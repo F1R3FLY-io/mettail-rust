@@ -30,10 +30,11 @@ use crate::rho_net_automaton::{
 };
 use crate::rho_net_lower::{
     ac_match_call_par, congruence_only_premises, contextual_hole_bridge_par,
-    contextual_premise_hole_channel, nested_structural_ac_match_call_par, spread_child_location,
-    spread_term_par, structural_ac_match_call_par, GroundTerm, RhoNetAcMatchEntry,
-    RhoNetContextualMatchEntry, RhoNetNestedStructuralAcMatchEntry,
-    RhoNetStructuralAcMatchEntry, LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
+    contextual_premise_hole_channel, instantiate_structural_ground_pattern,
+    nested_structural_ac_match_call_par, spread_child_location, spread_term_par,
+    structural_ac_match_call_par, walk_ground_term_locations, GroundTerm, RhoNetAcMatchEntry,
+    RhoNetContextualMatchEntry, RhoNetNestedStructuralAcMatchEntry, RhoNetStructuralAcMatchEntry,
+    StructuralGroundImage, LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
 };
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -54,53 +55,118 @@ pub enum PatternConvertReject {
 /// Convert a structural LHS pattern to its dovetail set-automaton input. Total over
 /// `mettail_ast::Pattern`: every node either converts or returns a typed reject.
 pub fn convert_lhs_pattern(p: &Pattern) -> Result<DvPattern<String>, PatternConvertReject> {
-    match p {
-        Pattern::Term(term) => convert_term(term),
-        // A bare collection literal / search metasyntax at a matched position is not a
-        // constructor-rooted structural pattern (a Collection is only structural as the
-        // sole arg of a constructor — handled in `convert_term`'s Apply arm).
-        Pattern::Collection { .. } | Pattern::Map { .. } | Pattern::Zip { .. } => {
-            Err(PatternConvertReject::CollectionSearch)
-        },
-        // Ordered indexed access is not constructor-rooted either. It is grouped with the
-        // search rejects because the set automaton has no positional-family entry for
-        // "one element of a `Vec`" — NOT because it is AC-searchable. The ordered/AC
-        // distinction is carried on the lowering side by
-        // `UnsupportedFamily::IndexedVecOrdered`, which must never be conflated with
-        // `CollectionAc` (that one is licensed to permute).
-        Pattern::IndexedVec { .. } => Err(PatternConvertReject::CollectionSearch),
-    }
+    convert_pattern_with_mode(p, PatternConversionMode::Base)
 }
 
-fn convert_term(term: &PatternTerm) -> Result<DvPattern<String>, PatternConvertReject> {
-    match term {
-        PatternTerm::Var(id) => Ok(DvPattern::var(id.to_string())),
-        PatternTerm::Apply { constructor, args } => {
-            let op = constructor.to_string();
-            // AC form: a constructor applied to a single collection literal (the bag).
-            // Becomes an AcApp — a valid dovetail pattern that `compile_structural`
-            // rejects, routing the rule to the AC path (Stage AC).
-            if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
-                let fixed = elements
-                    .iter()
-                    .map(convert_lhs_pattern)
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(DvPattern::ac(op, fixed, rest.as_ref().map(|r| r.to_string())))
-            } else {
-                let converted = args
-                    .iter()
-                    .map(convert_lhs_pattern)
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(DvPattern::app(op, converted))
-            }
+#[derive(Clone, Copy)]
+enum PatternConversionMode<'a> {
+    Base,
+    BinderAware(&'a HashMap<String, &'static str>),
+}
+
+/// Convert a metasyntax pattern into the set-automaton pattern with an explicit post-order PDA.
+///
+/// `Base` preserves ordinary constructor labels and rejects binder metasyntax. `BinderAware`
+/// remaps declared binder constructors and admits lambda bodies under their reserved reflection
+/// tags. Both modes share child ordering, AC recognition, and total fail-closed behavior.
+fn convert_pattern_with_mode(
+    pattern: &Pattern,
+    mode: PatternConversionMode<'_>,
+) -> Result<DvPattern<String>, PatternConvertReject> {
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        AssembleApp {
+            op: String,
+            child_count: usize,
         },
-        PatternTerm::Lambda { .. } | PatternTerm::MultiLambda { .. } => {
-            Err(PatternConvertReject::Binder)
-        },
-        PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => {
-            Err(PatternConvertReject::Subst)
+        AssembleAc {
+            op: String,
+            child_count: usize,
+            rest: Option<String>,
         },
     }
+
+    let mut tasks = vec![Task::Visit(pattern)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(id))) => {
+                values.push(DvPattern::var(id.to_string()));
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { constructor, args })) => {
+                let label = constructor.to_string();
+                let op = match mode {
+                    PatternConversionMode::Base => label,
+                    PatternConversionMode::BinderAware(tags) => tags
+                        .get(label.as_str())
+                        .map(|tag| (*tag).to_string())
+                        .unwrap_or(label),
+                };
+                if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
+                    tasks.push(Task::AssembleAc {
+                        op,
+                        child_count: elements.len(),
+                        rest: rest.as_ref().map(ToString::to_string),
+                    });
+                    tasks.extend(elements.iter().rev().map(Task::Visit));
+                } else {
+                    tasks.push(Task::AssembleApp { op, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                }
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Lambda { body, .. })) => match mode {
+                PatternConversionMode::Base => return Err(PatternConvertReject::Binder),
+                PatternConversionMode::BinderAware(_) => {
+                    tasks.push(Task::AssembleApp {
+                        op: LAMBDA_REFLECT_LABEL.to_string(),
+                        child_count: 1,
+                    });
+                    tasks.push(Task::Visit(body));
+                },
+            },
+            Task::Visit(Pattern::Term(PatternTerm::MultiLambda { body, .. })) => match mode {
+                PatternConversionMode::Base => return Err(PatternConvertReject::Binder),
+                PatternConversionMode::BinderAware(_) => {
+                    tasks.push(Task::AssembleApp {
+                        op: MULTILAMBDA_REFLECT_LABEL.to_string(),
+                        child_count: 1,
+                    });
+                    tasks.push(Task::Visit(body));
+                },
+            },
+            Task::Visit(Pattern::Term(
+                PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. },
+            )) => return Err(PatternConvertReject::Subst),
+            // Bare collection/search/indexed nodes have no constructor-rooted positional image.
+            Task::Visit(
+                Pattern::Collection { .. }
+                | Pattern::Map { .. }
+                | Pattern::Zip { .. }
+                | Pattern::IndexedVec { .. },
+            ) => return Err(PatternConvertReject::CollectionSearch),
+            Task::AssembleApp { op, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("pattern-conversion PDA lost an application child");
+                let children = values.split_off(first_child);
+                values.push(DvPattern::app(op, children));
+            },
+            Task::AssembleAc { op, child_count, rest } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("pattern-conversion PDA lost an AC child");
+                let children = values.split_off(first_child);
+                values.push(DvPattern::ac(op, children, rest));
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    Ok(values
+        .pop()
+        .expect("pattern-conversion PDA produced no result"))
 }
 
 /// The binder constructors of a language mapped to their RESERVED reflection tag (Stage 4
@@ -133,7 +199,11 @@ fn binder_reflect_tags(def: &LanguageDef) -> HashMap<String, &'static str> {
             } else if is_single {
                 tags.insert(label, LAMBDA_REFLECT_LABEL);
             }
-        } else if term.items.iter().any(|item| matches!(item, GrammarItem::Binder { .. })) {
+        } else if term
+            .items
+            .iter()
+            .any(|item| matches!(item, GrammarItem::Binder { .. }))
+        {
             tags.insert(label, LAMBDA_REFLECT_LABEL);
         }
     }
@@ -154,57 +224,7 @@ fn convert_subst_lhs(
     p: &Pattern,
     binder_tags: &HashMap<String, &'static str>,
 ) -> Result<DvPattern<String>, PatternConvertReject> {
-    match p {
-        Pattern::Term(term) => convert_subst_term(term, binder_tags),
-        Pattern::Collection { .. } | Pattern::Map { .. } | Pattern::Zip { .. } => {
-            Err(PatternConvertReject::CollectionSearch)
-        },
-        Pattern::IndexedVec { .. } => Err(PatternConvertReject::CollectionSearch),
-    }
-}
-
-fn convert_subst_term(
-    term: &PatternTerm,
-    binder_tags: &HashMap<String, &'static str>,
-) -> Result<DvPattern<String>, PatternConvertReject> {
-    match term {
-        PatternTerm::Var(id) => Ok(DvPattern::var(id.to_string())),
-        PatternTerm::Apply { constructor, args } => {
-            // A binder constructor (`Lam`) reflects to `^lambda`; a plain constructor (`App`, `F`)
-            // keeps its label — the SAME op the M-reflect subject tags the node with.
-            let op = binder_tags
-                .get(constructor.to_string().as_str())
-                .map(|tag| (*tag).to_string())
-                .unwrap_or_else(|| constructor.to_string());
-            if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
-                let fixed = elements
-                    .iter()
-                    .map(|p| convert_subst_lhs(p, binder_tags))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(DvPattern::ac(op, fixed, rest.as_ref().map(|r| r.to_string())))
-            } else {
-                let converted = args
-                    .iter()
-                    .map(|p| convert_subst_lhs(p, binder_tags))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(DvPattern::app(op, converted))
-            }
-        },
-        // A `\x.body` / `^[…].body` binder written in binder metasyntax reflects to
-        // `^lambda` / `^multilambda` over its converted body; the binder is De Bruijn-implicit.
-        PatternTerm::Lambda { body, .. } => {
-            let body_pat = convert_subst_lhs(body, binder_tags)?;
-            Ok(DvPattern::app(LAMBDA_REFLECT_LABEL.to_string(), vec![body_pat]))
-        },
-        PatternTerm::MultiLambda { body, .. } => {
-            let body_pat = convert_subst_lhs(body, binder_tags)?;
-            Ok(DvPattern::app(MULTILAMBDA_REFLECT_LABEL.to_string(), vec![body_pat]))
-        },
-        // A subst/multisubst on the LHS has no positional image (it is a host-computed σ slot).
-        PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => {
-            Err(PatternConvertReject::Subst)
-        },
-    }
+    convert_pattern_with_mode(p, PatternConversionMode::BinderAware(binder_tags))
 }
 
 /// Why a rewrite is not matched in Rho (routed to a later stage / its existing path).
@@ -340,8 +360,10 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     // report σ). Admitting a rule here (skipping its defer) shrinks `deferred`, so the gate stops
     // rejecting it — the AC analogue of S-native's `native_dispatch`.
     let ac_dispatch = crate::rho_net_ac_match_entries(def);
-    let ac_admitted: HashSet<&str> =
-        ac_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
+    let ac_admitted: HashSet<&str> = ac_dispatch
+        .iter()
+        .map(|entry| entry.fired_rule_label.as_str())
+        .collect();
 
     // Stage 4 (S-contextual): ADMIT the contextual (congruence) rewrite families. A contextual
     // rewrite has NO base-rewrite σ-receiver site (it lowered to a `ContextualRewrite` join), so it
@@ -353,8 +375,10 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     // shrinks `deferred`, so the gate stops rejecting it — the contextual analogue of S-native's
     // `native_dispatch` / S-AC's `ac_dispatch`.
     let contextual_dispatch = crate::rho_net_contextual_match_entries(def);
-    let contextual_admitted: HashSet<&str> =
-        contextual_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
+    let contextual_admitted: HashSet<&str> = contextual_dispatch
+        .iter()
+        .map(|entry| entry.fired_rule_label.as_str())
+        .collect();
 
     // Stage 4 (S-binder SLICE 3b): ADMIT the STRUCTURAL non-linear AC family rewrites (the Ambient
     // `OpenRule`). A structural-AC rewrite has NO base-rewrite σ-receiver site (it un-skipped to a
@@ -366,8 +390,10 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     // defer) shrinks `deferred`, so the gate stops rejecting it — the structural-AC analogue of
     // S-AC's `ac_dispatch` / S-contextual's `contextual_dispatch`.
     let structural_ac_dispatch = crate::rho_net_structural_ac_match_entries(def);
-    let structural_ac_admitted: HashSet<&str> =
-        structural_ac_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
+    let structural_ac_admitted: HashSet<&str> = structural_ac_dispatch
+        .iter()
+        .map(|entry| entry.fired_rule_label.as_str())
+        .collect();
 
     // Stage 4 (Ambient In/Out): ADMIT the DEPTH-2 NESTED structural non-linear AC family rewrites
     // (the Ambient `InRule`/`OutRule`). A nested-structural-AC rewrite has NO base-rewrite σ-receiver
@@ -400,8 +426,10 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     // (the automaton's in-Rho capture), NOT the host-computed reduct — the capture-avoiding
     // substitution (the in-Rho subst TRS) is S-binder slice 2. This slice LOCATES + captures.
     let subst_sites = crate::rho_net_subst_injection_sites(def);
-    let subst_site_channel: HashMap<&str, &str> =
-        subst_sites.iter().map(|s| (s.rule_label.as_str(), s.channel.as_str())).collect();
+    let subst_site_channel: HashMap<&str, &str> = subst_sites
+        .iter()
+        .map(|s| (s.rule_label.as_str(), s.channel.as_str()))
+        .collect();
     let binder_tags = binder_reflect_tags(def);
 
     let mut pairs: Vec<(PatternId, DvPattern<String>)> = Vec::with_capacity(def.rewrites.len());
@@ -639,13 +667,12 @@ fn collect_redex_sites(
     roots: &BTreeSet<String>,
     sites: &mut Vec<String>,
 ) {
-    if roots.contains(&node.constructor) {
-        sites.push(location.to_string());
-    }
-    for (index, child) in node.children.iter().enumerate() {
-        let child_location = spread_child_location(location, &node.constructor, index);
-        collect_redex_sites(child, &child_location, roots, sites);
-    }
+    walk_ground_term_locations(node, location, |node, location| {
+        if roots.contains(&node.constructor) {
+            sites.push(location.to_string());
+        }
+        true
+    });
 }
 
 /// Stage 4 (locate-all + multi-firing) — build ONE combined match call that locates EVERY redex of
@@ -830,9 +857,10 @@ pub fn contextual_match_call_par(
         .hole_positions
         .iter()
         .map(|path| {
-            path.iter().fold(root_site.to_string(), |site, (op, index)| {
-                spread_child_location(&site, op, *index)
-            })
+            path.iter()
+                .fold(root_site.to_string(), |site, (op, index)| {
+                    spread_child_location(&site, op, *index)
+                })
         })
         .collect();
 
@@ -1083,34 +1111,12 @@ fn instantiate_lhs(
     sigma: &HashMap<&str, &GroundTerm>,
     rule: &str,
 ) -> Result<GroundTerm, String> {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(id)) => {
-            let name = id.to_string();
-            sigma
-                .get(name.as_str())
-                .map(|ground| (*ground).clone())
-                .ok_or_else(|| {
-                    format!("in-Rho match subject for {rule}: σ missing LHS variable {name}")
-                })
-        },
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            if let [Pattern::Collection { .. }] = args.as_slice() {
-                return Err(format!(
-                    "in-Rho match subject for {rule}: AC constructor {constructor} has no positional redex image"
-                ));
-            }
-            let children = args
-                .iter()
-                .map(|arg| instantiate_lhs(arg, sigma, rule))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(GroundTerm::new(constructor.to_string(), children))
-        },
-        // binder / subst / collection-search → skipped rules; never reached past the gate.
-        _ => Err(format!(
-            "in-Rho match subject for {rule}: non-structural LHS has no ground redex image"
-        )),
-    }
+    instantiate_structural_ground_pattern(pattern, sigma, rule, StructuralGroundImage::Lhs)
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_ruleset_recursive_oracle.rs"]
+mod ruleset_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
@@ -1298,16 +1304,12 @@ mod tests {
         // A SINGLE nested-pattern redex has no co-installation, so it still matches in Rho (the
         // pre-Stage-4 single-redex behavior is preserved — no fallback).
         let single = wrap(swap_a_a.clone());
-        let (_call, n_single) =
-            in_rho_match_all_sites_call_par(&ruleset, &single, "site0", "OUT")
-                .expect("a single nested-pattern redex still serializes (no co-install contention)");
+        let (_call, n_single) = in_rho_match_all_sites_call_par(&ruleset, &single, "site0", "OUT")
+            .expect("a single nested-pattern redex still serializes (no co-install contention)");
         assert_eq!(n_single, 1, "the single Wrap(Swap …) redex is located");
 
         // ≥2 co-installed nested-pattern networks could contend, so fail closed (→ σ-replay).
-        let two = GroundTerm::new(
-            "Pair",
-            vec![wrap(swap_a_a.clone()), wrap(swap_a_a)],
-        );
+        let two = GroundTerm::new("Pair", vec![wrap(swap_a_a.clone()), wrap(swap_a_a)]);
         assert_eq!(
             in_rho_match_all_sites_call_par(&ruleset, &two, "site0", "OUT"),
             Err(AutomatonUnsupported::NestedEntryMultiSite),
@@ -1465,8 +1467,7 @@ mod tests {
         let hole_channel = format!("ph:{premise}");
         let has_bridge = call.receives.iter().any(|receive| {
             receive.binds.iter().any(|bind| {
-                bind.source.as_ref().and_then(par_gstring).as_deref()
-                    == Some(hole_channel.as_str())
+                bind.source.as_ref().and_then(par_gstring).as_deref() == Some(hole_channel.as_str())
             })
         });
         assert!(
@@ -1833,7 +1834,11 @@ mod tests {
         // The `Comm`-named declared join is a ContextualRewrite: admitted via contextual_dispatch
         // (not deferred), and its hole is matched + reassembled in Rho exactly like WrapCong.
         let ruleset = compile_in_rho_matching_ruleset(&comm_join_demo_def());
-        assert_eq!(ruleset.contextual_dispatch.len(), 1, "the declared-join Comm is a contextual family");
+        assert_eq!(
+            ruleset.contextual_dispatch.len(),
+            1,
+            "the declared-join Comm is a contextual family"
+        );
         assert_eq!(ruleset.contextual_dispatch[0].fired_rule_label, "Comm");
         assert!(
             !ruleset.deferred.iter().any(|d| d.rule_label == "Comm"),
@@ -1849,7 +1854,8 @@ mod tests {
                 vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
             )],
         );
-        contextual_match_call_par(&ruleset, &subject, "site0", "OUT")
-            .expect("the declared-join Comm rides contextual_match_call_par identically to WrapCong");
+        contextual_match_call_par(&ruleset, &subject, "site0", "OUT").expect(
+            "the declared-join Comm rides contextual_match_call_par identically to WrapCong",
+        );
     }
 }

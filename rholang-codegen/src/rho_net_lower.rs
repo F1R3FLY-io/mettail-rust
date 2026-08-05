@@ -1982,6 +1982,81 @@ impl GroundTerm {
     }
 }
 
+/// Which side of a rewrite is being reconstructed as a positional ground image.
+///
+/// The LHS redex and RHS contractum walkers have the same automaton; this tag keeps their
+/// established fail-closed diagnostics distinct while sharing one stack-safe implementation.
+#[derive(Clone, Copy)]
+pub(crate) enum StructuralGroundImage {
+    Lhs,
+    Rhs,
+}
+
+/// Instantiate a Var/Apply-only pattern with `sigma` using an explicit post-order PDA.
+///
+/// This is shared by contextual RHS reconstruction and the ruleset's LHS redex oracle. It
+/// deliberately rejects AC, binder, substitution, and collection-search nodes exactly where the
+/// former recursive implementations did. One heap task and one result slot are retained per
+/// active/pending node; native stack usage is constant in pattern depth.
+pub(crate) fn instantiate_structural_ground_pattern(
+    pattern: &Pattern,
+    sigma: &HashMap<&str, &GroundTerm>,
+    rule: &str,
+    image: StructuralGroundImage,
+) -> Result<GroundTerm, String> {
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        Assemble { constructor: String, child_count: usize },
+    }
+
+    let (context, side, noun) = match image {
+        StructuralGroundImage::Lhs => ("in-Rho match subject", "LHS", "redex"),
+        StructuralGroundImage::Rhs => ("contextual contractum", "RHS", "contractum"),
+    };
+    let mut tasks = vec![Task::Visit(pattern)];
+    let mut values = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(id))) => {
+                let name = id.to_string();
+                let ground = sigma.get(name.as_str()).ok_or_else(|| {
+                    format!("{context} for {rule}: σ missing {side} variable {name}")
+                })?;
+                values.push((*ground).clone());
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { constructor, args })) => {
+                if let [Pattern::Collection { .. }] = args.as_slice() {
+                    return Err(format!(
+                        "{context} for {rule}: AC constructor {constructor} has no positional {noun} image"
+                    ));
+                }
+                tasks.push(Task::Assemble {
+                    constructor: constructor.to_string(),
+                    child_count: args.len(),
+                });
+                tasks.extend(args.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(_) => {
+                return Err(format!(
+                    "{context} for {rule}: non-structural {side} has no ground {noun} image"
+                ));
+            },
+            Task::Assemble { constructor, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("ground-pattern PDA lost a child result");
+                let children = values.split_off(first_child);
+                values.push(GroundTerm::new(constructor, children));
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    Ok(values.pop().expect("ground-pattern PDA produced no result"))
+}
+
 /// A codegen-owned Rho-net σ-injection call, ready for the runtime to run against
 /// a language's INSTALLED σ-receiver program.
 ///
@@ -2815,34 +2890,7 @@ fn instantiate_rhs(
     sigma: &HashMap<&str, &GroundTerm>,
     rule: &str,
 ) -> Result<GroundTerm, String> {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(id)) => {
-            let name = id.to_string();
-            sigma
-                .get(name.as_str())
-                .map(|ground| (*ground).clone())
-                .ok_or_else(|| {
-                    format!("contextual contractum for {rule}: σ missing RHS variable {name}")
-                })
-        },
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            if let [Pattern::Collection { .. }] = args.as_slice() {
-                return Err(format!(
-                    "contextual contractum for {rule}: AC constructor {constructor} has no positional contractum image"
-                ));
-            }
-            let children = args
-                .iter()
-                .map(|arg| instantiate_rhs(arg, sigma, rule))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(GroundTerm::new(constructor.to_string(), children))
-        },
-        // binder / subst / collection RHS → a premise rewrite whose contractum has no
-        // positional ground image; never reached past a materialized contextual join.
-        _ => Err(format!(
-            "contextual contractum for {rule}: non-structural RHS has no ground contractum image"
-        )),
-    }
+    instantiate_structural_ground_pattern(pattern, sigma, rule, StructuralGroundImage::Rhs)
 }
 
 /// E-2-D: does a reflected node with head `label` carry the hereditary-ground marker?
@@ -3786,7 +3834,7 @@ struct GroundLocationFrame<'a> {
 /// `visit` decides whether the current node's children are part of the traversal. The driver
 /// retains one frame per active ancestor and mutates one location buffer in place, preserving the
 /// recursive walkers' child order without retaining a location string per pending sibling.
-fn walk_ground_term_locations<'a>(
+pub(crate) fn walk_ground_term_locations<'a>(
     root: &'a GroundTerm,
     root_location: &str,
     mut visit: impl FnMut(&'a GroundTerm, &str) -> bool,
