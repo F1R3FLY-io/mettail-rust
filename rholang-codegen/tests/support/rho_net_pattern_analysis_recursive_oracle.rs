@@ -25,20 +25,6 @@ fn recursive_contextual_source_path(
     }
 }
 
-fn recursive_pattern_is_hereditarily_ground(pattern: &Pattern) -> bool {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(_)) => false,
-        Pattern::Term(PatternTerm::Apply { args, .. }) => {
-            args.iter().all(recursive_pattern_is_hereditarily_ground)
-        },
-        Pattern::Term(PatternTerm::Lambda { body, .. })
-        | Pattern::Term(PatternTerm::MultiLambda { body, .. }) => {
-            recursive_pattern_is_hereditarily_ground(body)
-        },
-        _ => false,
-    }
-}
-
 fn recursive_collect_pattern_var_counts(pattern: &Pattern, counts: &mut HashMap<String, usize>) {
     match pattern {
         Pattern::Term(PatternTerm::Var(name)) => {
@@ -145,23 +131,6 @@ fn iterative_pattern_analyses_match_recursive_oracles() {
     collect_pattern_lhs_vars(&pattern, &mut actual_vars);
     recursive_collect_pattern_lhs_vars(&pattern, &mut expected_vars);
     assert_eq!(actual_vars, expected_vars);
-
-    let ground_pattern = apply(
-        "Root",
-        vec![
-            apply("Leaf", Vec::new()),
-            Pattern::Term(PatternTerm::Lambda {
-                binder: ident("x"),
-                body: Box::new(apply("Body", Vec::new())),
-            }),
-        ],
-    );
-    for candidate in [&pattern, &ground_pattern] {
-        assert_eq!(
-            pattern_is_hereditarily_ground(candidate),
-            recursive_pattern_is_hereditarily_ground(candidate)
-        );
-    }
 }
 
 #[test]
@@ -173,7 +142,6 @@ fn deep_pattern_analyses_fit_on_a_small_native_stack() {
         .spawn(|| {
             let pattern = deep_apply(DEPTH, variable("needle"));
             assert_eq!(contextual_source_path(&pattern, "needle").unwrap().len(), DEPTH);
-            assert!(!pattern_is_hereditarily_ground(&pattern));
             let mut counts = HashMap::new();
             collect_pattern_var_counts(&pattern, &mut counts);
             assert_eq!(counts.get("needle"), Some(&1));
@@ -182,10 +150,6 @@ fn deep_pattern_analyses_fit_on_a_small_native_stack() {
             assert_eq!(vars, HashSet::from(["needle".to_owned()]));
             assert_eq!(find_var_ident(&pattern, "needle").unwrap(), "needle");
             drop(pattern);
-
-            let ground_pattern = deep_apply(DEPTH, apply("Leaf", Vec::new()));
-            assert!(pattern_is_hereditarily_ground(&ground_pattern));
-            drop(ground_pattern);
         })
         .expect("small-stack RhoNet pattern analysis thread must spawn");
     handle

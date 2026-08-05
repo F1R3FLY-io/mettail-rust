@@ -2956,32 +2956,6 @@ pub fn par_carries_ground_marker(par: &Par, fingerprint: &str) -> bool {
     )
 }
 
-/// E-2-D: is a reflected RHS `Pattern` node HEREDITARILY GROUND? A variable occurrence (a σ-slot
-/// hole OR a bound-var leaf) is NEVER ground; a constructor/binder node is ground iff its body /
-/// all args are. Mirrors the bottom-up groundness state in [`spread_term_par`] so the RHS
-/// reflector's marker AGREES with [`reflect_ground_term_par`]'s on the ground (variable-free)
-/// overlap — preserving the shared-ABI byte identity.
-fn pattern_is_hereditarily_ground(pattern: &Pattern) -> bool {
-    let mut work = vec![pattern];
-    while let Some(pattern) = work.pop() {
-        match pattern {
-            Pattern::Term(PatternTerm::Apply { args, .. }) => {
-                work.extend(args.iter().rev());
-            },
-            Pattern::Term(PatternTerm::Lambda { body, .. })
-            | Pattern::Term(PatternTerm::MultiLambda { body, .. }) => work.push(body),
-            Pattern::Term(PatternTerm::Var(_))
-            | Pattern::Term(PatternTerm::Subst { .. })
-            | Pattern::Term(PatternTerm::MultiSubst { .. })
-            | Pattern::Collection { .. }
-            | Pattern::Map { .. }
-            | Pattern::Zip { .. }
-            | Pattern::IndexedVec { .. } => return false,
-        }
-    }
-    true
-}
-
 /// Reflect a GROUND constructor term to a normalized `Par` value under the SAME
 /// constructor reflection ABI as the internal RHS reflector `reflect_term_par`:
 ///
@@ -4165,7 +4139,7 @@ fn reflect_term_par(
     language_fingerprint: &str,
     def: Option<&LanguageDef>,
 ) -> Result<Par, UnsupportedFamily> {
-    reflect_term_par_env(pattern, vars, k, language_fingerprint, &mut Vec::new(), def)
+    reflect_term_par_env(pattern, vars, k, language_fingerprint, def)
 }
 
 /// The reserved reflection tag for a single-binder `Lambda` node — a synthetic
@@ -4432,128 +4406,197 @@ fn reflect_term_par_env(
     vars: &[Ident],
     k: usize,
     language_fingerprint: &str,
-    binder_env: &mut Vec<String>,
     def: Option<&LanguageDef>,
 ) -> Result<Par, UnsupportedFamily> {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(name)) => {
-            // A bound occurrence (in scope of an enclosing RHS binder) reflects to a
-            // distinguished bound-var leaf — it is supplied by the binder, not by σ.
-            if binder_env.contains(&name.to_string()) {
-                return Ok(reflect_bound_var_leaf(name, language_fingerprint));
-            }
-            match vars.iter().position(|var| var == name) {
-                Some(index) => Ok(new_boundvar_par(rhs_var_index(k, index), Vec::new(), false)),
-                // A RHS variable not bound by the LHS (and not a binder) has no σ-tuple
-                // slot; the rewrite is ill-formed for a flat receiver. Fail closed rather
-                // than emit a dangling De Bruijn index.
-                None => Err(UnsupportedFamily::DanglingRhsVariable),
-            }
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        VisitVariable(&'a Ident),
+        AssembleApply {
+            label: String,
+            child_count: usize,
         },
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            // Stage AC2b: a HashBag constructor over a single collection metapattern
-            // `op{e_0, …, ...rest}` reflects to the BARE process-soup carrier — the SAME shape
-            // `reflect_ground_term_par` emits for a HashBag ground term — NOT a tagged `EList`, so
-            // a bag-VALUED RHS fires as one FLAT bag: each fixed element is a send
-            // `@"ac:{op}"!(⟦e_i⟧σ)` and the `...rest` σ-slot delivers the residual bag's sends,
-            // which parallel composition SPLICES in (mirroring `dovetail::rules::add_flattened_bag`).
-            // Only when `def` resolves `op` to a HashBag; every other collection RHS (no `def`, a
-            // non-HashBag kind, or an unresolved kind) falls through to the fail-closed `Collection`
-            // arm below, exactly as before this stage.
-            if let (Some(def), [Pattern::Collection { coll_type, elements, rest }]) =
-                (def, args.as_slice())
-            {
-                if resolve_collection_kind(def, constructor, coll_type.as_ref())
-                    == Some(CollectionType::HashBag)
+        AssembleBinder {
+            label: &'static str,
+            binders: &'a [Ident],
+        },
+        AssembleHashBag {
+            op: String,
+            fixed_count: usize,
+            has_rest: bool,
+        },
+        ExitBinders(&'a [Ident]),
+    }
+
+    let mut var_index = HashMap::new();
+    for (index, var) in vars.iter().enumerate() {
+        var_index.entry(var.to_string()).or_insert(index);
+    }
+    let mut bound_counts: HashMap<String, usize> = HashMap::new();
+    let mut tasks = vec![Task::Visit(pattern)];
+    // Each result carries the reflected Par and this pattern node's hereditary-ground bit. The
+    // latter is folded once bottom-up, eliminating the former subtree rescan at every ancestor.
+    let mut values: Vec<(Par, bool)> = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(name))) | Task::VisitVariable(name) => {
+                let name_text = name.to_string();
+                let par = if bound_counts.contains_key(&name_text) {
+                    reflect_bound_var_leaf(name, language_fingerprint)
+                } else if let Some(index) = var_index.get(&name_text).copied() {
+                    new_boundvar_par(rhs_var_index(k, index), Vec::new(), false)
+                } else {
+                    return Err(UnsupportedFamily::DanglingRhsVariable);
+                };
+                values.push((par, false));
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { constructor, args })) => {
+                if let (Some(def), [Pattern::Collection { coll_type, elements, rest }]) =
+                    (def, args.as_slice())
                 {
-                    return reflect_hashbag_soup_par(
-                        constructor,
-                        elements,
-                        rest.as_ref(),
-                        vars,
-                        k,
-                        language_fingerprint,
-                        binder_env,
-                        def,
+                    if resolve_collection_kind(def, constructor, coll_type.as_ref())
+                        == Some(CollectionType::HashBag)
+                    {
+                        tasks.push(Task::AssembleHashBag {
+                            op: constructor.to_string(),
+                            fixed_count: elements.len(),
+                            has_rest: rest.is_some(),
+                        });
+                        if let Some(rest) = rest {
+                            tasks.push(Task::VisitVariable(rest));
+                        }
+                        tasks.extend(elements.iter().rev().map(Task::Visit));
+                        continue;
+                    }
+                }
+                tasks.push(Task::AssembleApply {
+                    label: constructor.to_string(),
+                    child_count: args.len(),
+                });
+                tasks.extend(args.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Lambda { binder, body })) => {
+                let binders = std::slice::from_ref(binder);
+                *bound_counts.entry(binder.to_string()).or_insert(0) += 1;
+                tasks.push(Task::AssembleBinder { label: LAMBDA_REFLECT_LABEL, binders });
+                tasks.push(Task::ExitBinders(binders));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(Pattern::Term(PatternTerm::MultiLambda { binders, body })) => {
+                for binder in binders {
+                    *bound_counts.entry(binder.to_string()).or_insert(0) += 1;
+                }
+                tasks.push(Task::AssembleBinder {
+                    label: MULTILAMBDA_REFLECT_LABEL,
+                    binders,
+                });
+                tasks.push(Task::ExitBinders(binders));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(Pattern::Term(
+                PatternTerm::MultiSubst { .. } | PatternTerm::Subst { .. },
+            )) => return Err(UnsupportedFamily::Substitution),
+            Task::Visit(Pattern::Collection { .. }) => {
+                return Err(UnsupportedFamily::CollectionAc);
+            },
+            Task::Visit(Pattern::Map { .. }) => return Err(UnsupportedFamily::MapAc),
+            Task::Visit(Pattern::Zip { .. }) => return Err(UnsupportedFamily::ZipAc),
+            Task::Visit(Pattern::IndexedVec { .. }) => {
+                return Err(UnsupportedFamily::IndexedVecOrdered);
+            },
+            Task::ExitBinders(binders) => {
+                for binder in binders {
+                    let name = binder.to_string();
+                    let count = bound_counts
+                        .get_mut(&name)
+                        .expect("reflection PDA exited an inactive binder");
+                    *count -= 1;
+                    if *count == 0 {
+                        bound_counts.remove(&name);
+                    }
+                }
+            },
+            Task::AssembleApply { label, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("reflection PDA lost an application child");
+                let children = values.split_off(first_child);
+                let ground = children.iter().all(|(_, ground)| *ground);
+                let tag =
+                    GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &label));
+                let mut elements = Vec::with_capacity(child_count + 2);
+                let mut locally_free = tag.locally_free.clone();
+                elements.push(tag);
+                if is_marked_object_label(&label) {
+                    elements.push(ground_marker_tag_par(language_fingerprint, ground));
+                }
+                for (child, _) in children {
+                    locally_free = union(locally_free, child.locally_free.clone());
+                    elements.push(child);
+                }
+                values.push((
+                    new_elist_par(elements, locally_free.clone(), false, None, locally_free, false),
+                    ground,
+                ));
+            },
+            Task::AssembleBinder { label, binders } => {
+                let (body, body_ground) = values.pop().expect("reflection PDA lost a binder body");
+                let tag =
+                    GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, label));
+                let mut elements = Vec::with_capacity(binders.len() + 3);
+                let mut locally_free = tag.locally_free.clone();
+                elements.push(tag);
+                elements.push(ground_marker_tag_par(language_fingerprint, body_ground));
+                for binder in binders {
+                    let leaf = reflect_bound_var_leaf(binder, language_fingerprint);
+                    locally_free = union(locally_free, leaf.locally_free.clone());
+                    elements.push(leaf);
+                }
+                locally_free = union(locally_free, body.locally_free.clone());
+                elements.push(body);
+                values.push((
+                    new_elist_par(elements, locally_free.clone(), false, None, locally_free, false),
+                    body_ground,
+                ));
+            },
+            Task::AssembleHashBag { op, fixed_count, has_rest } => {
+                let result_count = fixed_count + usize::from(has_rest);
+                let first_child = values
+                    .len()
+                    .checked_sub(result_count)
+                    .expect("reflection PDA lost a HashBag child");
+                let mut children = values.split_off(first_child).into_iter();
+                let channel = ac_soup_channel(language_fingerprint, &op);
+                let mut soup = Par::default();
+                for (reflected, _) in children.by_ref().take(fixed_count) {
+                    let free = reflected.locally_free.clone();
+                    extend_parallel_par(
+                        &mut soup,
+                        new_send_par(
+                            new_gstring_par(channel.clone(), Vec::new(), false),
+                            vec![reflected],
+                            false,
+                            free.clone(),
+                            false,
+                            free,
+                            false,
+                        ),
                     );
                 }
-            }
-            let label = constructor.to_string();
-            let tag =
-                GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &label));
-            let mut elements = Vec::with_capacity(args.len() + 2);
-            let mut locally_free = tag.locally_free.clone();
-            elements.push(tag);
-            // E-2-D: a USER constructor node is marked-object — interpose the hereditary-ground
-            // marker at index 1, AGREEING with `reflect_ground_term_par`'s on the ground overlap
-            // (both `^gnd` iff all args are variable/`^bound`-free) so the shared ABI stays
-            // byte-identical for a ground RHS constructor of the same shape.
-            if is_marked_object_label(&label) {
-                elements.push(ground_marker_tag_par(
-                    language_fingerprint,
-                    args.iter().all(pattern_is_hereditarily_ground),
-                ));
-            }
-            for arg in args {
-                let child =
-                    reflect_term_par_env(arg, vars, k, language_fingerprint, binder_env, def)?;
-                locally_free = union(locally_free, child.locally_free.clone());
-                elements.push(child);
-            }
-            Ok(new_elist_par(elements, locally_free.clone(), false, None, locally_free, false))
-        },
-        // A binder reflects to a tagged binder node `EList[tag, ⟦binder⟧, ⟦body⟧]`
-        // (mirrors the Apply arm): the binder name is captured as a bound-var leaf, and
-        // the body is reflected with the binder pushed onto the De Bruijn environment,
-        // so a bound occurrence in the body reflects to a bound-var leaf, not a σ-slot.
-        Pattern::Term(PatternTerm::Lambda { binder, body }) => reflect_binder_node(
-            LAMBDA_REFLECT_LABEL,
-            std::slice::from_ref(binder),
-            body,
-            vars,
-            k,
-            language_fingerprint,
-            binder_env,
-            def,
-        ),
-        Pattern::Term(PatternTerm::MultiLambda { binders, body }) => reflect_binder_node(
-            MULTILAMBDA_REFLECT_LABEL,
-            binders,
-            body,
-            vars,
-            k,
-            language_fingerprint,
-            binder_env,
-            def,
-        ),
-        // A substitution `subst(scope, …)` / `(eval scope arg)` RHS.
-        //
-        // RETIRED for the in-Rho β (Stage 4 S-binder SLICE 2a): a TOP-LEVEL substitution rewrite RHS
-        // no longer reflects here — it is lowered to the in-Rho β SEED σ-receiver
-        // (`lower_subst_rewrite` → `subst_seed_receiver_par`), which SENDS `^subst(⟦Z⟧, a, b, out)`
-        // on the reserved channel so the TRS COMPUTES the reduct IN RHO. The Stage 3c host-σ-slot
-        // resolver (`reflect_subst_scope_slot`) — which forwarded `BoundVar(scope-slot)` carrying the
-        // host-computed CONTRACTUM — is commented out below; the seed needs the RAW captured body,
-        // which the host-contractum path cannot supply. So a substitution node reaching THIS reflector
-        // (only a NESTED subst — a top-level one is routed to the seed) has no in-Rho image this slice
-        // and fails closed, exactly like the LHS subst arm (`lower_lhs_vars`).
-        Pattern::Term(PatternTerm::MultiSubst { .. })
-        | Pattern::Term(PatternTerm::Subst { .. }) => {
-            // RETIRED (host-σ-slot reduct): `reflect_subst_scope_slot(scope, vars, k)`.
-            Err(UnsupportedFamily::Substitution)
-        },
-        // A HashBag bag-VALUED RHS is intercepted at its ENCLOSING `Apply` (which supplies the `op`
-        // for the `@"ac:{op}"` soup channel — see the `Apply` arm's Stage AC2b intercept above). A
-        // BARE collection reaching here has no enclosing constructor, hence no `op` and no soup
-        // image; it fails closed (mirrors `pattern_to_dovetail`'s bare-collection rejection).
-        Pattern::Collection { .. } => Err(UnsupportedFamily::CollectionAc),
-        Pattern::Map { .. } => Err(UnsupportedFamily::MapAc),
-        Pattern::Zip { .. } => Err(UnsupportedFamily::ZipAc),
-        // Ordered indexed access has no reflected image for the same reason a bare
-        // collection has none — no enclosing constructor supplies an `op`. It must not
-        // borrow the AC rejection; see `UnsupportedFamily::IndexedVecOrdered`.
-        Pattern::IndexedVec { .. } => Err(UnsupportedFamily::IndexedVecOrdered),
+                if has_rest {
+                    let (rest, _) = children
+                        .next()
+                        .expect("reflection PDA lost a HashBag remainder");
+                    extend_parallel_par(&mut soup, rest);
+                }
+                values.push((soup, false));
+            },
+        }
     }
+
+    debug_assert_eq!(values.len(), 1);
+    Ok(values.pop().expect("reflection PDA produced no result").0)
 }
 
 /// A bound-variable occurrence reflected to its distinguished leaf
@@ -4577,49 +4620,6 @@ fn reflect_bound_var_leaf(name: &Ident, language_fingerprint: &str) -> Par {
         locally_free,
         false,
     )
-}
-
-/// Reflect a binder node (`Lambda`/`MultiLambda`) as a tagged `EList`
-/// `[GPrivate(reflect_tag(label)), ⟦binder₀⟧, …, ⟦binderₘ₋₁⟧, ⟦body⟧]`: each binder
-/// name is a bound-var leaf and the body is reflected with the binders pushed onto
-/// the De Bruijn environment. Injective and collision-free (reserved `label`).
-#[allow(clippy::too_many_arguments)]
-fn reflect_binder_node(
-    label: &str,
-    binders: &[Ident],
-    body: &Pattern,
-    vars: &[Ident],
-    k: usize,
-    language_fingerprint: &str,
-    binder_env: &mut Vec<String>,
-    def: Option<&LanguageDef>,
-) -> Result<Par, UnsupportedFamily> {
-    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, label));
-    let mut elements = Vec::with_capacity(binders.len() + 3);
-    let mut locally_free = tag.locally_free.clone();
-    elements.push(tag);
-    // E-2-D: `^lambda`/`^multilambda` are marked-object — `^gnd` iff the body is hereditarily
-    // ground (no σ-var / bound-var occurrence in the body), matching `reflect_ground_term_par`.
-    elements.push(ground_marker_tag_par(
-        language_fingerprint,
-        pattern_is_hereditarily_ground(body),
-    ));
-    for binder in binders {
-        let leaf = reflect_bound_var_leaf(binder, language_fingerprint);
-        locally_free = union(locally_free, leaf.locally_free.clone());
-        elements.push(leaf);
-    }
-    for binder in binders {
-        binder_env.push(binder.to_string());
-    }
-    let body_result = reflect_term_par_env(body, vars, k, language_fingerprint, binder_env, def);
-    for _ in binders {
-        binder_env.pop();
-    }
-    let body_par = body_result?;
-    locally_free = union(locally_free, body_par.locally_free.clone());
-    elements.push(body_par);
-    Ok(new_elist_par(elements, locally_free.clone(), false, None, locally_free, false))
 }
 
 // RETIRED (Stage 4 S-binder SLICE 2a): the host-σ-slot substitution-scope resolver.
@@ -4651,68 +4651,6 @@ fn reflect_binder_node(
 //         _ => Err(UnsupportedFamily::Substitution),
 //     }
 // }
-
-/// Reflect a HashBag constructor's bag-VALUED RHS `op{e_0, …, e_{m-1}, ...rest}` to the
-/// process-soup carrier (Stage AC2b): each fixed element `e_i` becomes a send
-/// `@"ac:{op}"!(⟦e_i⟧σ)` and the residual `...rest` becomes the reflected `rest` σ-slot — all
-/// parallel-composed.
-///
-/// This is byte-identical in SHAPE to [`reflect_ground_term_par`]'s HashBag reflection
-/// ([`reflect_ac_bag_par`]): a sends-only `Par` on the `@"ac:{op}"` element channel, one send per
-/// element, order-independent and multiplicity-preserving. So when this is the AC receiver body's
-/// `⟦R⟧σ` ([`ac_sigma_receiver_par`]), firing it emits a FLAT bag: the AC receiver bound `rest`
-/// (`ac_bag_pattern`'s process remainder) to the residual soup — the leftover `@"ac:{op}"!(…)`
-/// sends — so the reflected `rest` σ-slot substitutes to those sends and parallel composition
-/// SPLICES them into the fixed-element sends, never nesting (mirroring the host's
-/// `dovetail::rules::add_flattened_bag`).
-///
-/// Each fixed element reflects through the SAME [`reflect_term_par_env`] (so a `Wrap(x)` element →
-/// `EList[tag_Wrap, ⟦x⟧σ]`), threading `binder_env`/`def` so a nested binder or a nested same-op
-/// bag element reflects correctly. `rest`, when present, is reflected as its σ-slot `BoundVar`
-/// (`Pattern::Var`), so an unbound `rest` fails closed exactly like any dangling RHS variable
-/// ([`UnsupportedFamily::DanglingRhsVariable`]); a `None` rest yields an exact (rest-free) bag.
-#[allow(clippy::too_many_arguments)]
-fn reflect_hashbag_soup_par(
-    op: &Ident,
-    elements: &[Pattern],
-    rest: Option<&Ident>,
-    vars: &[Ident],
-    k: usize,
-    language_fingerprint: &str,
-    binder_env: &mut Vec<String>,
-    def: &LanguageDef,
-) -> Result<Par, UnsupportedFamily> {
-    let element_channel = ac_soup_channel(language_fingerprint, &op.to_string());
-    let mut soup = Par::default();
-    // Each fixed element `e_i` → a ground send `@"ac:{op}"!(⟦e_i⟧σ)` (the subject side's
-    // `reflect_ac_bag_par` element shape). Reflected with `Some(def)` so a nested same-op bag
-    // element is itself intercepted at its `Apply`.
-    for element in elements {
-        let reflected =
-            reflect_term_par_env(element, vars, k, language_fingerprint, binder_env, Some(def))?;
-        let free = reflected.locally_free.clone();
-        let send = new_send_par(
-            new_gstring_par(element_channel.clone(), Vec::new(), false),
-            vec![reflected],
-            false,
-            free.clone(),
-            false,
-            free,
-            false,
-        );
-        soup = soup.append(send);
-    }
-    // The residual `...rest`: reflect the σ-bound variable to its `BoundVar` slot. The AC receiver
-    // bound it to the leftover soup (a parallel composition of `@"ac:{op}"!(…)` sends), so
-    // appending it here parallel-composes — hence SPLICES — the residual sends into the flat bag.
-    if let Some(rest_name) = rest {
-        let rest_var = Pattern::Term(PatternTerm::Var(rest_name.clone()));
-        let rest_par =
-            reflect_term_par_env(&rest_var, vars, k, language_fingerprint, binder_env, Some(def))?;
-        soup = soup.append(rest_par);
-    }
-    Ok(soup)
-}
 
 /// P2 defensive detector (independent of the constructive walk): report the
 /// first out-of-scope family in a rewrite's LHS/RHS patterns. Constructor
@@ -5144,7 +5082,7 @@ pub(crate) fn ac_effective_bare_var_kind(
 ///
 /// The parser leaves a rewrite pattern collection's `coll_type` as `None` ("inferred from the
 /// enclosing constructor's grammar"), so BOTH the AC LHS un-skip ([`resolve_ac_collection_type`])
-/// AND the AC bag-VALUED RHS reflection ([`reflect_hashbag_soup_par`], Stage AC2b) resolve it here.
+/// AND the AC bag-valued RHS reflection ([`reflect_term_par_env`], Stage AC2b) resolve it here.
 /// Returns `None` when `op` is not a constructor over a collection parameter under EITHER form — so
 /// a non-collection or unknown constructor is never mis-classified as a HashBag.
 pub(crate) fn resolve_constructor_collection_type(
@@ -5192,7 +5130,7 @@ pub(crate) fn resolve_ac_collection_type(
 /// the pattern's own `coll_type` when the parser set it, else the kind `op`'s collection parameter
 /// declares (via [`resolve_constructor_collection_type`]). This mirrors the LHS
 /// `coll_type.as_ref().or(resolved_kind)` precedence in [`ac_rule_shape`], so the AC bag-RHS
-/// reflection ([`reflect_hashbag_soup_par`]) agrees with the AC LHS un-skip on the operand kind.
+/// reflection ([`reflect_term_par_env`]) agrees with the AC LHS un-skip on the operand kind.
 fn resolve_collection_kind(
     def: &LanguageDef,
     constructor: &Ident,
@@ -5241,7 +5179,7 @@ fn all_formals_bitvec(count: usize) -> Vec<u8> {
 //     substitution — model-b, exactly as the Stage 3c binder path) delivered as the firing's
 //     CONTRACTUM at a dedicated σ slot the receiver forwards;
 //   * a bag RHS `op{ cont[Q/y], ...rest }` — the receiver body `@"ac:op"!(reduct) | rest` is the
-//     Stage AC2b process-soup carrier (`reflect_hashbag_soup_par` shape): the reduct is the one
+//     Stage AC2b process-soup carrier (`reflect_term_par_env` HashBag shape): the reduct is the one
 //     fixed element and the bound `rest` remainder splices the residual sends back flat.
 //
 // The non-linear channel guard cannot be a repeated pattern variable (`for(@N!(_) & @N!(_) …)` is
@@ -7541,6 +7479,10 @@ mod spread_term_recursive_oracle;
 #[path = "../tests/support/lower_lhs_vars_recursive_oracle.rs"]
 mod lower_lhs_vars_recursive_oracle;
 
+#[cfg(test)]
+#[path = "../tests/support/rho_net_reflection_recursive_oracle.rs"]
+mod reflection_recursive_oracle;
+
 /// The recognized shape of a DEPTH-2 NESTED structural non-linear AC rewrite (the Ambient
 /// `InRule`/`OutRule`). Both are `k = 2` outer elements where EXACTLY ONE is NESTED (`PAmb N (PPar
 /// {…})`, whose second argument is a HashBag carrying the capability `in(m,·)`/`out(m,·)`), sharing a
@@ -9044,7 +8986,7 @@ pub fn rho_net_nested_structural_ac_injection_sites(
 //     `nested_match_pattern_for`, which WILDCARDS those positions); and
 //   * BUILDS the nested reduct `⟦nb[{ na[{A}] | B }]⟧` (or Out's `⟦{ na[{A} ] | nb[B] }⟧`) IN THE
 //     RECEIVER BODY from the bag-bound σ slots ([`reflect_ac_template_bound_par`], the bound-var twin
-//     of `reflect_ground_term_par` — reusing the `reflect_hashbag_soup_par` idiom so a NESTED AC bag
+//     of `reflect_ground_term_par` — reusing the reflection PDA's HashBag idiom so a NESTED AC bag
 //     rebuilds via the `ac:` carrier + a σ-slot rest), NOT host-delivered as a message slot.
 //
 // So its message is the 2-value `carrier!(⟦operand⟧, @out)` the spread delivers (NO host σ), exactly
@@ -9234,7 +9176,8 @@ pub(crate) fn nested_match_bind_pattern_for(
 /// twin of [`reflect_ground_term_par`]. A `Var` (or a `Bag`'s `...rest`) reflects to its bound σ
 /// slot; a `Node` to the tagged `EList[ GPrivate(tag), ⟦child⟧… ]` (byte-identical to
 /// `reflect_ground_term_par`'s constructor image); a `Bag` to the process-soup `@"ac:op"!(⟦e⟧) | … |
-/// BoundVar(rest)` (byte-identical to [`reflect_ac_bag_par`] / [`reflect_hashbag_soup_par`], so a
+/// BoundVar(rest)` (byte-identical to [`reflect_ac_bag_par`] / the [`reflect_term_par_env`]
+/// HashBag case, so a
 /// NESTED AC bag rebuilds through the `ac:` carrier with its residual bag spliced via the bound `rest`
 /// slot). This is how the SPREAD receiver BUILDS `⟦R⟧σ` in its body from the in-Rho-bound σ — never a
 /// host-delivered message slot. `slot_of` MUST bind every var/rest the template references (the walk
@@ -9294,7 +9237,7 @@ fn reflect_ac_template_bound_par(
             }
             // The residual `...rest`: the operand pattern bound it to the leftover bag soup, so
             // appending its bound σ slot parallel-composes — hence SPLICES — the residual sends into
-            // the flat reduct bag (mirroring [`reflect_hashbag_soup_par`], one level deeper).
+            // the flat reduct bag (mirroring the reflection PDA's HashBag case, one level deeper).
             if let Some(rest_name) = rest {
                 let level = *slot_of
                     .get(rest_name)
