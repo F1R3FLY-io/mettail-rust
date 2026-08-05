@@ -1842,6 +1842,14 @@ pub struct E6aWorkloadOutcome {
     pub emission: Duration,
     /// Total counting-runtime construction span.
     pub bringup: Duration,
+    /// Total phase-1 injection span (index publication plus discovery).
+    pub phase1_inj: Duration,
+    /// Total phase-2 injection span (guard and sigma-value queries).
+    pub phase2_inj: Duration,
+    /// Total encoded phase-1 program size.
+    pub phase1_encoded_len: usize,
+    /// Total encoded phase-2 program size.
+    pub phase2_encoded_len: usize,
 }
 
 /// The CONTROL matcher column of each E-6a corpus cell — the CURRENT
@@ -1944,8 +1952,12 @@ pub async fn run_e6a_treatment_workload(
             let mut bringup_total = Duration::ZERO;
             let mut build_total = Duration::ZERO;
             let mut inj_total = Duration::ZERO;
+            let mut phase1_inj_total = Duration::ZERO;
+            let mut phase2_inj_total = Duration::ZERO;
             let mut readback_total = Duration::ZERO;
             let mut encoded_len_total = 0usize;
+            let mut phase1_encoded_len_total = 0usize;
+            let mut phase2_encoded_len_total = 0usize;
             let mut receiver_count_total = 0usize;
             let mut consumed_total: i64 = 0;
             let mut observed_total: Vec<Par> = Vec::with_capacity(steps);
@@ -1995,8 +2007,12 @@ pub async fn run_e6a_treatment_workload(
                 bringup_total += outcome.bringup;
                 build_total += outcome.result.build;
                 inj_total += outcome.result.inj;
+                phase1_inj_total += outcome.phase1_inj;
+                phase2_inj_total += outcome.phase2_inj;
                 readback_total += outcome.result.readback;
                 encoded_len_total += outcome.result.program_encoded_len;
+                phase1_encoded_len_total += outcome.phase1_encoded_len;
+                phase2_encoded_len_total += outcome.phase2_encoded_len;
                 receiver_count_total += outcome.result.program_receiver_count;
                 consumed_total += outcome.result.consumed_cost_units;
                 accumulate_comm(&mut comm_total, &outcome.result.comm);
@@ -2022,6 +2038,10 @@ pub async fn run_e6a_treatment_workload(
                 treatment_spread_sends: spread_sends_total,
                 emission: emission_total,
                 bringup: bringup_total,
+                phase1_inj: phase1_inj_total,
+                phase2_inj: phase2_inj_total,
+                phase1_encoded_len: phase1_encoded_len_total,
+                phase2_encoded_len: phase2_encoded_len_total,
             })
         },
         _ => {
@@ -2055,6 +2075,10 @@ pub async fn run_e6a_treatment_workload(
                 treatment_spread_sends: outcome.treatment_spread_sends,
                 emission: outcome.emission,
                 bringup: outcome.bringup,
+                phase1_inj: outcome.phase1_inj,
+                phase2_inj: outcome.phase2_inj,
+                phase1_encoded_len: outcome.phase1_encoded_len,
+                phase2_encoded_len: outcome.phase2_encoded_len,
             })
         },
     }

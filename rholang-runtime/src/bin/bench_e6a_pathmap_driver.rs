@@ -272,8 +272,24 @@ fn rep_line(
     machine_sites_json: &str,
     emission: Duration,
     bringup: Duration,
+    treatment_phase1_inj: Option<Duration>,
+    treatment_phase2_inj: Option<Duration>,
+    treatment_phase1_encoded_len: Option<usize>,
+    treatment_phase2_encoded_len: Option<usize>,
 ) -> String {
     let spread_plus_matching_comms = spread_sends as u64 + matching_comms;
+    let phase1_inj_ns = treatment_phase1_inj
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let phase2_inj_ns = treatment_phase2_inj
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let phase1_encoded_len = treatment_phase1_encoded_len
+        .map(|length| length.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let phase2_encoded_len = treatment_phase2_encoded_len
+        .map(|length| length.to_string())
+        .unwrap_or_else(|| "null".to_string());
     format!(
         "{{\"e6a_rep\":{{\"workload\":{},\"arm\":{},\"n\":{},\"rep\":{rep},\
          \"is_warmup\":{is_warmup},\
@@ -282,6 +298,10 @@ fn rep_line(
          \"comm\":{},\"attempts\":{},\"successes\":{},\"consumed_cost_units\":{},\
          \"observed_count\":{},\"build_ns\":{},\"inj_ns\":{},\"readback_ns\":{},\
          \"emission_ns\":{},\"bringup_ns\":{},\
+         \"treatment_phase1_inj_ns\":{phase1_inj_ns},\
+         \"treatment_phase2_inj_ns\":{phase2_inj_ns},\
+         \"treatment_phase1_encoded_len\":{phase1_encoded_len},\
+         \"treatment_phase2_encoded_len\":{phase2_encoded_len},\
          \"program_encoded_len\":{},\"program_receiver_count\":{},\
          \"machine_sites\":{machine_sites_json}}}}}",
         json_string(args.workload.name()),
@@ -345,6 +365,10 @@ fn run_rep(
                             "{}",
                             outcome.emission,
                             outcome.bringup,
+                            None,
+                            None,
+                            None,
+                            None,
                         )
                     })
                 },
@@ -377,6 +401,10 @@ fn run_rep(
                                 &sites_json,
                                 outcome.emission,
                                 outcome.bringup,
+                                Some(outcome.phase1_inj),
+                                Some(outcome.phase2_inj),
+                                Some(outcome.phase1_encoded_len),
+                                Some(outcome.phase2_encoded_len),
                             )
                         })
                 },

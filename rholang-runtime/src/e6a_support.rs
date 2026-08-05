@@ -667,10 +667,9 @@ fn and_all(mut conjuncts: Vec<Par>) -> Par {
 /// * a guard-failing site fires NOTHING (`_ => Nil`) — the discovery
 ///   pre-filter is re-VERIFIED on the machine, so a stale site can never
 ///   fire a wrong match.
-pub fn entry_query_match_par(
+fn entry_query_match_body_par(
     shape: &EntryQueryShape,
     language_fingerprint: &str,
-    root_site: &str,
     site: &str,
     accept_channel: &str,
     out_channel: &str,
@@ -781,7 +780,13 @@ pub fn entry_query_match_par(
         false,
     );
 
-    // ── the idx bind (ONE query COMM against the persistent index) ──────────
+    guard_match
+}
+
+/// Bind the persistent subject index once around a body whose free index zero
+/// denotes that index. Multiple query bodies can be appended before wrapping,
+/// avoiding one whole-value reducer/COMM cycle per candidate site.
+fn index_query_receive_par(body: Par, language_fingerprint: &str, root_site: &str) -> Par {
     new_receive_par(
         vec![ReceiveBind {
             patterns: vec![new_freevar_par(0, Vec::new())],
@@ -789,7 +794,7 @@ pub fn entry_query_match_par(
             remainder: None,
             free_count: 1,
         }],
-        guard_match,
+        body,
         false,
         false,
         1,
@@ -797,6 +802,21 @@ pub fn entry_query_match_par(
         false,
         Vec::new(),
         false,
+    )
+}
+
+pub fn entry_query_match_par(
+    shape: &EntryQueryShape,
+    language_fingerprint: &str,
+    root_site: &str,
+    site: &str,
+    accept_channel: &str,
+    out_channel: &str,
+) -> Par {
+    index_query_receive_par(
+        entry_query_match_body_par(shape, language_fingerprint, site, accept_channel, out_channel),
+        language_fingerprint,
+        root_site,
     )
 }
 
@@ -832,6 +852,14 @@ pub struct E6aDriveOutcome {
     pub emission: Duration,
     /// Counting-runtime construction span.
     pub bringup: Duration,
+    /// Injection 1 only: persistent index publication plus site discovery.
+    pub phase1_inj: Duration,
+    /// Injection 2 only: per-site guard and sigma-value queries.
+    pub phase2_inj: Duration,
+    /// Canonical protobuf size of the phase-1 program.
+    pub phase1_encoded_len: usize,
+    /// Canonical protobuf size of the phase-2 program.
+    pub phase2_encoded_len: usize,
 }
 
 /// A typed treatment-drive failure (the driver records it as a DNF line).
@@ -978,7 +1006,8 @@ pub async fn drive_e6a_treatment(
     // ── emission, phase 2: per-(entry, site) query-match codegen ────────────
     let emission2_started = Instant::now();
     let view = ruleset.automaton.view();
-    let mut phase2 = Par::default();
+    let mut phase2_body = Par::default();
+    let mut phase2_query_count = 0usize;
     for entry in 0..view.entry_count() {
         let AutomatonNode::App { op, .. } = view.node(view.entry_root_state(entry)) else {
             return Err(E6aDriveFailure::new("variable-root entry — fail closed"));
@@ -999,16 +1028,24 @@ pub async fn drive_e6a_treatment(
             .iter()
             .filter(|site| site_filter.is_none_or(|filter| filter.contains(*site)))
         {
-            phase2 = phase2.append(entry_query_match_par(
+            phase2_body = phase2_body.append(entry_query_match_body_par(
                 &shape,
                 language_fingerprint,
-                root_site,
                 site,
                 &accept_channel,
                 out_channel,
             ));
+            phase2_query_count += 1;
         }
     }
+    // All site queries share one persistent-index bind. PathMap lookups remain
+    // exact and independent inside the parallel body, but the reducer no
+    // longer transports the same large EPathMap through one COMM per site.
+    let phase2 = if phase2_query_count == 0 {
+        phase2_body
+    } else {
+        index_query_receive_par(phase2_body, language_fingerprint, root_site)
+    };
     emission += emission2_started.elapsed();
 
     // ── injection 2: per-site query-match ───────────────────────────────────
@@ -1028,12 +1065,14 @@ pub async fn drive_e6a_treatment(
     }
     readback += out_read_started.elapsed();
 
+    let phase1_encoded_len = phase1.encoded_len();
+    let phase2_encoded_len = phase2.encoded_len();
     let result = BenchRunResult {
         workload: params,
         build: build1 + build2,
         inj: inj1 + inj2,
         readback,
-        program_encoded_len: phase1.encoded_len() + phase2.encoded_len(),
+        program_encoded_len: phase1_encoded_len + phase2_encoded_len,
         program_receiver_count: count_receive_nodes(&phase1) + count_receive_nodes(&phase2),
         observed,
         consumed_cost_units,
@@ -1046,6 +1085,10 @@ pub async fn drive_e6a_treatment(
         treatment_spread_sends,
         emission,
         bringup,
+        phase1_inj: inj1,
+        phase2_inj: inj2,
+        phase1_encoded_len,
+        phase2_encoded_len,
     })
 }
 
