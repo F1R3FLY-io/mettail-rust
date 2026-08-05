@@ -1,4 +1,4 @@
-use mettail_prattail::ltl::LtlFormula;
+use mettail_prattail::ltl::{ltl_to_buchi, LtlFormula};
 use mettail_prattail::parity_tree::{try_mu_calculus_to_pata, MuCalculusFormula};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -42,8 +42,22 @@ fn ltl_lifecycle_and_structural_walkers_are_stack_safe_at_depth_20k() {
         assert!(debug.starts_with("Always(Always("));
         assert!(debug.ends_with(&")".repeat(DEEP_FORMULA_DEPTH)));
 
+        let automaton = ltl_to_buchi(&formula);
+        assert_eq!(automaton.num_states(), 1);
+        assert_eq!(automaton.num_transitions(), 1);
+
+        let mut eventual = LtlFormula::atom("eventual");
+        for _ in 0..DEEP_FORMULA_DEPTH {
+            eventual = LtlFormula::Eventually(Box::new(eventual));
+        }
+        let eventual_automaton = ltl_to_buchi(&eventual);
+        assert_eq!(eventual_automaton.num_states(), 3);
+
         drop(cloned);
         drop(formula);
+        drop(automaton);
+        drop(eventual);
+        drop(eventual_automaton);
     });
 }
 

@@ -533,6 +533,377 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
 ///
 /// A `BuchiAutomaton` accepting `L(formula)`.
 pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
+    enum Task<'formula> {
+        Visit(&'formula LtlFormula, bool),
+        Always(&'formula LtlFormula, bool),
+        And,
+        Or,
+        Next,
+        Eventually,
+        AlwaysGeneral,
+        Until,
+    }
+
+    fn push_binary<'formula>(
+        tasks: &mut Vec<Task<'formula>>,
+        finish: Task<'formula>,
+        left: &'formula LtlFormula,
+        left_negated: bool,
+        right: &'formula LtlFormula,
+        right_negated: bool,
+    ) {
+        tasks.push(finish);
+        tasks.push(Task::Visit(right, right_negated));
+        tasks.push(Task::Visit(left, left_negated));
+    }
+
+    // a R b = (b U (a & b)) | G b.  Expanding directly avoids allocating an
+    // intermediate formula and, unlike the former dual-desugaring loop,
+    // terminates for Release nodes.
+    fn push_release<'formula>(
+        tasks: &mut Vec<Task<'formula>>,
+        left: &'formula LtlFormula,
+        right: &'formula LtlFormula,
+        operands_negated: bool,
+    ) {
+        tasks.push(Task::Or);
+        tasks.push(Task::Always(right, operands_negated));
+        tasks.push(Task::Until);
+        tasks.push(Task::And);
+        tasks.push(Task::Visit(right, operands_negated));
+        tasks.push(Task::Visit(left, operands_negated));
+        tasks.push(Task::Visit(right, operands_negated));
+    }
+
+    fn push_weak_until<'formula>(
+        tasks: &mut Vec<Task<'formula>>,
+        left: &'formula LtlFormula,
+        right: &'formula LtlFormula,
+    ) {
+        tasks.push(Task::Or);
+        tasks.push(Task::Always(left, false));
+        tasks.push(Task::Until);
+        tasks.push(Task::Visit(right, false));
+        tasks.push(Task::Visit(left, false));
+    }
+
+    let mut tasks = vec![Task::Visit(formula, false)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(LtlFormula::True, negated) => {
+                values.push(if negated { buchi_false() } else { buchi_true() });
+            },
+            Task::Visit(LtlFormula::False, negated) => {
+                values.push(if negated { buchi_true() } else { buchi_false() });
+            },
+            Task::Visit(LtlFormula::Atom(atom), negated) => {
+                values.push(buchi_atom(atom, negated));
+            },
+            Task::Visit(LtlFormula::Not(body), negated) => {
+                tasks.push(Task::Visit(body, !negated));
+            },
+            Task::Visit(LtlFormula::And(left, right), false) => {
+                push_binary(&mut tasks, Task::And, left, false, right, false);
+            },
+            Task::Visit(LtlFormula::And(left, right), true) => {
+                push_binary(&mut tasks, Task::Or, left, true, right, true);
+            },
+            Task::Visit(LtlFormula::Or(left, right), false) => {
+                push_binary(&mut tasks, Task::Or, left, false, right, false);
+            },
+            Task::Visit(LtlFormula::Or(left, right), true) => {
+                push_binary(&mut tasks, Task::And, left, true, right, true);
+            },
+            Task::Visit(LtlFormula::Implies(left, right), false) => {
+                push_binary(&mut tasks, Task::Or, left, true, right, false);
+            },
+            Task::Visit(LtlFormula::Implies(left, right), true) => {
+                push_binary(&mut tasks, Task::And, left, false, right, true);
+            },
+            Task::Visit(LtlFormula::Next(body), negated) => {
+                tasks.push(Task::Next);
+                tasks.push(Task::Visit(body, negated));
+            },
+            Task::Visit(LtlFormula::Eventually(body), false) => {
+                // F F phi = F phi.  Scan the whole homogeneous spine before
+                // building anything so a depth-N wrapper chain remains O(N),
+                // rather than building O(N) progressively larger automata.
+                let mut inner = body.as_ref();
+                while let LtlFormula::Eventually(next) = inner {
+                    inner = next;
+                }
+                tasks.push(Task::Eventually);
+                tasks.push(Task::Visit(inner, false));
+            },
+            Task::Visit(LtlFormula::Eventually(body), true) => {
+                tasks.push(Task::Always(body, true));
+            },
+            Task::Visit(LtlFormula::Always(body), false) => {
+                tasks.push(Task::Always(body, false));
+            },
+            Task::Visit(LtlFormula::Always(body), true) => {
+                tasks.push(Task::Eventually);
+                tasks.push(Task::Visit(body, true));
+            },
+            Task::Visit(LtlFormula::Until(left, right), false) => {
+                push_binary(&mut tasks, Task::Until, left, false, right, false);
+            },
+            Task::Visit(LtlFormula::Until(left, right), true) => {
+                push_release(&mut tasks, left, right, true);
+            },
+            Task::Visit(LtlFormula::Release(left, right), false) => {
+                push_release(&mut tasks, left, right, false);
+            },
+            Task::Visit(LtlFormula::Release(left, right), true) => {
+                push_binary(&mut tasks, Task::Until, left, true, right, true);
+            },
+            Task::Visit(LtlFormula::WeakUntil(left, right), false) => {
+                push_weak_until(&mut tasks, left, right);
+            },
+            Task::Visit(LtlFormula::WeakUntil(left, right), true) => {
+                // !(a W b) = (!a R !b) & F(!a)
+                tasks.push(Task::And);
+                tasks.push(Task::Eventually);
+                tasks.push(Task::Visit(left, true));
+                push_release(&mut tasks, left, right, true);
+            },
+            Task::Always(LtlFormula::Not(body), negated) => {
+                tasks.push(Task::Always(body, !negated));
+            },
+            Task::Always(LtlFormula::Always(body), false) => {
+                // G G phi = G phi.  The old construction doubled identical
+                // restart transitions at each wrapper and grew exponentially.
+                let mut inner = body.as_ref();
+                while let LtlFormula::Always(next) = inner {
+                    inner = next;
+                }
+                tasks.push(Task::Always(inner, false));
+            },
+            Task::Always(LtlFormula::Atom(atom), negated) => {
+                values.push(buchi_always_atom(atom, negated));
+            },
+            Task::Always(body, negated) => {
+                tasks.push(Task::AlwaysGeneral);
+                tasks.push(Task::Visit(body, negated));
+            },
+            Task::And => {
+                let right = values
+                    .pop()
+                    .expect("LTL compiler PDA lost a right automaton");
+                let left = values
+                    .pop()
+                    .expect("LTL compiler PDA lost a left automaton");
+                values.push(buchi::buchi_intersect(&left, &right));
+            },
+            Task::Or => {
+                let right = values
+                    .pop()
+                    .expect("LTL compiler PDA lost a right automaton");
+                let left = values
+                    .pop()
+                    .expect("LTL compiler PDA lost a left automaton");
+                values.push(buchi_union(&left, &right));
+            },
+            Task::Next => {
+                let body = values
+                    .pop()
+                    .expect("LTL compiler PDA lost a next automaton");
+                values.push(buchi_next(body));
+            },
+            Task::Eventually => {
+                let body = values
+                    .pop()
+                    .expect("LTL compiler PDA lost an eventual automaton");
+                values.push(buchi_eventually(body));
+            },
+            Task::AlwaysGeneral => {
+                let body = values
+                    .pop()
+                    .expect("LTL compiler PDA lost an always automaton");
+                values.push(buchi_always_general(body));
+            },
+            Task::Until => {
+                let right = values
+                    .pop()
+                    .expect("LTL compiler PDA lost an until-right automaton");
+                let left = values
+                    .pop()
+                    .expect("LTL compiler PDA lost an until-left automaton");
+                values.push(buchi_until(left, right));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("LTL compiler PDA produced no automaton")
+}
+
+fn buchi_true() -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    let initial = automaton.add_state(true);
+    automaton.initial_states.insert(initial);
+    automaton.add_transition(initial, Some("__true__".to_string()), initial);
+    automaton
+}
+
+fn buchi_false() -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    let initial = automaton.add_state(false);
+    automaton.initial_states.insert(initial);
+    automaton
+}
+
+fn buchi_atom(atom: &str, negated: bool) -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    let initial = automaton.add_state(false);
+    let accepting = automaton.add_state(true);
+    automaton.initial_states.insert(initial);
+    let label = if negated {
+        format!("!{atom}")
+    } else {
+        atom.to_owned()
+    };
+    automaton.add_transition(initial, Some(label), accepting);
+    automaton.add_transition(accepting, Some("__true__".to_string()), accepting);
+    automaton
+}
+
+fn buchi_always_atom(atom: &str, negated: bool) -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    let initial = automaton.add_state(true);
+    automaton.initial_states.insert(initial);
+    let label = if negated {
+        format!("!{atom}")
+    } else {
+        atom.to_owned()
+    };
+    automaton.add_transition(initial, Some(label), initial);
+    automaton
+}
+
+fn buchi_next(body: BuchiAutomaton) -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    let initial = automaton.add_state(false);
+    automaton.initial_states.insert(initial);
+    let offset = 1;
+    for state in &body.states {
+        automaton.add_state(state.is_accepting);
+    }
+    for &body_initial in &body.initial_states {
+        automaton.add_transition(initial, Some("__true__".to_string()), body_initial + offset);
+    }
+    for (&(from, ref label), targets) in &body.transitions {
+        for &(to, _) in targets {
+            automaton.add_transition(from + offset, label.clone(), to + offset);
+        }
+    }
+    automaton
+}
+
+fn buchi_eventually(body: BuchiAutomaton) -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    let waiting = automaton.add_state(false);
+    automaton.initial_states.insert(waiting);
+    automaton.add_transition(waiting, Some("__true__".to_string()), waiting);
+
+    let offset = 1;
+    for state in &body.states {
+        automaton.add_state(state.is_accepting);
+    }
+    for &body_initial in &body.initial_states {
+        automaton.add_transition(waiting, Some("__true__".to_string()), body_initial + offset);
+    }
+    for (&(from, ref label), targets) in &body.transitions {
+        if body.initial_states.contains(&from) {
+            for &(to, _) in targets {
+                automaton.add_transition(waiting, label.clone(), to + offset);
+            }
+        }
+    }
+    for (&(from, ref label), targets) in &body.transitions {
+        for &(to, _) in targets {
+            automaton.add_transition(from + offset, label.clone(), to + offset);
+        }
+    }
+    automaton
+}
+
+fn buchi_always_general(body: BuchiAutomaton) -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    for state in &body.states {
+        automaton.add_state(state.is_accepting);
+    }
+    automaton.initial_states = body.initial_states.clone();
+    for (&(from, ref label), targets) in &body.transitions {
+        for &(to, _) in targets {
+            add_buchi_transition_unique(&mut automaton, from, label.clone(), to);
+        }
+    }
+    for &accepting in &body.accepting_states {
+        for &initial in &body.initial_states {
+            for (&(from, ref label), targets) in &body.transitions {
+                if from == initial {
+                    for &(to, _) in targets {
+                        add_buchi_transition_unique(&mut automaton, accepting, label.clone(), to);
+                    }
+                }
+            }
+        }
+    }
+    automaton
+}
+
+fn add_buchi_transition_unique(
+    automaton: &mut BuchiAutomaton,
+    from: usize,
+    label: Option<String>,
+    to: usize,
+) {
+    if automaton
+        .transitions
+        .get(&(from, label.clone()))
+        .is_some_and(|targets| targets.iter().any(|&(target, _)| target == to))
+    {
+        return;
+    }
+    automaton.add_transition(from, label, to);
+}
+
+fn buchi_until(left: BuchiAutomaton, right: BuchiAutomaton) -> BuchiAutomaton {
+    let mut automaton = BuchiAutomaton::new();
+    let waiting = automaton.add_state(false);
+    automaton.initial_states.insert(waiting);
+
+    let right_offset = 1;
+    for state in &right.states {
+        automaton.add_state(state.is_accepting);
+    }
+    for (&(from, ref label), _) in &left.transitions {
+        if left.initial_states.contains(&from) {
+            automaton.add_transition(waiting, label.clone(), waiting);
+        }
+    }
+    for &initial in &right.initial_states {
+        for (&(from, ref label), targets) in &right.transitions {
+            if from == initial {
+                for &(to, _) in targets {
+                    automaton.add_transition(waiting, label.clone(), to + right_offset);
+                }
+            }
+        }
+    }
+    for (&(from, ref label), targets) in &right.transitions {
+        for &(to, _) in targets {
+            automaton.add_transition(from + right_offset, label.clone(), to + right_offset);
+        }
+    }
+    automaton
+}
+
+#[cfg(test)]
+fn ltl_to_buchi_recursive_oracle(formula: &LtlFormula) -> BuchiAutomaton {
     // Simplified GPVW (Gerth-Peled-Vardi-Wolper) tableau construction.
     //
     // We handle each formula form by direct Buchi construction:
@@ -613,33 +984,33 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                     // For general negation, push negation inward (NNF) and
                     // then compile the result.
                     let negated = negate_ltl(phi);
-                    ltl_to_buchi(&negated)
+                    ltl_to_buchi_recursive_oracle(&negated)
                 },
             }
         },
         LtlFormula::And(phi, psi) => {
             // L(phi AND psi) = L(phi) intersect L(psi).
-            let ba_phi = ltl_to_buchi(phi);
-            let ba_psi = ltl_to_buchi(psi);
+            let ba_phi = ltl_to_buchi_recursive_oracle(phi);
+            let ba_psi = ltl_to_buchi_recursive_oracle(psi);
             buchi::buchi_intersect(&ba_phi, &ba_psi)
         },
         LtlFormula::Or(phi, psi) => {
             // L(phi OR psi) = L(phi) union L(psi).
             // Union: merge both automata, unioning initial and accepting states.
-            let ba_phi = ltl_to_buchi(phi);
-            let ba_psi = ltl_to_buchi(psi);
+            let ba_phi = ltl_to_buchi_recursive_oracle(phi);
+            let ba_psi = ltl_to_buchi_recursive_oracle(psi);
             buchi_union(&ba_phi, &ba_psi)
         },
         LtlFormula::Implies(phi, psi) => {
             // phi -> psi  ===  !phi | psi
             let desugared = LtlFormula::Or(Box::new(LtlFormula::Not(phi.clone())), psi.clone());
-            ltl_to_buchi(&desugared)
+            ltl_to_buchi_recursive_oracle(&desugared)
         },
         LtlFormula::Next(phi) => {
             // X phi: phi must hold at the next step.
             // q0 (initial) --__true__--> q1, then from q1 behave as the
             // automaton for phi.
-            let ba_phi = ltl_to_buchi(phi);
+            let ba_phi = ltl_to_buchi_recursive_oracle(phi);
             let mut ba = BuchiAutomaton::new();
 
             // State 0 is the initial "delay" state (not accepting).
@@ -677,7 +1048,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             //   q0 (initial) --__true__--> q0  (keep waiting)
             //   q0 --[phi transitions]--> phi automaton states
             //   Accepting = phi's accepting states
-            let ba_phi = ltl_to_buchi(phi);
+            let ba_phi = ltl_to_buchi_recursive_oracle(phi);
             let mut ba = BuchiAutomaton::new();
 
             // q0: waiting state (not accepting).
@@ -750,7 +1121,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                             // G phi = !F(!phi)
                             let f_not_phi = LtlFormula::Eventually(Box::new(negate_ltl(phi)));
                             let neg = negate_ltl(&f_not_phi);
-                            ltl_to_buchi(&neg)
+                            ltl_to_buchi_recursive_oracle(&neg)
                         },
                     }
                 },
@@ -762,7 +1133,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                     //
                     // Simplified: construct via phi's Buchi and add self-loops back
                     // to initial states from accepting states.
-                    let ba_phi = ltl_to_buchi(phi);
+                    let ba_phi = ltl_to_buchi_recursive_oracle(phi);
                     let mut ba = BuchiAutomaton::new();
 
                     // Embed phi automaton.
@@ -808,8 +1179,8 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             //
             // For atoms phi=p, psi=q:
             //   q0 --p--> q0, q0 --q--> q1, q1 --__true__--> q1.
-            let ba_phi = ltl_to_buchi(phi);
-            let ba_psi = ltl_to_buchi(psi);
+            let ba_phi = ltl_to_buchi_recursive_oracle(phi);
+            let ba_psi = ltl_to_buchi_recursive_oracle(psi);
 
             let mut ba = BuchiAutomaton::new();
 
@@ -854,20 +1225,21 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             ba
         },
         LtlFormula::Release(phi, psi) => {
-            // phi R psi === !(!phi U !psi)
-            let desugared = LtlFormula::Not(Box::new(LtlFormula::Until(
-                Box::new(negate_ltl(phi)),
-                Box::new(negate_ltl(psi)),
-            )));
-            ltl_to_buchi(&desugared)
+            // phi R psi === (psi U (phi & psi)) | G psi.
+            let until_left = ltl_to_buchi_recursive_oracle(psi);
+            let and_left = ltl_to_buchi_recursive_oracle(phi);
+            let and_right = ltl_to_buchi_recursive_oracle(psi);
+            let conjunction = buchi::buchi_intersect(&and_left, &and_right);
+            let until = buchi_until(until_left, conjunction);
+            let always = ltl_to_buchi_recursive_oracle(&LtlFormula::Always(psi.clone()));
+            buchi_union(&until, &always)
         },
         LtlFormula::WeakUntil(phi, psi) => {
             // phi W psi === (phi U psi) | G(phi)
-            let desugared = LtlFormula::Or(
-                Box::new(LtlFormula::Until(phi.clone(), psi.clone())),
-                Box::new(LtlFormula::Always(phi.clone())),
-            );
-            ltl_to_buchi(&desugared)
+            let until =
+                buchi_until(ltl_to_buchi_recursive_oracle(phi), ltl_to_buchi_recursive_oracle(psi));
+            let always = ltl_to_buchi_recursive_oracle(&LtlFormula::Always(phi.clone()));
+            buchi_union(&until, &always)
         },
     }
 }
@@ -1530,6 +1902,48 @@ mod tests {
         // p || q should be non-empty.
         let ba = ltl_to_buchi(&LtlFormula::or(LtlFormula::atom("p"), LtlFormula::atom("q")));
         assert!(!buchi::check_emptiness(&ba));
+    }
+
+    #[test]
+    fn iterative_ltl_compiler_matches_the_recursive_oracle() {
+        fn assert_same(actual: &BuchiAutomaton, expected: &BuchiAutomaton) {
+            assert_eq!(actual.states, expected.states);
+            assert_eq!(actual.alphabet, expected.alphabet);
+            assert_eq!(actual.transitions.len(), expected.transitions.len());
+            for (edge, expected_targets) in &expected.transitions {
+                let mut actual_targets = actual.transitions[edge].clone();
+                let mut expected_targets = expected_targets.clone();
+                actual_targets.sort_by_key(|&(target, _)| target);
+                expected_targets.sort_by_key(|&(target, _)| target);
+                assert_eq!(actual_targets, expected_targets, "transition mismatch at {edge:?}");
+            }
+            assert_eq!(actual.initial_states, expected.initial_states);
+            assert_eq!(actual.accepting_states, expected.accepting_states);
+        }
+
+        let p = LtlFormula::atom("p");
+        let q = LtlFormula::atom("q");
+        let formulas = vec![
+            LtlFormula::True,
+            LtlFormula::False,
+            p.clone(),
+            LtlFormula::not(p.clone()),
+            LtlFormula::and(p.clone(), q.clone()),
+            LtlFormula::or(p.clone(), q.clone()),
+            LtlFormula::Implies(Box::new(p.clone()), Box::new(q.clone())),
+            LtlFormula::next(LtlFormula::and(p.clone(), q.clone())),
+            LtlFormula::eventually(LtlFormula::or(p.clone(), q.clone())),
+            LtlFormula::always(LtlFormula::and(p.clone(), q.clone())),
+            LtlFormula::until(p.clone(), q.clone()),
+            LtlFormula::Release(Box::new(p.clone()), Box::new(q.clone())),
+            LtlFormula::WeakUntil(Box::new(p.clone()), Box::new(q.clone())),
+            LtlFormula::not(LtlFormula::Release(Box::new(p.clone()), Box::new(q.clone()))),
+            LtlFormula::not(LtlFormula::WeakUntil(Box::new(p), Box::new(q))),
+        ];
+
+        for formula in formulas {
+            assert_same(&ltl_to_buchi(&formula), &ltl_to_buchi_recursive_oracle(&formula));
+        }
     }
 
     // ── check_ltl_property tests ────────────────────────────────────────────
