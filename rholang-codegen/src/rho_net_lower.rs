@@ -28,6 +28,7 @@
 //! that lands in a later slice.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
 use mettail_ast::language::{
@@ -3643,54 +3644,90 @@ fn ac_match_install_at(
     out_channel: &str,
     language_fingerprint: &str,
 ) -> Par {
-    // A HashBag AC operand bag: fire it IN RHO over the site-keyed carrier if its op is admitted.
-    // Do NOT recurse into its elements (a bag has no positional child descent).
-    if let Some(CollectionType::HashBag) = node.coll_type {
-        let Some(entry) = by_op.get(node.constructor.as_str()) else {
-            return Par::default();
-        };
-        let carrier = ac_carrier_channel(loc_channel, &node.constructor);
-        // The co-installed AC receiver over the site-keyed carrier — SAME `ac_sigma_receiver_par`
-        // shape (incl. the AC3 non-linear `Receive.condition` guard) as the installed one, only the
-        // source differs (so it picks k-of-n from the SPREAD bag, not the report σ).
-        let receiver = ac_sigma_receiver_par_with_condition(
-            entry.kind.clone(),
-            language_fingerprint,
-            &entry.op,
-            entry.arity,
-            entry.rhs_par.clone(),
-            new_gstring_par(carrier.clone(), Vec::new(), false),
-            entry.condition.clone(),
-        );
-        // The carrier delivery `carrier!(⟦bag⟧, @out)` — the process-soup sourced from THIS subject
-        // bag's ground elements (`reflect_ac_bag_par`), NOT `find_sigma`. The soup is ground, so the
-        // send is closed.
-        let soup = reflect_ac_bag_par(node, language_fingerprint);
-        let delivery = new_send_par(
-            new_gstring_par(carrier, Vec::new(), false),
-            vec![soup, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
-            false,
-            Vec::new(),
-            false,
-            Vec::new(),
-            false,
-        );
-        return receiver.append(delivery);
-    }
-    // A structural node: descend into each child at its derived `loc:` channel (a nested bag is
-    // located), composing every located bag's co-install.
     let mut par = Par::default();
-    for (index, child) in node.children.iter().enumerate() {
-        let child_loc = spread_child_location(loc_channel, &node.constructor, index);
-        par = par.append(ac_match_install_at(
-            child,
-            &child_loc,
-            by_op,
-            out_channel,
-            language_fingerprint,
-        ));
-    }
+    walk_ground_term_locations(node, loc_channel, |node, loc_channel| {
+        // A HashBag has no positional child descent, whether or not its op is admitted.
+        if !matches!(node.coll_type, Some(CollectionType::HashBag)) {
+            return true;
+        }
+        if let Some(entry) = by_op.get(node.constructor.as_str()) {
+            let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+            let receiver = ac_sigma_receiver_par_with_condition(
+                entry.kind.clone(),
+                language_fingerprint,
+                &entry.op,
+                entry.arity,
+                entry.rhs_par.clone(),
+                new_gstring_par(carrier.clone(), Vec::new(), false),
+                entry.condition.clone(),
+            );
+            let soup = reflect_ac_bag_par(node, language_fingerprint);
+            let delivery = new_send_par(
+                new_gstring_par(carrier, Vec::new(), false),
+                vec![soup, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+                false,
+                Vec::new(),
+                false,
+                Vec::new(),
+                false,
+            );
+            let preceding = std::mem::take(&mut par);
+            par = preceding.append(receiver).append(delivery);
+        }
+        false
+    });
     par
+}
+
+struct GroundLocationFrame<'a> {
+    node: &'a GroundTerm,
+    next_child: usize,
+    parent_location_len: usize,
+    descend: bool,
+}
+
+/// Visit a ground subject in recursive pre-order without using the native call stack.
+///
+/// `visit` decides whether the current node's children are part of the traversal. The driver
+/// retains one frame per active ancestor and mutates one location buffer in place, preserving the
+/// recursive walkers' child order without retaining a location string per pending sibling.
+fn walk_ground_term_locations<'a>(
+    root: &'a GroundTerm,
+    root_location: &str,
+    mut visit: impl FnMut(&'a GroundTerm, &str) -> bool,
+) {
+    let mut location = root_location.to_owned();
+    let descend = visit(root, &location);
+    let mut stack = vec![GroundLocationFrame {
+        node: root,
+        next_child: 0,
+        parent_location_len: 0,
+        descend,
+    }];
+
+    while let Some(frame) = stack.last_mut() {
+        if frame.descend && frame.next_child < frame.node.children.len() {
+            let index = frame.next_child;
+            frame.next_child += 1;
+            let child = &frame.node.children[index];
+            let parent_location_len = location.len();
+            location.push('/');
+            location.push_str(&frame.node.constructor);
+            location.push('.');
+            write!(&mut location, "{index}").expect("writing an index to String cannot fail");
+            let descend = visit(child, &location);
+            stack.push(GroundLocationFrame {
+                node: child,
+                next_child: 0,
+                parent_location_len,
+                descend,
+            });
+        } else {
+            let parent_location_len = frame.parent_location_len;
+            stack.pop();
+            location.truncate(parent_location_len);
+        }
+    }
 }
 
 fn spread_term_par_at(
@@ -6255,49 +6292,33 @@ fn structural_ac_match_install_at(
     out_channel: &str,
     language_fingerprint: &str,
 ) -> Par {
-    // A HashBag structural-AC operand bag: fire it IN RHO over the site-keyed carrier if its op is
-    // admitted. Do NOT recurse into its elements (a bag has no positional child descent).
-    if let Some(CollectionType::HashBag) = node.coll_type {
-        let Some(entry) = by_op.get(node.constructor.as_str()) else {
-            return Par::default();
-        };
-        let carrier = ac_carrier_channel(loc_channel, &node.constructor);
-        // The co-installed structural-AC MATCH receiver over the site-keyed carrier — SAME non-linear
-        // `Receive.condition` guard + spliced body as the installed receiver, only the source differs
-        // (so it binds the k elements + reducts + `rest` from the SPREAD bag, not the report σ).
-        let receiver = structural_ac_match_receiver_par(
-            &entry.shape,
-            new_gstring_par(carrier.clone(), Vec::new(), false),
-            language_fingerprint,
-        );
-        // The carrier delivery `carrier!(⟦bag⟧, @out)` — the process-soup sourced from THIS subject
-        // bag's ground elements (`reflect_ac_bag_par`), NOT `find_sigma`. The soup is ground, so the
-        // send is closed. Exactly the 2-value message the linear AC walk delivers.
-        let soup = reflect_ac_bag_par(node, language_fingerprint);
-        let delivery = new_send_par(
-            new_gstring_par(carrier, Vec::new(), false),
-            vec![soup, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
-            false,
-            Vec::new(),
-            false,
-            Vec::new(),
-            false,
-        );
-        return receiver.append(delivery);
-    }
-    // A structural node (incl. the `^lambda` binder image PNew reflects to): descend into each child
-    // at its derived `loc:` channel (a nested bag is located), composing every located bag's co-install.
     let mut par = Par::default();
-    for (index, child) in node.children.iter().enumerate() {
-        let child_loc = spread_child_location(loc_channel, &node.constructor, index);
-        par = par.append(structural_ac_match_install_at(
-            child,
-            &child_loc,
-            by_op,
-            out_channel,
-            language_fingerprint,
-        ));
-    }
+    walk_ground_term_locations(node, loc_channel, |node, loc_channel| {
+        if !matches!(node.coll_type, Some(CollectionType::HashBag)) {
+            return true;
+        }
+        if let Some(entry) = by_op.get(node.constructor.as_str()) {
+            let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+            let receiver = structural_ac_match_receiver_par(
+                &entry.shape,
+                new_gstring_par(carrier.clone(), Vec::new(), false),
+                language_fingerprint,
+            );
+            let soup = reflect_ac_bag_par(node, language_fingerprint);
+            let delivery = new_send_par(
+                new_gstring_par(carrier, Vec::new(), false),
+                vec![soup, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+                false,
+                Vec::new(),
+                false,
+                Vec::new(),
+                false,
+            );
+            let preceding = std::mem::take(&mut par);
+            par = preceding.append(receiver).append(delivery);
+        }
+        false
+    });
     par
 }
 
@@ -8918,40 +8939,29 @@ fn nested_structural_ac_match_install_at(
     language_fingerprint: &str,
 ) -> Par {
     let mut par = Par::default();
-    // Co-install at THIS node iff its constructor is an admitted nested root.
-    if let Some(entry) = by_root.get(&node.constructor) {
-        let carrier = ac_carrier_channel(loc_channel, &node.constructor);
-        let receiver = nested_structural_ac_match_receiver_par(
-            &entry.shape,
-            new_gstring_par(carrier.clone(), Vec::new(), false),
-            language_fingerprint,
-        );
-        // The carrier delivery `carrier!(⟦node⟧, @out)` — the WHOLE located node reflected from the
-        // SUBJECT (`reflect_ground_term_par`), NOT `find_sigma`. Ground, so the send is closed.
-        let operand = reflect_ground_term_par(node, language_fingerprint);
-        let delivery = new_send_par(
-            new_gstring_par(carrier, Vec::new(), false),
-            vec![operand, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
-            false,
-            Vec::new(),
-            false,
-            Vec::new(),
-            false,
-        );
-        par = par.append(receiver).append(delivery);
-    }
-    // Descend into every child at its derived `loc:` channel (a nested bag / wrapper is located, and
-    // a bag under a `^lambda` binder image is reached by the SAME descent).
-    for (index, child) in node.children.iter().enumerate() {
-        let child_loc = spread_child_location(loc_channel, &node.constructor, index);
-        par = par.append(nested_structural_ac_match_install_at(
-            child,
-            &child_loc,
-            by_root,
-            out_channel,
-            language_fingerprint,
-        ));
-    }
+    walk_ground_term_locations(node, loc_channel, |node, loc_channel| {
+        if let Some(entry) = by_root.get(&node.constructor) {
+            let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+            let receiver = nested_structural_ac_match_receiver_par(
+                &entry.shape,
+                new_gstring_par(carrier.clone(), Vec::new(), false),
+                language_fingerprint,
+            );
+            let operand = reflect_ground_term_par(node, language_fingerprint);
+            let delivery = new_send_par(
+                new_gstring_par(carrier, Vec::new(), false),
+                vec![operand, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+                false,
+                Vec::new(),
+                false,
+                Vec::new(),
+                false,
+            );
+            let preceding = std::mem::take(&mut par);
+            par = preceding.append(receiver).append(delivery);
+        }
+        true
+    });
     par
 }
 
