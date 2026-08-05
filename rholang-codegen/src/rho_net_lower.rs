@@ -2966,28 +2966,11 @@ pub fn par_carries_ground_marker(par: &Par, fingerprint: &str) -> bool {
     )
 }
 
-/// E-2-D: is a reflected object `GroundTerm` HEREDITARILY GROUND (contains no `^bound` leaf
-/// anywhere)? = the FV `InRhoCreeperTrace.oground`. `^bound` ⟹ false (the substitutable leaf),
-/// `^free` ⟹ true (inert), else ⟹ all children ground. An AC collection carrier is conservatively
-/// NOT ground (it has no positional marker slot; a parent with a collection child stays `^nog`).
-pub(crate) fn ground_term_is_hereditarily_ground(term: &GroundTerm) -> bool {
-    let mut work = vec![term];
-    while let Some(term) = work.pop() {
-        if term.coll_type.is_some() || term.constructor == BOUND_VAR_REFLECT_LABEL {
-            return false;
-        }
-        if term.constructor != FREE_VAR_REFLECT_LABEL {
-            work.extend(term.children.iter().rev());
-        }
-    }
-    true
-}
-
 /// E-2-D: is a reflected RHS `Pattern` node HEREDITARILY GROUND? A variable occurrence (a σ-slot
 /// hole OR a bound-var leaf) is NEVER ground; a constructor/binder node is ground iff its body /
-/// all args are. Mirrors [`ground_term_is_hereditarily_ground`] so the RHS reflector's marker
-/// AGREES with [`reflect_ground_term_par`]'s on the ground (variable-free) overlap — preserving
-/// the shared-ABI byte identity.
+/// all args are. Mirrors the bottom-up groundness state in [`spread_term_par`] so the RHS
+/// reflector's marker AGREES with [`reflect_ground_term_par`]'s on the ground (variable-free)
+/// overlap — preserving the shared-ABI byte identity.
 fn pattern_is_hereditarily_ground(pattern: &Pattern) -> bool {
     let mut work = vec![pattern];
     while let Some(pattern) = work.pop() {
@@ -3880,90 +3863,180 @@ fn spread_term_par_at(
     chain_location: &str,
     capture_location: &str,
 ) -> Par {
-    // Stage 4 (S-AC): a HashBag AC operand bag has NO positional `loc:`/child descent structure —
-    // the in-Rho AC matcher (a co-installed [`ac_sigma_receiver_par`], see
-    // [`ac_match_call_par`](crate::ac_match_call_par)) picks k-of-n + binds `rest` from the bag's
-    // order-independent process-soup carrier ON the interpreter, NOT by positional descent. So the
-    // spread publishes ONLY the bag's COLLAPSE value (the soup = [`reflect_ac_bag_par`], the same
-    // value [`reflect_ground_term_par`] produces for a HashBag `GroundTerm`) on this node's
-    // `col:`/`cap:` channels — the value a PARENT's fold / a Var-leaf `cap:` capture binds when the
-    // bag is a σ subterm — and does NOT positionally recurse (no `loc:` head-tag, no child spread).
-    // The AC redex firing is the co-installed receiver over the DISJOINT site-keyed `ac:` carrier
-    // (Red-team #1: the `ac:` carrier and the `col:`/`cap:` collapse are disjoint channels, each
-    // consumed at most once), so re-sourcing the collection from the spread is the genuine in-Rho AC
-    // match. Every AC operand collection kind (`HashBag` soup / `HashSet` `ESet` / `HashMap` `EMap`)
-    // publishes only its native carrier value on `col:`/`cap:` — the value a parent's fold or a
-    // Var-leaf `cap:` capture binds — and does NOT positionally recurse.
-    if matches!(
-        term.coll_type,
-        Some(CollectionType::HashBag | CollectionType::HashSet | CollectionType::HashMap)
-    ) {
-        let soup = reflect_ac_collection_par(term, language_fingerprint);
-        let free = soup.locally_free.clone();
-        let chain = new_send_par(
-            new_gstring_par(chain_location.to_string(), Vec::new(), false),
-            vec![soup.clone()],
-            false,
-            free.clone(),
-            false,
-            free.clone(),
-            false,
-        );
-        let capture = new_send_par(
-            new_gstring_par(capture_location.to_string(), Vec::new(), false),
-            vec![soup],
-            false,
-            free.clone(),
-            false,
-            free,
-            false,
-        );
-        return chain.append(capture);
+    enum SpreadTask<'a> {
+        Visit {
+            term: &'a GroundTerm,
+            location: String,
+            chain_location: String,
+            capture_location: String,
+        },
+        Collapse {
+            term: &'a GroundTerm,
+            head_tag: Par,
+            chain_location: String,
+            capture_location: String,
+            child_chain_channels: Vec<String>,
+        },
     }
-    // This node's head-tag send on its `loc:` channel — the tag ALONE (Appendix A publishes
-    // `f̲`; child locations are derived, never carried in the message). The automaton reads
-    // it to Match-dispatch (root / nested App descent), NEVER the collapse fold.
-    let head_tag =
-        GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
-    let mut par = new_send_par(
-        new_gstring_par(location.to_string(), Vec::new(), false),
-        vec![head_tag.clone()],
-        false,
-        Vec::new(),
-        false,
-        Vec::new(),
-        false,
+
+    let mut tasks = vec![SpreadTask::Visit {
+        term,
+        location: location.to_string(),
+        chain_location: chain_location.to_string(),
+        capture_location: capture_location.to_string(),
+    }];
+    let mut ground_values = Vec::new();
+    let mut output = Par::default();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            SpreadTask::Visit {
+                term,
+                location,
+                chain_location,
+                capture_location,
+            } => {
+                // Stage 4 (S-AC): an AC operand collection has no positional child structure.
+                // Publish only its native carrier on `col:`/`cap:` and treat it as one completed,
+                // conservatively non-ground child result for its positional parent.
+                if matches!(
+                    term.coll_type,
+                    Some(
+                        CollectionType::HashBag | CollectionType::HashSet | CollectionType::HashMap
+                    )
+                ) {
+                    let carrier = reflect_ac_collection_par(term, language_fingerprint);
+                    let free = carrier.locally_free.clone();
+                    let chain = new_send_par(
+                        new_gstring_par(chain_location, Vec::new(), false),
+                        vec![carrier.clone()],
+                        false,
+                        free.clone(),
+                        false,
+                        free.clone(),
+                        false,
+                    );
+                    let capture = new_send_par(
+                        new_gstring_par(capture_location, Vec::new(), false),
+                        vec![carrier],
+                        false,
+                        free.clone(),
+                        false,
+                        free,
+                        false,
+                    );
+                    extend_parallel_par(&mut output, chain);
+                    extend_parallel_par(&mut output, capture);
+                    ground_values.push(false);
+                    continue;
+                }
+
+                // The head send is a pre-order event. The matching post-order Collapse event is
+                // scheduled below every child, exactly preserving the recursive component order.
+                let head_tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+                    language_fingerprint,
+                    &term.constructor,
+                ));
+                extend_parallel_par(
+                    &mut output,
+                    new_send_par(
+                        new_gstring_par(location.clone(), Vec::new(), false),
+                        vec![head_tag.clone()],
+                        false,
+                        Vec::new(),
+                        false,
+                        Vec::new(),
+                        false,
+                    ),
+                );
+
+                let child_chain_channels: Vec<String> = (0..term.children.len())
+                    .map(|index| spread_child_location(&chain_location, &term.constructor, index))
+                    .collect();
+                tasks.push(SpreadTask::Collapse {
+                    term,
+                    head_tag,
+                    chain_location: chain_location.clone(),
+                    capture_location: capture_location.clone(),
+                    child_chain_channels,
+                });
+                for (index, child) in term.children.iter().enumerate().rev() {
+                    tasks.push(SpreadTask::Visit {
+                        term: child,
+                        location: spread_child_location(&location, &term.constructor, index),
+                        chain_location: spread_child_location(
+                            &chain_location,
+                            &term.constructor,
+                            index,
+                        ),
+                        capture_location: spread_child_location(
+                            &capture_location,
+                            &term.constructor,
+                            index,
+                        ),
+                    });
+                }
+            },
+            SpreadTask::Collapse {
+                term,
+                head_tag,
+                chain_location,
+                capture_location,
+                child_chain_channels,
+            } => {
+                let first_child = ground_values
+                    .len()
+                    .checked_sub(term.children.len())
+                    .expect("spread PDA lost a child groundness result");
+                let children_ground = ground_values[first_child..].iter().all(|ground| *ground);
+                ground_values.truncate(first_child);
+                let ground = if term.constructor == FREE_VAR_REFLECT_LABEL {
+                    true
+                } else {
+                    term.constructor != BOUND_VAR_REFLECT_LABEL && children_ground
+                };
+                let marker = is_marked_object_label(&term.constructor)
+                    .then(|| ground_marker_tag_par(language_fingerprint, ground));
+                extend_parallel_par(
+                    &mut output,
+                    collapse_publish(
+                        &chain_location,
+                        &capture_location,
+                        head_tag,
+                        marker,
+                        &child_chain_channels,
+                    ),
+                );
+                ground_values.push(ground);
+            },
+        }
+    }
+
+    debug_assert_eq!(ground_values.len(), 1);
+    output
+}
+
+/// Move one parallel `Par` component into an accumulator without cloning the accumulator.
+///
+/// `models::Par::append` intentionally takes `&self`, so a left fold over it clones every vector
+/// accumulated so far. Code generators routinely assemble large flat parallel compositions; this
+/// move-based equivalent preserves every field's order and cached union while keeping assembly
+/// linear in the emitted artifact size.
+fn extend_parallel_par(target: &mut Par, mut source: Par) {
+    target.sends.append(&mut source.sends);
+    target.receives.append(&mut source.receives);
+    target.news.append(&mut source.news);
+    target.exprs.append(&mut source.exprs);
+    target.matches.append(&mut source.matches);
+    target.unforgeables.append(&mut source.unforgeables);
+    target.bundles.append(&mut source.bundles);
+    target.connectives.append(&mut source.connectives);
+    target.conditionals.append(&mut source.conditionals);
+    target.locally_free = union(
+        std::mem::take(&mut target.locally_free),
+        std::mem::take(&mut source.locally_free),
     );
-    // Spread each child on its derived `loc:`/`col:`/`cap:` channels, in left-to-right `L`
-    // order, and collect the children's CHAIN channels so this node's fold can read them.
-    let mut child_chain_channels = Vec::with_capacity(term.children.len());
-    for (index, child) in term.children.iter().enumerate() {
-        let child_location = spread_child_location(location, &term.constructor, index);
-        let child_chain = spread_child_location(chain_location, &term.constructor, index);
-        let child_capture = spread_child_location(capture_location, &term.constructor, index);
-        child_chain_channels.push(child_chain.clone());
-        par = par.append(spread_term_par_at(
-            child,
-            language_fingerprint,
-            &child_location,
-            &child_chain,
-            &child_capture,
-        ));
-    }
-    // Bottom-up collapse: publish `⟦subtree⟧` on this node's `col:` (chain) and `cap:`
-    // (capture) channels. E-2-D: a marked-object node carries the `^gnd`/`^nog` marker at index
-    // 1, its ground-ness computed host-side from THIS subtree (so a production σ-value bound off
-    // `cap:` carries the SAME marker `reflect_ground_term_par` would — byte-identity preserved).
-    let marker = is_marked_object_label(&term.constructor).then(|| {
-        ground_marker_tag_par(language_fingerprint, ground_term_is_hereditarily_ground(term))
-    });
-    par.append(collapse_publish(
-        chain_location,
-        capture_location,
-        head_tag,
-        marker,
-        &child_chain_channels,
-    ))
+    target.connective_used |= source.connective_used;
 }
 
 /// Publish `⟦subtree⟧` on this node's CHAIN (`col:`) and CAPTURE (`cap:`) channels.
@@ -7469,6 +7542,10 @@ mod ac_template_recursive_oracle;
 #[cfg(test)]
 #[path = "../tests/support/nested_match_pattern_recursive_oracle.rs"]
 mod nested_match_pattern_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/spread_term_recursive_oracle.rs"]
+mod spread_term_recursive_oracle;
 
 /// The recognized shape of a DEPTH-2 NESTED structural non-linear AC rewrite (the Ambient
 /// `InRule`/`OutRule`). Both are `k = 2` outer elements where EXACTLY ONE is NESTED (`PAmb N (PPar

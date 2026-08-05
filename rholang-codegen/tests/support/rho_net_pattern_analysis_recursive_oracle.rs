@@ -25,20 +25,6 @@ fn recursive_contextual_source_path(
     }
 }
 
-fn recursive_ground_term_is_hereditarily_ground(term: &GroundTerm) -> bool {
-    if term.coll_type.is_some() {
-        return false;
-    }
-    match term.constructor.as_str() {
-        BOUND_VAR_REFLECT_LABEL => false,
-        FREE_VAR_REFLECT_LABEL => true,
-        _ => term
-            .children
-            .iter()
-            .all(recursive_ground_term_is_hereditarily_ground),
-    }
-}
-
 fn recursive_pattern_is_hereditarily_ground(pattern: &Pattern) -> bool {
     match pattern {
         Pattern::Term(PatternTerm::Var(_)) => false,
@@ -176,21 +162,6 @@ fn iterative_pattern_analyses_match_recursive_oracles() {
             recursive_pattern_is_hereditarily_ground(candidate)
         );
     }
-
-    let ground = GroundTerm::new(
-        "Root",
-        vec![
-            GroundTerm::nullary("Leaf"),
-            GroundTerm::new("Child", vec![GroundTerm::nullary(FREE_VAR_REFLECT_LABEL)]),
-        ],
-    );
-    let non_ground = GroundTerm::new("Root", vec![GroundTerm::nullary(BOUND_VAR_REFLECT_LABEL)]);
-    for candidate in [&ground, &non_ground] {
-        assert_eq!(
-            ground_term_is_hereditarily_ground(candidate),
-            recursive_ground_term_is_hereditarily_ground(candidate)
-        );
-    }
 }
 
 #[test]
@@ -215,13 +186,6 @@ fn deep_pattern_analyses_fit_on_a_small_native_stack() {
             let ground_pattern = deep_apply(DEPTH, apply("Leaf", Vec::new()));
             assert!(pattern_is_hereditarily_ground(&ground_pattern));
             drop(ground_pattern);
-
-            let mut ground = GroundTerm::nullary("Leaf");
-            for _ in 0..DEPTH {
-                ground = GroundTerm::new("Node", vec![ground]);
-            }
-            assert!(ground_term_is_hereditarily_ground(&ground));
-            drop(ground);
         })
         .expect("small-stack RhoNet pattern analysis thread must spawn");
     handle
