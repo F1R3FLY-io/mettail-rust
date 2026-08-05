@@ -55,7 +55,6 @@ use crate::{LanguageSpec, RuleSpec, SyntaxItemSpec};
 ///
 /// This representation is independent of the `railroad` crate — it can be
 /// serialized, tested, and converted to SVG or other formats.
-#[derive(Debug, Clone)]
 pub enum RailroadNode {
     /// A terminal token (literal keyword or symbol).
     Terminal {
@@ -92,6 +91,9 @@ pub enum RailroadNode {
     /// An empty node (epsilon transition).
     Empty,
 }
+
+#[path = "railroad/node_lifecycle.rs"]
+mod node_lifecycle;
 
 /// A railroad diagram for one category.
 #[derive(Debug, Clone)]
@@ -211,56 +213,110 @@ fn rule_to_node(rule: &RuleSpec) -> RailroadNode {
 
 /// Convert a syntax item to a railroad node.
 fn syntax_item_to_node(item: &SyntaxItemSpec) -> RailroadNode {
-    match item {
-        SyntaxItemSpec::Terminal(t) => RailroadNode::Terminal { text: t.clone() },
-        SyntaxItemSpec::NonTerminal { category, .. } => {
-            RailroadNode::NonTerminal { text: category.clone() }
-        },
-        SyntaxItemSpec::IdentCapture { .. } => {
-            RailroadNode::NonTerminal { text: "ident".to_string() }
-        },
-        SyntaxItemSpec::TokenKindCapture { kind_name, .. } => {
-            RailroadNode::NonTerminal { text: kind_name.clone() }
-        },
-        SyntaxItemSpec::Binder { category, .. } => {
-            RailroadNode::NonTerminal { text: format!("binder:{}", category) }
-        },
-        SyntaxItemSpec::Collection { element_category, separator, .. } => RailroadNode::Repeat {
-            element: Box::new(RailroadNode::NonTerminal { text: element_category.clone() }),
-            separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
-        },
-        SyntaxItemSpec::Optional { inner } => {
-            let inner_nodes: Vec<RailroadNode> = inner.iter().map(syntax_item_to_node).collect();
-            let inner_node = if inner_nodes.len() == 1 {
-                inner_nodes.into_iter().next().expect("single inner")
-            } else {
-                RailroadNode::Sequence { children: inner_nodes }
-            };
-            RailroadNode::Optional { inner: Box::new(inner_node) }
-        },
-        SyntaxItemSpec::Sep { body, separator, .. } => RailroadNode::Repeat {
-            element: Box::new(syntax_item_to_node(body)),
-            separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
-        },
-        SyntaxItemSpec::Map { body_items } => {
-            let children: Vec<RailroadNode> = body_items.iter().map(syntax_item_to_node).collect();
-            RailroadNode::Sequence { children }
-        },
-        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => RailroadNode::Sequence {
-            children: vec![
-                RailroadNode::NonTerminal { text: left_category.clone() },
-                syntax_item_to_node(body),
-                RailroadNode::NonTerminal { text: right_category.clone() },
-            ],
-        },
-        SyntaxItemSpec::BinderCollection { separator, .. } => RailroadNode::Repeat {
-            element: Box::new(RailroadNode::NonTerminal { text: "ident".to_string() }),
-            separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
-        },
-        SyntaxItemSpec::GuardExpression { param_name } => {
-            RailroadNode::NonTerminal { text: format!("guard:{}", param_name) }
-        },
+    enum Task<'item> {
+        Visit(&'item SyntaxItemSpec),
+        Optional { base: usize, len: usize },
+        Sep(&'item str),
+        Map { base: usize, len: usize },
+        Zip(&'item str, &'item str),
     }
+
+    let mut tasks = vec![Task::Visit(item)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(SyntaxItemSpec::Terminal(text)) => {
+                values.push(RailroadNode::Terminal { text: text.clone() });
+            },
+            Task::Visit(SyntaxItemSpec::NonTerminal { category, .. }) => {
+                values.push(RailroadNode::NonTerminal { text: category.clone() });
+            },
+            Task::Visit(SyntaxItemSpec::IdentCapture { .. }) => {
+                values.push(RailroadNode::NonTerminal { text: "ident".to_string() });
+            },
+            Task::Visit(SyntaxItemSpec::TokenKindCapture { kind_name, .. }) => {
+                values.push(RailroadNode::NonTerminal { text: kind_name.clone() });
+            },
+            Task::Visit(SyntaxItemSpec::Binder { category, .. }) => {
+                values.push(RailroadNode::NonTerminal { text: format!("binder:{category}") });
+            },
+            Task::Visit(SyntaxItemSpec::Collection { element_category, separator, .. }) => {
+                values.push(RailroadNode::Repeat {
+                    element: Box::new(RailroadNode::NonTerminal { text: element_category.clone() }),
+                    separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
+                });
+            },
+            Task::Visit(SyntaxItemSpec::Optional { inner }) => {
+                tasks.push(Task::Optional { base: values.len(), len: inner.len() });
+                tasks.extend(inner.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(SyntaxItemSpec::Sep { body, separator, .. }) => {
+                tasks.push(Task::Sep(separator));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(SyntaxItemSpec::Map { body_items }) => {
+                tasks.push(Task::Map {
+                    base: values.len(),
+                    len: body_items.len(),
+                });
+                tasks.extend(body_items.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(SyntaxItemSpec::Zip { left_category, right_category, body, .. }) => {
+                tasks.push(Task::Zip(left_category, right_category));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(SyntaxItemSpec::BinderCollection { separator, .. }) => {
+                values.push(RailroadNode::Repeat {
+                    element: Box::new(RailroadNode::NonTerminal { text: "ident".to_string() }),
+                    separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
+                });
+            },
+            Task::Visit(SyntaxItemSpec::GuardExpression { param_name }) => {
+                values.push(RailroadNode::NonTerminal { text: format!("guard:{param_name}") });
+            },
+            Task::Optional { base, len } => {
+                debug_assert_eq!(values.len(), base + len);
+                let children: Vec<_> = values.drain(base..).collect();
+                let inner = if len == 1 {
+                    children
+                        .into_iter()
+                        .next()
+                        .expect("single optional railroad child")
+                } else {
+                    RailroadNode::Sequence { children }
+                };
+                values.push(RailroadNode::Optional { inner: Box::new(inner) });
+            },
+            Task::Sep(separator) => {
+                let element = values.pop().expect("railroad Sep lowering lost its body");
+                values.push(RailroadNode::Repeat {
+                    element: Box::new(element),
+                    separator: Some(Box::new(RailroadNode::Terminal {
+                        text: separator.to_string(),
+                    })),
+                });
+            },
+            Task::Map { base, len } => {
+                debug_assert_eq!(values.len(), base + len);
+                let children = values.drain(base..).collect();
+                values.push(RailroadNode::Sequence { children });
+            },
+            Task::Zip(left_category, right_category) => {
+                let body = values.pop().expect("railroad Zip lowering lost its body");
+                values.push(RailroadNode::Sequence {
+                    children: vec![
+                        RailroadNode::NonTerminal { text: left_category.to_string() },
+                        body,
+                        RailroadNode::NonTerminal { text: right_category.to_string() },
+                    ],
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("syntax-item railroad lowering produced no node")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -294,39 +350,56 @@ pub fn annotate_diagrams(
 /// This is a basic ASCII-art visualization. For full SVG output,
 /// use the `railroad` crate (feature-gated).
 pub fn diagram_to_text(node: &RailroadNode) -> String {
-    match node {
-        RailroadNode::Terminal { text } => format!("──[ {} ]──", text),
-        RailroadNode::NonTerminal { text } => format!("──⟨ {} ⟩──", text),
-        RailroadNode::Sequence { children } => children
-            .iter()
-            .map(diagram_to_text)
-            .collect::<Vec<_>>()
-            .join(""),
-        RailroadNode::Choice { alternatives } => {
-            let mut out = String::new();
-            out.push_str("──┬──");
-            for (i, alt) in alternatives.iter().enumerate() {
-                if i > 0 {
-                    out.push_str("\n  ├──");
-                }
-                out.push_str(&diagram_to_text(alt));
-                out.push_str("──");
-            }
-            out.push_str("\n  └──");
-            out
-        },
-        RailroadNode::Optional { inner } => {
-            format!("──┬──{}──┬──\n  └──────────────┘", diagram_to_text(inner))
-        },
-        RailroadNode::Repeat { element, separator } => {
-            let sep_str = separator
-                .as_ref()
-                .map(|s| diagram_to_text(s))
-                .unwrap_or_default();
-            format!("──↻ {} {} ↻──", diagram_to_text(element), sep_str)
-        },
-        RailroadNode::Empty => "──ε──".to_string(),
+    use std::fmt::Write as _;
+
+    enum Task<'node> {
+        Visit(&'node RailroadNode),
+        Text(&'static str),
     }
+
+    let mut out = String::new();
+    let mut tasks = vec![Task::Visit(node)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Text(text) => out.push_str(text),
+            Task::Visit(RailroadNode::Terminal { text }) => {
+                write!(&mut out, "──[ {text} ]──").expect("writing into String cannot fail");
+            },
+            Task::Visit(RailroadNode::NonTerminal { text }) => {
+                write!(&mut out, "──⟨ {text} ⟩──").expect("writing into String cannot fail");
+            },
+            Task::Visit(RailroadNode::Sequence { children }) => {
+                tasks.extend(children.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(RailroadNode::Choice { alternatives }) => {
+                out.push_str("──┬──");
+                tasks.push(Task::Text("\n  └──"));
+                for (index, alternative) in alternatives.iter().enumerate().rev() {
+                    tasks.push(Task::Text("──"));
+                    tasks.push(Task::Visit(alternative));
+                    if index > 0 {
+                        tasks.push(Task::Text("\n  ├──"));
+                    }
+                }
+            },
+            Task::Visit(RailroadNode::Optional { inner }) => {
+                out.push_str("──┬──");
+                tasks.push(Task::Text("──┬──\n  └──────────────┘"));
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(RailroadNode::Repeat { element, separator }) => {
+                out.push_str("──↻ ");
+                tasks.push(Task::Text(" ↻──"));
+                if let Some(separator) = separator {
+                    tasks.push(Task::Visit(separator));
+                }
+                tasks.push(Task::Text(" "));
+                tasks.push(Task::Visit(element));
+            },
+            Task::Visit(RailroadNode::Empty) => out.push_str("──ε──"),
+        }
+    }
+    out
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -377,7 +450,7 @@ pub fn render_grammar_railroad_svg(
     let diagrams = generate_railroad_diagrams(spec);
     let mut rendered = std::collections::BTreeMap::new();
     for (category, diagram) in diagrams {
-        let svg = node_to_svg_document(&category, &diagram.root);
+        let svg = diagram_to_svg(&category, &diagram.root);
         rendered.insert(category, svg);
     }
     rendered
@@ -385,7 +458,7 @@ pub fn render_grammar_railroad_svg(
 
 /// Wrap a node's emitted SVG fragment in a minimal standalone `<svg>` document.
 #[cfg(feature = "railroad-diagrams")]
-fn node_to_svg_document(category: &str, node: &RailroadNode) -> String {
+pub fn diagram_to_svg(category: &str, node: &RailroadNode) -> String {
     let mut cursor_x: u32 = 10;
     let mut max_y: u32 = 60;
     let body = node_to_svg_fragment(node, &mut cursor_x, 30, &mut max_y);
@@ -413,61 +486,234 @@ fn node_to_svg_fragment(
     y: u32,
     max_y: &mut u32,
 ) -> String {
-    match node {
-        RailroadNode::Terminal { text } => svg_box(text, cursor_x, y, max_y, true),
-        RailroadNode::NonTerminal { text } => svg_box(text, cursor_x, y, max_y, false),
-        RailroadNode::Empty => svg_box("ε", cursor_x, y, max_y, true),
-        RailroadNode::Sequence { children } => children
-            .iter()
-            .map(|child| node_to_svg_fragment(child, cursor_x, y, max_y))
-            .collect::<Vec<_>>()
-            .join(""),
-        RailroadNode::Choice { alternatives } => {
-            // Stack alternatives vertically; each starts at the same x and
-            // descends by a fixed row height. The cursor advances by the widest.
-            let start_x = *cursor_x;
-            let mut widest = start_x;
-            let mut out = String::new();
-            for (i, alt) in alternatives.iter().enumerate() {
-                let mut branch_x = start_x;
-                let branch_y = y + (i as u32) * 50;
-                out.push_str(&node_to_svg_fragment(alt, &mut branch_x, branch_y, max_y));
-                widest = widest.max(branch_x);
-            }
-            *cursor_x = widest;
-            out
+    struct Rendered {
+        end_x: u32,
+        max_y: u32,
+    }
+
+    enum Task<'node> {
+        Visit {
+            node: &'node RailroadNode,
+            start_x: u32,
+            y: u32,
+            max_y: u32,
         },
-        RailroadNode::Optional { inner } => {
-            // Render the inner run, then annotate the bypass arc above it.
-            let start_x = *cursor_x;
-            let fragment = node_to_svg_fragment(inner, cursor_x, y, max_y);
-            format!(
-                "{fragment}  <path d=\"M{start} {arc_y} q {half} -18 {span} 0\" \
-                 fill=\"none\" stroke=\"#888888\"/>\n",
-                fragment = fragment,
-                start = start_x,
-                arc_y = y - 2,
-                half = (*cursor_x - start_x) / 2,
-                span = *cursor_x - start_x,
-            )
+        SequenceNext {
+            children: &'node [RailroadNode],
+            index: usize,
+            cursor_x: u32,
+            y: u32,
+            max_y: u32,
         },
-        RailroadNode::Repeat { element, separator } => {
-            let start_x = *cursor_x;
-            let mut fragment = node_to_svg_fragment(element, cursor_x, y, max_y);
-            if let Some(sep) = separator {
-                fragment.push_str(&node_to_svg_fragment(sep, cursor_x, y, max_y));
-            }
-            format!(
-                "{fragment}  <path d=\"M{end} {arc_y} q -{half} 18 -{span} 0\" \
-                 fill=\"none\" stroke=\"#3366cc\"/>\n",
-                fragment = fragment,
-                end = *cursor_x,
-                arc_y = y + 22,
-                half = (*cursor_x - start_x) / 2,
-                span = *cursor_x - start_x,
-            )
+        SequenceAfter {
+            children: &'node [RailroadNode],
+            next_index: usize,
+            y: u32,
+        },
+        ChoiceNext {
+            alternatives: &'node [RailroadNode],
+            index: usize,
+            start_x: u32,
+            widest: u32,
+            y: u32,
+            max_y: u32,
+        },
+        ChoiceAfter {
+            alternatives: &'node [RailroadNode],
+            next_index: usize,
+            start_x: u32,
+            widest: u32,
+            y: u32,
+        },
+        OptionalFinish {
+            start_x: u32,
+            y: u32,
+        },
+        RepeatAfterElement {
+            start_x: u32,
+            y: u32,
+            separator: Option<&'node RailroadNode>,
+        },
+        RepeatFinish {
+            start_x: u32,
+            y: u32,
+            element: Rendered,
         },
     }
+
+    fn finish_repeat(out: &mut String, rendered: Rendered, start_x: u32, y: u32) -> Rendered {
+        out.push_str(&format!(
+            "  <path d=\"M{end} {arc_y} q -{half} 18 -{span} 0\" \
+             fill=\"none\" stroke=\"#3366cc\"/>\n",
+            end = rendered.end_x,
+            arc_y = y + 22,
+            half = (rendered.end_x - start_x) / 2,
+            span = rendered.end_x - start_x,
+        ));
+        rendered
+    }
+
+    let mut tasks = vec![Task::Visit {
+        node,
+        start_x: *cursor_x,
+        y,
+        max_y: *max_y,
+    }];
+    let mut values = Vec::new();
+    let mut out = String::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit { node, start_x, y, max_y } => match node {
+                RailroadNode::Terminal { text } | RailroadNode::NonTerminal { text } => {
+                    let mut end_x = start_x;
+                    let mut leaf_max_y = max_y;
+                    let terminal = matches!(node, RailroadNode::Terminal { .. });
+                    let fragment = svg_box(text, &mut end_x, y, &mut leaf_max_y, terminal);
+                    out.push_str(&fragment);
+                    values.push(Rendered { end_x, max_y: leaf_max_y });
+                },
+                RailroadNode::Empty => {
+                    let mut end_x = start_x;
+                    let mut leaf_max_y = max_y;
+                    let fragment = svg_box("ε", &mut end_x, y, &mut leaf_max_y, true);
+                    out.push_str(&fragment);
+                    values.push(Rendered { end_x, max_y: leaf_max_y });
+                },
+                RailroadNode::Sequence { children } => tasks.push(Task::SequenceNext {
+                    children,
+                    index: 0,
+                    cursor_x: start_x,
+                    y,
+                    max_y,
+                }),
+                RailroadNode::Choice { alternatives } => tasks.push(Task::ChoiceNext {
+                    alternatives,
+                    index: 0,
+                    start_x,
+                    widest: start_x,
+                    y,
+                    max_y,
+                }),
+                RailroadNode::Optional { inner } => {
+                    tasks.push(Task::OptionalFinish { start_x, y });
+                    tasks.push(Task::Visit { node: inner, start_x, y, max_y });
+                },
+                RailroadNode::Repeat { element, separator } => {
+                    tasks.push(Task::RepeatAfterElement {
+                        start_x,
+                        y,
+                        separator: separator.as_deref(),
+                    });
+                    tasks.push(Task::Visit { node: element, start_x, y, max_y });
+                },
+            },
+            Task::SequenceNext { children, index, cursor_x, y, max_y } => {
+                if let Some(child) = children.get(index) {
+                    tasks.push(Task::SequenceAfter { children, next_index: index + 1, y });
+                    tasks.push(Task::Visit { node: child, start_x: cursor_x, y, max_y });
+                } else {
+                    values.push(Rendered { end_x: cursor_x, max_y });
+                }
+            },
+            Task::SequenceAfter { children, next_index, y } => {
+                let child = values.pop().expect("railroad SVG sequence lost a child");
+                tasks.push(Task::SequenceNext {
+                    children,
+                    index: next_index,
+                    cursor_x: child.end_x,
+                    y,
+                    max_y: child.max_y,
+                });
+            },
+            Task::ChoiceNext {
+                alternatives,
+                index,
+                start_x,
+                widest,
+                y,
+                max_y,
+            } => {
+                if let Some(alternative) = alternatives.get(index) {
+                    tasks.push(Task::ChoiceAfter {
+                        alternatives,
+                        next_index: index + 1,
+                        start_x,
+                        widest,
+                        y,
+                    });
+                    tasks.push(Task::Visit {
+                        node: alternative,
+                        start_x,
+                        y: y + (index as u32) * 50,
+                        max_y,
+                    });
+                } else {
+                    values.push(Rendered { end_x: widest, max_y });
+                }
+            },
+            Task::ChoiceAfter {
+                alternatives,
+                next_index,
+                start_x,
+                widest,
+                y,
+            } => {
+                let alternative = values
+                    .pop()
+                    .expect("railroad SVG choice lost an alternative");
+                tasks.push(Task::ChoiceNext {
+                    alternatives,
+                    index: next_index,
+                    start_x,
+                    widest: widest.max(alternative.end_x),
+                    y,
+                    max_y: alternative.max_y,
+                });
+            },
+            Task::OptionalFinish { start_x, y } => {
+                let inner = values.pop().expect("railroad SVG optional lost its child");
+                out.push_str(&format!(
+                    "  <path d=\"M{start_x} {arc_y} q {half} -18 {span} 0\" \
+                     fill=\"none\" stroke=\"#888888\"/>\n",
+                    arc_y = y - 2,
+                    half = (inner.end_x - start_x) / 2,
+                    span = inner.end_x - start_x,
+                ));
+                values.push(inner);
+            },
+            Task::RepeatAfterElement { start_x, y, separator } => {
+                let element = values.pop().expect("railroad SVG repeat lost its element");
+                if let Some(separator) = separator {
+                    let separator_start = element.end_x;
+                    let separator_max_y = element.max_y;
+                    tasks.push(Task::RepeatFinish { start_x, y, element });
+                    tasks.push(Task::Visit {
+                        node: separator,
+                        start_x: separator_start,
+                        y,
+                        max_y: separator_max_y,
+                    });
+                } else {
+                    values.push(finish_repeat(&mut out, element, start_x, y));
+                }
+            },
+            Task::RepeatFinish { start_x, y, mut element } => {
+                let separator = values
+                    .pop()
+                    .expect("railroad SVG repeat lost its separator");
+                element.end_x = separator.end_x;
+                element.max_y = separator.max_y;
+                values.push(finish_repeat(&mut out, element, start_x, y));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    let rendered = values
+        .pop()
+        .expect("railroad SVG traversal produced no result");
+    *cursor_x = rendered.end_x;
+    *max_y = rendered.max_y;
+    out
 }
 
 /// Emit one labeled box (rounded rect for terminals, plain rect for
