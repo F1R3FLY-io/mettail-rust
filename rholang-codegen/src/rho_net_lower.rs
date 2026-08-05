@@ -2741,21 +2741,47 @@ pub fn rho_net_contextual_match_entries(def: &LanguageDef) -> Vec<RhoNetContextu
 /// `None` when `source` does not occur). The path is folded through [`spread_child_location`] by the
 /// match driver into the hole's location site, so the derivation matches `collect_redex_sites`.
 fn contextual_source_path(pattern: &Pattern, source: &str) -> Option<Vec<(String, usize)>> {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(id)) if id == source => Some(Vec::new()),
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            for (index, arg) in args.iter().enumerate() {
-                if let Some(mut suffix) = contextual_source_path(arg, source) {
-                    let mut path = Vec::with_capacity(suffix.len() + 1);
-                    path.push((constructor.to_string(), index));
-                    path.append(&mut suffix);
-                    return Some(path);
-                }
-            }
-            None
+    enum Task<'pattern> {
+        Visit(&'pattern Pattern),
+        Enter {
+            pattern: &'pattern Pattern,
+            constructor: String,
+            index: usize,
         },
-        _ => None,
+        Truncate(usize),
     }
+
+    let mut work = vec![Task::Visit(pattern)];
+    let mut path = Vec::new();
+    while let Some(task) = work.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(id))) if id == source => {
+                return Some(path);
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { constructor, args })) => {
+                let constructor = constructor.to_string();
+                work.extend(
+                    args.iter()
+                        .enumerate()
+                        .rev()
+                        .map(|(index, pattern)| Task::Enter {
+                            pattern,
+                            constructor: constructor.clone(),
+                            index,
+                        }),
+                );
+            },
+            Task::Enter { pattern, constructor, index } => {
+                let old_len = path.len();
+                path.push((constructor, index));
+                work.push(Task::Truncate(old_len));
+                work.push(Task::Visit(pattern));
+            },
+            Task::Truncate(len) => path.truncate(len),
+            Task::Visit(_) => {},
+        }
+    }
+    None
 }
 
 /// Reconstruct the reduced hole `T = RHS_premise[σ]` a fired premise rewrite produced — the
@@ -2897,14 +2923,16 @@ pub fn par_carries_ground_marker(par: &Par, fingerprint: &str) -> bool {
 /// `^free` ⟹ true (inert), else ⟹ all children ground. An AC collection carrier is conservatively
 /// NOT ground (it has no positional marker slot; a parent with a collection child stays `^nog`).
 pub(crate) fn ground_term_is_hereditarily_ground(term: &GroundTerm) -> bool {
-    if term.coll_type.is_some() {
-        return false;
+    let mut work = vec![term];
+    while let Some(term) = work.pop() {
+        if term.coll_type.is_some() || term.constructor == BOUND_VAR_REFLECT_LABEL {
+            return false;
+        }
+        if term.constructor != FREE_VAR_REFLECT_LABEL {
+            work.extend(term.children.iter().rev());
+        }
     }
-    match term.constructor.as_str() {
-        BOUND_VAR_REFLECT_LABEL => false,
-        FREE_VAR_REFLECT_LABEL => true,
-        _ => term.children.iter().all(ground_term_is_hereditarily_ground),
-    }
+    true
 }
 
 /// E-2-D: is a reflected RHS `Pattern` node HEREDITARILY GROUND? A variable occurrence (a σ-slot
@@ -2913,17 +2941,24 @@ pub(crate) fn ground_term_is_hereditarily_ground(term: &GroundTerm) -> bool {
 /// AGREES with [`reflect_ground_term_par`]'s on the ground (variable-free) overlap — preserving
 /// the shared-ABI byte identity.
 fn pattern_is_hereditarily_ground(pattern: &Pattern) -> bool {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(_)) => false,
-        Pattern::Term(PatternTerm::Apply { args, .. }) => {
-            args.iter().all(pattern_is_hereditarily_ground)
-        },
-        Pattern::Term(PatternTerm::Lambda { body, .. })
-        | Pattern::Term(PatternTerm::MultiLambda { body, .. }) => {
-            pattern_is_hereditarily_ground(body)
-        },
-        _ => false,
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        match pattern {
+            Pattern::Term(PatternTerm::Apply { args, .. }) => {
+                work.extend(args.iter().rev());
+            },
+            Pattern::Term(PatternTerm::Lambda { body, .. })
+            | Pattern::Term(PatternTerm::MultiLambda { body, .. }) => work.push(body),
+            Pattern::Term(PatternTerm::Var(_))
+            | Pattern::Term(PatternTerm::Subst { .. })
+            | Pattern::Term(PatternTerm::MultiSubst { .. })
+            | Pattern::Collection { .. }
+            | Pattern::Map { .. }
+            | Pattern::Zip { .. }
+            | Pattern::IndexedVec { .. } => return false,
+        }
     }
+    true
 }
 
 /// Reflect a GROUND constructor term to a normalized `Par` value under the SAME
@@ -6977,21 +7012,20 @@ fn element_is_nested(element: &Pattern, def: &LanguageDef) -> bool {
 /// `Var` node, so remainder variables are excluded). The cross-level non-linear variable `M` is the
 /// unique name whose count is exactly `2` (it occurs in the inner capability AND at the outer level).
 fn collect_pattern_var_counts(pattern: &Pattern, counts: &mut HashMap<String, usize>) {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(name)) => {
-            *counts.entry(name.to_string()).or_insert(0) += 1;
-        },
-        Pattern::Term(PatternTerm::Apply { args, .. }) => {
-            for arg in args {
-                collect_pattern_var_counts(arg, counts);
-            }
-        },
-        Pattern::Collection { elements, .. } => {
-            for element in elements {
-                collect_pattern_var_counts(element, counts);
-            }
-        },
-        _ => {},
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        match pattern {
+            Pattern::Term(PatternTerm::Var(name)) => {
+                *counts.entry(name.to_string()).or_insert(0) += 1;
+            },
+            Pattern::Term(PatternTerm::Apply { args, .. }) => {
+                work.extend(args.iter().rev());
+            },
+            Pattern::Collection { elements, .. } => {
+                work.extend(elements.iter().rev());
+            },
+            _ => {},
+        }
     }
 }
 
@@ -7008,41 +7042,50 @@ pub(crate) fn count_var_occurrences(pattern: &Pattern, var: &Ident) -> usize {
 /// match and available to the RHS templates, e.g. the inner `rest1` the reduct's `{P, ...rest1}`
 /// splices). Used to check the RHS reduct templates are σ-closed.
 fn collect_pattern_lhs_vars(pattern: &Pattern, out: &mut HashSet<String>) {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(name)) => {
-            out.insert(name.to_string());
-        },
-        Pattern::Term(PatternTerm::Apply { args, .. }) => {
-            for arg in args {
-                collect_pattern_lhs_vars(arg, out);
-            }
-        },
-        Pattern::Collection { elements, rest, .. } => {
-            for element in elements {
-                collect_pattern_lhs_vars(element, out);
-            }
-            if let Some(rest) = rest {
-                out.insert(rest.to_string());
-            }
-        },
-        _ => {},
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        match pattern {
+            Pattern::Term(PatternTerm::Var(name)) => {
+                out.insert(name.to_string());
+            },
+            Pattern::Term(PatternTerm::Apply { args, .. }) => {
+                work.extend(args.iter().rev());
+            },
+            Pattern::Collection { elements, rest, .. } => {
+                work.extend(elements.iter().rev());
+                if let Some(rest) = rest {
+                    out.insert(rest.to_string());
+                }
+            },
+            _ => {},
+        }
     }
 }
 
 /// The first `PatternTerm::Var` in `pattern` whose name is `name` — used to recover the cross-level
 /// channel variable's `Ident` (preserving its span) after locating it by name via occurrence counts.
 fn find_var_ident(pattern: &Pattern, name: &str) -> Option<Ident> {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(ident)) => (ident == name).then(|| ident.clone()),
-        Pattern::Term(PatternTerm::Apply { args, .. }) => {
-            args.iter().find_map(|arg| find_var_ident(arg, name))
-        },
-        Pattern::Collection { elements, .. } => elements
-            .iter()
-            .find_map(|element| find_var_ident(element, name)),
-        _ => None,
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        match pattern {
+            Pattern::Term(PatternTerm::Var(ident)) if ident == name => {
+                return Some(ident.clone());
+            },
+            Pattern::Term(PatternTerm::Apply { args, .. }) => {
+                work.extend(args.iter().rev());
+            },
+            Pattern::Collection { elements, .. } => {
+                work.extend(elements.iter().rev());
+            },
+            _ => {},
+        }
     }
+    None
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_pattern_analysis_recursive_oracle.rs"]
+mod pattern_analysis_recursive_oracle;
 
 /// The recognized shape of a DEPTH-2 NESTED structural non-linear AC rewrite (the Ambient
 /// `InRule`/`OutRule`). Both are `k = 2` outer elements where EXACTLY ONE is NESTED (`PAmb N (PPar
