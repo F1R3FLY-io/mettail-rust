@@ -2443,6 +2443,14 @@ struct SppfSymbolTerm {
     output_cat: Option<u16>,
 }
 
+struct PackingWitnessContext {
+    cat: u16,
+    local_rule_idx: u16,
+    arity: usize,
+    action_children: Vec<crate::sppf::SppfId>,
+    args: Vec<ActionArg>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TransparentSourceReentryKey {
     source_src_idx: u16,
@@ -20790,7 +20798,7 @@ where
     }
 
     /// Phase F.3c.2 (2026-05-20): reconstruct an `ActionArg` from a single
-    /// SPPF node id, using `cursor.sppf_symbol_terms` as the memo for
+    /// SPPF node id, using the walker-global `sppf_symbol_terms` memo for
     /// previously-realized Symbols. Used by `fire_action_via_transient` to
     /// build action_fn argument lists from sppf_stack children, eliminating
     /// the need for the persistent `cursor.builder.stack`.
@@ -20800,307 +20808,455 @@ where
     /// SppfId (not a cartesian-product combo).
     fn reconstruct_action_arg(
         &self,
-        cursor: &BranchCursor<W>,
+        _cursor: &BranchCursor<W>,
         sid: crate::sppf::SppfId,
     ) -> Option<ActionArg> {
         let mut visiting = rustc_hash::FxHashSet::default();
-        self.reconstruct_action_arg_inner(cursor, sid, &mut visiting)
+        self.reconstruct_action_arg_inner(sid, &mut visiting)
     }
 
     fn reconstruct_action_arg_inner(
         &self,
-        cursor: &BranchCursor<W>,
         sid: crate::sppf::SppfId,
         visiting: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
     ) -> Option<ActionArg> {
         use crate::sppf::{PosOrSynth, SppfNode};
-        match self.sppf.node(sid)? {
-            SppfNode::Terminal {
-                token_kind,
-                text_handle,
-                pos,
-                pushed_via_push_ident,
-            } => {
-                let pos_val = match pos {
-                    PosOrSynth::Real(p) => *p as usize,
-                    PosOrSynth::Synthesized(_) => 0,
-                };
-                let text_s = self.sppf.text(*text_handle).to_string();
-                if *pushed_via_push_ident {
-                    Some(ActionArg::Ident { name: text_s, pos: pos_val })
-                } else {
-                    Some(ActionArg::Token {
-                        kind: token_kind.clone(),
-                        text: text_s,
-                        pos: pos_val,
-                    })
-                }
+        type SppfId = crate::sppf::SppfId;
+
+        enum Request {
+            Arg(SppfId),
+            Symbol(SppfId),
+            Packing(SppfId),
+        }
+
+        enum Value {
+            Arg(ActionArg),
+            Term(SppfSymbolTerm),
+        }
+
+        enum Frame {
+            ArgFromSymbol {
+                non_terminal_tag: u32,
             },
-            SppfNode::Symbol { non_terminal_tag, .. } => {
-                // Phase F.13 H1 (2026-05-20): look up in walker-global
-                // memo. SPPF SymbolIds are global (Symbol-dedup at
-                // `(nt, lo, hi)`), so any cursor that previously fired
-                // an action on this Symbol stored the result. Single
-                // HashMap lookup replaces the per-cursor Vec scan; the
-                // `cursor` parameter is unused for this arm.
-                let _ = cursor;
-                if let Some(term) = self.sppf_symbol_terms.get(&sid) {
-                    if !term
-                        .output_cat
-                        .is_some_and(|cat| cat as u32 != *non_terminal_tag)
-                    {
-                        return Some(ActionArg::Term {
-                            value: Arc::clone(&term.value),
-                            type_name: "F3c2Reconstructed",
-                        });
-                    }
+            OptionalArgs {
+                remaining: std::vec::IntoIter<SppfId>,
+                args: Vec<ActionArg>,
+            },
+            SymbolAlternatives {
+                symbol_id: SppfId,
+                non_terminal_tag: u32,
+                remaining: std::vec::IntoIter<SppfId>,
+            },
+            PackingArgs {
+                context: PackingWitnessContext,
+                remaining: std::vec::IntoIter<SppfId>,
+            },
+            PackingCollectionItems {
+                context: PackingWitnessContext,
+                remaining: std::vec::IntoIter<(u8, SppfId)>,
+                values: Vec<(u8, Arc<dyn std::any::Any + Send + Sync>)>,
+                current_id: u8,
+            },
+        }
+
+        let mut request = Some(Request::Arg(sid));
+        let mut frames = Vec::new();
+        let mut outcome: Option<Value> = None;
+
+        loop {
+            if let Some(next_request) = request.take() {
+                match next_request {
+                    Request::Arg(sid) => {
+                        outcome = match self.sppf.node(sid) {
+                            Some(SppfNode::Terminal {
+                                token_kind,
+                                text_handle,
+                                pos,
+                                pushed_via_push_ident,
+                            }) => {
+                                let pos = match pos {
+                                    PosOrSynth::Real(pos) => *pos as usize,
+                                    PosOrSynth::Synthesized(_) => 0,
+                                };
+                                let text = self.sppf.text(*text_handle).to_string();
+                                Some(Value::Arg(if *pushed_via_push_ident {
+                                    ActionArg::Ident { name: text, pos }
+                                } else {
+                                    ActionArg::Token { kind: token_kind.clone(), text, pos }
+                                }))
+                            },
+                            Some(SppfNode::Symbol { non_terminal_tag, .. }) => {
+                                if let Some(term) =
+                                    self.sppf_symbol_terms.get(&sid).filter(|term| {
+                                        !term
+                                            .output_cat
+                                            .is_some_and(|cat| cat as u32 != *non_terminal_tag)
+                                    })
+                                {
+                                    Some(Value::Arg(ActionArg::Term {
+                                        value: Arc::clone(&term.value),
+                                        type_name: "F3c2Reconstructed",
+                                    }))
+                                } else {
+                                    frames.push(Frame::ArgFromSymbol {
+                                        non_terminal_tag: *non_terminal_tag,
+                                    });
+                                    request = Some(Request::Symbol(sid));
+                                    continue;
+                                }
+                            },
+                            Some(SppfNode::Packing { rule_idx, children, .. })
+                                if *rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX =>
+                            {
+                                let mut remaining = children.clone().into_iter();
+                                match remaining.next() {
+                                    Some(child) => {
+                                        frames.push(Frame::OptionalArgs {
+                                            remaining,
+                                            args: Vec::with_capacity(children.len()),
+                                        });
+                                        request = Some(Request::Arg(child));
+                                        continue;
+                                    },
+                                    None => Some(Value::Arg(ActionArg::Optional(Some(Vec::new())))),
+                                }
+                            },
+                            Some(SppfNode::CollectionId { id, .. }) => {
+                                Some(Value::Arg(ActionArg::CollectionId(*id as u8)))
+                            },
+                            Some(SppfNode::OptAbsent { .. }) => {
+                                Some(Value::Arg(ActionArg::Optional(None)))
+                            },
+                            Some(SppfNode::Predicate { handle }) => self
+                                .sppf_predicate_arena
+                                .get(*handle as usize)
+                                .map(|predicate| {
+                                    Value::Arg(ActionArg::Predicate(Arc::clone(predicate)))
+                                }),
+                            Some(SppfNode::GuestBody { handle }) => self
+                                .sppf_guest_body_arena
+                                .get(*handle as usize)
+                                .map(|node| Value::Arg(ActionArg::GuestBody(Arc::clone(node)))),
+                            Some(SppfNode::BinderScope { names_text, depth }) => {
+                                let names = names_text
+                                    .iter()
+                                    .map(|handle| self.sppf.text(*handle).to_string())
+                                    .collect();
+                                Some(Value::Arg(ActionArg::BinderScope(
+                                    crate::wpda_runtime::BinderHandle::new(names, *depth),
+                                )))
+                            },
+                            Some(
+                                SppfNode::Packing { .. }
+                                | SppfNode::Epsilon { .. }
+                                | SppfNode::TriggerTerminal { .. }
+                                | SppfNode::Intermediate { .. },
+                            )
+                            | None => None,
+                        };
+                    },
+                    Request::Symbol(symbol_id) => {
+                        outcome = match self.sppf.node(symbol_id) {
+                            Some(SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. })
+                                if visiting.insert(symbol_id) =>
+                            {
+                                let candidates: Vec<SppfId> = self
+                                    .sppf
+                                    .packings_of(symbol_id)
+                                    .iter()
+                                    .copied()
+                                    .filter(|&packing_id| match self.sppf.node(packing_id) {
+                                        Some(SppfNode::Packing { rule_idx, children, .. }) => self
+                                            .packing_satisfies_min_terminal_span(
+                                                *rule_idx, children, *lo_pos, *hi_pos,
+                                            ),
+                                        _ => true,
+                                    })
+                                    .collect();
+                                let mut remaining = candidates.into_iter();
+                                match remaining.next() {
+                                    Some(packing_id) => {
+                                        frames.push(Frame::SymbolAlternatives {
+                                            symbol_id,
+                                            non_terminal_tag: *non_terminal_tag,
+                                            remaining,
+                                        });
+                                        request = Some(Request::Packing(packing_id));
+                                        continue;
+                                    },
+                                    None => {
+                                        visiting.remove(&symbol_id);
+                                        None
+                                    },
+                                }
+                            },
+                            _ => None,
+                        };
+                    },
+                    Request::Packing(packing_id) => {
+                        outcome = match self.sppf.node(packing_id) {
+                            Some(SppfNode::Packing { rule_idx, children, .. })
+                                if *rule_idx != Self::OPTIONAL_PRESENT_RULE_IDX =>
+                            {
+                                let cat = (*rule_idx >> 16) as u16;
+                                let local_rule_idx = (*rule_idx & 0xFFFF) as u16;
+                                let Some(entry) = self.engine.action_for(cat, local_rule_idx)
+                                else {
+                                    outcome = None;
+                                    continue;
+                                };
+                                let arity = entry.arity as usize;
+                                let action_children: Vec<SppfId> = children
+                                    .iter()
+                                    .copied()
+                                    .filter(|&child| {
+                                        !matches!(
+                                            self.sppf.node(child),
+                                            Some(SppfNode::TriggerTerminal { .. })
+                                        )
+                                    })
+                                    .collect();
+                                if action_children.len() != arity
+                                    || entry.expected_input_cats.len() != arity
+                                    || action_children.iter().zip(entry.expected_input_cats).any(
+                                        |(&child, &expected_cat)| {
+                                            expected_cat != crate::wpda_runtime::ANY_CAT
+                                                && !matches!(
+                                                    self.sppf.node(child),
+                                                    Some(SppfNode::Symbol {
+                                                        non_terminal_tag,
+                                                        ..
+                                                    }) if *non_terminal_tag == expected_cat as u32
+                                                )
+                                        },
+                                    )
+                                {
+                                    None
+                                } else {
+                                    let context = PackingWitnessContext {
+                                        cat,
+                                        local_rule_idx,
+                                        arity,
+                                        args: Vec::with_capacity(arity),
+                                        action_children: action_children.clone(),
+                                    };
+                                    let mut remaining = action_children.into_iter();
+                                    match remaining.next() {
+                                        Some(child) => {
+                                            frames.push(Frame::PackingArgs { context, remaining });
+                                            request = Some(Request::Arg(child));
+                                            continue;
+                                        },
+                                        None => self
+                                            .finish_packing_term_witness(context, Vec::new())
+                                            .map(Value::Term),
+                                    }
+                                }
+                            },
+                            _ => None,
+                        };
+                    },
                 }
-                self.realize_symbol_term_witness(cursor, sid, visiting)
-                    .and_then(|term| {
-                        if term
-                            .output_cat
-                            .is_some_and(|cat| cat as u32 != *non_terminal_tag)
+            }
+
+            let Some(frame) = frames.pop() else {
+                return match outcome {
+                    Some(Value::Arg(arg)) => Some(arg),
+                    _ => None,
+                };
+            };
+            match frame {
+                Frame::ArgFromSymbol { non_terminal_tag } => {
+                    outcome = match outcome.take() {
+                        Some(Value::Term(term))
+                            if !term
+                                .output_cat
+                                .is_some_and(|cat| cat as u32 != non_terminal_tag) =>
                         {
-                            None
-                        } else {
-                            Some(ActionArg::Term {
+                            Some(Value::Arg(ActionArg::Term {
                                 value: term.value,
                                 type_name: "F3c2Witness",
-                            })
+                            }))
+                        },
+                        _ => None,
+                    };
+                },
+                Frame::OptionalArgs { mut remaining, mut args } => {
+                    let Some(Value::Arg(arg)) = outcome.take() else {
+                        outcome = None;
+                        continue;
+                    };
+                    args.push(arg);
+                    match remaining.next() {
+                        Some(child) => {
+                            frames.push(Frame::OptionalArgs { remaining, args });
+                            request = Some(Request::Arg(child));
+                            continue;
+                        },
+                        None => outcome = Some(Value::Arg(ActionArg::Optional(Some(args)))),
+                    }
+                },
+                Frame::SymbolAlternatives {
+                    symbol_id,
+                    non_terminal_tag,
+                    mut remaining,
+                } => {
+                    if matches!(
+                        &outcome,
+                        Some(Value::Term(term))
+                            if !term.output_cat.is_some_and(|cat| cat as u32 != non_terminal_tag)
+                    ) {
+                        visiting.remove(&symbol_id);
+                    } else if let Some(packing_id) = remaining.next() {
+                        frames.push(Frame::SymbolAlternatives {
+                            symbol_id,
+                            non_terminal_tag,
+                            remaining,
+                        });
+                        request = Some(Request::Packing(packing_id));
+                        continue;
+                    } else {
+                        visiting.remove(&symbol_id);
+                        outcome = None;
+                    }
+                },
+                Frame::PackingArgs { mut context, mut remaining } => {
+                    let Some(Value::Arg(arg)) = outcome.take() else {
+                        outcome = None;
+                        continue;
+                    };
+                    context.args.push(arg);
+                    if let Some(child) = remaining.next() {
+                        frames.push(Frame::PackingArgs { context, remaining });
+                        request = Some(Request::Arg(child));
+                        continue;
+                    }
+
+                    let mut collection_items = Vec::new();
+                    for id in Self::collection_ids_in_args(&context.args) {
+                        if let Some(items) =
+                            self.collection_items_for_action_children(&context.action_children, id)
+                        {
+                            collection_items.extend(items.iter().map(|&sid| (id, sid)));
                         }
-                    })
-            },
-            SppfNode::Packing { rule_idx, children, .. }
-                if *rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX =>
-            {
-                // OPTIONAL_PRESENT synthetic packing — wrap inner children
-                // as `ActionArg::Optional(Some(inner_args))`.
-                let inner: Option<Vec<ActionArg>> = children
-                    .iter()
-                    .map(|&c| self.reconstruct_action_arg_inner(cursor, c, visiting))
-                    .collect();
-                inner.map(|args| ActionArg::Optional(Some(args)))
-            },
-            SppfNode::Packing { .. } => {
-                // Non-OPTIONAL_PRESENT Packing reached as a direct child:
-                // should not happen in well-formed parses — children are
-                // always Terminals or Symbols. Return None defensively.
-                None
-            },
-            SppfNode::Epsilon { .. } => {
-                // Epsilon children are filtered out at the call site
-                // (same as TriggerTerminal); unreachable here but return
-                // None defensively.
-                None
-            },
-            SppfNode::CollectionId { id, .. } => Some(ActionArg::CollectionId(*id as u8)),
-            SppfNode::OptAbsent { .. } => Some(ActionArg::Optional(None)),
-            SppfNode::Predicate { handle } => self
-                .sppf_predicate_arena
-                .get(*handle as usize)
-                .map(|p| ActionArg::Predicate(Arc::clone(p))),
-            SppfNode::GuestBody { handle } => self
-                .sppf_guest_body_arena
-                .get(*handle as usize)
-                .map(|node| ActionArg::GuestBody(Arc::clone(node))),
-            SppfNode::BinderScope { names_text, depth } => {
-                let names: Vec<String> = names_text
-                    .iter()
-                    .map(|h| self.sppf.text(*h).to_string())
-                    .collect();
-                Some(ActionArg::BinderScope(crate::wpda_runtime::BinderHandle::new(names, *depth)))
-            },
-            SppfNode::TriggerTerminal { .. } => {
-                // Filtered out at the call site BEFORE this is invoked
-                // (parallel to realize_packing_call's filter at line 3739).
-                None
-            },
-            // ROOT-P Stage E1: canonical-only Intermediate never reaches the
-            // classic arg-reconstruction path. Defensive None.
-            SppfNode::Intermediate { .. } => None,
-        }
-    }
-
-    /// Materialize one token-sound semantic witness for an SPPF Symbol when
-    /// the parse-time symbol memo has no suitable entry. This is an existence
-    /// check for continuing the current branch; it does not mutate the SPPF
-    /// or choose the final parse result.
-    fn realize_symbol_term_witness(
-        &self,
-        cursor: &BranchCursor<W>,
-        symbol_id: crate::sppf::SppfId,
-        visiting: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
-    ) -> Option<SppfSymbolTerm> {
-        let (non_terminal_tag, sym_lo, sym_hi) = match self.sppf.node(symbol_id)? {
-            crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. } => {
-                (*non_terminal_tag, *lo_pos, *hi_pos)
-            },
-            _ => return None,
-        };
-        if !visiting.insert(symbol_id) {
-            return None;
-        }
-        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(symbol_id).to_vec();
-        let mut found = None;
-        for packing_id in packings {
-            if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
-                self.sppf.node(packing_id)
-            {
-                if !self.packing_satisfies_min_terminal_span(*rule_idx, children, sym_lo, sym_hi) {
-                    continue;
-                }
-            }
-            let Some(term) = self.realize_packing_term_witness(cursor, packing_id, visiting) else {
-                continue;
-            };
-            if term
-                .output_cat
-                .is_some_and(|cat| cat as u32 != non_terminal_tag)
-            {
-                continue;
-            }
-            found = Some(term);
-            break;
-        }
-        visiting.remove(&symbol_id);
-        found
-    }
-
-    fn realize_packing_term_witness(
-        &self,
-        cursor: &BranchCursor<W>,
-        packing_id: crate::sppf::SppfId,
-        visiting: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
-    ) -> Option<SppfSymbolTerm> {
-        let (rule_idx, children) = match self.sppf.node(packing_id)? {
-            crate::sppf::SppfNode::Packing { rule_idx, children, .. } => {
-                (*rule_idx, children.clone())
-            },
-            _ => return None,
-        };
-        if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
-            return None;
-        }
-        let cat = (rule_idx >> 16) as u16;
-        let local_rule_idx = (rule_idx & 0xFFFF) as u16;
-        let entry = self.engine.action_for(cat, local_rule_idx)?;
-        let arity = entry.arity as usize;
-        let action_children: Vec<crate::sppf::SppfId> = children
-            .iter()
-            .copied()
-            .filter(|&c| {
-                !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
-            })
-            .collect();
-        if action_children.len() != arity || entry.expected_input_cats.len() != arity {
-            return None;
-        }
-        for (&sid, &expected_cat) in action_children.iter().zip(entry.expected_input_cats.iter()) {
-            if expected_cat == crate::wpda_runtime::ANY_CAT {
-                continue;
-            }
-            match self.sppf.node(sid) {
-                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
-                    if *non_terminal_tag == expected_cat as u32 => {},
-                _ => {
-                    return None;
+                    }
+                    let mut remaining = collection_items.into_iter();
+                    match remaining.next() {
+                        Some((current_id, item)) => {
+                            frames.push(Frame::PackingCollectionItems {
+                                context,
+                                remaining,
+                                values: Vec::new(),
+                                current_id,
+                            });
+                            request = Some(Request::Arg(item));
+                            continue;
+                        },
+                        None => {
+                            outcome = self
+                                .finish_packing_term_witness(context, Vec::new())
+                                .map(Value::Term)
+                        },
+                    }
+                },
+                Frame::PackingCollectionItems {
+                    context,
+                    mut remaining,
+                    mut values,
+                    current_id,
+                } => {
+                    let Some(Value::Arg(ActionArg::Term { value, .. })) = outcome.take() else {
+                        outcome = None;
+                        continue;
+                    };
+                    values.push((current_id, value));
+                    match remaining.next() {
+                        Some((next_id, item)) => {
+                            frames.push(Frame::PackingCollectionItems {
+                                context,
+                                remaining,
+                                values,
+                                current_id: next_id,
+                            });
+                            request = Some(Request::Arg(item));
+                            continue;
+                        },
+                        None => {
+                            outcome = self
+                                .finish_packing_term_witness(context, values)
+                                .map(Value::Term)
+                        },
+                    }
                 },
             }
         }
-        let args: Option<Vec<ActionArg>> = action_children
-            .iter()
-            .map(|&sid| self.reconstruct_action_arg_inner(cursor, sid, visiting))
-            .collect();
-        let args = args?;
+    }
 
-        let mut sb = SemanticBuilder::new();
-        let collection_ids = Self::collection_ids_in_args(&args);
-        Self::preallocate_collection_slots(&mut sb, &collection_ids);
-        for id in &collection_ids {
-            let items = self
-                .collection_items_for_action_children(&action_children, *id)
-                .unwrap_or(&[]);
-            for &item_sid in items {
-                // #307 ROOT-F F-2 (2026-06-11): refute-don't-skip — an
-                // unreconstructable item invalidates this witness (see
-                // realize_packing_call).
-                match self.reconstruct_action_arg_inner(cursor, item_sid, visiting) {
-                    Some(ActionArg::Term { value, .. }) => {
-                        sb.push_term_arc(value);
-                        sb.push_to_collection(*id);
-                    },
-                    _ => return None,
-                }
-            }
+    fn finish_packing_term_witness(
+        &self,
+        context: PackingWitnessContext,
+        collection_values: Vec<(u8, Arc<dyn std::any::Any + Send + Sync>)>,
+    ) -> Option<SppfSymbolTerm> {
+        let entry = self
+            .engine
+            .action_for(context.cat, context.local_rule_idx)?;
+        let mut builder = SemanticBuilder::new();
+        let collection_ids = Self::collection_ids_in_args(&context.args);
+        Self::preallocate_collection_slots(&mut builder, &collection_ids);
+        for (id, value) in collection_values {
+            builder.push_term_arc(value);
+            builder.push_to_collection(id);
         }
-        for arg in &args {
+        for arg in &context.args {
             match arg {
                 ActionArg::Token { kind, text, pos } => {
-                    sb.push_token(kind.clone(), text.clone(), *pos);
+                    builder.push_token(kind.clone(), text.clone(), *pos);
                 },
-                ActionArg::Ident { name, pos } => {
-                    sb.push_ident(name.clone(), *pos);
-                },
-                ActionArg::Term { value, .. } => {
-                    sb.push_term_arc(Arc::clone(value));
-                },
-                ActionArg::CollectionId(id) => {
-                    sb.push_collection_id(*id);
-                },
-                ActionArg::Predicate(p) => {
-                    sb.push_predicate_arc(Arc::clone(p));
+                ActionArg::Ident { name, pos } => builder.push_ident(name.clone(), *pos),
+                ActionArg::Term { value, .. } => builder.push_term_arc(Arc::clone(value)),
+                ActionArg::CollectionId(id) => builder.push_collection_id(*id),
+                ActionArg::Predicate(predicate) => {
+                    builder.push_predicate_arc(Arc::clone(predicate));
                 },
                 ActionArg::Optional(_)
                 | ActionArg::Collection { .. }
                 | ActionArg::BinderScope(_)
                 | ActionArg::GuestBody(_)
-                // #74: never a top-level arg (it lives only inside a collection
-                // accumulator); forwarded verbatim to keep the loop total.
-                | ActionArg::UnsetCollectionValue => {
-                    sb.push_raw_arg(arg.clone());
-                },
+                | ActionArg::UnsetCollectionValue => builder.push_raw_arg(arg.clone()),
             }
         }
-        let pre_len = sb.len();
-        if pre_len < arity {
+        let pre_len = builder.len();
+        if pre_len < context.arity {
             return None;
         }
-        let popped = sb.pop_args(arity);
-        (entry.action_fn)(&mut sb, popped);
-        let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
-        if sb.len() != expected_len {
+        let popped = builder.pop_args(context.arity);
+        (entry.action_fn)(&mut builder, popped);
+        if builder.len() != pre_len.saturating_sub(context.arity).saturating_add(1) {
             return None;
         }
-        let output_cat = sb
+        let output_cat = builder
             .top_term_type_name()
-            .and_then(|tn| self.engine.cat_of_type_name(tn));
-        let value = sb.take_dyn_result()?;
+            .and_then(|type_name| self.engine.cat_of_type_name(type_name));
+        let value = builder.take_dyn_result()?;
         Some(SppfSymbolTerm { value, output_cat })
-    }
-
-    fn collect_collection_ids_from_arg(arg: &ActionArg, seen: &mut [bool; 256], out: &mut Vec<u8>) {
-        match arg {
-            ActionArg::CollectionId(id) => {
-                let idx = *id as usize;
-                if !seen[idx] {
-                    seen[idx] = true;
-                    out.push(*id);
-                }
-            },
-            ActionArg::Optional(Some(inner)) => {
-                for inner_arg in inner {
-                    Self::collect_collection_ids_from_arg(inner_arg, seen, out);
-                }
-            },
-            _ => {},
-        }
     }
 
     fn collection_ids_in_args(args: &[ActionArg]) -> Vec<u8> {
         let mut seen = [false; 256];
         let mut ids = Vec::new();
-        for arg in args {
-            Self::collect_collection_ids_from_arg(arg, &mut seen, &mut ids);
+        let mut pending: Vec<&ActionArg> = args.iter().rev().collect();
+        while let Some(arg) = pending.pop() {
+            match arg {
+                ActionArg::CollectionId(id) => {
+                    let index = *id as usize;
+                    if !seen[index] {
+                        seen[index] = true;
+                        ids.push(*id);
+                    }
+                },
+                ActionArg::Optional(Some(inner)) => pending.extend(inner.iter().rev()),
+                _ => {},
+            }
         }
         ids
     }
@@ -21113,113 +21269,24 @@ where
         }
     }
 
-    fn collection_items_for_action_child(
-        &self,
-        sid: crate::sppf::SppfId,
-        target_id: u8,
-    ) -> Option<&[crate::sppf::SppfId]> {
-        match self.sppf.node(sid)? {
-            crate::sppf::SppfNode::CollectionId { id, items } if *id == target_id as u32 => {
-                Some(items.as_slice())
-            },
-            crate::sppf::SppfNode::Packing { children, .. } => {
-                for &child in children {
-                    if let Some(items) = self.collection_items_for_action_child(child, target_id) {
-                        return Some(items);
-                    }
-                }
-                None
-            },
-            _ => None,
-        }
-    }
-
     fn collection_items_for_action_children(
         &self,
         children: &[crate::sppf::SppfId],
         target_id: u8,
     ) -> Option<&[crate::sppf::SppfId]> {
-        for &child in children {
-            if let Some(items) = self.collection_items_for_action_child(child, target_id) {
-                return Some(items);
+        let mut pending: Vec<crate::sppf::SppfId> = children.iter().rev().copied().collect();
+        while let Some(sid) = pending.pop() {
+            match self.sppf.node(sid)? {
+                crate::sppf::SppfNode::CollectionId { id, items } if *id == target_id as u32 => {
+                    return Some(items);
+                },
+                crate::sppf::SppfNode::Packing { children, .. } => {
+                    pending.extend(children.iter().rev().copied());
+                },
+                _ => {},
             }
         }
         None
-    }
-
-    fn coerce_action_child_for_expected_category(
-        &mut self,
-        sid: crate::sppf::SppfId,
-        expected_cat: u16,
-        _cat_src_idx: u16,
-        _local_rule_idx: u16,
-    ) -> Option<crate::sppf::SppfId> {
-        if expected_cat == crate::wpda_runtime::ANY_CAT {
-            return Some(sid);
-        }
-        let produced_cat = match self.sppf.node(sid) {
-            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
-                *non_terminal_tag as u16
-            },
-            _ => {
-                return None;
-            },
-        };
-        if produced_cat == expected_cat {
-            return Some(sid);
-        }
-        let coercion_candidates: Vec<(u16, u16)> = self
-            .engine
-            .single_hop_coercion(produced_cat, expected_cat)
-            .to_vec();
-        let coercion = coercion_candidates
-            .into_iter()
-            .filter(|(coercion_cat, coercion_rule)| {
-                *coercion_cat == expected_cat
-                    && self.action_accepts_single_body_category(
-                        *coercion_cat,
-                        *coercion_rule,
-                        produced_cat,
-                    )
-            })
-            .min_by_key(|(_, coercion_rule)| *coercion_rule);
-        let Some((coercion_cat, coercion_rule)) = coercion else {
-            return None;
-        };
-        let wrapped = self.intern_coercion_over_body(sid, coercion_cat, coercion_rule);
-        wrapped
-    }
-
-    fn coerce_children_for_expected_categories(
-        &mut self,
-        children: &[crate::sppf::SppfId],
-        expected_input_cats: &[u16],
-        cat_src_idx: u16,
-        local_rule_idx: u16,
-    ) -> Option<Vec<crate::sppf::SppfId>> {
-        let mut rewritten = Vec::with_capacity(children.len());
-        let mut expected_idx = 0usize;
-        for &sid in children {
-            if matches!(self.sppf.node(sid), Some(crate::sppf::SppfNode::TriggerTerminal { .. })) {
-                rewritten.push(sid);
-                continue;
-            }
-            let Some(&expected_cat) = expected_input_cats.get(expected_idx) else {
-                return None;
-            };
-            let rewritten_sid = self.coerce_action_child_for_expected_category(
-                sid,
-                expected_cat,
-                cat_src_idx,
-                local_rule_idx,
-            )?;
-            rewritten.push(rewritten_sid);
-            expected_idx += 1;
-        }
-        if expected_idx != expected_input_cats.len() {
-            return None;
-        }
-        Some(rewritten)
     }
 
     fn fire_action_via_transient_without_child_coercions(
@@ -21233,15 +21300,14 @@ where
         usize,
         Vec<crate::sppf::SppfId>,
     )> {
-        self.fire_action_via_transient_inner(cursor, symbol, children, false)
+        self.fire_action_via_transient_prepared(cursor, symbol, children.to_vec())
     }
 
-    fn fire_action_via_transient_inner(
+    fn fire_action_via_transient_prepared(
         &mut self,
         cursor: &BranchCursor<W>,
         symbol: StackSymbolV2,
-        children: &[crate::sppf::SppfId],
-        allow_child_coercions: bool,
+        fire_children: Vec<crate::sppf::SppfId>,
     ) -> Option<(
         Arc<dyn std::any::Any + Send + Sync>,
         Option<u16>,
@@ -21254,16 +21320,6 @@ where
         let arity = entry.arity as usize;
         let action_fn = entry.action_fn;
         let expected_input_cats = entry.expected_input_cats;
-        let fire_children = if allow_child_coercions {
-            self.coerce_children_for_expected_categories(
-                children,
-                expected_input_cats,
-                cat_src_idx,
-                local_rule_idx,
-            )?
-        } else {
-            children.to_vec()
-        };
 
         // Filter TriggerTerminal children — same filter as
         // `realize_packing_call` (line 3739-3746). TriggerTerminals
@@ -21532,21 +21588,24 @@ where
         // ∃-member acceptance IS classic-unfactored behavior (all members run
         // in parallel pre-divergence). `spine_members` is default-empty, so
         // this is a no-op for real rule ids and factoring-off engines.
-        let members = self.engine.spine_members(cat_src_idx, rule_idx);
-        if !members.is_empty() {
-            let members = members.to_vec(); // end the engine borrow
-            return members
-                .into_iter()
-                .any(|m| self.action_accepts_single_body_category(cat_src_idx, m, body_cat));
+        let mut pending = vec![rule_idx];
+        while let Some(rule_idx) = pending.pop() {
+            let members = self.engine.spine_members(cat_src_idx, rule_idx);
+            if !members.is_empty() {
+                pending.extend(members.iter().rev().copied());
+                continue;
+            }
+            let Some(entry) = self.engine.action_for(cat_src_idx, rule_idx) else {
+                continue;
+            };
+            if entry.arity == 1 && entry.expected_input_cats.len() == 1 {
+                let expected = entry.expected_input_cats[0];
+                if expected == crate::wpda_runtime::ANY_CAT || expected == body_cat {
+                    return true;
+                }
+            }
         }
-        let Some(entry) = self.engine.action_for(cat_src_idx, rule_idx) else {
-            return false;
-        };
-        if entry.arity != 1 || entry.expected_input_cats.len() != 1 {
-            return false;
-        }
-        let expected = entry.expected_input_cats[0];
-        expected == crate::wpda_runtime::ANY_CAT || expected == body_cat
+        false
     }
 
     fn category_can_satisfy_expected(&self, produced_cat: u16, expected_cat: u16) -> bool {
@@ -21737,6 +21796,10 @@ where
 // ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+#[path = "../tests/support/wpda_witness_recursive_oracle.rs"]
+mod witness_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
