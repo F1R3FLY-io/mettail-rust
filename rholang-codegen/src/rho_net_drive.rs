@@ -2244,20 +2244,25 @@ pub enum ScionPolicy {
 /// SOUND (a spurious re-check is a redundant `Match`, never a wrong step); only a definite
 /// constructor / arity mismatch licenses the Skip (the graft — the savings).
 fn scion_could_unify(lhs: &Pattern, sub: &Pattern) -> bool {
-    match (lhs, sub) {
-        (Pattern::Term(PatternTerm::Var(_)), _) | (_, Pattern::Term(PatternTerm::Var(_))) => true,
-        (
-            Pattern::Term(PatternTerm::Apply { constructor: c1, args: a1 }),
-            Pattern::Term(PatternTerm::Apply { constructor: c2, args: a2 }),
-        ) => {
-            c1 == c2
-                && a1.len() == a2.len()
-                && a1.iter().zip(a2).all(|(x, y)| scion_could_unify(x, y))
-        },
-        // Any other shape pairing (binder / subst / collection LHS vs a constructor RHS) —
-        // conservatively re-check (sound); the L1 positional cells never reach this arm.
-        _ => true,
+    let mut pending = vec![(lhs, sub)];
+    while let Some((lhs, sub)) = pending.pop() {
+        match (lhs, sub) {
+            (Pattern::Term(PatternTerm::Var(_)), _) | (_, Pattern::Term(PatternTerm::Var(_))) => {},
+            (
+                Pattern::Term(PatternTerm::Apply { constructor: c1, args: a1 }),
+                Pattern::Term(PatternTerm::Apply { constructor: c2, args: a2 }),
+            ) => {
+                if c1 != c2 || a1.len() != a2.len() {
+                    return false;
+                }
+                pending.extend(a1.iter().zip(a2).rev());
+            },
+            // Any other shape pairing (binder / subst / collection LHS vs a constructor RHS) —
+            // conservatively re-check (sound); the L1 positional cells never reach this arm.
+            _ => {},
+        }
     }
+    true
 }
 
 /// Whether the constructor at RHS position `sub` could be a redex root for SOME fireable
@@ -2267,18 +2272,43 @@ fn scion_position_is_recheck(sub: &Pattern, fireable_lhs: &[&Pattern]) -> bool {
     fireable_lhs.iter().any(|lhs| scion_could_unify(lhs, sub))
 }
 
-/// Whether `pat` or any constructor descendant is a re-check position (a σ-slot leaf is
-/// never one). Drives the Skip-vs-recheck partition in [`scion_emit_point`].
-fn scion_contains_recheck(pat: &Pattern, fireable_lhs: &[&Pattern]) -> bool {
-    match pat {
-        Pattern::Term(PatternTerm::Apply { args, .. }) => {
-            scion_position_is_recheck(pat, fireable_lhs)
-                || args
-                    .iter()
-                    .any(|arg| scion_contains_recheck(arg, fireable_lhs))
-        },
-        _ => false,
+/// Cache whether each positional constructor subtree contains a recheck point. The emitter reads
+/// this index repeatedly while walking its one admitted spine; computing it once avoids the former
+/// quadratic sequence of descendant rescans.
+fn scion_recheck_index(root: &Pattern, fireable_lhs: &[&Pattern]) -> HashMap<*const Pattern, bool> {
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        Assemble(&'a Pattern),
     }
+
+    let mut tasks = vec![Task::Visit(root)];
+    let mut contains = HashMap::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(pattern) => {
+                tasks.push(Task::Assemble(pattern));
+                if let Pattern::Term(PatternTerm::Apply { args, .. }) = pattern {
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                }
+            },
+            Task::Assemble(pattern) => {
+                let value = match pattern {
+                    Pattern::Term(PatternTerm::Apply { args, .. }) => {
+                        scion_position_is_recheck(pattern, fireable_lhs)
+                            || args.iter().any(|arg| {
+                                contains
+                                    .get(&(arg as *const Pattern))
+                                    .copied()
+                                    .unwrap_or(false)
+                            })
+                    },
+                    _ => false,
+                };
+                contains.insert(pattern as *const Pattern, value);
+            },
+        }
+    }
+    contains
 }
 
 /// Collect the σ-slot occurrences of `rhs` in left-to-right DFS order, each paired with its
@@ -2291,28 +2321,126 @@ fn scion_collect_slots(
     sigma_set: &HashSet<String>,
     out: &mut Vec<(Vec<usize>, String)>,
 ) -> Result<(), String> {
-    match rhs {
-        Pattern::Term(PatternTerm::Var(name)) => {
-            let name = name.to_string();
-            if sigma_set.contains(&name) {
-                out.push((path.clone(), name));
-                Ok(())
-            } else {
-                Err(format!("scion: RHS variable {name:?} is not a σ capture (dangling)"))
-            }
-        },
-        Pattern::Term(PatternTerm::Apply { args, .. }) => {
-            for (index, arg) in args.iter().enumerate() {
-                path.push(index);
-                scion_collect_slots(arg, path, sigma_set, out)?;
-                path.pop();
-            }
-            Ok(())
-        },
-        _ => Err("scion: non-positional RHS shape (binder / substitution / collection) is not \
-             driver-scion-supported this stage"
-            .to_string()),
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        Enter { pattern: &'a Pattern, child_index: usize },
+        Truncate(usize),
     }
+
+    let initial_path_len = path.len();
+    let mut tasks = vec![Task::Visit(rhs)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(name))) => {
+                let name = name.to_string();
+                if sigma_set.contains(&name) {
+                    out.push((path.clone(), name));
+                } else {
+                    path.truncate(initial_path_len);
+                    return Err(format!(
+                        "scion: RHS variable {name:?} is not a σ capture (dangling)"
+                    ));
+                }
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { args, .. })) => {
+                tasks.extend(
+                    args.iter()
+                        .enumerate()
+                        .rev()
+                        .map(|(child_index, pattern)| Task::Enter { pattern, child_index }),
+                );
+            },
+            Task::Visit(_) => {
+                path.truncate(initial_path_len);
+                return Err(
+                    "scion: non-positional RHS shape (binder / substitution / collection) is not \
+                     driver-scion-supported this stage"
+                        .to_string(),
+                );
+            },
+            Task::Enter { pattern, child_index } => {
+                let parent_len = path.len();
+                path.push(child_index);
+                tasks.push(Task::Truncate(parent_len));
+                tasks.push(Task::Visit(pattern));
+            },
+            Task::Truncate(len) => path.truncate(len),
+        }
+    }
+    debug_assert_eq!(path.len(), initial_path_len);
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum ScionLeafMode<'a> {
+    Joined(&'a HashMap<Vec<usize>, usize>),
+    Raw,
+}
+
+/// Rebuild one positional scion subtree using a shared explicit post-order PDA. `Joined` resolves
+/// leaves by path to their driven `s#` value; `Raw` resolves the original σ capture by name.
+fn scion_build_pattern(
+    pat: &Pattern,
+    initial_path: &[usize],
+    mode: ScionLeafMode<'_>,
+    env: &Env,
+    fingerprint: &str,
+) -> Node {
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        Enter { pattern: &'a Pattern, child_index: usize },
+        Truncate(usize),
+        Assemble { label: String, child_count: usize },
+    }
+
+    let mut path = initial_path.to_vec();
+    let mut tasks = vec![Task::Visit(pat)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(name))) => {
+                values.push(match mode {
+                    ScionLeafMode::Joined(slot_index) => {
+                        let idx = slot_index.get(&path).copied().unwrap_or(0);
+                        env.var(&format!("s{idx}"))
+                    },
+                    ScionLeafMode::Raw => env.var(&name.to_string()),
+                });
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { constructor, args })) => {
+                tasks.push(Task::Assemble {
+                    label: constructor.to_string(),
+                    child_count: args.len(),
+                });
+                tasks.extend(
+                    args.iter()
+                        .enumerate()
+                        .rev()
+                        .map(|(child_index, pattern)| Task::Enter { pattern, child_index }),
+                );
+            },
+            Task::Visit(_) => {
+                values.push(tagged(fingerprint, "^scion-bug", Vec::new()));
+            },
+            Task::Enter { pattern, child_index } => {
+                let parent_len = path.len();
+                path.push(child_index);
+                tasks.push(Task::Truncate(parent_len));
+                tasks.push(Task::Visit(pattern));
+            },
+            Task::Truncate(len) => path.truncate(len),
+            Task::Assemble { label, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("scion-build PDA lost a child result");
+                let children = values.split_off(first_child);
+                values.push(tagged(fingerprint, &label, children));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("scion-build PDA produced no result")
 }
 
 /// Rebuild the reflected value of a PURE (no re-check) RHS subtree at `env`: a σ-slot leaf
@@ -2326,27 +2454,7 @@ fn scion_build_pure(
     env: &Env,
     fingerprint: &str,
 ) -> Node {
-    match pat {
-        Pattern::Term(PatternTerm::Var(_)) => {
-            let idx = slot_index.get(path).copied().unwrap_or(0);
-            env.var(&format!("s{idx}"))
-        },
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            let label = constructor.to_string();
-            let children: Vec<Node> = args
-                .iter()
-                .enumerate()
-                .map(|(index, arg)| {
-                    let mut child_path = path.to_vec();
-                    child_path.push(index);
-                    scion_build_pure(arg, &child_path, slot_index, env, fingerprint)
-                })
-                .collect();
-            tagged(fingerprint, &label, children)
-        },
-        // Unreachable: `scion_collect_slots` fail-closed on every other shape before build.
-        _ => tagged(fingerprint, "^scion-bug", Vec::new()),
-    }
+    scion_build_pattern(pat, path, ScionLeafMode::Joined(slot_index), env, fingerprint)
 }
 
 /// Rebuild the reflected value of a RECHECK subtree in RAW form (design v2 §1.2 `build_raw`):
@@ -2359,19 +2467,7 @@ fn scion_build_pure(
 /// `env` MUST be the drive-point frame where σ is in scope (R-9 frame discipline — NOT a detached
 /// ground context; the σ names live in the arm frame the reassembly threads through).
 fn scion_build_raw(pat: &Pattern, env: &Env, fingerprint: &str) -> Node {
-    match pat {
-        Pattern::Term(PatternTerm::Var(name)) => env.var(&name.to_string()),
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            let label = constructor.to_string();
-            let children: Vec<Node> = args
-                .iter()
-                .map(|arg| scion_build_raw(arg, env, fingerprint))
-                .collect();
-            tagged(fingerprint, &label, children)
-        },
-        // Unreachable: `scion_collect_slots` fail-closed on every other shape before build.
-        _ => tagged(fingerprint, "^scion-bug", Vec::new()),
-    }
+    scion_build_pattern(pat, &[], ScionLeafMode::Raw, env, fingerprint)
 }
 
 /// Emit the demand-driven DRIVE-POINT of a recheck subtree (design v2 §1.2 — the head-inspection
@@ -2431,6 +2527,50 @@ fn scion_slot_is_bare(rhs: &Pattern, slot_path: &[usize], fireable_lhs: &[&Patte
     true
 }
 
+struct ScionSkipFrame<'a> {
+    pattern: &'a Pattern,
+    label: String,
+    recheck_child: usize,
+    path_len: usize,
+}
+
+/// Graft the explicit Skip spine back around a terminal pure value or drive point. Pure siblings
+/// are reconstructed at the terminal environment, and the recheck child is moved into place once
+/// rather than cloned at every level.
+fn scion_wrap_skip_spine(
+    mut value: Node,
+    frames: &[ScionSkipFrame<'_>],
+    terminal_path: &[usize],
+    slot_index: &HashMap<Vec<usize>, usize>,
+    env: &Env,
+    fingerprint: &str,
+) -> Node {
+    let mut path = terminal_path.to_vec();
+    for frame in frames.iter().rev() {
+        path.truncate(frame.path_len);
+        let Pattern::Term(PatternTerm::Apply { args, .. }) = frame.pattern else {
+            unreachable!("a scion Skip frame is always an application")
+        };
+        let mut selected = Some(value);
+        let mut children = Vec::with_capacity(args.len());
+        for (index, arg) in args.iter().enumerate() {
+            if index == frame.recheck_child {
+                children.push(
+                    selected
+                        .take()
+                        .expect("scion Skip frame selected its child more than once"),
+                );
+            } else {
+                path.push(index);
+                children.push(scion_build_pure(arg, &path, slot_index, env, fingerprint));
+                path.truncate(frame.path_len);
+            }
+        }
+        value = tagged(fingerprint, &frame.label, children);
+    }
+    value
+}
+
 /// Reassemble `pat`'s value in the demand-driven scion bundle (design v2 §1.2), threading a
 /// continuation `tail` (given this position's value node + the env it is live in, produce the
 /// rest). Partitions each position into the three v2 roles:
@@ -2461,82 +2601,86 @@ fn scion_emit_point(
     next_index: &std::cell::Cell<usize>,
     tail: &dyn Fn(Node, &Env) -> Result<Node, String>,
 ) -> Result<Node, String> {
-    // PURE (no recheck anywhere below) → graft directly (bare σ-slots → joined NF `s{i}`).
-    if !scion_contains_recheck(pat, fireable_lhs) {
-        return tail(scion_build_pure(pat, path, slot_index, env, fingerprint), env);
-    }
-    // Contains a recheck ⟹ `pat` is an `Apply` (a σ-slot leaf never contains one).
-    let Pattern::Term(PatternTerm::Apply { constructor, args }) = pat else {
-        return Err("scion: re-check at a non-constructor RHS position".to_string());
+    let recheck_index = scion_recheck_index(pat, fireable_lhs);
+    let contains_recheck = |pattern: &Pattern| {
+        recheck_index
+            .get(&(pattern as *const Pattern))
+            .copied()
+            .unwrap_or(false)
     };
-    let label = constructor.to_string();
-    // RECHECK subtree root — the whole subtree is ONE demand-driven drive-point.
-    if scion_position_is_recheck(pat, fireable_lhs) {
-        // FOLD 3 (kept): a nested recheck (recheck strictly below this recheck root) is
-        // unsupported this stage — `build_raw` reassembles the subtree raw and cannot host a
-        // second drive-point below it. Fail closed.
-        if args
-            .iter()
-            .any(|arg| scion_contains_recheck(arg, fireable_lhs))
-        {
-            return Err(
-                "scion: nested re-check (re-check above a re-check) unsupported this stage"
-                    .to_string(),
+    let mut current = pat;
+    let mut current_path = path.to_vec();
+    let mut frames = Vec::new();
+
+    loop {
+        // PURE (no recheck anywhere below) → graft it and the accumulated Skip spine directly.
+        if !contains_recheck(current) {
+            let value = scion_build_pure(current, &current_path, slot_index, env, fingerprint);
+            let value =
+                scion_wrap_skip_spine(value, &frames, &current_path, slot_index, env, fingerprint);
+            return tail(value, env);
+        }
+
+        let Pattern::Term(PatternTerm::Apply { constructor, args }) = current else {
+            return Err("scion: re-check at a non-constructor RHS position".to_string());
+        };
+        let label = constructor.to_string();
+        if scion_position_is_recheck(current, fireable_lhs) {
+            if args.iter().any(|arg| contains_recheck(arg)) {
+                return Err(
+                    "scion: nested re-check (re-check above a re-check) unsupported this stage"
+                        .to_string(),
+                );
+            }
+            let terminal_path = current_path.clone();
+            let wrapped_tail = |value: Node, tail_env: &Env| -> Result<Node, String> {
+                let value = scion_wrap_skip_spine(
+                    value,
+                    &frames,
+                    &terminal_path,
+                    slot_index,
+                    tail_env,
+                    fingerprint,
+                );
+                tail(value, tail_env)
+            };
+            return scion_emit_recheck_point(
+                current,
+                fingerprint,
+                env,
+                fuel_var,
+                next_index,
+                &wrapped_tail,
             );
         }
-        return scion_emit_recheck_point(pat, fingerprint, env, fuel_var, next_index, tail);
-    }
-    // A SKIP constructor above a recheck. FOLD 1 (R-3): reject the inert graft when the ctor is
-    // ever a rule redex root — after its reducible child normalizes it could BECOME a redex that
-    // control fires, so grafting it inert would under-reduce (fail closed → `ContractumRedrive`).
-    if redex_root_ctors.contains(&label) {
-        return Err(format!(
-            "scion: inert-graft rootedness (Fold 1) — Skip ctor {label:?} is a rule redex root \
-             above a reducible subtree; grafting it inert could under-reduce vs control"
-        ));
-    }
-    // FOLD 3 (kept): branching recheck (>1 recheck-bearing child) unsupported this stage.
-    let non_pure: Vec<usize> = (0..args.len())
-        .filter(|&i| scion_contains_recheck(&args[i], fireable_lhs))
-        .collect();
-    if non_pure.len() > 1 {
-        return Err(
-            "scion: branching re-check (>1 re-check child) unsupported this stage".to_string()
-        );
-    }
-    // Recurse into the single recheck-bearing child, grafting THIS constructor around the result
-    // (pure siblings built with bare-slot NFs at the tail env).
-    let j = non_pure[0];
-    let mut child_path = path.to_vec();
-    child_path.push(j);
-    let child_tail = |child_value: Node, tail_env: &Env| -> Result<Node, String> {
-        let children: Vec<Node> = args
+
+        if redex_root_ctors.contains(&label) {
+            return Err(format!(
+                "scion: inert-graft rootedness (Fold 1) — Skip ctor {label:?} is a rule redex root \
+                 above a reducible subtree; grafting it inert could under-reduce vs control"
+            ));
+        }
+        let mut non_pure = args
             .iter()
             .enumerate()
-            .map(|(index, arg)| {
-                if index == j {
-                    child_value.clone()
-                } else {
-                    let mut cp = path.to_vec();
-                    cp.push(index);
-                    scion_build_pure(arg, &cp, slot_index, tail_env, fingerprint)
-                }
-            })
-            .collect();
-        tail(tagged(fingerprint, &label, children), tail_env)
-    };
-    scion_emit_point(
-        &args[j],
-        &child_path,
-        slot_index,
-        fireable_lhs,
-        redex_root_ctors,
-        fingerprint,
-        env,
-        fuel_var,
-        next_index,
-        &child_tail,
-    )
+            .filter_map(|(index, arg)| contains_recheck(arg).then_some(index));
+        let child_index = non_pure
+            .next()
+            .expect("a recheck-containing Skip node has a recheck-containing child");
+        if non_pure.next().is_some() {
+            return Err(
+                "scion: branching re-check (>1 re-check child) unsupported this stage".to_string()
+            );
+        }
+        frames.push(ScionSkipFrame {
+            pattern: current,
+            label,
+            recheck_child: child_index,
+            path_len: current_path.len(),
+        });
+        current_path.push(child_index);
+        current = &args[child_index];
+    }
 }
 
 /// Build the E-1 scion bundle Node for one positional structural (`BaseRewrite`) arm (design v2
@@ -3151,6 +3295,10 @@ pub(crate) fn hashbag_collection_ops(def: &LanguageDef) -> Vec<String> {
 #[cfg(test)]
 #[path = "../tests/support/rho_net_drive_pattern_recursive_oracle.rs"]
 mod pattern_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/scion_recursive_oracle.rs"]
+mod scion_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
