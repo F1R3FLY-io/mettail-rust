@@ -153,7 +153,7 @@ Every symbol, acronym and term used later, defined before first use.
 | **`fold`** | — | a rule annotation: reduce eagerly to a native value when all operands are values |
 | **`step`** | — | a rule annotation: keep the rule as a small-step / congruence-driven reduction |
 | **stuck term** | — | a redex that matches a rule whose side condition fails, so it never reduces and is a normal form with no value |
-| **safe arithmetic** | — | the `SafeArith` trait: every partial operation returns `Option`, `None` where the mathematics is undefined or the result is unrepresentable |
+| **safe arithmetic** | — | the `SafeArith` trait: every partial operation returns `Result<T, Partiality>`, distinguishing undefined inputs, carrier limits, and structural deferral |
 | **injection** / **promotion** | — | a lossless embedding of one carrier into a wider one, e.g. $`\mathbb{Z} \hookrightarrow \mathbb{Q}`$ |
 | **inert grouping** | — | `(` … `)`: Calculator declares no rule for it, so it denotes nothing and may be added or removed freely |
 
@@ -621,18 +621,19 @@ replaces each partial operation with its `SafeArith` counterpart threaded throug
 | `a - b`, `a * b`, `a / b`, `a % b` | `safe_sub` / `safe_mul` / `safe_div` / `safe_rem`, each `?`-threaded |
 | unary `-a` | `safe_neg(a)?` |
 | `a.pow(n)`, `.powi`, `.powf` | `safe_pow` / `safe_powf` |
-| `.product::<T>()`, `.sum::<T>()` | `safe_product` / `safe_sum`, short-circuiting on the first `None` |
+| `.product::<T>()`, `.sum::<T>()` | `safe_product` / `safe_sum`, short-circuiting on the first reported error |
 | `.sqrt() .ln() .log2() .log10() .exp() .sin() .cos() .tan() .asin() .acos() .atan()` | the `SafeFloat` equivalents |
 | `== != < > && \|\| ! & \| ^ << >>` | **left alone** — these do not overflow in a way the evaluator must model |
 
-The whole body is then wrapped in `(|| -> Option<_> { Some(#rewritten) })()`, so every native body
-has type `Option<T>` and every emission site can test it uniformly. That is why `AddInt`'s body is
-the three characters `a + b` and still cannot panic on overflow, and it is why the spec's own comment
-at `:322`–`:326` says manual `checked_*` calls are unnecessary.
+The whole body is wrapped in a `Result<_, Partiality>` closure. The report-producing evaluator
+classifies that result as ran, deferred, or declined and records the precise decline reason. The
+legacy `try_eval() -> Option<_>` projection intentionally discards the reason only at its public
+compatibility boundary. That is why `AddInt`'s body can remain `a + b` without panicking on
+overflow.
 
-Two rules opt into the same protocol *by hand*, returning `Option` directly rather than relying on
-the rewrite: `Fact` returns `None` for a negative argument, and `Fraction` returns whatever
-`CanonicalBigRat::try_from_nd` gives, which is `None` for a zero denominator.
+Two rules still return `Option` directly: `Fact` for a negative argument and `Fraction` for a zero
+denominator. `Lift<Option<T>>` converts either `None` to `Partiality::Unreported`, making these
+remaining reason-less sites visible in a report instead of silently conflating them with deferral.
 
 ---
 
@@ -1110,24 +1111,20 @@ DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold;
 __EvalFrame::ReduceDivInt => {
     let b = values.pop().expect("PDA same-cat value");
     let a = values.pop().expect("PDA same-cat value");
-    match (|| -> Option<_> {
+    match Result::ok((|| -> Result<_, mettail_runtime::Partiality> {
         let __mettail_lifted = Lift(<_ as SafeArith>::safe_div(a, b)?).lift();
         __mettail_lifted
-    })() {
+    })()) {
         Some(__v) => values.push(__v),
         None => return None,
     }
 }
 ```
 
-`SafeArith for i32` delegates to the standard library's checked family, and its contract is stated
-in the module:
-
-> Division and remainder by zero return `None`; signed $`i_{\min}`$ divided or remaindered by $`-1`$
-> overflows and also returns `None`.
-
-So `safe_div(5, 0) = None`, and so does `safe_div(i32::MIN, -1)` — the second case being the one
-readers forget.
+`SafeArith for i32` delegates to the standard library's checked family but preserves the reason:
+`safe_div(5, 0)` is `Undefined(DivisionByZero)`, whereas `safe_div(i32::MIN, -1)` is
+`NotRepresentable { operation: "div", carrier: "i32" }`. Both project to `None` through the
+compatibility `try_eval()` API, but the checked Dovetail report keeps them distinct.
 
 ### 10.2 The three dispositions
 
@@ -1194,7 +1191,8 @@ appears in exactly one generated module, `eval.rs`. A zero denominator therefore
 | `Neg` | $`-i32_{\min}`$ | `safe_neg` |
 | `PowInt` | exponent negative; result leaves `i32` | `safe_pow`; note the exponent is `b as u32`, so a negative `b` wraps to a huge exponent and overflows to `None` |
 | `Fact` | argument negative (returns `None` by hand); $`13! > i32_{\max}`$ | hand-written guard, then `safe_product` |
-| `AddFloat`, `MulFloat`, … | the result is `NaN` | `SafeArith for f64` returns `None` on `NaN` and preserves $`\pm\infty`$ |
+| `AddFloat`, `MulFloat`, … | the result is `NaN` | `SafeArith for f64` returns `Undefined(NotANumber)` and preserves $`\pm\infty`$ |
+| fixed-point binary arithmetic | operand scales differ | `Undefined(FixedPointScaleMismatch)`; explicit `fixed(value, places)` is the migration |
 | `DivBigRat` | denominator 0 | `safe_div` on `CanonicalBigRat` |
 | `Fraction` | denominator 0 | `try_from_nd` returns `None` |
 | `AddUInt32` | the sum leaves `u32` | `safe_add` |

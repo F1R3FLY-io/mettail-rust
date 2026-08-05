@@ -2475,20 +2475,21 @@ mod native_ops {
 
         #[test]
         fn fixed_arithmetic_add_sub_mul() {
-            assert_reduces_to("1p0 + 0.5p1", "1.5p1");
+            assert_reduces_to("1.0p1 + 0.5p1", "1.5p1");
             assert_reduces_to("2.0p1 - 0.5p1", "1.5p1");
             assert_reduces_to("3p0 * 2p0", "6p0");
+            assert_reduces_to("1p0 + 0.5p1", "error");
             assert_normal_form_display("-10p1", "-10.0p1");
         }
 
         #[test]
         fn fixed_div_by_zero_is_error() {
-            assert_reduces_to("10p1 / 0p0", "error");
+            assert_reduces_to("10p1 / 0p1", "error");
         }
 
         #[test]
         fn fixed_mod_by_zero_is_error() {
-            assert_reduces_to("10p1 % 0p0", "error");
+            assert_reduces_to("10p1 % 0p1", "error");
         }
 
         #[test]
@@ -2673,7 +2674,8 @@ mod native_ops {
         #[test]
         fn fixed_and_or_not() {
             assert_normal_form_display("bitnot 0p0", "-1p0");
-            assert_reduces_to("15p0 bitand 14p1", "13.2p1");
+            assert_reduces_to("15p0 bitand 14p1", "error");
+            assert_reduces_to("fixed(15p0, 1) bitand 14p1", "13.2p1");
         }
 
         #[test]

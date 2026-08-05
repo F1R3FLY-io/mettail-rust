@@ -1,34 +1,16 @@
-//! Does the Dovetail e-graph's hashcons collapse two fixed-point literals that differ in
-//! `places`, and does a scale-reading operator then observe the SURVIVOR?
+//! Fixed-point scale identity and explicit-rescaling regression gates.
 //!
-//! ★★ **It did until 2026-07-30. Work item #200 closed it, and this file is now the gate that
-//! keeps it closed.** Every test below was written against the defect; the ones that read the
-//! mechanism have been INVERTED, the two that pinned the wrong answers have been retired into
-//! [`the_answer_must_not_depend_on_an_equal_value_sibling`]'s doc, and the invariant that was
-//! pre-staged commented-out is now LIVE.
+//! Before work item #200, `CanonicalFixedPoint` keyed identity on its reduced rational value. The
+//! Dovetail hashcons therefore merged equal-number literals such as `7.00p2` and `7.0p1`, even
+//! though scale-sensitive division produced `2.33p2` and `2.3p1`. The first-inserted spelling
+//! could change an unrelated expression's result.
 //!
-//! # The exposure, as it was
+//! Identity now keys on the raw `(unscaled, places)` pair, exactly like upstream Rholang's
+//! structural `GFixedPoint`. The gates below establish three consequences:
 //!
-//! `mettail_runtime::CanonicalFixedPoint` used to key `PartialEq`, `Ord` and `Hash` on
-//! `value_ratio()` — the reduced rational `unscaled / 10^places`. So `7.00p2` and `7.0p1` were
-//! `Eq`-equal and hashed identically: both are the rational `7/1`. But `align_pair`
-//! (`runtime/src/canonical_fixed_point.rs:93`) reads `places` directly, and its callers —
-//! `checked_div` (`:104`), `checked_rem` (`:197`), `Add::add` (`:312`), `Sub::sub` (`:320`) —
-//! plus `bitwise_aligned` (`:205`, for `BitAnd` `:360` / `BitOr` `:367` / `BitXor` `:374`),
-//! `Mul::mul` (`:329`) and `Neg::neg` (`:353`) all distinguish them:
-//!
-//! ```text
-//!   7.00p2 / 3.00p2 = 2.33p2 = 233/100
-//!   7.0p1  / 3.0p1  = 2.3p1  =  23/10
-//! ```
-//!
-//! `233/100 != 23/10`, so `/` was not a function on this type's own `Eq` classes.
-//!
-//! ⚠ **Those coordinates are the SECOND set this header has carried.** The first cited `:139`,
-//! `:153`, `:159`, `checked_rem :115`, `bitwise_aligned :128`, `Add :231`, `Sub :239` — every
-//! one of them wrong, and wrong on the day the file was written, while the SAME file's
-//! `sibling_enumeration` doc carried the correct ones. Two coordinate systems in one file. The
-//! set above is re-derived at `7fad51db`; re-derive again rather than trusting it.
+//! 1. different scales remain distinct e-nodes regardless of insertion order;
+//! 2. equal-scale expressions do not depend on equal-number siblings at other scales; and
+//! 3. `fixed(value, places)` is an observable scale-repair operation, including for zero.
 //!
 //! # The mechanism (named, not assumed)
 //!
@@ -48,7 +30,7 @@
 //! `Fixed_FixedLit(CanonicalFixedPoint)`. So the hashcons key for a fixed-point literal leaf IS
 //! `CanonicalFixedPoint::{eq,hash}`.
 //!
-//! ⇒ **The repair is at the key, not at the e-graph.** Work item #200 moved `Eq`/`Hash`/`Ord`
+//! The repair is at the key, not at the e-graph. Work item #200 moved `Eq`/`Hash`/`Ord`
 //! onto the raw `(unscaled, places)` pair, so `7.00p2` and `7.0p1` no longer hash alike and the
 //! memo no longer conflates them. Nothing in `dovetail` changed.
 //!
@@ -70,8 +52,8 @@
 //!   __ex.kth(__eg.find(__cls_a), 0).value?
 //! ```
 //!
-//! So whichever `places` survives the hashcons is the `places` that reaches `align_pair` — and
-//! the fix is that nothing is eliminated, so what survives is what was written.
+//! The fix ensures nothing is eliminated: each fixed-point value retains the scale that was
+//! written, while mixed-scale binary operations now refuse before evaluation.
 #![cfg(all(feature = "calculator", feature = "dovetail-codegen"))]
 
 use dovetail::egraph::{EGraph, ENode};
@@ -207,59 +189,39 @@ fn surviving_places_is_order_independent() {
 /// the two scales computed the same quotient, conflating them would have been harmless.
 #[test]
 fn the_two_scales_compute_different_quotients() {
-    let p2 = fixed("7.00p2").checked_div(fixed("3.00p2")).expect("nonzero divisor");
-    let p1 = fixed("7.0p1").checked_div(fixed("3.0p1")).expect("nonzero divisor");
+    let p2 = fixed("7.00p2")
+        .checked_div(fixed("3.00p2"))
+        .expect("nonzero divisor");
+    let p1 = fixed("7.0p1")
+        .checked_div(fixed("3.0p1"))
+        .expect("nonzero divisor");
     assert_eq!(format!("{p2}"), "2.33p2");
     assert_eq!(format!("{p1}"), "2.3p1");
     assert_ne!(p2, p1, "233/100 != 23/10 — a genuine value difference, not a rendering one");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PROBE B — the end-to-end A/B through the production `dovetail_normal_term`.
-//
-// Carrier: `(x - x) - (y - y)` is rationally `0p0`, and `0p0 + q` re-aligns to `q.places`, so
-// the observable is EXACTLY the quotient. The carrier's only job is to put `x`/`y` literal
-// leaves into the e-graph BEFORE the divide's operands are lowered.
-// ─────────────────────────────────────────────────────────────────────────────
-
 fn normal_form(src: &str) -> Result<String, String> {
     mettail_runtime::clear_var_cache();
     let lang = CalculatorLanguage;
-    let term = lang.parse_term(src).map_err(|e| format!("parse error: {e}"))?;
+    let term = lang
+        .parse_term(src)
+        .map_err(|e| format!("parse error: {e}"))?;
     let normal = CalculatorLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
         .map_err(|e| format!("dovetail_normal_term error: {e}"))?;
     Ok(format!("{normal}"))
 }
 
-/// P0 — the baseline. No sibling literal at all.
-const P0: &str = "7.00p2 / 3.00p2";
-/// P0' — size-matched control: siblings present but SAME scale. Isolates "one more term".
-const P0_SAME_SCALE: &str =
-    "((7.00p2 - 7.00p2) - (3.00p2 - 3.00p2)) + (7.00p2 / 3.00p2)";
-/// P1 — the A/B: siblings of EQUAL VALUE but LOWER SCALE, lowered first.
-const P1_LOWER_SCALE_FIRST: &str = "((7.0p1 - 7.0p1) - (3.0p1 - 3.0p1)) + (7.00p2 / 3.00p2)";
-/// P2 — order control: the same siblings, but AFTER the divide.
-const P2_LOWER_SCALE_LAST: &str = "(7.00p2 / 3.00p2) + ((7.0p1 - 7.0p1) - (3.0p1 - 3.0p1))";
-/// P3 — negative control: siblings of a DIFFERENT value. Must not move the answer.
-const P3_DIFFERENT_VALUE: &str = "((5.0p1 - 5.0p1) - (2.0p1 - 2.0p1)) + (7.00p2 / 3.00p2)";
-
 // ─────────────────────────────────────────────────────────────────────────────
-// The SECOND carrier set (Q0–Q3), added 2026-07-30 alongside the fix.
+// End-to-end carriers through production `dovetail_normal_term`.
 //
-// Why a second set, when P0–P3 above already witnessed the defect and now pin the repair: the
-// P-carriers rely on `(x - x) - (y - y)` normalizing to `0p0` and on `0p0 + q` re-aligning to
-// `q.places`. That is a MIXED-SCALE addition, so if upstream's scale-equality refusal is ever
-// adopted (work item #186) every P-program becomes `error` and this gate goes VACUOUSLY GREEN —
-// a passing test that measures nothing, which is the worst possible outcome for a gate.
-//
-// The Q-carriers use a non-zero rescale instead, so every binary operation in them has
-// equal-scale operands and they survive that precondition. They are pre-positioned, not
-// speculative: they are measured here today.
+// Every binary operation has equal-scale operands. Explicit `fixed(..., 2)` conversions make the
+// scale-repair mechanism part of the gate; the obsolete mixed-scale zero carriers were retired
+// when upstream's scale-equality precondition landed.
 //
 // ⚠ Both operands of the divide need an equal-value lower-scale sibling. A carrier supplying
 // only ONE (say `7.0p1`, leaving `3.00p2` with no p1 twin) does NOT reproduce the defect —
-// `align_pair` still lifts to `max(places) = 2` and the quotient is unchanged. MEASURED, and it
-// refuted the first draft of this carrier: `fixed((7.0p1 - 4.0p1), 2) + (7.00p2 / 3.00p2)`
+// the p2 quotient is unchanged. This refuted the first draft of the carrier:
+// `fixed((7.0p1 - 4.0p1), 2) + (7.00p2 / 3.00p2)`
 // answers `5.33p2` both before AND after the fix, so it discriminates nothing.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -274,121 +236,15 @@ const Q2_LOWER_SCALE_LAST: &str = "(7.00p2 / 3.00p2) + fixed((7.0p1 - 3.0p1), 2)
 /// divide's 7 and 3.
 const Q3_DIFFERENT_VALUE: &str = "fixed((5.0p1 - 1.0p1), 2) + (7.00p2 / 3.00p2)";
 
-/// Diagnostic: print every program's normal form (or its error) in ONE run, so the A/B table
-/// can be read off a single output rather than reconstructed from five failures.
-#[test]
-fn ab_table_diagnostic() {
-    let rows = [
-        ("P0  baseline           ", P0),
-        ("P0' same-scale sibling ", P0_SAME_SCALE),
-        ("P1  lower-scale FIRST  ", P1_LOWER_SCALE_FIRST),
-        ("P2  lower-scale LAST   ", P2_LOWER_SCALE_LAST),
-        ("P3  different value    ", P3_DIFFERENT_VALUE),
-        ("Q0  same-scale rescale ", Q0_SAME_SCALE),
-        ("Q1  lower-scale FIRST  ", Q1_LOWER_SCALE_FIRST),
-        ("Q2  lower-scale LAST   ", Q2_LOWER_SCALE_LAST),
-        ("Q3  different value    ", Q3_DIFFERENT_VALUE),
-    ];
-    let mut report = String::new();
-    for (name, src) in rows {
-        let outcome = match normal_form(src) {
-            Ok(nf) => nf,
-            Err(e) => format!("<{e}>"),
-        };
-        report.push_str(&format!("{name} {src:<62} => {outcome}\n"));
-    }
-    eprintln!("\n=== fixed-point scale dedup A/B ===\n{report}");
-    assert!(
-        normal_form(P0).is_ok(),
-        "the BASELINE must at least evaluate, else the instrument is broken:\n{report}"
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THE GATE. ★★ TURNED LIVE 2026-07-30 by work item #200.
-//
-// Until then this section held two tests that PINNED A DEFECT — they were green because the
-// product was wrong — plus the correct invariant, commented out because it was red. The two
-// witnesses have been retired (their assertions are quoted verbatim in the invariant's doc
-// below, so nothing is lost) and the invariant is now live.
-//
-// This gate reads only the production `dovetail_normal_term` path.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// ★★ THE INVARIANT. A scale-reading operator's answer must not depend on whether an
-/// EQUAL-VALUE, different-scale sibling literal happens to appear elsewhere in the program, nor
-/// on the textual ORDER in which it appears.
-///
-/// This was pre-staged commented-out (it was red) with the note *"the correct assertion is
-/// already written and reviewed when the fix lands"*. It lands here.
-///
-/// # ⚠ What it replaces — the two retired witnesses, verbatim
-///
-/// The defect they pinned is quoted in full rather than deleted, so a future reader can see
-/// exactly what the product used to compute and cannot mistake the repair for a re-blessing.
-///
-/// `witness_equal_value_sibling_changes_the_quotient` asserted:
-///
-/// ```text
-/// assert_eq!(p0,      "2.33p2", "baseline 7/3 truncated at scale 2");
-/// assert_eq!(p0_same, "2.33p2", "control (a-size): a SAME-scale sibling must not move it");
-/// assert_eq!(p3,      "2.33p2", "control (b-negative): a DIFFERENT-VALUE sibling …");
-/// assert_eq!(p1,      "2.3p1",  "⚠ WITNESS: an equal-value LOWER-SCALE sibling (7.0p1/3.0p1)
-///                                seeds the hashcons first (dovetail/src/egraph.rs:292), so the
-///                                divide's operands resolve to the p1 survivors and align_pair
-///                                truncates one digit shallower");
-/// assert_ne!(p0, p1,            "⚠ 233/100 != 23/10 — a genuine VALUE difference");
-/// ```
-///
-/// `witness_the_quotient_depends_on_textual_order` asserted:
-///
-/// ```text
-/// assert_eq!(p1, "2.3p1",  "siblings FIRST => the p1 representative survives");
-/// assert_eq!(p2, "2.33p2", "siblings LAST => the p2 representative survives");
-/// assert_ne!(p1, p2,       "⚠ WITNESS: P1 and P2 differ ONLY in the order of two summands of
-///                           `+`, yet the quotient differs. Fixed-point `/` is not invariant
-///                           under reordering of unrelated siblings.");
-/// ```
-///
-/// And the originally-observed RED failure of THIS assertion was:
-///
-/// ```text
-/// assertion `left == right` failed: adding an equal-value, different-scale sibling literal
-/// changed the quotient
-///   left: "2.33p2"
-///  right: "2.3p1"
-/// ```
-#[test]
-fn the_answer_must_not_depend_on_an_equal_value_sibling() {
-    let p0 = normal_form(P0).expect("P0");
-    let p0_same = normal_form(P0_SAME_SCALE).expect("P0'");
-    let p1 = normal_form(P1_LOWER_SCALE_FIRST).expect("P1");
-    let p2 = normal_form(P2_LOWER_SCALE_LAST).expect("P2");
-    let p3 = normal_form(P3_DIFFERENT_VALUE).expect("P3");
-
-    assert_eq!(p0, "2.33p2", "the baseline is unmoved: 7/3 truncated at scale 2");
-    assert_eq!(
-        p1, p0,
-        "★ THE FIX: an equal-value LOWER-SCALE sibling no longer changes the quotient. This \
-         answered `2.3p1` before work item #200",
-    );
-    assert_eq!(
-        p2, p1,
-        "★ …nor does the ORDER in which it appears. P1 and P2 differ only in the order of two \
-         summands of `+`; before the fix they answered `2.3p1` and `2.33p2`",
-    );
-    assert_eq!(p0_same, p0, "control (a-size): a SAME-scale sibling never moved it");
-    assert_eq!(p3, p0, "control (b-negative): a DIFFERENT-VALUE sibling never moved it");
-}
-
-/// ★★ The same invariant on the Q-carriers, which have no mixed-scale operation in them and so
-/// cannot go vacuous under a future scale-equality precondition (work item #186). See the
-/// Q-constants' banner for why the P-carriers alone are not enough.
+/// A scale-reading operator's answer does not depend on an equal-number, different-scale sibling
+/// elsewhere in the program or on the sibling's textual order. All binary operations in these
+/// carriers have equal scales, so the gate cannot pass merely because mixed-scale evaluation
+/// refused.
 ///
 /// ⚠ Q1's pre-fix value is MEASURED, not assumed: `6.3p1`, against `6.33p2` for the other
 /// three. It really did discriminate.
 #[test]
-fn the_answer_must_not_depend_on_an_equal_value_sibling_q_carriers() {
+fn the_answer_must_not_depend_on_an_equal_value_sibling() {
     let q0 = normal_form(Q0_SAME_SCALE).expect("Q0");
     let q1 = normal_form(Q1_LOWER_SCALE_FIRST).expect("Q1");
     let q2 = normal_form(Q2_LOWER_SCALE_LAST).expect("Q2");
@@ -402,6 +258,31 @@ fn the_answer_must_not_depend_on_an_equal_value_sibling_q_carriers() {
     );
     assert_eq!(q2, q1, "★ …and it is order-independent");
     assert_eq!(q3, q0, "control (b-negative): siblings of a different VALUE never moved it");
+}
+
+#[test]
+fn calculator_refuses_mixed_scale_arithmetic_ordering_and_bitwise_ops() {
+    for expression in [
+        "7.00p2 + 3.000p3",
+        "7.00p2 - 3.000p3",
+        "7.00p2 * 3.000p3",
+        "7.00p2 / 3.000p3",
+        "7.00p2 % 3.000p3",
+        "7.00p2 bitand 3.000p3",
+        "7.00p2 bitor 3.000p3",
+        "7.00p2 > 3.000p3",
+        "7.00p2 < 3.000p3",
+        "7.00p2 >= 3.000p3",
+        "7.00p2 <= 3.000p3",
+    ] {
+        assert_eq!(
+            normal_form(expression).expect("the evaluator reaches a normal form"),
+            expression,
+            "`{expression}` must remain an unreduced redex instead of silently rescaling; \
+             Calculator records a fold decline rather than manufacturing its parseable `error` \
+             literal",
+        );
+    }
 }
 
 /// ★★ A CONSEQUENCE OF THE FIX THAT NOTHING ELSE PINS, and it is the language's whole
@@ -425,15 +306,9 @@ fn the_answer_must_not_depend_on_an_equal_value_sibling_q_carriers() {
 /// | `fixed(1.25p2, 1)` | NO (1.25 → 1.2) | `1.2p1` ← visible |
 /// | `fixed(1.25p2, 0)` | NO (1.25 → 1)   | `1p0`   ← visible |
 ///
-/// ⚠ This matters well beyond tidiness: `fixed(x, w)` is the ONLY way a program can repair a
-/// scale mismatch, so it is the escape hatch any future scale-equality precondition (work item
-/// #186) depends on. That precondition would have been unshippable while its escape hatch was
-/// a no-op, and nothing recorded that.
-///
-/// ★ `fixed(0p0, 2)` is deliberately NOT in the green list below. It stays `0p0` for a SECOND,
-/// independent reason — `CanonicalFixedPoint::normalize_in_place` collapses true zero to `0p0`
-/// at construction — which this ruling does not touch. Asserted as such so the two causes are
-/// not confused.
+/// This is now the migration mechanism for the scale-equality precondition: a program can make
+/// an intended scale explicit before applying a binary operator. Zero is included because its
+/// declared scale is no longer normalized away.
 #[test]
 fn the_rescale_operator_is_no_longer_erased_by_its_own_input() {
     for (src, want) in [
@@ -459,22 +334,17 @@ fn the_rescale_operator_is_no_longer_erased_by_its_own_input() {
 
     assert_eq!(
         normal_form("fixed(0p0, 2)").expect("rescale"),
-        "0p0",
-        "⚠ RESIDUAL, and NOT this ruling's: zero cannot be rescaled because \
-         `CanonicalFixedPoint::normalize_in_place` forces `places = 0` at construction. That is \
-         a separate divergence from upstream (`make_fixedpoint_expr` does not normalize) and \
-         needs its own ruling",
+        "0.00p2",
+        "zero retains the scale requested by the explicit conversion",
     );
 }
 
 /// Sibling enumeration, measured not asserted-by-hand: WHICH scale-reading operations change
 /// their VALUE (not merely their rendering) when the operand representative flips scale?
 ///
-/// `align_pair` (`runtime/src/canonical_fixed_point.rs:93`) has FOUR callers — `checked_div`
-/// (`:104`), `checked_rem` (`:197`), `Add::add` (`:312`), `Sub::sub` (`:320`) — and
-/// `bitwise_aligned` (`:205`) has THREE (`BitAnd` `:360`, `BitOr` `:367`, `BitXor` `:374`).
-/// `Mul::mul` (`:329`) and `Neg::neg` (`:353`) read `places` without either helper. NINE
-/// scale-reading operations in total.
+/// The checked arithmetic and bitwise methods all enforce equal scales. This table compares
+/// their results for same-number operand pairs represented consistently at p2 versus p1; it
+/// detects operations whose numerical answer genuinely depends on declared precision.
 ///
 /// ⚠⚠ **RE-DERIVED 2026-07-30 (work item #200): this table would otherwise have gone
 /// VACUOUS.** It classified each row by `at_p2 != at_p1`, i.e. by `PartialEq`. `PartialEq` now
@@ -502,14 +372,14 @@ fn the_rescale_operator_is_no_longer_erased_by_its_own_input() {
 /// immediately before work item #200 it was unchanged, with these rows:
 ///
 /// ```text
-///   checked_div  (align_pair)  p2=2.33p2     p1=2.3p1      VALUE-DIFFERS=true
-///   checked_rem  (align_pair)  p2=1.00p2     p1=1.0p1      VALUE-DIFFERS=false
-///   Add          (align_pair)  p2=10.00p2    p1=10.0p1     VALUE-DIFFERS=false
-///   Sub          (align_pair)  p2=4.00p2     p1=4.0p1      VALUE-DIFFERS=false
-///   Mul          (places sum)  p2=21.0000p4  p1=21.00p2    VALUE-DIFFERS=false
-///   BitAnd  (bitwise_aligned)  p2=0.44p2     p1=0.6p1      VALUE-DIFFERS=true
-///   BitOr   (bitwise_aligned)  p2=9.56p2     p1=9.4p1      VALUE-DIFFERS=true
-///   BitXor  (bitwise_aligned)  p2=9.12p2     p1=8.8p1      VALUE-DIFFERS=true
+///   checked_div                  p2=2.33p2     p1=2.3p1      VALUE-DIFFERS=true
+///   checked_rem                  p2=1.00p2     p1=1.0p1      VALUE-DIFFERS=false
+///   checked_add                  p2=10.00p2    p1=10.0p1     VALUE-DIFFERS=false
+///   checked_sub                  p2=4.00p2     p1=4.0p1      VALUE-DIFFERS=false
+///   checked_mul                  p2=21.00p2    p1=21.0p1     VALUE-DIFFERS=false
+///   checked_bitand               p2=0.44p2     p1=0.6p1      VALUE-DIFFERS=true
+///   checked_bitor                p2=9.56p2     p1=9.4p1      VALUE-DIFFERS=true
+///   checked_bitxor               p2=9.12p2     p1=8.8p1      VALUE-DIFFERS=true
 ///   Neg          (places kept)  p2=-7.00p2    p1=-7.0p1    VALUE-DIFFERS=false
 /// ```
 ///
@@ -544,14 +414,46 @@ fn sibling_enumeration_which_ops_change_value_on_scale_flip() {
     assert_eq!(b2.to_rational_canonical_bytes(), b1.to_rational_canonical_bytes());
 
     let rows: Vec<(&str, CanonicalFixedPoint, CanonicalFixedPoint)> = vec![
-        ("checked_div  (align_pair)", a2.checked_div(b2).expect("div"), a1.checked_div(b1).expect("div")),
-        ("checked_rem  (align_pair)", a2.checked_rem(b2).expect("rem"), a1.checked_rem(b1).expect("rem")),
-        ("Add          (align_pair)", a2 + b2, a1 + b1),
-        ("Sub          (align_pair)", a2 - b2, a1 - b1),
-        ("Mul          (places sum)", a2 * b2, a1 * b1),
-        ("BitAnd  (bitwise_aligned)", a2 & b2, a1 & b1),
-        ("BitOr   (bitwise_aligned)", a2 | b2, a1 | b1),
-        ("BitXor  (bitwise_aligned)", a2 ^ b2, a1 ^ b1),
+        (
+            "checked_div",
+            a2.checked_div(b2).expect("div"),
+            a1.checked_div(b1).expect("div"),
+        ),
+        (
+            "checked_rem",
+            a2.checked_rem(b2).expect("rem"),
+            a1.checked_rem(b1).expect("rem"),
+        ),
+        (
+            "checked_add",
+            a2.checked_add(b2).expect("add"),
+            a1.checked_add(b1).expect("add"),
+        ),
+        (
+            "checked_sub",
+            a2.checked_sub(b2).expect("sub"),
+            a1.checked_sub(b1).expect("sub"),
+        ),
+        (
+            "checked_mul",
+            a2.checked_mul(b2).expect("mul"),
+            a1.checked_mul(b1).expect("mul"),
+        ),
+        (
+            "checked_bitand",
+            a2.checked_bitand(b2).expect("bitand"),
+            a1.checked_bitand(b1).expect("bitand"),
+        ),
+        (
+            "checked_bitor",
+            a2.checked_bitor(b2).expect("bitor"),
+            a1.checked_bitor(b1).expect("bitor"),
+        ),
+        (
+            "checked_bitxor",
+            a2.checked_bitxor(b2).expect("bitxor"),
+            a1.checked_bitxor(b1).expect("bitxor"),
+        ),
         ("Neg          (places kept)", -a2, -a1),
     ];
     let mut value_changing = Vec::new();

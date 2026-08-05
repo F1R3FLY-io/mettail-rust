@@ -1038,12 +1038,13 @@ impl SafeFloat for CanonicalFloat32 {
 
 // ─── Arbitrary-precision impls ──────────────────────────────────────────────
 //
-// `CanonicalBigInt`/`CanonicalBigRat`/`CanonicalFixedPoint` cannot overflow the
-// way bounded integers do, so most operations always succeed and NONE of them
-// ever reports `NotRepresentable` — case (b) is empty for an unbounded carrier.
-// Division/remainder by zero is `Undefined`. Power with a negative exponent on
-// an integral carrier is `Undefined(NegativeExponent)`; `CanonicalBigRat`
-// supports negative powers via reciprocation.
+// These carriers cannot overflow the way bounded integers do, so case (b),
+// `NotRepresentable`, is empty. Division/remainder by zero is `Undefined`.
+// `CanonicalFixedPoint` additionally refuses binary operations whose declared
+// scales differ, matching upstream Rholang rather than silently rescaling.
+// Power with a negative exponent on an integral carrier is
+// `Undefined(NegativeExponent)`; `CanonicalBigRat` supports negative powers via
+// reciprocation.
 
 /// A zero divisor on an arbitrary-precision carrier.
 #[inline]
@@ -1053,6 +1054,16 @@ const fn arbitrary_precision_div_zero(
     reason: UndefinedReason,
 ) -> Partiality {
     Partiality::Undefined { operation, carrier, reason }
+}
+
+/// Upstream Rholang's fixed-point carrier requires equal declared scales for a binary operation.
+#[inline]
+const fn fixed_point_scale_mismatch(operation: &'static str) -> Partiality {
+    Partiality::Undefined {
+        operation,
+        carrier: "FixedPoint",
+        reason: UndefinedReason::FixedPointScaleMismatch,
+    }
 }
 
 // `&num_bigint::BigInt` impl: the safeify pass rewrites `a.get() - b.get()`
@@ -1277,41 +1288,33 @@ impl SafeArith for crate::CanonicalFixedPoint {
     type Output = Self;
     #[inline]
     fn safe_add(self, r: Self) -> Result<Self, Partiality> {
-        Ok(self + r)
+        self.checked_add(r).ok_or(fixed_point_scale_mismatch("add"))
     }
     #[inline]
     fn safe_sub(self, r: Self) -> Result<Self, Partiality> {
-        Ok(self - r)
+        self.checked_sub(r).ok_or(fixed_point_scale_mismatch("sub"))
     }
     #[inline]
     fn safe_mul(self, r: Self) -> Result<Self, Partiality> {
-        Ok(self * r)
+        self.checked_mul(r).ok_or(fixed_point_scale_mismatch("mul"))
     }
     #[inline]
     fn safe_div(self, r: Self) -> Result<Self, Partiality> {
-        use num_traits::Zero;
-        if r.unscaled().is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "div",
-                "FixedPoint",
-                UndefinedReason::DivisionByZero,
-            ))
-        } else {
-            Ok(self / r)
+        if !self.has_same_scale(r) {
+            return Err(fixed_point_scale_mismatch("div"));
         }
+        self.checked_div(r).ok_or_else(|| {
+            arbitrary_precision_div_zero("div", "FixedPoint", UndefinedReason::DivisionByZero)
+        })
     }
     #[inline]
     fn safe_rem(self, r: Self) -> Result<Self, Partiality> {
-        use num_traits::Zero;
-        if r.unscaled().is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "rem",
-                "FixedPoint",
-                UndefinedReason::RemainderByZero,
-            ))
-        } else {
-            Ok(self % r)
+        if !self.has_same_scale(r) {
+            return Err(fixed_point_scale_mismatch("rem"));
         }
+        self.checked_rem(r).ok_or_else(|| {
+            arbitrary_precision_div_zero("rem", "FixedPoint", UndefinedReason::RemainderByZero)
+        })
     }
     #[inline]
     fn safe_neg(self) -> Result<Self, Partiality> {
@@ -1332,9 +1335,11 @@ impl SafeArith for crate::CanonicalFixedPoint {
                 UndefinedReason::NegativeExponent,
             ));
         }
-        let mut acc = Self::new(num_bigint::BigInt::from(1), 0);
+        let mut acc = Self::new(num_bigint::BigInt::from(10u8).pow(self.places()), self.places());
         for _ in 0..exp {
-            acc = acc * self.clone();
+            acc = acc
+                .checked_mul(self)
+                .ok_or(fixed_point_scale_mismatch("pow"))?;
         }
         Ok(acc)
     }
@@ -1859,5 +1864,43 @@ mod tests {
             one.clone().safe_add(one).expect("1 + 1 is total"),
             CanonicalBigInt::from(num_bigint::BigInt::from(2)),
         );
+    }
+
+    #[test]
+    fn fixed_point_binary_arithmetic_reports_scale_mismatch() {
+        use crate::CanonicalFixedPoint;
+        use num_bigint::BigInt;
+
+        let p1 = CanonicalFixedPoint::new(BigInt::from(10), 1);
+        let p2 = CanonicalFixedPoint::new(BigInt::from(100), 2);
+        for (operation, result) in [
+            ("add", p1.safe_add(p2)),
+            ("sub", p1.safe_sub(p2)),
+            ("mul", p1.safe_mul(p2)),
+            ("div", p1.safe_div(p2)),
+            ("rem", p1.safe_rem(p2)),
+        ] {
+            assert_eq!(
+                result,
+                Err(undefined(operation, "FixedPoint", UndefinedReason::FixedPointScaleMismatch,)),
+            );
+        }
+
+        let mismatched_zero = CanonicalFixedPoint::new(BigInt::from(0), 2);
+        assert_eq!(
+            p1.safe_div(mismatched_zero).unwrap_err().reason_token(),
+            "FixedPointScaleMismatch",
+            "upstream checks the carrier scale before testing a zero divisor",
+        );
+    }
+
+    #[test]
+    fn fixed_point_safe_mul_preserves_scale_and_floors() {
+        use crate::CanonicalFixedPoint;
+        use num_bigint::BigInt;
+
+        let a = CanonicalFixedPoint::new(BigInt::from(-15), 1);
+        let b = CanonicalFixedPoint::new(BigInt::from(15), 1);
+        assert_eq!(a.safe_mul(b).expect("same scale").to_string(), "-2.3p1");
     }
 }

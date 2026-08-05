@@ -290,10 +290,10 @@ language! {
         NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step same;
         NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step same;
         EqFixed . a:Fixed, b:Fixed |- a "==" b : Bool ![a == b] step;
-        GtFixed . a:Fixed, b:Fixed |- a ">" b : Bool ![a > b] step same;
-        LtFixed . a:Fixed, b:Fixed |- a "<" b : Bool ![a < b] step same;
-        LtEqFixed . a:Fixed, b:Fixed |- a "<=" b : Bool ![a <= b] step same;
-        GtEqFixed . a:Fixed, b:Fixed |- a ">=" b : Bool ![a >= b] step same;
+        GtFixed . a:Fixed, b:Fixed |- a ">" b : Bool ![a.checked_cmp(b).map(|o| o.is_gt())] step same;
+        LtFixed . a:Fixed, b:Fixed |- a "<" b : Bool ![a.checked_cmp(b).map(|o| o.is_lt())] step same;
+        LtEqFixed . a:Fixed, b:Fixed |- a "<=" b : Bool ![a.checked_cmp(b).map(|o| o.is_le())] step same;
+        GtEqFixed . a:Fixed, b:Fixed |- a ">=" b : Bool ![a.checked_cmp(b).map(|o| o.is_ge())] step same;
         NeFixed . a:Fixed, b:Fixed |- a "!=" b : Bool ![a != b] step same;
         // Boolean operations
         Not . a:Bool |- "not" a : Bool ![{match a {
@@ -381,8 +381,8 @@ language! {
         DivFixed . a:Fixed, b:Fixed |- a "/" b : Fixed ![a / b] fold same;
         ModFixed . a:Fixed, b:Fixed |- a "%" b : Fixed ![a % b] fold same;
         NegFixed . a:Fixed |- "-" a : Fixed ![(-a)] fold;
-        BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
-        BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
+        BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a.checked_bitor(b)] fold;
+        BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a.checked_bitand(b)] fold;
         BitNotFixed . a:Fixed |- "bitnot" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
     ProcToBool . a:Proc |- "bool" "(" a ")" : Bool ![{
             match a {

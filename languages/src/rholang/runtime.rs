@@ -1,5 +1,5 @@
-use super::{Bag, ForRow, List, Map, Name, Proc, Set};
-use mettail_runtime::{BoundTerm, HashBag};
+use super::{Bag, Bool, ForRow, List, Map, Name, Proc, Set};
+use mettail_runtime::{BoundTerm, CanonicalFixedPoint, HashBag};
 
 fn is_collection_cast(proc: &Proc) -> bool {
     matches!(proc, Proc::CastList(_) | Proc::CastBag(_) | Proc::CastMap(_) | Proc::CastSet(_))
@@ -88,6 +88,18 @@ pub(crate) fn unary_fallback(a: &Proc, redex: impl FnOnce() -> Proc) -> Proc {
         Proc::Err
     } else {
         redex()
+    }
+}
+
+/// Applies an ordered fixed-point comparison only when both values have the same declared scale.
+pub(crate) fn fixed_ordered_compare(
+    a: CanonicalFixedPoint,
+    b: CanonicalFixedPoint,
+    predicate: impl FnOnce(std::cmp::Ordering) -> bool,
+) -> Proc {
+    match a.checked_cmp(b) {
+        Some(ordering) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(predicate(ordering)))),
+        None => Proc::Err,
     }
 }
 

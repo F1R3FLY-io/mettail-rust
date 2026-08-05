@@ -1378,7 +1378,10 @@ language! {
         BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x | *y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => match x.checked_bitor(*y) {
+                        Some(value) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(value))),
+                        None => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
@@ -1409,7 +1412,10 @@ language! {
         BitAnd . a:Proc, b:Proc |- a "bitand" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x & *y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => match x.checked_bitand(*y) {
+                        Some(value) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(value))),
+                        None => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
@@ -1695,7 +1701,7 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x > y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => crate::rholang::runtime::fixed_ordered_compare(*x, *y, |o| o.is_gt()),
                     _ => Proc::Err,
                 },
                 (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
@@ -1746,7 +1752,7 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x < y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => crate::rholang::runtime::fixed_ordered_compare(*x, *y, |o| o.is_lt()),
                     _ => Proc::Err,
                 },
                 (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
@@ -1797,7 +1803,7 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x >= y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => crate::rholang::runtime::fixed_ordered_compare(*x, *y, |o| o.is_ge()),
                     _ => Proc::Err,
                 },
                 (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
@@ -1848,7 +1854,7 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x <= y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => crate::rholang::runtime::fixed_ordered_compare(*x, *y, |o| o.is_le()),
                     _ => Proc::Err,
                 },
                 (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
@@ -1867,10 +1873,11 @@ language! {
         // Arithmetic (tighter than == and and/or)
         // ── Arithmetic: a failed operation answers the `error` term, never a value ──────────
         //
-        // Every numeric arm below runs its operation through `mettail_runtime::SafeArith`
-        // (integers ▸ stdlib `checked_*`; floats ▸ NaN-rejecting IEEE) and maps the `None`
-        // — overflow, division by zero, `Inf - Inf` — onto `Proc::Err`, the `error` term
-        // declared above (`Err . |- "error" : Proc`).
+        // Every partial numeric arm below uses an explicit checked operation and maps its
+        // reported failure onto `Proc::Err`, the `error` term declared above. Fixed-point arms
+        // call their checked methods explicitly: raw Rust operators would be safeify-rewritten
+        // with `?`, which would decline the entire fold and leave a stuck redex instead of
+        // producing Rholang's error term.
         //
         // Until 2026-07-25 the `Int` and `Float` arms instead wrote `(**a).clone() + (**b).clone()`,
         // reaching a macro-emitted `impl std::ops::Add for Int` whose failure path FABRICATED
@@ -1929,7 +1936,10 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x + *y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => match x.checked_add(*y) {
+                        Some(v) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(v))),
+                        None => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
@@ -1992,7 +2002,10 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x - *y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => match x.checked_sub(*y) {
+                        Some(v) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(v))),
+                        None => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 // Not two ground operands: `error` only when the operands ARE data
@@ -2050,7 +2063,10 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x * *y))),
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => match x.checked_mul(*y) {
+                        Some(v) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(v))),
+                        None => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 // Not two ground operands: `error` only when the operands ARE data
@@ -2289,77 +2305,10 @@ language! {
                     }
                     _ => Proc::Err,
                 },
-                // ★ REPAIRED 2026-07-30 BY OWNER RULING. This arm now AGREES with upstream.
-                //
-                // `CanonicalFixedPoint::checked_rem` computes the remainder on the aligned
-                // UNSCALED INTEGERS at the shared scale — `ua % ub`, truncated toward zero so the
-                // sign follows the dividend — which is upstream's `combine_mod` `GFixedPoint` arm
-                // verbatim (`reduce.rs:3460-3470`: `let remainder = &ua % &ub;` with
-                // `scale: fp1.scale`). `7.00p2 % 3.00p2` is `1.00p2` here and upstream;
-                // `7.50p2 % 2.00p2` is `1.50p2` here and upstream. The full derivation, the
-                // superseded formula, and the identity that no longer holds are documented on
-                // `checked_rem` itself in `runtime/src/canonical_fixed_point.rs`.
-                //
-                // ⚠⚠ DO NOT "RESTORE" THE OLD BEHAVIOUR. THE REASONING BELOW IS SUPERSEDED AND IS
-                // QUOTED ONLY SO IT IS NOT REDISCOVERED AND ACTED ON AS A BUG FIX (precedent:
-                // `0d05986d`). Until 2026-07-30 this comment read:
-                //
-                //   > ★ WHY THIS IS NOT REPAIRED IN THIS COMMIT. mettail's `checked_rem` is the
-                //   > MATCHED PAIR of its `checked_div`, which also divides to `p` places, and the
-                //   > two together satisfy `q·b + r = a` — pinned by
-                //   > `canonical_fixed_point.rs::div_mod_example` and `::div_mod_with_negatives`.
-                //   > Adopting upstream's `%` therefore requires re-deciding `/` in the same
-                //   > breath, and it MOVES A COMPUTED VALUE on a consensus-visible operator.
-                //
-                // WHY THAT WAS WRONG, point by point:
-                //
-                //   · "MATCHED PAIR … satisfy `q·b + r = a`" — the pairing was real but it is not
-                //     an argument for the old `%`. Read the other way, the old `%` was DEFINED as
-                //     whatever makes `checked_div` exact, i.e. as the division's own error term:
-                //     `a − trunc_p(a/b)·b = (a/b − trunc_p(a/b))·b = ε·b`, `0 ≤ ε < 10⁻ᵖ`. That is
-                //     a RESIDUAL, not a remainder — bounded by `|b|·10⁻ᵖ`, so it tends to ZERO as
-                //     precision grows. `7.50p2 % 2.00p2` returned `0` because `7.50/2.00 = 3.75`
-                //     is exact at two places.
-                //   · "requires re-deciding `/` in the same breath" — FALSE, and this is what
-                //     stalled the repair. `q·b + r = a` is a theorem about the TRUNCATED INTEGER
-                //     quotient (C99 §6.5.5), not about a `p`-places quotient. `/` therefore never
-                //     entered into it: `%` was simply not the operation the identity is about.
-                //     `checked_div` is UNCHANGED by the repair and `10p1 / 3p1` is still `3.3p1`.
-                //   · ⚠⚠ RE-DERIVED 2026-07-30 (work item #200). A third argument stood here,
-                //     verbatim:
-                //
-                //       > Not stated at the time, and DECISIVE: the old `%` read `places`, which
-                //       > this type's own equality contract declares meaningless.
-                //       > `PartialEq`/`Hash`/`to_canonical_bytes` key on the reduced rational, so
-                //       > `7.00p2 == 7.0p1` — yet the old `%` gave `0.01` and `0.1`. Equal
-                //       > inputs, unequal outputs: it was not a function on the type's own
-                //       > equivalence classes.
-                //
-                //     Its premise is now FALSE. The owner ruled `Eq`/`Hash`/`Ord` onto the raw
-                //     `(unscaled, places)` pair, so `7.00p2 != 7.0p1` and a `places`-reading `%`
-                //     IS a function on the equivalence classes. Left as written, that paragraph
-                //     reads as a licence to restore the residual `%`. It is not one.
-                //
-                //     What condemns the old `%` is the FLOOR, and it always did: upstream's
-                //     `combine_mod` `GFixedPoint` arm (`reduce.rs:3460-3470`) computes
-                //     `&ua % &ub` on the unscaled integers preserving `fp1.scale`, and upstream
-                //     requires `fp1.scale == fp2.scale`, so at equal scales this `%` is
-                //     upstream's `%` exactly. The residual matched it at NO scale:
-                //     `7.50p2 % 2.00p2` returned `0p0` where upstream returns `1.50p2`, because
-                //     `7.50/2.00 = 3.75` is exact at two places so the error term is zero. A
-                //     quantity that vanishes as precision grows is not a remainder. Any
-                //     "restoration" turns `runtime`'s
-                //     `remainder_is_invariant_under_the_places_spelling` red.
-                //
-                // ⚠ STILL OPEN, AND NOT CHANGED HERE: upstream REFUSES MIXED SCALES. Every
-                // upstream fixed-point arithmetic arm raises `OperatorExpectedError { op, expected:
-                // "FixedPoint(p{fp1.scale})", other_type: "FixedPoint(p{fp2.scale})" }` when the
-                // scales differ (`combine_mod:3446-3452`, `combine_plus:3540`), while mettail's
-                // `align_pair` aligns to `max(places)` — so `7.00p2 % 3.000p3` answers here and
-                // errors upstream, and `7.00p2 + 3.000p3` is `10.000p3` here. Adopting the refusal
-                // would make mettail LESS permissive (it removes accepted programs), which is a
-                // separate owner ruling from this one; the ruling received covered the ARITHMETIC
-                // only. Reported, pre-existing, PERMISSIVE.
+                // Upstream's fixed-point remainder is `u_a % u_b` on equal-scale mantissas,
+                // preserving that scale. `checked_rem` also rejects a zero divisor and refuses
+                // mismatched scales, so this arm matches both upstream's value and its accepted
+                // operand domain.
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => {
                         match x.checked_rem(*y) {

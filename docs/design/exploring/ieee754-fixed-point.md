@@ -7,7 +7,11 @@
 ### Implemented behavior (summary)
 
 - **Float literals:** `mettail_prattail::parse_float_lit` accepts unsuffixed, `f32`, or `f64` (reject `f128` / `f256`); `f32` is widened to `f64` for `CanonicalFloat64`. **Calculator and Rholang** only include optional `f64` in their float **lexer** pattern (no `f32` token in surface syntax, since neither language exposes `f32` as a type).
-- **Fixed-point:** `mettail_runtime::CanonicalFixedPoint` (`unscaled` / `places`, value `unscaled / 10^places`). Literals use `…p…` forms parsed by `parse_fixed_lit`. Lexer uses `fixed_by_category` parallel to rationals. Calculator has `Fixed` terms and `ProcFixed`; Rholang uses `CastFixed` on `Proc` with `+` / `-` / `*` / `/` / `%` and `bitand` / `bitor` / `bitxor` on fixed values only.
+- **Fixed-point:** `mettail_runtime::CanonicalFixedPoint` preserves the structural pair
+  `(unscaled, places)`; scale is part of identity, including for zero. Binary arithmetic,
+  ordered comparisons, and binary bitwise operators require equal scales, matching upstream
+  Rholang. Multiplication preserves that scale and floor-truncates the product back onto its
+  decimal grid. Literals use `…p…` forms parsed by `parse_fixed_lit`.
 - **Float restrictions:** No `%` or bitwise operators on `Float` in these languages (only on `Fixed` / integers as before).
 
 ---
@@ -30,14 +34,16 @@ Any new numeric kind should follow the same pattern: **define parsing + operatio
 
 - Ascent / term enums require `Eq + Hash`. Raw `f32`/`f64` are wrapped as **`CanonicalFloat32` / `CanonicalFloat64`** (`runtime/src/canonical_float.rs`): canonical NaN, `-0` → `+0`, total `Ord`, `BoundTerm`.
 - The `language!` macro maps `![f32]` → `CanonicalFloat32` and `![f64]` → `CanonicalFloat64` (`macros/src/gen/types/enums.rs`).
-- **Literals** today: a single regex in `calculator.rs` / `rholang.rs` that matches decimal / exponent forms **without** a `f32`/`f64` suffix; `eval` strips `_` and uses `parse::<f64>()` only — so everything is effectively **double precision** in the surface syntax even when the category is `Float` backed by `CanonicalFloat64`.
+- **Literals:** Calculator and Rholang accept unsuffixed binary64 literals and the explicit `f64`
+  suffix. The shared parser can also parse `f32`, but neither language exposes a binary32 carrier.
 - `CanonicalFloat64` currently implements **`Rem`** (Rust `%`). The desired language semantics say **floating-point must not** use modulus (or bitwise operators) at all; see §3.
 
-### 1.3 What does not exist yet
+### 1.3 Deliberately unsupported surfaces
 
-- Suffixed IEEE literals (`-1.234e5f32`, `f64`, and optionally `f128` / `f256`).
-- A **fixed-point** numeric type: syntax `<digits>p<digits>`, division/modulo semantics, bitwise semantics.
-- **Rholang** has no `%` on `Proc` for integers in the same style as `+` (Calculator has `ModInt` for `Int` only).
+- Calculator and Rholang do not expose `f32`, `f128`, or `f256` carriers.
+- Float remainder and float bitwise operators remain unavailable.
+- Fixed-point binary operators do not infer or align scales. Call `fixed(value, places)` explicitly
+  when a scale migration is intended.
 
 ---
 
@@ -128,9 +134,9 @@ After stripping `_` from digit runs:
 
 Represent a value as a pair **(unscaled, places)** with `unscaled: BigInt`, `places: u32`:
 
-\[
+```math
 \text{value} = \frac{\text{unscaled}}{10^{\text{places}}}
-\]
+```
 
 **Construction from literal:**
 
@@ -152,159 +158,108 @@ pub struct CanonicalFixedPoint {
 }
 ```
 
-Requirements:
+Requirements, now implemented:
 
-- **`Eq`, `Hash`, `Ord`, `BoundTerm`** (same reasons as `CanonicalBigRat` / floats in Ascent).
-- **Normalization policy:** Decide whether `(10, 1)` and `(100, 2)` are the same value — recommend **canonical form**: divide `unscaled` and `places` by common powers of ten until trailing zeros in the decimal expansion are removed, with a rule for **zero** (`0p0` or `0pk` for any `k`).
+- **`Eq`, `Hash`, `Ord`, `BoundTerm`** key on the exact `(unscaled, places)` pair.
+- **No implicit normalization:** `(10, 1)` and `(100, 2)` are distinct fixed-point values even
+  though they denote the same rational number. Zero likewise preserves its declared scale, so
+  `0p0`, `0.0p1`, and `0.00p2` remain structurally distinct.
 
-### 4.4 Arithmetic (same `places` — binary ops)
+### 4.4 Arithmetic (equal declared scales only)
 
-For binary `+`, `-`, `*`, `/`, `%`:
+Every binary fixed-point arithmetic operation first requires `places_a == places_b == P`.
+Mismatched scales are refused; the evaluator yields the language error term. An explicit
+`fixed(value, P)` cast is the only scale migration.
 
-1. **Align places** to `P = max(places_a, places_b)` by scaling unscaled values:  
-   `ua' = ua * 10^(P - pa)`, `ub' = ub * 10^(P - pb)`.
+1. **Add / sub:** `unscaled = ua ± ub`, `places = P`.
 
-2. **Add / sub:** `unscaled = ua' ± ub'`, `places = P`; then normalize.
+2. **Mul:** `unscaled = floor(ua * ub / 10^P)`, `places = P`. Floor division, rather than
+   truncation toward zero, is significant for negative products and matches upstream Rholang.
 
-3. **Mul:** `unscaled = ua * ub`, `places = pa + pb`; normalize.
-
-4. **Div (shifted integer division),** matching the user example `10p1 / 3p1 == 3.3p1`:
-
-   After alignment to common `P`,  
-   \[
-   \text{unscaled\_quot} = \frac{u_a' \cdot 10^P}{u_b'}
-   \]
-   using **integer** division on `BigInt`, and result places = `P`.  
-   Check: `a=100, b=30, P=1` → `100 * 10 / 30 = 33` → `3.3p1`. ✓
-
-5. **Mod — remainder on the unscaled integers, scale preserved:**
+3. **Div (shifted integer division):**
 
    ```math
-   r_{\text{unscaled}} = u_a' \bmod u_b', \qquad \text{places} = P
+   \text{unscaled\_quot} = \frac{u_a \cdot 10^P}{u_b}
+   ```
+
+   using `BigInt` integer division, with result scale `P`. For example,
+   `10.0p1 / 3.0p1 == 3.3p1`.
+
+4. **Mod — remainder on the unscaled integers, scale preserved:**
+
+   ```math
+   r_{\text{unscaled}} = u_a \bmod u_b, \qquad \text{places} = P
    ```
 
    using `BigInt`'s `%`, which truncates toward zero so the sign follows the **dividend** (as
    Rust's `i64 %` and C99's `%` both do).
-   Example: `10p1 % 3p1` → aligned `u_a' = 100`, `u_b' = 30`, `100 mod 30 = 10` → `1.0p1`. ✓
+   Example: `10.0p1 % 3.0p1` → `100 mod 30 = 10` → `1.0p1`. ✓
 
    This is upstream Rholang's definition verbatim — `combine_mod`'s `GFixedPoint` arm,
    `f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs:3460-3470`.
 
-   ★ Note the asymmetry with (4): the exact remainder **always fits** the type, because
-   `u_a' \bmod u_b'` is an integer no wider than `u_a'`. Division must approximate; remainder
-   never must. So (4) is a *choice* of precision and (5) is not.
+   The exact remainder always fits the type because `u_a mod u_b` is no wider than `u_a`.
+   Division must approximate; remainder does not.
 
-   > ### ⚠ SUPERSEDED (2026-07-30) — quoted so it is not restored
-   >
-   > This item previously read **"Mod (C99 identity)"** and specified, with `q` the quotient
-   > from (4):
-   >
-   > ```math
-   > (a / b) \times b + (a \bmod b) = a, \qquad
-   > r_{\text{unscaled}} = u_a' - \frac{q \cdot u_b'}{10^P}
-   > ```
-   >
-   > with the worked example `10p1 % 3p1` → `0.1p1`. ✓
-   >
-   > **That derivation is invalid, and it is the origin of the defect that shipped.** C99 §6.5.5
-   > does state `(a/b)*b + a%b == a`, but it states it for **integer** division, where `a/b` is
-   > truncated to an integer. Item (4)'s `q` is not an integer — it is a `P`-places fixed-point
-   > number — so substituting it into that identity is a category error. Solving the borrowed
-   > identity for `r` with the wrong `q` yields
-   >
-   > ```math
-   > r = a - \operatorname{trunc}_P(a/b)\cdot b
-   >   = \bigl(a/b - \operatorname{trunc}_P(a/b)\bigr)\cdot b
-   >   = \varepsilon\, b, \qquad 0 \le \varepsilon < 10^{-P}
-   > ```
-   >
-   > — the **truncation error of the division, scaled by the divisor.** A residual, not a
-   > remainder: it is bounded by `|b| \cdot 10^{-P}` and therefore tends to **zero** as precision
-   > grows, which no remainder does. `7.50p2 % 2.00p2` returned `0p0`, because `7.50/2.00 = 3.75`
-   > is exact at two places, for a division that leaves remainder `1.50`.
-   >
-   > The `10p1 % 3p1` → `0.1p1` example did not catch it because the residual there is
-   > numerically `0.1`, whose unscaled payload (`1`) is off from the true remainder's (`10`) by
-   > exactly the spurious factor `10^P` — the signature of the `\cdot 10^P` … `/ 10^P` round trip
-   > the formula inherited from item (4), where that factor is essential.
-   >
-   > It also violated a law stated elsewhere in this design: because `PartialEq`, `Hash` and
-   > `to_canonical_bytes` key on the reduced rational (so that `SemanticHash` agrees with `Eq` for
-   > the Dovetail e-graph), `places` is **not** part of a value's identity and `7.00p2 == 7.0p1`.
-   > The superseded `%` read `places`, answering `0.01` and `0.1` for those two spellings — equal
-   > inputs, unequal outputs. Guarded now by
-   > `runtime/src/canonical_fixed_point.rs::tests::remainder_is_invariant_under_the_places_spelling`.
-   >
-   > ⚠ Item (4) is **unchanged**. The two operators were wrongly believed to be a matched pair
-   > that had to move together; they never were, because the identity that binds a quotient to a
-   > remainder is about the integer quotient, which (4) does not return.
+   The retired implementation instead returned the division truncation residual
+   `a - trunc_P(a/b) * b`. That was not a remainder and disagreed with upstream; regression tests
+   retain `7.50p2 % 2.00p2 == 1.50p2` so the residual formula cannot reappear.
 
-Document **division by zero** as `Proc::Err` / language error, consistent with `Div` on `BigRat` / integers in Rholang.
-
-**Mixed-scale examples** should be added as unit tests in `languages/tests/` once implemented.
+Division or remainder by zero yields the language error term. Scale mismatch is checked first, so
+a mixed-scale operation whose right operand is zero is classified as a scale refusal, matching the
+upstream dispatch order.
 
 ### 4.5 Bitwise operators on fixed-point
 
-The spec says: *“Bitwise operators should satisfy x op y = bigrat(x) op bigrat(y).”*
+Binary `bitand`, `bitor`, and `bitxor` require equal scales and apply the operation directly to the
+two unscaled integers, preserving that scale. Mixed scales are refused because decimal rescaling is
+not a bit shift and upstream supplies no contrary fixed-point bitwise rule.
 
-**Issue:** `CanonicalBigRat` has no bitwise operations; bitwise is naturally defined on **integers**.
-
-**Recommended semantics (implementable, matches “exact rational then integer bit view”):**
-
-1. Map each fixed-point value to its **exact** rational (trivially `unscaled / 10^places`).
-2. Choose a common scale `S = max(places_x, places_y)` (same as arithmetic alignment).
-3. Map to **integers** `ix = unscaled_x * 10^(S - places_x)`, `iy = …`.
-4. Define `x op y` (for `&`, `|`, `^`, …; shifts may need a single **right-hand** integer operand) as the fixed-point value obtained from `(ix op iy)` with places `S`, then normalize.
-
-This is **equivalent** to “do bitwise on the unscaled numerators after aligning decimal points,” which is the usual fixed-point reading. If product stakeholders insist on a different reading of `bigrat(x)`, capture that as an amendment; the above is the default engineering interpretation.
-
-**Unary `~`:** Apply to aligned integer or to `ix` at scale `S` for the single operand.
+Unary `bitnot` applies `!` to the unscaled integer and preserves the operand's declared scale.
 
 ### 4.6 Comparison and mixed-type rules
 
-- **Equality:** After normalization, compare `(unscaled, places)` or compare as `CanonicalBigRat`.
-- **Cross-type with `BigRat` / `Float`:** Out of scope for MVP; recommend **disallow** implicit mixing (force explicit conversion functions in the language), or define a small table per language (e.g. fixed → `BigRat` exact, `Float` may round).
+- **Equality / hashing:** structural on `(unscaled, places)`.
+- **Ordering:** the total Rust `Ord` compares represented numeric value first and then uses scale as
+  a deterministic tie-break. The four language ordered relations (`<`, `<=`, `>`, `>=`) first
+  require equal scales, then compare the unscaled integers; they never expose that scale tie-break
+  to source programs.
+- **Cross-type operations:** require an explicit cast or a declared lossless promotion.
 
 ### 4.7 `language!` integration
 
-1. New type: `![mettail_runtime::CanonicalFixedPoint] as Fixed` (name TBD).
-2. New literal block with regex + `parse_fixed_lit` in `prattail`.
-3. In **Calculator**: term rules `AddFixed`, `DivFixed`, … mirroring `AddInt` / `AddBigRat`.
-4. In **Rholang**: extend `Add` / `Sub` / `Mul` / `Div` / future `Mod` dispatch with `CastFixed` arms, same style as `CastBigRat`.
-5. **Congruence / rewrite rules:** Generated from terms; add congruence rules for each new constructor (pattern matches existing `AddIntCongL` style in `calculator.rs`).
+The integration is complete: both languages declare `CanonicalFixedPoint` as `Fixed`, share the
+literal parser, expose the operator rules described above, and generate their ordinary congruence
+and evaluation machinery from those declarations.
 
 ---
 
-## 5. Implementation plan (ordered)
+## 5. Verification surfaces
 
-1. **Prattail:** `parse_float_lit` with optional/default suffix; tests in `prattail/src/tests/`.
-2. **Prattail:** `parse_fixed_lit` + normalization; property tests for round-trip of decimal strings.
-3. **Runtime:** `CanonicalFixedPoint` with `Eq`/`Hash`/`Ord`/`BoundTerm` and arithmetic helpers (div/mod as specified).
-4. **Macros:** No change expected if using existing `![Type] as Name` paths; confirm literal payload generation for the new type (mirror `BigRat`).
-5. **Languages:** Update `Float` literal regex + eval; add `Float32` category or split literals as decided in §2.3.
-6. **Languages:** Add `Fixed` to Calculator and Rholang with operations defined in HOL blocks.
-7. **Tests:** `languages/tests/calculator.rs`, `rholang_tests.rs`: float suffixes, fixed div/mod identity, fixed bitwise vs aligned-bigint reference.
-8. **Docs:** Update manual / EBNF dump (`prattail/docs/usage/ebnf-dump.md`) when grammar tokens stabilize.
+- `runtime/src/canonical_fixed_point.rs` pins raw-pair identity and each checked operation.
+- `runtime/src/safe_arith.rs` pins scale-mismatch reasons and multiplication flooring.
+- `languages/tests/fixedpoint_scale_dedup_{ab,rholang}.rs` pin structural scale identity, explicit
+  rescaling, and mixed-scale refusal.
+- `languages/tests/rholang_arith_carrier_matrix.rs` pins the Rholang carrier matrix.
+- `rholang-runtime/tests/rho_rholang_conformance.rs` compares the generated fold with the reducer.
 
 ---
 
 ## 6. Open questions
 
-1. **Unsuffixed float:** Confirm default `f64` vs require explicit suffix everywhere.
-2. **f128/f256:** Reject at parse time vs feature-gated software implementation.
-3. **Fixed vs `BigInt` literal collision:** e.g. is `10p1` ever ambiguous with a hypothetical `p` suffix on integers? (Current codebase has no `p` suffix for ints — low risk.)
-4. **Bitwise spec:** Confirm with theory owners that “align scales then integer bitwise” matches the intent of `bigrat(x) op bigrat(y)`.
-5. **Rholang `%` on integers:** If parity with C99 fixed-point mod identity is desired for `Int`, that is separate from this doc but may be added alongside `Mod` on `Proc` for `CastFixed`.
+1. **f128/f256:** remain reserved until a software carrier and explicit language surface are chosen.
+2. **Binary32 language surface:** the shared parser understands `f32`, but Calculator and Rholang do
+   not yet expose a `CanonicalFloat32` category.
 
 ---
 
 ## 7. Summary
 
-| Feature | Today | Target |
+| Feature | Current behavior | Status |
 |--------|--------|--------|
-| Float literals | Unsuffixed, `f64` parse only | Optional `f32`/`f64` suffixes; typed widths |
-| Float `%` / bitwise | Not in grammar; `Rem` exists on canonical type | Forbid in grammar and HOL; optional trait cleanup |
-| Fixed point | Absent | `…p…` syntax, `CanonicalFixedPoint`, div/mod as specified, bitwise via aligned unscaled integers |
-| Where semantics live | Per-language `language!` terms | Same: implement in Calculator, Rholang, and any other front-end that needs these types |
+| Float literals | Unsuffixed or `f64` in Calculator/Rholang | Implemented |
+| Float `%` / bitwise | Not in either language's grammar | Implemented refusal by absence |
+| Fixed point | Structural scale; same-scale binary ops; explicit rescaling | Implemented and gated |
+| Where semantics live | Per-language `language!` terms plus checked runtime helpers | Implemented |
 
 This keeps the same architecture as integers and rationals: **concrete languages own the operation tables**; runtime provides canonical, Ascent-friendly value types; prattail provides parsing.

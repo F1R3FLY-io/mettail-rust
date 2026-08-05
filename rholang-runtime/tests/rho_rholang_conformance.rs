@@ -68,7 +68,7 @@
 //! | **A2** | `Int` division / remainder by zero | the **`error`** term (was: silently **`0`**) | `ReduceError("Division by zero")` | — | ★ CLOSED |
 //! | **B** | `+` on a **runtime-bound** string | rests unreduced | `OperatorNotDefined { op: "+", other_type: "string" }` | C1 | open |
 //! | **C** | `l.nth(i)` out of bounds, and `nth` on a plain (`BigInt`) index | the `error` term, all carriers (was: **process abort** / `error`) | recoverable `ReduceError` | C1 | open (fold half CLOSED) |
-//! | **D** | `Fixed` arithmetic on **mismatched scales** | rescales | `OperatorExpectedError` | C1 | open |
+//! | **D** | `Fixed` arithmetic on **mismatched scales** | the `error` term | `OperatorExpectedError` | E6 | ★ CLOSED |
 //! | **E** | canonical **collection order** for `toByteArray` | protobuf byte order | `ScoredTerm` value order | C2 | ★ CLOSED |
 //! | **F** | `.toByteArray()` | a hex `GString` — and unreachable from source | a real `GByteArray` | C2 | ★ CLOSED |
 //! | **G** | `Pathmap` / zippers | homogeneous trie carriers + 20+ methods | native `EPathmapBody` / `EZipperBody` | C4 | ★ CLOSED |
@@ -1210,38 +1210,13 @@ async fn last_on_the_empty_list_agrees_with_nth_zero_on_the_machine() {
 
 // ── D — `Fixed` scale mismatch ───────────────────────────────────────────────────────────────────
 
-/// **Divergence D (witness) — the fold rescales where the reducer refuses.**
+/// **Divergence D — CLOSED: one fixed-point scale policy, the reducer's.**
 ///
-/// `rholang/src/rust/interpreter/reduce.rs:3193-3200` requires `fp1.scale == fp2.scale` and
-/// otherwise raises `OperatorExpectedError { expected: "FixedPoint(pN)" }`. Rholang's `Add` body
-/// delegates to `CanonicalFixedPoint`'s `std::ops::Add`, which rescales to the wider scale, so
-/// `1p0 + 0.5p1` folds to `1.5p1`.
-///
-/// *Delete when C1 lands.*
+/// The fold now refuses every mismatched-scale fixed-point arithmetic operation rather than
+/// silently widening to the larger scale. Upstream reports `OperatorExpectedError`; the local
+/// surface represents the same refusal as the `error` term.
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_d_witness_fixed_scale_mismatch_rescales_in_the_fold() {
-    let proc = parse("1p0 + 0.5p1");
-    assert_eq!(
-        fold(&proc).expect("the fold converges"),
-        "1.5p1",
-        "D: the fold rescales mismatched fixed-point operands"
-    );
-    let err = reduce(&proc)
-        .await
-        .expect_err("the reducer rejects mismatched scales");
-    assert!(
-        err.contains("OperatorExpectedError") && err.contains("FixedPoint"),
-        "D: expected reduce.rs's scale-equality precondition, got {err:?}"
-    );
-}
-
-/// **Divergence D (target) — one fixed-point scale policy, the reducer's.**
-///
-/// Closed by **C1**.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence D: `1p0 + 0.5p1` rescales in the fold and is rejected by reduce.rs:3193; \
-            closed by C1"]
-async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
+async fn divergence_d_closed_fixed_scale_policy_is_the_reducers() {
     let proc = parse("1p0 + 0.5p1");
     let folded = fold(&proc).expect("the fold converges (to a value or to `error`)");
     match reduce(&proc).await {

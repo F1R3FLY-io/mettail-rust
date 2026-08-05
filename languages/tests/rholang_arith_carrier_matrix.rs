@@ -56,58 +56,24 @@
 //! would break the property every other arm has, that the answer depends only on operand values.
 //! Failing closed is the correct answer, not a missing one.
 //!
-//! ## ⚠ TWO DERIVED DIVERGENCES ON `Fixed` — ONE NOW REPAIRED, ONE STILL OPEN
+//! ## Fixed-point alignment with upstream
 //!
-//! Both were found by this matrix. Neither is a missing operator.
+//! Two semantic differences were found by this matrix; both are now closed.
 //!
-//! 1. **`%` had a different DEFINITION — ★ REPAIRED 2026-07-30 by owner ruling ("align `%`
-//!    semantics with upstream Rholang"). `Fixed %` now AGREES with upstream.**
-//!    `CanonicalFixedPoint::checked_rem` computes the remainder on the aligned unscaled integers
-//!    at the shared scale, which is upstream's `combine_mod` `GFixedPoint` arm verbatim
+//! 1. **`%` uses upstream's definition.** `CanonicalFixedPoint::checked_rem` computes the
+//!    remainder on same-scale unscaled integers, which is upstream's `combine_mod`
+//!    `GFixedPoint` arm
 //!    (`reduce.rs:3460-3470`). `7.00p2 % 3.00p2` is `1.00p2` in both; `7.50p2 % 2.00p2` is
 //!    `1.50p2` in both.
 //!
-//!    ⚠ The superseded finding is quoted here so it is not rediscovered and "fixed" back:
+//! 2. **Mixed scales are refused.** Upstream requires equal scales for fixed-point `+`, `-`, `*`,
+//!    `/`, `%`, and ordered comparison. MeTTaIL now applies the same precondition before any
+//!    mantissa arithmetic. The MeTTaIL-only fixed bitwise operators apply it too: decimal
+//!    rescaling multiplies by a power of ten, which is not a bit shift and therefore cannot
+//!    preserve a meaningful bitwise interpretation.
 //!
-//!    > computes `a − trunc_p(a/b)·b` — the remainder after dividing to `p` places … It is NOT an
-//!    > arithmetic slip: mettail's `checked_rem` is the matched pair of its `checked_div` (which
-//!    > also divides to `p` places) and the two satisfy `q·b + r = a` … Adopting upstream's `%`
-//!    > requires re-deciding `/` in the same breath.
-//!
-//!    Two things in that were wrong. (a) `a − trunc_p(a/b)·b` expands to `(a/b − trunc_p(a/b))·b
-//!    = ε·b` with `0 ≤ ε < 10⁻ᵖ` — the division's own TRUNCATION ERROR scaled by the divisor,
-//!    bounded by `|b|·10⁻ᵖ` and therefore tending to zero as precision grows. A residual, not a
-//!    remainder. (b) `/` did NOT have to be re-decided: `q·b + r = a` is a theorem about the
-//!    TRUNCATED INTEGER quotient (C99 §6.5.5), not about a `p`-places quotient, so `/` was never
-//!    implicated. `checked_div` is unchanged and `10p1 / 3p1` is still `3.3p1`.
-//!
-//!    ⚠⚠ **RE-DERIVED 2026-07-30 (work item #200).** This item used to close with a third
-//!    argument, verbatim:
-//!
-//!    > What the finding missed entirely is decisive: the old `%` read `places`, which
-//!    > `PartialEq`/`Hash`/`to_canonical_bytes` all declare meaningless (they key on the reduced
-//!    > rational), so `7.00p2 == 7.0p1` while `%` answered `0.01` and `0.1` — not a function on
-//!    > the type's own equivalence classes.
-//!
-//!    That argument is DEAD: `places` is now part of `Fixed` identity, `7.00p2 != 7.0p1`, and a
-//!    `places`-reading `%` WOULD be a function on the new equivalence classes. Read unamended it
-//!    is an argument for restoring the residual-valued `%`. What condemns the old `%` instead is
-//!    simpler and is a floor obligation rather than an internal-consistency one: upstream's
-//!    `combine_mod` `GFixedPoint` arm (`reduce.rs:3460-3470`) is `&ua % &ub` on the unscaled
-//!    integers at `fp1.scale`, and upstream requires equal scales, so at equal scales this `%`
-//!    IS upstream's `%`. The residual agreed with it at no scale — `7.50p2 % 2.00p2` returned
-//!    `0p0` where upstream returns `1.50p2`. `runtime`'s
-//!    `remainder_is_invariant_under_the_places_spelling` remains the guard, re-derived alongside.
-//! 2. **Mixed scales are ACCEPTED — STILL OPEN, not changed.** Upstream requires equal scales for
-//!    every fixed-point arithmetic operator and raises `OperatorExpectedError { op, expected:
-//!    "FixedPoint(p{fp1.scale})", other_type: "FixedPoint(p{fp2.scale})" }` otherwise
-//!    (`combine_mod:3446-3452`, `combine_plus:3540`); mettail's `align_pair` aligns to
-//!    `max(places)`, so `7.00p2 + 3.000p3` is `10.000p3` here and `7.00p2 % 3.000p3` answers here.
-//!    Pre-existing and PERMISSIVE. Adopting the refusal REMOVES ACCEPTED PROGRAMS, which is a
-//!    separate ruling from the arithmetic one; the ruling received covered the arithmetic only.
-//!
-//! Row 1 is now pinned as an AGREEING cell with upstream's answer written down; row 2 remains
-//! pinned as KNOWN-DIVERGENT, so neither can be quietly forgotten or mistaken for the other.
+//! `fixed(value, places)` remains the explicit migration operation when a program needs to make
+//! scales agree, including zero-valued terms.
 //!
 //! # The gate
 //!
@@ -119,10 +85,7 @@
 
 #![cfg(feature = "rholang")]
 
-use mettail_languages::rholang::{
-    Proc, RholangLanguage, RholangTerm, RholangTermInner,
-};
-use mettail_runtime::Language;
+use mettail_languages::rholang::{Proc, RholangLanguage, RholangTerm, RholangTermInner};
 
 const DOVETAIL_ITERS: usize = 256;
 const DOVETAIL_NODES: usize = 4_000_000;
@@ -142,10 +105,18 @@ struct Carrier {
 
 const CARRIERS: &[Carrier] = &[
     Carrier { name: "Int", six: "6", three: "3" },
-    Carrier { name: "UInt32", six: "uint(6, 32)", three: "uint(3, 32)" },
+    Carrier {
+        name: "UInt32",
+        six: "uint(6, 32)",
+        three: "uint(3, 32)",
+    },
     Carrier { name: "BigInt", six: "6n", three: "3n" },
     Carrier { name: "BigRat", six: "6r", three: "3r" },
-    Carrier { name: "Fixed", six: "6.00p2", three: "3.00p2" },
+    Carrier {
+        name: "Fixed",
+        six: "6.00p2",
+        three: "3.00p2",
+    },
     Carrier { name: "Float", six: "6.0", three: "3.0" },
 ];
 
@@ -218,11 +189,7 @@ fn fold_carrier_and_value(src: &str) -> (String, String) {
     };
     let term = RholangTerm(RholangTermInner::Proc(parsed));
     match RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES) {
-        Ok(normal) => match normal
-            .as_any()
-            .downcast_ref::<RholangTerm>()
-            .map(|t| &t.0)
-        {
+        Ok(normal) => match normal.as_any().downcast_ref::<RholangTerm>().map(|t| &t.0) {
             Some(RholangTermInner::Proc(p)) => (carrier_of(p), format!("{p}")),
             _ => ("NON-PROC".to_string(), String::new()),
         },
@@ -254,10 +221,7 @@ fn every_arithmetic_operator_preserves_its_operand_carrier() {
             let (got, rendered) = fold_carrier_and_value(&src);
             let want = if op.arithmetic { carrier.name } else { "Bool" };
             let verdict = if got == want { "ok" } else { "★" };
-            rows.push(format!(
-                "  {verdict} {:<28} ⇒ {:<10} {}",
-                src, got, rendered
-            ));
+            rows.push(format!("  {verdict} {:<28} ⇒ {:<10} {}", src, got, rendered));
             if got != want {
                 violations.push(format!(
                     "  {src:<28} answered {got:<10} (want {want:<8}) value {rendered}"
@@ -413,15 +377,15 @@ fn bigrat_modulo_is_the_rational_zero() {
 /// for the two ways it was wrong. Do not move this row back.
 #[test]
 fn fixed_point_modulo_agrees_with_upstream() {
-    // Remainder on the aligned unscaled integers, scale preserved — `reduce.rs:3460-3470`.
+    // Remainder on same-scale unscaled integers, scale preserved — `reduce.rs:3460-3470`.
     for (src, upstream, derivation) in [
         ("7.00p2 % 3.00p2", "1.00p2", "700 % 300 = 100 at p2"),
         ("7.50p2 % 2.00p2", "1.50p2", "750 % 200 = 150 at p2"),
         // ★ The exactly-divisible case, which is where the old formula was most visibly wrong: it
         // answered `0` here because `7.50/2.50 = 3.00` is exact at two places, and it ALSO answers
         // `0` correctly — so this row only distinguishes the two definitions together with the
-        // rows above. Kept because a remainder of zero must survive normalization to `0p0`.
-        ("7.50p2 % 2.50p2", "0p0", "750 % 250 = 0, and true zero normalizes to p0"),
+        // rows above. A zero remainder retains the operands' declared scale.
+        ("7.50p2 % 2.50p2", "0.00p2", "750 % 250 = 0 at p2"),
         // Sign follows the DIVIDEND (truncated toward zero), as `BigInt`'s and upstream's `GInt`
         // `lhs % rhs` both do.
         ("-7.00p2 % 3.00p2", "-1.00p2", "-700 % 300 = -100 at p2"),
@@ -480,30 +444,59 @@ fn fixed_point_modulo_agrees_with_upstream() {
     }
 }
 
-/// ⚠ THE REMAINING `Fixed` DIVERGENCE, PINNED WITH UPSTREAM'S ANSWER WRITTEN DOWN. Mixed scales
-/// are ACCEPTED here and REFUSED upstream. Not repaired: adopting the refusal REMOVES ACCEPTED
-/// PROGRAMS, a separate owner ruling from the `%` arithmetic one. This row exists so that if it
-/// changes, it changes DELIBERATELY.
+/// Mixed-scale fixed-point arithmetic is refused, matching upstream's accepted-program set.
 #[test]
-fn mixed_scale_fixed_point_is_accepted_here_and_refused_upstream() {
-    // Upstream: `OperatorExpectedError { op: "+", expected: "FixedPoint(p2)",
-    //                                   other_type: "FixedPoint(p3)" }` — `combine_plus:3540`.
-    let (carrier, value) = fold_carrier_and_value("7.00p2 + 3.000p3");
+fn mixed_scale_fixed_point_is_refused_like_upstream() {
+    for expression in [
+        "7.00p2 + 3.000p3",
+        "7.00p2 - 3.000p3",
+        "7.00p2 * 3.000p3",
+        "7.00p2 / 3.000p3",
+        "7.00p2 % 3.000p3",
+        "7.00p2 bitand 3.000p3",
+        "7.00p2 bitor 3.000p3",
+        "7.00p2 > 3.000p3",
+        "7.00p2 < 3.000p3",
+        "7.00p2 >= 3.000p3",
+        "7.00p2 <= 3.000p3",
+    ] {
+        let (carrier, value) = fold_carrier_and_value(expression);
+        assert_eq!(
+            (carrier.as_str(), value.as_str()),
+            ("error", "error"),
+            "`{expression}` must refuse before applying a binary operator to unequal scales",
+        );
+    }
+
     assert_eq!(
-        (carrier.as_str(), value.as_str()),
-        ("Fixed", "10.000p3"),
-        "mixed-scale fixed-point addition aligns to `max(places)` here, while upstream raises          `OperatorExpectedError` (`combine_plus:3540`). PERMISSIVE and pre-existing.",
+        fold_carrier_and_value("fixed(7.00p2, 3) + 3.000p3"),
+        ("Fixed".to_string(), "10.000p3".to_string()),
+        "explicit rescaling is the migration path",
     );
-    // ★ The same permissiveness on `%` specifically, which the repair did NOT touch: upstream's
-    // `combine_mod:3446-3452` refuses this outright. `7.00p2 % 3.000p3` aligns to p3 —
-    // `7000 % 3000 = 1000` — and answers `1.000p3`.
-    let (carrier, value) = fold_carrier_and_value("7.00p2 % 3.000p3");
+}
+
+#[test]
+fn fixed_point_multiplication_matches_upstream_scale_and_floor() {
     assert_eq!(
-        (carrier.as_str(), value.as_str()),
-        ("Fixed", "1.000p3"),
-        "mixed-scale `%` answers here (aligned to `max(places)`) while upstream raises \
-         `OperatorExpectedError {{ op: \"%\", expected: \"FixedPoint(p2)\", other_type: \
-         \"FixedPoint(p3)\" }}` (`combine_mod:3446-3452`). ACCEPTED-PROGRAMS divergence, still \
-         open — the `%` ruling covered the arithmetic only.",
+        fold_carrier_and_value("1.5p1 * 1.5p1"),
+        ("Fixed".to_string(), "2.2p1".to_string()),
+    );
+    assert_eq!(
+        fold_carrier_and_value("-1.5p1 * 1.5p1"),
+        ("Fixed".to_string(), "-2.3p1".to_string()),
+        "negative multiplication uses floor, not truncation toward zero",
+    );
+}
+
+#[test]
+fn fixed_point_zero_keeps_declared_scale() {
+    assert_eq!(
+        fold_carrier_and_value("fixed(0p0, 2)"),
+        ("Fixed".to_string(), "0.00p2".to_string()),
+    );
+    assert_eq!(
+        fold_carrier_and_value("0.00p2 == 0.0p1"),
+        ("Bool".to_string(), "false".to_string()),
+        "zero identity is structural in the same way as every other fixed-point value",
     );
 }

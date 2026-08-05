@@ -5,10 +5,11 @@
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Rem, Sub};
+use std::ops::Neg;
 
 use moniker::{BoundTerm, Var};
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_rational::Ratio;
 use num_traits::Zero;
 
@@ -26,24 +27,17 @@ fn pow10(p: u32) -> BigInt {
 }
 
 impl CanonicalFixedPoint {
-    /// Constructs from unscaled integer and decimal place count, then normalizes.
+    /// Constructs from the exact raw `(unscaled, places)` pair.
+    ///
+    /// Declared scale is part of fixed-point identity and is preserved even for zero. Thus
+    /// `0p0`, `0.0p1`, and `0.00p2` denote the same number but remain distinct fixed-point values,
+    /// matching upstream Rholang's structural `GFixedPoint { unscaled, scale }` representation.
     pub fn new(unscaled: BigInt, places: u32) -> Self {
         Self::from_raw(CanonicalBigInt::from(unscaled), places)
     }
 
     fn from_raw(unscaled: CanonicalBigInt, places: u32) -> Self {
-        let mut s = Self { unscaled, places };
-        s.normalize_in_place();
-        s
-    }
-
-    /// Only collapse true zero to `0p0`. Do not strip trailing decimal zeros: `100p1` (ten with
-    /// scale 1) must stay distinct from `10p0` for literal-backed scale, while `+`/`-`/`*`/`/`
-    /// still align operands by `max(places)`.
-    fn normalize_in_place(&mut self) {
-        if self.unscaled.get().is_zero() {
-            self.places = 0;
-        }
+        Self { unscaled, places }
     }
 
     pub(crate) fn value_ratio(&self) -> Ratio<BigInt> {
@@ -168,19 +162,47 @@ impl Default for CanonicalFixedPoint {
 }
 
 impl CanonicalFixedPoint {
-    /// Align both operands to `P = max(places_a, places_b)`; returns scaled unscaled values.
-    fn align_pair(a: Self, b: Self) -> (BigInt, BigInt, u32) {
-        let p = a.places.max(b.places);
-        let scale_a = pow10(p - a.places);
-        let scale_b = pow10(p - b.places);
-        let ua = a.unscaled.get() * scale_a;
-        let ub = b.unscaled.get() * scale_b;
-        (ua, ub, p)
+    /// Returns whether two fixed-point values have the same declared scale.
+    #[inline]
+    pub const fn has_same_scale(self, rhs: Self) -> bool {
+        self.places == rhs.places
     }
 
-    /// Shifted integer division: `(ua * 10^P) / ub` at common scale `P`.
+    /// Extracts a same-scale pair without rescaling either mantissa.
+    #[inline]
+    fn same_scale_pair(a: Self, b: Self) -> Option<(BigInt, BigInt, u32)> {
+        if !a.has_same_scale(b) {
+            return None;
+        }
+        Some((a.unscaled.get().clone(), b.unscaled.get().clone(), a.places))
+    }
+
+    /// Same-scale addition, preserving the operands' scale.
+    pub fn checked_add(self, rhs: Self) -> Option<Self> {
+        let (ua, ub, p) = Self::same_scale_pair(self, rhs)?;
+        Some(Self::from_raw(CanonicalBigInt::from(ua + ub), p))
+    }
+
+    /// Same-scale subtraction, preserving the operands' scale.
+    pub fn checked_sub(self, rhs: Self) -> Option<Self> {
+        let (ua, ub, p) = Self::same_scale_pair(self, rhs)?;
+        Some(Self::from_raw(CanonicalBigInt::from(ua - ub), p))
+    }
+
+    /// Same-scale multiplication using upstream Rholang's scale-preserving floor rule.
+    ///
+    /// For operands `(u_a, p)` and `(u_b, p)`, the result is
+    /// `floor(u_a * u_b / 10^p)` at scale `p`. Floor division matters for negative products:
+    /// truncation toward zero would disagree with upstream by one unit in the last place.
+    pub fn checked_mul(self, rhs: Self) -> Option<Self> {
+        let (ua, ub, p) = Self::same_scale_pair(self, rhs)?;
+        let unscaled = (ua * ub).div_floor(&pow10(p));
+        Some(Self::from_raw(CanonicalBigInt::from(unscaled), p))
+    }
+
+    /// Same-scale shifted integer division: `(u_a * 10^p) / u_b`, at scale `p`.
     pub fn checked_div(self, rhs: Self) -> Option<Self> {
-        let (ua, ub, p) = Self::align_pair(self, rhs);
+        let (ua, ub, p) = Self::same_scale_pair(self, rhs)?;
         if ub.is_zero() {
             return None;
         }
@@ -189,7 +211,7 @@ impl CanonicalFixedPoint {
         Some(Self::from_raw(CanonicalBigInt::from(q), p))
     }
 
-    /// Remainder on the aligned unscaled integers, at the shared scale `P`: `ua % ub`, truncated
+    /// Remainder on same-scale unscaled integers: `u_a % u_b`, truncated
     /// toward zero so the sign follows the DIVIDEND (as `BigInt`'s and Rust's `i64`'s `%` do).
     ///
     /// # Upstream is the definition
@@ -294,7 +316,7 @@ impl CanonicalFixedPoint {
     ///
     /// `/` is deliberately NOT changed here; only `%` moved.
     pub fn checked_rem(self, rhs: Self) -> Option<Self> {
-        let (ua, ub, p) = Self::align_pair(self, rhs);
+        let (ua, ub, p) = Self::same_scale_pair(self, rhs)?;
         if ub.is_zero() {
             return None;
         }
@@ -302,17 +324,34 @@ impl CanonicalFixedPoint {
         Some(Self::from_raw(CanonicalBigInt::from(rem), p))
     }
 
-    fn bitwise_aligned<F>(a: Self, b: Self, op: F) -> Self
+    fn checked_bitwise<F>(a: Self, b: Self, op: F) -> Option<Self>
     where
         F: FnOnce(BigInt, BigInt) -> BigInt,
     {
-        let p = a.places.max(b.places);
-        let scale_a = pow10(p - a.places);
-        let scale_b = pow10(p - b.places);
-        let ia = a.unscaled.get() * scale_a;
-        let ib = b.unscaled.get() * scale_b;
-        let r = op(ia, ib);
-        Self::from_raw(CanonicalBigInt::from(r), p)
+        let (ua, ub, p) = Self::same_scale_pair(a, b)?;
+        Some(Self::from_raw(CanonicalBigInt::from(op(ua, ub)), p))
+    }
+
+    /// Bitwise AND over same-scale mantissas.
+    pub fn checked_bitand(self, rhs: Self) -> Option<Self> {
+        Self::checked_bitwise(self, rhs, |a, b| a & b)
+    }
+
+    /// Bitwise OR over same-scale mantissas.
+    pub fn checked_bitor(self, rhs: Self) -> Option<Self> {
+        Self::checked_bitwise(self, rhs, |a, b| a | b)
+    }
+
+    /// Bitwise XOR over same-scale mantissas.
+    pub fn checked_bitxor(self, rhs: Self) -> Option<Self> {
+        Self::checked_bitwise(self, rhs, |a, b| a ^ b)
+    }
+
+    /// Numeric comparison when the language-level scale precondition holds.
+    #[inline]
+    pub fn checked_cmp(self, rhs: Self) -> Option<std::cmp::Ordering> {
+        self.has_same_scale(rhs)
+            .then(|| self.unscaled.get().cmp(rhs.unscaled.get()))
     }
 }
 
@@ -359,10 +398,8 @@ impl CanonicalFixedPoint {
 /// TWO-element set upstream (`models/src/rust/sorted_par_hash_set.rs:14-24` is a
 /// `HashSet<Par>`) where mettail made it one.
 ///
-/// ⚠ **Residual, NOT closed by this change:** [`normalize_in_place`](Self::normalize_in_place)
-/// still collapses true zero to `0p0` where upstream's `make_fixedpoint_expr`
-/// (`reduce.rs:9668-9675`) does not, so `0.00p2 == 0.0p1` remains `true` here and `false`
-/// upstream. Recorded, not repaired — it is a third change and needs its own ruling.
+/// Zero follows the same rule: its declared scale is preserved, so `0.00p2 != 0.0p1`, matching
+/// upstream's structural equality.
 impl PartialEq for CanonicalFixedPoint {
     fn eq(&self, other: &Self) -> bool {
         // `places` first: a `u32` compare is far cheaper than a `BigInt` compare and
@@ -399,22 +436,18 @@ impl PartialOrd for CanonicalFixedPoint {
 /// comparing mantissas first gives `10 < 99` ⇒ `1.0p1 < 0.99p2`, which is false as arithmetic.
 /// Pinned by `tests::ord_is_numeric_first_then_places`.
 ///
-/// # ⚠ KNOWN RESIDUAL — the `places` tie-break leaks a non-numeric answer
+/// # The total-order tie-break is not a language-level comparison
 ///
 /// `7.00p2 > 7.0p1` is **`true`** under this `Ord` (equal value, `places` 2 > 1), and as
 /// arithmetic that is nonsense. The tie-break exists ONLY to satisfy Rust's totality
 /// requirement and to give `BTreeMap`/`sort` a total order; it is not meant to be observable
 /// from a program.
 ///
-/// **Its named resolution is upstream's scale-equality refusal** — the SIXTH refusal site,
+/// Upstream's scale-equality refusal is the sixth refusal site,
 /// `compare_fixed_points` (`reduce.rs:9772-9783`, reached from `combine_relop` `:3188`), which
-/// refuses a mixed-scale comparison outright with `op: "cmp"`. Once that precondition is
-/// adopted (work item #186), the four language-level ordering relops refuse before this
-/// tie-break is ever reachable, and the invariant to pin is: *no language-level ordering
-/// comparison may observe the `places` tie-break.* That work is a separate, owner-blocked
-/// change (it turns on a `Mul` scale-rule decision that neither ruling authorises) and is
-/// deliberately NOT made here. Until it lands, the leak is REAL and is recorded rather than
-/// hidden.
+/// refuses a mixed-scale comparison outright with `op: "cmp"`. The Calculator and Rholang
+/// ordered-comparison rules now enforce that same precondition before consulting `Ord`, so no
+/// program can observe this tie-break as a numeric fact.
 impl Ord for CanonicalFixedPoint {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.value_ratio()
@@ -493,72 +526,10 @@ impl BoundTerm<String> for CanonicalFixedPoint {
     fn visit_mut_vars(&mut self, _on_var: &mut impl FnMut(&mut Var<String>)) {}
 }
 
-impl Add for CanonicalFixedPoint {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self {
-        let (ua, ub, p) = Self::align_pair(self, rhs);
-        Self::from_raw(CanonicalBigInt::from(ua + ub), p)
-    }
-}
-
-impl Sub for CanonicalFixedPoint {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self {
-        let (ua, ub, p) = Self::align_pair(self, rhs);
-        Self::from_raw(CanonicalBigInt::from(ua - ub), p)
-    }
-}
-
-impl Mul for CanonicalFixedPoint {
-    type Output = Self;
-    fn mul(self, rhs: Self) -> Self {
-        let numer = self.unscaled.get() * rhs.unscaled.get();
-        let places = self.places + rhs.places;
-        Self::from_raw(CanonicalBigInt::from(numer), places)
-    }
-}
-
-impl Div for CanonicalFixedPoint {
-    type Output = Self;
-    fn div(self, rhs: Self) -> Self {
-        self.checked_div(rhs)
-            .expect("fixed-point division by zero or overflow path")
-    }
-}
-
-impl Rem for CanonicalFixedPoint {
-    type Output = Self;
-    fn rem(self, rhs: Self) -> Self {
-        self.checked_rem(rhs)
-            .expect("fixed-point remainder: division by zero")
-    }
-}
-
 impl Neg for CanonicalFixedPoint {
     type Output = Self;
     fn neg(self) -> Self {
         Self::from_raw(CanonicalBigInt::from(-self.unscaled.get().clone()), self.places)
-    }
-}
-
-impl BitAnd for CanonicalFixedPoint {
-    type Output = Self;
-    fn bitand(self, rhs: Self) -> Self {
-        Self::bitwise_aligned(self, rhs, |a, b| a & b)
-    }
-}
-
-impl BitOr for CanonicalFixedPoint {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self {
-        Self::bitwise_aligned(self, rhs, |a, b| a | b)
-    }
-}
-
-impl BitXor for CanonicalFixedPoint {
-    type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self {
-        Self::bitwise_aligned(self, rhs, |a, b| a ^ b)
     }
 }
 
@@ -583,8 +554,8 @@ mod tests {
         h.finish()
     }
 
-    /// The TRUNCATED INTEGER quotient `trunc(a/b)`, as an integer-valued fixed point
-    /// (`places = 0`).
+    /// The truncated integer quotient `trunc(a/b)`, represented at the operands' scale so it can
+    /// participate in upstream's same-scale multiplication.
     ///
     /// ★ This is the quotient `checked_rem`'s remainder pairs with, and it is NOT what
     /// [`CanonicalFixedPoint::checked_div`] returns. `checked_div` carries the quotient to `p`
@@ -592,8 +563,18 @@ mod tests {
     /// `q·b + r == a` holds for the INTEGER quotient only. Written out here so the two tests
     /// below can name the distinction instead of implying it.
     fn integer_quotient(a: CanonicalFixedPoint, b: CanonicalFixedPoint) -> CanonicalFixedPoint {
-        let (ua, ub, _p) = CanonicalFixedPoint::align_pair(a, b);
-        CanonicalFixedPoint::new(ua / ub, 0)
+        let (ua, ub, p) = CanonicalFixedPoint::same_scale_pair(a, b).expect("same scale");
+        CanonicalFixedPoint::new((ua / ub) * pow10(p), p)
+    }
+
+    fn multiply_then_add(
+        a: CanonicalFixedPoint,
+        b: CanonicalFixedPoint,
+        c: CanonicalFixedPoint,
+    ) -> CanonicalFixedPoint {
+        a.checked_mul(b)
+            .and_then(|product| product.checked_add(c))
+            .expect("test operands have one scale")
     }
 
     /// ★ RE-DERIVED 2026-07-30 — NOT re-blessed. `%` is the remainder on the ALIGNED UNSCALED
@@ -621,7 +602,7 @@ mod tests {
         assert_eq!(q.unscaled(), &BigInt::from(33));
         assert_eq!(q.places(), 1);
 
-        // `%` is the remainder on the aligned unscaled integers, at the shared scale.
+        // `%` is the remainder on same-scale unscaled integers.
         assert_eq!(
             r.unscaled(),
             &BigInt::from(10),
@@ -633,24 +614,24 @@ mod tests {
 
         // THE IDENTITY THAT HOLDS: against the truncated integer quotient.
         let q_int = integer_quotient(a, b);
-        assert_eq!(q_int.unscaled(), &BigInt::from(3), "trunc(10/3) == 3");
+        assert_eq!(q_int.unscaled(), &BigInt::from(30), "3.0p1 represents trunc(10/3)");
         assert_eq!(
-            q_int * b + r,
+            multiply_then_add(q_int, b, r),
             a,
             "`trunc(a/b)·b + (a % b) == a` — the division identity the exact remainder satisfies",
         );
 
         // THE IDENTITY THAT DOES NOT: against the p-places quotient. `3.3·3.0 + 1.0 == 10.9`.
         assert_ne!(
-            q * b + r,
+            multiply_then_add(q, b, r),
             a,
             "`(a/b)·b + (a % b) == a` holds only for the p-PLACES quotient paired with the \
              p-places truncation RESIDUAL — the superseded behaviour. If this row passes, \
              `checked_rem` has been reverted to computing `ε·b`.",
         );
         assert_eq!(
-            (q * b + r).to_string(),
-            "10.90p2",
+            multiply_then_add(q, b, r).to_string(),
+            "10.9p1",
             "the pairing is off by exactly the residual the old `%` returned (0.1·3.0 = 0.30… \
              precisely: 9.90 + 1.0 = 10.90 versus a = 10.0)",
         );
@@ -667,8 +648,7 @@ mod tests {
     /// the four `±7 % ±3` rows were added — the old pin could not have caught a sign error.
     #[test]
     fn div_mod_with_negatives() {
-        // Row 0: the originally pinned pair. Exact division ⇒ remainder is EXACTLY ZERO, which
-        // normalizes to `0p0`. Retained for continuity, not for coverage.
+        // Row 0: the originally pinned pair. Exact division gives zero at the operands' scale.
         let a = CanonicalFixedPoint::new(BigInt::from(-100), 2);
         let b = CanonicalFixedPoint::new(BigInt::from(25), 2);
         let r = a.checked_rem(b).expect("r");
@@ -677,10 +657,10 @@ mod tests {
             "-1.00p2 / 0.25p2 is exact (-4), so the remainder is 0 and this row cannot detect a \
              sign defect",
         );
-        assert_eq!(r.places(), 0, "true zero normalizes to `0p0`");
+        assert_eq!(r.places(), 2, "upstream preserves the declared scale of zero");
         let q_int = integer_quotient(a, b);
-        assert_eq!(q_int.unscaled(), &BigInt::from(-4));
-        assert_eq!(q_int * b + r, a, "`trunc(a/b)·b + (a % b) == a`");
+        assert_eq!(q_int.unscaled(), &BigInt::from(-400), "-4.00p2");
+        assert_eq!(multiply_then_add(q_int, b, r), a, "`trunc(a/b)·b + (a % b) == a`");
 
         // Rows 1-4: every sign combination, checked against `i64 %` — the carrier upstream's
         // `GInt` row uses, so agreement here is agreement with upstream on sign.
@@ -698,7 +678,7 @@ mod tests {
             );
             let q_int = integer_quotient(a, b);
             assert_eq!(
-                q_int * b + r,
+                multiply_then_add(q_int, b, r),
                 a,
                 "`trunc(a/b)·b + (a % b) == a` must hold at signs ({ai}, {bi})",
             );
@@ -831,10 +811,11 @@ mod tests {
     }
 
     #[test]
-    fn normalize_zero() {
+    fn preserve_zero_scale() {
         let z = CanonicalFixedPoint::new(BigInt::from(0), 5);
         assert!(z.unscaled.get().is_zero());
-        assert_eq!(z.places(), 0);
+        assert_eq!(z.places(), 5);
+        assert_eq!(z.to_string(), "0.00000p5");
     }
 
     #[test]
@@ -904,18 +885,16 @@ mod tests {
         );
         assert_eq!(point99_p2.cmp(&one_p1), Ordering::Less, "antisymmetry");
 
-        // The tie-break, asserted so the KNOWN RESIDUAL is visible rather than latent. See the
-        // `Ord` impl's doc: its named resolution is upstream's scale-equality refusal at the
-        // relops (`reduce.rs:9772-9783`), which is a separate, owner-blocked change.
+        // The tie-break makes the Rust carrier total. Language relops refuse mixed scales before
+        // reaching it, matching upstream's `compare_fixed_points` precondition.
         let seven_p2 = CanonicalFixedPoint::new(BigInt::from(700), 2);
         let seven_p1 = CanonicalFixedPoint::new(BigInt::from(70), 1);
         assert_eq!(seven_p2.value_ratio(), seven_p1.value_ratio(), "premise: equal VALUE",);
         assert_eq!(
             seven_p2.cmp(&seven_p1),
             Ordering::Greater,
-            "⚠ KNOWN RESIDUAL: equal value, so only the `places` tie-break can decide, and it \
-             answers `7.00p2 > 7.0p1` — not a numeric fact. It exists to make `Ord` TOTAL. Its \
-             resolution is the relops' scale-equality precondition, not a different `Ord`.",
+            "equal value leaves only the `places` tie-break. It exists to make `Ord` total and \
+             is unreachable through language-level ordered comparison",
         );
     }
 
@@ -924,14 +903,14 @@ mod tests {
     #[test]
     fn cmp_equal_iff_eq_over_a_scale_matrix() {
         // Six values spanning: same value at three scales, a neighbouring value, a negative,
-        // and zero (which `normalize_in_place` forces to `p0`).
+        // and a scale-bearing zero.
         let matrix = [
             ("7p0", CanonicalFixedPoint::new(BigInt::from(7), 0)),
             ("7.0p1", CanonicalFixedPoint::new(BigInt::from(70), 1)),
             ("7.00p2", CanonicalFixedPoint::new(BigInt::from(700), 2)),
             ("6.99p2", CanonicalFixedPoint::new(BigInt::from(699), 2)),
             ("-7.0p1", CanonicalFixedPoint::new(BigInt::from(-70), 1)),
-            ("0p0", CanonicalFixedPoint::new(BigInt::from(0), 3)),
+            ("0.000p3", CanonicalFixedPoint::new(BigInt::from(0), 3)),
         ];
         for (la, a) in &matrix {
             for (lb, b) in &matrix {
@@ -979,50 +958,30 @@ mod tests {
         assert_ne!(hash_val(&x), hash_val(&z));
     }
 
-    /// ★ RE-DERIVED 2026-07-30 (work item #200). The round-trip row moved from `assert_eq!` to
-    /// a value-level assertion, and the reason is worth stating because it is a NEW consequence
-    /// of the ruling that nothing else records.
-    ///
-    /// It read `assert_eq!(s - half, one)`. `align_pair` returns at `max(places)`, so
-    /// `(1p0 + 0.5p1) - 0.5p1` is `1.0p1 = (10, 1)`, not `1p0 = (1, 0)`. Under the old
-    /// value-keyed `Eq` those were the same value and the round trip closed. Under identity on
-    /// the raw pair they are distinct, so:
-    ///
-    /// ⚠ **`+` and `-` are no longer inverse AT THE LEVEL OF IDENTITY when the operand scales
-    /// differ.** `(x + y) - y` denotes the same NUMBER as `x` but is a different VALUE, and
-    /// therefore hashes differently, keys a `Map` differently, and occupies its own e-class.
-    ///
-    /// **Its named resolution is upstream's scale-equality refusal** (work item #186): once
-    /// `+`/`-` refuse mixed scales, `max(places)` can only ever equal both operands' `places`,
-    /// the widening disappears, and the round trip closes again at the identity level. That is
-    /// a separate, owner-blocked change and is deliberately NOT made here — so this residual is
-    /// REAL today and is pinned rather than hidden.
+    /// Upstream refuses mixed-scale addition and subtraction instead of silently widening either
+    /// operand. Callers can use the explicit `fixed(value, places)` conversion first.
     #[test]
-    fn add_sub_misaligned_places() {
+    fn add_sub_refuse_misaligned_places() {
         let one = fp(1, 0, 0);
         let half = fp(0, 5, 1);
-        let s = one + half;
-        let expected = fp(1, 5, 1);
-        assert_eq!(s, expected, "1p0 + 0.5p1 == 1.5p1, at p1 on both sides — identity holds");
-
-        let back = s - half;
-        assert_eq!(back.value_ratio(), one.value_ratio(), "the round trip recovers the NUMBER 1",);
-        assert_ne!(
-            back, one,
-            "⚠ …but not the VALUE `1p0`: `align_pair` widened to p1, so the result is `1.0p1`. \
-             `+`/`-` are not identity-inverse across mixed scales. Closed by the scale-equality \
-             precondition (work item #186), not by this ruling.",
-        );
-        assert_eq!(back.places(), 1, "the widened scale is where it came from");
+        assert_eq!(one.checked_add(half), None);
+        assert_eq!(one.checked_sub(half), None);
     }
 
     #[test]
-    fn mul_sums_places() {
+    fn mul_preserves_scale_and_floors() {
         let a = fp(2, 0, 1);
         let b = fp(3, 0, 1);
-        let p = a * b;
-        assert_eq!(p.places(), 2);
-        assert_eq!(p, fp(6, 0, 2));
+        let p = a.checked_mul(b).expect("same scale");
+        assert_eq!(p.places(), 1);
+        assert_eq!(p, fp(6, 0, 1));
+
+        let negative = CanonicalFixedPoint::new(BigInt::from(-15), 1)
+            .checked_mul(CanonicalFixedPoint::new(BigInt::from(15), 1))
+            .expect("same scale");
+        assert_eq!(negative.to_string(), "-2.3p1", "-2.25 floors to -2.3 at one place");
+
+        assert_eq!(a.checked_mul(CanonicalFixedPoint::new(BigInt::from(3), 0)), None);
     }
 
     #[test]
@@ -1035,37 +994,36 @@ mod tests {
     }
 
     #[test]
-    fn bitwise_and_aligned() {
+    fn bitwise_and_same_scale() {
         let a = CanonicalFixedPoint::new(BigInt::from(12), 1);
         let b = CanonicalFixedPoint::new(BigInt::from(10), 1);
-        let c = a & b;
+        let c = a.checked_bitand(b).expect("same scale");
         assert_eq!(c.unscaled.get(), &BigInt::from(8));
         assert_eq!(c.places(), 1);
     }
 
     #[test]
-    fn bitwise_misaligned_places() {
+    fn bitwise_refuses_misaligned_places() {
         let a = CanonicalFixedPoint::new(BigInt::from(15), 0);
         let b = CanonicalFixedPoint::new(BigInt::from(14), 1);
-        let c = a & b;
-        // 15p0 → 150p1 aligned; 150 & 14 = 6
-        assert_eq!(c.unscaled.get(), &BigInt::from(6));
-        assert_eq!(c.places(), 1);
+        assert_eq!(a.checked_bitand(b), None);
+        assert_eq!(a.checked_bitor(b), None);
+        assert_eq!(a.checked_bitxor(b), None);
     }
 
     #[test]
     fn bitwise_or_xor() {
         let a = fp(5, 0, 0);
         let b = fp(3, 0, 0);
-        assert_eq!(a | b, fp(7, 0, 0));
-        assert_eq!(a ^ b, fp(6, 0, 0));
+        assert_eq!(a.checked_bitor(b), Some(fp(7, 0, 0)));
+        assert_eq!(a.checked_bitxor(b), Some(fp(6, 0, 0)));
     }
 
     #[test]
     fn bitwise_negative_unscaled() {
         let a = CanonicalFixedPoint::new(BigInt::from(-4), 0);
         let b = CanonicalFixedPoint::new(BigInt::from(2), 0);
-        let c = a & b;
+        let c = a.checked_bitand(b).expect("same scale");
         assert_eq!(c.unscaled.get(), &(BigInt::from(-4) & BigInt::from(2)));
     }
 }

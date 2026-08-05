@@ -76,6 +76,10 @@ pub enum UndefinedReason {
     /// The operation is not defined on this carrier at all — `bool - bool`, `String / String`.
     /// A carrier-level type error the grammar allowed to be spelled.
     NotDefinedForCarrier,
+    /// A binary fixed-point operation received operands with different declared decimal scales.
+    /// Upstream Rholang treats the scale as part of the fixed-point carrier and refuses the
+    /// operation rather than silently rescaling either mantissa.
+    FixedPointScaleMismatch,
 }
 
 impl UndefinedReason {
@@ -89,6 +93,7 @@ impl UndefinedReason {
             Self::NotANumber => "NotANumber",
             Self::NegativeExponent => "NegativeExponent",
             Self::NotDefinedForCarrier => "NotDefinedForCarrier",
+            Self::FixedPointScaleMismatch => "FixedPointScaleMismatch",
         }
     }
 }
@@ -101,6 +106,9 @@ impl fmt::Display for UndefinedReason {
             Self::NotANumber => "the result is NaN",
             Self::NegativeExponent => "a negative exponent on an integer carrier",
             Self::NotDefinedForCarrier => "the operation is not defined on this carrier",
+            Self::FixedPointScaleMismatch => {
+                "the fixed-point operands have different declared scales"
+            },
         };
         f.write_str(prose)
     }
