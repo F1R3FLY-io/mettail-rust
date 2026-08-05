@@ -100,7 +100,6 @@ pub const SCHEMA_END: &str = "@@ METTAIL-RUST-CTOR-SCHEMA v1 END @@";
 
 /// How a constructor field is typed, and therefore what shape its `Debug` text has and what
 /// Rust must be written for it.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldSpec {
     /// `Arc<C>` for a declared category `C` — a nested term.
     Cat(String),
@@ -125,6 +124,8 @@ pub enum FieldSpec {
     /// `Option<inner>`.
     Opt(Box<FieldSpec>),
 }
+
+mod lifecycle;
 
 /// One constructor of one category.
 #[derive(Debug, Clone)]
@@ -184,7 +185,11 @@ impl Schema {
                     let native = parts.next().unwrap_or("-");
                     schema.natives.insert(
                         name.to_string(),
-                        if native == "-" { None } else { Some(native.to_string()) },
+                        if native == "-" {
+                            None
+                        } else {
+                            Some(native.to_string())
+                        },
                     );
                 },
                 "V" => {
@@ -247,46 +252,54 @@ impl Schema {
 }
 
 fn parse_field_spec(descriptor: &str) -> Result<FieldSpec, String> {
-    if let Some(inner) = descriptor.strip_prefix("opt:") {
-        return Ok(FieldSpec::Opt(Box::new(parse_field_spec(inner)?)));
+    let mut optional_depth = 0usize;
+    let mut descriptor = descriptor;
+    while let Some(inner) = descriptor.strip_prefix("opt:") {
+        optional_depth += 1;
+        descriptor = inner;
     }
-    if descriptor == "var" {
-        return Ok(FieldSpec::Var);
-    }
-    if descriptor == "pred" {
-        return Ok(FieldSpec::Pred);
-    }
-    if descriptor == "opaque:token" {
-        return Ok(FieldSpec::OpaqueToken);
-    }
-    if descriptor == "opaque:guest" {
-        return Ok(FieldSpec::OpaqueGuest);
-    }
-    if let Some(cat) = descriptor.strip_prefix("cat:") {
-        return Ok(FieldSpec::Cat(cat.to_string()));
-    }
-    if let Some(ty) = descriptor.strip_prefix("native:") {
-        return Ok(FieldSpec::Native(ty.to_string()));
-    }
-    for (prefix, build) in [
-        ("coll:", 0u8),
-        ("collit:", 1u8),
-        ("scope1:", 2u8),
-        ("scopeN:", 3u8),
-    ] {
-        if let Some(rest) = descriptor.strip_prefix(prefix) {
-            let (a, b) = rest
-                .split_once(':')
-                .ok_or_else(|| format!("`{prefix}` needs two colon-separated arguments"))?;
-            return Ok(match build {
-                0 => FieldSpec::Coll { kind: a.to_string(), elem: b.to_string() },
-                1 => FieldSpec::CollLit { kind: a.to_string(), elem: b.to_string() },
-                2 => FieldSpec::Scope1 { binder: a.to_string(), body: b.to_string() },
-                _ => FieldSpec::ScopeN { binder: a.to_string(), body: b.to_string() },
-            });
+    let mut spec = if descriptor == "var" {
+        FieldSpec::Var
+    } else if descriptor == "pred" {
+        FieldSpec::Pred
+    } else if descriptor == "opaque:token" {
+        FieldSpec::OpaqueToken
+    } else if descriptor == "opaque:guest" {
+        FieldSpec::OpaqueGuest
+    } else if let Some(cat) = descriptor.strip_prefix("cat:") {
+        FieldSpec::Cat(cat.to_string())
+    } else if let Some(ty) = descriptor.strip_prefix("native:") {
+        FieldSpec::Native(ty.to_string())
+    } else {
+        let mut parsed = None;
+        for (prefix, build) in
+            [("coll:", 0u8), ("collit:", 1u8), ("scope1:", 2u8), ("scopeN:", 3u8)]
+        {
+            if let Some(rest) = descriptor.strip_prefix(prefix) {
+                let (a, b) = rest
+                    .split_once(':')
+                    .ok_or_else(|| format!("`{prefix}` needs two colon-separated arguments"))?;
+                parsed = Some(match build {
+                    0 => FieldSpec::Coll { kind: a.to_string(), elem: b.to_string() },
+                    1 => FieldSpec::CollLit { kind: a.to_string(), elem: b.to_string() },
+                    2 => FieldSpec::Scope1 {
+                        binder: a.to_string(),
+                        body: b.to_string(),
+                    },
+                    _ => FieldSpec::ScopeN {
+                        binder: a.to_string(),
+                        body: b.to_string(),
+                    },
+                });
+                break;
+            }
         }
+        parsed.ok_or_else(|| format!("unrecognised field descriptor `{descriptor}`"))?
+    };
+    for _ in 0..optional_depth {
+        spec = FieldSpec::Opt(Box::new(spec));
     }
-    Err(format!("unrecognised field descriptor `{descriptor}`"))
+    Ok(spec)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -303,7 +316,10 @@ pub enum DebugNode {
     /// `Ident(a, b, …)`
     Call { head: String, args: Vec<DebugNode> },
     /// `Ident { field: v, … }`
-    Struct { head: String, fields: Vec<(String, DebugNode)> },
+    Struct {
+        head: String,
+        fields: Vec<(String, DebugNode)>,
+    },
     /// A bare identifier: a nullary constructor, `None`, `true`, `false`.
     Ident(String),
     /// `"…"`, already unescaped.
@@ -748,8 +764,12 @@ impl Parser {
             }
             let denom: String = self.src[dstart..self.pos].iter().collect();
             return Ok(DebugNode::Ratio(
-                numer.parse().map_err(|e| format!("bad numerator {numer:?}: {e}"))?,
-                denom.parse().map_err(|e| format!("bad denominator {denom:?}: {e}"))?,
+                numer
+                    .parse()
+                    .map_err(|e| format!("bad numerator {numer:?}: {e}"))?,
+                denom
+                    .parse()
+                    .map_err(|e| format!("bad denominator {denom:?}: {e}"))?,
             ));
         }
         // `a..b` — a range, not a float. `proc_macro2::Span`'s `Debug` writes
@@ -766,8 +786,10 @@ impl Parser {
             }
             let high: String = self.src[hstart..self.pos].iter().collect();
             return Ok(DebugNode::Range(
-                low.parse().map_err(|e| format!("bad range start {low:?}: {e}"))?,
-                high.parse().map_err(|e| format!("bad range end {high:?}: {e}"))?,
+                low.parse()
+                    .map_err(|e| format!("bad range start {low:?}: {e}"))?,
+                high.parse()
+                    .map_err(|e| format!("bad range end {high:?}: {e}"))?,
             ));
         }
         if self.peek() == Some('.') && matches!(self.peek_at(1), Some(c) if c.is_ascii_digit()) {
@@ -777,12 +799,14 @@ impl Parser {
             }
             let text: String = self.src[start..self.pos].iter().collect();
             return Ok(DebugNode::Float(
-                text.parse().map_err(|e| format!("bad float {text:?}: {e}"))?,
+                text.parse()
+                    .map_err(|e| format!("bad float {text:?}: {e}"))?,
             ));
         }
         let text: String = self.src[start..self.pos].iter().collect();
         Ok(DebugNode::Int(
-            text.parse().map_err(|e| format!("bad integer {text:?}: {e}"))?,
+            text.parse()
+                .map_err(|e| format!("bad integer {text:?}: {e}"))?,
         ))
     }
 }
@@ -802,7 +826,11 @@ pub enum EmitError {
     /// No category declares this constructor at all. Tier-3 territory.
     UnknownConstructor { label: String },
     /// The constructor exists, but not in the category expected at this position.
-    WrongCategory { label: String, expected: String, found_in: Vec<String> },
+    WrongCategory {
+        label: String,
+        expected: String,
+        found_in: Vec<String>,
+    },
     /// The text's shape does not match the field's declared type.
     ShapeMismatch { expected: String, found: String },
     /// The schema declares a field type this emitter does not know how to write.
@@ -855,7 +883,10 @@ pub fn emit_category(
         },
     };
 
-    let variant = match schema.variants.get(&(category.to_string(), head.to_string())) {
+    let variant = match schema
+        .variants
+        .get(&(category.to_string(), head.to_string()))
+    {
         Some(v) => v,
         None => {
             let elsewhere = schema.categories_declaring(head);
@@ -1132,10 +1163,7 @@ fn emit_collection(
                         parts.push(rendered.clone());
                     }
                 }
-                Ok(format!(
-                    "mettail_runtime::HashBag::from_iter(vec![{}])",
-                    parts.join(", ")
-                ))
+                Ok(format!("mettail_runtime::HashBag::from_iter(vec![{}])", parts.join(", ")))
             },
             other => Err(EmitError::ShapeMismatch {
                 expected: "`HashBag { counts: .., total_count: .. }`".to_string(),
@@ -1191,7 +1219,11 @@ fn emit_collection(
         },
 
         "HashMap" | "PathMap" => {
-            let wrapper = if kind == "HashMap" { "HashMapLit" } else { "PathMapLit" };
+            let wrapper = if kind == "HashMap" {
+                "HashMapLit"
+            } else {
+                "PathMapLit"
+            };
             let inner = unwrap_lit_container(node, wrapper)?;
             let entries = match inner {
                 DebugNode::Map(entries) => entries.as_slice(),
@@ -1478,7 +1510,9 @@ pub fn normalize_unique_ids(text: &str) -> String {
     while let Some(idx) = rest.find(NEEDLE) {
         out.push_str(&rest[..idx]);
         let after = &rest[idx + NEEDLE.len()..];
-        let digits = after.find(|c: char| !c.is_ascii_digit()).unwrap_or(after.len());
+        let digits = after
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(after.len());
         if digits > 0 && after[digits..].starts_with(')') {
             out.push_str("UniqueId(_)");
             rest = &after[digits + 1..];
@@ -1665,7 +1699,10 @@ pub fn canonicalize_shrinks_to(text: &str) -> String {
         Ok(bindings) => {
             let sorted: Vec<Binding> = bindings
                 .into_iter()
-                .map(|b| Binding { name: b.name, value: sort_brace_groups(b.value) })
+                .map(|b| Binding {
+                    name: b.name,
+                    value: sort_brace_groups(b.value),
+                })
                 .collect();
             render_bindings(&sorted)
         },
