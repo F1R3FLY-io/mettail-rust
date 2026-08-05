@@ -179,7 +179,6 @@ const RECURSION_DISPOSITIONS: &[(&str, Disposition)] = &[
         "ast/src/identity.rs",
         Disposition::Unmeasured("9-member cycle over rule identity; no subject"),
     ),
-    ("ast/src/pattern.rs", Disposition::Unmeasured("pattern walk, no subject")),
     (
         "ast/src/types.rs",
         Disposition::Unmeasured("`TypeExpr` walk — nesting is bounded by the declared type"),
