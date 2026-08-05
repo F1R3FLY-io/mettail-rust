@@ -17,11 +17,11 @@ use super::types::CollectionType;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 /// Term-like structure for rule specification.
 /// Mirrors `Term` but allows `Pattern` in sub-expression positions.
 /// This lets metasyntax (#map, #zip, etc.) appear anywhere in a term.
-#[derive(Debug, Clone)]
 pub enum PatternTerm {
     /// Variable (binds on LHS, references on RHS)
     Var(Ident),
@@ -56,7 +56,6 @@ pub enum PatternTerm {
 /// Interpretation differs by position:
 /// - LHS: pattern matching, variable binding
 /// - RHS: term construction
-#[derive(Debug, Clone)]
 pub enum Pattern {
     /// A term-like pattern (the common case)
     Term(PatternTerm),
@@ -141,6 +140,1104 @@ pub enum Pattern {
     },
 }
 
+#[derive(Clone, Copy)]
+enum PatternNode<'pattern> {
+    Pattern(&'pattern Pattern),
+    Term(&'pattern PatternTerm),
+}
+
+enum PatternCloneTask<'pattern> {
+    Visit(PatternNode<'pattern>),
+    WrapTerm(usize),
+    Collection(&'pattern Pattern, usize),
+    Map(&'pattern Pattern, usize),
+    Zip(usize),
+    IndexedVec(&'pattern Pattern, usize),
+    Apply(&'pattern PatternTerm, usize),
+    Lambda(&'pattern PatternTerm, usize),
+    MultiLambda(&'pattern PatternTerm, usize),
+    Subst(&'pattern PatternTerm, usize),
+    MultiSubst(&'pattern PatternTerm, usize),
+}
+
+enum ClonedPatternNode {
+    Pattern(Pattern),
+    Term(PatternTerm),
+}
+
+fn cloned_pattern(value: ClonedPatternNode) -> Pattern {
+    match value {
+        ClonedPatternNode::Pattern(pattern) => pattern,
+        ClonedPatternNode::Term(_) => panic!("pattern clone PDA expected a Pattern result"),
+    }
+}
+
+fn cloned_term(value: ClonedPatternNode) -> PatternTerm {
+    match value {
+        ClonedPatternNode::Term(term) => term,
+        ClonedPatternNode::Pattern(_) => panic!("pattern clone PDA expected a PatternTerm result"),
+    }
+}
+
+fn clone_pattern_node(root: PatternNode<'_>) -> ClonedPatternNode {
+    let mut tasks = vec![PatternCloneTask::Visit(root)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            PatternCloneTask::Visit(PatternNode::Pattern(pattern)) => match pattern {
+                Pattern::Term(term) => {
+                    tasks.push(PatternCloneTask::WrapTerm(values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Term(term)));
+                },
+                Pattern::Collection { elements, .. } => {
+                    tasks.push(PatternCloneTask::Collection(pattern, values.len()));
+                    tasks.extend(
+                        elements
+                            .iter()
+                            .rev()
+                            .map(|child| PatternCloneTask::Visit(PatternNode::Pattern(child))),
+                    );
+                },
+                Pattern::Map { collection, body, .. } => {
+                    tasks.push(PatternCloneTask::Map(pattern, values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(body)));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(collection)));
+                },
+                Pattern::Zip { first, second } => {
+                    tasks.push(PatternCloneTask::Zip(values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(second)));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(first)));
+                },
+                Pattern::IndexedVec { element, .. } => {
+                    tasks.push(PatternCloneTask::IndexedVec(pattern, values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(element)));
+                },
+            },
+            PatternCloneTask::Visit(PatternNode::Term(term)) => match term {
+                PatternTerm::Var(ident) => {
+                    values.push(ClonedPatternNode::Term(PatternTerm::Var(ident.clone())));
+                },
+                PatternTerm::Apply { args, .. } => {
+                    tasks.push(PatternCloneTask::Apply(term, values.len()));
+                    tasks.extend(
+                        args.iter()
+                            .rev()
+                            .map(|child| PatternCloneTask::Visit(PatternNode::Pattern(child))),
+                    );
+                },
+                PatternTerm::Lambda { body, .. } => {
+                    tasks.push(PatternCloneTask::Lambda(term, values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(body)));
+                },
+                PatternTerm::MultiLambda { body, .. } => {
+                    tasks.push(PatternCloneTask::MultiLambda(term, values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(body)));
+                },
+                PatternTerm::Subst { term: value, replacement, .. } => {
+                    tasks.push(PatternCloneTask::Subst(term, values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(replacement)));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(value)));
+                },
+                PatternTerm::MultiSubst { scope, replacements } => {
+                    tasks.push(PatternCloneTask::MultiSubst(term, values.len()));
+                    tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(scope)));
+                    tasks.extend(
+                        replacements
+                            .iter()
+                            .rev()
+                            .map(|child| PatternCloneTask::Visit(PatternNode::Pattern(child))),
+                    );
+                },
+            },
+            PatternCloneTask::WrapTerm(value_base) => {
+                let term = cloned_term(
+                    values
+                        .pop()
+                        .expect("pattern clone PDA lost a PatternTerm result"),
+                );
+                values.truncate(value_base);
+                values.push(ClonedPatternNode::Pattern(Pattern::Term(term)));
+            },
+            PatternCloneTask::Collection(source, value_base) => {
+                let Pattern::Collection { coll_type, rest, .. } = source else {
+                    unreachable!("collection clone task carries a collection source")
+                };
+                let elements = values.drain(value_base..).map(cloned_pattern).collect();
+                values.push(ClonedPatternNode::Pattern(Pattern::Collection {
+                    coll_type: coll_type.clone(),
+                    elements,
+                    rest: rest.clone(),
+                }));
+            },
+            PatternCloneTask::Map(source, value_base) => {
+                let Pattern::Map { params, .. } = source else {
+                    unreachable!("map clone task carries a map source")
+                };
+                let body = cloned_pattern(values.pop().expect("pattern clone PDA lost map body"));
+                let collection =
+                    cloned_pattern(values.pop().expect("pattern clone PDA lost map collection"));
+                values.truncate(value_base);
+                values.push(ClonedPatternNode::Pattern(Pattern::Map {
+                    collection: Box::new(collection),
+                    params: params.clone(),
+                    body: Box::new(body),
+                }));
+            },
+            PatternCloneTask::Zip(value_base) => {
+                let second = cloned_pattern(values.pop().expect("pattern clone PDA lost zip RHS"));
+                let first = cloned_pattern(values.pop().expect("pattern clone PDA lost zip LHS"));
+                values.truncate(value_base);
+                values.push(ClonedPatternNode::Pattern(Pattern::Zip {
+                    first: Box::new(first),
+                    second: Box::new(second),
+                }));
+            },
+            PatternCloneTask::IndexedVec(source, value_base) => {
+                let Pattern::IndexedVec { collection, index, .. } = source else {
+                    unreachable!("indexed clone task carries an IndexedVec source")
+                };
+                let element = cloned_pattern(
+                    values
+                        .pop()
+                        .expect("pattern clone PDA lost indexed element"),
+                );
+                values.truncate(value_base);
+                values.push(ClonedPatternNode::Pattern(Pattern::IndexedVec {
+                    collection: collection.clone(),
+                    index: index.clone(),
+                    element: Box::new(element),
+                }));
+            },
+            PatternCloneTask::Apply(source, value_base) => {
+                let PatternTerm::Apply { constructor, .. } = source else {
+                    unreachable!("apply clone task carries an Apply source")
+                };
+                let args = values.drain(value_base..).map(cloned_pattern).collect();
+                values.push(ClonedPatternNode::Term(PatternTerm::Apply {
+                    constructor: constructor.clone(),
+                    args,
+                }));
+            },
+            PatternCloneTask::Lambda(source, value_base) => {
+                let PatternTerm::Lambda { binder, .. } = source else {
+                    unreachable!("lambda clone task carries a Lambda source")
+                };
+                let body =
+                    cloned_pattern(values.pop().expect("pattern clone PDA lost lambda body"));
+                values.truncate(value_base);
+                values.push(ClonedPatternNode::Term(PatternTerm::Lambda {
+                    binder: binder.clone(),
+                    body: Box::new(body),
+                }));
+            },
+            PatternCloneTask::MultiLambda(source, value_base) => {
+                let PatternTerm::MultiLambda { binders, .. } = source else {
+                    unreachable!("multi-lambda clone task carries a MultiLambda source")
+                };
+                let body = cloned_pattern(
+                    values
+                        .pop()
+                        .expect("pattern clone PDA lost multi-lambda body"),
+                );
+                values.truncate(value_base);
+                values.push(ClonedPatternNode::Term(PatternTerm::MultiLambda {
+                    binders: binders.clone(),
+                    body: Box::new(body),
+                }));
+            },
+            PatternCloneTask::Subst(source, value_base) => {
+                let PatternTerm::Subst { var, .. } = source else {
+                    unreachable!("substitution clone task carries a Subst source")
+                };
+                let replacement = cloned_pattern(
+                    values
+                        .pop()
+                        .expect("pattern clone PDA lost substitution replacement"),
+                );
+                let term = cloned_pattern(
+                    values
+                        .pop()
+                        .expect("pattern clone PDA lost substitution term"),
+                );
+                values.truncate(value_base);
+                values.push(ClonedPatternNode::Term(PatternTerm::Subst {
+                    term: Box::new(term),
+                    var: var.clone(),
+                    replacement: Box::new(replacement),
+                }));
+            },
+            PatternCloneTask::MultiSubst(source, value_base) => {
+                let PatternTerm::MultiSubst { .. } = source else {
+                    unreachable!("multi-substitution clone task carries a MultiSubst source")
+                };
+                let scope = cloned_pattern(
+                    values
+                        .pop()
+                        .expect("pattern clone PDA lost multi-substitution scope"),
+                );
+                let replacements = values.drain(value_base..).map(cloned_pattern).collect();
+                values.push(ClonedPatternNode::Term(PatternTerm::MultiSubst {
+                    scope: Box::new(scope),
+                    replacements,
+                }));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("pattern clone PDA produced no result")
+}
+
+impl Clone for Pattern {
+    fn clone(&self) -> Self {
+        cloned_pattern(clone_pattern_node(PatternNode::Pattern(self)))
+    }
+}
+
+impl Clone for PatternTerm {
+    fn clone(&self) -> Self {
+        cloned_term(clone_pattern_node(PatternNode::Term(self)))
+    }
+}
+
+fn pattern_placeholder() -> Pattern {
+    Pattern::Term(PatternTerm::Var(Ident::new("_", Span::call_site())))
+}
+
+fn take_pattern_box(child: &mut Box<Pattern>, work: &mut Vec<Pattern>) {
+    work.push(*std::mem::replace(child, Box::new(pattern_placeholder())));
+}
+
+fn take_pattern_term_children(term: &mut PatternTerm, work: &mut Vec<Pattern>) {
+    match term {
+        PatternTerm::Var(_) => {},
+        PatternTerm::Apply { args, .. } => work.append(args),
+        PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+            take_pattern_box(body, work);
+        },
+        PatternTerm::Subst { term, replacement, .. } => {
+            take_pattern_box(term, work);
+            take_pattern_box(replacement, work);
+        },
+        PatternTerm::MultiSubst { scope, replacements } => {
+            take_pattern_box(scope, work);
+            work.append(replacements);
+        },
+    }
+}
+
+fn take_pattern_children(pattern: &mut Pattern, work: &mut Vec<Pattern>) {
+    match pattern {
+        Pattern::Term(term) => take_pattern_term_children(term, work),
+        Pattern::Collection { elements, .. } => work.append(elements),
+        Pattern::Map { collection, body, .. } => {
+            take_pattern_box(collection, work);
+            take_pattern_box(body, work);
+        },
+        Pattern::Zip { first, second } => {
+            take_pattern_box(first, work);
+            take_pattern_box(second, work);
+        },
+        Pattern::IndexedVec { element, .. } => take_pattern_box(element, work),
+    }
+}
+
+fn drain_pattern_descendants(work: &mut Vec<Pattern>) {
+    while let Some(pattern) = work.pop() {
+        drain_owned_pattern(pattern, work);
+    }
+}
+
+fn drain_owned_pattern(pattern: Pattern, work: &mut Vec<Pattern>) {
+    // `pattern` is a descendant whose recursive fields are being destroyed by
+    // this outer worklist. Suppressing its `Drop` avoids allocating and entering
+    // a fresh worklist once per node. Every field is moved out exactly once below;
+    // scalar fields are dropped immediately and child Patterns join `work`.
+    let mut pattern = std::mem::ManuallyDrop::new(pattern);
+    match &mut *pattern {
+        Pattern::Term(term) => {
+            // SAFETY: `pattern` is ManuallyDrop, this field is read exactly once,
+            // and `drain_owned_pattern_term` consumes every field of the value.
+            let term = unsafe { std::ptr::read(term) };
+            drain_owned_pattern_term(term, work);
+        },
+        Pattern::Collection { coll_type, elements, rest } => {
+            // SAFETY: all three fields belong to a ManuallyDrop value and each is
+            // read exactly once. The moved values assume normal destruction here.
+            drop(unsafe { std::ptr::read(coll_type) });
+            work.extend(unsafe { std::ptr::read(elements) });
+            drop(unsafe { std::ptr::read(rest) });
+        },
+        Pattern::Map { collection, params, body } => {
+            // SAFETY: each field is read exactly once from the ManuallyDrop node.
+            work.push(*unsafe { std::ptr::read(collection) });
+            drop(unsafe { std::ptr::read(params) });
+            work.push(*unsafe { std::ptr::read(body) });
+        },
+        Pattern::Zip { first, second } => {
+            // SAFETY: each Box is read exactly once from the ManuallyDrop node.
+            work.push(*unsafe { std::ptr::read(first) });
+            work.push(*unsafe { std::ptr::read(second) });
+        },
+        Pattern::IndexedVec { collection, index, element } => {
+            // SAFETY: each field is read exactly once from the ManuallyDrop node.
+            drop(unsafe { std::ptr::read(collection) });
+            drop(unsafe { std::ptr::read(index) });
+            work.push(*unsafe { std::ptr::read(element) });
+        },
+    }
+}
+
+fn drain_owned_pattern_term(term: PatternTerm, work: &mut Vec<Pattern>) {
+    let mut term = std::mem::ManuallyDrop::new(term);
+    match &mut *term {
+        PatternTerm::Var(ident) => {
+            // SAFETY: the Ident is read exactly once from the ManuallyDrop node.
+            drop(unsafe { std::ptr::read(ident) });
+        },
+        PatternTerm::Apply { constructor, args } => {
+            // SAFETY: both fields are read exactly once from the ManuallyDrop node.
+            drop(unsafe { std::ptr::read(constructor) });
+            work.extend(unsafe { std::ptr::read(args) });
+        },
+        PatternTerm::Lambda { binder, body } => {
+            // SAFETY: both fields are read exactly once from the ManuallyDrop node.
+            drop(unsafe { std::ptr::read(binder) });
+            work.push(*unsafe { std::ptr::read(body) });
+        },
+        PatternTerm::MultiLambda { binders, body } => {
+            // SAFETY: both fields are read exactly once from the ManuallyDrop node.
+            drop(unsafe { std::ptr::read(binders) });
+            work.push(*unsafe { std::ptr::read(body) });
+        },
+        PatternTerm::Subst { term, var, replacement } => {
+            // SAFETY: all fields are read exactly once from the ManuallyDrop node.
+            work.push(*unsafe { std::ptr::read(term) });
+            drop(unsafe { std::ptr::read(var) });
+            work.push(*unsafe { std::ptr::read(replacement) });
+        },
+        PatternTerm::MultiSubst { scope, replacements } => {
+            // SAFETY: both fields are read exactly once from the ManuallyDrop node.
+            work.push(*unsafe { std::ptr::read(scope) });
+            work.extend(unsafe { std::ptr::read(replacements) });
+        },
+    }
+}
+
+impl Drop for Pattern {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        take_pattern_children(self, &mut work);
+        drain_pattern_descendants(&mut work);
+    }
+}
+
+impl Drop for PatternTerm {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        take_pattern_term_children(self, &mut work);
+        drain_pattern_descendants(&mut work);
+    }
+}
+
+enum ScopedPatternTask<'pattern> {
+    Visit(PatternNode<'pattern>),
+    MapBody(&'pattern [Ident], &'pattern Pattern),
+    BindOne(&'pattern Ident, &'pattern Pattern),
+    BindMany(&'pattern [Ident], &'pattern Pattern),
+    ExitOne(&'pattern Ident),
+    ExitMany(&'pattern [Ident]),
+}
+
+fn visit_free_pattern_variables(root: PatternNode<'_>, mut visit: impl FnMut(&Ident)) {
+    let mut tasks = vec![ScopedPatternTask::Visit(root)];
+    let mut bound: HashMap<String, usize> = HashMap::new();
+    let visit_if_free =
+        |ident: &Ident, bound: &HashMap<String, usize>, visit: &mut dyn FnMut(&Ident)| {
+            if !bound.contains_key(&ident.to_string()) {
+                visit(ident);
+            }
+        };
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            ScopedPatternTask::Visit(PatternNode::Pattern(pattern)) => match pattern {
+                Pattern::Term(term) => {
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Term(term)));
+                },
+                Pattern::Collection { elements, rest, .. } => {
+                    tasks.extend(
+                        elements
+                            .iter()
+                            .rev()
+                            .map(|child| ScopedPatternTask::Visit(PatternNode::Pattern(child))),
+                    );
+                    if let Some(rest) = rest {
+                        visit_if_free(rest, &bound, &mut visit);
+                    }
+                },
+                Pattern::Map { collection, params, body } => {
+                    tasks.push(ScopedPatternTask::MapBody(params, body));
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(collection)));
+                },
+                Pattern::Zip { first, second } => {
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(second)));
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(first)));
+                },
+                Pattern::IndexedVec { collection, index, element } => {
+                    visit_if_free(collection, &bound, &mut visit);
+                    visit_if_free(index, &bound, &mut visit);
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(element)));
+                },
+            },
+            ScopedPatternTask::Visit(PatternNode::Term(term)) => match term {
+                PatternTerm::Var(ident) => visit_if_free(ident, &bound, &mut visit),
+                PatternTerm::Apply { args, .. } => {
+                    tasks.extend(
+                        args.iter()
+                            .rev()
+                            .map(|child| ScopedPatternTask::Visit(PatternNode::Pattern(child))),
+                    );
+                },
+                PatternTerm::Lambda { binder, body } => {
+                    tasks.push(ScopedPatternTask::BindOne(binder, body));
+                },
+                PatternTerm::MultiLambda { binders, body } => {
+                    tasks.push(ScopedPatternTask::BindMany(binders, body));
+                },
+                PatternTerm::Subst { term, var, replacement } => {
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(replacement)));
+                    visit_if_free(var, &bound, &mut visit);
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(term)));
+                },
+                PatternTerm::MultiSubst { scope, replacements } => {
+                    tasks.extend(
+                        replacements
+                            .iter()
+                            .rev()
+                            .map(|child| ScopedPatternTask::Visit(PatternNode::Pattern(child))),
+                    );
+                    tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(scope)));
+                },
+            },
+            ScopedPatternTask::MapBody(params, body)
+            | ScopedPatternTask::BindMany(params, body) => {
+                for ident in params {
+                    *bound.entry(ident.to_string()).or_default() += 1;
+                }
+                tasks.push(ScopedPatternTask::ExitMany(params));
+                tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(body)));
+            },
+            ScopedPatternTask::BindOne(ident, body) => {
+                *bound.entry(ident.to_string()).or_default() += 1;
+                tasks.push(ScopedPatternTask::ExitOne(ident));
+                tasks.push(ScopedPatternTask::Visit(PatternNode::Pattern(body)));
+            },
+            ScopedPatternTask::ExitOne(ident) => {
+                let name = ident.to_string();
+                let depth = bound.get_mut(&name).expect("entered binder must be active");
+                *depth -= 1;
+                if *depth == 0 {
+                    bound.remove(&name);
+                }
+            },
+            ScopedPatternTask::ExitMany(idents) => {
+                for ident in idents {
+                    let name = ident.to_string();
+                    let depth = bound.get_mut(&name).expect("entered binder must be active");
+                    *depth -= 1;
+                    if *depth == 0 {
+                        bound.remove(&name);
+                    }
+                }
+            },
+        }
+    }
+}
+
+fn collect_pattern_constructor_labels(root: PatternNode<'_>, labels: &mut HashSet<String>) {
+    let mut work = vec![root];
+    while let Some(node) = work.pop() {
+        match node {
+            PatternNode::Pattern(pattern) => match pattern {
+                Pattern::Term(term) => work.push(PatternNode::Term(term)),
+                Pattern::Collection { elements, .. } => {
+                    work.extend(elements.iter().rev().map(PatternNode::Pattern));
+                },
+                Pattern::Map { collection, body, .. } => {
+                    work.push(PatternNode::Pattern(body));
+                    work.push(PatternNode::Pattern(collection));
+                },
+                Pattern::Zip { first, second } => {
+                    work.push(PatternNode::Pattern(second));
+                    work.push(PatternNode::Pattern(first));
+                },
+                Pattern::IndexedVec { element, .. } => {
+                    work.push(PatternNode::Pattern(element));
+                },
+            },
+            PatternNode::Term(term) => match term {
+                PatternTerm::Var(_) => {},
+                PatternTerm::Apply { constructor, args } => {
+                    labels.insert(constructor.to_string());
+                    work.extend(args.iter().rev().map(PatternNode::Pattern));
+                },
+                PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+                    work.push(PatternNode::Pattern(body));
+                },
+                PatternTerm::Subst { term, replacement, .. } => {
+                    work.push(PatternNode::Pattern(replacement));
+                    work.push(PatternNode::Pattern(term));
+                },
+                PatternTerm::MultiSubst { scope, replacements } => {
+                    work.extend(replacements.iter().rev().map(PatternNode::Pattern));
+                    work.push(PatternNode::Pattern(scope));
+                },
+            },
+        }
+    }
+}
+
+fn pattern_node_span(mut node: PatternNode<'_>) -> Span {
+    loop {
+        match node {
+            PatternNode::Pattern(pattern) => match pattern {
+                Pattern::Term(term) => node = PatternNode::Term(term),
+                Pattern::Collection { elements, .. } => {
+                    let Some(first) = elements.first() else {
+                        return Span::call_site();
+                    };
+                    node = PatternNode::Pattern(first);
+                },
+                Pattern::Map { collection, .. } => node = PatternNode::Pattern(collection),
+                Pattern::Zip { first, .. } => node = PatternNode::Pattern(first),
+                Pattern::IndexedVec { collection, .. } => return collection.span(),
+            },
+            PatternNode::Term(term) => match term {
+                PatternTerm::Var(ident) => return ident.span(),
+                PatternTerm::Apply { constructor, .. } => return constructor.span(),
+                PatternTerm::Lambda { binder, .. } => return binder.span(),
+                PatternTerm::MultiLambda { binders, .. } => {
+                    return binders
+                        .first()
+                        .map_or(Span::call_site(), |binder| binder.span());
+                },
+                PatternTerm::Subst { var, .. } => return var.span(),
+                PatternTerm::MultiSubst { scope, .. } => node = PatternNode::Pattern(scope),
+            },
+        }
+    }
+}
+
+fn pattern_node_category<'language>(
+    mut node: PatternNode<'_>,
+    language: &'language LanguageDef,
+) -> Option<&'language Ident> {
+    loop {
+        match node {
+            PatternNode::Pattern(pattern) => match pattern {
+                Pattern::Term(term) => node = PatternNode::Term(term),
+                Pattern::Collection { .. } | Pattern::IndexedVec { .. } => return None,
+                Pattern::Map { body, .. } => node = PatternNode::Pattern(body),
+                Pattern::Zip { first, .. } => node = PatternNode::Pattern(first),
+            },
+            PatternNode::Term(term) => match term {
+                PatternTerm::Var(_) => return None,
+                PatternTerm::Apply { constructor, .. } => {
+                    return language.category_of_constructor(constructor);
+                },
+                PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+                    node = PatternNode::Pattern(body);
+                },
+                PatternTerm::Subst { term, .. } => node = PatternNode::Pattern(term),
+                PatternTerm::MultiSubst { scope, .. } => node = PatternNode::Pattern(scope),
+            },
+        }
+    }
+}
+
+fn pattern_node_is_ground(root: PatternNode<'_>, language: &LanguageDef) -> bool {
+    let mut work = vec![root];
+    while let Some(node) = work.pop() {
+        match node {
+            PatternNode::Pattern(pattern) => match pattern {
+                Pattern::Term(term) => work.push(PatternNode::Term(term)),
+                Pattern::Collection { elements, rest, .. } => {
+                    if rest.is_some() {
+                        return false;
+                    }
+                    work.extend(elements.iter().rev().map(PatternNode::Pattern));
+                },
+                Pattern::Map { .. } | Pattern::Zip { .. } | Pattern::IndexedVec { .. } => {
+                    return false;
+                },
+            },
+            PatternNode::Term(term) => match term {
+                PatternTerm::Var(ident) => {
+                    if language.get_constructor(ident).is_none() {
+                        return false;
+                    }
+                },
+                PatternTerm::Apply { args, .. } => {
+                    work.extend(args.iter().rev().map(PatternNode::Pattern));
+                },
+                PatternTerm::Lambda { .. }
+                | PatternTerm::MultiLambda { .. }
+                | PatternTerm::Subst { .. }
+                | PatternTerm::MultiSubst { .. } => return false,
+            },
+        }
+    }
+    true
+}
+
+enum PatternDebugTask<'pattern> {
+    Node(PatternNode<'pattern>, usize),
+    PatternList(&'pattern [Pattern], usize),
+    Ident(&'pattern Ident, usize),
+    IdentList(&'pattern [Ident], usize),
+    OptionIdent(&'pattern Option<Ident>, usize),
+    OptionCollectionType(&'pattern Option<CollectionType>, usize),
+    FieldNode(&'static str, PatternNode<'pattern>, usize),
+    FieldPatternList(&'static str, &'pattern [Pattern], usize),
+    FieldIdent(&'static str, &'pattern Ident, usize),
+    FieldIdentList(&'static str, &'pattern [Ident], usize),
+    FieldOptionIdent(&'static str, &'pattern Option<Ident>, usize),
+    FieldOptionCollectionType(&'static str, &'pattern Option<CollectionType>, usize),
+    Text(&'static str),
+    Indent(usize),
+    CloseTuple(usize),
+    CloseStruct(usize),
+    CloseList(usize),
+}
+
+fn write_debug_indent(f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+    for _ in 0..indent {
+        f.write_str("    ")?;
+    }
+    Ok(())
+}
+
+fn collection_type_name(collection_type: &CollectionType) -> &'static str {
+    match collection_type {
+        CollectionType::HashBag => "HashBag",
+        CollectionType::HashSet => "HashSet",
+        CollectionType::Vec => "Vec",
+        CollectionType::HashMap => "HashMap",
+        CollectionType::PathMap => "PathMap",
+    }
+}
+
+fn fmt_debug_ident(
+    ident: &Ident,
+    indent: usize,
+    pretty: bool,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    if pretty {
+        f.write_str("Ident {\n")?;
+        write_debug_indent(f, indent + 1)?;
+        write!(f, "sym: {},\n", ident)?;
+        write_debug_indent(f, indent)?;
+        f.write_str("}")
+    } else {
+        write!(f, "Ident {{ sym: {ident} }}")
+    }
+}
+
+fn push_compact_pattern_list<'pattern>(
+    tasks: &mut Vec<PatternDebugTask<'pattern>>,
+    patterns: &'pattern [Pattern],
+) {
+    tasks.push(PatternDebugTask::Text("]"));
+    for (index, pattern) in patterns.iter().enumerate().rev() {
+        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(pattern), 0));
+        if index > 0 {
+            tasks.push(PatternDebugTask::Text(", "));
+        }
+    }
+}
+
+fn push_pretty_pattern_list<'pattern>(
+    tasks: &mut Vec<PatternDebugTask<'pattern>>,
+    patterns: &'pattern [Pattern],
+    indent: usize,
+) {
+    tasks.push(PatternDebugTask::CloseList(indent));
+    for pattern in patterns.iter().rev() {
+        tasks.push(PatternDebugTask::Text(",\n"));
+        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(pattern), indent + 1));
+        tasks.push(PatternDebugTask::Indent(indent + 1));
+    }
+}
+
+fn fmt_pattern_debug(root: PatternNode<'_>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let pretty = f.alternate();
+    let mut tasks = vec![PatternDebugTask::Node(root, 0)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            PatternDebugTask::Text(text) => f.write_str(text)?,
+            PatternDebugTask::Indent(indent) => write_debug_indent(f, indent)?,
+            PatternDebugTask::CloseTuple(indent) => {
+                f.write_str(",\n")?;
+                write_debug_indent(f, indent)?;
+                f.write_str(")")?;
+            },
+            PatternDebugTask::CloseStruct(indent) => {
+                write_debug_indent(f, indent)?;
+                f.write_str("}")?;
+            },
+            PatternDebugTask::CloseList(indent) => {
+                write_debug_indent(f, indent)?;
+                f.write_str("]")?;
+            },
+            PatternDebugTask::Ident(ident, indent) => {
+                fmt_debug_ident(ident, indent, pretty, f)?;
+            },
+            PatternDebugTask::IdentList(idents, indent) => {
+                if !pretty || idents.is_empty() {
+                    f.write_str("[")?;
+                    for (index, ident) in idents.iter().enumerate() {
+                        if index > 0 {
+                            f.write_str(", ")?;
+                        }
+                        fmt_debug_ident(ident, indent, false, f)?;
+                    }
+                    f.write_str("]")?;
+                } else {
+                    f.write_str("[\n")?;
+                    for ident in idents {
+                        write_debug_indent(f, indent + 1)?;
+                        fmt_debug_ident(ident, indent + 1, true, f)?;
+                        f.write_str(",\n")?;
+                    }
+                    write_debug_indent(f, indent)?;
+                    f.write_str("]")?;
+                }
+            },
+            PatternDebugTask::OptionIdent(ident, indent) => match ident {
+                None => f.write_str("None")?,
+                Some(ident) if pretty => {
+                    f.write_str("Some(\n")?;
+                    write_debug_indent(f, indent + 1)?;
+                    fmt_debug_ident(ident, indent + 1, true, f)?;
+                    f.write_str(",\n")?;
+                    write_debug_indent(f, indent)?;
+                    f.write_str(")")?;
+                },
+                Some(ident) => {
+                    f.write_str("Some(")?;
+                    fmt_debug_ident(ident, indent, false, f)?;
+                    f.write_str(")")?;
+                },
+            },
+            PatternDebugTask::OptionCollectionType(collection_type, indent) => {
+                match collection_type {
+                    None => f.write_str("None")?,
+                    Some(collection_type) if pretty => {
+                        f.write_str("Some(\n")?;
+                        write_debug_indent(f, indent + 1)?;
+                        f.write_str(collection_type_name(collection_type))?;
+                        f.write_str(",\n")?;
+                        write_debug_indent(f, indent)?;
+                        f.write_str(")")?;
+                    },
+                    Some(collection_type) => {
+                        write!(f, "Some({})", collection_type_name(collection_type))?;
+                    },
+                }
+            },
+            PatternDebugTask::PatternList(patterns, indent) => {
+                if pretty && !patterns.is_empty() {
+                    f.write_str("[\n")?;
+                    push_pretty_pattern_list(&mut tasks, patterns, indent);
+                } else {
+                    f.write_str("[")?;
+                    push_compact_pattern_list(&mut tasks, patterns);
+                }
+            },
+            PatternDebugTask::FieldNode(name, node, indent) => {
+                write_debug_indent(f, indent)?;
+                write!(f, "{name}: ")?;
+                tasks.push(PatternDebugTask::Text(",\n"));
+                tasks.push(PatternDebugTask::Node(node, indent));
+            },
+            PatternDebugTask::FieldPatternList(name, patterns, indent) => {
+                write_debug_indent(f, indent)?;
+                write!(f, "{name}: ")?;
+                tasks.push(PatternDebugTask::Text(",\n"));
+                tasks.push(PatternDebugTask::PatternList(patterns, indent));
+            },
+            PatternDebugTask::FieldIdent(name, ident, indent) => {
+                write_debug_indent(f, indent)?;
+                write!(f, "{name}: ")?;
+                tasks.push(PatternDebugTask::Text(",\n"));
+                tasks.push(PatternDebugTask::Ident(ident, indent));
+            },
+            PatternDebugTask::FieldIdentList(name, idents, indent) => {
+                write_debug_indent(f, indent)?;
+                write!(f, "{name}: ")?;
+                tasks.push(PatternDebugTask::Text(",\n"));
+                tasks.push(PatternDebugTask::IdentList(idents, indent));
+            },
+            PatternDebugTask::FieldOptionIdent(name, ident, indent) => {
+                write_debug_indent(f, indent)?;
+                write!(f, "{name}: ")?;
+                tasks.push(PatternDebugTask::Text(",\n"));
+                tasks.push(PatternDebugTask::OptionIdent(ident, indent));
+            },
+            PatternDebugTask::FieldOptionCollectionType(name, collection_type, indent) => {
+                write_debug_indent(f, indent)?;
+                write!(f, "{name}: ")?;
+                tasks.push(PatternDebugTask::Text(",\n"));
+                tasks.push(PatternDebugTask::OptionCollectionType(collection_type, indent));
+            },
+            PatternDebugTask::Node(PatternNode::Pattern(pattern), indent) => match pattern {
+                Pattern::Term(term) => {
+                    if pretty {
+                        f.write_str("Term(\n")?;
+                        tasks.push(PatternDebugTask::CloseTuple(indent));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Term(term), indent + 1));
+                        tasks.push(PatternDebugTask::Indent(indent + 1));
+                    } else {
+                        f.write_str("Term(")?;
+                        tasks.push(PatternDebugTask::Text(")"));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Term(term), 0));
+                    }
+                },
+                Pattern::Collection { coll_type, elements, rest } => {
+                    if pretty {
+                        f.write_str("Collection {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldOptionIdent("rest", rest, indent + 1));
+                        tasks.push(PatternDebugTask::FieldPatternList(
+                            "elements",
+                            elements,
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldOptionCollectionType(
+                            "coll_type",
+                            coll_type,
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("Collection { coll_type: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::OptionIdent(rest, 0));
+                        tasks.push(PatternDebugTask::Text(", rest: "));
+                        tasks.push(PatternDebugTask::PatternList(elements, 0));
+                        tasks.push(PatternDebugTask::Text(", elements: "));
+                        tasks.push(PatternDebugTask::OptionCollectionType(coll_type, 0));
+                    }
+                },
+                Pattern::Map { collection, params, body } => {
+                    if pretty {
+                        f.write_str("Map {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "body",
+                            PatternNode::Pattern(body),
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldIdentList("params", params, indent + 1));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "collection",
+                            PatternNode::Pattern(collection),
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("Map { collection: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(body), 0));
+                        tasks.push(PatternDebugTask::Text(", body: "));
+                        tasks.push(PatternDebugTask::IdentList(params, 0));
+                        tasks.push(PatternDebugTask::Text(", params: "));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(collection), 0));
+                    }
+                },
+                Pattern::Zip { first, second } => {
+                    if pretty {
+                        f.write_str("Zip {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "second",
+                            PatternNode::Pattern(second),
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "first",
+                            PatternNode::Pattern(first),
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("Zip { first: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(second), 0));
+                        tasks.push(PatternDebugTask::Text(", second: "));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(first), 0));
+                    }
+                },
+                Pattern::IndexedVec { collection, index, element } => {
+                    if pretty {
+                        f.write_str("IndexedVec {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "element",
+                            PatternNode::Pattern(element),
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldIdent("index", index, indent + 1));
+                        tasks.push(PatternDebugTask::FieldIdent(
+                            "collection",
+                            collection,
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("IndexedVec { collection: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(element), 0));
+                        tasks.push(PatternDebugTask::Text(", element: "));
+                        tasks.push(PatternDebugTask::Ident(index, 0));
+                        tasks.push(PatternDebugTask::Text(", index: "));
+                        tasks.push(PatternDebugTask::Ident(collection, 0));
+                    }
+                },
+            },
+            PatternDebugTask::Node(PatternNode::Term(term), indent) => match term {
+                PatternTerm::Var(ident) => {
+                    if pretty {
+                        f.write_str("Var(\n")?;
+                        tasks.push(PatternDebugTask::CloseTuple(indent));
+                        tasks.push(PatternDebugTask::Ident(ident, indent + 1));
+                        tasks.push(PatternDebugTask::Indent(indent + 1));
+                    } else {
+                        f.write_str("Var(")?;
+                        tasks.push(PatternDebugTask::Text(")"));
+                        tasks.push(PatternDebugTask::Ident(ident, 0));
+                    }
+                },
+                PatternTerm::Apply { constructor, args } => {
+                    if pretty {
+                        f.write_str("Apply {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldPatternList("args", args, indent + 1));
+                        tasks.push(PatternDebugTask::FieldIdent(
+                            "constructor",
+                            constructor,
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("Apply { constructor: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::PatternList(args, 0));
+                        tasks.push(PatternDebugTask::Text(", args: "));
+                        tasks.push(PatternDebugTask::Ident(constructor, 0));
+                    }
+                },
+                PatternTerm::Lambda { binder, body } => {
+                    if pretty {
+                        f.write_str("Lambda {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "body",
+                            PatternNode::Pattern(body),
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldIdent("binder", binder, indent + 1));
+                    } else {
+                        f.write_str("Lambda { binder: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(body), 0));
+                        tasks.push(PatternDebugTask::Text(", body: "));
+                        tasks.push(PatternDebugTask::Ident(binder, 0));
+                    }
+                },
+                PatternTerm::MultiLambda { binders, body } => {
+                    if pretty {
+                        f.write_str("MultiLambda {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "body",
+                            PatternNode::Pattern(body),
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldIdentList(
+                            "binders",
+                            binders,
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("MultiLambda { binders: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(body), 0));
+                        tasks.push(PatternDebugTask::Text(", body: "));
+                        tasks.push(PatternDebugTask::IdentList(binders, 0));
+                    }
+                },
+                PatternTerm::Subst { term, var, replacement } => {
+                    if pretty {
+                        f.write_str("Subst {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "replacement",
+                            PatternNode::Pattern(replacement),
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldIdent("var", var, indent + 1));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "term",
+                            PatternNode::Pattern(term),
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("Subst { term: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(replacement), 0));
+                        tasks.push(PatternDebugTask::Text(", replacement: "));
+                        tasks.push(PatternDebugTask::Ident(var, 0));
+                        tasks.push(PatternDebugTask::Text(", var: "));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(term), 0));
+                    }
+                },
+                PatternTerm::MultiSubst { scope, replacements } => {
+                    if pretty {
+                        f.write_str("MultiSubst {\n")?;
+                        tasks.push(PatternDebugTask::CloseStruct(indent));
+                        tasks.push(PatternDebugTask::FieldPatternList(
+                            "replacements",
+                            replacements,
+                            indent + 1,
+                        ));
+                        tasks.push(PatternDebugTask::FieldNode(
+                            "scope",
+                            PatternNode::Pattern(scope),
+                            indent + 1,
+                        ));
+                    } else {
+                        f.write_str("MultiSubst { scope: ")?;
+                        tasks.push(PatternDebugTask::Text(" }"));
+                        tasks.push(PatternDebugTask::PatternList(replacements, 0));
+                        tasks.push(PatternDebugTask::Text(", replacements: "));
+                        tasks.push(PatternDebugTask::Node(PatternNode::Pattern(scope), 0));
+                    }
+                },
+            },
+        }
+    }
+    Ok(())
+}
+
+impl fmt::Debug for Pattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_pattern_debug(PatternNode::Pattern(self), f)
+    }
+}
+
+impl fmt::Debug for PatternTerm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_pattern_debug(PatternNode::Term(self), f)
+    }
+}
+
 // ============================================================================
 // PatternTerm implementations
 // ============================================================================
@@ -149,45 +1246,11 @@ impl PatternTerm {
     /// Collect free variables in this pattern term
     #[allow(dead_code)]
     pub fn free_vars(&self) -> HashSet<String> {
-        match self {
-            PatternTerm::Var(v) => {
-                let mut set = HashSet::new();
-                set.insert(v.to_string());
-                set
-            },
-            PatternTerm::Apply { args, .. } => {
-                let mut vars = HashSet::new();
-                for arg in args {
-                    vars.extend(arg.free_vars());
-                }
-                vars
-            },
-            PatternTerm::Lambda { binder, body } => {
-                let mut vars = body.free_vars();
-                vars.remove(&binder.to_string());
-                vars
-            },
-            PatternTerm::MultiLambda { binders, body } => {
-                let mut vars = body.free_vars();
-                for binder in binders {
-                    vars.remove(&binder.to_string());
-                }
-                vars
-            },
-            PatternTerm::Subst { term, var, replacement } => {
-                let mut vars = term.free_vars();
-                vars.insert(var.to_string());
-                vars.extend(replacement.free_vars());
-                vars
-            },
-            PatternTerm::MultiSubst { scope, replacements } => {
-                let mut vars = scope.free_vars();
-                for repl in replacements {
-                    vars.extend(repl.free_vars());
-                }
-                vars
-            },
-        }
+        let mut vars = HashSet::new();
+        visit_free_pattern_variables(PatternNode::Term(self), |ident| {
+            vars.insert(ident.to_string());
+        });
+        vars
     }
 
     /// Collect all constructor labels referenced in this pattern term.
@@ -197,42 +1260,12 @@ impl PatternTerm {
     /// if an equation/rewrite/logic rule references a constructor, that constructor is
     /// semantically live even if parsing never dispatches to it.
     pub fn collect_constructor_labels(&self, labels: &mut HashSet<String>) {
-        match self {
-            PatternTerm::Apply { constructor, args } => {
-                labels.insert(constructor.to_string());
-                for arg in args {
-                    arg.collect_constructor_labels(labels);
-                }
-            },
-            PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
-                body.collect_constructor_labels(labels);
-            },
-            PatternTerm::Subst { term, replacement, .. } => {
-                term.collect_constructor_labels(labels);
-                replacement.collect_constructor_labels(labels);
-            },
-            PatternTerm::MultiSubst { scope, replacements } => {
-                scope.collect_constructor_labels(labels);
-                for r in replacements {
-                    r.collect_constructor_labels(labels);
-                }
-            },
-            PatternTerm::Var(_) => {},
-        }
+        collect_pattern_constructor_labels(PatternNode::Term(self), labels);
     }
 
     /// Return the most representative span for this pattern term.
     pub fn span(&self) -> Span {
-        match self {
-            PatternTerm::Var(ident) => ident.span(),
-            PatternTerm::Apply { constructor, .. } => constructor.span(),
-            PatternTerm::Lambda { binder, .. } => binder.span(),
-            PatternTerm::MultiLambda { binders, .. } => {
-                binders.first().map_or(Span::call_site(), |b| b.span())
-            },
-            PatternTerm::Subst { var, .. } => var.span(),
-            PatternTerm::MultiSubst { scope, .. } => scope.span(),
-        }
+        pattern_node_span(PatternNode::Term(self))
     }
 }
 
@@ -243,16 +1276,7 @@ impl PatternTerm {
 impl Pattern {
     /// Return the most representative span for this pattern.
     pub fn span(&self) -> Span {
-        match self {
-            Pattern::Term(pt) => pt.span(),
-            Pattern::Collection { elements, .. } => {
-                elements.first().map_or(Span::call_site(), |e| e.span())
-            },
-            Pattern::Map { collection, .. } => collection.span(),
-            Pattern::Zip { first, .. } => first.span(),
-            // The collection name is the leftmost token of `args[i := S]`.
-            Pattern::IndexedVec { collection, .. } => collection.span(),
-        }
+        pattern_node_span(PatternNode::Pattern(self))
     }
 
     /// Collect all constructor labels referenced in this pattern.
@@ -261,68 +1285,17 @@ impl Pattern {
     /// identifiers. Used for transitive liveness analysis: equations, rewrites, and logic
     /// blocks reference constructors that must not be flagged as dead rules.
     pub fn collect_constructor_labels(&self, labels: &mut HashSet<String>) {
-        match self {
-            Pattern::Term(term) => term.collect_constructor_labels(labels),
-            Pattern::Collection { elements, .. } => {
-                for elem in elements {
-                    elem.collect_constructor_labels(labels);
-                }
-                // `rest` is an Ident (variable binding), not a constructor — skip.
-            },
-            Pattern::Map { collection, body, .. } => {
-                collection.collect_constructor_labels(labels);
-                body.collect_constructor_labels(labels);
-            },
-            Pattern::Zip { first, second } => {
-                first.collect_constructor_labels(labels);
-                second.collect_constructor_labels(labels);
-            },
-            // Only the element sub-pattern can name a constructor; `collection` and
-            // `index` are plain variables.
-            Pattern::IndexedVec { element, .. } => element.collect_constructor_labels(labels),
-        }
+        collect_pattern_constructor_labels(PatternNode::Pattern(self), labels);
     }
 
     /// Collect free variables in this pattern
     #[allow(dead_code)]
     pub fn free_vars(&self) -> HashSet<String> {
-        match self {
-            Pattern::Term(pt) => pt.free_vars(),
-            Pattern::Collection { elements, rest, .. } => {
-                let mut vars = HashSet::new();
-                for elem in elements {
-                    vars.extend(elem.free_vars());
-                }
-                if let Some(r) = rest {
-                    vars.insert(r.to_string());
-                }
-                vars
-            },
-            Pattern::Map { collection, params, body } => {
-                let mut vars = collection.free_vars();
-                // Body vars, minus the params (which are bound by the map)
-                let mut body_vars = body.free_vars();
-                for param in params {
-                    body_vars.remove(&param.to_string());
-                }
-                vars.extend(body_vars);
-                vars
-            },
-            Pattern::Zip { first, second } => {
-                let mut vars = first.free_vars();
-                vars.extend(second.free_vars());
-                vars
-            },
-            // `collection` and `index` are both vars here, exactly as `Collection`'s
-            // `rest` is: each is a binder when the pattern is read as a MATCH and a use
-            // when it is read as a CONSTRUCTION, and `free_vars` serves both readings.
-            Pattern::IndexedVec { collection, index, element } => {
-                let mut vars = element.free_vars();
-                vars.insert(collection.to_string());
-                vars.insert(index.to_string());
-                vars
-            },
-        }
+        let mut vars = HashSet::new();
+        visit_free_pattern_variables(PatternNode::Pattern(self), |ident| {
+            vars.insert(ident.to_string());
+        });
+        vars
     }
 
     /// Check if this pattern is just a variable (no constructor or structure)
@@ -344,18 +1317,7 @@ impl Pattern {
     /// can match at most one specific term shape, enabling direct seed insertion
     /// at Ascent initialization instead of per-iteration pattern matching.
     pub fn is_ground_pattern(&self, language: &LanguageDef) -> bool {
-        match self {
-            Pattern::Term(pt) => pt.is_ground_pattern(language),
-            Pattern::Collection { elements, rest, .. } => {
-                // Ground only if no rest variable and all elements are ground
-                rest.is_none() && elements.iter().all(|e| e.is_ground_pattern(language))
-            },
-            // Map and Zip involve iteration over collections — never ground
-            Pattern::Map { .. } | Pattern::Zip { .. } => false,
-            // Never ground: it quantifies over the positions of a `Vec`, so it matches a
-            // family of terms, not one shape.
-            Pattern::IndexedVec { .. } => false,
-        }
+        pattern_node_is_ground(PatternNode::Pattern(self), language)
     }
 
     /// Get the constructor name if this is a constructor application
@@ -377,20 +1339,7 @@ impl Pattern {
     /// NOTE: Collection patterns return None - they get their category from
     /// the enclosing PatternTerm::Apply which knows the constructor.
     pub fn category<'a>(&self, language: &'a LanguageDef) -> Option<&'a Ident> {
-        match self {
-            Pattern::Term(pt) => pt.category(language),
-            // Collections don't know their category - it comes from enclosing Apply
-            Pattern::Collection { .. } => None,
-            // Map produces elements of the body's category
-            Pattern::Map { body, .. } => body.category(language),
-            Pattern::Zip { first, .. } => {
-                // Zip produces a collection of tuples - category depends on first
-                first.category(language)
-            },
-            // Like `Collection`, it denotes the whole payload and takes its category from
-            // the enclosing `Apply`, which is what knows the field's declared type.
-            Pattern::IndexedVec { .. } => None,
-        }
+        pattern_node_category(PatternNode::Pattern(self), language)
     }
 
     // -------------------------------------------------------------------------
@@ -401,48 +1350,10 @@ impl Pattern {
     /// Useful for detecting duplicate variables that need equational checks.
     pub fn var_occurrences(&self) -> HashMap<String, usize> {
         let mut counts = HashMap::new();
-        self.collect_var_occurrences(&mut counts);
+        visit_free_pattern_variables(PatternNode::Pattern(self), |ident| {
+            *counts.entry(ident.to_string()).or_insert(0) += 1;
+        });
         counts
-    }
-
-    fn collect_var_occurrences(&self, counts: &mut HashMap<String, usize>) {
-        match self {
-            Pattern::Term(pt) => pt.collect_var_occurrences(counts),
-            Pattern::Collection { elements, rest, .. } => {
-                for elem in elements {
-                    elem.collect_var_occurrences(counts);
-                }
-                if let Some(r) = rest {
-                    *counts.entry(r.to_string()).or_insert(0) += 1;
-                }
-            },
-            Pattern::Map { collection, params, body } => {
-                collection.collect_var_occurrences(counts);
-                // params are binders, not occurrences
-                // body occurrences that match params are bound
-                let mut body_counts = HashMap::new();
-                body.collect_var_occurrences(&mut body_counts);
-                let param_names: HashSet<_> = params.iter().map(|p| p.to_string()).collect();
-                for (var, count) in body_counts {
-                    if !param_names.contains(&var) {
-                        *counts.entry(var).or_insert(0) += count;
-                    }
-                }
-            },
-            Pattern::Zip { first, second } => {
-                first.collect_var_occurrences(counts);
-                second.collect_var_occurrences(counts);
-            },
-            // `collection` and `index` each occur once, mirroring how `Collection` counts
-            // its `rest`. The count drives duplicate-variable detection (a var occurring
-            // twice on the LHS must match EQUAL subterms), and both of these do occur as
-            // ordinary variables, so undercounting them would silently disable that check.
-            Pattern::IndexedVec { collection, index, element } => {
-                *counts.entry(collection.to_string()).or_insert(0) += 1;
-                *counts.entry(index.to_string()).or_insert(0) += 1;
-                element.collect_var_occurrences(counts);
-            },
-        }
     }
 }
 
@@ -454,75 +1365,12 @@ impl PatternTerm {
     /// - `Lambda`, `MultiLambda`, `Subst`, `MultiSubst` are never ground
     ///   (they involve variable binding/substitution, which is non-ground by design).
     pub fn is_ground_pattern(&self, language: &LanguageDef) -> bool {
-        match self {
-            PatternTerm::Var(v) => {
-                // A bare identifier could be a nullary constructor (e.g., `PNil`).
-                // Check if it's a known constructor with no arguments.
-                language.get_constructor(v).is_some()
-            },
-            PatternTerm::Apply { args, .. } => {
-                args.iter().all(|arg| arg.is_ground_pattern(language))
-            },
-            // Lambda/MultiLambda introduce binders — not ground for our purposes
-            PatternTerm::Lambda { .. } | PatternTerm::MultiLambda { .. } => false,
-            // Subst/MultiSubst involve variable references — not ground
-            PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => false,
-        }
+        pattern_node_is_ground(PatternNode::Term(self), language)
     }
 
     /// Infer the category this pattern term produces
     pub fn category<'a>(&self, language: &'a LanguageDef) -> Option<&'a Ident> {
-        match self {
-            PatternTerm::Var(_) => None, // Variables need context
-            PatternTerm::Apply { constructor, .. } => language.category_of_constructor(constructor),
-            PatternTerm::Lambda { body, .. } => body.category(language),
-            PatternTerm::MultiLambda { body, .. } => body.category(language),
-            PatternTerm::Subst { term, .. } => term.category(language),
-            PatternTerm::MultiSubst { scope, .. } => scope.category(language),
-        }
-    }
-
-    fn collect_var_occurrences(&self, counts: &mut HashMap<String, usize>) {
-        match self {
-            PatternTerm::Var(v) => {
-                *counts.entry(v.to_string()).or_insert(0) += 1;
-            },
-            PatternTerm::Apply { args, .. } => {
-                for arg in args {
-                    arg.collect_var_occurrences(counts);
-                }
-            },
-            PatternTerm::Lambda { binder, body } => {
-                // binder is bound, not an occurrence
-                let mut body_counts = HashMap::new();
-                body.collect_var_occurrences(&mut body_counts);
-                body_counts.remove(&binder.to_string());
-                for (var, count) in body_counts {
-                    *counts.entry(var).or_insert(0) += count;
-                }
-            },
-            PatternTerm::MultiLambda { binders, body } => {
-                let mut body_counts = HashMap::new();
-                body.collect_var_occurrences(&mut body_counts);
-                for binder in binders {
-                    body_counts.remove(&binder.to_string());
-                }
-                for (var, count) in body_counts {
-                    *counts.entry(var).or_insert(0) += count;
-                }
-            },
-            PatternTerm::Subst { term, var, replacement } => {
-                term.collect_var_occurrences(counts);
-                *counts.entry(var.to_string()).or_insert(0) += 1;
-                replacement.collect_var_occurrences(counts);
-            },
-            PatternTerm::MultiSubst { scope, replacements } => {
-                scope.collect_var_occurrences(counts);
-                for repl in replacements {
-                    repl.collect_var_occurrences(counts);
-                }
-            },
-        }
+        pattern_node_category(PatternNode::Term(self), language)
     }
 }
 
