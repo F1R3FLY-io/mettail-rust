@@ -6,8 +6,9 @@
 
 use crate::gen::term_ops::collection_walk::{for_each_subterm, WalkOrder};
 use crate::gen::{generate_literal_label, generate_var_label};
-use mettail_ast::grammar::GrammarItem;
+use mettail_ast::grammar::{GrammarItem, TermParam};
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::TypeExpr;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -1167,6 +1168,154 @@ fn generate_language_struct(
 }
 
 /// Generate the collect_all_vars_impl method with proper traversal
+fn flat_term_param_count(params: &[TermParam]) -> usize {
+    let mut count = 0;
+    let mut stack: Vec<_> = params.iter().collect();
+    while let Some(param) = stack.pop() {
+        if let TermParam::Optional { params: inner } = param {
+            stack.extend(inner);
+        } else {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Emit the runtime variable-collection pushes described by a flattened term
+/// context without recursing through nested `Optional` groups.
+///
+/// The task stack is seeded in reverse source order, so popping it reproduces
+/// the recursive generator's depth-first, left-to-right token emission exactly.
+/// A single worklist serves the complete context; no descendant allocates its
+/// own traversal stack.
+fn emit_var_collection_recursion(
+    params: &[TermParam],
+    field_names: &[syn::Ident],
+    field_idx: &mut usize,
+    primary_type: &syn::Ident,
+    recurse_calls: &mut Vec<TokenStream>,
+) {
+    let primary_name = primary_type.to_string();
+    let mut tasks: Vec<_> = params.iter().rev().map(|param| (param, false)).collect();
+
+    while let Some((param, optional_wrap)) = tasks.pop() {
+        match param {
+            TermParam::Simple { ty, .. } => {
+                let field_name = &field_names[*field_idx];
+                *field_idx += 1;
+                let inner_body: Option<TokenStream> = match ty {
+                    TypeExpr::Base(ident) if ident.to_string() == primary_name => Some(quote! {
+                        stack.push(CollectTask::Visit(__v.as_ref() as *const _));
+                    }),
+                    TypeExpr::Collection { coll_type, element } => {
+                        if let TypeExpr::Base(id) = element.as_ref() {
+                            if id.to_string() == primary_name {
+                                Some(for_each_subterm(
+                                    coll_type,
+                                    &quote! { __v },
+                                    WalkOrder::ReverseForLifo,
+                                    &|elem, _| {
+                                        quote! {
+                                            stack.push(CollectTask::Visit(#elem as *const _));
+                                        }
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    },
+                    _ => None,
+                };
+                if let Some(body) = inner_body {
+                    if optional_wrap {
+                        recurse_calls.push(quote! {
+                            if let Some(__v) = #field_name.as_ref() {
+                                #body
+                            }
+                        });
+                    } else {
+                        recurse_calls.push(quote! {
+                            { let __v = #field_name; #body }
+                        });
+                    }
+                }
+            },
+            TermParam::Abstraction { ty, .. } => {
+                let field_name = &field_names[*field_idx];
+                *field_idx += 1;
+                if let TypeExpr::Arrow { domain, codomain } = ty {
+                    if matches!(codomain.as_ref(), TypeExpr::Base(ident) if ident.to_string() == primary_name)
+                    {
+                        let domain_name = match domain.as_ref() {
+                            TypeExpr::Base(domain) => domain.to_string(),
+                            _ => "Name".to_owned(),
+                        };
+                        let domain_lit = LitStr::new(&domain_name, Span::call_site());
+                        let body = quote! {
+                            stack.push(CollectTask::Binder(__scope as *const _, #domain_lit));
+                        };
+                        if optional_wrap {
+                            recurse_calls.push(quote! {
+                                if let Some(__scope) = #field_name.as_ref() {
+                                    #body
+                                }
+                            });
+                        } else {
+                            recurse_calls.push(quote! {
+                                { let __scope = #field_name; #body }
+                            });
+                        }
+                    }
+                }
+            },
+            TermParam::MultiAbstraction { ty, .. } => {
+                let field_name = &field_names[*field_idx];
+                *field_idx += 1;
+                if let TypeExpr::Arrow { domain, codomain } = ty {
+                    if matches!(codomain.as_ref(), TypeExpr::Base(ident) if ident.to_string() == primary_name)
+                    {
+                        let domain_name = match domain.as_ref() {
+                            TypeExpr::MultiBinder(inner) => match inner.as_ref() {
+                                TypeExpr::Base(domain) => domain.to_string(),
+                                _ => "Name".to_owned(),
+                            },
+                            _ => "Name".to_owned(),
+                        };
+                        let domain_lit = LitStr::new(&domain_name, Span::call_site());
+                        let body = quote! {
+                            stack.push(CollectTask::MultiBinder(__scope as *const _, #domain_lit));
+                        };
+                        if optional_wrap {
+                            recurse_calls.push(quote! {
+                                if let Some(__scope) = #field_name.as_ref() {
+                                    #body
+                                }
+                            });
+                        } else {
+                            recurse_calls.push(quote! {
+                                { let __scope = #field_name; #body }
+                            });
+                        }
+                    }
+                }
+            },
+            TermParam::GuardBody { .. } => {
+                *field_idx += 1;
+            },
+            TermParam::Optional { params: inner } => {
+                tasks.extend(inner.iter().rev().map(|param| (param, true)));
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/support/language_recursion_recursive_oracle.rs"]
+mod recursive_oracle;
+
 fn generate_var_collection_impl(
     primary_type: &Ident,
     language: &LanguageDef,
@@ -1262,20 +1411,9 @@ fn generate_var_collection_impl(
 
         // Use term_context if available for accurate field count.
         // Each TermParam becomes one field (abstractions become Scope fields).
-        // Opt-Group: an Optional contributes `inner.len()` fields (each
-        // wrapped as `Option<...>`), not 1 — flatten recursively.
-        fn flat_field_count(params: &[mettail_ast::grammar::TermParam]) -> usize {
-            use mettail_ast::grammar::TermParam;
-            params
-                .iter()
-                .map(|p| match p {
-                    TermParam::Optional { params: inner } => flat_field_count(inner),
-                    _ => 1,
-                })
-                .sum()
-        }
+        // Opt-Group: an Optional contributes one field per flattened child.
         let field_count = if let Some(ctx) = &rule.term_context {
-            flat_field_count(ctx)
+            flat_term_param_count(ctx)
         } else {
             // Old syntax - count non-terminals but combine binder+body pairs
             let mut count = 0;
@@ -1314,180 +1452,16 @@ fn generate_var_collection_impl(
             let mut recurse_calls: Vec<TokenStream> = Vec::new();
 
             if let Some(ctx) = &rule.term_context {
-                use mettail_ast::grammar::TermParam;
-                use mettail_ast::types::TypeExpr;
-
                 // Opt-Group: emit recursion calls for a flat parallel-array
                 // view of the term context. Each TermParam is consumed in
                 // order (advancing field_idx by 1 for non-Optional params).
                 // Optional descends into inner params with `optional_wrap=true`,
                 // which gates each recursion in `if let Some(__v) = #field { ... }`.
-                fn emit_recursion(
-                    params: &[TermParam],
-                    field_names: &[syn::Ident],
-                    field_idx: &mut usize,
-                    optional_wrap: bool,
-                    primary_type: &syn::Ident,
-                    recurse_calls: &mut Vec<TokenStream>,
-                ) {
-                    for param in params {
-                        match param {
-                            TermParam::Simple { ty, .. } => {
-                                let field_name = &field_names[*field_idx];
-                                *field_idx += 1;
-                                let inner_body: Option<TokenStream> = match ty {
-                                    TypeExpr::Base(ident)
-                                        if ident.to_string() == primary_type.to_string() =>
-                                    {
-                                        Some(quote! {
-                                            stack.push(CollectTask::Visit(__v.as_ref() as *const _));
-                                        })
-                                    },
-                                    TypeExpr::Collection { coll_type, element } => {
-                                        if let TypeExpr::Base(id) = element.as_ref() {
-                                            if id.to_string() == primary_type.to_string() {
-                                                Some(for_each_subterm(
-                                                    coll_type,
-                                                    &quote! { __v },
-                                                    WalkOrder::ReverseForLifo,
-                                                    &|elem, _| {
-                                                        quote! {
-                                                            stack.push(CollectTask::Visit(#elem as *const _));
-                                                        }
-                                                    },
-                                                ))
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    },
-                                    _ => None,
-                                };
-                                if let Some(body) = inner_body {
-                                    if optional_wrap {
-                                        recurse_calls.push(quote! {
-                                            if let Some(__v) = #field_name.as_ref() {
-                                                #body
-                                            }
-                                        });
-                                    } else {
-                                        recurse_calls.push(quote! {
-                                            { let __v = #field_name; #body }
-                                        });
-                                    }
-                                }
-                            },
-                            TermParam::Abstraction { ty, .. } => {
-                                let field_name = &field_names[*field_idx];
-                                *field_idx += 1;
-                                if let TypeExpr::Arrow { codomain, .. } = ty {
-                                    if let TypeExpr::Base(ident) = codomain.as_ref() {
-                                        if ident.to_string() == primary_type.to_string() {
-                                            let domain_str =
-                                                if let TypeExpr::Arrow { domain, .. } = ty {
-                                                    if let TypeExpr::Base(d) = domain.as_ref() {
-                                                        d.to_string()
-                                                    } else {
-                                                        "Name".to_string()
-                                                    }
-                                                } else {
-                                                    "Name".to_string()
-                                                };
-                                            let domain_lit =
-                                                LitStr::new(&domain_str, Span::call_site());
-                                            let body_block = quote! {
-                                                stack.push(CollectTask::Binder(
-                                                    __scope as *const _,
-                                                    #domain_lit,
-                                                ));
-                                            };
-                                            if optional_wrap {
-                                                recurse_calls.push(quote! {
-                                                    if let Some(__scope) = #field_name.as_ref() {
-                                                        #body_block
-                                                    }
-                                                });
-                                            } else {
-                                                recurse_calls.push(quote! {
-                                                    { let __scope = #field_name; #body_block }
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            TermParam::MultiAbstraction { ty, .. } => {
-                                let field_name = &field_names[*field_idx];
-                                *field_idx += 1;
-                                if let TypeExpr::Arrow { codomain, .. } = ty {
-                                    if let TypeExpr::Base(ident) = codomain.as_ref() {
-                                        if ident.to_string() == primary_type.to_string() {
-                                            let domain_str =
-                                                if let TypeExpr::Arrow { domain, .. } = ty {
-                                                    if let TypeExpr::MultiBinder(inner) =
-                                                        domain.as_ref()
-                                                    {
-                                                        if let TypeExpr::Base(d) = inner.as_ref() {
-                                                            d.to_string()
-                                                        } else {
-                                                            "Name".to_string()
-                                                        }
-                                                    } else {
-                                                        "Name".to_string()
-                                                    }
-                                                } else {
-                                                    "Name".to_string()
-                                                };
-                                            let domain_lit =
-                                                LitStr::new(&domain_str, Span::call_site());
-                                            let body_block = quote! {
-                                                stack.push(CollectTask::MultiBinder(
-                                                    __scope as *const _,
-                                                    #domain_lit,
-                                                ));
-                                            };
-                                            if optional_wrap {
-                                                recurse_calls.push(quote! {
-                                                    if let Some(__scope) = #field_name.as_ref() {
-                                                        #body_block
-                                                    }
-                                                });
-                                            } else {
-                                                recurse_calls.push(quote! {
-                                                    { let __scope = #field_name; #body_block }
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            TermParam::GuardBody { .. } => {
-                                *field_idx += 1;
-                                // Guard bodies are passive runtime data; no
-                                // recursion needed for VarTypeInfo collection.
-                            },
-                            TermParam::Optional { params: inner } => {
-                                emit_recursion(
-                                    inner,
-                                    field_names,
-                                    field_idx,
-                                    true, // wrap inner recursions in `if let Some(...)`
-                                    primary_type,
-                                    recurse_calls,
-                                );
-                            },
-                        }
-                    }
-                }
-
                 let mut idx = 0usize;
-                emit_recursion(
+                emit_var_collection_recursion(
                     ctx,
                     &field_names,
                     &mut idx,
-                    false,
                     primary_type,
                     &mut recurse_calls,
                 );
