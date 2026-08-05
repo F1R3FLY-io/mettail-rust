@@ -47,11 +47,11 @@ use models::rust::utils::{
 };
 use syn::Ident;
 
-use crate::lower::{scalar_contract_par_for, RhoLowering};
+use crate::lower::{RhoLowering, scalar_contract_par_for};
 use crate::rho_net::{
-    behavioral_predicate_has_structural_component, rule_id_equation, rule_id_join, rule_id_native,
-    rule_id_rewrite, rule_id_scalar, rule_id_term, term_requires_native_system_process,
-    RhoNetProgram, RhoNetRule, RhoNetRuleKind,
+    RhoNetProgram, RhoNetRule, RhoNetRuleKind, behavioral_predicate_has_structural_component,
+    rule_id_equation, rule_id_join, rule_id_native, rule_id_rewrite, rule_id_scalar, rule_id_term,
+    term_requires_native_system_process,
 };
 
 /// Source-construct family that is out of scope for σ-receiver lowering this
@@ -1974,7 +1974,8 @@ impl GroundTerm {
     }
 
     /// A `HashMap` AC operand ENTRY `key => value` — the reserved `^kv(key, value)` envelope
-    /// ([`AC_MAP_ENTRY_LABEL`]) [`reflect_ac_map_par`] reads back as one `EMap` `KeyValuePair`. A
+    /// ([`AC_MAP_ENTRY_LABEL`]) [`reflect_ground_term_par`] reads back as one `EMap`
+    /// `KeyValuePair`. A
     /// `HashMap` [`collection`](Self::collection)'s `elements` are these entry nodes.
     pub fn map_entry(key: GroundTerm, value: GroundTerm) -> Self {
         Self::new(AC_MAP_ENTRY_LABEL, vec![key, value])
@@ -2952,17 +2953,80 @@ pub fn reflect_ground_term_par(term: &GroundTerm, language_fingerprint: &str) ->
 /// carriers get NO marker (and count as NOT ground for a parent's marker). Returns the reflected
 /// `Par` and its ground bit (so a parent computes its marker without re-traversing — no O(n²)).
 fn reflect_ground_term_marked(term: &GroundTerm, language_fingerprint: &str) -> (Par, bool) {
-    // Stage AC / AC4: an AC operand COLLECTION reflects as its kind's native matching CARRIER,
-    // not the positional tagged `EList`. A `HashBag` reflects to the order-independent process-`Par`
-    // soup; a `HashSet` to a native `ESet`; a `HashMap` to a native `EMap` (key-uniqueness enforced
-    // by `ParMap`'s sorted-dedup). See [`reflect_ac_collection_par`]. No positional marker; a
-    // collection is conservatively NOT ground for its parent's marker.
-    if matches!(
-        term.coll_type,
-        Some(CollectionType::HashBag | CollectionType::HashSet | CollectionType::HashMap)
-    ) {
-        return (reflect_ac_collection_par(term, language_fingerprint), false);
+    enum ReflectTask<'term> {
+        Visit(&'term GroundTerm),
+        Assemble {
+            term: &'term GroundTerm,
+            value_count: usize,
+        },
     }
+
+    let mut tasks = vec![ReflectTask::Visit(term)];
+    let mut values: Vec<(Par, bool)> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            ReflectTask::Visit(term) => {
+                if term.coll_type == Some(CollectionType::HashMap) {
+                    let entries = term
+                        .children
+                        .iter()
+                        .filter(|entry| {
+                            entry.constructor == AC_MAP_ENTRY_LABEL && entry.children.len() == 2
+                        })
+                        .count();
+                    tasks.push(ReflectTask::Assemble { term, value_count: entries * 2 });
+                    for entry in term.children.iter().rev() {
+                        let [key, value] = entry.children.as_slice() else {
+                            continue;
+                        };
+                        if entry.constructor != AC_MAP_ENTRY_LABEL {
+                            continue;
+                        }
+                        tasks.push(ReflectTask::Visit(value));
+                        tasks.push(ReflectTask::Visit(key));
+                    }
+                } else {
+                    tasks.push(ReflectTask::Assemble { term, value_count: term.children.len() });
+                    for child in term.children.iter().rev() {
+                        tasks.push(ReflectTask::Visit(child));
+                    }
+                }
+            },
+            ReflectTask::Assemble { term, value_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(value_count)
+                    .expect("ground reflection PDA lost a child result");
+                let children = values.split_off(first);
+                let reflected = match term.coll_type {
+                    Some(CollectionType::HashBag) => {
+                        (assemble_ac_bag_par(term, children, language_fingerprint), false)
+                    },
+                    Some(CollectionType::HashSet) => (assemble_ac_set_par(children), false),
+                    Some(CollectionType::HashMap) => (assemble_ac_map_par(children), false),
+                    _ => assemble_positional_ground_node(term, children, language_fingerprint),
+                };
+                values.push(reflected);
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("ground reflection PDA produced no result")
+}
+
+/// Assemble one positional reflected node from already-reflected children.
+///
+/// This is the shared reduce step for the ground reflector and the FLT pattern/
+/// construction PDAs. Keeping it here makes the E-2-D marker and `locally_free`
+/// invariants single-sourced while every caller owns only its traversal policy.
+pub(crate) fn assemble_positional_ground_node(
+    term: &GroundTerm,
+    children: Vec<(Par, bool)>,
+    language_fingerprint: &str,
+) -> (Par, bool) {
     let tag =
         GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
     let marked = is_marked_object_label(&term.constructor);
@@ -2976,8 +3040,7 @@ fn reflect_ground_term_marked(term: &GroundTerm, language_fingerprint: &str) -> 
         elements.len() - 1
     });
     let mut children_ground = true;
-    for child in &term.children {
-        let (child_par, child_ground) = reflect_ground_term_marked(child, language_fingerprint);
+    for (child_par, child_ground) in children {
         children_ground &= child_ground;
         locally_free = union(locally_free, child_par.locally_free.clone());
         elements.push(child_par);
@@ -3002,11 +3065,14 @@ fn reflect_ground_term_marked(term: &GroundTerm, language_fingerprint: &str) -> 
 /// `Vec` of sends, duplicates disambiguated by `Indexed`), and element slots never collide
 /// with the pattern's process remainder. This is the subject side of Stage AC's Scheme B —
 /// the AC receiver's collection pattern matches this carrier inside one atomic `consume`.
-fn reflect_ac_bag_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+fn assemble_ac_bag_par(
+    term: &GroundTerm,
+    children: Vec<(Par, bool)>,
+    language_fingerprint: &str,
+) -> Par {
     let element_channel = ac_soup_channel(language_fingerprint, &term.constructor);
     let mut soup = Par::default();
-    for child in &term.children {
-        let element = reflect_ground_term_par(child, language_fingerprint);
+    for (element, _) in children {
         let free = element.locally_free.clone();
         let send = new_send_par(
             new_gstring_par(element_channel.clone(), Vec::new(), false),
@@ -3022,28 +3088,27 @@ fn reflect_ac_bag_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
     soup
 }
 
+fn reflect_ac_bag_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    reflect_ground_term_marked(term, language_fingerprint).0
+}
+
 /// The reserved constructor label a HashMap AC operand entry (`key => value`) reflects to in a
 /// [`GroundTerm`]: a synthetic node `^kv(⟦key⟧, ⟦value⟧)` whose two children are the entry's key
 /// and value. It cannot collide with any user constructor (a Rust `Ident`, never containing `^`),
 /// so the map carrier's entry envelope is distinct from every `Apply` node. The macro
-/// `reflect_category_fn`'s `HashMap` arm emits one such node per entry; [`reflect_ac_map_par`] reads
-/// the two children back as the `EMap`'s key/value.
+/// `reflect_category_fn`'s `HashMap` arm emits one such node per entry; the ground-reflection PDA
+/// reads the two children back as the `EMap`'s key/value.
 pub(crate) const AC_MAP_ENTRY_LABEL: &str = "^kv";
 
 /// Reflect an AC operand COLLECTION [`GroundTerm`] as its kind's native matching CARRIER — the
 /// subject side of Stage 4 S-AC / AC4. A `HashBag` reflects to the order-independent process-`Par`
-/// soup ([`reflect_ac_bag_par`]); a `HashSet` to a native `ESet` ([`reflect_ac_set_par`]); a
-/// `HashMap` to a native `EMap` ([`reflect_ac_map_par`]). The `ESet`/`EMap` carriers ride
+/// soup; a `HashSet` to a native `ESet`; a `HashMap` to a native `EMap`. The `ESet`/`EMap`
+/// carriers ride
 /// `ParSet`/`ParMap`, whose construction SORTS + DEDUPES (so `ESet` is a genuine set and `EMap`'s
 /// keys are unique — the key-uniqueness invariant survives reflection), and the native spatial
 /// matcher AC-matches each carrier order-independently with a remainder.
 fn reflect_ac_collection_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
-    match term.coll_type {
-        Some(CollectionType::HashSet) => reflect_ac_set_par(term, language_fingerprint),
-        Some(CollectionType::HashMap) => reflect_ac_map_par(term, language_fingerprint),
-        // `HashBag` (and any other kind routed here) → the process-soup carrier.
-        _ => reflect_ac_bag_par(term, language_fingerprint),
-    }
+    reflect_ground_term_marked(term, language_fingerprint).0
 }
 
 /// Reflect a `HashSet` AC operand set as a native `ESet` matching CARRIER: each element reflects to
@@ -3051,11 +3116,10 @@ fn reflect_ac_collection_par(term: &GroundTerm, language_fingerprint: &str) -> P
 /// order-independent, uniqueness-preserving set. The AC receiver's `ESet` connective pattern
 /// ([`ac_set_pattern`]) matches this carrier inside one atomic `consume` (native `list_match_single_`
 /// over `sorted_pars`), binding `k` element slots + the residual set to the remainder.
-fn reflect_ac_set_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
-    let mut elements = Vec::with_capacity(term.children.len());
+fn assemble_ac_set_par(children: Vec<(Par, bool)>) -> Par {
+    let mut elements = Vec::with_capacity(children.len());
     let mut locally_free = Vec::new();
-    for child in &term.children {
-        let element = reflect_ground_term_par(child, language_fingerprint);
+    for (element, _) in children {
         locally_free = union(locally_free, element.locally_free.clone());
         elements.push(element);
     }
@@ -3069,19 +3133,15 @@ fn reflect_ac_set_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
 /// invariant survives the reflect. The AC receiver's `EMap` connective pattern ([`ac_map_pattern`])
 /// matches this carrier inside one atomic `consume` (native `list_match_single_` over the
 /// key-sorted kv list), binding `k` `(key, value)` slots + the residual map to the remainder.
-fn reflect_ac_map_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
-    let mut kvs = Vec::with_capacity(term.children.len());
+fn assemble_ac_map_par(children: Vec<(Par, bool)>) -> Par {
+    debug_assert_eq!(children.len() % 2, 0);
+    let mut kvs = Vec::with_capacity(children.len() / 2);
     let mut locally_free = Vec::new();
-    for entry in &term.children {
-        // Each entry is a `^kv(key, value)` node ([`AC_MAP_ENTRY_LABEL`]) — read its two children
-        // back as key/value. A malformed entry (defensive) is skipped, keeping the reflection total.
-        let ([key, value], true) =
-            (entry.children.as_slice(), entry.constructor == AC_MAP_ENTRY_LABEL)
-        else {
-            continue;
-        };
-        let key_par = reflect_ground_term_par(key, language_fingerprint);
-        let value_par = reflect_ground_term_par(value, language_fingerprint);
+    let mut children = children.into_iter();
+    while let Some((key_par, _)) = children.next() {
+        let (value_par, _) = children
+            .next()
+            .expect("map reflection PDA pairs each key with one value");
         locally_free = union(locally_free, key_par.locally_free.clone());
         locally_free = union(locally_free, value_par.locally_free.clone());
         kvs.push(KeyValuePair {
@@ -9984,8 +10044,8 @@ mod tests {
     #[test]
     fn lower_rhs_variable_uses_first_occurrence_de_bruijn_index() {
         let vars = vec![ident("a"), ident("b"), ident("c")]; // k = 3
-                                                             // b is the second variable (occurrence index 1) ⇒ BoundVar(3 - 1) = 2.
-                                                             // The fingerprint is unused for a bare variable RHS.
+        // b is the second variable (occurrence index 1) ⇒ BoundVar(3 - 1) = 2.
+        // The fingerprint is unused for a bare variable RHS.
         let par = lower_rhs(&var_pattern("b"), &vars, 3, "fp").expect("bound RHS variable");
         assert_eq!(boundvar_index(&par), Some(2));
         assert_eq!(rhs_var_index(3, 0), 3);
@@ -12898,8 +12958,8 @@ mod tests {
     #[test]
     fn swap_language_plans_to_installed_sigma_receiver() {
         use crate::backend::{
-            plan_rho_default_backend, suggest_rejected_rule_dispositions,
-            RhoDefaultBackendRequirements,
+            RhoDefaultBackendRequirements, plan_rho_default_backend,
+            suggest_rejected_rule_dispositions,
         };
         use crate::{RhoCoverageEvidence, RhoGuardCoverageEvidence};
 
