@@ -3,7 +3,7 @@ use crate::grammar::{PatternOp, SyntaxExpr};
 use crate::language::LanguageDef;
 use crate::types::{CollectionType, TypeExpr};
 use quote::quote;
-use syn::{parse2, Ident};
+use syn::{Ident, parse2};
 
 #[test]
 fn parse_hashbag_simple() {
@@ -139,7 +139,7 @@ fn parse_type_expr_base() {
     assert!(result.is_ok(), "Failed to parse base type: {:?}", result.err());
 
     let ty = result.unwrap();
-    assert!(matches!(ty, TypeExpr::Base(ident) if ident == "Name"));
+    assert!(matches!(&ty, TypeExpr::Base(ident) if ident == "Name"));
 }
 
 #[test]
@@ -149,10 +149,10 @@ fn parse_type_expr_arrow() {
     assert!(result.is_ok(), "Failed to parse arrow type: {:?}", result.err());
 
     let ty = result.unwrap();
-    match ty {
+    match &ty {
         TypeExpr::Arrow { domain, codomain } => {
-            assert!(matches!(*domain, TypeExpr::Base(ref id) if id == "Name"));
-            assert!(matches!(*codomain, TypeExpr::Base(ref id) if id == "Proc"));
+            assert!(matches!(domain.as_ref(), TypeExpr::Base(id) if id == "Name"));
+            assert!(matches!(codomain.as_ref(), TypeExpr::Base(id) if id == "Proc"));
         },
         _ => panic!("Expected Arrow type"),
     }
@@ -166,16 +166,16 @@ fn parse_type_expr_nested_arrow() {
     assert!(result.is_ok(), "Failed to parse nested arrow: {:?}", result.err());
 
     let ty = result.unwrap();
-    match ty {
+    match &ty {
         TypeExpr::Arrow { domain, codomain } => {
-            assert!(matches!(*codomain, TypeExpr::Base(ref id) if id == "C"));
-            match *domain {
+            assert!(matches!(codomain.as_ref(), TypeExpr::Base(id) if id == "C"));
+            match domain.as_ref() {
                 TypeExpr::Arrow {
                     domain: inner_domain,
                     codomain: inner_codomain,
                 } => {
-                    assert!(matches!(*inner_domain, TypeExpr::Base(ref id) if id == "A"));
-                    assert!(matches!(*inner_codomain, TypeExpr::Base(ref id) if id == "B"));
+                    assert!(matches!(inner_domain.as_ref(), TypeExpr::Base(id) if id == "A"));
+                    assert!(matches!(inner_codomain.as_ref(), TypeExpr::Base(id) if id == "B"));
                 },
                 _ => panic!("Expected inner Arrow type"),
             }
@@ -192,15 +192,15 @@ fn parse_type_expr_multi_binder() {
     assert!(result.is_ok(), "Failed to parse multi-binder: {:?}", result.err());
 
     let ty = result.unwrap();
-    match ty {
+    match &ty {
         TypeExpr::Arrow { domain, codomain } => {
-            match *domain {
+            match domain.as_ref() {
                 TypeExpr::MultiBinder(inner) => {
-                    assert!(matches!(*inner, TypeExpr::Base(ref id) if id == "Name"));
+                    assert!(matches!(inner.as_ref(), TypeExpr::Base(id) if id == "Name"));
                 },
                 _ => panic!("Expected MultiBinder domain, got {:?}", domain),
             }
-            assert!(matches!(*codomain, TypeExpr::Base(ref id) if id == "Proc"));
+            assert!(matches!(codomain.as_ref(), TypeExpr::Base(id) if id == "Proc"));
         },
         _ => panic!("Expected Arrow type"),
     }
@@ -214,9 +214,9 @@ fn parse_type_expr_standalone_multi_binder() {
     assert!(result.is_ok(), "Failed to parse standalone multi-binder: {:?}", result.err());
 
     let ty = result.unwrap();
-    match ty {
+    match &ty {
         TypeExpr::MultiBinder(inner) => {
-            assert!(matches!(*inner, TypeExpr::Base(ref id) if id == "Name"));
+            assert!(matches!(inner.as_ref(), TypeExpr::Base(id) if id == "Name"));
         },
         _ => panic!("Expected MultiBinder type, got {:?}", ty),
     }
@@ -229,10 +229,10 @@ fn parse_type_expr_collection_vec() {
     assert!(result.is_ok(), "Failed to parse Vec: {:?}", result.err());
 
     let ty = result.unwrap();
-    match ty {
+    match &ty {
         TypeExpr::Collection { coll_type, element } => {
-            assert_eq!(coll_type, CollectionType::Vec);
-            assert!(matches!(*element, TypeExpr::Base(ref id) if id == "Name"));
+            assert_eq!(coll_type, &CollectionType::Vec);
+            assert!(matches!(element.as_ref(), TypeExpr::Base(id) if id == "Name"));
         },
         _ => panic!("Expected Collection type"),
     }
@@ -245,10 +245,10 @@ fn parse_type_expr_collection_hashbag() {
     assert!(result.is_ok(), "Failed to parse HashBag: {:?}", result.err());
 
     let ty = result.unwrap();
-    match ty {
+    match &ty {
         TypeExpr::Collection { coll_type, element } => {
-            assert_eq!(coll_type, CollectionType::HashBag);
-            assert!(matches!(*element, TypeExpr::Base(ref id) if id == "Proc"));
+            assert_eq!(coll_type, &CollectionType::HashBag);
+            assert!(matches!(element.as_ref(), TypeExpr::Base(id) if id == "Proc"));
         },
         _ => panic!("Expected Collection type"),
     }

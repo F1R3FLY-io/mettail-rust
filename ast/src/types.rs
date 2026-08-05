@@ -1,6 +1,7 @@
+use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use syn::{
-    parse::{Parse, ParseStream},
     Ident, Result as SynResult, Token,
+    parse::{Parse, ParseStream},
 };
 
 /// Collection type specifier
@@ -25,7 +26,6 @@ pub enum CollectionType {
 /// - `[Name* -> Proc]` → `Arrow { domain: MultiBinder(Name), codomain: Proc }`
 /// - `[[A -> B] -> C]` → `Arrow { domain: Arrow(A,B), codomain: C }`
 /// - `Vec(Name)` → `Collection { coll_type: Vec, element: Name }`
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeExpr {
     /// Base type: Name, Proc, etc.
     Base(Ident),
@@ -64,6 +64,241 @@ pub enum TypeExpr {
     Map { key: Box<TypeExpr>, value: Box<TypeExpr> },
 }
 
+impl Clone for TypeExpr {
+    fn clone(&self) -> Self {
+        enum Task<'ty> {
+            Visit(&'ty TypeExpr),
+            Arrow,
+            MultiBinder,
+            Collection(CollectionType),
+            Refined { var: Ident, predicate_repr: String },
+            Map,
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TypeExpr::Base(ident)) => values.push(TypeExpr::Base(ident.clone())),
+                Task::Visit(TypeExpr::Arrow { domain, codomain }) => {
+                    tasks.push(Task::Arrow);
+                    tasks.push(Task::Visit(codomain));
+                    tasks.push(Task::Visit(domain));
+                },
+                Task::Visit(TypeExpr::MultiBinder(inner)) => {
+                    tasks.push(Task::MultiBinder);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(TypeExpr::Collection { coll_type, element }) => {
+                    tasks.push(Task::Collection(coll_type.clone()));
+                    tasks.push(Task::Visit(element));
+                },
+                Task::Visit(TypeExpr::Refined { var, base, predicate_repr }) => {
+                    tasks.push(Task::Refined {
+                        var: var.clone(),
+                        predicate_repr: predicate_repr.clone(),
+                    });
+                    tasks.push(Task::Visit(base));
+                },
+                Task::Visit(TypeExpr::Map { key, value }) => {
+                    tasks.push(Task::Map);
+                    tasks.push(Task::Visit(value));
+                    tasks.push(Task::Visit(key));
+                },
+                Task::Arrow => {
+                    let codomain = values.pop().expect("TypeExpr clone PDA lost its codomain");
+                    let domain = values.pop().expect("TypeExpr clone PDA lost its domain");
+                    values.push(TypeExpr::Arrow {
+                        domain: Box::new(domain),
+                        codomain: Box::new(codomain),
+                    });
+                },
+                Task::MultiBinder => {
+                    let inner = values
+                        .pop()
+                        .expect("TypeExpr clone PDA lost its inner type");
+                    values.push(TypeExpr::MultiBinder(Box::new(inner)));
+                },
+                Task::Collection(coll_type) => {
+                    let element = values
+                        .pop()
+                        .expect("TypeExpr clone PDA lost its element type");
+                    values.push(TypeExpr::Collection { coll_type, element: Box::new(element) });
+                },
+                Task::Refined { var, predicate_repr } => {
+                    let base = values
+                        .pop()
+                        .expect("TypeExpr clone PDA lost its refined base");
+                    values.push(TypeExpr::Refined {
+                        var,
+                        base: Box::new(base),
+                        predicate_repr,
+                    });
+                },
+                Task::Map => {
+                    let value = values.pop().expect("TypeExpr clone PDA lost its map value");
+                    let key = values.pop().expect("TypeExpr clone PDA lost its map key");
+                    values.push(TypeExpr::Map {
+                        key: Box::new(key),
+                        value: Box::new(value),
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("TypeExpr clone PDA produced no result")
+    }
+}
+
+impl PartialEq for TypeExpr {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some((left, right)) = work.pop() {
+            match (left, right) {
+                (TypeExpr::Base(left), TypeExpr::Base(right)) if left == right => {},
+                (
+                    TypeExpr::Arrow {
+                        domain: left_domain,
+                        codomain: left_codomain,
+                    },
+                    TypeExpr::Arrow {
+                        domain: right_domain,
+                        codomain: right_codomain,
+                    },
+                ) => {
+                    work.push((left_domain, right_domain));
+                    work.push((left_codomain, right_codomain));
+                },
+                (TypeExpr::MultiBinder(left), TypeExpr::MultiBinder(right)) => {
+                    work.push((left, right));
+                },
+                (
+                    TypeExpr::Collection {
+                        coll_type: left_kind,
+                        element: left_element,
+                    },
+                    TypeExpr::Collection {
+                        coll_type: right_kind,
+                        element: right_element,
+                    },
+                ) if left_kind == right_kind => work.push((left_element, right_element)),
+                (
+                    TypeExpr::Refined {
+                        var: left_var,
+                        base: left_base,
+                        predicate_repr: left_predicate,
+                    },
+                    TypeExpr::Refined {
+                        var: right_var,
+                        base: right_base,
+                        predicate_repr: right_predicate,
+                    },
+                ) if left_var == right_var && left_predicate == right_predicate => {
+                    work.push((left_base, right_base));
+                },
+                (
+                    TypeExpr::Map { key: left_key, value: left_value },
+                    TypeExpr::Map { key: right_key, value: right_value },
+                ) => {
+                    work.push((left_key, right_key));
+                    work.push((left_value, right_value));
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for TypeExpr {}
+
+impl Drop for TypeExpr {
+    fn drop(&mut self) {
+        fn placeholder() -> TypeExpr {
+            TypeExpr::Base(Ident::new("_", proc_macro2::Span::call_site()))
+        }
+
+        fn take_child(child: &mut Box<TypeExpr>) -> TypeExpr {
+            *std::mem::replace(child, Box::new(placeholder()))
+        }
+
+        fn take_children(node: &mut TypeExpr, work: &mut Vec<TypeExpr>) {
+            match node {
+                TypeExpr::Arrow { domain, codomain } => {
+                    work.push(take_child(domain));
+                    work.push(take_child(codomain));
+                },
+                TypeExpr::MultiBinder(inner) => work.push(take_child(inner)),
+                TypeExpr::Collection { element, .. } => work.push(take_child(element)),
+                TypeExpr::Refined { base, .. } => work.push(take_child(base)),
+                TypeExpr::Map { key, value } => {
+                    work.push(take_child(key));
+                    work.push(take_child(value));
+                },
+                TypeExpr::Base(_) => {},
+            }
+        }
+
+        let mut work = Vec::new();
+        take_children(self, &mut work);
+        while let Some(mut node) = work.pop() {
+            take_children(&mut node, &mut work);
+        }
+    }
+}
+
+impl std::fmt::Debug for TypeExpr {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Task<'ty> {
+            Visit(&'ty TypeExpr),
+            Text(&'static str),
+            Predicate(&'ty str),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TypeExpr::Base(ident)) => write!(formatter, "Base({ident:?})")?,
+                Task::Visit(TypeExpr::Arrow { domain, codomain }) => {
+                    formatter.write_str("Arrow { domain: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Visit(codomain));
+                    tasks.push(Task::Text(", codomain: "));
+                    tasks.push(Task::Visit(domain));
+                },
+                Task::Visit(TypeExpr::MultiBinder(inner)) => {
+                    formatter.write_str("MultiBinder(")?;
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(TypeExpr::Collection { coll_type, element }) => {
+                    write!(formatter, "Collection {{ coll_type: {coll_type:?}, element: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Visit(element));
+                },
+                Task::Visit(TypeExpr::Refined { var, base, predicate_repr }) => {
+                    write!(formatter, "Refined {{ var: {var:?}, base: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Predicate(predicate_repr));
+                    tasks.push(Task::Visit(base));
+                },
+                Task::Visit(TypeExpr::Map { key, value }) => {
+                    formatter.write_str("Map { key: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Visit(value));
+                    tasks.push(Task::Text(", value: "));
+                    tasks.push(Task::Visit(key));
+                },
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::Predicate(predicate) => {
+                    write!(formatter, ", predicate_repr: {predicate:?}")?;
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
 impl TypeExpr {
     /// True when this type is the builtin `Ident` — identifier TEXT, lowered to a bare
     /// `String`, NOT a grammar category.
@@ -99,25 +334,57 @@ impl TypeExpr {
 
 impl std::fmt::Display for TypeExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeExpr::Base(ident) => write!(f, "{}", ident),
-            TypeExpr::Arrow { domain, codomain } => write!(f, "[{} -> {}]", domain, codomain),
-            TypeExpr::MultiBinder(inner) => write!(f, "{}*", inner),
-            TypeExpr::Collection { coll_type, element } => {
-                let coll_name = match coll_type {
-                    CollectionType::Vec => "Vec",
-                    CollectionType::HashBag => "HashBag",
-                    CollectionType::HashSet => "HashSet",
-                    CollectionType::HashMap => "HashMap",
-                    CollectionType::PathMap => "PathMap",
-                };
-                write!(f, "{}({})", coll_name, element)
-            },
-            TypeExpr::Refined { var, base, predicate_repr } => {
-                write!(f, "{{ {}: {} | {} }}", var, base, predicate_repr)
-            },
-            TypeExpr::Map { key, value } => write!(f, "HashMap({}, {})", key, value),
+        enum Task<'ty> {
+            Visit(&'ty TypeExpr),
+            Text(&'static str),
+            Predicate(&'ty str),
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TypeExpr::Base(ident)) => write!(f, "{ident}")?,
+                Task::Visit(TypeExpr::Arrow { domain, codomain }) => {
+                    f.write_str("[")?;
+                    tasks.push(Task::Text("]"));
+                    tasks.push(Task::Visit(codomain));
+                    tasks.push(Task::Text(" -> "));
+                    tasks.push(Task::Visit(domain));
+                },
+                Task::Visit(TypeExpr::MultiBinder(inner)) => {
+                    tasks.push(Task::Text("*"));
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(TypeExpr::Collection { coll_type, element }) => {
+                    f.write_str(match coll_type {
+                        CollectionType::Vec => "Vec(",
+                        CollectionType::HashBag => "HashBag(",
+                        CollectionType::HashSet => "HashSet(",
+                        CollectionType::HashMap => "HashMap(",
+                        CollectionType::PathMap => "PathMap(",
+                    })?;
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(element));
+                },
+                Task::Visit(TypeExpr::Refined { var, base, predicate_repr }) => {
+                    write!(f, "{{ {var}: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Predicate(predicate_repr));
+                    tasks.push(Task::Text(" | "));
+                    tasks.push(Task::Visit(base));
+                },
+                Task::Visit(TypeExpr::Map { key, value }) => {
+                    f.write_str("HashMap(")?;
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(value));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::Visit(key));
+                },
+                Task::Text(text) => f.write_str(text)?,
+                Task::Predicate(predicate) => f.write_str(predicate)?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -138,94 +405,178 @@ impl Parse for TypeExpr {
 
 /// Parse a type expression, handling postfix `*` for multi-binder
 fn parse_type_expr(input: ParseStream) -> SynResult<TypeExpr> {
-    let base = parse_type_atom(input)?;
+    let mut atom = TokenStream::new();
+    if input.peek(Ident) {
+        let ident = input.parse::<Ident>()?;
+        atom.extend([TokenTree::Ident(ident)]);
+        if input.peek(syn::token::Paren) {
+            let content;
+            let delimiters = syn::parenthesized!(content in input);
+            let mut group = Group::new(Delimiter::Parenthesis, content.parse()?);
+            group.set_span(delimiters.span.open());
+            atom.extend([TokenTree::Group(group)]);
+        }
+    } else if input.peek(syn::token::Bracket) {
+        let content;
+        let delimiters = syn::bracketed!(content in input);
+        let mut group = Group::new(Delimiter::Bracket, content.parse()?);
+        group.set_span(delimiters.span.open());
+        atom.extend([TokenTree::Group(group)]);
+    } else {
+        return Err(input.error("expected a type name, collection, or `[domain -> codomain]`"));
+    }
+
+    let mut parsed = parse_type_tokens(atom)?;
 
     // Check for multi-binder marker: Type*
     if input.peek(Token![*]) {
         input.parse::<Token![*]>()?;
-        return Ok(TypeExpr::MultiBinder(Box::new(base)));
+        parsed = TypeExpr::MultiBinder(Box::new(parsed));
     }
 
-    Ok(base)
+    Ok(parsed)
 }
 
-/// Parse an atomic type (no postfix operators)
-fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
-    // Check for collection types: Vec(...), HashBag(...), HashSet(...)
-    if input.peek(Ident) {
-        let fork = input.fork();
-        let ident: Ident = fork.parse()?;
-        let ident_str = ident.to_string();
+/// Parse an owned token-tree representation with an explicit reduce stack.
+/// Nested delimiter groups are atomic `TokenTree::Group` values, so neither
+/// arrows nor collection element types consume native call-stack depth.
+fn parse_type_tokens(tokens: TokenStream) -> SynResult<TypeExpr> {
+    enum ParseTask {
+        Parse(TokenStream),
+        MultiBinder,
+        Collection(CollectionType),
+        Map,
+        Arrow,
+    }
 
-        if matches!(ident_str.as_str(), "Vec" | "HashBag" | "HashSet" | "HashMap") {
-            // Check if followed by parentheses
-            if fork.peek(syn::token::Paren) {
-                // Commit to collection parse
-                let _: Ident = input.parse()?;
-                let content;
-                syn::parenthesized!(content in input);
+    fn split_once(
+        tokens: Vec<TokenTree>,
+        delimiter: impl Fn(&[TokenTree], usize) -> Option<usize>,
+        expected: &str,
+        span: proc_macro2::Span,
+    ) -> SynResult<(TokenStream, TokenStream)> {
+        let Some((index, width)) = tokens
+            .iter()
+            .enumerate()
+            .find_map(|(index, _)| delimiter(&tokens, index).map(|width| (index, width)))
+        else {
+            return Err(syn::Error::new(span, expected));
+        };
+        let left = tokens[..index].iter().cloned().collect();
+        let right = tokens[index + width..].iter().cloned().collect();
+        Ok((left, right))
+    }
 
-                if ident_str == "HashMap" {
-                    let key: TypeExpr = parse_type_expr(&content)?;
-                    content.parse::<Token![,]>()?;
-                    let value: TypeExpr = parse_type_expr(&content)?;
-                    return Ok(TypeExpr::Map {
-                        key: Box::new(key),
-                        value: Box::new(value),
-                    });
+    let mut tasks = vec![ParseTask::Parse(tokens)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            ParseTask::Parse(tokens) => {
+                let mut tokens = tokens.into_iter().collect::<Vec<_>>();
+                let multi = matches!(tokens.last(), Some(TokenTree::Punct(punct)) if punct.as_char() == '*');
+                if multi {
+                    tokens.pop();
+                    tasks.push(ParseTask::MultiBinder);
                 }
 
-                let element: TypeExpr = parse_type_expr(&content)?;
-                // ★ #141 G5. The `unreachable!()` rested on the enclosing
-                // `if` having already tested the same three names — a claim about
-                // two lists staying in step, held by nothing. `parse_type_expr`
-                // returns `syn::Result`, so the refusal is a spanned parse error.
-                let coll_type = match ident_str.as_str() {
-                    "Vec" => CollectionType::Vec,
-                    "HashBag" => CollectionType::HashBag,
-                    "HashSet" => CollectionType::HashSet,
-                    other => {
-                        return Err(syn::Error::new(
-                            ident.span(),
-                            format!(
-                                "mettail internal error: the collection-type lookahead \
-                                 accepted `{other}` but this parser builds a \
-                                 `CollectionType` only for `Vec`, `HashBag` and \
-                                 `HashSet`, so the two have drifted apart. This is a \
-                                 macro bug, not a grammar bug — please report it."
-                            ),
-                        ));
+                match tokens.as_slice() {
+                    [TokenTree::Ident(ident)] => values.push(TypeExpr::Base(ident.clone())),
+                    [TokenTree::Ident(ident), TokenTree::Group(group)]
+                        if group.delimiter() == Delimiter::Parenthesis =>
+                    {
+                        let kind = ident.to_string();
+                        if kind == "HashMap" {
+                            let inner = group.stream().into_iter().collect::<Vec<_>>();
+                            let (key, value) = split_once(
+                                inner,
+                                |tokens, index| match tokens.get(index) {
+                                    Some(TokenTree::Punct(punct)) if punct.as_char() == ',' => {
+                                        Some(1)
+                                    },
+                                    _ => None,
+                                },
+                                "expected `,` between HashMap key and value types",
+                                group.span(),
+                            )?;
+                            tasks.push(ParseTask::Map);
+                            tasks.push(ParseTask::Parse(value));
+                            tasks.push(ParseTask::Parse(key));
+                        } else {
+                            let coll_type = match kind.as_str() {
+                                "Vec" => CollectionType::Vec,
+                                "HashBag" => CollectionType::HashBag,
+                                "HashSet" => CollectionType::HashSet,
+                                "PathMap" => CollectionType::PathMap,
+                                _ => {
+                                    return Err(syn::Error::new(
+                                        ident.span(),
+                                        format!("unknown collection type `{kind}`"),
+                                    ));
+                                },
+                            };
+                            tasks.push(ParseTask::Collection(coll_type));
+                            tasks.push(ParseTask::Parse(group.stream()));
+                        }
                     },
-                };
-
-                return Ok(TypeExpr::Collection { coll_type, element: Box::new(element) });
-            }
+                    [TokenTree::Group(group)] if group.delimiter() == Delimiter::Bracket => {
+                        let inner = group.stream().into_iter().collect::<Vec<_>>();
+                        let (domain, codomain) = split_once(
+                            inner,
+                            |tokens, index| match (tokens.get(index), tokens.get(index + 1)) {
+                                (Some(TokenTree::Punct(left)), Some(TokenTree::Punct(right)))
+                                    if left.as_char() == '-' && right.as_char() == '>' =>
+                                {
+                                    Some(2)
+                                },
+                                _ => None,
+                            },
+                            "expected `->` between arrow domain and codomain",
+                            group.span(),
+                        )?;
+                        tasks.push(ParseTask::Arrow);
+                        tasks.push(ParseTask::Parse(codomain));
+                        tasks.push(ParseTask::Parse(domain));
+                    },
+                    _ => {
+                        let span = tokens
+                            .first()
+                            .map(TokenTree::span)
+                            .unwrap_or_else(proc_macro2::Span::call_site);
+                        return Err(syn::Error::new(span, "malformed type expression"));
+                    },
+                }
+            },
+            ParseTask::MultiBinder => {
+                let value = values.pop().expect("type parser PDA lost its operand");
+                values.push(TypeExpr::MultiBinder(Box::new(value)));
+            },
+            ParseTask::Collection(coll_type) => {
+                let element = values.pop().expect("type parser PDA lost its element type");
+                values.push(TypeExpr::Collection { coll_type, element: Box::new(element) });
+            },
+            ParseTask::Map => {
+                let value = values.pop().expect("type parser PDA lost its map value");
+                let key = values.pop().expect("type parser PDA lost its map key");
+                values.push(TypeExpr::Map {
+                    key: Box::new(key),
+                    value: Box::new(value),
+                });
+            },
+            ParseTask::Arrow => {
+                let codomain = values.pop().expect("type parser PDA lost its codomain");
+                let domain = values.pop().expect("type parser PDA lost its domain");
+                values.push(TypeExpr::Arrow {
+                    domain: Box::new(domain),
+                    codomain: Box::new(codomain),
+                });
+            },
         }
     }
 
-    // Check for arrow type: [Domain -> Codomain]
-    if input.peek(syn::token::Bracket) {
-        let content;
-        syn::bracketed!(content in input);
-
-        // Parse domain (which may itself be a bracketed type or include *)
-        let domain = parse_type_expr(&content)?;
-
-        // Expect ->
-        content.parse::<Token![->]>()?;
-
-        // Parse codomain
-        let codomain = parse_type_expr(&content)?;
-
-        return Ok(TypeExpr::Arrow {
-            domain: Box::new(domain),
-            codomain: Box::new(codomain),
-        });
-    }
-
-    // Base type: just an identifier
-    let ident: Ident = input.parse()?;
-    Ok(TypeExpr::Base(ident))
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .ok_or_else(|| syn::Error::new(proc_macro2::Span::call_site(), "empty type expression"))
 }
 
 //=============================================================================
