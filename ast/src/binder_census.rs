@@ -187,9 +187,7 @@ pub fn binder_census(workspace_root: &Path) -> Result<Vec<DeclaredLanguage>, Str
         }
     }
 
-    census.sort_by(|left, right| {
-        (&left.name, &left.source).cmp(&(&right.name, &right.source))
-    });
+    census.sort_by(|left, right| (&left.name, &left.source).cmp(&(&right.name, &right.source)));
     Ok(census)
 }
 
@@ -200,12 +198,20 @@ pub fn binder_census(workspace_root: &Path) -> Result<Vec<DeclaredLanguage>, Str
 /// `ItemMod::content` is `None`) is correctly not followed — the declaration belongs to the
 /// file that spells it, and following the `#[path]` would count one grammar twice.
 fn collect_language_defs(items: &[Item], out: &mut Vec<LanguageDef>) -> Result<(), String> {
-    for item in items {
+    // Explicit DFS frames preserve the recursive implementation's source/pre-order
+    // while making arbitrarily deep inline-module chains independent of the thread
+    // stack. Non-inline modules still remain file-local census boundaries.
+    let mut frames = vec![items.iter()];
+    while let Some(frame) = frames.last_mut() {
+        let Some(item) = frame.next() else {
+            frames.pop();
+            continue;
+        };
         match item {
             Item::Macro(item_macro) => collect_language_def(item_macro, out)?,
             Item::Mod(item_mod) => {
                 if let Some((_, nested)) = &item_mod.content {
-                    collect_language_defs(nested, out)?;
+                    frames.push(nested.iter());
                 }
             },
             _ => {},
