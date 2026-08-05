@@ -1,4 +1,4 @@
-use syn::{parse::ParseStream, Ident, Result as SynResult, Token};
+use syn::{Ident, Result as SynResult, Token, parse::ParseStream};
 
 use super::types::{CollectionType, EvalMode, RustCodeBlock, TypeExpr};
 
@@ -883,7 +883,7 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                 shares_level_with_previous = true;
             } else if kw == "prefix" {
                 let _ = input.parse::<syn::Ident>()?; // consume "prefix"
-                                                      // Parse (N)
+                // Parse (N)
                 let content;
                 syn::parenthesized!(content in input);
                 let bp_lit: syn::LitInt = content.parse()?;
@@ -1160,7 +1160,7 @@ pub(crate) fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
 
     Err(syn::Error::new(
         input.span(),
-        "Expected parameter reference (identifier), quoted literal (string), or pattern operation (#sep, #map, etc.)"
+        "Expected parameter reference (identifier), quoted literal (string), or pattern operation (#sep, #map, etc.)",
     ))
 }
 
@@ -1191,7 +1191,7 @@ fn parse_pattern_op(input: ParseStream) -> SynResult<PatternOp> {
                     "Unknown pattern operation: #{}. Expected #sep, #zip, #map, or #opt",
                     name_str
                 ),
-            ))
+            ));
         },
     };
 
@@ -1233,7 +1233,7 @@ fn parse_pattern_op_with_receiver(input: ParseStream, receiver: PatternOp) -> Sy
                     return Err(syn::Error::new(
                         name.span(),
                         "#sep receiver must be a collection parameter or result of #map/#zip",
-                    ))
+                    ));
                 },
             };
             PatternOp::Sep { collection, separator, source: None }
@@ -1250,7 +1250,7 @@ fn parse_pattern_op_with_receiver(input: ParseStream, receiver: PatternOp) -> Sy
                     "Cannot chain #{} after pattern operation. Expected #sep or #map",
                     name_str
                 ),
-            ))
+            ));
         },
     };
 
@@ -1456,7 +1456,12 @@ pub fn convert_term_context_to_items(
                 // variant arity. Recursively flatten and emit synthetic
                 // items mirroring the inner types.
                 fn flatten_optional_items(inner: &[TermParam], items: &mut Vec<GrammarItem>) {
-                    for p in inner {
+                    let mut frames = vec![inner.iter()];
+                    while let Some(frame) = frames.last_mut() {
+                        let Some(p) = frame.next() else {
+                            frames.pop();
+                            continue;
+                        };
                         match p {
                             TermParam::Simple { ty, .. } => {
                                 if let TypeExpr::Base(type_name) = ty {
@@ -1501,7 +1506,7 @@ pub fn convert_term_context_to_items(
                             },
                             TermParam::GuardBody { .. } => {},
                             TermParam::Optional { params: nested } => {
-                                flatten_optional_items(nested, items);
+                                frames.push(nested.iter());
                             },
                         }
                     }
@@ -1698,7 +1703,7 @@ fn parse_collection(coll_type_ident: Ident, input: ParseStream) -> SynResult<Gra
             return Err(syn::Error::new(
                 coll_type_ident.span(),
                 "expected HashBag, HashSet, or Vec",
-            ))
+            ));
         },
     };
 
