@@ -18,7 +18,6 @@ use models::rust::utils::{
 };
 
 /// Ground value used by generated Rho call and witness sends.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoAstLiteral {
     Int(i64),
     Bool(bool),
@@ -41,157 +40,257 @@ pub enum RhoAstLiteral {
     QuotedChannel(String),
 }
 
+mod lifecycle;
+
+enum AnnotationTask<'literal> {
+    Visit(&'literal RhoAstLiteral),
+    Text(&'static str),
+    Count(usize),
+}
+
 impl RhoAstLiteral {
-    pub(crate) fn try_to_par(&self) -> Result<Par, RhoAstBuildError> {
-        match self {
-            Self::Int(value) => Ok(new_gint_par(*value, Vec::new(), false)),
-            Self::Bool(value) => Ok(new_gbool_par(*value, Vec::new(), false)),
-            Self::String(value) | Self::QuotedChannel(value) => {
-                Ok(new_gstring_par(value.clone(), Vec::new(), false))
-            },
-            Self::Uri(value) => Ok(new_guri_par(value.clone(), Vec::new(), false)),
-            Self::Bytes(value) => Ok(new_gbytearray_par(value.clone(), Vec::new(), false)),
-            Self::DoubleBits(value) => Ok(expr_par(ExprInstance::GDouble(*value))),
-            Self::BigIntBytes(value) => Ok(expr_par(ExprInstance::GBigInt(value.clone()))),
-            Self::BigRationalBytes { numerator, denominator } => {
-                Ok(expr_par(ExprInstance::GBigRat(GBigRational {
-                    numerator: numerator.clone(),
-                    denominator: denominator.clone(),
-                })))
-            },
-            Self::FixedPointBytes { unscaled, scale } => {
-                Ok(expr_par(ExprInstance::GFixedPoint(GFixedPoint {
-                    unscaled: unscaled.clone(),
-                    scale: *scale,
-                })))
-            },
-            Self::PrivateName(value) => {
-                Ok(unforgeable_par(UnfInstance::GPrivateBody(GPrivate { id: value.clone() })))
-            },
-            Self::DeployId(value) => {
-                Ok(unforgeable_par(UnfInstance::GDeployIdBody(GDeployId { sig: value.clone() })))
-            },
-            Self::DeployerId(value) => {
-                Ok(unforgeable_par(UnfInstance::GDeployerIdBody(GDeployerId {
-                    public_key: value.clone(),
-                })))
-            },
-            Self::SysAuthToken => {
-                Ok(unforgeable_par(UnfInstance::GSysAuthTokenBody(GSysAuthToken {})))
-            },
-            Self::List(values) => {
-                let values = values
-                    .iter()
-                    .map(RhoAstLiteral::try_to_par)
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(new_elist_par(values, Vec::new(), false, None, Vec::new(), false))
-            },
-            Self::Tuple(values) => {
-                let values = values
-                    .iter()
-                    .map(RhoAstLiteral::try_to_par)
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(new_etuple_par(values))
-            },
-            Self::Set(values) => {
-                let values = values
-                    .iter()
-                    .map(RhoAstLiteral::try_to_par)
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(new_eset_par(values, Vec::new(), false, None, Vec::new(), false))
-            },
-            Self::Map(entries) => {
-                let entries = entries
-                    .iter()
-                    .map(|(key, value)| {
-                        Ok(new_key_value_pair(key.try_to_par()?, value.try_to_par()?))
-                    })
-                    .collect::<Result<Vec<_>, RhoAstBuildError>>()?;
-                Ok(new_emap_par(entries, Vec::new(), false, None, Vec::new(), false))
-            },
-            Self::Bag(entries) => {
-                let mut encoded_entries = Vec::with_capacity(entries.len());
-                for (value, count) in entries {
-                    let count = i64::try_from(*count)
-                        .map_err(|_| RhoAstBuildError::BagMultiplicityTooLarge)?;
-                    encoded_entries.push(new_elist_par(
-                        vec![value.try_to_par()?, new_gint_par(count, Vec::new(), false)],
+    pub fn try_to_par(&self) -> Result<Par, RhoAstBuildError> {
+        enum Task<'literal> {
+            Visit(&'literal RhoAstLiteral),
+            Sequence { kind: u8, base: usize },
+            Map { base: usize, len: usize },
+            Bag { base: usize, counts: Vec<i64> },
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(literal) => match literal {
+                    Self::Int(value) => values.push(new_gint_par(*value, Vec::new(), false)),
+                    Self::Bool(value) => values.push(new_gbool_par(*value, Vec::new(), false)),
+                    Self::String(value) | Self::QuotedChannel(value) => {
+                        values.push(new_gstring_par(value.clone(), Vec::new(), false));
+                    },
+                    Self::Uri(value) => {
+                        values.push(new_guri_par(value.clone(), Vec::new(), false));
+                    },
+                    Self::Bytes(value) => {
+                        values.push(new_gbytearray_par(value.clone(), Vec::new(), false));
+                    },
+                    Self::DoubleBits(value) => {
+                        values.push(expr_par(ExprInstance::GDouble(*value)));
+                    },
+                    Self::BigIntBytes(value) => {
+                        values.push(expr_par(ExprInstance::GBigInt(value.clone())));
+                    },
+                    Self::BigRationalBytes { numerator, denominator } => {
+                        values.push(expr_par(ExprInstance::GBigRat(GBigRational {
+                            numerator: numerator.clone(),
+                            denominator: denominator.clone(),
+                        })))
+                    },
+                    Self::FixedPointBytes { unscaled, scale } => {
+                        values.push(expr_par(ExprInstance::GFixedPoint(GFixedPoint {
+                            unscaled: unscaled.clone(),
+                            scale: *scale,
+                        })))
+                    },
+                    Self::PrivateName(value) => {
+                        values.push(unforgeable_par(UnfInstance::GPrivateBody(GPrivate {
+                            id: value.clone(),
+                        })))
+                    },
+                    Self::DeployId(value) => {
+                        values.push(unforgeable_par(UnfInstance::GDeployIdBody(GDeployId {
+                            sig: value.clone(),
+                        })))
+                    },
+                    Self::DeployerId(value) => {
+                        values.push(unforgeable_par(UnfInstance::GDeployerIdBody(GDeployerId {
+                            public_key: value.clone(),
+                        })))
+                    },
+                    Self::SysAuthToken => values
+                        .push(unforgeable_par(UnfInstance::GSysAuthTokenBody(GSysAuthToken {}))),
+                    Self::List(children) | Self::Tuple(children) | Self::Set(children) => {
+                        let kind = match literal {
+                            Self::List(_) => 0,
+                            Self::Tuple(_) => 1,
+                            Self::Set(_) => 2,
+                            _ => unreachable!(),
+                        };
+                        tasks.push(Task::Sequence { kind, base: values.len() });
+                        for child in children.iter().rev() {
+                            tasks.push(Task::Visit(child));
+                        }
+                    },
+                    Self::Map(entries) => {
+                        tasks.push(Task::Map { base: values.len(), len: entries.len() });
+                        for (key, value) in entries.iter().rev() {
+                            tasks.push(Task::Visit(value));
+                            tasks.push(Task::Visit(key));
+                        }
+                    },
+                    Self::Bag(entries) => {
+                        let counts = entries
+                            .iter()
+                            .map(|(_, count)| {
+                                i64::try_from(*count)
+                                    .map_err(|_| RhoAstBuildError::BagMultiplicityTooLarge)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        tasks.push(Task::Bag { base: values.len(), counts });
+                        for (value, _) in entries.iter().rev() {
+                            tasks.push(Task::Visit(value));
+                        }
+                    },
+                },
+                Task::Sequence { kind, base } => {
+                    let children = values.split_off(base);
+                    values.push(match kind {
+                        0 => new_elist_par(children, Vec::new(), false, None, Vec::new(), false),
+                        1 => new_etuple_par(children),
+                        2 => new_eset_par(children, Vec::new(), false, None, Vec::new(), false),
+                        _ => unreachable!("unknown literal sequence kind"),
+                    });
+                },
+                Task::Map { base, len } => {
+                    let children = values.split_off(base);
+                    debug_assert_eq!(children.len(), len * 2);
+                    let mut children = children.into_iter();
+                    let entries = (0..len)
+                        .map(|_| {
+                            new_key_value_pair(
+                                children.next().expect("literal PDA lost a map key"),
+                                children.next().expect("literal PDA lost a map value"),
+                            )
+                        })
+                        .collect();
+                    values.push(new_emap_par(entries, Vec::new(), false, None, Vec::new(), false));
+                },
+                Task::Bag { base, counts } => {
+                    let children = values.split_off(base);
+                    debug_assert_eq!(children.len(), counts.len());
+                    let encoded_entries = children
+                        .into_iter()
+                        .zip(counts)
+                        .map(|(value, count)| {
+                            new_elist_par(
+                                vec![value, new_gint_par(count, Vec::new(), false)],
+                                Vec::new(),
+                                false,
+                                None,
+                                Vec::new(),
+                                false,
+                            )
+                        })
+                        .collect();
+                    let entries =
+                        new_elist_par(encoded_entries, Vec::new(), false, None, Vec::new(), false);
+                    let tag = GPrivateBuilder::new_par_from_string(
+                        crate::RHOLANG_BAG_ABI_TAG.to_string(),
+                    );
+                    values.push(new_elist_par(
+                        vec![tag, entries],
                         Vec::new(),
                         false,
                         None,
                         Vec::new(),
                         false,
                     ));
-                }
-                let entries =
-                    new_elist_par(encoded_entries, Vec::new(), false, None, Vec::new(), false);
-                let tag =
-                    GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string());
-                Ok(new_elist_par(vec![tag, entries], Vec::new(), false, None, Vec::new(), false))
-            },
+                },
+            }
         }
+        debug_assert_eq!(values.len(), 1);
+        Ok(values.pop().expect("literal-to-Par PDA produced no value"))
     }
 
-    pub(crate) fn annotation(&self) -> String {
-        match self {
-            Self::Int(value) => value.to_string(),
-            Self::Bool(value) => value.to_string(),
-            Self::String(value) => format!("{value:?}"),
-            Self::Uri(value) => format!("Uri({value:?})"),
-            Self::Bytes(value) => format!("0x{}", hex_bytes(value)),
-            Self::DoubleBits(value) => format!("DoubleBits(0x{value:016x})"),
-            Self::BigIntBytes(value) => format!("BigInt(0x{})", hex_bytes(value)),
-            Self::BigRationalBytes { numerator, denominator } => {
-                format!("BigRat(0x{}/0x{})", hex_bytes(numerator), hex_bytes(denominator))
-            },
-            Self::FixedPointBytes { unscaled, scale } => {
-                format!("FixedPoint(0x{} scale {scale})", hex_bytes(unscaled))
-            },
-            Self::PrivateName(value) => format!("Private(0x{})", hex_bytes(value)),
-            Self::DeployId(value) => format!("DeployId(0x{})", hex_bytes(value)),
-            Self::DeployerId(value) => format!("DeployerId(0x{})", hex_bytes(value)),
-            Self::SysAuthToken => "SysAuthToken".to_string(),
-            Self::List(values) => format!(
-                "[{}]",
-                values
-                    .iter()
-                    .map(RhoAstLiteral::annotation)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::Tuple(values) => format!(
-                "({})",
-                values
-                    .iter()
-                    .map(RhoAstLiteral::annotation)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::Set(values) => format!(
-                "Set{{{}}}",
-                values
-                    .iter()
-                    .map(RhoAstLiteral::annotation)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::Map(entries) => format!(
-                "{{{}}}",
-                entries
-                    .iter()
-                    .map(|(key, value)| format!("{}: {}", key.annotation(), value.annotation()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::Bag(entries) => format!(
-                "Bag{{{}}}",
-                entries
-                    .iter()
-                    .map(|(value, count)| format!("{} * {count}", value.annotation()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::QuotedChannel(value) => format!("@{value:?}"),
+    pub fn annotation(&self) -> String {
+        let mut out = String::new();
+        let mut tasks = vec![AnnotationTask::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                AnnotationTask::Text(text) => out.push_str(text),
+                AnnotationTask::Count(count) => out.push_str(&count.to_string()),
+                AnnotationTask::Visit(literal) => match literal {
+                    Self::Int(value) => out.push_str(&value.to_string()),
+                    Self::Bool(value) => out.push_str(&value.to_string()),
+                    Self::String(value) => out.push_str(&format!("{value:?}")),
+                    Self::Uri(value) => out.push_str(&format!("Uri({value:?})")),
+                    Self::Bytes(value) => out.push_str(&format!("0x{}", hex_bytes(value))),
+                    Self::DoubleBits(value) => {
+                        out.push_str(&format!("DoubleBits(0x{value:016x})"));
+                    },
+                    Self::BigIntBytes(value) => {
+                        out.push_str(&format!("BigInt(0x{})", hex_bytes(value)));
+                    },
+                    Self::BigRationalBytes { numerator, denominator } => out.push_str(&format!(
+                        "BigRat(0x{}/0x{})",
+                        hex_bytes(numerator),
+                        hex_bytes(denominator)
+                    )),
+                    Self::FixedPointBytes { unscaled, scale } => out
+                        .push_str(&format!("FixedPoint(0x{} scale {scale})", hex_bytes(unscaled))),
+                    Self::PrivateName(value) => {
+                        out.push_str(&format!("Private(0x{})", hex_bytes(value)));
+                    },
+                    Self::DeployId(value) => {
+                        out.push_str(&format!("DeployId(0x{})", hex_bytes(value)));
+                    },
+                    Self::DeployerId(value) => {
+                        out.push_str(&format!("DeployerId(0x{})", hex_bytes(value)));
+                    },
+                    Self::SysAuthToken => out.push_str("SysAuthToken"),
+                    Self::List(children) => {
+                        out.push('[');
+                        push_annotation_sequence(&mut tasks, children, "]");
+                    },
+                    Self::Tuple(children) => {
+                        out.push('(');
+                        push_annotation_sequence(&mut tasks, children, ")");
+                    },
+                    Self::Set(children) => {
+                        out.push_str("Set{");
+                        push_annotation_sequence(&mut tasks, children, "}");
+                    },
+                    Self::Map(entries) => {
+                        out.push('{');
+                        tasks.push(AnnotationTask::Text("}"));
+                        for (index, (key, value)) in entries.iter().enumerate().rev() {
+                            tasks.push(AnnotationTask::Visit(value));
+                            tasks.push(AnnotationTask::Text(": "));
+                            tasks.push(AnnotationTask::Visit(key));
+                            if index != 0 {
+                                tasks.push(AnnotationTask::Text(", "));
+                            }
+                        }
+                    },
+                    Self::Bag(entries) => {
+                        out.push_str("Bag{");
+                        tasks.push(AnnotationTask::Text("}"));
+                        for (index, (value, count)) in entries.iter().enumerate().rev() {
+                            tasks.push(AnnotationTask::Count(*count));
+                            tasks.push(AnnotationTask::Text(" * "));
+                            tasks.push(AnnotationTask::Visit(value));
+                            if index != 0 {
+                                tasks.push(AnnotationTask::Text(", "));
+                            }
+                        }
+                    },
+                    Self::QuotedChannel(value) => out.push_str(&format!("@{value:?}")),
+                },
+            }
+        }
+        out
+    }
+}
+
+fn push_annotation_sequence<'literal>(
+    tasks: &mut Vec<AnnotationTask<'literal>>,
+    children: &'literal [RhoAstLiteral],
+    close: &'static str,
+) {
+    tasks.push(AnnotationTask::Text(close));
+    for (index, child) in children.iter().enumerate().rev() {
+        tasks.push(AnnotationTask::Visit(child));
+        if index != 0 {
+            tasks.push(AnnotationTask::Text(", "));
         }
     }
 }
