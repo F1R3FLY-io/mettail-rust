@@ -1,4 +1,4 @@
-use syn::{Ident, Result as SynResult, Token, parse::ParseStream};
+use syn::{parse::ParseStream, Ident, Result as SynResult, Token};
 
 use super::types::{CollectionType, EvalMode, RustCodeBlock, TypeExpr};
 
@@ -181,6 +181,20 @@ pub enum TermParam {
     /// signature. GuardBody and nested Optional inner params are
     /// supported by the same recursive treatment.
     Optional { params: Vec<TermParam> },
+}
+
+impl Drop for TermParam {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        if let TermParam::Optional { params } = self {
+            work.append(params);
+        }
+        while let Some(mut param) = work.pop() {
+            if let TermParam::Optional { params } = &mut param {
+                work.append(params);
+            }
+        }
+    }
 }
 
 /// Syntax expression in patterns (can include meta-operations)
@@ -883,7 +897,7 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                 shares_level_with_previous = true;
             } else if kw == "prefix" {
                 let _ = input.parse::<syn::Ident>()?; // consume "prefix"
-                // Parse (N)
+                                                      // Parse (N)
                 let content;
                 syn::parenthesized!(content in input);
                 let bp_lit: syn::LitInt = content.parse()?;
@@ -939,8 +953,15 @@ fn parse_term_context(input: ParseStream) -> SynResult<Vec<TermParam>> {
             break;
         }
 
-        // Parse a parameter
-        let param = parse_term_param(input)?;
+        // Parse one top-level parameter token slice. Delimited groups are one
+        // token tree, so even a deeply nested `*opt(...)` chain is transferred
+        // to the explicit parser below without recursively materializing its
+        // entire remainder through `syn::ParseBuffer`.
+        let mut tokens = proc_macro2::TokenStream::new();
+        while !input.is_empty() && !input.peek(Token![,]) && !input.peek(Token![|]) {
+            tokens.extend(std::iter::once(input.parse::<proc_macro2::TokenTree>()?));
+        }
+        let param = parse_term_param(tokens)?;
         params.push(param);
 
         // Check for comma separator
@@ -960,7 +981,12 @@ fn parse_term_context(input: ParseStream) -> SynResult<Vec<TermParam>> {
 /// - `^x.p:[Name -> Proc]` → Abstraction
 /// - `^[xs].p:[Name* -> Proc]` → MultiAbstraction
 /// - `?guard:Guard` → GuardBody (Phase 2C — predicated types)
-fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
+fn parse_term_param(tokens: proc_macro2::TokenStream) -> SynResult<TermParam> {
+    parse_term_param_tokens(tokens)
+}
+
+/// Parse the non-recursive leaves of the term-parameter grammar.
+fn parse_non_optional_term_param(input: ParseStream) -> SynResult<TermParam> {
     // Guard slot: `?<name>:Guard` (Phase 2C, predicated types)
     //
     // The slot name declares where in the syntax pattern the guard
@@ -986,37 +1012,6 @@ fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
             ));
         }
         return Ok(TermParam::GuardBody { name });
-    }
-
-    // Optional group: `*opt(p1: T1, p2: T2, ...)` (Opt-Group, 2026-04-29)
-    //
-    // Mirrors `*opt(...)` in the syntax pattern. Inner params parse
-    // recursively as a comma-separated TermParam list. At codegen time,
-    // each inner Simple/Abstraction is wrapped as `Option<T>` in the
-    // emitted AST variant and action body. The surface uses `*` (not
-    // `#`) for pattern ops to match the rest of the MeTTaIL DSL — see
-    // `parse_pattern_op` for the asterisk convention.
-    if input.peek(Token![*]) {
-        let fork = input.fork();
-        let _ = fork.parse::<Token![*]>()?;
-        let kw = fork.parse::<Ident>()?;
-        if kw == "opt" {
-            let _ = input.parse::<Token![*]>()?;
-            let _ = input.parse::<Ident>()?; // consume "opt"
-            let content;
-            syn::parenthesized!(content in input);
-            let mut params = Vec::new();
-            while !content.is_empty() {
-                let inner = parse_term_param(&content)?;
-                params.push(inner);
-                if content.peek(Token![,]) {
-                    let _ = content.parse::<Token![,]>()?;
-                } else {
-                    break;
-                }
-            }
-            return Ok(TermParam::Optional { params });
-        }
     }
 
     if input.peek(Token![^]) {
@@ -1058,6 +1053,92 @@ fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
 
         Ok(TermParam::Simple { name, ty })
     }
+}
+
+/// Split one optional group's token stream at top-level commas. Delimited
+/// subgroups are single token trees, so commas inside types or nested `*opt`
+/// groups never become separators here. A trailing comma is accepted exactly
+/// as before; leading and repeated commas retain an empty segment which the
+/// leaf parser rejects.
+fn split_term_param_tokens(tokens: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
+    let mut segments = Vec::new();
+    let mut current = proc_macro2::TokenStream::new();
+    for tree in tokens {
+        if matches!(&tree, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == ',') {
+            segments.push(std::mem::take(&mut current));
+        } else {
+            current.extend(std::iter::once(tree));
+        }
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+    segments
+}
+
+/// Parse a complete term parameter with an explicit task/value machine.
+fn parse_term_param_tokens(tokens: proc_macro2::TokenStream) -> SynResult<TermParam> {
+    enum Parsed {
+        Leaf(TermParam),
+        Optional(Vec<proc_macro2::TokenStream>),
+    }
+
+    enum Task {
+        Parse(proc_macro2::TokenStream),
+        AssembleOptional(usize),
+    }
+
+    fn parse_one(tokens: proc_macro2::TokenStream) -> SynResult<Parsed> {
+        let trees: Vec<_> = tokens.clone().into_iter().collect();
+        if trees.len() >= 2
+            && matches!(&trees[0], proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '*')
+            && matches!(&trees[1], proc_macro2::TokenTree::Ident(keyword) if keyword == "opt")
+        {
+            if trees.len() != 3 {
+                return Err(syn::Error::new(
+                    trees[1].span(),
+                    "expected exactly one parenthesized parameter group after `*opt`",
+                ));
+            }
+            let proc_macro2::TokenTree::Group(group) = &trees[2] else {
+                return Err(syn::Error::new(trees[2].span(), "expected parentheses after `*opt`"));
+            };
+            if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
+                return Err(syn::Error::new(group.span(), "expected parentheses after `*opt`"));
+            }
+            Ok(Parsed::Optional(split_term_param_tokens(group.stream())))
+        } else {
+            syn::parse::Parser::parse2(parse_non_optional_term_param, tokens).map(Parsed::Leaf)
+        }
+    }
+
+    let mut tasks = vec![Task::Parse(tokens)];
+    let mut values = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Parse(tokens) => match parse_one(tokens)? {
+                Parsed::Leaf(param) => values.push(param),
+                Parsed::Optional(children) => {
+                    tasks.push(Task::AssembleOptional(children.len()));
+                    tasks.extend(children.into_iter().rev().map(Task::Parse));
+                },
+            },
+            Task::AssembleOptional(child_count) => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("optional assembly must follow all child parses");
+                let params = values.split_off(first_child);
+                values.push(TermParam::Optional { params });
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    Ok(values
+        .pop()
+        .expect("the root optional assembly always emits one value"))
 }
 
 /// Parse syntax pattern until we hit `:` followed by an identifier (the type)
@@ -1852,3 +1933,7 @@ mod fixture_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/term_param_recursive_oracle.rs"]
+mod term_param_recursive_oracle;
