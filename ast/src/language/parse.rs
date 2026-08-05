@@ -2306,6 +2306,17 @@ fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
 ///   relation   ::= ident "(" (ident ("," ident)*)? ")"
 ///   forall     ::= ident "." "*" "map" "(" "|" ident "|" premise ")"
 fn parse_premise(input: ParseStream) -> SynResult<Premise> {
+    let mut tokens = TokenStream::new();
+    while !input.is_empty()
+        && !input.peek(Token![,])
+        && !(input.peek(Token![|]) && input.peek2(Token![-]))
+    {
+        tokens.extend(std::iter::once(input.parse::<proc_macro2::TokenTree>()?));
+    }
+    parse_premise_tokens(tokens)
+}
+
+fn parse_non_forall_premise(input: ParseStream) -> SynResult<Premise> {
     let first = input.parse::<Ident>()?;
 
     if input.peek(Token![#]) {
@@ -2334,6 +2345,16 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
         let _ = input.parse::<Token![>]>()?;
         let target = input.parse::<Ident>()?;
         Ok(Premise::Congruence { source: first, target })
+    } else if first == "guard" && input.peek(syn::token::Paren) {
+        // Behavioral guard premise: guard(pred_expr). This must precede the
+        // generic relation-query arm because both start with `ident(...)`.
+        let content;
+        syn::parenthesized!(content in input);
+        let pred = parse_behavioral_pred(&content)?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected trailing tokens in behavioral guard"));
+        }
+        Ok(Premise::BehavioralGuard(pred))
     } else if input.peek(syn::token::Paren) {
         // Relation query: rel(args)
         let args_content;
@@ -2346,34 +2367,6 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
             }
         }
         Ok(Premise::RelationQuery { relation: first, args })
-    } else if input.peek(Token![.]) {
-        // ForAll: xs.*map(|x| premise)
-        let _ = input.parse::<Token![.]>()?;
-        let _ = input.parse::<Token![*]>()?;
-        let op = input.parse::<Ident>()?;
-        if op != "map" {
-            return Err(syn::Error::new(
-                op.span(),
-                "expected 'map' in quantified premise (xs.*map(|x| ...))",
-            ));
-        }
-        let content;
-        syn::parenthesized!(content in input);
-        let _ = content.parse::<Token![|]>()?;
-        let param = content.parse::<Ident>()?;
-        let _ = content.parse::<Token![|]>()?;
-        let body = parse_premise(&content)?;
-        Ok(Premise::ForAll {
-            collection: first,
-            param,
-            body: Box::new(body),
-        })
-    } else if first == "guard" && input.peek(syn::token::Paren) {
-        // Behavioral guard premise: guard(pred_expr)
-        let content;
-        syn::parenthesized!(content in input);
-        let pred = parse_behavioral_pred(&content)?;
-        Ok(Premise::BehavioralGuard(pred))
     } else if first == "forall" || first == "exists" {
         // Quantified behavioral guard used directly as premise:
         // forall var in domain. body  /  exists var in domain. body
@@ -2424,6 +2417,105 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
              'forall ...', 'exists ...', or 'xs.*map(|x| ...)'",
         ))
     }
+}
+
+fn parse_premise_tokens(tokens: TokenStream) -> SynResult<Premise> {
+    enum Parsed {
+        Leaf(Premise),
+        ForAll {
+            collection: Ident,
+            param: Ident,
+            body: TokenStream,
+        },
+    }
+
+    enum Task {
+        Parse(TokenStream),
+        AssembleForAll { collection: Ident, param: Ident },
+    }
+
+    fn punct(tree: &proc_macro2::TokenTree, expected: char) -> bool {
+        matches!(tree, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == expected)
+    }
+
+    fn parse_one(tokens: TokenStream) -> SynResult<Parsed> {
+        let trees: Vec<_> = tokens.clone().into_iter().collect();
+        let starts_method_quantifier = trees.len() >= 2
+            && matches!(&trees[0], proc_macro2::TokenTree::Ident(_))
+            && punct(&trees[1], '.');
+        if !starts_method_quantifier {
+            return syn::parse::Parser::parse2(parse_non_forall_premise, tokens).map(Parsed::Leaf);
+        }
+
+        if trees.len() != 5 || !punct(&trees[2], '*') {
+            return Err(syn::Error::new(
+                trees[1].span(),
+                "expected quantified premise `collection.*map(|param| premise)`",
+            ));
+        }
+        let proc_macro2::TokenTree::Ident(collection) = &trees[0] else {
+            unreachable!("the prefix check requires an identifier")
+        };
+        let proc_macro2::TokenTree::Ident(operator) = &trees[3] else {
+            return Err(syn::Error::new(trees[3].span(), "expected `map` after `.*`"));
+        };
+        if operator != "map" {
+            return Err(syn::Error::new(
+                operator.span(),
+                "expected 'map' in quantified premise (xs.*map(|x| ...))",
+            ));
+        }
+        let proc_macro2::TokenTree::Group(group) = &trees[4] else {
+            return Err(syn::Error::new(trees[4].span(), "expected parentheses after `map`"));
+        };
+        if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
+            return Err(syn::Error::new(group.span(), "expected parentheses after `map`"));
+        }
+
+        let closure: Vec<_> = group.stream().into_iter().collect();
+        if closure.len() < 4 || !punct(&closure[0], '|') || !punct(&closure[2], '|') {
+            return Err(syn::Error::new(
+                group.span(),
+                "expected quantified premise closure `|param| premise`",
+            ));
+        }
+        let proc_macro2::TokenTree::Ident(param) = &closure[1] else {
+            return Err(syn::Error::new(closure[1].span(), "expected closure parameter"));
+        };
+        let param = param.clone();
+        let body: TokenStream = closure.into_iter().skip(3).collect();
+        if body.is_empty() {
+            return Err(syn::Error::new(group.span(), "expected premise after closure parameter"));
+        }
+        Ok(Parsed::ForAll {
+            collection: collection.clone(),
+            param,
+            body,
+        })
+    }
+
+    let mut tasks = vec![Task::Parse(tokens)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Parse(tokens) => match parse_one(tokens)? {
+                Parsed::Leaf(premise) => values.push(premise),
+                Parsed::ForAll { collection, param, body } => {
+                    tasks.push(Task::AssembleForAll { collection, param });
+                    tasks.push(Task::Parse(body));
+                },
+            },
+            Task::AssembleForAll { collection, param } => {
+                let body = values
+                    .pop()
+                    .expect("forall assembly follows its body parse");
+                values.push(Premise::ForAll { collection, param, body: Box::new(body) });
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    Ok(values.pop().expect("one root premise is always emitted"))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3678,3 +3770,7 @@ mod rewrite_fragment_tests {
             .contains("ambiguous"),);
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/premise_recursive_oracle.rs"]
+mod premise_recursive_oracle;

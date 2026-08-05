@@ -202,6 +202,69 @@ pub enum Premise {
     },
 }
 
+fn premise_placeholder() -> Premise {
+    Premise::RelationQuery {
+        relation: Ident::new("_", proc_macro2::Span::call_site()),
+        args: Vec::new(),
+    }
+}
+
+fn take_premise_children(premise: &mut Premise, work: &mut Vec<Premise>) {
+    if let Premise::ForAll { body, .. } = premise {
+        work.push(*std::mem::replace(body, Box::new(premise_placeholder())));
+    }
+}
+
+fn drain_owned_premise(premise: Premise, work: &mut Vec<Premise>) {
+    let mut premise = std::mem::ManuallyDrop::new(premise);
+    match &mut *premise {
+        Premise::Freshness(condition) => {
+            // SAFETY: the field is moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(condition) });
+        },
+        Premise::Congruence { source, target } | Premise::CongruenceWithheld { source, target } => {
+            // SAFETY: both fields are moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(source) });
+            drop(unsafe { std::ptr::read(target) });
+        },
+        Premise::RelationQuery { relation, args } => {
+            // SAFETY: both fields are moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(relation) });
+            drop(unsafe { std::ptr::read(args) });
+        },
+        Premise::ForAll { collection, param, body } => {
+            // SAFETY: every field is moved exactly once; the child joins the shared worklist.
+            drop(unsafe { std::ptr::read(collection) });
+            drop(unsafe { std::ptr::read(param) });
+            work.push(*unsafe { std::ptr::read(body) });
+        },
+        Premise::BehavioralGuard(predicate) => {
+            // SAFETY: the field is moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(predicate) });
+        },
+        Premise::SyntheticInjGuard {
+            inner_var,
+            source_category,
+            excluded_variants,
+        } => {
+            // SAFETY: every field is moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(inner_var) });
+            drop(unsafe { std::ptr::read(source_category) });
+            drop(unsafe { std::ptr::read(excluded_variants) });
+        },
+    }
+}
+
+impl Drop for Premise {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        take_premise_children(self, &mut work);
+        while let Some(premise) = work.pop() {
+            drain_owned_premise(premise, &mut work);
+        }
+    }
+}
+
 /// Equation in unified judgement syntax
 /// Syntax: Name . type_context | prop_context |- lhs = rhs ;
 /// Example: ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest})) ;
