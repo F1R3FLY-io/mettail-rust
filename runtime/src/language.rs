@@ -2101,7 +2101,6 @@ impl WeightedRewriteSeed {
 ///
 /// This mirrors the compile-time `InferredType` but is available at runtime
 /// for displaying types to users.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TermType {
     /// Base type: Name, Proc, etc.
     Base(String),
@@ -2122,21 +2121,7 @@ pub enum TermType {
     Unknown,
 }
 
-impl fmt::Display for TermType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TermType::Base(name) => write!(f, "{}", name),
-            TermType::Arrow(domain, codomain) => write!(f, "[{} -> {}]", domain, codomain),
-            TermType::MultiArrow(domain, codomain) => write!(f, "[{}* -> {}]", domain, codomain),
-            TermType::Ambiguous(types) => {
-                // Render as a pipe-separated union: `Int | Bool | Float`.
-                let parts: Vec<String> = types.iter().map(|t| format!("{}", t)).collect();
-                write!(f, "{}", parts.join(" | "))
-            },
-            TermType::Unknown => write!(f, "?"),
-        }
-    }
-}
+mod term_type_lifecycle;
 
 impl TermType {
     /// Create a base type
@@ -2164,10 +2149,7 @@ impl TermType {
         // Flatten nested Ambiguous and deduplicate.
         let mut seen: Vec<TermType> = Vec::with_capacity(types.len());
         for ty in types {
-            let to_add: Vec<TermType> = match ty {
-                TermType::Ambiguous(inner) => inner,
-                other => vec![other],
-            };
+            let to_add = term_type_lifecycle::into_ambiguous(ty);
             for t in to_add {
                 if !seen.contains(&t) {
                     seen.push(t);

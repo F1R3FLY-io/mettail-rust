@@ -19,12 +19,13 @@ pub struct Atom {
 }
 
 /// Body atom: relation, negation, or if-clause. (FunctionCall reserved for later.)
-#[derive(Debug, Clone)]
 pub enum BodyAtom {
     Relation { name: String, terms: Vec<Term> },
     Negation(Box<BodyAtom>),
     If(IfExpr),
 }
+
+mod lifecycle;
 
 /// Boolean expression in an `if` clause.
 #[derive(Debug, Clone)]

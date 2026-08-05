@@ -24,7 +24,7 @@ fn evaluator_and_domain_inference_handle_depth_20k_on_a_256k_stack() {
             for _ in 0..DEPTH {
                 body = BehavioralPred::Not(Box::new(body));
             }
-            let mut predicate = BehavioralPred::Quantified {
+            let predicate = BehavioralPred::Quantified {
                 quantifier: Quantifier::ForAll,
                 var: "x".to_string(),
                 domain: None,
@@ -34,15 +34,15 @@ fn evaluator_and_domain_inference_handle_depth_20k_on_a_256k_stack() {
             assert!(evaluate_pred_with_bindings(&predicate, &[]));
             clear_pred_fact_snapshot();
 
-            predicate = match predicate {
-                BehavioralPred::Quantified { body, .. } => *body,
+            let mut cursor = match &predicate {
+                BehavioralPred::Quantified { body, .. } => body.as_ref(),
                 _ => unreachable!(),
             };
             let mut depth = 0;
             loop {
-                match predicate {
+                match cursor {
                     BehavioralPred::Not(inner) => {
-                        predicate = *inner;
+                        cursor = inner;
                         depth += 1;
                     },
                     BehavioralPred::RelationQuery { .. } => break,
@@ -50,6 +50,7 @@ fn evaluator_and_domain_inference_handle_depth_20k_on_a_256k_stack() {
                 }
             }
             assert_eq!(depth, DEPTH);
+            drop(predicate);
         })
         .expect("small-stack worker spawns")
         .join()

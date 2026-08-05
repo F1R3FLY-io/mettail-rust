@@ -29,6 +29,10 @@ fn nested_negation_queries_are_stack_safe() {
                     .collect::<Vec<_>>(),
                 ["x"]
             );
+            let cloned = atom.clone();
+            assert_eq!(cloned.relation_name(), Some("edge"));
+            assert!(format!("{cloned:?}").ends_with(&")".repeat(DEPTH)));
+            drop(cloned);
             atom
         })
         .expect("small-stack query thread starts")
