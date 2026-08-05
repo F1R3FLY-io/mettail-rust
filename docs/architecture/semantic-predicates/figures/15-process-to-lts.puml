@@ -26,7 +26,7 @@ title Concretizing a process as an LTS, so a μ-calculus predicate can be decide
 ' ══════════════════════════════════════════════════════════════════════════════
 rectangle "a process term t\n(the thing to predicate)" as T #DBEAFE
 component "HostTerm\nsuccessors(t): one-step labeled edges\nlabel(t): atomic proposition" as HT #CCFBF1
-component "build_lts: BFS from t\nthe reachable LTS (S, →)\ncap MAX_REACH_STATES = 10000" as BL #CCFBF1
+component "build_lts: BFS from t\nthe complete finite reachable LTS (S, →)\nuntil the frontier is empty" as BL #CCFBF1
 component "denote: μ-calculus model check\n⟦φ⟧ ⊆ S by fixpoint iteration" as DN #FEF3C7
 rectangle "evaluate(φ, t) = (root ∈ ⟦φ⟧)\nthe predicate decided in the behavioral Heyting algebra" as EV #DCFCE7
 
@@ -36,7 +36,7 @@ BL --> DN : finite reachable LTS
 DN --> EV : root membership
 
 note bottom of BL #FEF3C7
-  truncation is reject-safe: missing edges only shrink ⟨a⟩/μ sets.
+  no implicit truncation: missing edges can make [a]φ vacuously true.
 end note
 
 note bottom of DN #E0E7FF

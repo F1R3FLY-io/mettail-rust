@@ -77,12 +77,13 @@ fn behavioral_lifecycle_handles_depth_20k_on_a_256k_stack() {
         .expect("behavioral lifecycle must not overflow the native stack");
 }
 
-fn dismantle_not_formula(mut formula: BehavioralFormula, expected_depth: usize) {
+fn dismantle_not_formula(formula: BehavioralFormula, expected_depth: usize) {
     let mut depth = 0;
+    let mut cursor = &formula;
     loop {
-        match formula {
+        match cursor {
             BehavioralFormula::Not(inner) => {
-                formula = *inner;
+                cursor = inner;
                 depth += 1;
             },
             BehavioralFormula::Relation { name, args } => {

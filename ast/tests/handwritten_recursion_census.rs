@@ -79,6 +79,8 @@ const TERM_FAMILY: &[&str] = &[
     "PatternOp",
     "Condition",
     "BehavioralPred",
+    "BehavioralFormula",
+    "QDomain",
     "RefinementPredicate",
     "ConstraintDomain",
     "TreeConstraintExpr",

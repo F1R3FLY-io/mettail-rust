@@ -395,8 +395,9 @@ The behavioral algebra already provides the eight branching-time (CTL) operators
 the state operators `AG`/`EG`/`AF`/`EF`/`AX`/`EX` and the path operators `AU`/`EU`,
 each defined as sugar over the modal μ-calculus fixpoints (for example `AG φ` is
 "`φ` holds in every reachable state" and `EF φ` is "`φ` is reachable on some run"),
-with model checking over a finite labeled transition system *exact* and bounded-reach
-truncation *reject-safe*; both the operator definitions and that exactness are stated
+with model checking over the complete finite reachable labeled transition system
+*exact*. The Boolean checker deliberately does not truncate because edge removal is not
+reject-safe for universal modalities. Both the operator definitions and that exactness are stated
 and proved in [12 — Heyting Behavioral Logic, §4](12-heyting-behavioral-logic.md). The
 proposal exposes them so an author can write safety and liveness guards directly. They
 bind tighter than the boolean connectives and scope the following predicate:

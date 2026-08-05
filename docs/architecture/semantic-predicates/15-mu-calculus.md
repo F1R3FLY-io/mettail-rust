@@ -182,8 +182,10 @@ the one-step labeled edges `{ (a, t′) }` — backed by the host's reduction re
 `label(t)` returns the atomic proposition true at `t`. From a root `t`, the **reachable
 LTS** `(S, →)` is built by breadth-first search: `S` is the set of distinct reachable
 terms (assigning each an index, the root at `0`), `→` is the edge relation from
-`successors`, and exploration stops once `MAX_REACH_STATES = 10000` states are reached.
-**This finite `(S, →)` is the concrete object a μ-calculus predicate is checked against.**
+`successors`, and exploration continues until the reachable frontier is empty.
+`HostTerm` model checking therefore requires the reachable component to be finite.
+**This complete finite `(S, →)` is the concrete object a μ-calculus predicate is checked
+against.**
 The atomic propositions `p` partition the states by `label`; the actions `a` label the
 edges; and a behavioral formula `φ` is evaluated by computing its satisfying set
 `⟦φ⟧ ⊆ S` over this LTS (§5) and asking whether the root is in it.
@@ -197,7 +199,7 @@ PlantUML source: [figures/15-process-to-lts.puml](figures/15-process-to-lts.puml
 ([12 §6.2](12-heyting-behavioral-logic.md)); a μ-calculus formula is one of its
 predicates, and the process `t` (via its reachable LTS) is the *domain element* the
 predicate is evaluated against. Two consequences are load-bearing and follow from the
-concretization being a **bounded** construction:
+concretization producing a **complete finite** reachable component:
 
 - **Model checking against a given process is exact** (Theorem 5.2): the LTS is a finite
   structure, so `denote` computes `⟦φ⟧` exactly over it — the predicate's truth at `t` is
@@ -246,21 +248,15 @@ denotation under `fix[X := T]` is `Φ(T)` (Definition 3.2); the loop computes th
 limit `Φ^n_⊥` (resp. `Φ^n_⊤`), which equals `μΦ` (resp. `νΦ`) by Lemma 3.7. Hence
 `⟦φ⟧` is computed exactly, and the verdict is `root ∈ ⟦φ⟧`. `∎`
 
-**Proposition 5.3 (truncation is reject-safe).** If the BFS truncates at
-`MAX_REACH_STATES`, dropping states and edges beyond the cap, then for every formula the
-computed possibility/least-fixpoint sets only **shrink** relative to the full LTS — the
-checker may return `false`/`DontKnow` where the full model returns `true`, but never the
-reverse for a guard.
-
-*Proof.* Dropping edges removes successors. This can only remove `⟨a⟩` witnesses (the
-existential finds fewer) and only shrink a `μX` least fixpoint (fewer predecessors are
-added at each Kleene round), so `⟨a⟩`- and `μ`-sets shrink. A `[a]` universal becomes
-vacuously *easier* to satisfy on a truncated successor list, which over-approximates
-safety in the **conservative** direction — a guard that requires a safety property is
-never granted on the strength of edges that were dropped. Hence a truncated model checker
-errs only toward refusing a COMM, never toward wrongly admitting one — the reject-safe
-contract ([12 §3](12-heyting-behavioral-logic.md), [05](05-algebra-pyramid-and-decidability.md)).
-This is the source invariant "missing edges only shrink modal satisfaction sets." `∎`
+**Engineering correction 5.3 (implicit truncation is not reject-safe).** An earlier
+implementation stopped the reachable-LTS BFS after 10,000 states and described missing
+edges as uniformly shrinking modal satisfaction sets. That statement is false for the
+universal modality: removing the only `a`-edge from a state can change `[a]⊥` from false
+to true by vacuity. The cap could therefore admit a safety guard that the complete model
+rejects. The two-valued checker now explores the complete finite reachable component.
+Support for intentionally bounded or infinite models, if added, must use an explicit
+three-valued/incomplete result rather than silently returning a Boolean verdict for a
+truncated graph.
 
 **Proposition 5.4 (complexity, alternation-free).** For an alternation-free `φ` (no
 mutually-dependent `μ`/`ν` nesting — the CTL fragment), the model checker runs in

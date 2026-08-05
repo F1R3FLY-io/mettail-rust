@@ -141,7 +141,6 @@ impl ActionPattern {
 }
 
 /// The domain a quantifier ranges over.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum QDomain {
     /// An explicit set of values.
     Values(Vec<String>),
@@ -155,7 +154,6 @@ pub enum QDomain {
 
 /// A behavioral predicate. (Relational fragment; modal/temporal arms added
 /// later.)
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BehavioralFormula {
     /// Always true.
     Top,
@@ -195,65 +193,18 @@ pub enum BehavioralFormula {
     Not(Box<BehavioralFormula>),
 }
 
+mod lifecycle;
+
 impl BehavioralFormula {
     /// Collect the free variables (not bound by an enclosing quantifier).
-    fn free_vars(&self, bound: &mut BTreeSet<String>, acc: &mut BTreeSet<String>) {
-        match self {
-            BehavioralFormula::Top | BehavioralFormula::Bot => {},
-            BehavioralFormula::Relation { args, .. } => {
-                for a in args {
-                    if let Arg::Var(v) = a {
-                        if !bound.contains(v) {
-                            acc.insert(v.clone());
-                        }
-                    }
-                }
-            },
-            BehavioralFormula::Forall { var, body, .. }
-            | BehavioralFormula::Exists { var, body, .. } => {
-                let fresh = bound.insert(var.clone());
-                body.free_vars(bound, acc);
-                if fresh {
-                    bound.remove(var);
-                }
-            },
-            BehavioralFormula::And(a, b) | BehavioralFormula::Or(a, b) => {
-                a.free_vars(bound, acc);
-                b.free_vars(bound, acc);
-            },
-            BehavioralFormula::Not(x) => x.free_vars(bound, acc),
-            // Modal arms: fixpoint variables are a separate namespace (state
-            // sets), not relational vars; recurse into bodies for relational
-            // free vars; Atom/FixVar contribute no relational vars.
-            BehavioralFormula::Atom(_) | BehavioralFormula::FixVar(_) => {},
-            BehavioralFormula::Diamond(_, body)
-            | BehavioralFormula::BoxAll(_, body)
-            | BehavioralFormula::Mu(_, body)
-            | BehavioralFormula::Nu(_, body) => body.free_vars(bound, acc),
-        }
+    fn free_variables(&self) -> BTreeSet<String> {
+        lifecycle::free_variables(self)
     }
 
     /// Whether the formula uses any modal/temporal operator (and therefore needs
     /// the LTS, not just the fact base).
     fn has_modal(&self) -> bool {
-        match self {
-            BehavioralFormula::Atom(_)
-            | BehavioralFormula::Diamond(..)
-            | BehavioralFormula::BoxAll(..)
-            | BehavioralFormula::Mu(..)
-            | BehavioralFormula::Nu(..)
-            | BehavioralFormula::FixVar(_) => true,
-            BehavioralFormula::And(a, b) | BehavioralFormula::Or(a, b) => {
-                a.has_modal() || b.has_modal()
-            },
-            BehavioralFormula::Not(x) => x.has_modal(),
-            BehavioralFormula::Forall { body, .. } | BehavioralFormula::Exists { body, .. } => {
-                body.has_modal()
-            },
-            BehavioralFormula::Top
-            | BehavioralFormula::Bot
-            | BehavioralFormula::Relation { .. } => false,
-        }
+        lifecycle::has_modal(self)
     }
 
     /// Classify this behavioral predicate into a decidability tier — the
@@ -329,6 +280,30 @@ pub struct BehavioralAlgebra<H: HostTerm> {
     _marker: std::marker::PhantomData<fn() -> H>,
 }
 
+fn restore_binding(
+    environment: &mut BTreeMap<String, String>,
+    variable: &str,
+    previous: Option<String>,
+) {
+    if let Some(value) = previous {
+        environment.insert(variable.to_owned(), value);
+    } else {
+        environment.remove(variable);
+    }
+}
+
+fn restore_fixpoint(
+    fixpoints: &mut HashMap<String, HashSet<usize>>,
+    variable: &str,
+    previous: Option<HashSet<usize>>,
+) {
+    if let Some(value) = previous {
+        fixpoints.insert(variable.to_owned(), value);
+    } else {
+        fixpoints.remove(variable);
+    }
+}
+
 impl<H: HostTerm> BehavioralAlgebra<H> {
     /// Construct over the given fact base (default search budget).
     pub fn new(facts: FactBase) -> Self {
@@ -355,7 +330,13 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
     fn domain_values(&self, domain: &QDomain) -> (Vec<String>, bool) {
         // Returns (values, exact). `exact = false` means the domain was bounded
         // and may have been truncated.
-        match domain {
+        let mut limits = Vec::new();
+        let mut cursor = domain;
+        while let QDomain::Bounded(inner, limit) = cursor {
+            limits.push(*limit);
+            cursor = inner;
+        }
+        let (mut values, mut exact) = match cursor {
             QDomain::Values(vs) => (vs.clone(), true),
             QDomain::Active => (self.facts.active_domain().into_iter().collect(), true),
             QDomain::RelationColumn(rel, col) => {
@@ -369,101 +350,172 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
                 }
                 (vals.into_iter().collect(), true)
             },
-            QDomain::Bounded(inner, limit) => {
-                let (mut vals, exact) = self.domain_values(inner);
-                let truncated = vals.len() > *limit;
-                vals.truncate(*limit);
-                (vals, exact && !truncated)
-            },
+            QDomain::Bounded(..) => unreachable!("QDomain spine scan stopped on a wrapper"),
+        };
+        for limit in limits.into_iter().rev() {
+            let truncated = values.len() > limit;
+            values.truncate(limit);
+            exact = exact && !truncated;
         }
+        (values, exact)
     }
 
     /// Evaluate `formula` against the snapshot with the given bindings. Returns
     /// `(result, exact)`; `exact = false` when a bounded quantifier may have
     /// been truncated (so a `false`/`true` could be budget-limited).
     fn eval(&self, formula: &BehavioralFormula, env: &BTreeMap<String, String>) -> (bool, bool) {
-        match formula {
-            BehavioralFormula::Top => (true, true),
-            BehavioralFormula::Bot => (false, true),
-            BehavioralFormula::Relation { name, args } => {
-                let tuple: Option<Vec<String>> =
-                    args.iter().map(|a| self.resolve(a, env)).collect();
-                match tuple {
-                    Some(t) => (self.facts.holds(name, &t), true),
-                    None => (false, true), // unbound var ⇒ not satisfied with this env
-                }
-            },
-            BehavioralFormula::Forall { var, domain, body } => {
-                let (vals, dom_exact) = self.domain_values(domain);
-                let mut env2 = env.clone();
-                let mut all = true;
-                let mut exact = dom_exact;
-                for v in &vals {
-                    env2.insert(var.clone(), v.clone());
-                    let (r, e) = self.eval(body, &env2);
-                    exact = exact && e;
-                    if !r {
-                        all = false;
-                        break;
-                    }
-                }
-                env2.remove(var);
-                // If `all` held only over a truncated domain, the result is inexact.
-                (all, exact)
-            },
-            BehavioralFormula::Exists { var, domain, body } => {
-                let (vals, dom_exact) = self.domain_values(domain);
-                let mut env2 = env.clone();
-                let mut any = false;
-                let mut exact = dom_exact;
-                for v in &vals {
-                    env2.insert(var.clone(), v.clone());
-                    let (r, e) = self.eval(body, &env2);
-                    exact = exact && e;
-                    if r {
-                        any = true;
-                        break;
-                    }
-                }
-                env2.remove(var);
-                (any, exact)
-            },
-            BehavioralFormula::And(a, b) => {
-                let (ra, ea) = self.eval(a, env);
-                if !ra {
-                    return (false, ea);
-                }
-                let (rb, eb) = self.eval(b, env);
-                (rb, ea && eb)
-            },
-            BehavioralFormula::Or(a, b) => {
-                let (ra, ea) = self.eval(a, env);
-                if ra {
-                    return (true, ea);
-                }
-                let (rb, eb) = self.eval(b, env);
-                (rb, ea && eb)
-            },
-            BehavioralFormula::Not(x) => {
-                let (r, e) = self.eval(x, env);
-                (!r, e)
-            },
-            // Invariant: `eval` is the relational-only evaluator; modal formulas
-            // are routed to the model checker by `evaluate`/`is_satisfiable_3v`,
-            // and the relational fast path runs only when `has_modal()` is false,
-            // so no modal arm is reachable here.
-            BehavioralFormula::Atom(_)
-            | BehavioralFormula::Diamond(..)
-            | BehavioralFormula::BoxAll(..)
-            | BehavioralFormula::Mu(..)
-            | BehavioralFormula::Nu(..)
-            | BehavioralFormula::FixVar(_) => {
-                unreachable!("modal formula reached the relational evaluator")
-            },
+        struct QuantFrame<'formula> {
+            forall: bool,
+            var: &'formula str,
+            body: &'formula BehavioralFormula,
+            values: Vec<String>,
+            next: usize,
+            result: bool,
+            exact: bool,
+            previous: Option<String>,
         }
+        enum Task<'formula> {
+            Visit(&'formula BehavioralFormula),
+            Not,
+            AndLeft(&'formula BehavioralFormula),
+            AndRight(bool),
+            OrLeft(&'formula BehavioralFormula),
+            OrRight(bool),
+            QuantNext(QuantFrame<'formula>),
+            QuantAfter(QuantFrame<'formula>),
+        }
+
+        let mut environment = env.clone();
+        let mut tasks = vec![Task::Visit(formula)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(BehavioralFormula::Top) => values.push((true, true)),
+                Task::Visit(BehavioralFormula::Bot) => values.push((false, true)),
+                Task::Visit(BehavioralFormula::Relation { name, args }) => {
+                    let tuple: Option<Vec<String>> = args
+                        .iter()
+                        .map(|arg| self.resolve(arg, &environment))
+                        .collect();
+                    values.push((tuple.is_some_and(|tuple| self.facts.holds(name, &tuple)), true));
+                },
+                Task::Visit(BehavioralFormula::Forall { var, domain, body }) => {
+                    let (domain_values, exact) = self.domain_values(domain);
+                    let previous = environment.get(var).cloned();
+                    tasks.push(Task::QuantNext(QuantFrame {
+                        forall: true,
+                        var,
+                        body,
+                        values: domain_values,
+                        next: 0,
+                        result: true,
+                        exact,
+                        previous,
+                    }));
+                },
+                Task::Visit(BehavioralFormula::Exists { var, domain, body }) => {
+                    let (domain_values, exact) = self.domain_values(domain);
+                    let previous = environment.get(var).cloned();
+                    tasks.push(Task::QuantNext(QuantFrame {
+                        forall: false,
+                        var,
+                        body,
+                        values: domain_values,
+                        next: 0,
+                        result: false,
+                        exact,
+                        previous,
+                    }));
+                },
+                Task::Visit(BehavioralFormula::And(left, right)) => {
+                    tasks.push(Task::AndLeft(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(BehavioralFormula::Or(left, right)) => {
+                    tasks.push(Task::OrLeft(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(BehavioralFormula::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(
+                    BehavioralFormula::Atom(_)
+                    | BehavioralFormula::Diamond(..)
+                    | BehavioralFormula::BoxAll(..)
+                    | BehavioralFormula::Mu(..)
+                    | BehavioralFormula::Nu(..)
+                    | BehavioralFormula::FixVar(_),
+                ) => unreachable!("modal formula reached the relational evaluator"),
+                Task::Not => {
+                    let (result, exact) = values.pop().expect("relational PDA lost a Not operand");
+                    values.push((!result, exact));
+                },
+                Task::AndLeft(right) => {
+                    let (left, exact) = values
+                        .pop()
+                        .expect("relational PDA lost an And left operand");
+                    if left {
+                        tasks.push(Task::AndRight(exact));
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push((false, exact));
+                    }
+                },
+                Task::AndRight(left_exact) => {
+                    let (right, right_exact) = values
+                        .pop()
+                        .expect("relational PDA lost an And right operand");
+                    values.push((right, left_exact && right_exact));
+                },
+                Task::OrLeft(right) => {
+                    let (left, exact) = values
+                        .pop()
+                        .expect("relational PDA lost an Or left operand");
+                    if left {
+                        values.push((true, exact));
+                    } else {
+                        tasks.push(Task::OrRight(exact));
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+                Task::OrRight(left_exact) => {
+                    let (right, right_exact) = values
+                        .pop()
+                        .expect("relational PDA lost an Or right operand");
+                    values.push((right, left_exact && right_exact));
+                },
+                Task::QuantNext(frame) if frame.next == frame.values.len() => {
+                    restore_binding(&mut environment, frame.var, frame.previous);
+                    values.push((frame.result, frame.exact));
+                },
+                Task::QuantNext(frame) => {
+                    environment.insert(frame.var.to_owned(), frame.values[frame.next].clone());
+                    let body = frame.body;
+                    tasks.push(Task::QuantAfter(frame));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::QuantAfter(mut frame) => {
+                    let (result, exact) = values
+                        .pop()
+                        .expect("relational PDA lost a quantifier body result");
+                    frame.exact = frame.exact && exact;
+                    if (frame.forall && !result) || (!frame.forall && result) {
+                        frame.result = result;
+                        restore_binding(&mut environment, frame.var, frame.previous);
+                        values.push((frame.result, frame.exact));
+                    } else {
+                        frame.next += 1;
+                        tasks.push(Task::QuantNext(frame));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("relational PDA produced no result")
     }
 
-    /// Build the reachable LTS from `root` (BFS), capped at `MAX_REACH_STATES`.
+    /// Build the finite reachable LTS from `root` (BFS).
     /// Returns the states (index 0 = root) and adjacency `(action, target)`.
     fn build_lts(&self, root: &H) -> (Vec<H>, Vec<Vec<(String, usize)>>) {
         let mut states = vec![root.clone()];
@@ -476,9 +528,6 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
                 let j = match index.get(&next) {
                     Some(&j) => j,
                     None => {
-                        if states.len() >= MAX_REACH_STATES {
-                            continue; // truncated (reject-safe: missing edges only shrink modal sets)
-                        }
                         let j = states.len();
                         states.push(next.clone());
                         index.insert(next, j);
@@ -504,115 +553,220 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
         env: &BTreeMap<String, String>,
         fix: &HashMap<String, HashSet<usize>>,
     ) -> HashSet<usize> {
-        let all = || (0..states.len()).collect::<HashSet<usize>>();
-        match formula {
-            BehavioralFormula::Top => all(),
-            BehavioralFormula::Bot => HashSet::new(),
-            BehavioralFormula::Atom(label) => (0..states.len())
-                .filter(|&i| states[i].label() == *label)
-                .collect(),
-            // State-independent relational atom: holds at all states or none.
-            BehavioralFormula::Relation { .. } => {
-                if self.eval(formula, env).0 {
-                    all()
-                } else {
-                    HashSet::new()
-                }
-            },
-            BehavioralFormula::Forall { var, domain, body } => {
-                let (vals, _exact) = self.domain_values(domain);
-                let mut acc = all();
-                let mut env2 = env.clone();
-                for v in &vals {
-                    env2.insert(var.clone(), v.clone());
-                    let d = self.denote(body, states, adj, &env2, fix);
-                    acc = acc.intersection(&d).copied().collect();
-                }
-                env2.remove(var);
-                acc
-            },
-            BehavioralFormula::Exists { var, domain, body } => {
-                let (vals, _exact) = self.domain_values(domain);
-                let mut acc = HashSet::new();
-                let mut env2 = env.clone();
-                for v in &vals {
-                    env2.insert(var.clone(), v.clone());
-                    let d = self.denote(body, states, adj, &env2, fix);
-                    acc = acc.union(&d).copied().collect();
-                }
-                env2.remove(var);
-                acc
-            },
-            BehavioralFormula::And(a, b) => {
-                let da = self.denote(a, states, adj, env, fix);
-                let db = self.denote(b, states, adj, env, fix);
-                da.intersection(&db).copied().collect()
-            },
-            BehavioralFormula::Or(a, b) => {
-                let da = self.denote(a, states, adj, env, fix);
-                let db = self.denote(b, states, adj, env, fix);
-                da.union(&db).copied().collect()
-            },
-            BehavioralFormula::Not(x) => {
-                let d = self.denote(x, states, adj, env, fix);
-                (0..states.len()).filter(|i| !d.contains(i)).collect()
-            },
-            BehavioralFormula::Diamond(ap, body) => {
-                let b = self.denote(body, states, adj, env, fix);
-                (0..states.len())
-                    .filter(|&i| {
-                        adj[i]
-                            .iter()
-                            .any(|(act, j)| ap.matches(act) && b.contains(j))
-                    })
-                    .collect()
-            },
-            BehavioralFormula::BoxAll(ap, body) => {
-                let b = self.denote(body, states, adj, env, fix);
-                (0..states.len())
-                    .filter(|&i| {
-                        adj[i]
-                            .iter()
-                            .all(|(act, j)| !ap.matches(act) || b.contains(j))
-                    })
-                    .collect()
-            },
-            BehavioralFormula::Mu(x, body) => {
-                // least fixpoint: start ∅, iterate (monotone; ≤ |states| steps).
-                let mut cur: HashSet<usize> = HashSet::new();
-                for _ in 0..=states.len() {
-                    let mut fix2 = fix.clone();
-                    fix2.insert(x.clone(), cur.clone());
-                    let next = self.denote(body, states, adj, env, &fix2);
-                    if next == cur {
-                        break;
-                    }
-                    cur = next;
-                }
-                cur
-            },
-            BehavioralFormula::Nu(x, body) => {
-                // greatest fixpoint: start ⊤, iterate (monotone; ≤ |states| steps).
-                let mut cur: HashSet<usize> = all();
-                for _ in 0..=states.len() {
-                    let mut fix2 = fix.clone();
-                    fix2.insert(x.clone(), cur.clone());
-                    let next = self.denote(body, states, adj, env, &fix2);
-                    if next == cur {
-                        break;
-                    }
-                    cur = next;
-                }
-                cur
-            },
-            BehavioralFormula::FixVar(x) => fix.get(x).cloned().unwrap_or_default(),
+        struct QuantFrame<'formula> {
+            forall: bool,
+            var: &'formula str,
+            body: &'formula BehavioralFormula,
+            values: Vec<String>,
+            next: usize,
+            accumulator: HashSet<usize>,
+            previous: Option<String>,
         }
+        struct FixFrame<'formula> {
+            var: &'formula str,
+            body: &'formula BehavioralFormula,
+            current: HashSet<usize>,
+            remaining: usize,
+            previous: Option<HashSet<usize>>,
+        }
+        enum Task<'formula> {
+            Visit(&'formula BehavioralFormula),
+            And,
+            Or,
+            Not,
+            Diamond(&'formula ActionPattern),
+            BoxAll(&'formula ActionPattern),
+            QuantNext(QuantFrame<'formula>),
+            QuantAfter(QuantFrame<'formula>),
+            FixNext(FixFrame<'formula>),
+            FixAfter(FixFrame<'formula>),
+        }
+
+        let all_states = || (0..states.len()).collect::<HashSet<usize>>();
+        let mut environment = env.clone();
+        let mut fixpoints = fix.clone();
+        let mut tasks = vec![Task::Visit(formula)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(BehavioralFormula::Top) => values.push(all_states()),
+                Task::Visit(BehavioralFormula::Bot) => values.push(HashSet::new()),
+                Task::Visit(BehavioralFormula::Atom(label)) => values.push(
+                    (0..states.len())
+                        .filter(|&index| states[index].label() == *label)
+                        .collect(),
+                ),
+                Task::Visit(formula @ BehavioralFormula::Relation { .. }) => {
+                    values.push(if self.eval(formula, &environment).0 {
+                        all_states()
+                    } else {
+                        HashSet::new()
+                    });
+                },
+                Task::Visit(BehavioralFormula::Forall { var, domain, body }) => {
+                    let (domain_values, _) = self.domain_values(domain);
+                    tasks.push(Task::QuantNext(QuantFrame {
+                        forall: true,
+                        var,
+                        body,
+                        values: domain_values,
+                        next: 0,
+                        accumulator: all_states(),
+                        previous: environment.get(var).cloned(),
+                    }));
+                },
+                Task::Visit(BehavioralFormula::Exists { var, domain, body }) => {
+                    let (domain_values, _) = self.domain_values(domain);
+                    tasks.push(Task::QuantNext(QuantFrame {
+                        forall: false,
+                        var,
+                        body,
+                        values: domain_values,
+                        next: 0,
+                        accumulator: HashSet::new(),
+                        previous: environment.get(var).cloned(),
+                    }));
+                },
+                Task::Visit(BehavioralFormula::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(BehavioralFormula::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(BehavioralFormula::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(BehavioralFormula::Diamond(action, body)) => {
+                    tasks.push(Task::Diamond(action));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(BehavioralFormula::BoxAll(action, body)) => {
+                    tasks.push(Task::BoxAll(action));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(BehavioralFormula::Mu(var, body)) => {
+                    tasks.push(Task::FixNext(FixFrame {
+                        var,
+                        body,
+                        current: HashSet::new(),
+                        remaining: states.len() + 1,
+                        previous: fixpoints.get(var).cloned(),
+                    }));
+                },
+                Task::Visit(BehavioralFormula::Nu(var, body)) => {
+                    tasks.push(Task::FixNext(FixFrame {
+                        var,
+                        body,
+                        current: all_states(),
+                        remaining: states.len() + 1,
+                        previous: fixpoints.get(var).cloned(),
+                    }));
+                },
+                Task::Visit(BehavioralFormula::FixVar(var)) => {
+                    values.push(fixpoints.get(var).cloned().unwrap_or_default());
+                },
+                Task::And => {
+                    let right = values
+                        .pop()
+                        .expect("denotation PDA lost an And right operand");
+                    let left = values
+                        .pop()
+                        .expect("denotation PDA lost an And left operand");
+                    values.push(left.intersection(&right).copied().collect());
+                },
+                Task::Or => {
+                    let right = values
+                        .pop()
+                        .expect("denotation PDA lost an Or right operand");
+                    let left = values
+                        .pop()
+                        .expect("denotation PDA lost an Or left operand");
+                    values.push(left.union(&right).copied().collect());
+                },
+                Task::Not => {
+                    let inner = values.pop().expect("denotation PDA lost a Not operand");
+                    values.push(
+                        (0..states.len())
+                            .filter(|index| !inner.contains(index))
+                            .collect(),
+                    );
+                },
+                Task::Diamond(action) => {
+                    let body = values.pop().expect("denotation PDA lost a Diamond body");
+                    values.push(
+                        (0..states.len())
+                            .filter(|&index| {
+                                adj[index].iter().any(|(label, target)| {
+                                    action.matches(label) && body.contains(target)
+                                })
+                            })
+                            .collect(),
+                    );
+                },
+                Task::BoxAll(action) => {
+                    let body = values.pop().expect("denotation PDA lost a BoxAll body");
+                    values.push(
+                        (0..states.len())
+                            .filter(|&index| {
+                                adj[index].iter().all(|(label, target)| {
+                                    !action.matches(label) || body.contains(target)
+                                })
+                            })
+                            .collect(),
+                    );
+                },
+                Task::QuantNext(frame) if frame.next == frame.values.len() => {
+                    restore_binding(&mut environment, frame.var, frame.previous);
+                    values.push(frame.accumulator);
+                },
+                Task::QuantNext(frame) => {
+                    environment.insert(frame.var.to_owned(), frame.values[frame.next].clone());
+                    let body = frame.body;
+                    tasks.push(Task::QuantAfter(frame));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::QuantAfter(mut frame) => {
+                    let body = values.pop().expect("denotation PDA lost a quantifier body");
+                    frame.accumulator = if frame.forall {
+                        frame.accumulator.intersection(&body).copied().collect()
+                    } else {
+                        frame.accumulator.union(&body).copied().collect()
+                    };
+                    frame.next += 1;
+                    tasks.push(Task::QuantNext(frame));
+                },
+                Task::FixNext(frame) if frame.remaining == 0 => {
+                    restore_fixpoint(&mut fixpoints, frame.var, frame.previous);
+                    values.push(frame.current);
+                },
+                Task::FixNext(frame) => {
+                    fixpoints.insert(frame.var.to_owned(), frame.current.clone());
+                    let body = frame.body;
+                    tasks.push(Task::FixAfter(frame));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::FixAfter(mut frame) => {
+                    let next = values.pop().expect("denotation PDA lost a fixpoint body");
+                    if next == frame.current {
+                        restore_fixpoint(&mut fixpoints, frame.var, frame.previous);
+                        values.push(frame.current);
+                    } else {
+                        frame.current = next;
+                        frame.remaining -= 1;
+                        tasks.push(Task::FixNext(frame));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("denotation PDA produced no result")
     }
 }
-
-/// Cap on reachable-LTS size for modal model checking (beyond it the LTS is
-/// truncated; missing edges only shrink modal satisfaction sets — reject-safe).
-const MAX_REACH_STATES: usize = 10_000;
 
 impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
     type Predicate = BehavioralFormula;
@@ -662,9 +816,7 @@ impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
         // Relational: existentially close the free variables over the active
         // domain and search; exact (Sat/Unsat) unless the search budget is
         // exceeded or a bounded quantifier truncated.
-        let mut free = BTreeSet::new();
-        a.free_vars(&mut BTreeSet::new(), &mut free);
-        let free: Vec<String> = free.into_iter().collect();
+        let free: Vec<String> = a.free_variables().into_iter().collect();
         let domain: Vec<String> = self.facts.active_domain().into_iter().collect();
 
         // Budget: |domain|^|free| assignments.

@@ -282,8 +282,8 @@ This is concrete in the code:
 - `BehavioralAlgebra::is_satisfiable_3v` (defined in §4.1) returns `Sat3::DontKnow`
   for any modal formula, because modal satisfiability is semi-decidable without a full
   μ-calculus satisfiability engine; the model-checking direction (`evaluate` against a
-  *given* process) is exact but bounded by `MAX_REACH_STATES`, and the truncation is
-  reject-safe (missing edges only shrink modal satisfaction sets).
+  *given* process with a finite reachable component) is exact over the complete reachable
+  LTS.
 - relational satisfiability searches the assignment space and returns `DontKnow` on
   budget exhaustion (`DEFAULT_SEARCH_BUDGET`).
 
@@ -395,10 +395,10 @@ transition system* (LTS) via two operations: `successors : S → list(action × 
 the one-step edges, backed by the host's reduction relation — and
 `label : S → string` — the state's atomic-proposition label. (In code, the trait
 `HostTerm`.) From a root `t`, the **reachable LTS** is built by breadth-first search
-over `successors`, assigning each distinct state an index; exploration stops once
-`MAX_REACH_STATES = 10000` states are reached. Truncation is **reject-safe**: dropping
-states and edges can only *shrink* possibility/`μ` sets, never create a spurious
-witness.
+over `successors`, assigning each distinct state an index, until the reachable frontier
+is empty. The Boolean model checker requires that reachable component to be finite and
+checks it completely. It does not silently truncate: removing edges can make `[a]φ`
+vacuously true and is therefore not reject-safe for the full modal language.
 
 **Definition 4.2 (the fact base).** The *relational* fragment is decided closed-world
 against a **`FactBase`** — a finite map from relation name to a set of string tuples,
@@ -443,7 +443,7 @@ fairness (e.g. `GF p`) is deliberately **out of scope** for this branching algeb
 routes to the separate Büchi engine (`crate::buchi`, `crate::ltl`).
 
 **Definition 4.5 (evaluation / model checking).** `evaluate(φ, world) → bool` is
-two-valued, exact-but-bounded model checking. If `φ` is non-modal it is the
+two-valued, exact model checking over a finite reachable component. If `φ` is non-modal it is the
 closed-world `FactBase` check on `world.env`. Otherwise it builds the reachable LTS
 from `world.term` (Definition 4.1) and computes `⟦φ⟧` by structural recursion, where
 `μX.φ` iterates from `∅` upward and `νX.φ` from the all-states set downward until the
@@ -911,13 +911,13 @@ operator of Definition 4.4, with `bad` a state proposition (`Atom`). Evaluation 
 greatest-fixpoint model checking over the reachable LTS of `P` (Definition 4.5),
 exactly as computed in Example A of §4.3.
 
-- **Why `¬¬safe(P) ≠ safe(P)` operationally.** A bounded check of `safe(P)` explores
-  the reachable LTS up to `MAX_REACH_STATES`. Finding no `bad` within the explored
-  region returns true *for that snapshot*, but if the LTS is truncated (or `bad` is
-  reachable only beyond the cap) the modal `is_satisfiable_3v(safe(P))` is honestly
-  `Sat3::DontKnow`. The double pseudo-complement `¬¬safe(P)` ("`safe(P)` is not
-  refuted") is *weaker* than `safe(P)` ("invariance is verified"): a bounded check that
-  did not refute safety is not a proof of safety. Algebraically this is `a ≤ ¬¬a`
+- **Why `¬¬safe(P) ≠ safe(P)` operationally.** Model checking `safe(P)` against one
+  given process with a finite reachable component is exact, while modal satisfiability
+  over *all possible processes* remains `Sat3::DontKnow` without a complete
+  μ-calculus satisfiability engine. The double pseudo-complement `¬¬safe(P)`
+  ("`safe(P)` is not refuted") is *weaker* than `safe(P)` ("invariance is verified"):
+  absence of a general counter-model is not a constructive proof of invariance.
+  Algebraically this is `a ≤ ¬¬a`
   (Lemma 2.6) with the converse unavailable off the regulars; operationally it is the
   gap between "no counterexample found within budget" (`¬¬safe`, the boundary /
   `DontKnow` region) and "invariance established" (`safe`, a regular / decidable

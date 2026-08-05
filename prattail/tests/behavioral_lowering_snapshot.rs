@@ -270,11 +270,12 @@ fn tier_equivalence_over_corpus() {
 #[test]
 fn h1_negated_relation_wraps_in_not() {
     let p = rel("halts", vec![pvar("x"), pint(3)], true);
-    match p.to_behavioral_formula() {
-        Some(BehavioralFormula::Not(inner)) => match *inner {
+    let lowered = p.to_behavioral_formula();
+    match &lowered {
+        Some(BehavioralFormula::Not(inner)) => match inner.as_ref() {
             BehavioralFormula::Relation { name, args } => {
                 assert_eq!(name, "halts");
-                assert_eq!(args, vec![Arg::Var("x".to_string()), Arg::Lit("3".to_string())]);
+                assert_eq!(args.as_slice(), [Arg::Var("x".to_string()), Arg::Lit("3".to_string())]);
             },
             other => panic!("H1: inner of Not is not a Relation: {other:?}"),
         },
