@@ -306,24 +306,23 @@ fn term_context_param_names(
     tc: Option<&Vec<crate::grammar::TermParam>>,
 ) -> std::collections::HashSet<String> {
     use crate::grammar::TermParam;
-    fn collect(params: &[TermParam], out: &mut std::collections::HashSet<String>) {
-        for p in params {
-            match p {
-                TermParam::Simple { name, .. } | TermParam::GuardBody { name } => {
-                    out.insert(name.to_string());
-                },
-                TermParam::Abstraction { binder, body, .. }
-                | TermParam::MultiAbstraction { binder, body, .. } => {
-                    out.insert(binder.to_string());
-                    out.insert(body.to_string());
-                },
-                TermParam::Optional { params } => collect(params, out),
-            }
-        }
-    }
     let mut out = std::collections::HashSet::new();
-    if let Some(params) = tc {
-        collect(params, &mut out);
+    let mut pending: Vec<&TermParam> = tc
+        .into_iter()
+        .flat_map(|params| params.iter().rev())
+        .collect();
+    while let Some(param) = pending.pop() {
+        match param {
+            TermParam::Simple { name, .. } | TermParam::GuardBody { name } => {
+                out.insert(name.to_string());
+            },
+            TermParam::Abstraction { binder, body, .. }
+            | TermParam::MultiAbstraction { binder, body, .. } => {
+                out.insert(binder.to_string());
+                out.insert(body.to_string());
+            },
+            TermParam::Optional { params } => pending.extend(params.iter().rev()),
+        }
     }
     out
 }
@@ -331,52 +330,74 @@ fn term_context_param_names(
 /// L9-3: reclassify a bare `Param(x)` → `TokenKind{name:x, bind:None}` when `x`
 /// is a declared token kind and not a term-context param. Recurses into
 /// `#opt`/`#map` bodies (a `#map` closure param shadows a like-named token
-/// inside its body).
+/// inside its body). The traversal is one explicit scoped worklist, so nesting
+/// in `#opt`/`#map` follows heap capacity rather than the proc-macro stack.
 fn reclassify_token_kinds(
     exprs: &mut [crate::grammar::SyntaxExpr],
     declared_kinds: &std::collections::HashSet<String>,
     ctx_names: &std::collections::HashSet<String>,
 ) {
-    use crate::grammar::SyntaxExpr;
-    for e in exprs.iter_mut() {
-        match e {
-            SyntaxExpr::Param(id) => {
-                let n = id.to_string();
-                if declared_kinds.contains(&n) && !ctx_names.contains(&n) {
-                    *e = SyntaxExpr::TokenKind { name: id.clone(), bind: None };
+    use crate::grammar::{PatternOp, SyntaxExpr};
+
+    enum Task<'syntax> {
+        Expr(&'syntax mut SyntaxExpr),
+        Op(&'syntax mut PatternOp),
+        Enter(Vec<String>),
+        Exit(Vec<String>),
+    }
+
+    let mut active_names: std::collections::HashMap<String, usize> =
+        ctx_names.iter().cloned().map(|name| (name, 1)).collect();
+    let mut tasks: Vec<Task<'_>> = exprs.iter_mut().rev().map(Task::Expr).collect();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Expr(expr) => match expr {
+                SyntaxExpr::Param(ident) => {
+                    let name = ident.to_string();
+                    if declared_kinds.contains(&name) && !active_names.contains_key(&name) {
+                        *expr = SyntaxExpr::TokenKind { name: ident.clone(), bind: None };
+                    }
+                },
+                SyntaxExpr::Op(op) => tasks.push(Task::Op(op)),
+                // L9-4: a GuestBody's open/close are already token KINDS
+                // (written explicitly in `*flt(bind, open, close)`).
+                SyntaxExpr::Literal(_)
+                | SyntaxExpr::TokenKind { .. }
+                | SyntaxExpr::GuestBody { .. } => {},
+            },
+            Task::Op(PatternOp::Opt { inner }) => {
+                tasks.extend(inner.iter_mut().rev().map(Task::Expr));
+            },
+            Task::Op(PatternOp::Map { source, params, body }) => {
+                let names: Vec<String> = params.iter().map(ToString::to_string).collect();
+                tasks.push(Task::Exit(names.clone()));
+                tasks.extend(body.iter_mut().rev().map(Task::Expr));
+                tasks.push(Task::Enter(names));
+                tasks.push(Task::Op(source));
+            },
+            Task::Op(PatternOp::Sep { source: Some(inner), .. }) => {
+                tasks.push(Task::Op(inner));
+            },
+            Task::Op(PatternOp::Sep { source: None, .. })
+            | Task::Op(PatternOp::Zip { .. })
+            | Task::Op(PatternOp::Var(_)) => {},
+            Task::Enter(names) => {
+                for name in names {
+                    *active_names.entry(name).or_default() += 1;
                 }
             },
-            SyntaxExpr::Op(op) => reclassify_op_token_kinds(op, declared_kinds, ctx_names),
-            // L9-4: a GuestBody's open/close are already token KINDS (written
-            // explicitly in `*flt(bind, open, close)`); no reclassification.
-            SyntaxExpr::Literal(_)
-            | SyntaxExpr::TokenKind { .. }
-            | SyntaxExpr::GuestBody { .. } => {},
+            Task::Exit(names) => {
+                for name in names {
+                    let depth = active_names
+                        .get_mut(&name)
+                        .expect("entered map parameter must remain active");
+                    *depth -= 1;
+                    if *depth == 0 {
+                        active_names.remove(&name);
+                    }
+                }
+            },
         }
-    }
-}
-
-fn reclassify_op_token_kinds(
-    op: &mut crate::grammar::PatternOp,
-    declared_kinds: &std::collections::HashSet<String>,
-    ctx_names: &std::collections::HashSet<String>,
-) {
-    use crate::grammar::PatternOp;
-    match op {
-        PatternOp::Opt { inner } => reclassify_token_kinds(inner, declared_kinds, ctx_names),
-        PatternOp::Map { source, params, body } => {
-            reclassify_op_token_kinds(source, declared_kinds, ctx_names);
-            // A #map closure param shadows a like-named token inside the body.
-            let mut extended = ctx_names.clone();
-            for p in params.iter() {
-                extended.insert(p.to_string());
-            }
-            reclassify_token_kinds(body, declared_kinds, &extended);
-        },
-        PatternOp::Sep { source: Some(inner), .. } => {
-            reclassify_op_token_kinds(inner, declared_kinds, ctx_names)
-        },
-        PatternOp::Sep { .. } | PatternOp::Zip { .. } | PatternOp::Var(_) => {},
     }
 }
 

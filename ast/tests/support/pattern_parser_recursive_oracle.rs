@@ -515,3 +515,63 @@ fn deep_pattern_parser_paths_fit_on_a_small_native_stack() {
         .join()
         .expect("Pattern parser PDA must not overflow the native stack");
 }
+
+#[test]
+fn token_reclassification_and_term_context_walk_fit_on_a_small_native_stack() {
+    use crate::grammar::{PatternOp, SyntaxExpr, TermParam};
+    use crate::types::TypeExpr;
+
+    const DEPTH: usize = 20_000;
+    std::thread::Builder::new()
+        .name("syntax-reclassification-small-stack".into())
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut param = TermParam::Simple {
+                name: Ident::new("bound", Span::call_site()),
+                ty: TypeExpr::Base(Ident::new("Term", Span::call_site())),
+            };
+            for _ in 0..DEPTH {
+                param = TermParam::Optional { params: vec![param] };
+            }
+            let params = vec![param];
+            let context = term_context_param_names(Some(&params));
+            assert_eq!(context.len(), 1);
+            assert!(context.contains("bound"));
+
+            let mut expr = SyntaxExpr::Param(Ident::new("TokenLeaf", Span::call_site()));
+            for _ in 0..DEPTH {
+                expr = SyntaxExpr::Op(PatternOp::Opt { inner: vec![expr] });
+            }
+            let mut exprs = vec![expr];
+            let declared = std::collections::HashSet::from(["TokenLeaf".to_string()]);
+            reclassify_token_kinds(&mut exprs, &declared, &context);
+
+            let mut expr = &exprs[0];
+            for _ in 0..DEPTH {
+                let SyntaxExpr::Op(PatternOp::Opt { inner }) = expr else {
+                    panic!("expected a nested Opt expression")
+                };
+                assert_eq!(inner.len(), 1);
+                expr = &inner[0];
+            }
+            assert!(matches!(
+                expr,
+                SyntaxExpr::TokenKind { name, bind: None } if name == "TokenLeaf"
+            ));
+
+            let mut mapped = vec![SyntaxExpr::Op(PatternOp::Map {
+                source: Box::new(PatternOp::Var(Ident::new("items", Span::call_site()))),
+                params: vec![Ident::new("TokenLeaf", Span::call_site())],
+                body: vec![SyntaxExpr::Param(Ident::new("TokenLeaf", Span::call_site()))],
+            })];
+            reclassify_token_kinds(&mut mapped, &declared, &context);
+            assert!(matches!(
+                &mapped[0],
+                SyntaxExpr::Op(PatternOp::Map { body, .. })
+                    if matches!(&body[..], [SyntaxExpr::Param(name)] if name == "TokenLeaf")
+            ));
+        })
+        .expect("small-stack syntax reclassification thread must spawn")
+        .join()
+        .expect("syntax reclassification must not overflow the native stack");
+}

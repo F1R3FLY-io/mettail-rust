@@ -148,7 +148,6 @@ impl GrammarItem {
 /// - `n:Name` → Simple parameter
 /// - `^x.p:[Name -> Proc]` → Abstraction binding x in p
 /// - `^[xs].p:[Name* -> Proc]` → Multi-binder abstraction
-#[derive(Debug, Clone)]
 pub enum TermParam {
     /// Simple typed parameter: `n:Name`
     Simple { name: Ident, ty: TypeExpr },
@@ -181,6 +180,230 @@ pub enum TermParam {
     /// signature. GuardBody and nested Optional inner params are
     /// supported by the same recursive treatment.
     Optional { params: Vec<TermParam> },
+}
+
+impl Clone for TermParam {
+    fn clone(&self) -> Self {
+        enum Task<'param> {
+            Visit(&'param TermParam),
+            Optional(usize),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TermParam::Simple { name, ty }) => {
+                    values.push(TermParam::Simple { name: name.clone(), ty: ty.clone() });
+                },
+                Task::Visit(TermParam::Abstraction { binder, body, ty }) => {
+                    values.push(TermParam::Abstraction {
+                        binder: binder.clone(),
+                        body: body.clone(),
+                        ty: ty.clone(),
+                    });
+                },
+                Task::Visit(TermParam::MultiAbstraction { binder, body, ty }) => {
+                    values.push(TermParam::MultiAbstraction {
+                        binder: binder.clone(),
+                        body: body.clone(),
+                        ty: ty.clone(),
+                    });
+                },
+                Task::Visit(TermParam::GuardBody { name }) => {
+                    values.push(TermParam::GuardBody { name: name.clone() });
+                },
+                Task::Visit(TermParam::Optional { params }) => {
+                    tasks.push(Task::Optional(values.len()));
+                    tasks.extend(params.iter().rev().map(Task::Visit));
+                },
+                Task::Optional(value_base) => {
+                    let params = values.drain(value_base..).collect();
+                    values.push(TermParam::Optional { params });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("TermParam clone PDA produced no result")
+    }
+}
+
+fn write_grammar_debug_indent(
+    formatter: &mut std::fmt::Formatter<'_>,
+    indent: usize,
+) -> std::fmt::Result {
+    for _ in 0..indent {
+        formatter.write_str("    ")?;
+    }
+    Ok(())
+}
+
+fn fmt_grammar_ident(
+    ident: &Ident,
+    indent: usize,
+    pretty: bool,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    if pretty {
+        formatter.write_str("Ident {\n")?;
+        write_grammar_debug_indent(formatter, indent + 1)?;
+        write!(formatter, "sym: {ident},\n")?;
+        write_grammar_debug_indent(formatter, indent)?;
+        formatter.write_str("}")
+    } else {
+        write!(formatter, "Ident {{ sym: {ident} }}")
+    }
+}
+
+impl std::fmt::Debug for TermParam {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Task<'param> {
+            Visit(&'param TermParam, usize),
+            List(&'param [TermParam], usize),
+            Ident(&'param Ident, usize),
+            Type(&'param TypeExpr),
+            FieldIdent(&'static str, &'param Ident, usize),
+            FieldType(&'static str, &'param TypeExpr, usize),
+            FieldList(&'static str, &'param [TermParam], usize),
+            Text(&'static str),
+            Indent(usize),
+            CloseStruct(usize),
+            CloseList(usize),
+        }
+
+        let pretty = formatter.alternate();
+        let mut tasks = vec![Task::Visit(self, 0)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::Indent(indent) => write_grammar_debug_indent(formatter, indent)?,
+                Task::CloseStruct(indent) => {
+                    write_grammar_debug_indent(formatter, indent)?;
+                    formatter.write_str("}")?;
+                },
+                Task::CloseList(indent) => {
+                    write_grammar_debug_indent(formatter, indent)?;
+                    formatter.write_str("]")?;
+                },
+                Task::Ident(ident, indent) => {
+                    fmt_grammar_ident(ident, indent, pretty, formatter)?;
+                },
+                Task::Type(ty) => {
+                    if pretty {
+                        write!(formatter, "{ty:#?}")?;
+                    } else {
+                        write!(formatter, "{ty:?}")?;
+                    }
+                },
+                Task::List(params, _indent) if !pretty => {
+                    formatter.write_str("[")?;
+                    tasks.push(Task::Text("]"));
+                    for (index, param) in params.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(param, 0));
+                        if index != 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                },
+                Task::List([], _) => formatter.write_str("[]")?,
+                Task::List(params, indent) => {
+                    formatter.write_str("[\n")?;
+                    tasks.push(Task::CloseList(indent));
+                    for param in params.iter().rev() {
+                        tasks.push(Task::Text(",\n"));
+                        tasks.push(Task::Visit(param, indent + 1));
+                        tasks.push(Task::Indent(indent + 1));
+                    }
+                },
+                Task::FieldIdent(name, ident, indent) => {
+                    write_grammar_debug_indent(formatter, indent)?;
+                    write!(formatter, "{name}: ")?;
+                    tasks.push(Task::Text(",\n"));
+                    tasks.push(Task::Ident(ident, indent));
+                },
+                Task::FieldType(name, ty, indent) => {
+                    write_grammar_debug_indent(formatter, indent)?;
+                    write!(formatter, "{name}: ")?;
+                    tasks.push(Task::Text(",\n"));
+                    tasks.push(Task::Type(ty));
+                },
+                Task::FieldList(name, params, indent) => {
+                    write_grammar_debug_indent(formatter, indent)?;
+                    write!(formatter, "{name}: ")?;
+                    tasks.push(Task::Text(",\n"));
+                    tasks.push(Task::List(params, indent));
+                },
+                Task::Visit(TermParam::Simple { name, ty }, indent) if pretty => {
+                    formatter.write_str("Simple {\n")?;
+                    tasks.push(Task::CloseStruct(indent));
+                    tasks.push(Task::FieldType("ty", ty, indent + 1));
+                    tasks.push(Task::FieldIdent("name", name, indent + 1));
+                },
+                Task::Visit(TermParam::Abstraction { binder, body, ty }, indent) if pretty => {
+                    formatter.write_str("Abstraction {\n")?;
+                    tasks.push(Task::CloseStruct(indent));
+                    tasks.push(Task::FieldType("ty", ty, indent + 1));
+                    tasks.push(Task::FieldIdent("body", body, indent + 1));
+                    tasks.push(Task::FieldIdent("binder", binder, indent + 1));
+                },
+                Task::Visit(TermParam::MultiAbstraction { binder, body, ty }, indent) if pretty => {
+                    formatter.write_str("MultiAbstraction {\n")?;
+                    tasks.push(Task::CloseStruct(indent));
+                    tasks.push(Task::FieldType("ty", ty, indent + 1));
+                    tasks.push(Task::FieldIdent("body", body, indent + 1));
+                    tasks.push(Task::FieldIdent("binder", binder, indent + 1));
+                },
+                Task::Visit(TermParam::GuardBody { name }, indent) if pretty => {
+                    formatter.write_str("GuardBody {\n")?;
+                    tasks.push(Task::CloseStruct(indent));
+                    tasks.push(Task::FieldIdent("name", name, indent + 1));
+                },
+                Task::Visit(TermParam::Optional { params }, indent) if pretty => {
+                    formatter.write_str("Optional {\n")?;
+                    tasks.push(Task::CloseStruct(indent));
+                    tasks.push(Task::FieldList("params", params, indent + 1));
+                },
+                Task::Visit(TermParam::Simple { name, ty }, _) => {
+                    formatter.write_str("Simple { name: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Type(ty));
+                    tasks.push(Task::Text(", ty: "));
+                    tasks.push(Task::Ident(name, 0));
+                },
+                Task::Visit(TermParam::Abstraction { binder, body, ty }, _) => {
+                    formatter.write_str("Abstraction { binder: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Type(ty));
+                    tasks.push(Task::Text(", ty: "));
+                    tasks.push(Task::Ident(body, 0));
+                    tasks.push(Task::Text(", body: "));
+                    tasks.push(Task::Ident(binder, 0));
+                },
+                Task::Visit(TermParam::MultiAbstraction { binder, body, ty }, _) => {
+                    formatter.write_str("MultiAbstraction { binder: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Type(ty));
+                    tasks.push(Task::Text(", ty: "));
+                    tasks.push(Task::Ident(body, 0));
+                    tasks.push(Task::Text(", body: "));
+                    tasks.push(Task::Ident(binder, 0));
+                },
+                Task::Visit(TermParam::GuardBody { name }, _) => {
+                    formatter.write_str("GuardBody { name: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Ident(name, 0));
+                },
+                Task::Visit(TermParam::Optional { params }, _) => {
+                    formatter.write_str("Optional { params: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::List(params, 0));
+                },
+            }
+        }
+        Ok(())
+    }
 }
 
 fn take_term_param_children(param: &mut TermParam, work: &mut Vec<TermParam>) {
@@ -230,7 +453,6 @@ impl Drop for TermParam {
 /// Syntax expression in patterns (can include meta-operations)
 ///
 /// Example: `"for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}"`
-#[derive(Debug, Clone)]
 pub enum SyntaxExpr {
     /// Quoted literal: "for", "(", "<-"
     Literal(String),
@@ -261,7 +483,6 @@ pub enum SyntaxExpr {
 /// Pattern operation (compile-time meta-syntax)
 ///
 /// These operations generate grammar rules and display code at compile time.
-#[derive(Debug, Clone)]
 pub enum PatternOp {
     /// #sep(coll, "sep") or coll.#sep("sep") or chain.#sep(",")
     /// Generates: `(<elem> "sep")* <elem>?` in grammar
@@ -289,6 +510,567 @@ pub enum PatternOp {
     Opt { inner: Vec<SyntaxExpr> },
     /// Variable reference (for chaining: coll.#sep)
     Var(Ident),
+}
+
+#[derive(Clone, Copy)]
+enum SyntaxNode<'syntax> {
+    Expr(&'syntax SyntaxExpr),
+    Op(&'syntax PatternOp),
+}
+
+enum SyntaxCloneTask<'syntax> {
+    Visit(SyntaxNode<'syntax>),
+    WrapOp(usize),
+    Sep(&'syntax PatternOp, usize),
+    Map(&'syntax PatternOp, usize),
+    Opt(usize),
+}
+
+enum ClonedSyntaxNode {
+    Expr(SyntaxExpr),
+    Op(PatternOp),
+}
+
+fn cloned_syntax_expr(node: ClonedSyntaxNode) -> SyntaxExpr {
+    match node {
+        ClonedSyntaxNode::Expr(expr) => expr,
+        ClonedSyntaxNode::Op(_) => panic!("syntax clone PDA expected a SyntaxExpr"),
+    }
+}
+
+fn cloned_pattern_op(node: ClonedSyntaxNode) -> PatternOp {
+    match node {
+        ClonedSyntaxNode::Op(op) => op,
+        ClonedSyntaxNode::Expr(_) => panic!("syntax clone PDA expected a PatternOp"),
+    }
+}
+
+fn clone_syntax_node(root: SyntaxNode<'_>) -> ClonedSyntaxNode {
+    let mut tasks = vec![SyntaxCloneTask::Visit(root)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            SyntaxCloneTask::Visit(SyntaxNode::Expr(expr)) => match expr {
+                SyntaxExpr::Literal(value) => {
+                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::Literal(value.clone())));
+                },
+                SyntaxExpr::Param(ident) => {
+                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::Param(ident.clone())));
+                },
+                SyntaxExpr::Op(op) => {
+                    tasks.push(SyntaxCloneTask::WrapOp(values.len()));
+                    tasks.push(SyntaxCloneTask::Visit(SyntaxNode::Op(op)));
+                },
+                SyntaxExpr::TokenKind { name, bind } => {
+                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::TokenKind {
+                        name: name.clone(),
+                        bind: bind.clone(),
+                    }));
+                },
+                SyntaxExpr::GuestBody { open, close, bind } => {
+                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::GuestBody {
+                        open: open.clone(),
+                        close: close.clone(),
+                        bind: bind.clone(),
+                    }));
+                },
+            },
+            SyntaxCloneTask::Visit(SyntaxNode::Op(op)) => match op {
+                PatternOp::Sep { source: None, collection, separator } => {
+                    values.push(ClonedSyntaxNode::Op(PatternOp::Sep {
+                        collection: collection.clone(),
+                        separator: separator.clone(),
+                        source: None,
+                    }));
+                },
+                PatternOp::Sep { source: Some(source), .. } => {
+                    tasks.push(SyntaxCloneTask::Sep(op, values.len()));
+                    tasks.push(SyntaxCloneTask::Visit(SyntaxNode::Op(source)));
+                },
+                PatternOp::Zip { left, right } => {
+                    values.push(ClonedSyntaxNode::Op(PatternOp::Zip {
+                        left: left.clone(),
+                        right: right.clone(),
+                    }));
+                },
+                PatternOp::Map { source, body, .. } => {
+                    tasks.push(SyntaxCloneTask::Map(op, values.len()));
+                    tasks.extend(
+                        body.iter()
+                            .rev()
+                            .map(|expr| SyntaxCloneTask::Visit(SyntaxNode::Expr(expr))),
+                    );
+                    tasks.push(SyntaxCloneTask::Visit(SyntaxNode::Op(source)));
+                },
+                PatternOp::Opt { inner } => {
+                    tasks.push(SyntaxCloneTask::Opt(values.len()));
+                    tasks.extend(
+                        inner
+                            .iter()
+                            .rev()
+                            .map(|expr| SyntaxCloneTask::Visit(SyntaxNode::Expr(expr))),
+                    );
+                },
+                PatternOp::Var(ident) => {
+                    values.push(ClonedSyntaxNode::Op(PatternOp::Var(ident.clone())));
+                },
+            },
+            SyntaxCloneTask::WrapOp(value_base) => {
+                let op =
+                    cloned_pattern_op(values.pop().expect("syntax clone PDA lost an Op result"));
+                values.truncate(value_base);
+                values.push(ClonedSyntaxNode::Expr(SyntaxExpr::Op(op)));
+            },
+            SyntaxCloneTask::Sep(source, value_base) => {
+                let PatternOp::Sep { collection, separator, .. } = source else {
+                    unreachable!("Sep clone task carries a Sep source")
+                };
+                let inner =
+                    cloned_pattern_op(values.pop().expect("syntax clone PDA lost a Sep source"));
+                values.truncate(value_base);
+                values.push(ClonedSyntaxNode::Op(PatternOp::Sep {
+                    collection: collection.clone(),
+                    separator: separator.clone(),
+                    source: Some(Box::new(inner)),
+                }));
+            },
+            SyntaxCloneTask::Map(source, value_base) => {
+                let PatternOp::Map { params, .. } = source else {
+                    unreachable!("Map clone task carries a Map source")
+                };
+                let mut cloned = values.drain(value_base..);
+                let source =
+                    cloned_pattern_op(cloned.next().expect("syntax clone PDA lost a Map source"));
+                let body = cloned.map(cloned_syntax_expr).collect();
+                values.push(ClonedSyntaxNode::Op(PatternOp::Map {
+                    source: Box::new(source),
+                    params: params.clone(),
+                    body,
+                }));
+            },
+            SyntaxCloneTask::Opt(value_base) => {
+                let inner = values.drain(value_base..).map(cloned_syntax_expr).collect();
+                values.push(ClonedSyntaxNode::Op(PatternOp::Opt { inner }));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("syntax clone PDA produced no result")
+}
+
+impl Clone for SyntaxExpr {
+    fn clone(&self) -> Self {
+        cloned_syntax_expr(clone_syntax_node(SyntaxNode::Expr(self)))
+    }
+}
+
+impl Clone for PatternOp {
+    fn clone(&self) -> Self {
+        cloned_pattern_op(clone_syntax_node(SyntaxNode::Op(self)))
+    }
+}
+
+enum SyntaxDebugTask<'syntax> {
+    Node(SyntaxNode<'syntax>, usize),
+    ExprList(&'syntax [SyntaxExpr], usize),
+    Ident(&'syntax Ident, usize),
+    IdentList(&'syntax [Ident], usize),
+    OptionIdent(&'syntax Option<Ident>, usize),
+    OptionOp(Option<&'syntax PatternOp>, usize),
+    String(&'syntax str),
+    FieldNode(&'static str, SyntaxNode<'syntax>, usize),
+    FieldExprList(&'static str, &'syntax [SyntaxExpr], usize),
+    FieldIdent(&'static str, &'syntax Ident, usize),
+    FieldIdentList(&'static str, &'syntax [Ident], usize),
+    FieldOptionIdent(&'static str, &'syntax Option<Ident>, usize),
+    FieldOptionOp(&'static str, Option<&'syntax PatternOp>, usize),
+    FieldString(&'static str, &'syntax str, usize),
+    Text(&'static str),
+    Indent(usize),
+    CloseTuple(usize),
+    CloseStruct(usize),
+    CloseList(usize),
+}
+
+fn push_compact_syntax_list<'syntax>(
+    tasks: &mut Vec<SyntaxDebugTask<'syntax>>,
+    exprs: &'syntax [SyntaxExpr],
+) {
+    tasks.push(SyntaxDebugTask::Text("]"));
+    for (index, expr) in exprs.iter().enumerate().rev() {
+        tasks.push(SyntaxDebugTask::Node(SyntaxNode::Expr(expr), 0));
+        if index != 0 {
+            tasks.push(SyntaxDebugTask::Text(", "));
+        }
+    }
+}
+
+fn push_pretty_syntax_list<'syntax>(
+    tasks: &mut Vec<SyntaxDebugTask<'syntax>>,
+    exprs: &'syntax [SyntaxExpr],
+    indent: usize,
+) {
+    tasks.push(SyntaxDebugTask::CloseList(indent));
+    for expr in exprs.iter().rev() {
+        tasks.push(SyntaxDebugTask::Text(",\n"));
+        tasks.push(SyntaxDebugTask::Node(SyntaxNode::Expr(expr), indent + 1));
+        tasks.push(SyntaxDebugTask::Indent(indent + 1));
+    }
+}
+
+fn fmt_syntax_node(
+    root: SyntaxNode<'_>,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    let pretty = formatter.alternate();
+    let mut tasks = vec![SyntaxDebugTask::Node(root, 0)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            SyntaxDebugTask::Text(text) => formatter.write_str(text)?,
+            SyntaxDebugTask::Indent(indent) => write_grammar_debug_indent(formatter, indent)?,
+            SyntaxDebugTask::CloseTuple(indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                formatter.write_str(")")?;
+            },
+            SyntaxDebugTask::CloseStruct(indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                formatter.write_str("}")?;
+            },
+            SyntaxDebugTask::CloseList(indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                formatter.write_str("]")?;
+            },
+            SyntaxDebugTask::Ident(ident, indent) => {
+                fmt_grammar_ident(ident, indent, pretty, formatter)?;
+            },
+            SyntaxDebugTask::String(value) => write!(formatter, "{value:?}")?,
+            SyntaxDebugTask::IdentList(idents, _) if !pretty => {
+                formatter.write_str("[")?;
+                tasks.push(SyntaxDebugTask::Text("]"));
+                for (index, ident) in idents.iter().enumerate().rev() {
+                    tasks.push(SyntaxDebugTask::Ident(ident, 0));
+                    if index != 0 {
+                        tasks.push(SyntaxDebugTask::Text(", "));
+                    }
+                }
+            },
+            SyntaxDebugTask::IdentList([], _) => formatter.write_str("[]")?,
+            SyntaxDebugTask::IdentList(idents, indent) => {
+                formatter.write_str("[\n")?;
+                tasks.push(SyntaxDebugTask::CloseList(indent));
+                for ident in idents.iter().rev() {
+                    tasks.push(SyntaxDebugTask::Text(",\n"));
+                    tasks.push(SyntaxDebugTask::Ident(ident, indent + 1));
+                    tasks.push(SyntaxDebugTask::Indent(indent + 1));
+                }
+            },
+            SyntaxDebugTask::ExprList(exprs, _) if !pretty => {
+                formatter.write_str("[")?;
+                push_compact_syntax_list(&mut tasks, exprs);
+            },
+            SyntaxDebugTask::ExprList([], _) => formatter.write_str("[]")?,
+            SyntaxDebugTask::ExprList(exprs, indent) => {
+                formatter.write_str("[\n")?;
+                push_pretty_syntax_list(&mut tasks, exprs, indent);
+            },
+            SyntaxDebugTask::OptionIdent(None, _) => formatter.write_str("None")?,
+            SyntaxDebugTask::OptionIdent(Some(ident), _) if !pretty => {
+                formatter.write_str("Some(")?;
+                tasks.push(SyntaxDebugTask::Text(")"));
+                tasks.push(SyntaxDebugTask::Ident(ident, 0));
+            },
+            SyntaxDebugTask::OptionIdent(Some(ident), indent) => {
+                formatter.write_str("Some(\n")?;
+                tasks.push(SyntaxDebugTask::CloseTuple(indent));
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::Ident(ident, indent + 1));
+                tasks.push(SyntaxDebugTask::Indent(indent + 1));
+            },
+            SyntaxDebugTask::OptionOp(None, _) => formatter.write_str("None")?,
+            SyntaxDebugTask::OptionOp(Some(op), _) if !pretty => {
+                formatter.write_str("Some(")?;
+                tasks.push(SyntaxDebugTask::Text(")"));
+                tasks.push(SyntaxDebugTask::Node(SyntaxNode::Op(op), 0));
+            },
+            SyntaxDebugTask::OptionOp(Some(op), indent) => {
+                formatter.write_str("Some(\n")?;
+                tasks.push(SyntaxDebugTask::CloseTuple(indent));
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::Node(SyntaxNode::Op(op), indent + 1));
+                tasks.push(SyntaxDebugTask::Indent(indent + 1));
+            },
+            SyntaxDebugTask::FieldNode(name, node, indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                write!(formatter, "{name}: ")?;
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::Node(node, indent));
+            },
+            SyntaxDebugTask::FieldExprList(name, exprs, indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                write!(formatter, "{name}: ")?;
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::ExprList(exprs, indent));
+            },
+            SyntaxDebugTask::FieldIdent(name, ident, indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                write!(formatter, "{name}: ")?;
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::Ident(ident, indent));
+            },
+            SyntaxDebugTask::FieldIdentList(name, idents, indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                write!(formatter, "{name}: ")?;
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::IdentList(idents, indent));
+            },
+            SyntaxDebugTask::FieldOptionIdent(name, ident, indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                write!(formatter, "{name}: ")?;
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::OptionIdent(ident, indent));
+            },
+            SyntaxDebugTask::FieldOptionOp(name, op, indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                write!(formatter, "{name}: ")?;
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::OptionOp(op, indent));
+            },
+            SyntaxDebugTask::FieldString(name, value, indent) => {
+                write_grammar_debug_indent(formatter, indent)?;
+                write!(formatter, "{name}: {value:?},\n")?;
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::Literal(value)), indent)
+                if pretty =>
+            {
+                formatter.write_str("Literal(\n")?;
+                tasks.push(SyntaxDebugTask::CloseTuple(indent));
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::String(value));
+                tasks.push(SyntaxDebugTask::Indent(indent + 1));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::Param(ident)), indent) if pretty => {
+                formatter.write_str("Param(\n")?;
+                tasks.push(SyntaxDebugTask::CloseTuple(indent));
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::Ident(ident, indent + 1));
+                tasks.push(SyntaxDebugTask::Indent(indent + 1));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::Op(op)), indent) if pretty => {
+                formatter.write_str("Op(\n")?;
+                tasks.push(SyntaxDebugTask::CloseTuple(indent));
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::Node(SyntaxNode::Op(op), indent + 1));
+                tasks.push(SyntaxDebugTask::Indent(indent + 1));
+            },
+            SyntaxDebugTask::Node(
+                SyntaxNode::Expr(SyntaxExpr::TokenKind { name, bind }),
+                indent,
+            ) if pretty => {
+                formatter.write_str("TokenKind {\n")?;
+                tasks.push(SyntaxDebugTask::CloseStruct(indent));
+                tasks.push(SyntaxDebugTask::FieldOptionIdent("bind", bind, indent + 1));
+                tasks.push(SyntaxDebugTask::FieldIdent("name", name, indent + 1));
+            },
+            SyntaxDebugTask::Node(
+                SyntaxNode::Expr(SyntaxExpr::GuestBody { open, close, bind }),
+                indent,
+            ) if pretty => {
+                formatter.write_str("GuestBody {\n")?;
+                tasks.push(SyntaxDebugTask::CloseStruct(indent));
+                tasks.push(SyntaxDebugTask::FieldIdent("bind", bind, indent + 1));
+                tasks.push(SyntaxDebugTask::FieldIdent("close", close, indent + 1));
+                tasks.push(SyntaxDebugTask::FieldIdent("open", open, indent + 1));
+            },
+            SyntaxDebugTask::Node(
+                SyntaxNode::Op(PatternOp::Sep { collection, separator, source }),
+                indent,
+            ) if pretty => {
+                formatter.write_str("Sep {\n")?;
+                tasks.push(SyntaxDebugTask::CloseStruct(indent));
+                tasks.push(SyntaxDebugTask::FieldOptionOp("source", source.as_deref(), indent + 1));
+                tasks.push(SyntaxDebugTask::FieldString("separator", separator, indent + 1));
+                tasks.push(SyntaxDebugTask::FieldIdent("collection", collection, indent + 1));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Op(PatternOp::Zip { left, right }), indent)
+                if pretty =>
+            {
+                formatter.write_str("Zip {\n")?;
+                tasks.push(SyntaxDebugTask::CloseStruct(indent));
+                tasks.push(SyntaxDebugTask::FieldIdent("right", right, indent + 1));
+                tasks.push(SyntaxDebugTask::FieldIdent("left", left, indent + 1));
+            },
+            SyntaxDebugTask::Node(
+                SyntaxNode::Op(PatternOp::Map { source, params, body }),
+                indent,
+            ) if pretty => {
+                formatter.write_str("Map {\n")?;
+                tasks.push(SyntaxDebugTask::CloseStruct(indent));
+                tasks.push(SyntaxDebugTask::FieldExprList("body", body, indent + 1));
+                tasks.push(SyntaxDebugTask::FieldIdentList("params", params, indent + 1));
+                tasks.push(SyntaxDebugTask::FieldNode(
+                    "source",
+                    SyntaxNode::Op(source),
+                    indent + 1,
+                ));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Op(PatternOp::Opt { inner }), indent) if pretty => {
+                formatter.write_str("Opt {\n")?;
+                tasks.push(SyntaxDebugTask::CloseStruct(indent));
+                tasks.push(SyntaxDebugTask::FieldExprList("inner", inner, indent + 1));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Op(PatternOp::Var(ident)), indent) if pretty => {
+                formatter.write_str("Var(\n")?;
+                tasks.push(SyntaxDebugTask::CloseTuple(indent));
+                tasks.push(SyntaxDebugTask::Text(",\n"));
+                tasks.push(SyntaxDebugTask::Ident(ident, indent + 1));
+                tasks.push(SyntaxDebugTask::Indent(indent + 1));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::Literal(value)), _) => {
+                write!(formatter, "Literal({value:?})")?;
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::Param(ident)), _) => {
+                formatter.write_str("Param(")?;
+                tasks.push(SyntaxDebugTask::Text(")"));
+                tasks.push(SyntaxDebugTask::Ident(ident, 0));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::Op(op)), _) => {
+                formatter.write_str("Op(")?;
+                tasks.push(SyntaxDebugTask::Text(")"));
+                tasks.push(SyntaxDebugTask::Node(SyntaxNode::Op(op), 0));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::TokenKind { name, bind }), _) => {
+                formatter.write_str("TokenKind { name: ")?;
+                tasks.push(SyntaxDebugTask::Text(" }"));
+                tasks.push(SyntaxDebugTask::OptionIdent(bind, 0));
+                tasks.push(SyntaxDebugTask::Text(", bind: "));
+                tasks.push(SyntaxDebugTask::Ident(name, 0));
+            },
+            SyntaxDebugTask::Node(
+                SyntaxNode::Expr(SyntaxExpr::GuestBody { open, close, bind }),
+                _,
+            ) => {
+                formatter.write_str("GuestBody { open: ")?;
+                tasks.push(SyntaxDebugTask::Text(" }"));
+                tasks.push(SyntaxDebugTask::Ident(bind, 0));
+                tasks.push(SyntaxDebugTask::Text(", bind: "));
+                tasks.push(SyntaxDebugTask::Ident(close, 0));
+                tasks.push(SyntaxDebugTask::Text(", close: "));
+                tasks.push(SyntaxDebugTask::Ident(open, 0));
+            },
+            SyntaxDebugTask::Node(
+                SyntaxNode::Op(PatternOp::Sep { collection, separator, source }),
+                _,
+            ) => {
+                formatter.write_str("Sep { collection: ")?;
+                tasks.push(SyntaxDebugTask::Text(" }"));
+                tasks.push(SyntaxDebugTask::OptionOp(source.as_deref(), 0));
+                tasks.push(SyntaxDebugTask::Text(", source: "));
+                tasks.push(SyntaxDebugTask::String(separator));
+                tasks.push(SyntaxDebugTask::Text(", separator: "));
+                tasks.push(SyntaxDebugTask::Ident(collection, 0));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Op(PatternOp::Zip { left, right }), _) => {
+                formatter.write_str("Zip { left: ")?;
+                tasks.push(SyntaxDebugTask::Text(" }"));
+                tasks.push(SyntaxDebugTask::Ident(right, 0));
+                tasks.push(SyntaxDebugTask::Text(", right: "));
+                tasks.push(SyntaxDebugTask::Ident(left, 0));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Op(PatternOp::Map { source, params, body }), _) => {
+                formatter.write_str("Map { source: ")?;
+                tasks.push(SyntaxDebugTask::Text(" }"));
+                tasks.push(SyntaxDebugTask::ExprList(body, 0));
+                tasks.push(SyntaxDebugTask::Text(", body: "));
+                tasks.push(SyntaxDebugTask::IdentList(params, 0));
+                tasks.push(SyntaxDebugTask::Text(", params: "));
+                tasks.push(SyntaxDebugTask::Node(SyntaxNode::Op(source), 0));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Op(PatternOp::Opt { inner }), _) => {
+                formatter.write_str("Opt { inner: ")?;
+                tasks.push(SyntaxDebugTask::Text(" }"));
+                tasks.push(SyntaxDebugTask::ExprList(inner, 0));
+            },
+            SyntaxDebugTask::Node(SyntaxNode::Op(PatternOp::Var(ident)), _) => {
+                formatter.write_str("Var(")?;
+                tasks.push(SyntaxDebugTask::Text(")"));
+                tasks.push(SyntaxDebugTask::Ident(ident, 0));
+            },
+        }
+    }
+    Ok(())
+}
+
+impl std::fmt::Debug for SyntaxExpr {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_syntax_node(SyntaxNode::Expr(self), formatter)
+    }
+}
+
+impl std::fmt::Debug for PatternOp {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_syntax_node(SyntaxNode::Op(self), formatter)
+    }
+}
+
+fn placeholder_ident() -> Ident {
+    Ident::new("_", proc_macro2::Span::call_site())
+}
+
+fn placeholder_pattern_op() -> PatternOp {
+    PatternOp::Var(placeholder_ident())
+}
+
+fn take_syntax_expr_children(expr: &mut SyntaxExpr, ops: &mut Vec<PatternOp>) {
+    if let SyntaxExpr::Op(op) = expr {
+        ops.push(std::mem::replace(op, placeholder_pattern_op()));
+    }
+}
+
+fn take_pattern_op_children(
+    op: &mut PatternOp,
+    exprs: &mut Vec<SyntaxExpr>,
+    ops: &mut Vec<PatternOp>,
+) {
+    match op {
+        PatternOp::Sep { source: Some(source), .. } => {
+            ops.push(*std::mem::replace(source, Box::new(placeholder_pattern_op())));
+        },
+        PatternOp::Map { source, body, .. } => {
+            ops.push(*std::mem::replace(source, Box::new(placeholder_pattern_op())));
+            exprs.append(body);
+        },
+        PatternOp::Opt { inner } => exprs.append(inner),
+        PatternOp::Sep { source: None, .. } | PatternOp::Zip { .. } | PatternOp::Var(_) => {},
+    }
+}
+
+fn drain_syntax_descendants(exprs: &mut Vec<SyntaxExpr>, ops: &mut Vec<PatternOp>) {
+    while !exprs.is_empty() || !ops.is_empty() {
+        while let Some(mut expr) = exprs.pop() {
+            take_syntax_expr_children(&mut expr, ops);
+        }
+        if let Some(mut op) = ops.pop() {
+            take_pattern_op_children(&mut op, exprs, ops);
+        }
+    }
+}
+
+impl Drop for SyntaxExpr {
+    fn drop(&mut self) {
+        let mut exprs = Vec::new();
+        let mut ops = Vec::new();
+        take_syntax_expr_children(self, &mut ops);
+        drain_syntax_descendants(&mut exprs, &mut ops);
+    }
+}
+
+impl Drop for PatternOp {
+    fn drop(&mut self) {
+        let mut exprs = Vec::new();
+        let mut ops = Vec::new();
+        take_pattern_op_children(self, &mut exprs, &mut ops);
+        drain_syntax_descendants(&mut exprs, &mut ops);
+    }
 }
 
 /// Grammar rule - supports both old BNFC-style and new judgement-style syntax
