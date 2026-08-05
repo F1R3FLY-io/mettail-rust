@@ -106,15 +106,35 @@ fn push_tokens<T: ToTokens>(out: &mut String, value: &T) {
     push_token_stream_canonical(out, &value.to_token_stream());
 }
 
-/// Recursively emit a token stream in span/spacing-independent canonical form.
+/// Emit a token stream in span/spacing-independent canonical form without
+/// consuming native call-stack space for nested token groups.
 /// See [`push_tokens`] for why this is necessary.
 fn push_token_stream_canonical(out: &mut String, stream: &proc_macro2::TokenStream) {
-    let mut first = true;
-    for tree in stream.clone() {
-        if !first {
-            out.push(' ');
+    enum TokenTask {
+        Text(&'static str),
+        Tree(proc_macro2::TokenTree),
+    }
+
+    fn push_stream(tasks: &mut Vec<TokenTask>, stream: proc_macro2::TokenStream) {
+        let trees: Vec<_> = stream.into_iter().collect();
+        for (index, tree) in trees.into_iter().enumerate().rev() {
+            tasks.push(TokenTask::Tree(tree));
+            if index != 0 {
+                tasks.push(TokenTask::Text(" "));
+            }
         }
-        first = false;
+    }
+
+    let mut tasks = Vec::new();
+    push_stream(&mut tasks, stream.clone());
+    while let Some(task) = tasks.pop() {
+        let TokenTask::Tree(tree) = task else {
+            let TokenTask::Text(text) = task else {
+                unreachable!()
+            };
+            out.push_str(text);
+            continue;
+        };
         match tree {
             proc_macro2::TokenTree::Group(group) => {
                 let (open, close) = match group.delimiter() {
@@ -124,8 +144,8 @@ fn push_token_stream_canonical(out: &mut String, stream: &proc_macro2::TokenStre
                     proc_macro2::Delimiter::None => ("", ""),
                 };
                 out.push_str(open);
-                push_token_stream_canonical(out, &group.stream());
-                out.push_str(close);
+                tasks.push(TokenTask::Text(close));
+                push_stream(&mut tasks, group.stream());
             },
             proc_macro2::TokenTree::Ident(ident) => out.push_str(&ident.to_string()),
             proc_macro2::TokenTree::Punct(punct) => out.push(punct.as_char()),
@@ -141,6 +161,554 @@ fn push_ids(out: &mut String, ids: &[Ident]) {
         out.push(';');
     }
     out.push(']');
+}
+
+enum IdentityTask<'identity> {
+    Str(&'identity str),
+    Char(char),
+    TypeExpr(&'identity TypeExpr),
+    TreeConstraint(&'identity TreeConstraintExpr),
+    SyntaxExprs(&'identity [SyntaxExpr]),
+    SyntaxExpr(&'identity SyntaxExpr),
+    PatternOp(&'identity PatternOp),
+    Premise(&'identity Premise),
+    Pattern(&'identity Pattern),
+    PatternTerm(&'identity PatternTerm),
+    BehavioralPred(&'identity BehavioralPred),
+    RefinementPredicate(&'identity RefinementPredicate),
+    TermParams(&'identity [TermParam]),
+    TermParam(&'identity TermParam),
+    Ident(&'identity Ident),
+    Ids(&'identity [Ident]),
+}
+
+fn run_identity_tasks<'identity>(out: &mut String, mut tasks: Vec<IdentityTask<'identity>>) {
+    while let Some(task) = tasks.pop() {
+        match task {
+            IdentityTask::Str(text) => out.push_str(text),
+            IdentityTask::Char(character) => out.push(character),
+            IdentityTask::TypeExpr(ty) => match ty {
+                TypeExpr::Base(id) => {
+                    out.push_str("base(");
+                    push_ident(out, id);
+                    out.push(')');
+                },
+                TypeExpr::Arrow { domain, codomain } => {
+                    out.push_str("arrow(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TypeExpr(codomain));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::TypeExpr(domain));
+                },
+                TypeExpr::MultiBinder(inner) => {
+                    out.push_str("multi(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TypeExpr(inner));
+                },
+                TypeExpr::Collection { coll_type, element } => {
+                    out.push_str("collection(");
+                    write_collection_type(coll_type, out);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TypeExpr(element));
+                },
+                TypeExpr::Refined { var, base, predicate_repr } => {
+                    out.push_str("refined(");
+                    push_ident(out, var);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Str(predicate_repr));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::TypeExpr(base));
+                },
+                TypeExpr::Map { key, value } => {
+                    out.push_str("maptype(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TypeExpr(value));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::TypeExpr(key));
+                },
+            },
+            IdentityTask::TreeConstraint(expr) => match expr {
+                TreeConstraintExpr::ForallChildren { symbol, body } => {
+                    out.push_str("forall-children(");
+                    out.push_str(symbol);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TreeConstraint(body));
+                },
+                TreeConstraintExpr::ExistsChild => out.push_str("exists-child"),
+                TreeConstraintExpr::Not(inner) => {
+                    out.push_str("not(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TreeConstraint(inner));
+                },
+                TreeConstraintExpr::Match(symbols) => {
+                    out.push_str("match(");
+                    for symbol in symbols {
+                        out.push_str(symbol);
+                        out.push('|');
+                    }
+                    out.push(')');
+                },
+                TreeConstraintExpr::Atom(symbol) => {
+                    out.push_str("atom(");
+                    out.push_str(symbol);
+                    out.push(')');
+                },
+                TreeConstraintExpr::And(left, right) => {
+                    out.push_str("and(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TreeConstraint(right));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::TreeConstraint(left));
+                },
+                TreeConstraintExpr::Or(left, right) => {
+                    out.push_str("or(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TreeConstraint(right));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::TreeConstraint(left));
+                },
+            },
+            IdentityTask::SyntaxExprs(exprs) => {
+                out.push('[');
+                tasks.push(IdentityTask::Char(']'));
+                for expr in exprs.iter().rev() {
+                    tasks.push(IdentityTask::Char(';'));
+                    tasks.push(IdentityTask::SyntaxExpr(expr));
+                }
+            },
+            IdentityTask::SyntaxExpr(expr) => match expr {
+                SyntaxExpr::Literal(value) => {
+                    out.push_str("lit(");
+                    out.push_str(value);
+                    out.push(')');
+                },
+                SyntaxExpr::Param(id) => {
+                    out.push_str("param(");
+                    push_ident(out, id);
+                    out.push(')');
+                },
+                SyntaxExpr::Op(op) => tasks.push(IdentityTask::PatternOp(op)),
+                SyntaxExpr::TokenKind { name, bind } => {
+                    out.push_str("tokenkind(");
+                    push_ident(out, name);
+                    if let Some(bind) = bind {
+                        out.push('@');
+                        push_ident(out, bind);
+                    }
+                    out.push(')');
+                },
+                SyntaxExpr::GuestBody { open, close, bind } => {
+                    out.push_str("guestbody(");
+                    push_ident(out, bind);
+                    out.push(',');
+                    push_ident(out, open);
+                    out.push(',');
+                    push_ident(out, close);
+                    out.push(')');
+                },
+            },
+            IdentityTask::PatternOp(op) => match op {
+                PatternOp::Sep { collection, separator, source } => {
+                    out.push_str("sep(");
+                    push_ident(out, collection);
+                    out.push(',');
+                    out.push_str(separator);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    if let Some(source) = source {
+                        tasks.push(IdentityTask::PatternOp(source));
+                    }
+                },
+                PatternOp::Zip { left, right } => {
+                    out.push_str("zip(");
+                    push_ident(out, left);
+                    out.push(',');
+                    push_ident(out, right);
+                    out.push(')');
+                },
+                PatternOp::Map { source, params, body } => {
+                    out.push_str("map(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::SyntaxExprs(body));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::Ids(params));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::PatternOp(source));
+                },
+                PatternOp::Opt { inner } => {
+                    out.push_str("opt(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::SyntaxExprs(inner));
+                },
+                PatternOp::Var(id) => {
+                    out.push_str("var(");
+                    push_ident(out, id);
+                    out.push(')');
+                },
+            },
+            IdentityTask::Premise(premise) => match premise {
+                Premise::Freshness(freshness) => {
+                    out.push_str("fresh(");
+                    push_ident(out, &freshness.var);
+                    out.push(',');
+                    write_freshness_target(&freshness.term, out);
+                    out.push(')');
+                },
+                Premise::Congruence { source, target } => {
+                    out.push_str("cong(");
+                    push_ident(out, source);
+                    out.push(',');
+                    push_ident(out, target);
+                    out.push(')');
+                },
+                Premise::CongruenceWithheld { source, target } => {
+                    out.push_str("ncong(");
+                    push_ident(out, source);
+                    out.push(',');
+                    push_ident(out, target);
+                    out.push(')');
+                },
+                Premise::RelationQuery { relation, args } => {
+                    out.push_str("rel(");
+                    push_ident(out, relation);
+                    out.push(',');
+                    push_ids(out, args);
+                    out.push(')');
+                },
+                Premise::ForAll { collection, param, body } => {
+                    out.push_str("forall(");
+                    push_ident(out, collection);
+                    out.push(',');
+                    push_ident(out, param);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Premise(body));
+                },
+                Premise::BehavioralGuard(pred) => {
+                    tasks.push(IdentityTask::BehavioralPred(pred));
+                },
+                Premise::SyntheticInjGuard {
+                    inner_var,
+                    source_category,
+                    excluded_variants,
+                } => {
+                    out.push_str("synthetic-inj(");
+                    push_ident(out, inner_var);
+                    out.push(',');
+                    push_ident(out, source_category);
+                    out.push(',');
+                    push_ids(out, excluded_variants);
+                    out.push(')');
+                },
+            },
+            IdentityTask::Pattern(pattern) => match pattern {
+                Pattern::Term(term) => tasks.push(IdentityTask::PatternTerm(term)),
+                Pattern::Collection { coll_type, elements, rest } => {
+                    out.push_str("collection(");
+                    if let Some(coll_type) = coll_type {
+                        write_collection_type(coll_type, out);
+                    }
+                    out.push(':');
+                    tasks.push(IdentityTask::Char(')'));
+                    if let Some(rest) = rest {
+                        tasks.push(IdentityTask::Ident(rest));
+                    }
+                    tasks.push(IdentityTask::Char(':'));
+                    for element in elements.iter().rev() {
+                        tasks.push(IdentityTask::Char(','));
+                        tasks.push(IdentityTask::Pattern(element));
+                    }
+                },
+                Pattern::Map { collection, params, body } => {
+                    out.push_str("pmap(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Pattern(body));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::Ids(params));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::Pattern(collection));
+                },
+                Pattern::Zip { first, second } => {
+                    out.push_str("pzip(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Pattern(second));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::Pattern(first));
+                },
+                Pattern::IndexedVec { collection, index, element } => {
+                    out.push_str("pidx(");
+                    push_ident(out, collection);
+                    out.push(',');
+                    push_ident(out, index);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Pattern(element));
+                },
+            },
+            IdentityTask::PatternTerm(term) => match term {
+                PatternTerm::Var(id) => {
+                    out.push_str("pvar(");
+                    push_ident(out, id);
+                    out.push(')');
+                },
+                PatternTerm::Apply { constructor, args } => {
+                    out.push_str("apply(");
+                    push_ident(out, constructor);
+                    out.push(':');
+                    tasks.push(IdentityTask::Char(')'));
+                    for arg in args.iter().rev() {
+                        tasks.push(IdentityTask::Char(','));
+                        tasks.push(IdentityTask::Pattern(arg));
+                    }
+                },
+                PatternTerm::Lambda { binder, body } => {
+                    out.push_str("lambda(");
+                    push_ident(out, binder);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Pattern(body));
+                },
+                PatternTerm::MultiLambda { binders, body } => {
+                    out.push_str("multilambda(");
+                    push_ids(out, binders);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Pattern(body));
+                },
+                PatternTerm::Subst { term, var, replacement } => {
+                    out.push_str("subst(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::Pattern(replacement));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::Ident(var));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::Pattern(term));
+                },
+                PatternTerm::MultiSubst { scope, replacements } => {
+                    out.push_str("multisubst(");
+                    tasks.push(IdentityTask::Char(')'));
+                    for replacement in replacements.iter().rev() {
+                        tasks.push(IdentityTask::Char(','));
+                        tasks.push(IdentityTask::Pattern(replacement));
+                    }
+                    tasks.push(IdentityTask::Char(':'));
+                    tasks.push(IdentityTask::Pattern(scope));
+                },
+            },
+            IdentityTask::BehavioralPred(pred) => match pred {
+                BehavioralPred::RelationQuery { relation_name, args, negated } => {
+                    out.push_str("brel(");
+                    push_ident(out, relation_name);
+                    out.push(',');
+                    out.push_str(if *negated { "not" } else { "pos" });
+                    out.push(',');
+                    for arg in args {
+                        write_pred_arg(arg, out);
+                        out.push(',');
+                    }
+                    out.push(')');
+                },
+                BehavioralPred::Quantified { quantifier, var, domain, bound, body } => {
+                    out.push_str("bquant(");
+                    write_quantifier(quantifier, out);
+                    out.push(',');
+                    push_ident(out, var);
+                    out.push(',');
+                    if let Some(domain) = domain {
+                        push_ident(out, domain);
+                    }
+                    out.push(',');
+                    if let Some(bound) = bound {
+                        out.push_str(&bound.to_string());
+                    }
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::BehavioralPred(body));
+                },
+                BehavioralPred::And(left, right) => {
+                    out.push_str("and(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::BehavioralPred(right));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::BehavioralPred(left));
+                },
+                BehavioralPred::Or(left, right) => {
+                    out.push_str("or(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::BehavioralPred(right));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::BehavioralPred(left));
+                },
+                BehavioralPred::Not(inner) => {
+                    out.push_str("bnot(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::BehavioralPred(inner));
+                },
+                BehavioralPred::Implies(left, right) => {
+                    out.push_str("implies(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::BehavioralPred(right));
+                    tasks.push(IdentityTask::Char(','));
+                    tasks.push(IdentityTask::BehavioralPred(left));
+                },
+                BehavioralPred::AcMatch { bag, elements, rest } => {
+                    out.push_str("ac(");
+                    push_ident(out, bag);
+                    out.push(',');
+                    push_ids(out, elements);
+                    out.push(',');
+                    if let Some(rest) = rest {
+                        push_ident(out, rest);
+                    }
+                    out.push(')');
+                },
+                BehavioralPred::Top => out.push_str("top"),
+            },
+            IdentityTask::RefinementPredicate(pred) => match pred {
+                RefinementPredicate::Linear { terms, relation, rhs } => {
+                    for (index, (var, coefficient)) in terms.iter().enumerate() {
+                        if index != 0 {
+                            out.push_str(" + ");
+                        }
+                        if *coefficient == 1 {
+                            push_ident(out, var);
+                        } else {
+                            out.push_str(&coefficient.to_string());
+                            out.push('*');
+                            push_ident(out, var);
+                        }
+                    }
+                    out.push(' ');
+                    out.push_str(&relation.to_string());
+                    out.push(' ');
+                    out.push_str(&rhs.to_string());
+                },
+                RefinementPredicate::Relation { name, args, negated } => {
+                    if *negated {
+                        out.push('~');
+                    }
+                    push_ident(out, name);
+                    out.push('(');
+                    for (index, arg) in args.iter().enumerate() {
+                        if index != 0 {
+                            out.push_str(", ");
+                        }
+                        match arg {
+                            PredArg::Var(var) | PredArg::Constant(var) => push_ident(out, var),
+                        }
+                    }
+                    out.push(')');
+                },
+                RefinementPredicate::Quantified { quantifier, var, domain, bound, body } => {
+                    write_quantifier(quantifier, out);
+                    if let Some(bound) = bound {
+                        out.push_str("_{k=");
+                        out.push_str(&bound.to_string());
+                        out.push('}');
+                    }
+                    out.push(' ');
+                    push_ident(out, var);
+                    if let Some(domain) = domain {
+                        out.push_str(" in ");
+                        push_ident(out, domain);
+                    }
+                    out.push_str(". (");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::RefinementPredicate(body));
+                },
+                RefinementPredicate::And(left, right) => {
+                    out.push('(');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::RefinementPredicate(right));
+                    tasks.push(IdentityTask::Str(" && "));
+                    tasks.push(IdentityTask::RefinementPredicate(left));
+                },
+                RefinementPredicate::Or(left, right) => {
+                    out.push('(');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::RefinementPredicate(right));
+                    tasks.push(IdentityTask::Str(" || "));
+                    tasks.push(IdentityTask::RefinementPredicate(left));
+                },
+                RefinementPredicate::Not(inner) => {
+                    out.push('~');
+                    tasks.push(IdentityTask::RefinementPredicate(inner));
+                },
+                RefinementPredicate::Implies(left, right) => {
+                    out.push('(');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::RefinementPredicate(right));
+                    tasks.push(IdentityTask::Str(" => "));
+                    tasks.push(IdentityTask::RefinementPredicate(left));
+                },
+                RefinementPredicate::TermEq(left, right)
+                | RefinementPredicate::TermNeq(left, right) => {
+                    let operator = if matches!(pred, RefinementPredicate::TermEq(_, _)) {
+                        " == "
+                    } else {
+                        " != "
+                    };
+                    match left {
+                        PredArg::Var(var) | PredArg::Constant(var) => push_ident(out, var),
+                    }
+                    out.push_str(operator);
+                    match right {
+                        PredArg::Var(var) | PredArg::Constant(var) => push_ident(out, var),
+                    }
+                },
+            },
+            IdentityTask::TermParams(params) => {
+                out.push('[');
+                tasks.push(IdentityTask::Char(']'));
+                for param in params.iter().rev() {
+                    tasks.push(IdentityTask::Char(';'));
+                    tasks.push(IdentityTask::TermParam(param));
+                }
+            },
+            IdentityTask::TermParam(param) => match param {
+                TermParam::Simple { name, ty } => {
+                    out.push_str("simple(");
+                    push_ident(out, name);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TypeExpr(ty));
+                },
+                TermParam::Abstraction { binder, body, ty } => {
+                    out.push_str("abs(");
+                    push_ident(out, binder);
+                    out.push(',');
+                    push_ident(out, body);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TypeExpr(ty));
+                },
+                TermParam::MultiAbstraction { binder, body, ty } => {
+                    out.push_str("multiabs(");
+                    push_ident(out, binder);
+                    out.push(',');
+                    push_ident(out, body);
+                    out.push(',');
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TypeExpr(ty));
+                },
+                TermParam::GuardBody { name } => {
+                    out.push_str("guard(");
+                    push_ident(out, name);
+                    out.push(')');
+                },
+                TermParam::Optional { params } => {
+                    out.push_str("optional(");
+                    tasks.push(IdentityTask::Char(')'));
+                    tasks.push(IdentityTask::TermParams(params));
+                },
+            },
+            IdentityTask::Ident(ident) => push_ident(out, ident),
+            IdentityTask::Ids(ids) => push_ids(out, ids),
+        }
+    }
 }
 
 fn write_language(language: &LanguageDef, out: &mut String) {
@@ -313,50 +881,8 @@ fn write_sync_constraint(constraint: &SyncConstraint, out: &mut String) {
 }
 
 fn write_tree_constraint_expr(expr: &TreeConstraintExpr, out: &mut String) {
-    match expr {
-        TreeConstraintExpr::ForallChildren { symbol, body } => {
-            out.push_str("forall-children(");
-            out.push_str(symbol);
-            out.push(',');
-            write_tree_constraint_expr(body, out);
-            out.push(')');
-        },
-        TreeConstraintExpr::ExistsChild => out.push_str("exists-child"),
-        TreeConstraintExpr::Not(inner) => {
-            out.push_str("not(");
-            write_tree_constraint_expr(inner, out);
-            out.push(')');
-        },
-        TreeConstraintExpr::Match(symbols) => {
-            out.push_str("match(");
-            for symbol in symbols {
-                out.push_str(symbol);
-                out.push('|');
-            }
-            out.push(')');
-        },
-        TreeConstraintExpr::Atom(symbol) => {
-            out.push_str("atom(");
-            out.push_str(symbol);
-            out.push(')');
-        },
-        TreeConstraintExpr::And(left, right) => {
-            out.push_str("and(");
-            write_tree_constraint_expr(left, out);
-            out.push(',');
-            write_tree_constraint_expr(right, out);
-            out.push(')');
-        },
-        TreeConstraintExpr::Or(left, right) => {
-            out.push_str("or(");
-            write_tree_constraint_expr(left, out);
-            out.push(',');
-            write_tree_constraint_expr(right, out);
-            out.push(')');
-        },
-    }
+    run_identity_tasks(out, vec![IdentityTask::TreeConstraint(expr)]);
 }
-
 fn write_collection_type(coll_type: &CollectionType, out: &mut String) {
     out.push_str(match coll_type {
         CollectionType::HashBag => "HashBag",
@@ -411,50 +937,8 @@ fn write_delimiters(delims: &crate::language::CollectionDelimiters, out: &mut St
 }
 
 fn write_type_expr(ty: &TypeExpr, out: &mut String) {
-    match ty {
-        TypeExpr::Base(id) => {
-            out.push_str("base(");
-            push_ident(out, id);
-            out.push(')');
-        },
-        TypeExpr::Arrow { domain, codomain } => {
-            out.push_str("arrow(");
-            write_type_expr(domain, out);
-            out.push(',');
-            write_type_expr(codomain, out);
-            out.push(')');
-        },
-        TypeExpr::MultiBinder(inner) => {
-            out.push_str("multi(");
-            write_type_expr(inner, out);
-            out.push(')');
-        },
-        TypeExpr::Collection { coll_type, element } => {
-            out.push_str("collection(");
-            write_collection_type(coll_type, out);
-            out.push(',');
-            write_type_expr(element, out);
-            out.push(')');
-        },
-        TypeExpr::Refined { var, base, predicate_repr } => {
-            out.push_str("refined(");
-            push_ident(out, var);
-            out.push(',');
-            write_type_expr(base, out);
-            out.push(',');
-            out.push_str(predicate_repr);
-            out.push(')');
-        },
-        TypeExpr::Map { key, value } => {
-            out.push_str("maptype(");
-            write_type_expr(key, out);
-            out.push(',');
-            write_type_expr(value, out);
-            out.push(')');
-        },
-    }
+    run_identity_tasks(out, vec![IdentityTask::TypeExpr(ty)]);
 }
-
 fn write_grammar_rule(rule: &GrammarRule, out: &mut String) {
     push_ident(out, &rule.label);
     out.push(':');
@@ -508,6 +992,9 @@ fn write_grammar_rule(rule: &GrammarRule, out: &mut String) {
     });
 }
 
+fn write_syntax_exprs(exprs: &[SyntaxExpr], out: &mut String) {
+    run_identity_tasks(out, vec![IdentityTask::SyntaxExprs(exprs)]);
+}
 fn write_grammar_item(item: &GrammarItem, out: &mut String) {
     match item {
         GrammarItem::Terminal(value) => {
@@ -551,138 +1038,7 @@ fn write_grammar_item(item: &GrammarItem, out: &mut String) {
 }
 
 fn write_term_params(params: &[TermParam], out: &mut String) {
-    out.push('[');
-    for param in params {
-        match param {
-            TermParam::Simple { name, ty } => {
-                out.push_str("simple(");
-                push_ident(out, name);
-                out.push(',');
-                write_type_expr(ty, out);
-                out.push(')');
-            },
-            TermParam::Abstraction { binder, body, ty } => {
-                out.push_str("abs(");
-                push_ident(out, binder);
-                out.push(',');
-                push_ident(out, body);
-                out.push(',');
-                write_type_expr(ty, out);
-                out.push(')');
-            },
-            TermParam::MultiAbstraction { binder, body, ty } => {
-                out.push_str("multiabs(");
-                push_ident(out, binder);
-                out.push(',');
-                push_ident(out, body);
-                out.push(',');
-                write_type_expr(ty, out);
-                out.push(')');
-            },
-            TermParam::GuardBody { name } => {
-                out.push_str("guard(");
-                push_ident(out, name);
-                out.push(')');
-            },
-            TermParam::Optional { params } => {
-                out.push_str("optional(");
-                write_term_params(params, out);
-                out.push(')');
-            },
-        }
-        out.push(';');
-    }
-    out.push(']');
-}
-
-fn write_syntax_exprs(exprs: &[SyntaxExpr], out: &mut String) {
-    out.push('[');
-    for expr in exprs {
-        write_syntax_expr(expr, out);
-        out.push(';');
-    }
-    out.push(']');
-}
-
-fn write_syntax_expr(expr: &SyntaxExpr, out: &mut String) {
-    match expr {
-        SyntaxExpr::Literal(value) => {
-            out.push_str("lit(");
-            out.push_str(value);
-            out.push(')');
-        },
-        SyntaxExpr::Param(id) => {
-            out.push_str("param(");
-            push_ident(out, id);
-            out.push(')');
-        },
-        SyntaxExpr::Op(op) => write_pattern_op(op, out),
-        SyntaxExpr::TokenKind { name, bind } => {
-            // L9-3: fold the kind name + optional @-bind into the langdef
-            // fingerprint so a rule that consumes a token KIND is distinct from
-            // one that references a like-named nonterminal/param.
-            out.push_str("tokenkind(");
-            push_ident(out, name);
-            if let Some(b) = bind {
-                out.push('@');
-                push_ident(out, b);
-            }
-            out.push(')');
-        },
-        SyntaxExpr::GuestBody { open, close, bind } => {
-            // L9-4: fold the guest-body capture (opener/closer kinds + bind) into
-            // the langdef fingerprint.
-            out.push_str("guestbody(");
-            push_ident(out, bind);
-            out.push(',');
-            push_ident(out, open);
-            out.push(',');
-            push_ident(out, close);
-            out.push(')');
-        },
-    }
-}
-
-fn write_pattern_op(op: &PatternOp, out: &mut String) {
-    match op {
-        PatternOp::Sep { collection, separator, source } => {
-            out.push_str("sep(");
-            push_ident(out, collection);
-            out.push(',');
-            out.push_str(separator);
-            out.push(',');
-            if let Some(source) = source {
-                write_pattern_op(source, out);
-            }
-            out.push(')');
-        },
-        PatternOp::Zip { left, right } => {
-            out.push_str("zip(");
-            push_ident(out, left);
-            out.push(',');
-            push_ident(out, right);
-            out.push(')');
-        },
-        PatternOp::Map { source, params, body } => {
-            out.push_str("map(");
-            write_pattern_op(source, out);
-            out.push(',');
-            push_ids(out, params);
-            out.push(',');
-            write_syntax_exprs(body, out);
-            out.push(')');
-        },
-        PatternOp::Opt { inner } => {
-            out.push_str("opt(");
-            write_syntax_exprs(inner, out);
-            out.push(')');
-        },
-        PatternOp::Var(id) => {
-            out.push_str("var(");
-            push_ident(out, id);
-            out.push(')');
-        },
-    }
+    run_identity_tasks(out, vec![IdentityTask::TermParams(params)]);
 }
 
 fn write_eval_mode(mode: EvalMode, out: &mut String) {
@@ -713,66 +1069,8 @@ fn write_premises(premises: &[Premise], out: &mut String) {
 }
 
 fn write_premise(premise: &Premise, out: &mut String) {
-    match premise {
-        Premise::Freshness(freshness) => {
-            out.push_str("fresh(");
-            push_ident(out, &freshness.var);
-            out.push(',');
-            write_freshness_target(&freshness.term, out);
-            out.push(')');
-        },
-        Premise::Congruence { source, target } => {
-            out.push_str("cong(");
-            push_ident(out, source);
-            out.push(',');
-            push_ident(out, target);
-            out.push(')');
-        },
-        // ★ (#195) A WITHHELD congruence renders under its OWN constructor name, so a
-        // denial can never fingerprint-alias the assertion it denies. A language that
-        // declares no withholding emits nothing here, which is why every pre-#195
-        // language's `language_definition_fingerprint` is byte-identical across #195
-        // (pinned by `ast/tests/congruence_withholding.rs`).
-        Premise::CongruenceWithheld { source, target } => {
-            out.push_str("ncong(");
-            push_ident(out, source);
-            out.push(',');
-            push_ident(out, target);
-            out.push(')');
-        },
-        Premise::RelationQuery { relation, args } => {
-            out.push_str("rel(");
-            push_ident(out, relation);
-            out.push(',');
-            push_ids(out, args);
-            out.push(')');
-        },
-        Premise::ForAll { collection, param, body } => {
-            out.push_str("forall(");
-            push_ident(out, collection);
-            out.push(',');
-            push_ident(out, param);
-            out.push(',');
-            write_premise(body, out);
-            out.push(')');
-        },
-        Premise::BehavioralGuard(pred) => write_behavioral_pred(pred, out),
-        Premise::SyntheticInjGuard {
-            inner_var,
-            source_category,
-            excluded_variants,
-        } => {
-            out.push_str("synthetic-inj(");
-            push_ident(out, inner_var);
-            out.push(',');
-            push_ident(out, source_category);
-            out.push(',');
-            push_ids(out, excluded_variants);
-            out.push(')');
-        },
-    }
+    run_identity_tasks(out, vec![IdentityTask::Premise(premise)]);
 }
-
 fn write_freshness_target(target: &FreshnessTarget, out: &mut String) {
     match target {
         FreshnessTarget::Var(id) => push_ident(out, id),
@@ -784,108 +1082,8 @@ fn write_freshness_target(target: &FreshnessTarget, out: &mut String) {
 }
 
 fn write_pattern(pattern: &Pattern, out: &mut String) {
-    match pattern {
-        Pattern::Term(term) => write_pattern_term(term, out),
-        Pattern::Collection { coll_type, elements, rest } => {
-            out.push_str("collection(");
-            if let Some(coll_type) = coll_type {
-                write_collection_type(coll_type, out);
-            }
-            out.push(':');
-            for element in elements {
-                write_pattern(element, out);
-                out.push(',');
-            }
-            out.push(':');
-            if let Some(rest) = rest {
-                push_ident(out, rest);
-            }
-            out.push(')');
-        },
-        Pattern::Map { collection, params, body } => {
-            out.push_str("pmap(");
-            write_pattern(collection, out);
-            out.push(',');
-            push_ids(out, params);
-            out.push(',');
-            write_pattern(body, out);
-            out.push(')');
-        },
-        Pattern::Zip { first, second } => {
-            out.push_str("pzip(");
-            write_pattern(first, out);
-            out.push(',');
-            write_pattern(second, out);
-            out.push(')');
-        },
-        // Distinct prefix so no other pattern shape can collide with this one's canonical
-        // form; both binders are part of the identity because `args[i:=S]` and
-        // `args[j:=S]` differ as patterns (the index is usable on the RHS).
-        Pattern::IndexedVec { collection, index, element } => {
-            out.push_str("pidx(");
-            out.push_str(&collection.to_string());
-            out.push(',');
-            out.push_str(&index.to_string());
-            out.push(',');
-            write_pattern(element, out);
-            out.push(')');
-        },
-    }
+    run_identity_tasks(out, vec![IdentityTask::Pattern(pattern)]);
 }
-
-fn write_pattern_term(term: &PatternTerm, out: &mut String) {
-    match term {
-        PatternTerm::Var(id) => {
-            out.push_str("pvar(");
-            push_ident(out, id);
-            out.push(')');
-        },
-        PatternTerm::Apply { constructor, args } => {
-            out.push_str("apply(");
-            push_ident(out, constructor);
-            out.push(':');
-            for arg in args {
-                write_pattern(arg, out);
-                out.push(',');
-            }
-            out.push(')');
-        },
-        PatternTerm::Lambda { binder, body } => {
-            out.push_str("lambda(");
-            push_ident(out, binder);
-            out.push(',');
-            write_pattern(body, out);
-            out.push(')');
-        },
-        PatternTerm::MultiLambda { binders, body } => {
-            out.push_str("multilambda(");
-            push_ids(out, binders);
-            out.push(',');
-            write_pattern(body, out);
-            out.push(')');
-        },
-        PatternTerm::Subst { term, var, replacement } => {
-            out.push_str("subst(");
-            write_pattern(term, out);
-            out.push(',');
-            push_ident(out, var);
-            out.push(',');
-            write_pattern(replacement, out);
-            out.push(')');
-        },
-        PatternTerm::MultiSubst { scope, replacements } => {
-            out.push_str("multisubst(");
-            write_pattern(scope, out);
-            out.push(':');
-            for replacement in replacements {
-                write_pattern(replacement, out);
-                out.push(',');
-            }
-            out.push(')');
-        },
-    }
-}
-
 fn write_equation(equation: &Equation, out: &mut String) {
     push_ident(out, &equation.name);
     out.push(':');
@@ -917,68 +1115,8 @@ fn write_rewrite(rewrite: &RewriteRule, out: &mut String) {
 }
 
 fn write_behavioral_pred(pred: &BehavioralPred, out: &mut String) {
-    match pred {
-        BehavioralPred::RelationQuery { relation_name, args, negated } => {
-            out.push_str("brel(");
-            push_ident(out, relation_name);
-            out.push(',');
-            out.push_str(if *negated { "not" } else { "pos" });
-            out.push(',');
-            for arg in args {
-                write_pred_arg(arg, out);
-                out.push(',');
-            }
-            out.push(')');
-        },
-        BehavioralPred::Quantified { quantifier, var, domain, bound, body } => {
-            out.push_str("bquant(");
-            write_quantifier(quantifier, out);
-            out.push(',');
-            push_ident(out, var);
-            out.push(',');
-            if let Some(domain) = domain {
-                push_ident(out, domain);
-            }
-            out.push(',');
-            if let Some(bound) = bound {
-                out.push_str(&bound.to_string());
-            }
-            out.push(',');
-            write_behavioral_pred(body, out);
-            out.push(')');
-        },
-        BehavioralPred::And(a, b) => write_binary_pred("and", a, b, out),
-        BehavioralPred::Or(a, b) => write_binary_pred("or", a, b, out),
-        BehavioralPred::Not(inner) => {
-            out.push_str("bnot(");
-            write_behavioral_pred(inner, out);
-            out.push(')');
-        },
-        BehavioralPred::Implies(a, b) => write_binary_pred("implies", a, b, out),
-        BehavioralPred::AcMatch { bag, elements, rest } => {
-            out.push_str("ac(");
-            push_ident(out, bag);
-            out.push(',');
-            push_ids(out, elements);
-            out.push(',');
-            if let Some(rest) = rest {
-                push_ident(out, rest);
-            }
-            out.push(')');
-        },
-        BehavioralPred::Top => out.push_str("top"),
-    }
+    run_identity_tasks(out, vec![IdentityTask::BehavioralPred(pred)]);
 }
-
-fn write_binary_pred(name: &str, left: &BehavioralPred, right: &BehavioralPred, out: &mut String) {
-    out.push_str(name);
-    out.push('(');
-    write_behavioral_pred(left, out);
-    out.push(',');
-    write_behavioral_pred(right, out);
-    out.push(')');
-}
-
 fn write_quantifier(quantifier: &Quantifier, out: &mut String) {
     out.push_str(match quantifier {
         Quantifier::ForAll => "forall",
@@ -1000,7 +1138,7 @@ fn write_pred_arg(arg: &PredArg, out: &mut String) {
 }
 
 fn write_refinement_predicate(pred: &RefinementPredicate, out: &mut String) {
-    out.push_str(&pred.to_string());
+    run_identity_tasks(out, vec![IdentityTask::RefinementPredicate(pred)]);
 }
 
 fn write_guard_config(guards: &GuardConfig, out: &mut String) {
@@ -1237,3 +1375,7 @@ mod tests {
         assert_ne!(language_definition_fingerprint(&left), language_definition_fingerprint(&right));
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/identity_recursive_oracle.rs"]
+mod recursive_oracle;
