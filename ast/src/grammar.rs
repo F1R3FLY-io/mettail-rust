@@ -183,16 +183,46 @@ pub enum TermParam {
     Optional { params: Vec<TermParam> },
 }
 
+fn take_term_param_children(param: &mut TermParam, work: &mut Vec<TermParam>) {
+    if let TermParam::Optional { params } = param {
+        work.append(params);
+    }
+}
+
+fn drain_owned_term_param(param: TermParam, work: &mut Vec<TermParam>) {
+    // Descendants are consumed by this one outer worklist. Suppressing their
+    // `Drop` prevents one fresh (usually empty) worklist allocation per node.
+    let mut param = std::mem::ManuallyDrop::new(param);
+    match &mut *param {
+        TermParam::Simple { name, ty } => {
+            // SAFETY: each field is moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(name) });
+            drop(unsafe { std::ptr::read(ty) });
+        },
+        TermParam::Abstraction { binder, body, ty }
+        | TermParam::MultiAbstraction { binder, body, ty } => {
+            // SAFETY: each field is moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(binder) });
+            drop(unsafe { std::ptr::read(body) });
+            drop(unsafe { std::ptr::read(ty) });
+        },
+        TermParam::GuardBody { name } => {
+            // SAFETY: the field is moved exactly once from this ManuallyDrop node.
+            drop(unsafe { std::ptr::read(name) });
+        },
+        TermParam::Optional { params } => {
+            // SAFETY: the Vec is moved exactly once; descendants join the shared worklist.
+            work.extend(unsafe { std::ptr::read(params) });
+        },
+    }
+}
+
 impl Drop for TermParam {
     fn drop(&mut self) {
         let mut work = Vec::new();
-        if let TermParam::Optional { params } = self {
-            work.append(params);
-        }
-        while let Some(mut param) = work.pop() {
-            if let TermParam::Optional { params } = &mut param {
-                work.append(params);
-            }
+        take_term_param_children(self, &mut work);
+        while let Some(param) = work.pop() {
+            drain_owned_term_param(param, &mut work);
         }
     }
 }
