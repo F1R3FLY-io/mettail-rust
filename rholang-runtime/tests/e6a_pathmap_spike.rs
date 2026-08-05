@@ -194,7 +194,7 @@ async fn u1_set_pattern_does_not_cross_match_map_index() {
     assert_eq!(
         single_epathmap(&built.index).mode(),
         EPathMapMode::Map,
-        "the subject index stores path/value pairs"
+        "the subject index stores native PathMap keys with associated Par values"
     );
 
     // Cross-mode attempt: set pattern = {| free-var |} (connective marked).

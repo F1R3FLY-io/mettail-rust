@@ -187,24 +187,32 @@ impl Query {
 
 impl BodyAtom {
     pub fn variables(&self) -> Vec<&Variable> {
-        match self {
-            BodyAtom::Relation { terms, .. } => terms
-                .iter()
-                .filter_map(|t| match t {
-                    Term::Variable(v) => Some(v),
-                    _ => None,
-                })
-                .collect(),
-            BodyAtom::Negation(inner) => inner.variables(),
-            BodyAtom::If(expr) => expr.variables(),
+        let mut atom = self;
+        loop {
+            match atom {
+                BodyAtom::Relation { terms, .. } => {
+                    return terms
+                        .iter()
+                        .filter_map(|term| match term {
+                            Term::Variable(variable) => Some(variable),
+                            _ => None,
+                        })
+                        .collect();
+                },
+                BodyAtom::Negation(inner) => atom = inner,
+                BodyAtom::If(expr) => return expr.variables(),
+            }
         }
     }
 
     pub fn relation_name(&self) -> Option<&str> {
-        match self {
-            BodyAtom::Relation { name, .. } => Some(name.as_str()),
-            BodyAtom::Negation(inner) => inner.relation_name(),
-            BodyAtom::If(_) => None,
+        let mut atom = self;
+        loop {
+            match atom {
+                BodyAtom::Relation { name, .. } => return Some(name.as_str()),
+                BodyAtom::Negation(inner) => atom = inner,
+                BodyAtom::If(_) => return None,
+            }
         }
     }
 }
