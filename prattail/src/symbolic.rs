@@ -975,18 +975,22 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
                 queue.push_back(init);
             }
         }
+        let mut adjacency = vec![Vec::new(); self.states.len()];
+        for transition in &self.transitions {
+            adjacency[transition.from].push(transition);
+        }
         while let Some(state) = queue.pop_front() {
-            for trans in &self.transitions {
-                if trans.from != state || visited[trans.to] {
+            for transition in &adjacency[state] {
+                if visited[transition.to] {
                     continue;
                 }
-                if let Some(elem) = self.algebra.witness(&trans.guard) {
-                    visited[trans.to] = true;
-                    pred[trans.to] = Some((state, elem));
-                    if self.accepting_states.contains(&trans.to) {
+                if let Some(elem) = self.algebra.witness(&transition.guard) {
+                    visited[transition.to] = true;
+                    pred[transition.to] = Some((state, elem));
+                    if self.accepting_states.contains(&transition.to) {
                         // Reconstruct the path back to an initial state.
                         let mut word = Vec::new();
-                        let mut cur = trans.to;
+                        let mut cur = transition.to;
                         while let Some((prev, elem)) = pred[cur].take() {
                             word.push(elem);
                             cur = prev;
@@ -994,7 +998,7 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
                         word.reverse();
                         return Some(word);
                     }
-                    queue.push_back(trans.to);
+                    queue.push_back(transition.to);
                 }
             }
         }
@@ -1012,20 +1016,25 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
     ///
     /// # Complexity
     ///
-    /// O(|w| * |Q| * |delta|), where |w| is word length.
+    /// O(|delta| + |w| * |delta|) in the worst case, with each step visiting
+    /// only transitions outgoing from the current states.
     pub fn accepts(&self, word: &[A::Domain]) -> bool {
         if self.initial_states.is_empty() {
             return false;
         }
 
+        let mut adjacency = vec![Vec::new(); self.states.len()];
+        for transition in &self.transitions {
+            adjacency[transition.from].push(transition);
+        }
         let mut current: HashSet<usize> = self.initial_states.clone();
 
         for elem in word {
             let mut next = HashSet::new();
             for &state in &current {
-                for trans in &self.transitions {
-                    if trans.from == state && self.algebra.evaluate(&trans.guard, elem) {
-                        next.insert(trans.to);
+                for transition in &adjacency[state] {
+                    if self.algebra.evaluate(&transition.guard, elem) {
+                        next.insert(transition.to);
                     }
                 }
             }

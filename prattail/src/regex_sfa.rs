@@ -18,9 +18,7 @@
 //! the collection layer uses for `List`. Bags/maps (order-insensitive) use a
 //! separate multiset model.
 
-use std::collections::HashSet;
 use std::fmt::Debug;
-use std::hash::Hash;
 
 use crate::symbolic::{BooleanAlgebra, SymbolicAutomaton};
 
@@ -30,7 +28,6 @@ use crate::symbolic::{BooleanAlgebra, SymbolicAutomaton};
 
 /// A symbolic regular expression whose character class is an element predicate
 /// `P` (`= A::Predicate`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RegexPred<P> {
     /// `∅` — matches no sequence.
     Empty,
@@ -51,6 +48,9 @@ pub enum RegexPred<P> {
     /// Complement (relative to `Σ*`).
     Compl(Box<RegexPred<P>>),
 }
+
+#[path = "regex_sfa/lifecycle.rs"]
+mod lifecycle;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Epsilon-NFA over element predicates (compilation target)
@@ -96,75 +96,185 @@ impl<P: Clone> EpsNfa<P> {
     }
 
     fn concat(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
-        let off = a.n;
-        let mut eps: Vec<(usize, usize)> = a.eps.clone();
-        eps.extend(b.eps.iter().map(|&(x, y)| (x + off, y + off)));
-        let mut chr = a.chr.clone();
-        chr.extend(b.chr.iter().map(|(x, g, y)| (x + off, g.clone(), y + off)));
-        for &ai in &a.accepts {
-            for &bi in &b.initials {
-                eps.push((ai, bi + off));
+        let EpsNfa {
+            n: a_n,
+            eps: a_eps,
+            chr: a_chr,
+            initials: a_initials,
+            accepts: a_accepts,
+        } = a;
+        let EpsNfa {
+            n: b_n,
+            eps: b_eps,
+            chr: b_chr,
+            initials: b_initials,
+            accepts: b_accepts,
+        } = b;
+
+        if a_n >= b_n {
+            let offset = a_n;
+            let mut eps = a_eps;
+            eps.reserve(b_eps.len() + a_accepts.len() * b_initials.len());
+            eps.extend(
+                b_eps
+                    .into_iter()
+                    .map(|(from, to)| (from + offset, to + offset)),
+            );
+            for accept in a_accepts {
+                for initial in &b_initials {
+                    eps.push((accept, initial + offset));
+                }
             }
-        }
-        let accepts = b.accepts.iter().map(|&s| s + off).collect();
-        EpsNfa {
-            n: a.n + b.n,
-            eps,
-            chr,
-            initials: a.initials.clone(),
-            accepts,
+            let mut chr = a_chr;
+            chr.reserve(b_chr.len());
+            chr.extend(
+                b_chr
+                    .into_iter()
+                    .map(|(from, guard, to)| (from + offset, guard, to + offset)),
+            );
+            EpsNfa {
+                n: a_n + b_n,
+                eps,
+                chr,
+                initials: a_initials,
+                accepts: b_accepts.into_iter().map(|state| state + offset).collect(),
+            }
+        } else {
+            // State numbers are observationally irrelevant. Keeping the larger
+            // right graph in place means only the smaller left graph is offset.
+            let offset = b_n;
+            let mut eps = b_eps;
+            eps.reserve(a_eps.len() + a_accepts.len() * b_initials.len());
+            eps.extend(
+                a_eps
+                    .into_iter()
+                    .map(|(from, to)| (from + offset, to + offset)),
+            );
+            for accept in a_accepts {
+                for initial in &b_initials {
+                    eps.push((accept + offset, *initial));
+                }
+            }
+            let mut chr = b_chr;
+            chr.reserve(a_chr.len());
+            chr.extend(
+                a_chr
+                    .into_iter()
+                    .map(|(from, guard, to)| (from + offset, guard, to + offset)),
+            );
+            EpsNfa {
+                n: a_n + b_n,
+                eps,
+                chr,
+                initials: a_initials.into_iter().map(|state| state + offset).collect(),
+                accepts: b_accepts,
+            }
         }
     }
 
     fn alt(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
-        let off = a.n;
-        let mut eps = a.eps.clone();
-        eps.extend(b.eps.iter().map(|&(x, y)| (x + off, y + off)));
-        let mut chr = a.chr.clone();
-        chr.extend(b.chr.iter().map(|(x, g, y)| (x + off, g.clone(), y + off)));
-        let mut initials = a.initials.clone();
-        initials.extend(b.initials.iter().map(|&s| s + off));
-        let mut accepts = a.accepts.clone();
-        accepts.extend(b.accepts.iter().map(|&s| s + off));
-        EpsNfa {
-            n: a.n + b.n,
-            eps,
-            chr,
-            initials,
-            accepts,
+        let EpsNfa {
+            n: a_n,
+            eps: a_eps,
+            chr: a_chr,
+            initials: a_initials,
+            accepts: a_accepts,
+        } = a;
+        let EpsNfa {
+            n: b_n,
+            eps: b_eps,
+            chr: b_chr,
+            initials: b_initials,
+            accepts: b_accepts,
+        } = b;
+
+        if a_n >= b_n {
+            let offset = a_n;
+            let mut eps = a_eps;
+            eps.reserve(b_eps.len());
+            eps.extend(
+                b_eps
+                    .into_iter()
+                    .map(|(from, to)| (from + offset, to + offset)),
+            );
+            let mut chr = a_chr;
+            chr.reserve(b_chr.len());
+            chr.extend(
+                b_chr
+                    .into_iter()
+                    .map(|(from, guard, to)| (from + offset, guard, to + offset)),
+            );
+            let mut initials = a_initials;
+            initials.extend(b_initials.into_iter().map(|state| state + offset));
+            let mut accepts = a_accepts;
+            accepts.extend(b_accepts.into_iter().map(|state| state + offset));
+            EpsNfa {
+                n: a_n + b_n,
+                eps,
+                chr,
+                initials,
+                accepts,
+            }
+        } else {
+            let offset = b_n;
+            let mut eps = b_eps;
+            eps.reserve(a_eps.len());
+            eps.extend(
+                a_eps
+                    .into_iter()
+                    .map(|(from, to)| (from + offset, to + offset)),
+            );
+            let mut chr = b_chr;
+            chr.reserve(a_chr.len());
+            chr.extend(
+                a_chr
+                    .into_iter()
+                    .map(|(from, guard, to)| (from + offset, guard, to + offset)),
+            );
+            let mut initials = b_initials;
+            initials.extend(a_initials.into_iter().map(|state| state + offset));
+            let mut accepts = b_accepts;
+            accepts.extend(a_accepts.into_iter().map(|state| state + offset));
+            EpsNfa {
+                n: a_n + b_n,
+                eps,
+                chr,
+                initials,
+                accepts,
+            }
         }
     }
 
     fn star(a: EpsNfa<P>) -> Self {
-        let q = a.n;
-        let mut eps = a.eps.clone();
-        for &ai in &a.initials {
-            eps.push((q, ai));
+        let EpsNfa { n, mut eps, chr, initials, accepts } = a;
+        eps.reserve(initials.len() + accepts.len());
+        for initial in &initials {
+            eps.push((n, *initial));
         }
-        for &acc in &a.accepts {
-            eps.push((acc, q));
+        for accept in accepts {
+            eps.push((accept, n));
         }
         EpsNfa {
-            n: a.n + 1,
+            n: n + 1,
             eps,
-            chr: a.chr.clone(),
-            initials: vec![q],
-            accepts: vec![q],
+            chr,
+            initials: vec![n],
+            accepts: vec![n],
         }
     }
 
-    fn from_sfa<A>(sfa: &SymbolicAutomaton<A>) -> Self
+    fn from_sfa<A>(sfa: SymbolicAutomaton<A>) -> Self
     where
         A: BooleanAlgebra<Predicate = P>,
     {
         let chr = sfa
             .transitions
-            .iter()
-            .map(|t| (t.from, t.guard.clone(), t.to))
+            .into_iter()
+            .map(|transition| (transition.from, transition.guard, transition.to))
             .collect();
-        let mut initials: Vec<usize> = sfa.initial_states.iter().copied().collect();
+        let mut initials: Vec<usize> = sfa.initial_states.into_iter().collect();
         initials.sort_unstable();
-        let mut accepts: Vec<usize> = sfa.accepting_states.iter().copied().collect();
+        let mut accepts: Vec<usize> = sfa.accepting_states.into_iter().collect();
         accepts.sort_unstable();
         EpsNfa {
             n: sfa.states.len().max(1),
@@ -175,37 +285,59 @@ impl<P: Clone> EpsNfa<P> {
         }
     }
 
-    fn eclosure(&self, seeds: &[usize]) -> HashSet<usize> {
-        let mut seen: HashSet<usize> = seeds.iter().copied().collect();
-        let mut stack: Vec<usize> = seeds.to_vec();
-        while let Some(s) = stack.pop() {
-            for &(a, b) in &self.eps {
-                if a == s && seen.insert(b) {
-                    stack.push(b);
+    fn epsilon_closures(&self) -> Vec<Vec<usize>> {
+        let mut adjacency = vec![Vec::new(); self.n];
+        for &(from, to) in &self.eps {
+            adjacency[from].push(to);
+        }
+
+        let mut closures = Vec::with_capacity(self.n);
+        let mut seen_at = vec![usize::MAX; self.n];
+        let mut stack = Vec::new();
+        for source in 0..self.n {
+            let mut closure = Vec::new();
+            stack.push(source);
+            seen_at[source] = source;
+            while let Some(state) = stack.pop() {
+                closure.push(state);
+                for &next in &adjacency[state] {
+                    if seen_at[next] != source {
+                        seen_at[next] = source;
+                        stack.push(next);
+                    }
                 }
             }
+            closures.push(closure);
         }
-        seen
+        closures
     }
 
-    fn to_sfa<A>(&self, algebra: A) -> SymbolicAutomaton<A>
+    fn into_sfa<A>(self, algebra: A) -> SymbolicAutomaton<A>
     where
         A: BooleanAlgebra<Predicate = P>,
     {
-        let accept_set: HashSet<usize> = self.accepts.iter().copied().collect();
-        let ecl: Vec<HashSet<usize>> = (0..self.n).map(|s| self.eclosure(&[s])).collect();
+        let mut accept_set = vec![false; self.n];
+        for accept in &self.accepts {
+            accept_set[*accept] = true;
+        }
+        let closures = self.epsilon_closures();
+        let mut character_adjacency = vec![Vec::new(); self.n];
+        for (index, (from, _, _)) in self.chr.iter().enumerate() {
+            character_adjacency[*from].push(index);
+        }
         let mut sfa = SymbolicAutomaton::new(algebra);
         for i in 0..self.n {
-            let is_acc = ecl[i].iter().any(|s| accept_set.contains(s));
+            let is_acc = closures[i].iter().any(|state| accept_set[*state]);
             sfa.add_state(is_acc, None);
         }
-        for &init in &self.initials {
+        for init in self.initials {
             sfa.set_initial(init);
         }
-        for (u, g, v) in &self.chr {
-            for (s, closure) in ecl.iter().enumerate() {
-                if closure.contains(u) {
-                    sfa.add_transition(s, *v, g.clone());
+        for (source, closure) in closures.iter().enumerate() {
+            for state in closure {
+                for index in &character_adjacency[*state] {
+                    let (_, guard, to) = &self.chr[*index];
+                    sfa.add_transition(source, *to, guard.clone());
                 }
             }
         }
@@ -218,39 +350,104 @@ fn compile_eps<A>(algebra: &A, p: &RegexPred<A::Predicate>) -> EpsNfa<A::Predica
 where
     A: BooleanAlgebra,
 {
-    match p {
-        RegexPred::Empty => EpsNfa::empty(),
-        RegexPred::Epsilon => EpsNfa::epsilon(),
-        RegexPred::Elem(c) => EpsNfa::elem(c.clone()),
-        RegexPred::Length(lo, hi) => {
-            let sigma = || EpsNfa::elem(algebra.true_pred());
-            let mut acc = EpsNfa::epsilon();
-            for _ in 0..*lo {
-                acc = EpsNfa::concat(acc, sigma());
-            }
-            match hi {
-                None => EpsNfa::concat(acc, EpsNfa::star(sigma())),
-                Some(h) => {
-                    for _ in 0..h.saturating_sub(*lo) {
-                        acc = EpsNfa::concat(acc, EpsNfa::alt(EpsNfa::epsilon(), sigma()));
-                    }
-                    acc
-                },
-            }
-        },
-        RegexPred::Concat(a, b) => EpsNfa::concat(compile_eps(algebra, a), compile_eps(algebra, b)),
-        RegexPred::Alt(a, b) => EpsNfa::alt(compile_eps(algebra, a), compile_eps(algebra, b)),
-        RegexPred::Star(a) => EpsNfa::star(compile_eps(algebra, a)),
-        RegexPred::Inter(a, b) => {
-            let sa = compile_eps(algebra, a).to_sfa(algebra.clone());
-            let sb = compile_eps(algebra, b).to_sfa(algebra.clone());
-            EpsNfa::from_sfa(&sa.intersect(&sb))
-        },
-        RegexPred::Compl(a) => {
-            let sa = compile_eps(algebra, a).to_sfa(algebra.clone());
-            EpsNfa::from_sfa(&sa.complement())
-        },
+    enum Task<'pred, P> {
+        Visit(&'pred RegexPred<P>),
+        Concat,
+        Alt,
+        Star,
+        Inter,
+        Compl,
     }
+
+    let mut tasks = vec![Task::Visit(p)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(RegexPred::Empty) => values.push(EpsNfa::empty()),
+            Task::Visit(RegexPred::Epsilon) => values.push(EpsNfa::epsilon()),
+            Task::Visit(RegexPred::Elem(class)) => values.push(EpsNfa::elem(class.clone())),
+            Task::Visit(RegexPred::Length(lo, hi)) => {
+                let sigma = || EpsNfa::elem(algebra.true_pred());
+                let mut nfa = EpsNfa::epsilon();
+                for _ in 0..*lo {
+                    nfa = EpsNfa::concat(nfa, sigma());
+                }
+                match hi {
+                    None => nfa = EpsNfa::concat(nfa, EpsNfa::star(sigma())),
+                    Some(upper) => {
+                        for _ in 0..upper.saturating_sub(*lo) {
+                            nfa = EpsNfa::concat(nfa, EpsNfa::alt(EpsNfa::epsilon(), sigma()));
+                        }
+                    },
+                }
+                values.push(nfa);
+            },
+            Task::Visit(RegexPred::Concat(left, right)) => {
+                tasks.push(Task::Concat);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(RegexPred::Alt(left, right)) => {
+                tasks.push(Task::Alt);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(RegexPred::Inter(left, right)) => {
+                tasks.push(Task::Inter);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(RegexPred::Star(body)) => {
+                tasks.push(Task::Star);
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(RegexPred::Compl(body)) => {
+                tasks.push(Task::Compl);
+                tasks.push(Task::Visit(body));
+            },
+            Task::Concat => {
+                let right = values
+                    .pop()
+                    .expect("regex compilation lost right concatenand");
+                let left = values
+                    .pop()
+                    .expect("regex compilation lost left concatenand");
+                values.push(EpsNfa::concat(left, right));
+            },
+            Task::Alt => {
+                let right = values
+                    .pop()
+                    .expect("regex compilation lost right alternative");
+                let left = values
+                    .pop()
+                    .expect("regex compilation lost left alternative");
+                values.push(EpsNfa::alt(left, right));
+            },
+            Task::Star => {
+                let body = values.pop().expect("regex compilation lost star body");
+                values.push(EpsNfa::star(body));
+            },
+            Task::Inter => {
+                let right = values
+                    .pop()
+                    .expect("regex compilation lost right intersection");
+                let left = values
+                    .pop()
+                    .expect("regex compilation lost left intersection");
+                let left = left.into_sfa(algebra.clone());
+                let right = right.into_sfa(algebra.clone());
+                values.push(EpsNfa::from_sfa(left.intersect(&right)));
+            },
+            Task::Compl => {
+                let body = values
+                    .pop()
+                    .expect("regex compilation lost complement body");
+                values.push(EpsNfa::from_sfa(body.into_sfa(algebra.clone()).complement()));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("regex compilation produced no NFA")
 }
 
 /// Compile a [`RegexPred`] to an SFA over `A`.
@@ -258,7 +455,7 @@ pub fn compile<A>(algebra: &A, p: &RegexPred<A::Predicate>) -> SymbolicAutomaton
 where
     A: BooleanAlgebra,
 {
-    compile_eps(algebra, p).to_sfa(algebra.clone())
+    compile_eps(algebra, p).into_sfa(algebra.clone())
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
