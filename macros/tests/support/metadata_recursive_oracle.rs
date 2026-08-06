@@ -3,6 +3,86 @@
 
 use super::*;
 
+fn recursive_type_expr_to_string(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Base(ident) => ident.to_string(),
+        TypeExpr::Collection { coll_type, element } => format!(
+            "{}({})",
+            collection_type_name(coll_type),
+            recursive_type_expr_to_string(element)
+        ),
+        TypeExpr::Map { key, value } => format!(
+            "HashMap({}, {})",
+            recursive_type_expr_to_string(key),
+            recursive_type_expr_to_string(value)
+        ),
+        TypeExpr::Arrow { domain, codomain } => format!(
+            "[{} -> {}]",
+            recursive_type_expr_to_string(domain),
+            recursive_type_expr_to_string(codomain)
+        ),
+        TypeExpr::MultiBinder(inner) => format!("{}*", recursive_type_expr_to_string(inner)),
+        TypeExpr::Refined { base, .. } => recursive_type_expr_to_string(base),
+    }
+}
+
+/// Whether `rule` renders as exactly its single argument and nothing else.
+///
+/// This classifier and the comparator below are test oracles, not production
+/// metadata traversal. Keeping them under `tests/support` prevents the source
+/// recursion census from mistaking their bounded recursive equation for a live
+/// runtime path.
+fn is_display_transparent(rule: &GrammarRule) -> bool {
+    match &rule.syntax_pattern {
+        Some(syntax_pattern) => {
+            syntax_pattern.len() == 1 && matches!(syntax_pattern[0], SyntaxExpr::Param(_))
+        },
+        None => rule.items.len() == 1 && matches!(rule.items[0], GrammarItem::NonTerminal { .. }),
+    }
+}
+
+fn erase_transparent<'a>(pattern: &'a Pattern, language: &LanguageDef) -> &'a Pattern {
+    let mut current = pattern;
+    loop {
+        let Pattern::Term(PatternTerm::Apply { constructor, args }) = current else {
+            return current;
+        };
+        if args.len() != 1 {
+            return current;
+        }
+        let Some(rule) = language.get_constructor(constructor) else {
+            return current;
+        };
+        if !is_display_transparent(rule) {
+            return current;
+        }
+        current = &args[0];
+    }
+}
+
+/// Structural equality after erasing display-transparent wrappers.
+pub(super) fn equal_modulo_transparent(a: &Pattern, b: &Pattern, language: &LanguageDef) -> bool {
+    let (a, b) = (erase_transparent(a, language), erase_transparent(b, language));
+    match (a, b) {
+        (Pattern::Term(x), Pattern::Term(y)) => match (x, y) {
+            (PatternTerm::Var(u), PatternTerm::Var(v)) => u == v,
+            (
+                PatternTerm::Apply { constructor: cx, args: ax },
+                PatternTerm::Apply { constructor: cy, args: ay },
+            ) => {
+                cx == cy
+                    && ax.len() == ay.len()
+                    && ax
+                        .iter()
+                        .zip(ay.iter())
+                        .all(|(p, q)| equal_modulo_transparent(p, q, language))
+            },
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 struct RecursiveRuleBp {
     own_left_bp: u8,
     child_min_bps: Vec<u8>,
@@ -348,6 +428,53 @@ fn variable(name: &str) -> Pattern {
 }
 
 #[test]
+fn metadata_type_expr_pda_matches_recursive_equations_on_all_variants() {
+    for coll_type in [
+        CollectionType::HashBag,
+        CollectionType::HashSet,
+        CollectionType::Vec,
+        CollectionType::HashMap,
+        CollectionType::PathMap,
+    ] {
+        let ty = TypeExpr::Collection {
+            coll_type,
+            element: Box::new(TypeExpr::Base(ident("Proc"))),
+        };
+        assert_eq!(type_expr_to_string(&ty), recursive_type_expr_to_string(&ty));
+    }
+
+    let mut ty = TypeExpr::Base(ident("T"));
+    for depth in 0..64 {
+        ty = match depth % 5 {
+            0 => TypeExpr::Arrow {
+                domain: Box::new(TypeExpr::Base(ident("D"))),
+                codomain: Box::new(ty),
+            },
+            1 => TypeExpr::MultiBinder(Box::new(ty)),
+            2 => TypeExpr::Map {
+                key: Box::new(TypeExpr::Base(ident("K"))),
+                value: Box::new(ty),
+            },
+            3 => TypeExpr::Collection {
+                coll_type: CollectionType::PathMap,
+                element: Box::new(ty),
+            },
+            _ => TypeExpr::Refined {
+                var: ident("x"),
+                base: Box::new(ty),
+                predicate_repr: "test-only predicate".to_owned(),
+            },
+        };
+        assert_eq!(
+            type_expr_to_string(&ty),
+            recursive_type_expr_to_string(&ty),
+            "TypeExpr rendering diverged at bounded depth {}",
+            depth + 1,
+        );
+    }
+}
+
+#[test]
 fn metadata_render_pdas_match_recursive_equations_across_the_bundled_corpus() {
     let mut syntax_patterns = 0usize;
     let mut pattern_sides = 0usize;
@@ -508,6 +635,34 @@ fn metadata_render_pdas_traverse_twenty_thousand_levels_on_a_small_stack() {
             assert_eq!(rendered.len(), DEPTH * 2 + 1);
             drop(rendered);
             drop(syntax);
+
+            let mut ty = TypeExpr::Base(ident("T"));
+            for depth in 0..DEPTH {
+                ty = match depth % 5 {
+                    0 => TypeExpr::Arrow {
+                        domain: Box::new(TypeExpr::Base(ident("D"))),
+                        codomain: Box::new(ty),
+                    },
+                    1 => TypeExpr::MultiBinder(Box::new(ty)),
+                    2 => TypeExpr::Map {
+                        key: Box::new(TypeExpr::Base(ident("K"))),
+                        value: Box::new(ty),
+                    },
+                    3 => TypeExpr::Collection {
+                        coll_type: CollectionType::PathMap,
+                        element: Box::new(ty),
+                    },
+                    _ => TypeExpr::Refined {
+                        var: ident("x"),
+                        base: Box::new(ty),
+                        predicate_repr: "deep test predicate".to_owned(),
+                    },
+                };
+            }
+            let rendered = type_expr_to_string(&ty);
+            assert!(rendered.len() > DEPTH);
+            drop(rendered);
+            drop(ty);
         })
         .expect("spawn metadata renderer small-stack worker")
         .join()

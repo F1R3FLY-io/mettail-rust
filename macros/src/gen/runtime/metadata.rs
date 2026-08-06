@@ -645,25 +645,52 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
     quote! { &[#(#defs),*] }
 }
 
-/// Convert TypeExpr to string
+enum TypeExprStringJob<'ty> {
+    Visit(&'ty TypeExpr),
+    Text(&'static str),
+}
+
+/// Convert a [`TypeExpr`] to its metadata spelling without placing type nesting
+/// on the native call stack or constructing an intermediate string per node.
 fn type_expr_to_string(ty: &TypeExpr) -> String {
-    match ty {
-        TypeExpr::Base(id) => id.to_string(),
-        TypeExpr::Collection { coll_type, element } => {
-            let coll_name = collection_type_name(coll_type);
-            format!("{}({})", coll_name, type_expr_to_string(element))
-        },
-        TypeExpr::Map { key, value } => {
-            format!("HashMap({}, {})", type_expr_to_string(key), type_expr_to_string(value))
-        },
-        TypeExpr::Arrow { domain, codomain } => {
-            format!("[{} -> {}]", type_expr_to_string(domain), type_expr_to_string(codomain))
-        },
-        TypeExpr::MultiBinder(inner) => {
-            format!("{}*", type_expr_to_string(inner))
-        },
-        TypeExpr::Refined { base, .. } => type_expr_to_string(base),
+    let mut result = String::new();
+    let mut jobs = vec![TypeExprStringJob::Visit(ty)];
+    while let Some(job) = jobs.pop() {
+        match job {
+            TypeExprStringJob::Text(text) => result.push_str(text),
+            TypeExprStringJob::Visit(TypeExpr::Base(ident)) => {
+                result.push_str(&ident.to_string());
+            },
+            TypeExprStringJob::Visit(TypeExpr::Collection { coll_type, element }) => {
+                result.push_str(collection_type_name(coll_type));
+                result.push('(');
+                jobs.push(TypeExprStringJob::Text(")"));
+                jobs.push(TypeExprStringJob::Visit(element));
+            },
+            TypeExprStringJob::Visit(TypeExpr::Map { key, value }) => {
+                result.push_str("HashMap(");
+                jobs.push(TypeExprStringJob::Text(")"));
+                jobs.push(TypeExprStringJob::Visit(value));
+                jobs.push(TypeExprStringJob::Text(", "));
+                jobs.push(TypeExprStringJob::Visit(key));
+            },
+            TypeExprStringJob::Visit(TypeExpr::Arrow { domain, codomain }) => {
+                result.push('[');
+                jobs.push(TypeExprStringJob::Text("]"));
+                jobs.push(TypeExprStringJob::Visit(codomain));
+                jobs.push(TypeExprStringJob::Text(" -> "));
+                jobs.push(TypeExprStringJob::Visit(domain));
+            },
+            TypeExprStringJob::Visit(TypeExpr::MultiBinder(inner)) => {
+                jobs.push(TypeExprStringJob::Text("*"));
+                jobs.push(TypeExprStringJob::Visit(inner));
+            },
+            TypeExprStringJob::Visit(TypeExpr::Refined { base, .. }) => {
+                jobs.push(TypeExprStringJob::Visit(base));
+            },
+        }
     }
+    result
 }
 
 /// Generate EquationDef array
@@ -2109,70 +2136,6 @@ mod tests {
     // THE CORPUS GATE — no reflected rule is vacuous without a REASON
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Whether `rule` renders as exactly its single argument and nothing else.
-    ///
-    /// Such a constructor is DISPLAY-TRANSPARENT: `CastInt(x)` and `x` are written
-    /// identically, by design — the injection exists to retype a value, not to
-    /// add notation. The generated `Display` is transparent for the same node.
-    fn is_display_transparent(rule: &GrammarRule) -> bool {
-        match &rule.syntax_pattern {
-            Some(syntax_pattern) => {
-                syntax_pattern.len() == 1 && matches!(syntax_pattern[0], SyntaxExpr::Param(_))
-            },
-            None => {
-                rule.items.len() == 1 && matches!(rule.items[0], GrammarItem::NonTerminal { .. })
-            },
-        }
-    }
-
-    /// Strip every display-transparent wrapper from a pattern.
-    fn erase_transparent<'a>(pattern: &'a Pattern, language: &LanguageDef) -> &'a Pattern {
-        let mut current = pattern;
-        loop {
-            let Pattern::Term(PatternTerm::Apply { constructor, args }) = current else {
-                return current;
-            };
-            if args.len() != 1 {
-                return current;
-            }
-            let Some(rule) = language.get_constructor(constructor) else {
-                return current;
-            };
-            if !is_display_transparent(rule) {
-                return current;
-            }
-            current = &args[0];
-        }
-    }
-
-    /// Structural equality of two patterns AFTER erasing display-transparent
-    /// wrappers.
-    ///
-    /// This is the exemption predicate for the gate below: when it holds, the two
-    /// sides really do have the same SURFACE, and rendering them identically is
-    /// faithful rather than lossy.
-    fn equal_modulo_transparent(a: &Pattern, b: &Pattern, language: &LanguageDef) -> bool {
-        let (a, b) = (erase_transparent(a, language), erase_transparent(b, language));
-        match (a, b) {
-            (Pattern::Term(x), Pattern::Term(y)) => match (x, y) {
-                (PatternTerm::Var(u), PatternTerm::Var(v)) => u == v,
-                (
-                    PatternTerm::Apply { constructor: cx, args: ax },
-                    PatternTerm::Apply { constructor: cy, args: ay },
-                ) => {
-                    cx == cy
-                        && ax.len() == ay.len()
-                        && ax
-                            .iter()
-                            .zip(ay.iter())
-                            .all(|(p, q)| equal_modulo_transparent(p, q, language))
-                },
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
     /// ★ THE ANTI-VACUITY GATE over the whole corpus: no reflected equation or
     /// rewrite renders its two sides identically UNLESS the two sides genuinely
     /// have the same surface.
@@ -2228,7 +2191,7 @@ mod tests {
                 if lhs != rhs {
                     continue;
                 }
-                if equal_modulo_transparent(left, right, def) {
+                if metadata_recursive_oracle::equal_modulo_transparent(left, right, def) {
                     exempt += 1;
                     continue;
                 }
