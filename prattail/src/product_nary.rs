@@ -24,7 +24,6 @@ use crate::symbolic::BooleanAlgebra;
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A predicate over a tuple whose components have inner-predicate type `P`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NaryProductPred<P> {
     /// Satisfied by every tuple.
     True,
@@ -39,6 +38,9 @@ pub enum NaryProductPred<P> {
     /// Negation.
     Not(Box<NaryProductPred<P>>),
 }
+
+#[path = "product_nary/lifecycle.rs"]
+mod lifecycle;
 
 /// The effective Boolean algebra of fixed-arity tuples with independent fields.
 #[derive(Clone, Debug)]
@@ -58,87 +60,134 @@ impl<A: BooleanAlgebra> NaryProductAlgebra<A> {
         self.fields.len()
     }
 
-    /// Negation-normal form: push `Not` down to the field leaves using each
-    /// field algebra's `not`. Out-of-range field indices are treated as the
-    /// unsatisfiable atom (so a positive occurrence is `False`, a negated one is
-    /// `True`).
-    fn nnf(
-        &self,
-        p: &NaryProductPred<A::Predicate>,
-        negate: bool,
-    ) -> NaryProductPred<A::Predicate> {
-        use NaryProductPred::*;
-        match p {
-            True => {
-                if negate {
-                    False
-                } else {
-                    True
-                }
-            },
-            False => {
-                if negate {
-                    True
-                } else {
-                    False
-                }
-            },
-            Field(i, pi) => {
-                if *i >= self.fields.len() {
-                    return if negate { True } else { False };
-                }
-                if negate {
-                    Field(*i, self.fields[*i].not(pi))
-                } else {
-                    Field(*i, pi.clone())
-                }
-            },
-            And(a, b) => {
-                if negate {
-                    Or(Box::new(self.nnf(a, true)), Box::new(self.nnf(b, true)))
-                } else {
-                    And(Box::new(self.nnf(a, false)), Box::new(self.nnf(b, false)))
-                }
-            },
-            Or(a, b) => {
-                if negate {
-                    And(Box::new(self.nnf(a, true)), Box::new(self.nnf(b, true)))
-                } else {
-                    Or(Box::new(self.nnf(a, false)), Box::new(self.nnf(b, false)))
-                }
-            },
-            Not(x) => self.nnf(x, !negate),
-        }
-    }
-
-    /// Disjunctive normal form over a `Not`-free predicate: a list of disjuncts,
-    /// each a list of `(field, predicate)` atoms.
+    /// Disjunctive normal form: a list of disjuncts, each a list of
+    /// `(field, predicate)` atoms. Negation polarity is propagated directly to
+    /// leaves, avoiding an intermediate NNF tree.
     fn to_dnf(&self, p: &NaryProductPred<A::Predicate>) -> Vec<Vec<(usize, A::Predicate)>> {
-        use NaryProductPred::*;
-        match p {
-            True => vec![Vec::new()], // one disjunct, no constraints
-            False => Vec::new(),      // no disjuncts
-            Field(i, pi) => vec![vec![(*i, pi.clone())]],
-            Or(a, b) => {
-                let mut out = self.to_dnf(a);
-                out.extend(self.to_dnf(b));
-                out
+        enum Task<'pred, P> {
+            Visit {
+                pred: &'pred NaryProductPred<P>,
+                negated: bool,
             },
-            And(a, b) => {
-                let da = self.to_dnf(a);
-                let db = self.to_dnf(b);
-                let mut out = Vec::with_capacity(da.len() * db.len());
-                for ca in &da {
-                    for cb in &db {
-                        let mut conj = ca.clone();
-                        conj.extend(cb.iter().cloned());
-                        out.push(conj);
-                    }
-                }
-                out
-            },
-            Not(_) => unreachable!("to_dnf expects NNF (no Not)"),
+            And,
+            Or,
         }
+
+        let mut tasks = vec![Task::Visit { pred: p, negated: false }];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit {
+                    pred: NaryProductPred::True,
+                    negated: false,
+                }
+                | Task::Visit {
+                    pred: NaryProductPred::False,
+                    negated: true,
+                } => {
+                    values.push(vec![Vec::new()]);
+                },
+                Task::Visit {
+                    pred: NaryProductPred::False,
+                    negated: false,
+                }
+                | Task::Visit {
+                    pred: NaryProductPred::True,
+                    negated: true,
+                } => {
+                    values.push(Vec::new());
+                },
+                Task::Visit {
+                    pred: NaryProductPred::Field(index, predicate),
+                    negated,
+                } => {
+                    if *index >= self.fields.len() {
+                        values.push(if negated {
+                            vec![Vec::new()]
+                        } else {
+                            Vec::new()
+                        });
+                    } else {
+                        let predicate = if negated {
+                            self.fields[*index].not(predicate)
+                        } else {
+                            predicate.clone()
+                        };
+                        values.push(vec![vec![(*index, predicate)]]);
+                    }
+                },
+                Task::Visit {
+                    pred: NaryProductPred::Not(body),
+                    negated,
+                } => {
+                    tasks.push(Task::Visit { pred: body, negated: !negated });
+                },
+                Task::Visit {
+                    pred: NaryProductPred::And(left, right),
+                    negated,
+                } => {
+                    tasks.push(if negated { Task::Or } else { Task::And });
+                    tasks.push(Task::Visit { pred: right, negated });
+                    tasks.push(Task::Visit { pred: left, negated });
+                },
+                Task::Visit {
+                    pred: NaryProductPred::Or(left, right),
+                    negated,
+                } => {
+                    tasks.push(if negated { Task::And } else { Task::Or });
+                    tasks.push(Task::Visit { pred: right, negated });
+                    tasks.push(Task::Visit { pred: left, negated });
+                },
+                Task::And => {
+                    let mut right = values
+                        .pop()
+                        .expect("N-ary product DNF lost right conjunction");
+                    let mut left = values
+                        .pop()
+                        .expect("N-ary product DNF lost left conjunction");
+                    if left.is_empty() || right.is_empty() {
+                        values.push(Vec::new());
+                        continue;
+                    }
+                    if left.len() == 1 && right.len() == 1 {
+                        let mut conjunction = left.pop().expect("singleton left conjunction");
+                        let mut right_conjunction =
+                            right.pop().expect("singleton right conjunction");
+                        conjunction.append(&mut right_conjunction);
+                        values.push(vec![conjunction]);
+                        continue;
+                    }
+                    let capacity = left
+                        .len()
+                        .checked_mul(right.len())
+                        .expect("N-ary product DNF exceeds addressable memory");
+                    let mut result = Vec::with_capacity(capacity);
+                    for left_conjunction in &left {
+                        for right_conjunction in &right {
+                            let mut conjunction = Vec::with_capacity(
+                                left_conjunction.len() + right_conjunction.len(),
+                            );
+                            conjunction.extend(left_conjunction.iter().cloned());
+                            conjunction.extend(right_conjunction.iter().cloned());
+                            result.push(conjunction);
+                        }
+                    }
+                    values.push(result);
+                },
+                Task::Or => {
+                    let mut right = values
+                        .pop()
+                        .expect("N-ary product DNF lost right disjunction");
+                    let mut left = values
+                        .pop()
+                        .expect("N-ary product DNF lost left disjunction");
+                    left.append(&mut right);
+                    values.push(left);
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("N-ary product DNF produced no value")
     }
 
     /// Collapse a disjunct's atoms into a per-field conjoined predicate
@@ -195,8 +244,7 @@ impl<A: BooleanAlgebra> BooleanAlgebra for NaryProductAlgebra<A> {
     }
 
     fn is_satisfiable(&self, a: &Self::Predicate) -> bool {
-        let nnf = self.nnf(a, false);
-        for disjunct in self.to_dnf(&nnf) {
+        for disjunct in self.to_dnf(a) {
             if let Some(constraints) = self.field_constraints(&disjunct) {
                 let all_sat = constraints.iter().enumerate().all(|(i, c)| match c {
                     Some(pred) => self.fields[i].is_satisfiable(pred),
@@ -217,8 +265,7 @@ impl<A: BooleanAlgebra> BooleanAlgebra for NaryProductAlgebra<A> {
     }
 
     fn witness(&self, a: &Self::Predicate) -> Option<Self::Domain> {
-        let nnf = self.nnf(a, false);
-        for disjunct in self.to_dnf(&nnf) {
+        for disjunct in self.to_dnf(a) {
             let Some(constraints) = self.field_constraints(&disjunct) else {
                 continue;
             };
@@ -245,17 +292,69 @@ impl<A: BooleanAlgebra> BooleanAlgebra for NaryProductAlgebra<A> {
     }
 
     fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
-        match pred {
-            NaryProductPred::True => true,
-            NaryProductPred::False => false,
-            NaryProductPred::Field(i, pi) => match (self.fields.get(*i), elem.get(*i)) {
-                (Some(field), Some(value)) => field.evaluate(pi, value),
-                _ => false,
-            },
-            NaryProductPred::And(a, b) => self.evaluate(a, elem) && self.evaluate(b, elem),
-            NaryProductPred::Or(a, b) => self.evaluate(a, elem) || self.evaluate(b, elem),
-            NaryProductPred::Not(x) => !self.evaluate(x, elem),
+        enum Task<'pred, P> {
+            Visit(&'pred NaryProductPred<P>),
+            Not,
+            AndRight(&'pred NaryProductPred<P>),
+            OrRight(&'pred NaryProductPred<P>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(NaryProductPred::True) => values.push(true),
+                Task::Visit(NaryProductPred::False) => values.push(false),
+                Task::Visit(NaryProductPred::Field(index, predicate)) => {
+                    values.push(match (self.fields.get(*index), elem.get(*index)) {
+                        (Some(field), Some(value)) => field.evaluate(predicate, value),
+                        _ => false,
+                    })
+                },
+                Task::Visit(NaryProductPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(NaryProductPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(NaryProductPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values
+                        .pop()
+                        .expect("N-ary product evaluation lost negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("N-ary product evaluation lost left value");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("N-ary product evaluation lost left value");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("N-ary product evaluation produced no value")
     }
 }
 
@@ -273,7 +372,6 @@ pub struct SumValue<D> {
 }
 
 /// A predicate over a tagged value.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SumPred<P> {
     /// Satisfied by every value.
     True,
@@ -313,27 +411,63 @@ impl<A: BooleanAlgebra> SumAlgebra<A> {
     /// `variants[tag]`. (Mirrors the per-sort fold of the many-sorted carrier.)
     fn project(&self, p: &SumPred<A::Predicate>, tag: usize) -> A::Predicate {
         let alg = &self.variants[tag];
-        match p {
-            SumPred::True => alg.true_pred(),
-            SumPred::False => alg.false_pred(),
-            SumPred::InVariant(i, pi) => {
-                if *i == tag {
-                    pi.clone()
-                } else {
-                    alg.false_pred()
-                }
-            },
-            SumPred::TagIs(i) => {
-                if *i == tag {
+        enum Task<'pred, P> {
+            Visit(&'pred SumPred<P>),
+            And,
+            Or,
+            Not,
+        }
+
+        let mut tasks = vec![Task::Visit(p)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(SumPred::True) => values.push(alg.true_pred()),
+                Task::Visit(SumPred::False) => values.push(alg.false_pred()),
+                Task::Visit(SumPred::InVariant(index, predicate)) => {
+                    values.push(if *index == tag {
+                        predicate.clone()
+                    } else {
+                        alg.false_pred()
+                    })
+                },
+                Task::Visit(SumPred::TagIs(index)) => values.push(if *index == tag {
                     alg.true_pred()
                 } else {
                     alg.false_pred()
-                }
-            },
-            SumPred::And(a, b) => alg.and(&self.project(a, tag), &self.project(b, tag)),
-            SumPred::Or(a, b) => alg.or(&self.project(a, tag), &self.project(b, tag)),
-            SumPred::Not(x) => alg.not(&self.project(x, tag)),
+                }),
+                Task::Visit(SumPred::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SumPred::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SumPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::And => {
+                    let right = values.pop().expect("sum projection lost right conjunction");
+                    let left = values.pop().expect("sum projection lost left conjunction");
+                    values.push(alg.and(&left, &right));
+                },
+                Task::Or => {
+                    let right = values.pop().expect("sum projection lost right disjunction");
+                    let left = values.pop().expect("sum projection lost left disjunction");
+                    values.push(alg.or(&left, &right));
+                },
+                Task::Not => {
+                    let body = values.pop().expect("sum projection lost negated body");
+                    values.push(alg.not(&body));
+                },
+            }
         }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("sum projection produced no predicate")
     }
 }
 
@@ -387,21 +521,63 @@ impl<A: BooleanAlgebra> BooleanAlgebra for SumAlgebra<A> {
     }
 
     fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
-        match pred {
-            SumPred::True => true,
-            SumPred::False => false,
-            SumPred::InVariant(i, pi) => {
-                *i == elem.tag
-                    && self
-                        .variants
-                        .get(elem.tag)
-                        .is_some_and(|alg| alg.evaluate(pi, &elem.payload))
-            },
-            SumPred::TagIs(i) => *i == elem.tag,
-            SumPred::And(a, b) => self.evaluate(a, elem) && self.evaluate(b, elem),
-            SumPred::Or(a, b) => self.evaluate(a, elem) || self.evaluate(b, elem),
-            SumPred::Not(x) => !self.evaluate(x, elem),
+        enum Task<'pred, P> {
+            Visit(&'pred SumPred<P>),
+            Not,
+            AndRight(&'pred SumPred<P>),
+            OrRight(&'pred SumPred<P>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(SumPred::True) => values.push(true),
+                Task::Visit(SumPred::False) => values.push(false),
+                Task::Visit(SumPred::InVariant(index, predicate)) => values.push(
+                    *index == elem.tag
+                        && self
+                            .variants
+                            .get(elem.tag)
+                            .is_some_and(|alg| alg.evaluate(predicate, &elem.payload)),
+                ),
+                Task::Visit(SumPred::TagIs(index)) => values.push(*index == elem.tag),
+                Task::Visit(SumPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(SumPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SumPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values.pop().expect("sum evaluation lost negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values.pop().expect("sum evaluation lost left conjunction");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values.pop().expect("sum evaluation lost left disjunction");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("sum evaluation produced no value")
     }
 }
 
