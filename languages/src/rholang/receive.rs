@@ -83,7 +83,11 @@ fn bind_to_arity_pattern(bind: &InputBind) -> Option<Proc> {
 }
 
 pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
-    match name_pat {
+    let mut current = name_pat;
+    while let Name::NParen(inner) = current {
+        current = inner;
+    }
+    match current {
         Name::NVar(v) => Proc::PVar(v.clone()),
         Name::NQuote(p) => p.as_ref().clone(),
         Name::NQuoteShort(p) => p.as_ref().clone(),
@@ -95,10 +99,9 @@ pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
         // Falling to `Proc::Err` therefore made a *parenthesized* receive pattern — `for((x) <- c)`
         // — lower to `Err` AS THE PATTERN, so it silently matched nothing.
         //
-        // Parentheses are pure grouping: they carry no semantics of their own, so the pattern a
-        // parenthesized name denotes is exactly the pattern the inner name denotes. Recursing
-        // (rather than unwrapping one layer) also handles `((x))`.
-        Name::NParen(inner) => name_pattern_to_proc(inner),
+        // Parentheses are pure grouping. The loop above unwraps every layer without consuming
+        // native stack, so `((x))` denotes exactly the same pattern as `x`.
+        Name::NParen(_) => unreachable!("parenthesized names are unwrapped by the driver"),
         _ => Proc::Err,
     }
 }
@@ -106,14 +109,22 @@ pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
 /// Lower `@P` / `@Nil` name sugar to the canonical `NQuote` channel shape used
 /// by send/receive matching and `Exec` rewrites.
 pub(crate) fn normalize_quote_name(name: &Name) -> Name {
-    match name {
+    let mut current = name;
+    let mut paren_depth = 0usize;
+    while let Name::NParen(inner) = current {
+        paren_depth += 1;
+        current = inner;
+    }
+    let mut normalized = match current {
         Name::NQuoteNil => Name::NQuote(std::sync::Arc::new(Proc::PZero)),
         Name::NQuoteShort(p) => Name::NQuote(std::sync::Arc::new(p.as_ref().clone())),
-        Name::NParen(inner) => {
-            Name::NParen(std::sync::Arc::new(normalize_quote_name(inner.as_ref())))
-        },
+        Name::NParen(_) => unreachable!("parenthesized names are unwrapped by the driver"),
         other => other.clone(),
+    };
+    for _ in 0..paren_depth {
+        normalized = Name::NParen(std::sync::Arc::new(normalized));
     }
+    normalized
 }
 
 pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
@@ -453,81 +464,104 @@ impl GuardDisposition {
 /// fire host-side while the machine does NOT fire — unsoundness in the FIRING direction.
 pub fn eval_guard_disposition(cond: &Proc) -> GuardDisposition {
     use GuardDisposition::{Blocks, Declines, Fires};
-    match cond {
-        Proc::CastBool(b) => match b.as_ref() {
-            Bool::BoolLit(v) => GuardDisposition::from_decided(*v),
-            _ => Declines,
-        },
-        // `a and b`: left-strict, then short-circuit on a decided-FALSE left.
-        Proc::And(a, b) => match eval_guard_disposition(a) {
-            Declines => Declines,
-            Blocks => Blocks,
-            Fires => eval_guard_disposition(b),
-        },
-        // `a or b`: dual — short-circuit on a decided-TRUE left.
-        Proc::Or(a, b) => match eval_guard_disposition(a) {
-            Declines => Declines,
-            Fires => Fires,
-            Blocks => eval_guard_disposition(b),
-        },
-        // M-0: material implication `a implies b ≡ (not a) or b`, and therefore the `Or`
-        // discipline applied to the NEGATED antecedent: a decided-FALSE antecedent
-        // short-circuits to `Fires` (vacuous truth). The machine twin is
-        // `EOrBody(ENotBody ⟦a⟧, ⟦b⟧)` in `rholang_ast::lower_proc`. On the four
-        // ground-boolean rows the two paths agree by construction (see the truth table in
-        // `rholang-runtime/tests/rho_implies_guard.rs`, which drives both).
-        Proc::Implies(a, b) => match eval_guard_disposition(a) {
-            Declines => Declines,
-            Blocks => Fires,
-            Fires => eval_guard_disposition(b),
-        },
-        // M-1b: the SPATIAL satisfaction operator `t matches φ`.
-        //
-        // Delegated to `formula::host_matches_verdict`, which decides the fragment
-        // for which the generated first-order `Proc::match_pattern` is a faithful
-        // model of the reducer's spatial matcher (the logical constants, the
-        // propositional connectives, and a concrete term pattern) and DECLINES the
-        // SEPARATING conjunction, whose AC-with-remainder semantics belongs to the
-        // reducer alone.
-        //
-        // ★ This is the arm where `Declines` is a genuine, permanent abstention rather
-        // than an evaluator gap: nothing is guessed and nothing is fabricated, and the
-        // guard is decided where it can be decided soundly — on the machine, by
-        // `rho_pure_eval` through the `SpatialMatch` oracle.
-        Proc::Matches(target, formula) => GuardDisposition::from_verdict(
-            crate::rholang::formula::host_matches_verdict(target, formula),
-        ),
-        Proc::Not(a) => eval_guard_disposition(a).negate(),
-        Proc::Eq(a, b) => match crate::rholang::runtime::compare_collection_equality(a, b) {
-            Some(v) => GuardDisposition::from_decided(v),
-            None => {
-                GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o == Ordering::Equal))
-            },
-        },
-        Proc::Ne(a, b) => match crate::rholang::runtime::compare_collection_equality(a, b) {
-            Some(v) => GuardDisposition::from_decided(!v),
-            None => {
-                GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o != Ordering::Equal))
-            },
-        },
-        Proc::Gt(a, b) => {
-            GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o == Ordering::Greater))
-        },
-        Proc::Lt(a, b) => {
-            GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o == Ordering::Less))
-        },
-        Proc::GtEq(a, b) => GuardDisposition::from_verdict(
-            eval_cmp_order(a, b).map(|o| o == Ordering::Greater || o == Ordering::Equal),
-        ),
-        Proc::LtEq(a, b) => GuardDisposition::from_verdict(
-            eval_cmp_order(a, b).map(|o| o == Ordering::Less || o == Ordering::Equal),
-        ),
-        // ★ THE CONCEALER. Every shape the host has no arm for lands here. Under the old
-        // `Option<bool>` encoding this was indistinguishable from a decided `false` at every
-        // caller, which is how divergence H's second half stayed silent for as long as it
-        // did. It is still `Declines` — but now it SAYS so.
-        _ => Declines,
+    #[derive(Clone, Copy)]
+    enum Job<'a> {
+        Visit(&'a Proc),
+        AfterAnd(&'a Proc),
+        AfterOr(&'a Proc),
+        AfterImplies(&'a Proc),
+        Negate,
     }
+
+    let mut jobs = vec![Job::Visit(cond)];
+    let mut values = Vec::new();
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Visit(cond) => match cond {
+                Proc::CastBool(b) => values.push(match b.as_ref() {
+                    Bool::BoolLit(value) => GuardDisposition::from_decided(*value),
+                    _ => Declines,
+                }),
+                // Each continuation observes the left result before it decides whether the
+                // right subtree is visited, preserving the original left-strict short circuit.
+                Proc::And(left, right) => {
+                    jobs.push(Job::AfterAnd(right));
+                    jobs.push(Job::Visit(left));
+                },
+                Proc::Or(left, right) => {
+                    jobs.push(Job::AfterOr(right));
+                    jobs.push(Job::Visit(left));
+                },
+                Proc::Implies(left, right) => {
+                    jobs.push(Job::AfterImplies(right));
+                    jobs.push(Job::Visit(left));
+                },
+                Proc::Not(inner) => {
+                    jobs.push(Job::Negate);
+                    jobs.push(Job::Visit(inner));
+                },
+                Proc::Matches(target, formula) => values.push(GuardDisposition::from_verdict(
+                    crate::rholang::formula::host_matches_verdict(target, formula),
+                )),
+                Proc::Eq(left, right) => values.push(
+                    match crate::rholang::runtime::compare_collection_equality(left, right) {
+                        Some(value) => GuardDisposition::from_decided(value),
+                        None => GuardDisposition::from_verdict(
+                            eval_cmp_order(left, right).map(|order| order == Ordering::Equal),
+                        ),
+                    },
+                ),
+                Proc::Ne(left, right) => values.push(
+                    match crate::rholang::runtime::compare_collection_equality(left, right) {
+                        Some(value) => GuardDisposition::from_decided(!value),
+                        None => GuardDisposition::from_verdict(
+                            eval_cmp_order(left, right).map(|order| order != Ordering::Equal),
+                        ),
+                    },
+                ),
+                Proc::Gt(left, right) => {
+                    values.push(GuardDisposition::from_verdict(
+                        eval_cmp_order(left, right).map(|order| order == Ordering::Greater),
+                    ));
+                },
+                Proc::Lt(left, right) => {
+                    values.push(GuardDisposition::from_verdict(
+                        eval_cmp_order(left, right).map(|order| order == Ordering::Less),
+                    ));
+                },
+                Proc::GtEq(left, right) => values.push(GuardDisposition::from_verdict(
+                    eval_cmp_order(left, right)
+                        .map(|order| order == Ordering::Greater || order == Ordering::Equal),
+                )),
+                Proc::LtEq(left, right) => values.push(GuardDisposition::from_verdict(
+                    eval_cmp_order(left, right)
+                        .map(|order| order == Ordering::Less || order == Ordering::Equal),
+                )),
+                _ => values.push(Declines),
+            },
+            Job::AfterAnd(right) => match values.pop().expect("guard conjunction left result") {
+                Declines => values.push(Declines),
+                Blocks => values.push(Blocks),
+                Fires => jobs.push(Job::Visit(right)),
+            },
+            Job::AfterOr(right) => match values.pop().expect("guard disjunction left result") {
+                Declines => values.push(Declines),
+                Fires => values.push(Fires),
+                Blocks => jobs.push(Job::Visit(right)),
+            },
+            Job::AfterImplies(right) => match values.pop().expect("guard implication antecedent") {
+                Declines => values.push(Declines),
+                Blocks => values.push(Fires),
+                Fires => jobs.push(Job::Visit(right)),
+            },
+            Job::Negate => {
+                let result = values.pop().expect("guard negation result");
+                values.push(result.negate());
+            },
+        }
+    }
+    assert_eq!(values.len(), 1);
+    values.pop().expect("guard disposition")
 }
 
 /// The HOST `where`-guard evaluator in its legacy `Option<bool>` encoding: `Some(b)` iff
@@ -1159,6 +1193,32 @@ pub(crate) fn pfor_continuation_after_first_row(rows: &[ForRow], body: &Proc) ->
     }
 }
 
+fn schedule_parallel_bag<'a>(work: &mut Vec<&'a Proc>, bag: &'a HashBag<Proc>) {
+    let start = work.len();
+    for (element, count) in bag.iter() {
+        for _ in 0..count {
+            work.push(element);
+        }
+    }
+    // The source iterator's order is arbitrary but stable for this bag. Reverse only the newly
+    // appended slice so the last-in/first-out driver consumes it in that same observed order.
+    work[start..].reverse();
+}
+
+fn flatten_parallel_into(bag: &mut HashBag<Proc>, proc: &Proc) {
+    let mut work = vec![proc];
+    while let Some(proc) = work.pop() {
+        match proc {
+            Proc::PPar(elements) => schedule_parallel_bag(&mut work, elements),
+            Proc::PParInfix(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            other => bag.insert(other.clone()),
+        }
+    }
+}
+
 /// One-step `PForUser` communication reduction on a `PPar`, mirroring the former
 /// `CommPattern` / `CommPatternWhere` / `Comm` rewrite rules.
 pub fn try_comm_rw_proc(s: &Proc) -> Option<Proc> {
@@ -1166,25 +1226,9 @@ pub fn try_comm_rw_proc(s: &Proc) -> Option<Proc> {
         return None;
     };
     let mut flat_bag = HashBag::new();
-    fn flatten_into(bag: &mut HashBag<Proc>, p: &Proc) {
-        match p {
-            Proc::PPar(ps) => {
-                for (elem, count) in ps.iter() {
-                    for _ in 0..count {
-                        flatten_into(bag, elem);
-                    }
-                }
-            },
-            Proc::PParInfix(a, b) => {
-                flatten_into(bag, a);
-                flatten_into(bag, b);
-            },
-            other => bag.insert(other.clone()),
-        }
-    }
     for (elem, count) in bag.iter() {
         for _ in 0..count {
-            flatten_into(&mut flat_bag, elem);
+            flatten_parallel_into(&mut flat_bag, elem);
         }
     }
     for (cand, _) in flat_bag.iter() {
@@ -1431,6 +1475,10 @@ fn try_comm_join(
     work.insert(res);
     Some(Proc::PPar(work))
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/rholang_receive_recursive_oracle.rs"]
+mod recursive_oracle;
 
 /// ★ #33 STAGE A — the separating tests for [`GuardDisposition`].
 ///
