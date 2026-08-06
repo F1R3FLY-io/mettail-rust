@@ -63,7 +63,6 @@ pub(crate) fn minterms<A: BooleanAlgebra>(elem: &A, classes: &[A::Predicate]) ->
 
 /// A bag predicate: a boolean combination of cardinality atoms over an element
 /// predicate type `P`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BagPred<P> {
     /// Satisfied by every bag.
     True,
@@ -78,6 +77,9 @@ pub enum BagPred<P> {
     /// Negation.
     Not(Box<BagPred<P>>),
 }
+
+#[path = "collection_algebra/lifecycle.rs"]
+mod lifecycle;
 
 /// The effective Boolean algebra of multisets (bags) over an element algebra.
 #[derive(Clone, Debug)]
@@ -113,18 +115,21 @@ impl<A: BooleanAlgebra> BagAlgebra<A> {
 
     /// Collect every distinct `class` appearing in `Count` atoms.
     fn collect_classes(&self, pred: &BagPred<A::Predicate>, out: &mut Vec<A::Predicate>) {
-        match pred {
-            BagPred::Count { class, .. } => {
-                if !out.iter().any(|c| c == class) {
-                    out.push(class.clone());
-                }
-            },
-            BagPred::And(a, b) | BagPred::Or(a, b) => {
-                self.collect_classes(a, out);
-                self.collect_classes(b, out);
-            },
-            BagPred::Not(x) => self.collect_classes(x, out),
-            BagPred::True | BagPred::False => {},
+        let mut work = vec![pred];
+        while let Some(predicate) = work.pop() {
+            match predicate {
+                BagPred::Count { class, .. } => {
+                    if !out.iter().any(|candidate| candidate == class) {
+                        out.push(class.clone());
+                    }
+                },
+                BagPred::And(left, right) | BagPred::Or(left, right) => {
+                    work.push(right);
+                    work.push(left);
+                },
+                BagPred::Not(body) => work.push(body),
+                BagPred::True | BagPred::False => {},
+            }
         }
     }
 
@@ -156,48 +161,94 @@ impl<A: BooleanAlgebra> BagAlgebra<A> {
         counts: &[u64],
         cover: &HashMap<A::Predicate, Vec<usize>>,
     ) -> bool {
-        match pred {
-            BagPred::True => true,
-            BagPred::False => false,
-            BagPred::Count { class, lo, hi } => {
-                let sum: u64 = cover
-                    .get(class)
-                    .map(|idxs| idxs.iter().map(|&i| counts[i]).sum())
-                    .unwrap_or(0);
-                sum >= *lo && hi.map(|h| sum <= h).unwrap_or(true)
-            },
-            BagPred::And(a, b) => {
-                self.eval_counts(a, counts, cover) && self.eval_counts(b, counts, cover)
-            },
-            BagPred::Or(a, b) => {
-                self.eval_counts(a, counts, cover) || self.eval_counts(b, counts, cover)
-            },
-            BagPred::Not(x) => !self.eval_counts(x, counts, cover),
+        enum Task<'pred, P> {
+            Visit(&'pred BagPred<P>),
+            Not,
+            AndRight(&'pred BagPred<P>),
+            OrRight(&'pred BagPred<P>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(BagPred::True) => values.push(true),
+                Task::Visit(BagPred::False) => values.push(false),
+                Task::Visit(BagPred::Count { class, lo, hi }) => {
+                    let sum: u64 = cover
+                        .get(class)
+                        .map(|indices| indices.iter().map(|&index| counts[index]).sum())
+                        .unwrap_or(0);
+                    values.push(sum >= *lo && hi.map(|upper| sum <= upper).unwrap_or(true));
+                },
+                Task::Visit(BagPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(BagPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(BagPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values
+                        .pop()
+                        .expect("bag count evaluation lost negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("bag count evaluation lost left conjunction");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("bag count evaluation lost left disjunction");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("bag count evaluation produced no value")
     }
 
     /// The smallest count cap `B` such that counts `≥ B` are indistinguishable
     /// from `B` for every atom (`1 + max threshold`).
     fn count_cap(&self, pred: &BagPred<A::Predicate>) -> u64 {
-        fn go<P>(pred: &BagPred<P>, acc: &mut u64) {
-            match pred {
+        let mut maximum = 0;
+        let mut work = vec![pred];
+        while let Some(predicate) = work.pop() {
+            match predicate {
                 BagPred::Count { lo, hi, .. } => {
-                    *acc = (*acc).max(*lo);
-                    if let Some(h) = hi {
-                        *acc = (*acc).max(*h);
+                    maximum = maximum.max(*lo);
+                    if let Some(upper) = hi {
+                        maximum = maximum.max(*upper);
                     }
                 },
-                BagPred::And(a, b) | BagPred::Or(a, b) => {
-                    go(a, acc);
-                    go(b, acc);
+                BagPred::And(left, right) | BagPred::Or(left, right) => {
+                    work.push(right);
+                    work.push(left);
                 },
-                BagPred::Not(x) => go(x, acc),
+                BagPred::Not(body) => work.push(body),
                 BagPred::True | BagPred::False => {},
             }
         }
-        let mut acc = 0;
-        go(pred, &mut acc);
-        acc + 1
+        maximum + 1
     }
 
     /// Search for a feasible count vector; returns it if one exists.
@@ -287,17 +338,62 @@ impl<A: BooleanAlgebra> BooleanAlgebra for BagAlgebra<A> {
     }
 
     fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
-        match pred {
-            BagPred::True => true,
-            BagPred::False => false,
-            BagPred::Count { class, lo, hi } => {
-                let count = elem.iter().filter(|e| self.elem.evaluate(class, e)).count() as u64;
-                count >= *lo && hi.map(|h| count <= h).unwrap_or(true)
-            },
-            BagPred::And(a, b) => self.evaluate(a, elem) && self.evaluate(b, elem),
-            BagPred::Or(a, b) => self.evaluate(a, elem) || self.evaluate(b, elem),
-            BagPred::Not(x) => !self.evaluate(x, elem),
+        enum Task<'pred, P> {
+            Visit(&'pred BagPred<P>),
+            Not,
+            AndRight(&'pred BagPred<P>),
+            OrRight(&'pred BagPred<P>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(BagPred::True) => values.push(true),
+                Task::Visit(BagPred::False) => values.push(false),
+                Task::Visit(BagPred::Count { class, lo, hi }) => {
+                    let count = elem
+                        .iter()
+                        .filter(|element| self.elem.evaluate(class, element))
+                        .count() as u64;
+                    values.push(count >= *lo && hi.map(|upper| count <= upper).unwrap_or(true));
+                },
+                Task::Visit(BagPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(BagPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(BagPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values.pop().expect("bag evaluation lost negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values.pop().expect("bag evaluation lost left conjunction");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values.pop().expect("bag evaluation lost left disjunction");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("bag evaluation produced no value")
     }
 }
 
@@ -460,7 +556,6 @@ impl Singleton for crate::symbolic::KatBooleanAlgebra {
 
 /// A map predicate: a boolean combination of entry-cardinality atoms over a key
 /// predicate type `KP` and value predicate type `VP`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MapPred<KP, VP> {
     /// Satisfied by every map.
     True,
@@ -542,44 +637,47 @@ impl<K: Singleton, V: BooleanAlgebra> MapAlgebra<K, V> {
         keys: &mut Vec<K::Predicate>,
         vals: &mut Vec<V::Predicate>,
     ) {
-        match pred {
-            MapPred::CountEntries { key_class, val_class, .. } => {
-                if !keys.iter().any(|c| c == key_class) {
-                    keys.push(key_class.clone());
-                }
-                if !vals.iter().any(|c| c == val_class) {
-                    vals.push(val_class.clone());
-                }
-            },
-            MapPred::And(a, b) | MapPred::Or(a, b) => {
-                self.collect_classes(a, keys, vals);
-                self.collect_classes(b, keys, vals);
-            },
-            MapPred::Not(x) => self.collect_classes(x, keys, vals),
-            MapPred::True | MapPred::False => {},
+        let mut work = vec![pred];
+        while let Some(predicate) = work.pop() {
+            match predicate {
+                MapPred::CountEntries { key_class, val_class, .. } => {
+                    if !keys.iter().any(|candidate| candidate == key_class) {
+                        keys.push(key_class.clone());
+                    }
+                    if !vals.iter().any(|candidate| candidate == val_class) {
+                        vals.push(val_class.clone());
+                    }
+                },
+                MapPred::And(left, right) | MapPred::Or(left, right) => {
+                    work.push(right);
+                    work.push(left);
+                },
+                MapPred::Not(body) => work.push(body),
+                MapPred::True | MapPred::False => {},
+            }
         }
     }
 
     fn count_cap(&self, pred: &MapPred<K::Predicate, V::Predicate>) -> u64 {
-        fn go<KP, VP>(pred: &MapPred<KP, VP>, acc: &mut u64) {
-            match pred {
+        let mut maximum = 0;
+        let mut work = vec![pred];
+        while let Some(predicate) = work.pop() {
+            match predicate {
                 MapPred::CountEntries { lo, hi, .. } => {
-                    *acc = (*acc).max(*lo);
-                    if let Some(h) = hi {
-                        *acc = (*acc).max(*h);
+                    maximum = maximum.max(*lo);
+                    if let Some(upper) = hi {
+                        maximum = maximum.max(*upper);
                     }
                 },
-                MapPred::And(a, b) | MapPred::Or(a, b) => {
-                    go(a, acc);
-                    go(b, acc);
+                MapPred::And(left, right) | MapPred::Or(left, right) => {
+                    work.push(right);
+                    work.push(left);
                 },
-                MapPred::Not(x) => go(x, acc),
+                MapPred::Not(body) => work.push(body),
                 MapPred::True | MapPred::False => {},
             }
         }
-        let mut acc = 0;
-        go(pred, &mut acc);
-        acc + 1
+        maximum + 1
     }
 
     /// Up to `cap` distinct keys drawn from `key_minterm` (witness-with-exclusion).
@@ -606,33 +704,83 @@ impl<K: Singleton, V: BooleanAlgebra> MapAlgebra<K, V> {
         key_ms: &[K::Predicate],
         val_ms: &[V::Predicate],
     ) -> bool {
-        match pred {
-            MapPred::True => true,
-            MapPred::False => false,
-            MapPred::CountEntries { key_class, val_class, lo, hi } => {
-                let mut sum = 0u64;
-                for (i, km) in key_ms.iter().enumerate() {
-                    if !self.key.is_satisfiable(&self.key.and(km, key_class)) {
-                        continue;
-                    }
-                    for (j, vm) in val_ms.iter().enumerate() {
-                        if self.val.is_satisfiable(&self.val.and(vm, val_class)) {
-                            sum += counts[i][j];
+        enum Task<'pred, KP, VP> {
+            Visit(&'pred MapPred<KP, VP>),
+            Not,
+            AndRight(&'pred MapPred<KP, VP>),
+            OrRight(&'pred MapPred<KP, VP>),
+        }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(MapPred::True) => values.push(true),
+                Task::Visit(MapPred::False) => values.push(false),
+                Task::Visit(MapPred::CountEntries { key_class, val_class, lo, hi }) => {
+                    let mut sum = 0u64;
+                    for (key_index, key_minterm) in key_ms.iter().enumerate() {
+                        if !self
+                            .key
+                            .is_satisfiable(&self.key.and(key_minterm, key_class))
+                        {
+                            continue;
+                        }
+                        for (value_index, value_minterm) in val_ms.iter().enumerate() {
+                            if self
+                                .val
+                                .is_satisfiable(&self.val.and(value_minterm, val_class))
+                            {
+                                sum += counts[key_index][value_index];
+                            }
                         }
                     }
-                }
-                sum >= *lo && hi.map(|h| sum <= h).unwrap_or(true)
-            },
-            MapPred::And(a, b) => {
-                self.eval_counts(a, counts, key_ms, val_ms)
-                    && self.eval_counts(b, counts, key_ms, val_ms)
-            },
-            MapPred::Or(a, b) => {
-                self.eval_counts(a, counts, key_ms, val_ms)
-                    || self.eval_counts(b, counts, key_ms, val_ms)
-            },
-            MapPred::Not(x) => !self.eval_counts(x, counts, key_ms, val_ms),
+                    values.push(sum >= *lo && hi.map(|upper| sum <= upper).unwrap_or(true));
+                },
+                Task::Visit(MapPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(MapPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(MapPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values
+                        .pop()
+                        .expect("map count evaluation lost negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("map count evaluation lost left conjunction");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("map count evaluation lost left disjunction");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
         }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("map count evaluation produced no value")
     }
 
     /// Search for a feasible (key-minterm × value-minterm) count matrix honoring
@@ -751,22 +899,64 @@ impl<K: Singleton, V: BooleanAlgebra> BooleanAlgebra for MapAlgebra<K, V> {
     }
 
     fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
-        match pred {
-            MapPred::True => true,
-            MapPred::False => false,
-            MapPred::CountEntries { key_class, val_class, lo, hi } => {
-                let count = elem
-                    .iter()
-                    .filter(|(k, v)| {
-                        self.key.evaluate(key_class, k) && self.val.evaluate(val_class, v)
-                    })
-                    .count() as u64;
-                count >= *lo && hi.map(|h| count <= h).unwrap_or(true)
-            },
-            MapPred::And(a, b) => self.evaluate(a, elem) && self.evaluate(b, elem),
-            MapPred::Or(a, b) => self.evaluate(a, elem) || self.evaluate(b, elem),
-            MapPred::Not(x) => !self.evaluate(x, elem),
+        enum Task<'pred, KP, VP> {
+            Visit(&'pred MapPred<KP, VP>),
+            Not,
+            AndRight(&'pred MapPred<KP, VP>),
+            OrRight(&'pred MapPred<KP, VP>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(MapPred::True) => values.push(true),
+                Task::Visit(MapPred::False) => values.push(false),
+                Task::Visit(MapPred::CountEntries { key_class, val_class, lo, hi }) => {
+                    let count = elem
+                        .iter()
+                        .filter(|(key, value)| {
+                            self.key.evaluate(key_class, key) && self.val.evaluate(val_class, value)
+                        })
+                        .count() as u64;
+                    values.push(count >= *lo && hi.map(|upper| count <= upper).unwrap_or(true));
+                },
+                Task::Visit(MapPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(MapPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(MapPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values.pop().expect("map evaluation lost negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values.pop().expect("map evaluation lost left conjunction");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values.pop().expect("map evaluation lost left disjunction");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("map evaluation produced no value")
     }
 }
 
