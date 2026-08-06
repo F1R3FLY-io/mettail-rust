@@ -271,7 +271,7 @@ fn recursive_packing(
 }
 
 fn arg_chain_value(arg: ActionArg) -> Option<usize> {
-    match arg {
+    match &arg {
         ActionArg::Term { value, .. } => value.downcast_ref::<ChainValue>().map(|value| value.0),
         _ => None,
     }
@@ -331,8 +331,9 @@ fn witness_pda_matches_recursive_oracle_for_nested_and_fallback_packings() {
         vec![actual_root],
         LexicographicWeight::one_ref(),
     );
+    let actual_optional = actual.reconstruct_action_arg(&actual_cursor, optional);
     assert!(matches!(
-        actual.reconstruct_action_arg(&actual_cursor, optional),
+        actual_optional.as_ref(),
         Some(ActionArg::Optional(Some(args))) if args.len() == 1
     ));
 }

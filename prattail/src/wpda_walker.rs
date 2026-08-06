@@ -7353,11 +7353,13 @@ where
                     let (st, fd) = &mut kbest_session;
                     self.cgll_kbest_extract_realized(st, fd, root, KbestOrderKey::Election, 1)
                 };
-                if let Some((ActionArg::Term { value, .. }, w)) = realized.into_iter().next() {
-                    selected_pos.get_or_insert(*pos);
-                    weights.push(w);
-                    terms.push(value);
-                    roots.push(root);
+                if let Some((arg, w)) = realized.into_iter().next() {
+                    if let Some(value) = arg.into_dyn_term() {
+                        selected_pos.get_or_insert(*pos);
+                        weights.push(w);
+                        terms.push(value);
+                        roots.push(root);
+                    }
                 }
             } else if let Some(t) = self
                 .realize_root_to_terms(root, Some(1), RealizeRequestMode::SingleResultElection)
@@ -7601,7 +7603,7 @@ where
                                 let mut out: Vec<(Arc<dyn Any + Send + Sync>, W)> =
                                     Vec::with_capacity(realized.len());
                                 for (arg, w) in realized {
-                                    if let ActionArg::Term { value, .. } = arg {
+                                    if let Some(value) = arg.into_dyn_term() {
                                         out.push((value, w));
                                     }
                                 }
@@ -7642,10 +7644,7 @@ where
                         // the distinct cap must NOT apply here.
                         .cgll_realize_bin_symbol(root, &mut memo, limit, false)
                         .into_iter()
-                        .filter_map(|(arg, w)| match arg {
-                            ActionArg::Term { value, .. } => Some((value, w)),
-                            _ => None,
-                        })
+                        .filter_map(|(arg, w)| arg.into_dyn_term().map(|value| (value, w)))
                         .collect();
                 }
             }
@@ -7801,10 +7800,7 @@ where
         memo.remove(&root)
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|(arg, w)| match arg {
-                ActionArg::Term { value, .. } => Some((value, w)),
-                _ => None,
-            })
+            .filter_map(|(arg, w)| arg.into_dyn_term().map(|value| (value, w)))
             .collect()
     }
 
@@ -7826,10 +7822,7 @@ where
         let realized = self.realize_node_lazy_prefix(root, cap, &mut memo, &mut colors)?;
         Ok(realized
             .into_iter()
-            .filter_map(|(arg, w)| match arg {
-                ActionArg::Term { value, .. } => Some((value, w)),
-                _ => None,
-            })
+            .filter_map(|(arg, w)| arg.into_dyn_term().map(|value| (value, w)))
             .collect())
     }
 
@@ -11054,7 +11047,7 @@ where
                     // Unbounded: byte-identical to the pre-A1 accumulation — no
                     // clone, no dedup, no post-loop check.
                     for (arg, w) in realized {
-                        if let ActionArg::Term { value, .. } = arg {
+                        if let Some(value) = arg.into_dyn_term() {
                             weights.push(w);
                             terms.push(value);
                             roots.push(bin_root);
@@ -21165,7 +21158,11 @@ where
                     mut values,
                     current_id,
                 } => {
-                    let Some(Value::Arg(ActionArg::Term { value, .. })) = outcome.take() else {
+                    let Some(Value::Arg(arg)) = outcome.take() else {
+                        outcome = None;
+                        continue;
+                    };
+                    let Some(value) = arg.into_dyn_term() else {
                         outcome = None;
                         continue;
                     };
@@ -21388,13 +21385,11 @@ where
                     // unreconstructable spliced element fails the FIRE (the
                     // elide/arity path surfaces the Error; the no-loss
                     // direction is identical to realize_packing_call's).
-                    match self.reconstruct_action_arg(cursor, item_sid) {
-                        Some(ActionArg::Term { value, .. }) => {
-                            sb.push_term_arc(value);
-                            sb.push_to_collection(*id);
-                        },
-                        _ => return None,
-                    }
+                    let value = self
+                        .reconstruct_action_arg(cursor, item_sid)
+                        .and_then(ActionArg::into_dyn_term)?;
+                    sb.push_term_arc(value);
+                    sb.push_to_collection(*id);
                 }
             }
         }
@@ -22701,10 +22696,8 @@ mod tests {
         if let [ActionArg::CollectionId(id)] = &args[..] {
             let mut sum: i64 = 0;
             for it in b.drain_collection(*id) {
-                if let ActionArg::Term { value, .. } = it {
-                    if let Some(x) = value.downcast_ref::<i64>() {
-                        sum += x;
-                    }
+                if let Some(value) = it.into_term_arc::<i64>() {
+                    sum += *value;
                 }
             }
             b.push_term::<i64>(500 + sum);

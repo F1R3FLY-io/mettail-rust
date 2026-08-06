@@ -2686,7 +2686,6 @@ pub const fn unpack_action_id(id: ActionId) -> (u16, u16) {
 /// `into_term::<T>` / `into_collection::<T>` / `into_predicate::<T>`
 /// gain a `T: Clone` bound so they can deep-clone out of the Arc when
 /// the value is shared.
-#[derive(Clone)]
 pub enum ActionArg {
     /// A raw token kind + its text + position.
     Token {
@@ -2763,6 +2762,9 @@ pub enum ActionArg {
     /// `runtime/src/pathmap_lit.rs` for the homogeneous representation.
     UnsetCollectionValue,
 }
+
+#[path = "wpda_runtime/action_arg_lifecycle.rs"]
+mod action_arg_lifecycle;
 
 /// #151 (2026-07-29): why a collection flat was refused at the close.
 ///
@@ -2986,12 +2988,12 @@ impl ActionArg {
     /// existing callers are untouched.
     pub fn try_into_term<T: 'static + Send + Sync + Clone>(self) -> Result<T, ActionArgMismatch> {
         let requested = std::any::type_name::<T>();
-        match self {
-            ActionArg::Term { value, type_name } => match Arc::downcast::<T>(value) {
+        match self.into_term_parts() {
+            Ok((value, type_name)) => match Arc::downcast::<T>(value) {
                 Ok(arc) => Ok(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
                 Err(_) => Err(ActionArgMismatch { requested, found: type_name }),
             },
-            other => Err(ActionArgMismatch { requested, found: other.variant_name() }),
+            Err(other) => Err(ActionArgMismatch { requested, found: other.variant_name() }),
         }
     }
 
@@ -3031,10 +3033,17 @@ impl ActionArg {
     /// O(N) structural sharing. Unlike `into_term`, NO `T: Clone` bound is
     /// required — the value is never cloned, only shared.
     pub fn into_term_arc<T: 'static + Send + Sync>(self) -> Option<Arc<T>> {
-        match self {
-            ActionArg::Term { value, .. } => Arc::downcast::<T>(value).ok(),
-            _ => None,
-        }
+        self.into_dyn_term()
+            .and_then(|value| Arc::downcast::<T>(value).ok())
+    }
+
+    /// Consume a `Term` argument without downcasting its type-erased payload.
+    ///
+    /// This crate-internal form lets realization and result-extraction paths
+    /// move the `Arc` out while [`ActionArg`]'s explicit iterative destructor
+    /// remains responsible for every non-matching variant.
+    pub(crate) fn into_dyn_term(self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.into_term_parts().ok().map(|(value, _)| value)
     }
     /// Borrow the BinderScope handle.
     pub fn as_binder_scope(&self) -> Option<&BinderHandle> {
@@ -3048,12 +3057,12 @@ impl ActionArg {
     /// Stage 3.6 / ι Phase 1 (2026-05-01): see `into_term` for Arc/Clone
     /// rationale.
     pub fn into_collection<T: 'static + Send + Sync + Clone>(self) -> Option<T> {
-        match self {
-            ActionArg::Collection { value, .. } => match Arc::downcast::<T>(value) {
+        match self.into_collection_parts() {
+            Ok(value) => match Arc::downcast::<T>(value) {
                 Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
                 Err(_) => None,
             },
-            _ => None,
+            Err(_) => None,
         }
     }
     /// Phase 4: extract a `CollectionId` argument's id.
@@ -3068,12 +3077,12 @@ impl ActionArg {
     /// Stage 3.6 / ι Phase 1 (2026-05-01): see `into_term` for Arc/Clone
     /// rationale.
     pub fn into_predicate<T: 'static + Send + Sync + Clone>(self) -> Option<T> {
-        match self {
-            ActionArg::Predicate(value) => match Arc::downcast::<T>(value) {
+        match self.into_predicate_value() {
+            Ok(value) => match Arc::downcast::<T>(value) {
                 Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
                 Err(_) => None,
             },
-            _ => None,
+            Err(_) => None,
         }
     }
     /// Opt-Group: consume this `Optional` arg, returning the inner
@@ -3081,10 +3090,7 @@ impl ActionArg {
     /// Returns `None` if the arg is not an `Optional` variant
     /// (mismatched action arity / kind would be a codegen bug).
     pub fn into_optional(self) -> Option<Option<Vec<ActionArg>>> {
-        match self {
-            ActionArg::Optional(value) => Some(value),
-            _ => None,
-        }
+        self.into_optional_value().ok()
     }
 }
 
@@ -3535,12 +3541,12 @@ impl SemanticBuilder {
         if self.stack.len() != 1 {
             return None;
         }
-        match self.stack.pop_back()? {
-            ActionArg::Term { value, .. } => match Arc::downcast::<T>(value) {
+        match self.stack.pop_back()?.into_dyn_term() {
+            Some(value) => match Arc::downcast::<T>(value) {
                 Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
                 Err(_) => None,
             },
-            _ => None,
+            None => None,
         }
     }
 
@@ -3558,10 +3564,7 @@ impl SemanticBuilder {
         if self.stack.len() != 1 {
             return None;
         }
-        match self.stack.pop_back()? {
-            ActionArg::Term { value, .. } => Some(value),
-            _ => None,
-        }
+        self.stack.pop_back()?.into_dyn_term()
     }
 
     // ─── Phase 4: collection-literal accumulator helpers ──────────────────
