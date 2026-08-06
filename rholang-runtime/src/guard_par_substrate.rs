@@ -554,135 +554,162 @@ impl ParEncoder {
     // ── Operand position ──────────────────────────────────────────────────────────────────
 
     fn opt_operand(&mut self, par: Option<&Par>) -> Operand {
-        match par {
-            Some(p) => self.operand(p),
-            None => Operand::Uncovered,
+        #[derive(Clone, Copy)]
+        enum Job<'a> {
+            Visit(Option<&'a Par>),
+            BuildNeg,
+            BuildArithmetic(fn(&LinearForm, &LinearForm) -> Option<LinearForm>),
+            BuildMultiply,
+            BuildIntegerDivision(fn(i64, i64) -> Option<i64>),
         }
-    }
 
-    fn operand(&mut self, par: &Par) -> Operand {
-        let Some(expr) = self.sole_expr(par) else {
-            return Operand::Uncovered;
-        };
-        let Some(instance) = expr.expr_instance.as_ref() else {
-            return Operand::Uncovered;
-        };
-        match instance {
-            ExprInstance::GInt(n) => Operand::Int(LinearForm::constant(*n)),
-            ExprInstance::GBool(b) => Operand::Lit(GuardValue::Bool(*b)),
-            ExprInstance::GString(s) => Operand::Lit(GuardValue::Str(s.clone())),
-            // `GDouble` carries the IEEE-754 bit pattern, which is how the lowering stores an
-            // `f64` — decode it rather than treating a float guard as uncovered.
-            ExprInstance::GDouble(bits) => {
-                Operand::Lit(GuardValue::Float(OrderedF64(f64::from_bits(*bits))))
-            },
+        let mut jobs = vec![Job::Visit(par)];
+        let mut values = Vec::new();
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Visit(None) => values.push(Operand::Uncovered),
+                Job::Visit(Some(par)) => {
+                    let Some(expr) = self.sole_expr(par) else {
+                        values.push(Operand::Uncovered);
+                        continue;
+                    };
+                    let Some(instance) = expr.expr_instance.as_ref() else {
+                        values.push(Operand::Uncovered);
+                        continue;
+                    };
+                    match instance {
+                        ExprInstance::GInt(n) => {
+                            values.push(Operand::Int(LinearForm::constant(*n)))
+                        },
+                        ExprInstance::GBool(b) => values.push(Operand::Lit(GuardValue::Bool(*b))),
+                        ExprInstance::GString(s) => {
+                            values.push(Operand::Lit(GuardValue::Str(s.clone())))
+                        },
+                        // `GDouble` carries the IEEE-754 bit pattern, which is how the lowering
+                        // stores an `f64` — decode it rather than treating it as uncovered.
+                        ExprInstance::GDouble(bits) => values.push(Operand::Lit(
+                            GuardValue::Float(OrderedF64(f64::from_bits(*bits))),
+                        )),
 
-            ExprInstance::EVarBody(EVar { v }) => match self.var_index(v.as_ref()) {
-                Some(idx) => Operand::Var(idx),
-                None => Operand::Uncovered,
-            },
+                        ExprInstance::EVarBody(EVar { v }) => {
+                            values.push(match self.var_index(v.as_ref()) {
+                                Some(idx) => Operand::Var(idx),
+                                None => Operand::Uncovered,
+                            });
+                        },
 
-            ExprInstance::EPlusBody(EPlus { p1, p2 }) => {
-                self.arithmetic(p1.as_ref(), p2.as_ref(), LinearForm::add)
-            },
-            ExprInstance::EMinusBody(EMinus { p1, p2 }) => {
-                self.arithmetic(p1.as_ref(), p2.as_ref(), LinearForm::sub)
-            },
-            ExprInstance::ENegBody(ENeg { p }) => match self.int_form(p.as_ref()) {
-                Some(form) => match form.negate() {
-                    Some(negated) => Operand::Int(negated),
-                    None => Operand::NonLinear,
+                        ExprInstance::EPlusBody(EPlus { p1, p2 }) => {
+                            jobs.push(Job::BuildArithmetic(LinearForm::add));
+                            jobs.push(Job::Visit(p2.as_ref()));
+                            jobs.push(Job::Visit(p1.as_ref()));
+                        },
+                        ExprInstance::EMinusBody(EMinus { p1, p2 }) => {
+                            jobs.push(Job::BuildArithmetic(LinearForm::sub));
+                            jobs.push(Job::Visit(p2.as_ref()));
+                            jobs.push(Job::Visit(p1.as_ref()));
+                        },
+                        ExprInstance::ENegBody(ENeg { p }) => {
+                            jobs.push(Job::BuildNeg);
+                            jobs.push(Job::Visit(p.as_ref()));
+                        },
+                        ExprInstance::EMultBody(EMult { p1, p2 }) => {
+                            jobs.push(Job::BuildMultiply);
+                            jobs.push(Job::Visit(p2.as_ref()));
+                            jobs.push(Job::Visit(p1.as_ref()));
+                        },
+                        ExprInstance::EDivBody(EDiv { p1, p2 }) => {
+                            jobs.push(Job::BuildIntegerDivision(i64::checked_div));
+                            jobs.push(Job::Visit(p2.as_ref()));
+                            jobs.push(Job::Visit(p1.as_ref()));
+                        },
+                        ExprInstance::EModBody(EMod { p1, p2 }) => {
+                            jobs.push(Job::BuildIntegerDivision(i64::checked_rem));
+                            jobs.push(Job::Visit(p2.as_ref()));
+                            jobs.push(Job::Visit(p1.as_ref()));
+                        },
+
+                        ExprInstance::EListBody(_)
+                        | ExprInstance::ESetBody(_)
+                        | ExprInstance::EMapBody(_)
+                        | ExprInstance::ETupleBody(_) => values.push(Operand::Structural),
+
+                        ExprInstance::GUri(_)
+                        | ExprInstance::GByteArray(_)
+                        | ExprInstance::GBigInt(_)
+                        | ExprInstance::GBigRat(_)
+                        | ExprInstance::GFixedPoint(_)
+                        | ExprInstance::ENotBody(_)
+                        | ExprInstance::EAndBody(_)
+                        | ExprInstance::EOrBody(_)
+                        | ExprInstance::EEqBody(_)
+                        | ExprInstance::ENeqBody(_)
+                        | ExprInstance::ELtBody(_)
+                        | ExprInstance::ELteBody(_)
+                        | ExprInstance::EGtBody(_)
+                        | ExprInstance::EGteBody(_)
+                        | ExprInstance::EMatchesBody(_)
+                        | ExprInstance::EPercentPercentBody(_)
+                        | ExprInstance::EPlusPlusBody(_)
+                        | ExprInstance::EMinusMinusBody(_)
+                        | ExprInstance::EMethodBody(_)
+                        | ExprInstance::EPathmapBody(_)
+                        | ExprInstance::EZipperBody(_) => values.push(Operand::Uncovered),
+                    }
                 },
-                None => Operand::Uncovered,
-            },
-
-            // `*` is linear only when one side is a constant; Presburger arithmetic has no
-            // multiplication of two variables.
-            ExprInstance::EMultBody(EMult { p1, p2 }) => {
-                match (self.int_form(p1.as_ref()), self.int_form(p2.as_ref())) {
-                    (Some(x), Some(y)) if x.is_constant() => scaled(&y, x.constant),
-                    (Some(x), Some(y)) if y.is_constant() => scaled(&x, y.constant),
-                    (Some(_), Some(_)) => Operand::NonLinear,
-                    _ => Operand::Uncovered,
-                }
-            },
-
-            ExprInstance::EDivBody(EDiv { p1, p2 }) => {
-                self.integer_division(p1.as_ref(), p2.as_ref(), i64::checked_div)
-            },
-            ExprInstance::EModBody(EMod { p1, p2 }) => {
-                self.integer_division(p1.as_ref(), p2.as_ref(), i64::checked_rem)
-            },
-
-            ExprInstance::EListBody(_)
-            | ExprInstance::ESetBody(_)
-            | ExprInstance::EMapBody(_)
-            | ExprInstance::ETupleBody(_) => Operand::Structural,
-
-            ExprInstance::GUri(_)
-            | ExprInstance::GByteArray(_)
-            | ExprInstance::GBigInt(_)
-            | ExprInstance::GBigRat(_)
-            | ExprInstance::GFixedPoint(_)
-            | ExprInstance::ENotBody(_)
-            | ExprInstance::EAndBody(_)
-            | ExprInstance::EOrBody(_)
-            | ExprInstance::EEqBody(_)
-            | ExprInstance::ENeqBody(_)
-            | ExprInstance::ELtBody(_)
-            | ExprInstance::ELteBody(_)
-            | ExprInstance::EGtBody(_)
-            | ExprInstance::EGteBody(_)
-            | ExprInstance::EMatchesBody(_)
-            | ExprInstance::EPercentPercentBody(_)
-            | ExprInstance::EPlusPlusBody(_)
-            | ExprInstance::EMinusMinusBody(_)
-            | ExprInstance::EMethodBody(_)
-            | ExprInstance::EPathmapBody(_)
-            | ExprInstance::EZipperBody(_) => Operand::Uncovered,
+                Job::BuildNeg => {
+                    let operand = values.pop().expect("integer negation operand");
+                    values.push(match int_form_of(operand) {
+                        Some(form) => match form.negate() {
+                            Some(negated) => Operand::Int(negated),
+                            None => Operand::NonLinear,
+                        },
+                        None => Operand::Uncovered,
+                    });
+                },
+                Job::BuildArithmetic(combine) => {
+                    let right = int_form_of(values.pop().expect("arithmetic right operand"));
+                    let left = int_form_of(values.pop().expect("arithmetic left operand"));
+                    values.push(match (left, right) {
+                        (Some(left), Some(right)) => match combine(&left, &right) {
+                            Some(form) => Operand::Int(form),
+                            None => Operand::NonLinear,
+                        },
+                        _ => Operand::Uncovered,
+                    });
+                },
+                Job::BuildMultiply => {
+                    let right = int_form_of(values.pop().expect("multiplication right operand"));
+                    let left = int_form_of(values.pop().expect("multiplication left operand"));
+                    values.push(match (left, right) {
+                        (Some(left), Some(right)) if left.is_constant() => {
+                            scaled(&right, left.constant)
+                        },
+                        (Some(left), Some(right)) if right.is_constant() => {
+                            scaled(&left, right.constant)
+                        },
+                        (Some(_), Some(_)) => Operand::NonLinear,
+                        _ => Operand::Uncovered,
+                    });
+                },
+                Job::BuildIntegerDivision(combine) => {
+                    let right = int_form_of(values.pop().expect("division right operand"));
+                    let left = int_form_of(values.pop().expect("division left operand"));
+                    values.push(match (left, right) {
+                        (Some(left), Some(right)) if left.is_constant() && right.is_constant() => {
+                            match combine(left.constant, right.constant) {
+                                Some(value) => Operand::Int(LinearForm::constant(value)),
+                                // Division by zero, or `i64::MIN / -1`.
+                                None => Operand::NonLinear,
+                            }
+                        },
+                        (Some(_), Some(_)) => Operand::NonLinear,
+                        _ => Operand::Uncovered,
+                    });
+                },
+            }
         }
-    }
-
-    fn arithmetic(
-        &mut self,
-        left: Option<&Par>,
-        right: Option<&Par>,
-        combine: fn(&LinearForm, &LinearForm) -> Option<LinearForm>,
-    ) -> Operand {
-        match (self.int_form(left), self.int_form(right)) {
-            (Some(a), Some(b)) => match combine(&a, &b) {
-                Some(form) => Operand::Int(form),
-                None => Operand::NonLinear,
-            },
-            _ => Operand::Uncovered,
-        }
-    }
-
-    fn integer_division(
-        &mut self,
-        left: Option<&Par>,
-        right: Option<&Par>,
-        combine: fn(i64, i64) -> Option<i64>,
-    ) -> Operand {
-        match (self.int_form(left), self.int_form(right)) {
-            (Some(a), Some(b)) if a.is_constant() && b.is_constant() => {
-                match combine(a.constant, b.constant) {
-                    Some(value) => Operand::Int(LinearForm::constant(value)),
-                    // Division by zero, or `i64::MIN / -1`.
-                    None => Operand::NonLinear,
-                }
-            },
-            (Some(_), Some(_)) => Operand::NonLinear,
-            _ => Operand::Uncovered,
-        }
-    }
-
-    fn int_form(&mut self, par: Option<&Par>) -> Option<LinearForm> {
-        match self.opt_operand(par) {
-            Operand::Int(form) => Some(form),
-            Operand::Var(idx) => Some(LinearForm::var(idx)),
-            _ => None,
-        }
+        assert_eq!(values.len(), 1);
+        values.pop().expect("encoded guard operand")
     }
 
     // ── Variables and atoms ───────────────────────────────────────────────────────────────
@@ -705,6 +732,14 @@ impl ParEncoder {
         let id = self.opaque.len() as u32;
         self.opaque.push(fragment.clone());
         GuardFormula::Atom(GuardAtom { id, kind })
+    }
+}
+
+fn int_form_of(operand: Operand) -> Option<LinearForm> {
+    match operand {
+        Operand::Int(form) => Some(form),
+        Operand::Var(idx) => Some(LinearForm::var(idx)),
+        _ => None,
     }
 }
 

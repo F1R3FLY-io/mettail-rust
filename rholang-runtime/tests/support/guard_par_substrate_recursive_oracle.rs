@@ -74,6 +74,128 @@ fn expr_formula_recursive(encoder: &mut ParEncoder, expr: &Expr, whole: &Par) ->
     }
 }
 
+fn opt_operand_recursive(encoder: &mut ParEncoder, par: Option<&Par>) -> Operand {
+    match par {
+        Some(par) => operand_recursive(encoder, par),
+        None => Operand::Uncovered,
+    }
+}
+
+fn operand_recursive(encoder: &mut ParEncoder, par: &Par) -> Operand {
+    let Some(expr) = encoder.sole_expr(par) else {
+        return Operand::Uncovered;
+    };
+    let Some(instance) = expr.expr_instance.as_ref() else {
+        return Operand::Uncovered;
+    };
+    match instance {
+        ExprInstance::GInt(n) => Operand::Int(LinearForm::constant(*n)),
+        ExprInstance::GBool(b) => Operand::Lit(GuardValue::Bool(*b)),
+        ExprInstance::GString(s) => Operand::Lit(GuardValue::Str(s.clone())),
+        ExprInstance::GDouble(bits) => {
+            Operand::Lit(GuardValue::Float(OrderedF64(f64::from_bits(*bits))))
+        },
+        ExprInstance::EVarBody(EVar { v }) => match encoder.var_index(v.as_ref()) {
+            Some(index) => Operand::Var(index),
+            None => Operand::Uncovered,
+        },
+        ExprInstance::EPlusBody(EPlus { p1, p2 }) => {
+            arithmetic_recursive(encoder, p1.as_ref(), p2.as_ref(), LinearForm::add)
+        },
+        ExprInstance::EMinusBody(EMinus { p1, p2 }) => {
+            arithmetic_recursive(encoder, p1.as_ref(), p2.as_ref(), LinearForm::sub)
+        },
+        ExprInstance::ENegBody(ENeg { p }) => match int_form_recursive(encoder, p.as_ref()) {
+            Some(form) => match form.negate() {
+                Some(negated) => Operand::Int(negated),
+                None => Operand::NonLinear,
+            },
+            None => Operand::Uncovered,
+        },
+        ExprInstance::EMultBody(EMult { p1, p2 }) => match (
+            int_form_recursive(encoder, p1.as_ref()),
+            int_form_recursive(encoder, p2.as_ref()),
+        ) {
+            (Some(left), Some(right)) if left.is_constant() => scaled(&right, left.constant),
+            (Some(left), Some(right)) if right.is_constant() => scaled(&left, right.constant),
+            (Some(_), Some(_)) => Operand::NonLinear,
+            _ => Operand::Uncovered,
+        },
+        ExprInstance::EDivBody(EDiv { p1, p2 }) => {
+            integer_division_recursive(encoder, p1.as_ref(), p2.as_ref(), i64::checked_div)
+        },
+        ExprInstance::EModBody(EMod { p1, p2 }) => {
+            integer_division_recursive(encoder, p1.as_ref(), p2.as_ref(), i64::checked_rem)
+        },
+        ExprInstance::EListBody(_)
+        | ExprInstance::ESetBody(_)
+        | ExprInstance::EMapBody(_)
+        | ExprInstance::ETupleBody(_) => Operand::Structural,
+        ExprInstance::GUri(_)
+        | ExprInstance::GByteArray(_)
+        | ExprInstance::GBigInt(_)
+        | ExprInstance::GBigRat(_)
+        | ExprInstance::GFixedPoint(_)
+        | ExprInstance::ENotBody(_)
+        | ExprInstance::EAndBody(_)
+        | ExprInstance::EOrBody(_)
+        | ExprInstance::EEqBody(_)
+        | ExprInstance::ENeqBody(_)
+        | ExprInstance::ELtBody(_)
+        | ExprInstance::ELteBody(_)
+        | ExprInstance::EGtBody(_)
+        | ExprInstance::EGteBody(_)
+        | ExprInstance::EMatchesBody(_)
+        | ExprInstance::EPercentPercentBody(_)
+        | ExprInstance::EPlusPlusBody(_)
+        | ExprInstance::EMinusMinusBody(_)
+        | ExprInstance::EMethodBody(_)
+        | ExprInstance::EPathmapBody(_)
+        | ExprInstance::EZipperBody(_) => Operand::Uncovered,
+    }
+}
+
+fn arithmetic_recursive(
+    encoder: &mut ParEncoder,
+    left: Option<&Par>,
+    right: Option<&Par>,
+    combine: fn(&LinearForm, &LinearForm) -> Option<LinearForm>,
+) -> Operand {
+    match (int_form_recursive(encoder, left), int_form_recursive(encoder, right)) {
+        (Some(left), Some(right)) => match combine(&left, &right) {
+            Some(form) => Operand::Int(form),
+            None => Operand::NonLinear,
+        },
+        _ => Operand::Uncovered,
+    }
+}
+
+fn integer_division_recursive(
+    encoder: &mut ParEncoder,
+    left: Option<&Par>,
+    right: Option<&Par>,
+    combine: fn(i64, i64) -> Option<i64>,
+) -> Operand {
+    match (int_form_recursive(encoder, left), int_form_recursive(encoder, right)) {
+        (Some(left), Some(right)) if left.is_constant() && right.is_constant() => {
+            match combine(left.constant, right.constant) {
+                Some(value) => Operand::Int(LinearForm::constant(value)),
+                None => Operand::NonLinear,
+            }
+        },
+        (Some(_), Some(_)) => Operand::NonLinear,
+        _ => Operand::Uncovered,
+    }
+}
+
+fn int_form_recursive(encoder: &mut ParEncoder, par: Option<&Par>) -> Option<LinearForm> {
+    match opt_operand_recursive(encoder, par) {
+        Operand::Int(form) => Some(form),
+        Operand::Var(index) => Some(LinearForm::var(index)),
+        _ => None,
+    }
+}
+
 fn expr(instance: ExprInstance) -> Par {
     let mut par = Par::default();
     par.exprs.push(Expr { expr_instance: Some(instance) });
@@ -94,6 +216,50 @@ fn and_par(left: Option<Par>, right: Option<Par>) -> Par {
 
 fn or_par(left: Option<Par>, right: Option<Par>) -> Par {
     expr(ExprInstance::EOrBody(EOr { p1: left, p2: right }))
+}
+
+fn int_par(value: i64) -> Par {
+    expr(ExprInstance::GInt(value))
+}
+
+fn bound_par(index: i32) -> Par {
+    expr(ExprInstance::EVarBody(EVar {
+        v: Some(Var {
+            var_instance: Some(VarInstance::BoundVar(index)),
+        }),
+    }))
+}
+
+fn free_par(index: i32) -> Par {
+    expr(ExprInstance::EVarBody(EVar {
+        v: Some(Var {
+            var_instance: Some(VarInstance::FreeVar(index)),
+        }),
+    }))
+}
+
+fn plus_par(left: Option<Par>, right: Option<Par>) -> Par {
+    expr(ExprInstance::EPlusBody(EPlus { p1: left, p2: right }))
+}
+
+fn minus_par(left: Option<Par>, right: Option<Par>) -> Par {
+    expr(ExprInstance::EMinusBody(EMinus { p1: left, p2: right }))
+}
+
+fn neg_par(inner: Option<Par>) -> Par {
+    expr(ExprInstance::ENegBody(ENeg { p: inner }))
+}
+
+fn mult_par(left: Option<Par>, right: Option<Par>) -> Par {
+    expr(ExprInstance::EMultBody(EMult { p1: left, p2: right }))
+}
+
+fn div_par(left: Option<Par>, right: Option<Par>) -> Par {
+    expr(ExprInstance::EDivBody(EDiv { p1: left, p2: right }))
+}
+
+fn mod_par(left: Option<Par>, right: Option<Par>) -> Par {
+    expr(ExprInstance::EModBody(EMod { p1: left, p2: right }))
 }
 
 fn encode_recursive(par: &Par) -> ParGuardEncoding {
@@ -156,6 +322,67 @@ fn formula_drivers_match_the_bounded_recursive_oracles() {
 }
 
 #[test]
+fn operand_driver_matches_the_bounded_recursive_oracle() {
+    let corpus = vec![
+        Par::default(),
+        int_par(0),
+        int_par(i64::MIN),
+        bool_par(true),
+        expr(ExprInstance::GString("text".to_string())),
+        expr(ExprInstance::GDouble(1.5_f64.to_bits())),
+        bound_par(7),
+        free_par(2),
+        plus_par(Some(bound_par(7)), Some(free_par(2))),
+        plus_par(Some(int_par(i64::MAX)), Some(int_par(1))),
+        plus_par(None, Some(int_par(1))),
+        minus_par(Some(bound_par(1)), Some(bound_par(0))),
+        neg_par(Some(int_par(i64::MIN))),
+        neg_par(None),
+        mult_par(Some(int_par(3)), Some(bound_par(0))),
+        mult_par(Some(bound_par(1)), Some(bound_par(0))),
+        mult_par(Some(bool_par(true)), Some(int_par(2))),
+        div_par(Some(int_par(12)), Some(int_par(3))),
+        div_par(Some(int_par(1)), Some(int_par(0))),
+        div_par(Some(bound_par(0)), Some(int_par(2))),
+        mod_par(Some(int_par(13)), Some(int_par(5))),
+        expr(ExprInstance::EListBody(Default::default())),
+        not_par(Some(bool_par(false))),
+    ];
+
+    for (index, par) in corpus.iter().enumerate() {
+        let mut driven = ParEncoder {
+            vars: GuardVarMap::new(),
+            opaque: Vec::new(),
+        };
+        let mut recursive = ParEncoder {
+            vars: GuardVarMap::new(),
+            opaque: Vec::new(),
+        };
+        let driven_operand = driven.opt_operand(Some(par));
+        let recursive_operand = opt_operand_recursive(&mut recursive, Some(par));
+        assert_eq!(
+            format!("{driven_operand:?}"),
+            format!("{recursive_operand:?}"),
+            "operand traversal differs at corpus index {index}"
+        );
+        assert_eq!(format!("{:?}", driven.vars), format!("{:?}", recursive.vars));
+    }
+
+    let mut driven = ParEncoder {
+        vars: GuardVarMap::new(),
+        opaque: Vec::new(),
+    };
+    let mut recursive = ParEncoder {
+        vars: GuardVarMap::new(),
+        opaque: Vec::new(),
+    };
+    assert_eq!(
+        format!("{:?}", driven.opt_operand(None)),
+        format!("{:?}", opt_operand_recursive(&mut recursive, None))
+    );
+}
+
+#[test]
 fn formula_drivers_are_stack_safe_at_depth_20k() {
     const DEPTH: usize = 20_000;
     std::thread::Builder::new()
@@ -179,4 +406,26 @@ fn formula_drivers_are_stack_safe_at_depth_20k() {
         .expect("spawn guard formula depth gate")
         .join()
         .expect("guard formula depth gate must not overflow or panic");
+}
+
+#[test]
+fn operand_driver_is_stack_safe_at_depth_20k() {
+    const DEPTH: usize = 20_000;
+    std::thread::Builder::new()
+        .name("guard-operand-driver-256k".to_string())
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut par = bound_par(0);
+            for _ in 0..DEPTH {
+                par = plus_par(Some(par), Some(int_par(1)));
+            }
+            let mut encoder = ParEncoder {
+                vars: GuardVarMap::new(),
+                opaque: Vec::new(),
+            };
+            assert!(matches!(encoder.opt_operand(Some(&par)), Operand::Int(_)));
+        })
+        .expect("spawn guard operand depth gate")
+        .join()
+        .expect("guard operand depth gate must not overflow or panic");
 }
