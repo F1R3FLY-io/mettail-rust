@@ -39,6 +39,9 @@ use crate::symbolic::{
     KatBooleanAlgebra,
 };
 
+#[path = "any_algebra/lifecycle.rs"]
+mod lifecycle;
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Sort
 // ══════════════════════════════════════════════════════════════════════════════
@@ -81,7 +84,6 @@ pub enum Sort {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A concrete element of one of the supported sorts.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnyDomain {
     /// Integer (`Sort::Int`).
     Int(i64),
@@ -140,7 +142,6 @@ impl AnyDomain {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A predicate over [`AnyDomain`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AnyPred {
     /// Satisfied by every element.
     True,
@@ -222,15 +223,54 @@ where
     A: BooleanAlgebra,
     F: Fn(&AnyPred) -> Option<A::Predicate>,
 {
-    match p {
-        AnyPred::True => alg.true_pred(),
-        AnyPred::False => alg.false_pred(),
-        AnyPred::And(a, b) => alg.and(&fold_pred(alg, a, leaf), &fold_pred(alg, b, leaf)),
-        AnyPred::Or(a, b) => alg.or(&fold_pred(alg, a, leaf), &fold_pred(alg, b, leaf)),
-        AnyPred::Not(x) => alg.not(&fold_pred(alg, x, leaf)),
-        other if other.is_leaf() => leaf(other).unwrap_or_else(|| alg.false_pred()),
-        _ => unreachable!("all non-leaf cases handled above"),
+    enum Task<'pred> {
+        Visit(&'pred AnyPred),
+        And,
+        Or,
+        Not,
     }
+
+    let mut tasks = vec![Task::Visit(p)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(AnyPred::True) => values.push(alg.true_pred()),
+            Task::Visit(AnyPred::False) => values.push(alg.false_pred()),
+            Task::Visit(AnyPred::And(left, right)) => {
+                tasks.push(Task::And);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(AnyPred::Or(left, right)) => {
+                tasks.push(Task::Or);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(AnyPred::Not(body)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(other) if other.is_leaf() => {
+                values.push(leaf(other).unwrap_or_else(|| alg.false_pred()));
+            },
+            Task::Visit(_) => unreachable!("all non-leaf cases handled above"),
+            kind @ (Task::And | Task::Or) => {
+                let right = values.pop().expect("predicate fold lost right operand");
+                let left = values.pop().expect("predicate fold lost left operand");
+                values.push(match kind {
+                    Task::And => alg.and(&left, &right),
+                    Task::Or => alg.or(&left, &right),
+                    _ => unreachable!(),
+                });
+            },
+            Task::Not => {
+                let body = values.pop().expect("predicate fold lost negated operand");
+                values.push(alg.not(&body));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("predicate fold produced no value")
 }
 
 fn int_leaf(p: &AnyPred) -> Option<IntervalPred> {
@@ -337,7 +377,6 @@ fn map_leaf(p: &AnyPred) -> Option<MapPred<AnyPred, AnyPred>> {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A single effective Boolean algebra, tagged by the sort it ranges over.
-#[derive(Clone, Debug)]
 pub enum AnyAlgebra {
     /// Bounded-integer algebra.
     Int(IntervalAlgebra),
@@ -631,99 +670,216 @@ impl BooleanAlgebra for AnyAlgebra {
     }
 }
 
-/// Exact-structure tree singleton: the pattern matched only by `term`.
-fn point_tree(elem: &AnyAlgebra, term: &SymTerm<AnyDomain>) -> TreePred<AnyPred> {
-    TreePred::Node {
-        constructor: term.constructor.clone(),
-        payload_guard: term.payload.as_ref().map(|p| elem.point(p)),
-        children: term.children.iter().map(|c| point_tree(elem, c)).collect(),
+/// Exact singleton construction across the recursive uniform carrier.
+fn point_any(algebra: &AnyAlgebra, value: &AnyDomain) -> AnyPred {
+    enum Task<'input> {
+        Visit(&'input AnyAlgebra, &'input AnyDomain),
+        VisitTree(&'input AnyAlgebra, &'input SymTerm<AnyDomain>),
+        Product(usize),
+        Sum(usize),
+        List(usize),
+        Bag {
+            elem: &'input AnyAlgebra,
+            total: usize,
+            counts: Vec<u64>,
+        },
+        Tree {
+            constructor: String,
+            has_payload: bool,
+            child_count: usize,
+        },
+        WrapTree,
+        Map {
+            key: &'input AnyAlgebra,
+            val: &'input AnyAlgebra,
+            count: usize,
+        },
     }
-}
 
-impl Singleton for AnyAlgebra {
-    fn point(&self, value: &AnyDomain) -> AnyPred {
-        match (self, value) {
-            (AnyAlgebra::Int(g), AnyDomain::Int(v)) => AnyPred::Int(g.point(v)),
-            (AnyAlgebra::Char(g), AnyDomain::Char(v)) => AnyPred::Char(g.point(v)),
-            (AnyAlgebra::Bool(g), AnyDomain::Bool(v)) => AnyPred::Bool(g.point(v)),
-            (AnyAlgebra::BigInt(g), AnyDomain::BigInt(v)) => AnyPred::BigInt(g.point(v)),
-            (AnyAlgebra::BigRat(g), AnyDomain::BigRat(v)) => AnyPred::BigRat(g.point(v)),
-            (AnyAlgebra::Fixed(g), AnyDomain::Fixed(v)) => AnyPred::Fixed(g.point(v)),
-            (AnyAlgebra::Float(g), AnyDomain::Float(v)) => AnyPred::Float(g.point(v)),
-            (AnyAlgebra::Str(g), AnyDomain::Str(v)) => AnyPred::Str(g.point(v)),
-            (AnyAlgebra::Product(g), AnyDomain::Product(vals)) if vals.len() == g.fields.len() => {
+    fn take_predicates(values: &mut Vec<AnyPred>, count: usize) -> Vec<AnyPred> {
+        let start = values
+            .len()
+            .checked_sub(count)
+            .expect("singleton PDA lost predicates");
+        values.split_off(start)
+    }
+
+    let mut tasks = vec![Task::Visit(algebra, value)];
+    let mut predicates = Vec::new();
+    let mut trees = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(AnyAlgebra::Int(g), AnyDomain::Int(value)) => {
+                predicates.push(AnyPred::Int(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::Char(g), AnyDomain::Char(value)) => {
+                predicates.push(AnyPred::Char(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::Bool(g), AnyDomain::Bool(value)) => {
+                predicates.push(AnyPred::Bool(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::BigInt(g), AnyDomain::BigInt(value)) => {
+                predicates.push(AnyPred::BigInt(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::BigRat(g), AnyDomain::BigRat(value)) => {
+                predicates.push(AnyPred::BigRat(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::Fixed(g), AnyDomain::Fixed(value)) => {
+                predicates.push(AnyPred::Fixed(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::Float(g), AnyDomain::Float(value)) => {
+                predicates.push(AnyPred::Float(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::Str(g), AnyDomain::Str(value)) => {
+                predicates.push(AnyPred::Str(g.point(value)));
+            },
+            Task::Visit(AnyAlgebra::Product(g), AnyDomain::Product(values))
+                if values.len() == g.fields.len() =>
+            {
+                tasks.push(Task::Product(values.len()));
+                for (field, value) in g.fields.iter().zip(values).rev() {
+                    tasks.push(Task::Visit(field, value));
+                }
+            },
+            Task::Visit(AnyAlgebra::Sum(g), AnyDomain::Sum(value))
+                if value.tag < g.variants.len() =>
+            {
+                tasks.push(Task::Sum(value.tag));
+                tasks.push(Task::Visit(&g.variants[value.tag], &value.payload));
+            },
+            Task::Visit(AnyAlgebra::List(g), AnyDomain::List(values)) => {
+                tasks.push(Task::List(values.len()));
+                for value in values.iter().rev() {
+                    tasks.push(Task::Visit(&g.elem, value));
+                }
+            },
+            Task::Visit(AnyAlgebra::Bag(g), AnyDomain::Bag(values)) => {
+                let mut groups: Vec<(&AnyDomain, u64)> = Vec::new();
+                for value in values {
+                    if let Some(group) = groups.iter_mut().find(|(domain, _)| *domain == value) {
+                        group.1 += 1;
+                    } else {
+                        groups.push((value, 1));
+                    }
+                }
+                let counts = groups.iter().map(|(_, count)| *count).collect();
+                tasks.push(Task::Bag {
+                    elem: &g.elem,
+                    total: values.len(),
+                    counts,
+                });
+                for (value, _) in groups.into_iter().rev() {
+                    tasks.push(Task::Visit(&g.elem, value));
+                }
+            },
+            Task::Visit(AnyAlgebra::Tree(g), AnyDomain::Tree(term)) => {
+                tasks.push(Task::WrapTree);
+                tasks.push(Task::VisitTree(&g.elem, term));
+            },
+            Task::Visit(AnyAlgebra::Map(g), AnyDomain::Map(entries)) => {
+                tasks.push(Task::Map {
+                    key: &g.key,
+                    val: &g.val,
+                    count: entries.len(),
+                });
+                for (key, value) in entries.iter().rev() {
+                    tasks.push(Task::Visit(&g.val, value));
+                    tasks.push(Task::Visit(&g.key, key));
+                }
+            },
+            Task::Visit(_, _) => predicates.push(AnyPred::False),
+            Task::VisitTree(elem, term) => {
+                tasks.push(Task::Tree {
+                    constructor: term.constructor.clone(),
+                    has_payload: term.payload.is_some(),
+                    child_count: term.children.len(),
+                });
+                for child in term.children.iter().rev() {
+                    tasks.push(Task::VisitTree(elem, child));
+                }
+                if let Some(payload) = &term.payload {
+                    tasks.push(Task::Visit(elem, payload));
+                }
+            },
+            Task::Product(count) => {
+                let fields = take_predicates(&mut predicates, count);
                 let mut acc = NaryProductPred::True;
-                for (i, v) in vals.iter().enumerate() {
-                    let atom = NaryProductPred::Field(i, g.fields[i].point(v));
+                for (index, predicate) in fields.into_iter().enumerate() {
+                    let atom = NaryProductPred::Field(index, predicate);
                     acc = match acc {
                         NaryProductPred::True => atom,
                         other => NaryProductPred::And(Box::new(other), Box::new(atom)),
                     };
                 }
-                AnyPred::Product(Box::new(acc))
+                predicates.push(AnyPred::Product(Box::new(acc)));
             },
-            (AnyAlgebra::Sum(g), AnyDomain::Sum(v)) if v.tag < g.variants.len() => AnyPred::Sum(
-                Box::new(SumPred::InVariant(v.tag, g.variants[v.tag].point(&v.payload))),
-            ),
-            (AnyAlgebra::List(g), AnyDomain::List(vals)) => {
+            Task::Sum(tag) => {
+                let payload = predicates.pop().expect("singleton PDA lost sum payload");
+                predicates.push(AnyPred::Sum(Box::new(SumPred::InVariant(tag, payload))));
+            },
+            Task::List(count) => {
+                let elements = take_predicates(&mut predicates, count);
                 let mut acc = RegexPred::Epsilon;
-                for v in vals {
-                    acc = RegexPred::Concat(
-                        Box::new(acc),
-                        Box::new(RegexPred::Elem(g.elem.point(v))),
-                    );
+                for predicate in elements {
+                    acc = RegexPred::Concat(Box::new(acc), Box::new(RegexPred::Elem(predicate)));
                 }
-                AnyPred::List(Box::new(acc))
+                predicates.push(AnyPred::List(Box::new(acc)));
             },
-            (AnyAlgebra::Tree(g), AnyDomain::Tree(term)) => {
-                AnyPred::Tree(Box::new(point_tree(&g.elem, term)))
-            },
-            (AnyAlgebra::Bag(g), AnyDomain::Bag(vals)) => {
-                // Group distinct elements (AnyDomain: Eq) with their multiplicities.
-                let mut groups: Vec<(&AnyDomain, u64)> = Vec::new();
-                for v in vals {
-                    if let Some(grp) = groups.iter_mut().find(|(d, _)| *d == v) {
-                        grp.1 += 1;
-                    } else {
-                        groups.push((v, 1));
-                    }
-                }
+            Task::Bag { elem, total, counts } => {
+                let classes = take_predicates(&mut predicates, counts.len());
                 let mut acc = BagPred::Count {
-                    class: g.elem.true_pred(),
-                    lo: vals.len() as u64,
-                    hi: Some(vals.len() as u64),
+                    class: elem.true_pred(),
+                    lo: total as u64,
+                    hi: Some(total as u64),
                 };
-                for (d, count) in groups {
-                    let atom = BagPred::Count {
-                        class: g.elem.point(d),
-                        lo: count,
-                        hi: Some(count),
-                    };
+                for (class, count) in classes.into_iter().zip(counts) {
+                    let atom = BagPred::Count { class, lo: count, hi: Some(count) };
                     acc = BagPred::And(Box::new(acc), Box::new(atom));
                 }
-                AnyPred::Bag(Box::new(acc))
+                predicates.push(AnyPred::Bag(Box::new(acc)));
             },
-            (AnyAlgebra::Map(g), AnyDomain::Map(entries)) => {
+            Task::Tree { constructor, has_payload, child_count } => {
+                let child_start = trees
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("singleton PDA lost tree children");
+                let children = trees.split_off(child_start);
+                let payload_guard =
+                    has_payload.then(|| predicates.pop().expect("singleton PDA lost tree payload"));
+                trees.push(TreePred::Node { constructor, payload_guard, children });
+            },
+            Task::WrapTree => {
+                let tree = trees.pop().expect("singleton PDA lost tree root");
+                predicates.push(AnyPred::Tree(Box::new(tree)));
+            },
+            Task::Map { key, val, count } => {
+                let entries = take_predicates(&mut predicates, count * 2);
                 let mut acc = MapPred::CountEntries {
-                    key_class: g.key.true_pred(),
-                    val_class: g.val.true_pred(),
-                    lo: entries.len() as u64,
-                    hi: Some(entries.len() as u64),
+                    key_class: key.true_pred(),
+                    val_class: val.true_pred(),
+                    lo: count as u64,
+                    hi: Some(count as u64),
                 };
-                for (k, v) in entries {
-                    let atom = MapPred::CountEntries {
-                        key_class: g.key.point(k),
-                        val_class: g.val.point(v),
-                        lo: 1,
-                        hi: Some(1),
-                    };
+                let mut entries = entries.into_iter();
+                while let Some(key_class) = entries.next() {
+                    let val_class = entries.next().expect("singleton PDA lost map value");
+                    let atom = MapPred::CountEntries { key_class, val_class, lo: 1, hi: Some(1) };
                     acc = MapPred::And(Box::new(acc), Box::new(atom));
                 }
-                AnyPred::Map(Box::new(acc))
+                predicates.push(AnyPred::Map(Box::new(acc)));
             },
-            // Foreign-sort value (or malformed): no element of this sort equals it.
-            _ => AnyPred::False,
         }
+    }
+    debug_assert!(trees.is_empty());
+    debug_assert_eq!(predicates.len(), 1);
+    predicates
+        .pop()
+        .expect("singleton PDA produced no predicate")
+}
+
+impl Singleton for AnyAlgebra {
+    fn point(&self, value: &AnyDomain) -> AnyPred {
+        point_any(self, value)
     }
 }
 
