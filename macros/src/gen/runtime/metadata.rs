@@ -326,7 +326,7 @@ fn generate_term_def(rule: &GrammarRule, language: &LanguageDef) -> TokenStream 
 fn term_to_user_syntax(rule: &GrammarRule, _language: &LanguageDef) -> String {
     // If there's a syntax_pattern, use it
     if let Some(syntax_pattern) = &rule.syntax_pattern {
-        return syntax_pattern_to_string(syntax_pattern, rule.term_context.as_ref());
+        return syntax_pattern_to_string(syntax_pattern);
     }
 
     // Otherwise, build from grammar items
@@ -359,74 +359,104 @@ fn term_to_user_syntax(rule: &GrammarRule, _language: &LanguageDef) -> String {
     parts.join("")
 }
 
-/// Convert syntax pattern to user-readable string
-fn syntax_pattern_to_string(pattern: &[SyntaxExpr], term_ctx: Option<&Vec<TermParam>>) -> String {
-    let mut result = String::new();
+enum SyntaxStringJob<'syntax> {
+    Expr(&'syntax SyntaxExpr),
+    Op(&'syntax PatternOp),
+    Text(&'static str),
+}
 
-    for expr in pattern {
-        match expr {
-            SyntaxExpr::Literal(s) => result.push_str(s),
-            SyntaxExpr::Param(id) => result.push_str(&id.to_string()),
-            SyntaxExpr::Op(op) => result.push_str(&pattern_op_to_string(op, term_ctx)),
-            SyntaxExpr::TokenKind { name, bind } => {
-                if let Some(b) = bind {
-                    result.push_str(&b.to_string());
+fn push_syntax_exprs<'syntax>(
+    jobs: &mut Vec<SyntaxStringJob<'syntax>>,
+    expressions: &'syntax [SyntaxExpr],
+) {
+    for expression in expressions.iter().rev() {
+        jobs.push(SyntaxStringJob::Expr(expression));
+    }
+}
+
+fn append_syntax_string(result: &mut String, mut jobs: Vec<SyntaxStringJob<'_>>) {
+    while let Some(job) = jobs.pop() {
+        match job {
+            SyntaxStringJob::Text(text) => result.push_str(text),
+            SyntaxStringJob::Expr(SyntaxExpr::Literal(text)) => result.push_str(text),
+            SyntaxStringJob::Expr(SyntaxExpr::Param(ident)) => {
+                result.push_str(&ident.to_string());
+            },
+            SyntaxStringJob::Expr(SyntaxExpr::Op(operation)) => {
+                jobs.push(SyntaxStringJob::Op(operation));
+            },
+            SyntaxStringJob::Expr(SyntaxExpr::TokenKind { name, bind }) => {
+                if let Some(bind) = bind {
+                    result.push_str(&bind.to_string());
                     result.push('@');
                 }
                 result.push_str(&name.to_string());
             },
-            SyntaxExpr::GuestBody { open, close, bind } => {
-                result.push_str(&format!("*flt({},{},{})", bind, open, close));
+            SyntaxStringJob::Expr(SyntaxExpr::GuestBody { open, close, bind }) => {
+                result.push_str("*flt(");
+                result.push_str(&bind.to_string());
+                result.push(',');
+                result.push_str(&open.to_string());
+                result.push(',');
+                result.push_str(&close.to_string());
+                result.push(')');
+            },
+            SyntaxStringJob::Op(PatternOp::Sep { collection, separator, source }) => {
+                if let Some(source) = source {
+                    if let PatternOp::Map { body, .. } = source.as_ref() {
+                        jobs.push(SyntaxStringJob::Text(", ..."));
+                        push_syntax_exprs(&mut jobs, body);
+                    } else {
+                        result.push_str("..., ...");
+                    }
+                } else {
+                    result.push_str(&collection.to_string());
+                    result.push(' ');
+                    result.push_str(separator);
+                    result.push_str(" ...");
+                }
+            },
+            SyntaxStringJob::Op(PatternOp::Var(ident)) => {
+                result.push_str(&ident.to_string());
+            },
+            SyntaxStringJob::Op(PatternOp::Opt { inner }) => {
+                result.push('[');
+                jobs.push(SyntaxStringJob::Text("]"));
+                push_syntax_exprs(&mut jobs, inner);
+            },
+            SyntaxStringJob::Op(PatternOp::Zip { left, right }) => {
+                result.push('(');
+                result.push_str(&left.to_string());
+                result.push_str(", ");
+                result.push_str(&right.to_string());
+                result.push(')');
+            },
+            SyntaxStringJob::Op(PatternOp::Map { params, body, .. }) => {
+                if params.len() <= 1 {
+                    result.push('|');
+                    if let Some(param) = params.first() {
+                        result.push_str(&param.to_string());
+                    }
+                    result.push_str("| ");
+                }
+                push_syntax_exprs(&mut jobs, body);
             },
         }
     }
+}
 
+/// Convert a syntax pattern to a user-readable string without placing source
+/// nesting on the native call stack or rebuilding child strings.
+fn syntax_pattern_to_string(pattern: &[SyntaxExpr]) -> String {
+    let mut result = String::new();
+    let mut jobs = Vec::new();
+    push_syntax_exprs(&mut jobs, pattern);
+    append_syntax_string(&mut result, jobs);
     result
 }
 
-/// Convert pattern operation to string
-fn pattern_op_to_string(op: &PatternOp, term_ctx: Option<&Vec<TermParam>>) -> String {
-    match op {
-        PatternOp::Sep { collection, separator, source } => {
-            // Check if there's a chained source (zip.map.sep pattern)
-            if let Some(chain_source) = source {
-                // Extract the pattern from the chain
-                let element_pattern =
-                    extract_chained_element_pattern(chain_source.as_ref(), term_ctx);
-                format!("{}, ...", element_pattern)
-            } else {
-                // Simple collection separator
-                format!("{} {} ...", collection, separator)
-            }
-        },
-        PatternOp::Var(id) => id.to_string(),
-        PatternOp::Opt { inner } => {
-            format!("[{}]", syntax_pattern_to_string(inner, term_ctx))
-        },
-        PatternOp::Zip { left, right, .. } => {
-            format!("({}, {})", left, right)
-        },
-        PatternOp::Map { params, body, .. } => {
-            let body_str = syntax_pattern_to_string(body, term_ctx);
-            let params_str: Vec<_> = params.iter().map(|p| p.to_string()).collect();
-            if params_str.len() > 1 {
-                body_str
-            } else {
-                format!("|{}| {}", params_str.join(", "), body_str)
-            }
-        },
-    }
-}
-
-/// Extract the element pattern from a chained zip.map pattern
-fn extract_chained_element_pattern(op: &PatternOp, term_ctx: Option<&Vec<TermParam>>) -> String {
-    match op {
-        PatternOp::Map { body, .. } => {
-            // The body contains the pattern for each element
-            syntax_pattern_to_string(body, term_ctx)
-        },
-        _ => "...".to_string(),
-    }
+fn append_pattern_op_string(result: &mut String, operation: &PatternOp) {
+    append_syntax_string(result, vec![SyntaxStringJob::Op(operation)]);
 }
 
 /// Generate FieldDef array for a term
@@ -973,12 +1003,20 @@ struct RenderCtx<'a> {
 /// delimited, atomic or binder rule. Such a rule brackets its own operands with
 /// its own literals, so it never needs parentheses and its children inherit `0`.
 /// This mirrors the `else` arm of `display.rs`'s arm generator exactly.
+#[derive(Clone, Copy)]
+enum ChildBpPolicy {
+    Uniform(u8),
+    Regular { left: u8, right: u8 },
+    Mixfix { left: u8, right: u8, slots: usize },
+}
+
+#[derive(Clone, Copy)]
 struct RuleBp {
     /// The rule's own left binding power — the operand strength it competes at.
     /// Bracket the rendering when this is BELOW the inherited threshold.
     own_left_bp: u8,
     /// The `min_bp` each argument slot inherits, by slot index.
-    child_min_bps: Vec<u8>,
+    child_policy: ChildBpPolicy,
 }
 
 /// Read `label`'s precedence out of the shared table, in the same case order
@@ -990,35 +1028,27 @@ fn rule_bp(
     bp: &crate::gen::syntax::display::BpLookup,
 ) -> Option<RuleBp> {
     if let Some(info) = bp.infix.get(label) {
-        let child_min_bps: Vec<u8> = if info.is_postfix {
+        let child_policy = if info.is_postfix {
             // Postfix: the single operand carries the operator's left power.
-            vec![info.left_bp; arg_slots]
+            ChildBpPolicy::Uniform(info.left_bp)
         } else if info.is_mixfix {
             // Mixfix: first operand = left_bp, last = right_bp, interior = 0
             // (an interior slot is fenced by the operator's own literals).
-            (0..arg_slots)
-                .map(|i| {
-                    if i == 0 {
-                        info.left_bp
-                    } else if i + 1 == arg_slots {
-                        info.right_bp
-                    } else {
-                        0
-                    }
-                })
-                .collect()
+            ChildBpPolicy::Mixfix {
+                left: info.left_bp,
+                right: info.right_bp,
+                slots: arg_slots,
+            }
         } else {
             // Regular infix: left operand = left_bp, everything after = right_bp.
-            (0..arg_slots)
-                .map(|i| if i == 0 { info.left_bp } else { info.right_bp })
-                .collect()
+            ChildBpPolicy::Regular { left: info.left_bp, right: info.right_bp }
         };
-        return Some(RuleBp { own_left_bp: info.left_bp, child_min_bps });
+        return Some(RuleBp { own_left_bp: info.left_bp, child_policy });
     }
     if let Some(prefix) = bp.prefix.get(label) {
         return Some(RuleBp {
             own_left_bp: prefix.prefix_bp,
-            child_min_bps: vec![prefix.prefix_bp; arg_slots],
+            child_policy: ChildBpPolicy::Uniform(prefix.prefix_bp),
         });
     }
     None
@@ -1026,12 +1056,32 @@ fn rule_bp(
 
 /// The `min_bp` for argument slot `index`, or `0` when the rule is not
 /// precedence-governed.
-fn child_min_bp(bp: Option<&RuleBp>, index: usize) -> u8 {
-    bp.and_then(|b| b.child_min_bps.get(index).copied())
-        .unwrap_or(0)
+fn child_min_bp(bp: Option<RuleBp>, index: usize) -> u8 {
+    let Some(bp) = bp else {
+        return 0;
+    };
+    match bp.child_policy {
+        ChildBpPolicy::Uniform(value) => value,
+        ChildBpPolicy::Regular { left, right } => {
+            if index == 0 {
+                left
+            } else {
+                right
+            }
+        },
+        ChildBpPolicy::Mixfix { left, right, slots } => {
+            if index == 0 {
+                left
+            } else if index + 1 == slots {
+                right
+            } else {
+                0
+            }
+        },
+    }
 }
 
-/// The surface of `name` when it denotes a NULLARY constructor, else `None`.
+/// The rule for `name` when it denotes a NULLARY constructor, else `None`.
 ///
 /// ★ #97 item 2. A bare identifier in a pattern is parsed as
 /// [`PatternTerm::Var`] whether the author meant a metavariable or a nullary
@@ -1046,7 +1096,10 @@ fn child_min_bp(bp: Option<&RuleBp>, index: usize) -> u8 {
 /// "Nullary" is structural: the rule consumes no argument slot, in either
 /// grammar form. A constructor that takes arguments is not what a bare
 /// identifier denotes, so its label passes through unresolved.
-fn nullary_constructor_surface(name: &syn::Ident, ctx: RenderCtx<'_>) -> Option<String> {
+fn nullary_constructor_rule<'language>(
+    name: &syn::Ident,
+    ctx: RenderCtx<'language>,
+) -> Option<&'language GrammarRule> {
     let rule = ctx.language.get_constructor(name)?;
     let takes_arguments = match (&rule.term_context, &rule.syntax_pattern) {
         (Some(term_context), _) => !term_context.is_empty(),
@@ -1062,10 +1115,7 @@ fn nullary_constructor_surface(name: &syn::Ident, ctx: RenderCtx<'_>) -> Option<
     if takes_arguments {
         return None;
     }
-    Some(match &rule.syntax_pattern {
-        Some(syntax_pattern) => apply_args_to_syntax(syntax_pattern, &[], ctx, None),
-        None => build_syntax_from_grammar(rule, &[], ctx, None),
-    })
+    Some(rule)
 }
 
 /// Convert a Pattern to user syntax string, at the top level (nothing outside
@@ -1085,277 +1135,393 @@ fn pattern_to_user_syntax(
     render_pattern(pattern, RenderCtx { language, bp }, 0)
 }
 
-/// Convert a Pattern to user syntax at an inherited precedence threshold.
-fn render_pattern(pattern: &Pattern, ctx: RenderCtx<'_>, min_bp: u8) -> String {
-    match pattern {
-        Pattern::Term(pt) => render_pattern_term(pt, ctx, min_bp),
-        // Every arm below is DELIMITED: its own braces / `*map(…)` / `*zip(…)` /
-        // `[… := …]` fence its children, so no child can bind loosely enough to
-        // need a bracket and each is rendered at `0`. This is the same rule the
-        // generated `Display` collection twin follows.
-        Pattern::Collection { elements, rest, .. } => {
-            let mut parts: Vec<String> =
-                elements.iter().map(|e| render_pattern(e, ctx, 0)).collect();
+/// Defunctionalized continuations for the reflected-pattern renderer. Every
+/// variant is constant-size, and child renderings are never parked as nested
+/// `String` values.
+enum PatternRenderJob<'pattern> {
+    Pattern(&'pattern Pattern, u8),
+    Term(&'pattern PatternTerm, u8),
+    ApplySyntax {
+        syntax: &'pattern [SyntaxExpr],
+        args: &'pattern [Pattern],
+        bp: Option<RuleBp>,
+        expr_index: usize,
+        arg_index: usize,
+        slot: usize,
+        current_lambda: Option<&'pattern Pattern>,
+    },
+    Grammar {
+        rule: &'pattern GrammarRule,
+        args: &'pattern [Pattern],
+        bp: Option<RuleBp>,
+        item_index: usize,
+        arg_index: usize,
+        slot: usize,
+    },
+    CollectionWithSep {
+        pattern: &'pattern Pattern,
+        separator: &'pattern str,
+    },
+    Text(&'pattern str),
+    Separator(&'pattern str),
+    Rest(&'pattern syn::Ident),
+    MapOpen(&'pattern [syn::Ident]),
+    SubstClose(&'pattern syn::Ident),
+}
 
-            if let Some(r) = rest {
-                parts.push(format!("...{}", r));
-            }
-
-            format!("{{{}}}", parts.join(" | "))
-        },
-        Pattern::Map { collection, params, body } => {
-            let coll = render_pattern(collection, ctx, 0);
-            let params_str: Vec<_> = params.iter().map(|p| p.to_string()).collect();
-            let body_str = render_pattern(body, ctx, 0);
-            format!("{}.*map(|{}| {})", coll, params_str.join(", "), body_str)
-        },
-        Pattern::Zip { first, second } => {
-            let first_str = render_pattern(first, ctx, 0);
-            let second_str = render_pattern(second, ctx, 0);
-            format!("*zip({}, {})", first_str, second_str)
-        },
-        // Renders back as the surface syntax the user wrote.
-        Pattern::IndexedVec { collection, index, element } => {
-            format!("{}[{} := {}]", collection, index, render_pattern(element, ctx, 0))
-        },
+fn append_idents(result: &mut String, idents: &[syn::Ident]) {
+    for (index, ident) in idents.iter().enumerate() {
+        if index != 0 {
+            result.push_str(", ");
+        }
+        result.push_str(&ident.to_string());
     }
 }
 
-/// Convert a PatternTerm to user syntax string, at an inherited precedence
-/// threshold.
-fn render_pattern_term(pt: &PatternTerm, ctx: RenderCtx<'_>, min_bp: u8) -> String {
-    match pt {
-        // A bare identifier is a METAVARIABLE unless it names a nullary
-        // constructor, in which case it denotes that constructor and renders as
-        // its surface — see [`nullary_constructor_surface`]. A nullary
-        // constructor's surface is a literal, so no threshold can bracket it.
-        PatternTerm::Var(v) => nullary_constructor_surface(v, ctx).unwrap_or_else(|| v.to_string()),
-
-        PatternTerm::Apply { constructor, args } => {
-            // Try to find the grammar rule for this constructor
-            if let Some(rule) = ctx.language.terms.iter().find(|r| &r.label == constructor) {
-                let bp = rule_bp(&constructor.to_string(), args.len(), ctx.bp);
-                // Use syntax_pattern if available; otherwise build from grammar items.
-                let rendered = match &rule.syntax_pattern {
-                    Some(syntax_pattern) => {
-                        apply_args_to_syntax(syntax_pattern, args, ctx, bp.as_ref())
-                    },
-                    None => build_syntax_from_grammar(rule, args, ctx, bp.as_ref()),
-                };
-                // The one bracketing decision, in the same form the generated
-                // `Display` arm emits it: `own_left_bp < min_bp`.
-                return match &bp {
-                    Some(b) if b.own_left_bp < min_bp => format!("({rendered})"),
-                    _ => rendered,
-                };
-            }
-
-            // Fallback: the constructor has no grammar rule, so there is no
-            // surface for it and the prefix form is written out. It is already
-            // delimited, so it needs no threshold of its own and its arguments
-            // inherit none.
-            if args.is_empty() {
-                constructor.to_string()
-            } else {
-                let args_str: Vec<_> = args.iter().map(|a| render_pattern(a, ctx, 0)).collect();
-                format!(
-                    "({}{})",
-                    constructor,
-                    if args_str.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {}", args_str.join(" "))
-                    }
-                )
-            }
-        },
-
-        // The remaining forms all write their own delimiters — `^x.{…}`,
-        // `^[xs].{…}`, `t[r/x]`, `s[…]` — so each child is rendered bare.
-        PatternTerm::Lambda { binder, body } => {
-            let body_str = render_pattern(body, ctx, 0);
-            format!("^{}.{{{}}}", binder, body_str)
-        },
-
-        PatternTerm::MultiLambda { binders, body } => {
-            let binders_str: Vec<_> = binders.iter().map(|b| b.to_string()).collect();
-            let body_str = render_pattern(body, ctx, 0);
-            format!("^[{}].{{{}}}", binders_str.join(", "), body_str)
-        },
-
-        PatternTerm::Subst { term, var, replacement } => {
-            let term_str = render_pattern(term, ctx, 0);
-            let repl_str = render_pattern(replacement, ctx, 0);
-            format!("{}[{}/{}]", term_str, repl_str, var)
-        },
-
-        PatternTerm::MultiSubst { scope, replacements } => {
-            let scope_str = render_pattern(scope, ctx, 0);
-            let repls: Vec<_> = replacements
-                .iter()
-                .map(|r| render_pattern(r, ctx, 0))
-                .collect();
-            format!("{}[{}]", scope_str, repls.join(", "))
-        },
+fn push_pattern_sequence<'pattern>(
+    jobs: &mut Vec<PatternRenderJob<'pattern>>,
+    patterns: &'pattern [Pattern],
+    separator: &'static str,
+) {
+    for (index, pattern) in patterns.iter().enumerate().rev() {
+        jobs.push(PatternRenderJob::Pattern(pattern, 0));
+        if index != 0 {
+            jobs.push(PatternRenderJob::Text(separator));
+        }
     }
 }
 
-/// Apply arguments to a syntax pattern.
-///
-/// `bp` is the enclosing constructor's precedence, or `None` when it is not
-/// Pratt-registered. Each argument slot is rendered at the threshold that
-/// precedence gives it: for a regular infix rule the FIRST slot inherits
-/// `left_bp` and the rest `right_bp`, which is what makes a right-nested
-/// left-associative operand bracket itself and a left-nested one not.
-fn apply_args_to_syntax(
-    syntax_pattern: &[SyntaxExpr],
-    args: &[Pattern],
-    ctx: RenderCtx<'_>,
-    bp: Option<&RuleBp>,
+fn drive_pattern_renderer<'pattern>(
+    mut jobs: Vec<PatternRenderJob<'pattern>>,
+    ctx: RenderCtx<'pattern>,
 ) -> String {
     let mut result = String::new();
-    let mut arg_iter = args.iter().peekable();
-    // Which argument slot the next consumed argument occupies. Indexes
-    // `bp.child_min_bps`, so it counts CONSUMED ARGUMENTS and not syntax
-    // elements — a literal is not a slot.
-    let mut slot: usize = 0;
-
-    // Track if we're currently inside a lambda argument (for binder/body extraction)
-    let mut current_lambda: Option<&Pattern> = None;
-
-    for expr in syntax_pattern {
-        match expr {
-            SyntaxExpr::Literal(s) => result.push_str(s),
-            SyntaxExpr::TokenKind { name, .. } => result.push_str(&name.to_string()),
-            SyntaxExpr::GuestBody { open, .. } => result.push_str(&open.to_string()),
-            SyntaxExpr::Param(id) => {
-                let id_str = id.to_string();
-
-                // Check if this param is from a lambda (binder or body)
-                if let Some(Pattern::Term(PatternTerm::Lambda { binder, body })) = current_lambda {
-                    if id_str == binder.to_string() {
-                        // This is the binder variable
-                        result.push_str(&id_str);
-                        continue;
-                    } else {
-                        // This is the body — rendered bare: a binder body sits
-                        // inside the rule's own delimiters, exactly as the
-                        // generated `Display` pushes it at `min_bp == 0`.
-                        result.push_str(&render_pattern(body, ctx, 0));
-                        current_lambda = None;
-                        continue;
-                    }
-                }
-
-                // Get next argument
-                if let Some(arg) = arg_iter.next() {
-                    let inherited = child_min_bp(bp, slot);
-                    slot += 1;
-                    // Check if this argument is a Lambda - if so, we need special handling
-                    if let Pattern::Term(PatternTerm::Lambda { .. }) = arg {
-                        // Store the lambda for subsequent binder/body params
-                        current_lambda = Some(arg);
-                        // The current param is the binder
-                        if let Pattern::Term(PatternTerm::Lambda { binder, .. }) = arg {
-                            result.push_str(&binder.to_string());
-                        }
-                    } else {
-                        result.push_str(&render_pattern(arg, ctx, inherited));
-                    }
-                }
+    while let Some(job) = jobs.pop() {
+        match job {
+            PatternRenderJob::Text(text) => result.push_str(text),
+            PatternRenderJob::Separator(separator) => {
+                result.push(' ');
+                result.push_str(separator);
+                result.push(' ');
             },
-            SyntaxExpr::Op(op) => {
-                // For Sep operations referencing a parameter, use the next argument
-                if let PatternOp::Sep { separator, source, .. } = op {
-                    if let Some(arg) = arg_iter.next() {
-                        slot += 1;
-                        // Check if there's a chained source (zip.map.sep)
-                        if source.is_some() {
-                            result.push_str(&pattern_op_to_string(op, None));
-                        } else {
-                            // Render the collection argument with the separator
-                            result.push_str(&render_collection_with_sep(arg, separator, ctx));
-                        }
-                    } else {
-                        result.push_str(&pattern_op_to_string(op, None));
+            PatternRenderJob::Rest(rest) => {
+                result.push_str("...");
+                result.push_str(&rest.to_string());
+            },
+            PatternRenderJob::MapOpen(params) => {
+                result.push_str(".*map(|");
+                append_idents(&mut result, params);
+                result.push_str("| ");
+            },
+            PatternRenderJob::SubstClose(var) => {
+                result.push('/');
+                result.push_str(&var.to_string());
+                result.push(']');
+            },
+            PatternRenderJob::Pattern(Pattern::Term(term), min_bp) => {
+                jobs.push(PatternRenderJob::Term(term, min_bp));
+            },
+            PatternRenderJob::Pattern(Pattern::Collection { elements, rest, .. }, _) => {
+                result.push('{');
+                jobs.push(PatternRenderJob::Text("}"));
+                if let Some(rest) = rest {
+                    jobs.push(PatternRenderJob::Rest(rest));
+                    if !elements.is_empty() {
+                        jobs.push(PatternRenderJob::Text(" | "));
+                    }
+                }
+                push_pattern_sequence(&mut jobs, elements, " | ");
+            },
+            PatternRenderJob::Pattern(Pattern::Map { collection, params, body }, _) => {
+                jobs.push(PatternRenderJob::Text(")"));
+                jobs.push(PatternRenderJob::Pattern(body, 0));
+                jobs.push(PatternRenderJob::MapOpen(params));
+                jobs.push(PatternRenderJob::Pattern(collection, 0));
+            },
+            PatternRenderJob::Pattern(Pattern::Zip { first, second }, _) => {
+                result.push_str("*zip(");
+                jobs.push(PatternRenderJob::Text(")"));
+                jobs.push(PatternRenderJob::Pattern(second, 0));
+                jobs.push(PatternRenderJob::Text(", "));
+                jobs.push(PatternRenderJob::Pattern(first, 0));
+            },
+            PatternRenderJob::Pattern(Pattern::IndexedVec { collection, index, element }, _) => {
+                result.push_str(&collection.to_string());
+                result.push('[');
+                result.push_str(&index.to_string());
+                result.push_str(" := ");
+                jobs.push(PatternRenderJob::Text("]"));
+                jobs.push(PatternRenderJob::Pattern(element, 0));
+            },
+            PatternRenderJob::Term(PatternTerm::Var(name), _) => {
+                if let Some(rule) = nullary_constructor_rule(name, ctx) {
+                    match &rule.syntax_pattern {
+                        Some(syntax) => jobs.push(PatternRenderJob::ApplySyntax {
+                            syntax,
+                            args: &[],
+                            bp: None,
+                            expr_index: 0,
+                            arg_index: 0,
+                            slot: 0,
+                            current_lambda: None,
+                        }),
+                        None => jobs.push(PatternRenderJob::Grammar {
+                            rule,
+                            args: &[],
+                            bp: None,
+                            item_index: 0,
+                            arg_index: 0,
+                            slot: 0,
+                        }),
                     }
                 } else {
-                    result.push_str(&pattern_op_to_string(op, None));
+                    result.push_str(&name.to_string());
                 }
             },
-        }
-    }
-
-    result
-}
-
-/// Render a collection pattern with a separator.
-///
-/// Elements are rendered bare: a collection slot is fenced by the rule's own
-/// open/close literals, so no element can bind loosely enough to need a bracket.
-fn render_collection_with_sep(pattern: &Pattern, separator: &str, ctx: RenderCtx<'_>) -> String {
-    match pattern {
-        Pattern::Collection { elements, rest, .. } => {
-            let mut parts: Vec<String> =
-                elements.iter().map(|e| render_pattern(e, ctx, 0)).collect();
-
-            if let Some(r) = rest {
-                parts.push(format!("...{}", r));
-            }
-
-            parts.join(&format!(" {} ", separator))
-        },
-        _ => render_pattern(pattern, ctx, 0),
-    }
-}
-
-/// Build user syntax from grammar items (the BNFC item form).
-///
-/// The precedence contract is identical to [`apply_args_to_syntax`]'s: a
-/// non-terminal item is an argument slot and inherits its threshold from the
-/// enclosing rule's `bp`; a collection item writes its own delimiters, so its
-/// contents are bare.
-fn build_syntax_from_grammar(
-    rule: &GrammarRule,
-    args: &[Pattern],
-    ctx: RenderCtx<'_>,
-    bp: Option<&RuleBp>,
-) -> String {
-    let mut result = String::new();
-    let mut arg_iter = args.iter();
-    let mut slot: usize = 0;
-
-    for item in &rule.items {
-        match item {
-            GrammarItem::Terminal(t) => {
-                result.push_str(t);
-            },
-            GrammarItem::NonTerminal { .. } => {
-                if let Some(arg) = arg_iter.next() {
-                    let inherited = child_min_bp(bp, slot);
-                    slot += 1;
-                    result.push_str(&render_pattern(arg, ctx, inherited));
-                }
-            },
-            GrammarItem::Collection { delimiters, .. } => {
-                if let Some(arg) = arg_iter.next() {
-                    slot += 1;
-                    let inner = render_pattern(arg, ctx, 0);
-                    if let Some((open, close)) = delimiters {
-                        result.push_str(&format!("{}{}{}", open, inner, close));
-                    } else {
-                        result.push_str(&inner);
+            PatternRenderJob::Term(PatternTerm::Apply { constructor, args }, min_bp) => {
+                if let Some(rule) = ctx
+                    .language
+                    .terms
+                    .iter()
+                    .find(|rule| &rule.label == constructor)
+                {
+                    let bp = rule_bp(&constructor.to_string(), args.len(), ctx.bp);
+                    if bp.is_some_and(|bp| bp.own_left_bp < min_bp) {
+                        result.push('(');
+                        jobs.push(PatternRenderJob::Text(")"));
+                    }
+                    match &rule.syntax_pattern {
+                        Some(syntax) => jobs.push(PatternRenderJob::ApplySyntax {
+                            syntax,
+                            args,
+                            bp,
+                            expr_index: 0,
+                            arg_index: 0,
+                            slot: 0,
+                            current_lambda: None,
+                        }),
+                        None => jobs.push(PatternRenderJob::Grammar {
+                            rule,
+                            args,
+                            bp,
+                            item_index: 0,
+                            arg_index: 0,
+                            slot: 0,
+                        }),
+                    }
+                } else if args.is_empty() {
+                    result.push_str(&constructor.to_string());
+                } else {
+                    result.push('(');
+                    result.push_str(&constructor.to_string());
+                    jobs.push(PatternRenderJob::Text(")"));
+                    for argument in args.iter().rev() {
+                        jobs.push(PatternRenderJob::Pattern(argument, 0));
+                        jobs.push(PatternRenderJob::Text(" "));
                     }
                 }
             },
-            GrammarItem::Binder { category } => {
-                // Use lowercase category as a synthetic binder label.
-                result.push_str(&category.to_string().to_lowercase());
+            PatternRenderJob::Term(PatternTerm::Lambda { binder, body }, _) => {
+                result.push('^');
+                result.push_str(&binder.to_string());
+                result.push_str(".{");
+                jobs.push(PatternRenderJob::Text("}"));
+                jobs.push(PatternRenderJob::Pattern(body, 0));
+            },
+            PatternRenderJob::Term(PatternTerm::MultiLambda { binders, body }, _) => {
+                result.push_str("^[");
+                append_idents(&mut result, binders);
+                result.push_str("].{");
+                jobs.push(PatternRenderJob::Text("}"));
+                jobs.push(PatternRenderJob::Pattern(body, 0));
+            },
+            PatternRenderJob::Term(PatternTerm::Subst { term, var, replacement }, _) => {
+                jobs.push(PatternRenderJob::SubstClose(var));
+                jobs.push(PatternRenderJob::Pattern(replacement, 0));
+                jobs.push(PatternRenderJob::Text("["));
+                jobs.push(PatternRenderJob::Pattern(term, 0));
+            },
+            PatternRenderJob::Term(PatternTerm::MultiSubst { scope, replacements }, _) => {
+                jobs.push(PatternRenderJob::Text("]"));
+                push_pattern_sequence(&mut jobs, replacements, ", ");
+                jobs.push(PatternRenderJob::Text("["));
+                jobs.push(PatternRenderJob::Pattern(scope, 0));
+            },
+            PatternRenderJob::ApplySyntax {
+                syntax,
+                args,
+                bp,
+                mut expr_index,
+                mut arg_index,
+                mut slot,
+                mut current_lambda,
+            } => {
+                while let Some(expression) = syntax.get(expr_index) {
+                    expr_index += 1;
+                    match expression {
+                        SyntaxExpr::Literal(text) => result.push_str(text),
+                        SyntaxExpr::TokenKind { name, .. } => {
+                            result.push_str(&name.to_string());
+                        },
+                        SyntaxExpr::GuestBody { open, .. } => {
+                            result.push_str(&open.to_string());
+                        },
+                        SyntaxExpr::Param(ident) => {
+                            let ident_text = ident.to_string();
+                            if let Some(Pattern::Term(PatternTerm::Lambda { binder, body })) =
+                                current_lambda
+                            {
+                                if ident_text == binder.to_string() {
+                                    result.push_str(&ident_text);
+                                    continue;
+                                }
+                                jobs.push(PatternRenderJob::ApplySyntax {
+                                    syntax,
+                                    args,
+                                    bp,
+                                    expr_index,
+                                    arg_index,
+                                    slot,
+                                    current_lambda: None,
+                                });
+                                jobs.push(PatternRenderJob::Pattern(body, 0));
+                                break;
+                            }
+                            let Some(argument) = args.get(arg_index) else {
+                                continue;
+                            };
+                            arg_index += 1;
+                            let inherited = child_min_bp(bp, slot);
+                            slot += 1;
+                            if let Pattern::Term(PatternTerm::Lambda { binder, .. }) = argument {
+                                current_lambda = Some(argument);
+                                result.push_str(&binder.to_string());
+                            } else {
+                                jobs.push(PatternRenderJob::ApplySyntax {
+                                    syntax,
+                                    args,
+                                    bp,
+                                    expr_index,
+                                    arg_index,
+                                    slot,
+                                    current_lambda,
+                                });
+                                jobs.push(PatternRenderJob::Pattern(argument, inherited));
+                                break;
+                            }
+                        },
+                        SyntaxExpr::Op(operation) => {
+                            if let PatternOp::Sep { separator, source, .. } = operation {
+                                if let Some(argument) = args.get(arg_index) {
+                                    arg_index += 1;
+                                    slot += 1;
+                                    if source.is_some() {
+                                        append_pattern_op_string(&mut result, operation);
+                                        continue;
+                                    }
+                                    jobs.push(PatternRenderJob::ApplySyntax {
+                                        syntax,
+                                        args,
+                                        bp,
+                                        expr_index,
+                                        arg_index,
+                                        slot,
+                                        current_lambda,
+                                    });
+                                    jobs.push(PatternRenderJob::CollectionWithSep {
+                                        pattern: argument,
+                                        separator,
+                                    });
+                                    break;
+                                }
+                            }
+                            append_pattern_op_string(&mut result, operation);
+                        },
+                    }
+                }
+            },
+            PatternRenderJob::Grammar {
+                rule,
+                args,
+                bp,
+                mut item_index,
+                mut arg_index,
+                mut slot,
+            } => {
+                while let Some(item) = rule.items.get(item_index) {
+                    item_index += 1;
+                    match item {
+                        GrammarItem::Terminal(text) => result.push_str(text),
+                        GrammarItem::NonTerminal { .. } => {
+                            let Some(argument) = args.get(arg_index) else {
+                                continue;
+                            };
+                            arg_index += 1;
+                            let inherited = child_min_bp(bp, slot);
+                            slot += 1;
+                            jobs.push(PatternRenderJob::Grammar {
+                                rule,
+                                args,
+                                bp,
+                                item_index,
+                                arg_index,
+                                slot,
+                            });
+                            jobs.push(PatternRenderJob::Pattern(argument, inherited));
+                            break;
+                        },
+                        GrammarItem::Collection { delimiters, .. } => {
+                            let Some(argument) = args.get(arg_index) else {
+                                continue;
+                            };
+                            arg_index += 1;
+                            slot += 1;
+                            jobs.push(PatternRenderJob::Grammar {
+                                rule,
+                                args,
+                                bp,
+                                item_index,
+                                arg_index,
+                                slot,
+                            });
+                            if let Some((open, close)) = delimiters {
+                                result.push_str(open);
+                                jobs.push(PatternRenderJob::Text(close));
+                            }
+                            jobs.push(PatternRenderJob::Pattern(argument, 0));
+                            break;
+                        },
+                        GrammarItem::Binder { category } => {
+                            result.push_str(&category.to_string().to_lowercase());
+                        },
+                    }
+                }
+            },
+            PatternRenderJob::CollectionWithSep { pattern, separator } => match pattern {
+                Pattern::Collection { elements, rest, .. } => {
+                    if let Some(rest) = rest {
+                        jobs.push(PatternRenderJob::Rest(rest));
+                        if !elements.is_empty() {
+                            jobs.push(PatternRenderJob::Separator(separator));
+                        }
+                    }
+                    for (index, element) in elements.iter().enumerate().rev() {
+                        jobs.push(PatternRenderJob::Pattern(element, 0));
+                        if index != 0 {
+                            jobs.push(PatternRenderJob::Separator(separator));
+                        }
+                    }
+                },
+                _ => jobs.push(PatternRenderJob::Pattern(pattern, 0)),
             },
         }
     }
-
     result
+}
+
+/// Convert a Pattern to user syntax at an inherited precedence threshold.
+fn render_pattern(pattern: &Pattern, ctx: RenderCtx<'_>, min_bp: u8) -> String {
+    drive_pattern_renderer(vec![PatternRenderJob::Pattern(pattern, min_bp)], ctx)
 }
 
 /// Generate LogicRelationDef array from logic block
@@ -1492,7 +1658,7 @@ fn generate_builtin_predicate_defs(language: &LanguageDef) -> TokenStream {
                 .first()
                 .map(|form| {
                     form.iter()
-                        .map(|expr| syntax_expr_to_display(expr))
+                        .map(syntax_expr_to_display)
                         .collect::<Vec<_>>()
                         .join(" ")
                 })
@@ -1683,6 +1849,10 @@ fn generate_connective_defs(language: &LanguageDef) -> TokenStream {
 
     quote! { &[#(#defs),*] }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/metadata_recursive_oracle.rs"]
+mod metadata_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
