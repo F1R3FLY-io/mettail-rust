@@ -459,10 +459,13 @@ fn drain_owned_pattern(pattern: Pattern, work: &mut Vec<Pattern>) {
             let term = unsafe { std::ptr::read(term) };
             drain_owned_pattern_term(term, work);
         },
-        Pattern::Collection { coll_type, elements, rest } => {
-            // SAFETY: all three fields belong to a ManuallyDrop value and each is
-            // read exactly once. The moved values assume normal destruction here.
-            drop(unsafe { std::ptr::read(coll_type) });
+        Pattern::Collection { coll_type: _, elements, rest } => {
+            // SAFETY: both destructor-bearing fields belong to a ManuallyDrop
+            // value and are read exactly once. The moved values assume normal
+            // destruction here.
+            // `CollectionType` has no destructor.  The parent is forgotten
+            // after its recursive children are moved to `work`, so there is
+            // no lifecycle action to perform for this field.
             work.extend(unsafe { std::ptr::read(elements) });
             drop(unsafe { std::ptr::read(rest) });
         },
@@ -835,7 +838,7 @@ fn fmt_debug_ident(
     if pretty {
         f.write_str("Ident {\n")?;
         write_debug_indent(f, indent + 1)?;
-        write!(f, "sym: {},\n", ident)?;
+        writeln!(f, "sym: {},", ident)?;
         write_debug_indent(f, indent)?;
         f.write_str("}")
     } else {

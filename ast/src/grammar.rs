@@ -249,7 +249,7 @@ fn fmt_grammar_ident(
     if pretty {
         formatter.write_str("Ident {\n")?;
         write_grammar_debug_indent(formatter, indent + 1)?;
-        write!(formatter, "sym: {ident},\n")?;
+        writeln!(formatter, "sym: {ident},")?;
         write_grammar_debug_indent(formatter, indent)?;
         formatter.write_str("}")
     } else {
@@ -837,7 +837,7 @@ fn fmt_syntax_node(
             },
             SyntaxDebugTask::FieldString(name, value, indent) => {
                 write_grammar_debug_indent(formatter, indent)?;
-                write!(formatter, "{name}: {value:?},\n")?;
+                writeln!(formatter, "{name}: {value:?},")?;
             },
             SyntaxDebugTask::Node(SyntaxNode::Expr(SyntaxExpr::Literal(value)), indent)
                 if pretty =>

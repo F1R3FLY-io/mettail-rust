@@ -26,7 +26,7 @@ fn fmt_model_ident(
     if pretty {
         formatter.write_str("Ident {\n")?;
         write_model_debug_indent(formatter, indent + 1)?;
-        write!(formatter, "sym: {ident},\n")?;
+        writeln!(formatter, "sym: {ident},")?;
         write_model_debug_indent(formatter, indent)?;
         formatter.write_str("}")
     } else {
@@ -220,11 +220,11 @@ fn fmt_behavioral_predicate_at(
             },
             BehavioralDebugTask::FieldQuantifier(name, quantifier, indent) => {
                 write_model_debug_indent(formatter, indent)?;
-                write!(formatter, "{name}: {quantifier:?},\n")?;
+                writeln!(formatter, "{name}: {quantifier:?},")?;
             },
             BehavioralDebugTask::FieldBool(name, value, indent) => {
                 write_model_debug_indent(formatter, indent)?;
-                write!(formatter, "{name}: {value},\n")?;
+                writeln!(formatter, "{name}: {value},")?;
             },
             BehavioralDebugTask::Visit(
                 BehavioralPred::RelationQuery { relation_name, args, negated },
