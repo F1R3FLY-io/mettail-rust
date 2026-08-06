@@ -82,7 +82,6 @@ use crate::logict::{ConstraintTheory, LogicStream};
 /// Kept independent of any Z3 `Context` so [`SmtConstraint`] satisfies
 /// `ConstraintTheory::Constraint: Clone + Eq + Hash`; translated to a fresh Z3 AST at
 /// solve time by [`Z3Env`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SmtTerm {
     /// Integer literal.
     IntLit(i64),
@@ -103,7 +102,6 @@ pub enum SmtTerm {
 /// A guard constraint over [`SmtTerm`]s: booleans + (in)equalities. Boolean
 /// connectives compose constraints; comparisons relate two terms **of the same sort**
 /// (both integer or both bitvector of equal width).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SmtConstraint {
     /// Constant truth.
     True,
@@ -128,6 +126,9 @@ pub enum SmtConstraint {
     /// `a ∨ b`.
     Or(Box<SmtConstraint>, Box<SmtConstraint>),
 }
+
+#[path = "logict_smt/lifecycle.rs"]
+mod lifecycle;
 
 /// A satisfying assignment extracted from a [`Sat3::Sat`] store.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -314,32 +315,128 @@ pub fn checked_witness(theory: &Z3Theory, c: &SmtConstraint) -> Option<SmtModel>
 /// (a satisfying model from Z3 binds every relevant variable, so this only affects
 /// terms over variables outside the witness).
 fn eval_term(t: &SmtTerm, m: &SmtModel) -> i64 {
-    match t {
-        SmtTerm::IntLit(n) => *n,
-        SmtTerm::IntVar(name) => m.ints.get(name).copied().unwrap_or(0),
-        SmtTerm::BvLit(v, _) => *v as i64,
-        SmtTerm::BvVar(name, _) => m.bvs.get(name).copied().unwrap_or(0) as i64,
-        SmtTerm::Add(a, b) => eval_term(a, m).wrapping_add(eval_term(b, m)),
-        SmtTerm::Sub(a, b) => eval_term(a, m).wrapping_sub(eval_term(b, m)),
-        SmtTerm::Scale(k, a) => k.wrapping_mul(eval_term(a, m)),
+    enum Task<'term> {
+        Visit(&'term SmtTerm),
+        Add,
+        Sub,
+        Scale(i64),
     }
+
+    let mut tasks = vec![Task::Visit(t)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(SmtTerm::IntLit(value)) => values.push(*value),
+            Task::Visit(SmtTerm::IntVar(name)) => {
+                values.push(m.ints.get(name).copied().unwrap_or(0));
+            },
+            Task::Visit(SmtTerm::BvLit(value, _)) => values.push(*value as i64),
+            Task::Visit(SmtTerm::BvVar(name, _)) => {
+                values.push(m.bvs.get(name).copied().unwrap_or(0) as i64);
+            },
+            Task::Visit(SmtTerm::Add(left, right)) => {
+                tasks.push(Task::Add);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(SmtTerm::Sub(left, right)) => {
+                tasks.push(Task::Sub);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(SmtTerm::Scale(coefficient, term)) => {
+                tasks.push(Task::Scale(*coefficient));
+                tasks.push(Task::Visit(term));
+            },
+            Task::Add => {
+                let right = values.pop().expect("SMT evaluator lost addition RHS");
+                let left = values.pop().expect("SMT evaluator lost addition LHS");
+                values.push(left.wrapping_add(right));
+            },
+            Task::Sub => {
+                let right = values.pop().expect("SMT evaluator lost subtraction RHS");
+                let left = values.pop().expect("SMT evaluator lost subtraction LHS");
+                values.push(left.wrapping_sub(right));
+            },
+            Task::Scale(coefficient) => {
+                let value = values.pop().expect("SMT evaluator lost scale operand");
+                values.push(coefficient.wrapping_mul(value));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("SMT term evaluator produced no value")
 }
 
 /// Evaluate an [`SmtConstraint`] under an assignment.
 pub fn eval_constraint(c: &SmtConstraint, m: &SmtModel) -> bool {
-    match c {
-        SmtConstraint::True => true,
-        SmtConstraint::False => false,
-        SmtConstraint::BoolVar(name) => m.bools.get(name).copied().unwrap_or(false),
-        SmtConstraint::Eq(a, b) => eval_term(a, m) == eval_term(b, m),
-        SmtConstraint::Le(a, b) => eval_term(a, m) <= eval_term(b, m),
-        SmtConstraint::Lt(a, b) => eval_term(a, m) < eval_term(b, m),
-        SmtConstraint::Ge(a, b) => eval_term(a, m) >= eval_term(b, m),
-        SmtConstraint::Gt(a, b) => eval_term(a, m) > eval_term(b, m),
-        SmtConstraint::Not(a) => !eval_constraint(a, m),
-        SmtConstraint::And(a, b) => eval_constraint(a, m) && eval_constraint(b, m),
-        SmtConstraint::Or(a, b) => eval_constraint(a, m) || eval_constraint(b, m),
+    enum Task<'constraint> {
+        Visit(&'constraint SmtConstraint),
+        Not,
+        AndRight(&'constraint SmtConstraint),
+        OrRight(&'constraint SmtConstraint),
     }
+
+    let mut tasks = vec![Task::Visit(c)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(SmtConstraint::True) => values.push(true),
+            Task::Visit(SmtConstraint::False) => values.push(false),
+            Task::Visit(SmtConstraint::BoolVar(name)) => {
+                values.push(m.bools.get(name).copied().unwrap_or(false));
+            },
+            Task::Visit(SmtConstraint::Eq(left, right)) => {
+                values.push(eval_term(left, m) == eval_term(right, m));
+            },
+            Task::Visit(SmtConstraint::Le(left, right)) => {
+                values.push(eval_term(left, m) <= eval_term(right, m));
+            },
+            Task::Visit(SmtConstraint::Lt(left, right)) => {
+                values.push(eval_term(left, m) < eval_term(right, m));
+            },
+            Task::Visit(SmtConstraint::Ge(left, right)) => {
+                values.push(eval_term(left, m) >= eval_term(right, m));
+            },
+            Task::Visit(SmtConstraint::Gt(left, right)) => {
+                values.push(eval_term(left, m) > eval_term(right, m));
+            },
+            Task::Visit(SmtConstraint::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(SmtConstraint::And(left, right)) => {
+                tasks.push(Task::AndRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(SmtConstraint::Or(left, right)) => {
+                tasks.push(Task::OrRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Not => {
+                let value = values.pop().expect("SMT evaluator lost negated value");
+                values.push(!value);
+            },
+            Task::AndRight(right) => {
+                if values.pop().expect("SMT evaluator lost conjunction LHS") {
+                    tasks.push(Task::Visit(right));
+                } else {
+                    values.push(false);
+                }
+            },
+            Task::OrRight(right) => {
+                if values.pop().expect("SMT evaluator lost disjunction LHS") {
+                    values.push(true);
+                } else {
+                    tasks.push(Task::Visit(right));
+                }
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("SMT constraint evaluator produced no value")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -394,62 +491,149 @@ impl<'ctx> Z3Env<'ctx> {
     }
 
     fn term(&mut self, t: &SmtTerm) -> Z3Num<'ctx> {
-        match t {
-            SmtTerm::IntLit(n) => Z3Num::Int(z3::ast::Int::from_i64(self.ctx, *n)),
-            SmtTerm::IntVar(name) => Z3Num::Int(self.int_var(name)),
-            SmtTerm::BvLit(v, w) => Z3Num::Bv(z3::ast::BV::from_u64(self.ctx, *v, *w)),
-            SmtTerm::BvVar(name, w) => Z3Num::Bv(self.bv_var(name, *w)),
-            SmtTerm::Add(a, b) => self.num_binop(a, b, |x, y| x + y, |x, y| x.bvadd(y)),
-            SmtTerm::Sub(a, b) => self.num_binop(a, b, |x, y| x - y, |x, y| x.bvsub(y)),
-            SmtTerm::Scale(k, a) => match self.term(a) {
-                Z3Num::Int(x) => Z3Num::Int(z3::ast::Int::from_i64(self.ctx, *k) * x),
-                Z3Num::Bv(x) => {
-                    let w = x.get_size();
-                    Z3Num::Bv(z3::ast::BV::from_u64(self.ctx, *k as u64, w).bvmul(&x))
-                },
-            },
+        enum Task<'term> {
+            Visit(&'term SmtTerm),
+            Add,
+            Sub,
+            Scale(i64),
         }
-    }
 
-    fn num_binop(
-        &mut self,
-        a: &SmtTerm,
-        b: &SmtTerm,
-        int_op: impl Fn(z3::ast::Int<'ctx>, z3::ast::Int<'ctx>) -> z3::ast::Int<'ctx>,
-        bv_op: impl Fn(&z3::ast::BV<'ctx>, &z3::ast::BV<'ctx>) -> z3::ast::BV<'ctx>,
-    ) -> Z3Num<'ctx> {
-        match (self.term(a), self.term(b)) {
-            (Z3Num::Int(x), Z3Num::Int(y)) => Z3Num::Int(int_op(x, y)),
-            (Z3Num::Bv(x), Z3Num::Bv(y)) => Z3Num::Bv(bv_op(&x, &y)),
-            // Mixed sorts are ill-typed guards; default to the integer reading so the
-            // solver sees a well-formed (if unintended) constraint rather than panicking.
-            (Z3Num::Int(x), _) => Z3Num::Int(x),
-            (Z3Num::Bv(x), _) => Z3Num::Bv(x),
+        let mut tasks = vec![Task::Visit(t)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(SmtTerm::IntLit(value)) => {
+                    values.push(Z3Num::Int(z3::ast::Int::from_i64(self.ctx, *value)));
+                },
+                Task::Visit(SmtTerm::IntVar(name)) => {
+                    values.push(Z3Num::Int(self.int_var(name)));
+                },
+                Task::Visit(SmtTerm::BvLit(value, width)) => {
+                    values.push(Z3Num::Bv(z3::ast::BV::from_u64(self.ctx, *value, *width)));
+                },
+                Task::Visit(SmtTerm::BvVar(name, width)) => {
+                    values.push(Z3Num::Bv(self.bv_var(name, *width)));
+                },
+                Task::Visit(SmtTerm::Add(left, right)) => {
+                    tasks.push(Task::Add);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SmtTerm::Sub(left, right)) => {
+                    tasks.push(Task::Sub);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SmtTerm::Scale(coefficient, term)) => {
+                    tasks.push(Task::Scale(*coefficient));
+                    tasks.push(Task::Visit(term));
+                },
+                Task::Add | Task::Sub => {
+                    let right = values.pop().expect("SMT Z3 translation lost binary RHS");
+                    let left = values.pop().expect("SMT Z3 translation lost binary LHS");
+                    let result = match (task, left, right) {
+                        (Task::Add, Z3Num::Int(x), Z3Num::Int(y)) => Z3Num::Int(x + y),
+                        (Task::Sub, Z3Num::Int(x), Z3Num::Int(y)) => Z3Num::Int(x - y),
+                        (Task::Add, Z3Num::Bv(x), Z3Num::Bv(y)) => Z3Num::Bv(x.bvadd(&y)),
+                        (Task::Sub, Z3Num::Bv(x), Z3Num::Bv(y)) => Z3Num::Bv(x.bvsub(&y)),
+                        // Preserve the historical mixed-sort fallback: the left AST
+                        // survives unchanged and determines the result sort.
+                        (_, left @ Z3Num::Int(_), _) | (_, left @ Z3Num::Bv(_), _) => left,
+                    };
+                    values.push(result);
+                },
+                Task::Scale(coefficient) => {
+                    let value = values.pop().expect("SMT Z3 translation lost scale operand");
+                    let result = match value {
+                        Z3Num::Int(value) => {
+                            Z3Num::Int(z3::ast::Int::from_i64(self.ctx, coefficient) * value)
+                        },
+                        Z3Num::Bv(value) => {
+                            let width = value.get_size();
+                            Z3Num::Bv(
+                                z3::ast::BV::from_u64(self.ctx, coefficient as u64, width)
+                                    .bvmul(&value),
+                            )
+                        },
+                    };
+                    values.push(result);
+                },
+            }
         }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("SMT term Z3 translation produced no value")
     }
 
     fn constraint(&mut self, c: &SmtConstraint) -> z3::ast::Bool<'ctx> {
-        match c {
-            SmtConstraint::True => z3::ast::Bool::from_bool(self.ctx, true),
-            SmtConstraint::False => z3::ast::Bool::from_bool(self.ctx, false),
-            SmtConstraint::BoolVar(name) => self.bool_var(name),
-            SmtConstraint::Eq(a, b) => self.compare(a, b, Cmp::Eq),
-            SmtConstraint::Le(a, b) => self.compare(a, b, Cmp::Le),
-            SmtConstraint::Lt(a, b) => self.compare(a, b, Cmp::Lt),
-            SmtConstraint::Ge(a, b) => self.compare(a, b, Cmp::Ge),
-            SmtConstraint::Gt(a, b) => self.compare(a, b, Cmp::Gt),
-            SmtConstraint::Not(a) => self.constraint(a).not(),
-            SmtConstraint::And(a, b) => {
-                let x = self.constraint(a);
-                let y = self.constraint(b);
-                z3::ast::Bool::and(self.ctx, &[&x, &y])
-            },
-            SmtConstraint::Or(a, b) => {
-                let x = self.constraint(a);
-                let y = self.constraint(b);
-                z3::ast::Bool::or(self.ctx, &[&x, &y])
-            },
+        enum Task<'constraint> {
+            Visit(&'constraint SmtConstraint),
+            Not,
+            And,
+            Or,
         }
+
+        let mut tasks = vec![Task::Visit(c)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(SmtConstraint::True) => {
+                    values.push(z3::ast::Bool::from_bool(self.ctx, true));
+                },
+                Task::Visit(SmtConstraint::False) => {
+                    values.push(z3::ast::Bool::from_bool(self.ctx, false));
+                },
+                Task::Visit(SmtConstraint::BoolVar(name)) => values.push(self.bool_var(name)),
+                Task::Visit(SmtConstraint::Eq(left, right)) => {
+                    values.push(self.compare(left, right, Cmp::Eq));
+                },
+                Task::Visit(SmtConstraint::Le(left, right)) => {
+                    values.push(self.compare(left, right, Cmp::Le));
+                },
+                Task::Visit(SmtConstraint::Lt(left, right)) => {
+                    values.push(self.compare(left, right, Cmp::Lt));
+                },
+                Task::Visit(SmtConstraint::Ge(left, right)) => {
+                    values.push(self.compare(left, right, Cmp::Ge));
+                },
+                Task::Visit(SmtConstraint::Gt(left, right)) => {
+                    values.push(self.compare(left, right, Cmp::Gt));
+                },
+                Task::Visit(SmtConstraint::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(SmtConstraint::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SmtConstraint::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values.pop().expect("SMT Z3 translation lost negated value");
+                    values.push(value.not());
+                },
+                Task::And | Task::Or => {
+                    let right = values.pop().expect("SMT Z3 translation lost boolean RHS");
+                    let left = values.pop().expect("SMT Z3 translation lost boolean LHS");
+                    let value = match task {
+                        Task::And => z3::ast::Bool::and(self.ctx, &[&left, &right]),
+                        Task::Or => z3::ast::Bool::or(self.ctx, &[&left, &right]),
+                        _ => unreachable!("boolean reducer receives only And or Or"),
+                    };
+                    values.push(value);
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("SMT constraint Z3 translation produced no value")
     }
 
     fn compare(&mut self, a: &SmtTerm, b: &SmtTerm, cmp: Cmp) -> z3::ast::Bool<'ctx> {
