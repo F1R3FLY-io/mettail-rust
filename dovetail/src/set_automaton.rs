@@ -459,67 +459,135 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
         cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
         stats: &mut SetAutomatonStats,
     ) -> CachedSubsts {
-        let class = eg.find(class);
-        let key = (state_id, class);
-        if let Some(matches) = cache.get(&key) {
-            stats.state_cache_hits += 1;
-            return Rc::clone(matches);
+        struct AppFrame {
+            state_id: StateId,
+            class: EClassId,
+            next_node: usize,
+            active_node: Option<usize>,
+            next_arg: usize,
+            partial: Vec<Subst>,
+            out: Vec<Subst>,
         }
 
-        stats.state_evaluations += 1;
-        let matches = match &self.compiler.states[state_id.0] {
-            PatternState::Var(name) => {
-                let mut subst = Subst::default();
-                subst.insert(name.clone(), class);
-                cached_substs(vec![subst])
-            },
-            PatternState::App { op, args } => {
-                self.eval_app_state(eg, op, args, class, cache, stats)
-            },
-        };
-        cache.insert(key, Rc::clone(&matches));
-        matches
-    }
+        enum Job {
+            Evaluate { state_id: StateId, class: EClassId },
+            ContinueApp(AppFrame),
+            MergeArg(AppFrame),
+        }
 
-    fn eval_app_state(
-        &self,
-        eg: &EGraph<L>,
-        op: &L,
-        args: &[StateId],
-        class: EClassId,
-        cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
-        stats: &mut SetAutomatonStats,
-    ) -> CachedSubsts {
-        let mut out = Vec::new();
-        for node in eg
-            .nodes(class)
-            .iter()
-            .filter(|node| node.op == *op && node.children.len() == args.len())
-        {
-            let mut partial = vec![Subst::default()];
-            for (&arg_state, &child) in args.iter().zip(&node.children) {
-                let child_matches = self.eval_state(eg, arg_state, child, cache, stats);
-                if child_matches.is_empty() {
-                    partial.clear();
-                    break;
-                }
+        let mut jobs = vec![Job::Evaluate { state_id, class }];
+        let mut values = Vec::<CachedSubsts>::new();
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Evaluate { state_id, class } => {
+                    let class = eg.find(class);
+                    let key = (state_id, class);
+                    if let Some(matches) = cache.get(&key) {
+                        stats.state_cache_hits += 1;
+                        values.push(Rc::clone(matches));
+                        continue;
+                    }
 
-                let mut next = Vec::new();
-                for left in &partial {
-                    for right in child_matches.iter() {
-                        if let Some(merged) = merge_substs(eg, left, right) {
-                            next.push(merged);
+                    stats.state_evaluations += 1;
+                    match &self.compiler.states[state_id.0] {
+                        PatternState::Var(name) => {
+                            let mut subst = Subst::default();
+                            subst.insert(name.clone(), class);
+                            let matches = cached_substs(vec![subst]);
+                            cache.insert(key, Rc::clone(&matches));
+                            values.push(matches);
+                        },
+                        PatternState::App { .. } => jobs.push(Job::ContinueApp(AppFrame {
+                            state_id,
+                            class,
+                            next_node: 0,
+                            active_node: None,
+                            next_arg: 0,
+                            partial: Vec::new(),
+                            out: Vec::new(),
+                        })),
+                    }
+                },
+                Job::ContinueApp(mut frame) => {
+                    let PatternState::App { op, args } = &self.compiler.states[frame.state_id.0]
+                    else {
+                        unreachable!("only App states create application evaluation frames")
+                    };
+
+                    if frame.active_node.is_none() {
+                        let nodes = eg.nodes(frame.class);
+                        let Some(node_index) = (frame.next_node..nodes.len()).find(|&index| {
+                            nodes[index].op == *op && nodes[index].children.len() == args.len()
+                        }) else {
+                            let matches = cached_substs(frame.out);
+                            cache.insert((frame.state_id, frame.class), Rc::clone(&matches));
+                            values.push(matches);
+                            continue;
+                        };
+                        frame.next_node = node_index + 1;
+                        frame.active_node = Some(node_index);
+                        frame.next_arg = 0;
+                        frame.partial.push(Subst::default());
+
+                        if args.is_empty() {
+                            frame.out.append(&mut frame.partial);
+                            frame.active_node = None;
+                            jobs.push(Job::ContinueApp(frame));
+                            continue;
                         }
                     }
-                }
-                partial = next;
-                if partial.is_empty() {
-                    break;
-                }
+
+                    let node_index = frame
+                        .active_node
+                        .expect("an active application node was just selected");
+                    let arg_state = args[frame.next_arg];
+                    let child = eg.nodes(frame.class)[node_index].children[frame.next_arg];
+                    jobs.push(Job::MergeArg(frame));
+                    jobs.push(Job::Evaluate { state_id: arg_state, class: child });
+                },
+                Job::MergeArg(mut frame) => {
+                    let child_matches = values
+                        .pop()
+                        .expect("application evaluator lost a child-state result");
+                    if child_matches.is_empty() {
+                        frame.partial.clear();
+                        frame.active_node = None;
+                        jobs.push(Job::ContinueApp(frame));
+                        continue;
+                    }
+
+                    let mut next = Vec::new();
+                    for left in &frame.partial {
+                        for right in child_matches.iter() {
+                            if let Some(merged) = merge_substs(eg, left, right) {
+                                next.push(merged);
+                            }
+                        }
+                    }
+                    frame.partial = next;
+                    if frame.partial.is_empty() {
+                        frame.active_node = None;
+                    } else {
+                        frame.next_arg += 1;
+                        let PatternState::App { args, .. } =
+                            &self.compiler.states[frame.state_id.0]
+                        else {
+                            unreachable!("only App states create application evaluation frames")
+                        };
+                        if frame.next_arg == args.len() {
+                            frame.out.append(&mut frame.partial);
+                            frame.active_node = None;
+                        }
+                    }
+                    jobs.push(Job::ContinueApp(frame));
+                },
             }
-            out.extend(partial);
         }
-        cached_substs(out)
+
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("set-automaton evaluator produced no root-state result")
     }
 }
 
@@ -557,6 +625,10 @@ fn merge_substs<L: Clone + Eq + Hash>(
 #[cfg(test)]
 #[path = "../tests/support/set_automaton_compile_recursive_oracle.rs"]
 mod compile_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/set_automaton_eval_recursive_oracle.rs"]
+mod eval_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
@@ -765,6 +837,73 @@ mod tests {
             run.stats.state_cache_hits >= 1,
             "shared nested pair state should be reused across root patterns"
         );
+    }
+
+    #[test]
+    fn evaluator_pda_matches_bounded_recursive_equations_exactly() {
+        let mut eg = EGraph::new();
+        let a = leaf(&mut eg, "a");
+        let b = leaf(&mut eg, "b");
+        let pair_ab = eg.add(ENode::new("pair".to_string(), vec![a, b]));
+        let pair_ba = eg.add(ENode::new("pair".to_string(), vec![b, a]));
+        eg.merge(pair_ab, pair_ba);
+        eg.rebuild();
+        let pair = eg.find(pair_ab);
+        let _wrap = eg.add(ENode::new("wrap".to_string(), vec![pair]));
+
+        let shared_pair =
+            Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]);
+        let automaton = SetAutomaton::compile_structural([
+            (PatternId(0), Pattern::var("root")),
+            (PatternId(1), shared_pair.clone()),
+            (PatternId(2), Pattern::app("wrap".to_string(), vec![shared_pair])),
+            (
+                PatternId(3),
+                Pattern::app("pair".to_string(), vec![Pattern::var("same"), Pattern::var("same")]),
+            ),
+            (PatternId(4), Pattern::app("a".to_string(), Vec::new())),
+        ])
+        .expect("the bounded positional corpus compiles");
+
+        assert_eq!(
+            automaton.search_egraph(&eg),
+            eval_recursive_oracle::search_egraph(&automaton, &eg),
+            "the PDA preserves match ordering, substitutions, and cache statistics"
+        );
+    }
+
+    #[test]
+    fn evaluator_pda_is_stack_safe_at_twenty_thousand_levels() {
+        std::thread::Builder::new()
+            .name("set-automaton-deep-pda".to_string())
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                const DEPTH: usize = 20_000;
+
+                let mut eg = EGraph::new();
+                let mut subject = leaf(&mut eg, "leaf");
+                for _ in 0..DEPTH {
+                    subject = eg.add(ENode::new("S".to_string(), vec![subject]));
+                }
+                let root = eg.add(ENode::new("Root".to_string(), vec![subject]));
+
+                let mut pattern = Pattern::var("x");
+                for _ in 0..DEPTH {
+                    pattern = Pattern::app("S".to_string(), vec![pattern]);
+                }
+                pattern = Pattern::app("Root".to_string(), vec![pattern]);
+                let automaton = SetAutomaton::compile_structural([(PatternId(0), pattern)])
+                    .expect("the deep positional pattern compiles");
+
+                let run = automaton.search_egraph(&eg);
+                assert_eq!(run.matches.len(), 1);
+                assert_eq!(run.matches[0].root, root);
+                assert_eq!(run.stats.candidate_evaluations, 1);
+                assert_eq!(run.stats.state_evaluations, DEPTH + 2);
+            })
+            .expect("the bounded-stack worker starts")
+            .join()
+            .expect("the evaluator PDA completes without stack overflow");
     }
 
     #[test]
