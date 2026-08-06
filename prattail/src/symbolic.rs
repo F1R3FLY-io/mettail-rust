@@ -693,9 +693,11 @@ impl BooleanAlgebra for CharClassAlgebra {
 ///
 /// # Satisfiability
 ///
-/// Since the domain is finite (2^n valuations for n atoms), satisfiability
-/// is decided by exhaustive enumeration. This is tractable for the small
-/// number of atoms typical in PraTTaIL grammars (usually fewer than 10).
+/// Satisfiability is decided by an iterative Davis--Putnam--Logemann--Loveland
+/// style search over only the atoms that occur in the predicate.  Three-valued
+/// partial evaluation prunes a branch as soon as it becomes constant, while an
+/// explicit branch stack avoids both native recursion and machine-word limits
+/// on the number of atoms.
 #[derive(Clone, Debug)]
 pub struct KatBooleanAlgebra {
     /// All proposition (atom) names known to this algebra.
@@ -716,20 +718,158 @@ impl KatBooleanAlgebra {
         KatBooleanAlgebra { atoms }
     }
 
-    /// Generate all 2^n truth assignments for the atoms.
-    fn all_valuations(&self) -> Vec<HashMap<String, bool>> {
-        let n = self.atoms.len();
-        let num_valuations = 1usize << n;
-        let mut valuations = Vec::with_capacity(num_valuations);
-        for bits in 0..num_valuations {
-            let mut valuation = HashMap::with_capacity(n);
-            for (i, name) in self.atoms.iter().enumerate() {
-                valuation.insert(name.clone(), (bits >> i) & 1 == 1);
+    /// Find a satisfying assignment without materializing the truth table.
+    fn satisfying_assignment(&self, predicate: &BooleanTest) -> Option<HashMap<String, bool>> {
+        let universe: HashMap<&str, usize> = self
+            .atoms
+            .iter()
+            .enumerate()
+            .map(|(index, atom)| (atom.as_str(), index))
+            .collect();
+        let predicate_atoms = predicate.atoms();
+        let mut relevant: Vec<usize> = predicate_atoms
+            .iter()
+            .filter_map(|atom| universe.get(atom.as_str()).copied())
+            .collect();
+        relevant.sort_unstable();
+        relevant.dedup();
+
+        let mut assignment = vec![None; self.atoms.len()];
+        let mut branches = Vec::new();
+        loop {
+            match partial_eval_test(predicate, &universe, &assignment) {
+                PartialTruth::True => {
+                    return Some(
+                        self.atoms
+                            .iter()
+                            .enumerate()
+                            .map(|(index, atom)| (atom.clone(), assignment[index].unwrap_or(false)))
+                            .collect(),
+                    );
+                },
+                PartialTruth::Unknown => {
+                    let index = relevant
+                        .iter()
+                        .copied()
+                        .find(|index| assignment[*index].is_none())
+                        .expect("partial Boolean evaluation lost an unknown atom");
+                    assignment[index] = Some(false);
+                    branches.push(index);
+                },
+                PartialTruth::False => loop {
+                    let index = branches.pop()?;
+                    match assignment[index] {
+                        Some(false) => {
+                            assignment[index] = Some(true);
+                            branches.push(index);
+                            break;
+                        },
+                        Some(true) => assignment[index] = None,
+                        None => unreachable!("Boolean search branch was not assigned"),
+                    }
+                },
             }
-            valuations.push(valuation);
         }
-        valuations
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartialTruth {
+    False,
+    Unknown,
+    True,
+}
+
+/// Evaluate a Boolean test under a partial assignment without recursion.
+/// Atoms outside the algebra's declared universe retain the historical value
+/// `false`; declared but unassigned atoms evaluate to [`PartialTruth::Unknown`].
+fn partial_eval_test(
+    test: &BooleanTest,
+    universe: &HashMap<&str, usize>,
+    assignment: &[Option<bool>],
+) -> PartialTruth {
+    enum Task<'test> {
+        Visit(&'test BooleanTest),
+        Not,
+        And,
+        Or,
+    }
+
+    let mut tasks = vec![Task::Visit(test)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(BooleanTest::True) => values.push(PartialTruth::True),
+            Task::Visit(BooleanTest::False) => values.push(PartialTruth::False),
+            Task::Visit(BooleanTest::Atom(atom)) => values.push(
+                universe
+                    .get(atom.as_str())
+                    .and_then(|index| assignment[*index])
+                    .map_or_else(
+                        || {
+                            if universe.contains_key(atom.as_str()) {
+                                PartialTruth::Unknown
+                            } else {
+                                PartialTruth::False
+                            }
+                        },
+                        |value| {
+                            if value {
+                                PartialTruth::True
+                            } else {
+                                PartialTruth::False
+                            }
+                        },
+                    ),
+            ),
+            Task::Visit(BooleanTest::Not(body)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(BooleanTest::And(left, right)) => {
+                tasks.push(Task::And);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(BooleanTest::Or(left, right)) => {
+                tasks.push(Task::Or);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Not => {
+                let value = values
+                    .last_mut()
+                    .expect("partial Boolean evaluation lost negated value");
+                *value = match *value {
+                    PartialTruth::False => PartialTruth::True,
+                    PartialTruth::Unknown => PartialTruth::Unknown,
+                    PartialTruth::True => PartialTruth::False,
+                };
+            },
+            kind @ (Task::And | Task::Or) => {
+                let right = values
+                    .pop()
+                    .expect("partial Boolean evaluation lost right operand");
+                let left = values
+                    .pop()
+                    .expect("partial Boolean evaluation lost left operand");
+                values.push(match (kind, left, right) {
+                    (Task::And, PartialTruth::False, _)
+                    | (Task::And, _, PartialTruth::False)
+                    | (Task::Or, PartialTruth::False, PartialTruth::False) => PartialTruth::False,
+                    (Task::And, PartialTruth::True, PartialTruth::True)
+                    | (Task::Or, PartialTruth::True, _)
+                    | (Task::Or, _, PartialTruth::True) => PartialTruth::True,
+                    (Task::And | Task::Or, _, _) => PartialTruth::Unknown,
+                    _ => unreachable!(),
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("partial Boolean evaluation produced no value")
 }
 
 /// Evaluate a `BooleanTest` under a truth assignment.
@@ -765,14 +905,11 @@ impl BooleanAlgebra for KatBooleanAlgebra {
     }
 
     fn is_satisfiable(&self, a: &BooleanTest) -> bool {
-        // Exhaustive search over 2^n truth assignments.
-        self.all_valuations().iter().any(|v| eval_test_public(a, v))
+        self.satisfying_assignment(a).is_some()
     }
 
     fn witness(&self, a: &BooleanTest) -> Option<HashMap<String, bool>> {
-        self.all_valuations()
-            .into_iter()
-            .find(|v| eval_test_public(a, v))
+        self.satisfying_assignment(a)
     }
 
     fn evaluate(&self, pred: &BooleanTest, elem: &HashMap<String, bool>) -> bool {
@@ -2785,6 +2922,20 @@ mod tests {
         let w = w.expect("should have witness for p AND q");
         assert_eq!(w.get("p"), Some(&true));
         assert_eq!(w.get("q"), Some(&true));
+    }
+
+    #[test]
+    fn kat_algebra_search_has_no_machine_word_atom_ceiling() {
+        let atoms: Vec<_> = (0..80).map(|index| format!("p{index}")).collect();
+        let alg = KatBooleanAlgebra::new(atoms);
+        let last = BooleanTest::Atom("p79".to_string());
+        let contradiction = alg.and(&last, &alg.not(&last));
+        assert!(!alg.is_satisfiable(&contradiction));
+
+        let tautology = alg.or(&last, &alg.not(&last));
+        let witness = alg.witness(&tautology).expect("tautology has a witness");
+        assert_eq!(witness.len(), 80);
+        assert!(alg.evaluate(&tautology, &witness));
     }
 
     // ── SymbolicAutomaton: emptiness ─────────────────────────────────────

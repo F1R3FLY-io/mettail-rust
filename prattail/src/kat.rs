@@ -328,9 +328,6 @@ impl fmt::Display for HoareTriple {
 // Core functions
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Default depth limit for bounded bisimulation.
-const DEFAULT_DEPTH_LIMIT: usize = 100;
-
 /// Check equivalence of two KAT expressions.
 ///
 /// Two KAT expressions are equivalent iff they denote the same set of
@@ -346,94 +343,78 @@ const DEFAULT_DEPTH_LIMIT: usize = 100;
 ///
 /// `true` if `a` and `b` are equivalent in the free KAT.
 pub fn check_equivalence(a: &KatExpr, b: &KatExpr) -> bool {
-    check_equivalence_bounded(a, b, DEFAULT_DEPTH_LIMIT)
+    check_equivalence_exact(a, b)
 }
 
-/// Check equivalence of two KAT expressions with a configurable depth limit.
+/// Check equivalence of two KAT expressions exactly.
 ///
-/// Since full KAT equivalence is EXPTIME-complete, this uses a bounded
-/// symbolic bisimulation approach (Kozen & Patt-Shamir, 2001). The algorithm
-/// expands pairs of expressions by symbolic execution under all Boolean atom
-/// valuations up to `depth_limit` steps.
+/// The procedure computes the reachable subset states of Antimirov partial
+/// derivatives to exhaustion.  Expressions are hash-consed and each derivative
+/// state is a sorted set of expression identifiers; this supplies a compact,
+/// canonical finite-state representation without relying on a search budget.
+/// Boolean valuations are generated lazily with an arbitrary-width bit vector,
+/// so the number of test atoms is not capped by a machine-word shift.
 ///
 /// # Algorithm
 ///
 /// 1. Collect all atomic tests appearing in both expressions.
-/// 2. Enumerate all 2^n valuations of those atoms (n = number of distinct atoms).
-/// 3. Maintain a worklist of `(e1, e2)` pairs that must be equivalent.
+/// 2. Lazily enumerate all `2^n` valuations of those atoms (`n` is the number
+///    of distinct atoms).
+/// 3. Maintain a worklist of pairs of canonical partial-derivative subsets.
 /// 4. For each pair, under each valuation:
-///    a. Check **nullability** (acceptance of the empty string): both must agree.
-///    b. Compute the **Brzozowski derivative** w.r.t. each action: the resulting
-///       derivative pairs are added to the worklist.
+///   a. Check **nullability** (acceptance of the empty string): both must agree.
+///   b. Compute the **Antimirov partial derivative** w.r.t. each action, intern
+///      its residual expressions, and add the resulting subset pair to the
+///      worklist.
 /// 5. If any valuation reveals a nullability mismatch, return `false`.
-/// 6. If the worklist is exhausted within the depth limit, return `true`.
+/// 6. Return `true` only after the derivative-pair worklist is exhausted.
 ///
 /// # Arguments
 ///
 /// * `a` - First KAT expression.
 /// * `b` - Second KAT expression.
-/// * `depth_limit` - Maximum number of worklist iterations.
-///
 /// # Returns
 ///
-/// `true` if `a` and `b` are equivalent up to the given depth bound.
-pub fn check_equivalence_bounded(a: &KatExpr, b: &KatExpr, depth_limit: usize) -> bool {
+/// `true` if and only if `a` and `b` are equivalent in the free KAT.
+pub fn check_equivalence_exact(a: &KatExpr, b: &KatExpr) -> bool {
     // Collect all atom names from both expressions.
     let mut atoms = HashSet::new();
     collect_atoms_expr(a, &mut atoms);
     collect_atoms_expr(b, &mut atoms);
-    let atom_list: Vec<String> = atoms.into_iter().collect();
-    let num_atoms = atom_list.len();
-
-    // Build all 2^n valuations. Each valuation maps atom name → bool.
-    let num_valuations = 1usize << num_atoms;
-    let valuations: Vec<HashMap<String, bool>> = (0..num_valuations)
-        .map(|bits| {
-            let mut valuation = HashMap::with_capacity(num_atoms);
-            for (i, name) in atom_list.iter().enumerate() {
-                valuation.insert(name.clone(), (bits >> i) & 1 == 1);
-            }
-            valuation
-        })
-        .collect();
+    let mut atom_list: Vec<String> = atoms.into_iter().collect();
+    atom_list.sort_unstable();
 
     // Collect all action names for computing derivatives.
     let mut action_set = HashSet::new();
     collect_actions(a, &mut action_set);
     collect_actions(b, &mut action_set);
-    let actions: Vec<String> = action_set.into_iter().collect();
+    let mut actions: Vec<String> = action_set.into_iter().collect();
+    actions.sort_unstable();
 
-    // Worklist of (expr1, expr2) pairs that must be shown equivalent.
-    let mut worklist: VecDeque<(KatExpr, KatExpr)> = VecDeque::new();
-    let mut visited: HashSet<(KatExpr, KatExpr)> = HashSet::new();
+    let mut expressions = ExprInterner::default();
+    let initial_left = vec![expressions.intern(simplify(a))];
+    let initial_right = vec![expressions.intern(simplify(b))];
 
-    worklist.push_back((a.clone(), b.clone()));
-    visited.insert((a.clone(), b.clone()));
+    // Worklist of canonical subset-state pairs that must be shown equivalent.
+    let mut worklist = VecDeque::from([(initial_left.clone(), initial_right.clone())]);
+    let mut visited = HashSet::from([(initial_left, initial_right)]);
 
-    let mut iterations = 0;
-
-    while let Some((e1, e2)) = worklist.pop_front() {
-        if iterations >= depth_limit {
-            // Bounded: assume equivalent if we haven't found a counterexample.
-            break;
-        }
-        iterations += 1;
-
+    while let Some((left, right)) = worklist.pop_front() {
         // Under each Boolean valuation, check nullability agreement and
         // compute derivatives for each action.
-        for valuation in &valuations {
+        for valuation in BooleanValuations::new(&atom_list) {
             // Check nullability: does the expression accept the empty string
             // under this valuation?
-            let n1 = nullable(&e1, valuation);
-            let n2 = nullable(&e2, valuation);
+            let n1 = expressions.nullable(&left, &valuation);
+            let n2 = expressions.nullable(&right, &valuation);
             if n1 != n2 {
                 return false;
             }
 
             // Compute derivatives w.r.t. each action and enqueue new pairs.
             for action in &actions {
-                let d1 = simplify(&derivative(&e1, action, valuation));
-                let d2 = simplify(&derivative(&e2, action, valuation));
+                let d1 = expressions.derivative(&left, action, &valuation);
+                let d2 = expressions.derivative(&right, action, &valuation);
 
                 if d1 != d2 {
                     let pair = (d1, d2);
@@ -447,6 +428,119 @@ pub fn check_equivalence_bounded(a: &KatExpr, b: &KatExpr, depth_limit: usize) -
     }
 
     true
+}
+
+/// Hash-consed expression storage used to canonicalize partial-derivative
+/// subsets.  The vector supplies stable small identifiers; the map ensures that
+/// structurally equal residuals share one identifier.
+#[derive(Default)]
+struct ExprInterner {
+    ids: HashMap<KatExpr, usize>,
+    expressions: Vec<KatExpr>,
+}
+
+impl ExprInterner {
+    fn intern(&mut self, expression: KatExpr) -> usize {
+        if let Some(index) = self.ids.get(&expression) {
+            return *index;
+        }
+        let index = self.expressions.len();
+        self.expressions.push(expression.clone());
+        self.ids.insert(expression, index);
+        index
+    }
+
+    fn nullable(&self, state: &[usize], valuation: &HashMap<String, bool>) -> bool {
+        state
+            .iter()
+            .any(|index| nullable(&self.expressions[*index], valuation))
+    }
+
+    fn derivative(
+        &mut self,
+        state: &[usize],
+        action: &str,
+        valuation: &HashMap<String, bool>,
+    ) -> Vec<usize> {
+        let mut residuals = Vec::new();
+        for index in state {
+            residuals.extend(partial_derivative(&self.expressions[*index], action, valuation));
+        }
+        let mut result: Vec<_> = residuals
+            .into_iter()
+            .map(|expression| self.intern(expression))
+            .collect();
+        result.sort_unstable();
+        result.dedup();
+        result
+    }
+}
+
+/// Compatibility entry point retained for downstream callers that selected a
+/// budget before the checker became exact.
+///
+/// The former implementation treated budget exhaustion as proof of
+/// equivalence, which could return a false positive.  The argument is therefore
+/// intentionally ignored: this function now has the same exact semantics as
+/// [`check_equivalence_exact`].
+pub fn check_equivalence_bounded(a: &KatExpr, b: &KatExpr, _depth_limit: usize) -> bool {
+    check_equivalence_exact(a, b)
+}
+
+/// Lazy, arbitrary-width enumeration of Boolean valuations.
+///
+/// `bits[0]` is the least-significant position.  Keeping the counter as a
+/// vector avoids `1usize << atom_count`, which both overflowed for large atom
+/// sets and forced every valuation to be resident at once.
+struct BooleanValuations<'a> {
+    atoms: &'a [String],
+    bits: Vec<bool>,
+    first: bool,
+    exhausted: bool,
+}
+
+impl<'a> BooleanValuations<'a> {
+    fn new(atoms: &'a [String]) -> Self {
+        Self {
+            atoms,
+            bits: vec![false; atoms.len()],
+            first: true,
+            exhausted: false,
+        }
+    }
+
+    fn materialize(&self) -> HashMap<String, bool> {
+        self.atoms
+            .iter()
+            .cloned()
+            .zip(self.bits.iter().copied())
+            .collect()
+    }
+}
+
+impl Iterator for BooleanValuations<'_> {
+    type Item = HashMap<String, bool>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.exhausted {
+            return None;
+        }
+        if self.first {
+            self.first = false;
+            return Some(self.materialize());
+        }
+
+        for bit in &mut self.bits {
+            if *bit {
+                *bit = false;
+            } else {
+                *bit = true;
+                return Some(self.materialize());
+            }
+        }
+        self.exhausted = true;
+        None
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -603,22 +697,24 @@ fn nullable(expr: &KatExpr, valuation: &HashMap<String, bool>) -> bool {
     values.pop().expect("KAT nullability produced no value")
 }
 
-/// Compute the Brzozowski derivative of a KAT expression w.r.t. an action
-/// under a given Boolean atom valuation.
+/// Compute the Antimirov partial derivative of a KAT expression w.r.t. an
+/// action under a given Boolean atom valuation.
 ///
-/// The derivative `D_a(e)` gives the expression that remains after consuming
-/// action `a` from `e`. Under a Boolean valuation, tests are resolved to
-/// `One` or `Zero`, simplifying the derivative.
+/// Each returned expression is one residual alternative after consuming the
+/// action.  Keeping alternatives as a set avoids constructing ever-larger
+/// nested `Alt` trees; the caller interns and canonicalizes the set.
 ///
-/// Derivative rules:
-/// - `D_a(0) = 0`
-/// - `D_a(1) = 0`
-/// - `D_a(Test(t)) = 0` (tests don't consume actions)
-/// - `D_a(Action(a)) = 1` if the action matches, else `0`
-/// - `D_a(Seq(p, q)) = Alt(Seq(D_a(p), q), if nullable(p) then D_a(q) else 0)`
-/// - `D_a(Alt(p, q)) = Alt(D_a(p), D_a(q))`
-/// - `D_a(Star(p)) = Seq(D_a(p), Star(p))`
-fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -> KatExpr {
+/// Partial-derivative rules:
+/// - `d_a(0) = d_a(1) = d_a(Test(t)) = {}`
+/// - `d_a(Action(a)) = {1}` and `d_a(Action(b)) = {}` for `a != b`
+/// - `d_a(p q) = {r q | r in d_a(p)} union d_a(q)` when `p` is nullable
+/// - `d_a(p + q) = d_a(p) union d_a(q)`
+/// - `d_a(p*) = {r p* | r in d_a(p)}`
+fn partial_derivative(
+    expr: &KatExpr,
+    action: &str,
+    valuation: &HashMap<String, bool>,
+) -> Vec<KatExpr> {
     enum Task<'expr> {
         Visit(&'expr KatExpr),
         FinishSeq {
@@ -634,12 +730,12 @@ fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -
     while let Some(task) = tasks.pop() {
         match task {
             Task::Visit(KatExpr::Zero | KatExpr::One | KatExpr::Test(_)) => {
-                values.push(KatExpr::Zero);
+                values.push(Vec::new());
             },
             Task::Visit(KatExpr::Action(name)) => values.push(if name == action {
-                KatExpr::One
+                vec![KatExpr::One]
             } else {
-                KatExpr::Zero
+                Vec::new()
             }),
             Task::Visit(KatExpr::Seq(left, right)) => {
                 let right_derivative = nullable(left, valuation);
@@ -659,30 +755,56 @@ fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -
                 tasks.push(Task::Visit(inner));
             },
             Task::FinishSeq { right, right_derivative } => {
-                let derivative_right = right_derivative
-                    .then(|| values.pop().expect("KAT derivative lost right result"));
-                let derivative_left = values.pop().expect("KAT derivative lost left result");
-                let left = KatExpr::Seq(Arc::new(derivative_left), Arc::clone(right));
-                values.push(match derivative_right {
-                    Some(derivative_right) => {
-                        KatExpr::Alt(Arc::new(left), Arc::new(derivative_right))
-                    },
-                    None => left,
-                });
+                let mut derivative_right = if right_derivative {
+                    values
+                        .pop()
+                        .expect("KAT partial derivative lost right result")
+                } else {
+                    Vec::new()
+                };
+                let derivative_left = values
+                    .pop()
+                    .expect("KAT partial derivative lost left result");
+                let mut result = Vec::with_capacity(derivative_left.len() + derivative_right.len());
+                result.extend(derivative_left.into_iter().filter_map(|residual| {
+                    let sequence = simplify(&KatExpr::Seq(Arc::new(residual), Arc::clone(right)));
+                    (!matches!(&sequence, KatExpr::Zero)).then_some(sequence)
+                }));
+                result.append(&mut derivative_right);
+                values.push(result);
             },
             Task::FinishAlt => {
-                let right = Arc::new(values.pop().expect("KAT derivative lost right result"));
-                let left = Arc::new(values.pop().expect("KAT derivative lost left result"));
-                values.push(KatExpr::Alt(left, right));
+                let mut right = values
+                    .pop()
+                    .expect("KAT partial derivative lost right result");
+                let mut left = values
+                    .pop()
+                    .expect("KAT partial derivative lost left result");
+                left.append(&mut right);
+                values.push(left);
             },
             Task::FinishStar(inner) => {
-                let derivative = Arc::new(values.pop().expect("KAT derivative lost star result"));
-                values.push(KatExpr::Seq(derivative, Arc::new(KatExpr::Star(Arc::clone(inner)))));
+                let derivative = values
+                    .pop()
+                    .expect("KAT partial derivative lost star result");
+                let star = Arc::new(KatExpr::Star(Arc::clone(inner)));
+                values.push(
+                    derivative
+                        .into_iter()
+                        .filter_map(|residual| {
+                            let sequence =
+                                simplify(&KatExpr::Seq(Arc::new(residual), Arc::clone(&star)));
+                            (!matches!(&sequence, KatExpr::Zero)).then_some(sequence)
+                        })
+                        .collect(),
+                );
             },
         }
     }
     debug_assert_eq!(values.len(), 1);
-    values.pop().expect("KAT derivative produced no result")
+    values
+        .pop()
+        .expect("KAT partial derivative produced no result")
 }
 
 /// Simplify a KAT expression by applying algebraic identities.
@@ -963,6 +1085,30 @@ mod tests {
 
         // Zero is NOT equivalent to One.
         assert!(!check_equivalence(&KatExpr::Zero, &KatExpr::One));
+    }
+
+    #[test]
+    fn compatibility_budget_cannot_turn_an_unfinished_proof_into_equivalence() {
+        // The initial pair is non-nullable on both sides.  The mismatch becomes
+        // visible only after taking the derivative for `step`, so the former
+        // one-iteration budget incorrectly returned true.
+        let one_step = KatExpr::action("step");
+        let two_steps = KatExpr::seq(one_step.clone(), one_step.clone());
+        assert!(!check_equivalence_bounded(&one_step, &two_steps, 1));
+        assert!(!check_equivalence_bounded(&KatExpr::Zero, &KatExpr::One, 0));
+    }
+
+    #[test]
+    fn lazy_valuation_counter_covers_all_small_assignments_in_binary_order() {
+        let atoms = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let valuations: Vec<_> = BooleanValuations::new(&atoms).collect();
+        assert_eq!(valuations.len(), 8);
+        for (index, valuation) in valuations.iter().enumerate() {
+            for (bit, atom) in atoms.iter().enumerate() {
+                assert_eq!(valuation[atom], index & (1 << bit) != 0);
+            }
+        }
+        assert_eq!(BooleanValuations::new(&[]).count(), 1);
     }
 
     #[test]
