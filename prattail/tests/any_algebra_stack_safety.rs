@@ -125,8 +125,8 @@ fn deep_evaluation_case() -> (AnyAlgebra, AnyPred, AnyDomain) {
             4 => {
                 algebra = AnyAlgebra::Tree(Box::new(TreeAlgebra::new(
                     algebra,
-                    HashMap::new(),
-                    HashSet::new(),
+                    HashMap::from([("node".to_string(), 0)]),
+                    HashSet::from(["node".to_string()]),
                 )));
                 predicate = AnyPred::Tree(Box::new(TreePred::Node {
                     constructor: "node".to_string(),
@@ -224,6 +224,21 @@ fn nested_combinator_evaluation_is_stack_safe_at_depth_20k() {
         assert!(algebra.evaluate(&predicate, &domain));
         drop(predicate);
         drop(domain);
+        drop(algebra);
+    });
+}
+
+#[test]
+fn nested_decision_procedures_are_stack_safe_at_depth_20k() {
+    on_small_stack(|| {
+        let (algebra, predicate, _) = deep_evaluation_case();
+        assert!(algebra.is_satisfiable(&predicate));
+        let witness = algebra
+            .witness(&predicate)
+            .expect("deep Any predicate has a witness");
+        assert!(algebra.evaluate(&predicate, &witness));
+        drop(predicate);
+        drop(witness);
         drop(algebra);
     });
 }

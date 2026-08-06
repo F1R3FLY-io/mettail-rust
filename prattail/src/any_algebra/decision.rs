@@ -8,6 +8,21 @@ use crate::symbolic::BooleanAlgebra;
 
 use super::{AnyAlgebra, AnyDomain, AnyPred};
 
+#[path = "decision/sfa.rs"]
+mod sfa;
+#[path = "decision/solver.rs"]
+mod solver;
+#[path = "decision/tree.rs"]
+mod tree;
+
+pub(super) fn is_satisfiable(algebra: &AnyAlgebra, predicate: &AnyPred) -> bool {
+    solver::is_satisfiable(algebra, predicate)
+}
+
+pub(super) fn witness(algebra: &AnyAlgebra, predicate: &AnyPred) -> Option<AnyDomain> {
+    solver::witness(algebra, predicate)
+}
+
 #[derive(Clone, Copy)]
 enum EvalNode<'a> {
     Any {

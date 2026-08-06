@@ -78,6 +78,42 @@ pub enum BagPred<P> {
     Not(Box<BagPred<P>>),
 }
 
+pub(crate) enum BagNode<P> {
+    True,
+    False,
+    Count { class: P, lo: u64, hi: Option<u64> },
+    And(Box<BagPred<P>>, Box<BagPred<P>>),
+    Or(Box<BagPred<P>>, Box<BagPred<P>>),
+    Not(Box<BagPred<P>>),
+}
+
+impl<P> BagPred<P> {
+    pub(crate) fn into_node(self) -> BagNode<P> {
+        let predicate = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `ManuallyDrop` suppresses the source destructor. The match
+        // selects its active variant, and every non-Copy field in that variant
+        // is moved exactly once into the corresponding owned node.
+        unsafe {
+            match &*predicate {
+                BagPred::True => BagNode::True,
+                BagPred::False => BagNode::False,
+                BagPred::Count { class, lo, hi } => BagNode::Count {
+                    class: std::ptr::read(class),
+                    lo: *lo,
+                    hi: *hi,
+                },
+                BagPred::And(left, right) => {
+                    BagNode::And(std::ptr::read(left), std::ptr::read(right))
+                },
+                BagPred::Or(left, right) => {
+                    BagNode::Or(std::ptr::read(left), std::ptr::read(right))
+                },
+                BagPred::Not(value) => BagNode::Not(std::ptr::read(value)),
+            }
+        }
+    }
+}
+
 #[path = "collection_algebra/lifecycle.rs"]
 mod lifecycle;
 
@@ -574,6 +610,48 @@ pub enum MapPred<KP, VP> {
     Or(Box<MapPred<KP, VP>>, Box<MapPred<KP, VP>>),
     /// Negation.
     Not(Box<MapPred<KP, VP>>),
+}
+
+pub(crate) enum MapNode<KP, VP> {
+    True,
+    False,
+    CountEntries {
+        key_class: KP,
+        val_class: VP,
+        lo: u64,
+        hi: Option<u64>,
+    },
+    And(Box<MapPred<KP, VP>>, Box<MapPred<KP, VP>>),
+    Or(Box<MapPred<KP, VP>>, Box<MapPred<KP, VP>>),
+    Not(Box<MapPred<KP, VP>>),
+}
+
+impl<KP, VP> MapPred<KP, VP> {
+    pub(crate) fn into_node(self) -> MapNode<KP, VP> {
+        let predicate = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `ManuallyDrop` suppresses the source destructor. The match
+        // selects its active variant, and every non-Copy field in that variant
+        // is moved exactly once into the corresponding owned node.
+        unsafe {
+            match &*predicate {
+                MapPred::True => MapNode::True,
+                MapPred::False => MapNode::False,
+                MapPred::CountEntries { key_class, val_class, lo, hi } => MapNode::CountEntries {
+                    key_class: std::ptr::read(key_class),
+                    val_class: std::ptr::read(val_class),
+                    lo: *lo,
+                    hi: *hi,
+                },
+                MapPred::And(left, right) => {
+                    MapNode::And(std::ptr::read(left), std::ptr::read(right))
+                },
+                MapPred::Or(left, right) => {
+                    MapNode::Or(std::ptr::read(left), std::ptr::read(right))
+                },
+                MapPred::Not(value) => MapNode::Not(std::ptr::read(value)),
+            }
+        }
+    }
 }
 
 /// The effective Boolean algebra of finite key→value maps (unique keys).

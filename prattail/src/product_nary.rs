@@ -39,6 +39,40 @@ pub enum NaryProductPred<P> {
     Not(Box<NaryProductPred<P>>),
 }
 
+pub(crate) enum NaryProductNode<P> {
+    True,
+    False,
+    Field(usize, P),
+    And(Box<NaryProductPred<P>>, Box<NaryProductPred<P>>),
+    Or(Box<NaryProductPred<P>>, Box<NaryProductPred<P>>),
+    Not(Box<NaryProductPred<P>>),
+}
+
+impl<P> NaryProductPred<P> {
+    pub(crate) fn into_node(self) -> NaryProductNode<P> {
+        let predicate = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `ManuallyDrop` suppresses the source destructor. The match
+        // selects its active variant, and every non-Copy field in that variant
+        // is moved exactly once into the corresponding owned node.
+        unsafe {
+            match &*predicate {
+                NaryProductPred::True => NaryProductNode::True,
+                NaryProductPred::False => NaryProductNode::False,
+                NaryProductPred::Field(index, value) => {
+                    NaryProductNode::Field(*index, std::ptr::read(value))
+                },
+                NaryProductPred::And(left, right) => {
+                    NaryProductNode::And(std::ptr::read(left), std::ptr::read(right))
+                },
+                NaryProductPred::Or(left, right) => {
+                    NaryProductNode::Or(std::ptr::read(left), std::ptr::read(right))
+                },
+                NaryProductPred::Not(value) => NaryProductNode::Not(std::ptr::read(value)),
+            }
+        }
+    }
+}
+
 #[path = "product_nary/lifecycle.rs"]
 mod lifecycle;
 
@@ -208,6 +242,123 @@ impl<A: BooleanAlgebra> NaryProductAlgebra<A> {
             });
         }
         Some(acc)
+    }
+
+    pub(crate) fn to_dnf_owned(
+        &self,
+        predicate: NaryProductPred<A::Predicate>,
+    ) -> Vec<Vec<(usize, A::Predicate)>> {
+        enum Task<P> {
+            Visit {
+                predicate: NaryProductPred<P>,
+                negated: bool,
+            },
+            And,
+            Or,
+        }
+        let mut tasks = vec![Task::Visit { predicate, negated: false }];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit { predicate, negated } => match predicate.into_node() {
+                    NaryProductNode::True => values.push(if negated {
+                        Vec::new()
+                    } else {
+                        vec![Vec::new()]
+                    }),
+                    NaryProductNode::False => values.push(if negated {
+                        vec![Vec::new()]
+                    } else {
+                        Vec::new()
+                    }),
+                    NaryProductNode::Field(index, predicate) => {
+                        if index >= self.fields.len() {
+                            values.push(if negated {
+                                vec![Vec::new()]
+                            } else {
+                                Vec::new()
+                            });
+                        } else {
+                            let predicate = if negated {
+                                self.fields[index].not(&predicate)
+                            } else {
+                                predicate
+                            };
+                            values.push(vec![vec![(index, predicate)]]);
+                        }
+                    },
+                    NaryProductNode::Not(body) => {
+                        tasks.push(Task::Visit { predicate: *body, negated: !negated })
+                    },
+                    NaryProductNode::And(left, right) => {
+                        tasks.push(if negated { Task::Or } else { Task::And });
+                        tasks.push(Task::Visit { predicate: *right, negated });
+                        tasks.push(Task::Visit { predicate: *left, negated });
+                    },
+                    NaryProductNode::Or(left, right) => {
+                        tasks.push(if negated { Task::And } else { Task::Or });
+                        tasks.push(Task::Visit { predicate: *right, negated });
+                        tasks.push(Task::Visit { predicate: *left, negated });
+                    },
+                },
+                Task::And => {
+                    let right = values
+                        .pop()
+                        .expect("owned product DNF lost right conjunction");
+                    let left = values
+                        .pop()
+                        .expect("owned product DNF lost left conjunction");
+                    if left.is_empty() || right.is_empty() {
+                        values.push(Vec::new());
+                        continue;
+                    }
+                    let mut result = Vec::with_capacity(
+                        left.len()
+                            .checked_mul(right.len())
+                            .expect("owned product DNF exceeds addressable memory"),
+                    );
+                    for left_conjunction in &left {
+                        for right_conjunction in &right {
+                            let mut conjunction = Vec::with_capacity(
+                                left_conjunction.len() + right_conjunction.len(),
+                            );
+                            conjunction.extend(left_conjunction.iter().cloned());
+                            conjunction.extend(right_conjunction.iter().cloned());
+                            result.push(conjunction);
+                        }
+                    }
+                    values.push(result);
+                },
+                Task::Or => {
+                    let mut right = values
+                        .pop()
+                        .expect("owned product DNF lost right disjunction");
+                    let mut left = values
+                        .pop()
+                        .expect("owned product DNF lost left disjunction");
+                    left.append(&mut right);
+                    values.push(left);
+                },
+            }
+        }
+        values.pop().expect("owned product DNF produced no value")
+    }
+
+    pub(crate) fn field_constraints_owned(
+        &self,
+        disjunct: Vec<(usize, A::Predicate)>,
+    ) -> Option<Vec<Option<A::Predicate>>> {
+        let mut constraints = vec![None; self.fields.len()];
+        for (index, predicate) in disjunct {
+            if index >= self.fields.len() {
+                return None;
+            }
+            constraints[index] = Some(match constraints[index].take() {
+                Some(previous) => self.fields[index].and(&previous, &predicate),
+                None => predicate,
+            });
+        }
+        Some(constraints)
     }
 }
 
@@ -387,6 +538,40 @@ pub enum SumPred<P> {
     Or(Box<SumPred<P>>, Box<SumPred<P>>),
     /// Negation.
     Not(Box<SumPred<P>>),
+}
+
+pub(crate) enum SumNode<P> {
+    True,
+    False,
+    InVariant(usize, P),
+    TagIs(usize),
+    And(Box<SumPred<P>>, Box<SumPred<P>>),
+    Or(Box<SumPred<P>>, Box<SumPred<P>>),
+    Not(Box<SumPred<P>>),
+}
+
+impl<P> SumPred<P> {
+    pub(crate) fn into_node(self) -> SumNode<P> {
+        let predicate = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `ManuallyDrop` suppresses the source destructor. The match
+        // selects its active variant, and every non-Copy field in that variant
+        // is moved exactly once into the corresponding owned node.
+        unsafe {
+            match &*predicate {
+                SumPred::True => SumNode::True,
+                SumPred::False => SumNode::False,
+                SumPred::InVariant(tag, value) => SumNode::InVariant(*tag, std::ptr::read(value)),
+                SumPred::TagIs(tag) => SumNode::TagIs(*tag),
+                SumPred::And(left, right) => {
+                    SumNode::And(std::ptr::read(left), std::ptr::read(right))
+                },
+                SumPred::Or(left, right) => {
+                    SumNode::Or(std::ptr::read(left), std::ptr::read(right))
+                },
+                SumPred::Not(value) => SumNode::Not(std::ptr::read(value)),
+            }
+        }
+    }
 }
 
 /// The effective Boolean algebra of tagged unions.

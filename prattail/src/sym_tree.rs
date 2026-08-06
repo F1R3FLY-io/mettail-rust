@@ -656,6 +656,48 @@ pub enum TreePred<P> {
     Not(Box<TreePred<P>>),
 }
 
+pub(crate) enum TreeNode<P> {
+    True,
+    False,
+    Wild,
+    Node {
+        constructor: String,
+        payload_guard: Option<P>,
+        children: Vec<TreePred<P>>,
+    },
+    And(Box<TreePred<P>>, Box<TreePred<P>>),
+    Or(Box<TreePred<P>>, Box<TreePred<P>>),
+    Not(Box<TreePred<P>>),
+}
+
+impl<P> TreePred<P> {
+    pub(crate) fn into_node(self) -> TreeNode<P> {
+        let predicate = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `ManuallyDrop` suppresses the source destructor. The match
+        // selects its active variant, and every non-Copy field in that variant
+        // is moved exactly once into the corresponding owned node.
+        unsafe {
+            match &*predicate {
+                TreePred::True => TreeNode::True,
+                TreePred::False => TreeNode::False,
+                TreePred::Wild => TreeNode::Wild,
+                TreePred::Node { constructor, payload_guard, children } => TreeNode::Node {
+                    constructor: std::ptr::read(constructor),
+                    payload_guard: std::ptr::read(payload_guard),
+                    children: std::ptr::read(children),
+                },
+                TreePred::And(left, right) => {
+                    TreeNode::And(std::ptr::read(left), std::ptr::read(right))
+                },
+                TreePred::Or(left, right) => {
+                    TreeNode::Or(std::ptr::read(left), std::ptr::read(right))
+                },
+                TreePred::Not(value) => TreeNode::Not(std::ptr::read(value)),
+            }
+        }
+    }
+}
+
 /// The effective Boolean algebra of symbolic tree predicates over a ranked
 /// alphabet, with scalar payloads decided by an element algebra `A`.
 #[derive(Clone, Debug)]

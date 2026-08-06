@@ -185,6 +185,64 @@ pub enum AnyPred {
     Not(Box<AnyPred>),
 }
 
+pub(crate) enum AnyPredNode {
+    True,
+    False,
+    Int(IntervalPred),
+    Char(CharClassPred),
+    Bool(BooleanTest),
+    BigInt(OrderedFieldPred<BigInt>),
+    BigRat(OrderedFieldPred<BigRational>),
+    Fixed(OrderedFieldPred<BigRational>),
+    Float(OrderedFieldPred<OrderedF64>),
+    Str(StrPred),
+    Product(Box<NaryProductPred<AnyPred>>),
+    Sum(Box<SumPred<AnyPred>>),
+    List(Box<RegexPred<AnyPred>>),
+    Bag(Box<BagPred<AnyPred>>),
+    Tree(Box<TreePred<AnyPred>>),
+    Map(Box<MapPred<AnyPred, AnyPred>>),
+    And(Box<AnyPred>, Box<AnyPred>),
+    Or(Box<AnyPred>, Box<AnyPred>),
+    Not(Box<AnyPred>),
+}
+
+impl AnyPred {
+    pub(crate) fn into_node(self) -> AnyPredNode {
+        let predicate = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `ManuallyDrop` suppresses the source destructor. The match
+        // selects its active variant, and every non-Copy field in that variant
+        // is moved exactly once into the corresponding owned node.
+        unsafe {
+            match &*predicate {
+                AnyPred::True => AnyPredNode::True,
+                AnyPred::False => AnyPredNode::False,
+                AnyPred::Int(value) => AnyPredNode::Int(std::ptr::read(value)),
+                AnyPred::Char(value) => AnyPredNode::Char(std::ptr::read(value)),
+                AnyPred::Bool(value) => AnyPredNode::Bool(std::ptr::read(value)),
+                AnyPred::BigInt(value) => AnyPredNode::BigInt(std::ptr::read(value)),
+                AnyPred::BigRat(value) => AnyPredNode::BigRat(std::ptr::read(value)),
+                AnyPred::Fixed(value) => AnyPredNode::Fixed(std::ptr::read(value)),
+                AnyPred::Float(value) => AnyPredNode::Float(std::ptr::read(value)),
+                AnyPred::Str(value) => AnyPredNode::Str(std::ptr::read(value)),
+                AnyPred::Product(value) => AnyPredNode::Product(std::ptr::read(value)),
+                AnyPred::Sum(value) => AnyPredNode::Sum(std::ptr::read(value)),
+                AnyPred::List(value) => AnyPredNode::List(std::ptr::read(value)),
+                AnyPred::Bag(value) => AnyPredNode::Bag(std::ptr::read(value)),
+                AnyPred::Tree(value) => AnyPredNode::Tree(std::ptr::read(value)),
+                AnyPred::Map(value) => AnyPredNode::Map(std::ptr::read(value)),
+                AnyPred::And(left, right) => {
+                    AnyPredNode::And(std::ptr::read(left), std::ptr::read(right))
+                },
+                AnyPred::Or(left, right) => {
+                    AnyPredNode::Or(std::ptr::read(left), std::ptr::read(right))
+                },
+                AnyPred::Not(value) => AnyPredNode::Not(std::ptr::read(value)),
+            }
+        }
+    }
+}
+
 impl AnyPred {
     /// If this is a leaf predicate, the sort it constrains.
     pub fn leaf_sort(&self) -> Option<Sort> {
@@ -209,168 +267,6 @@ impl AnyPred {
             | AnyPred::Or(..)
             | AnyPred::Not(_) => None,
         }
-    }
-
-    /// Whether this is a leaf (non-boolean-combination) node.
-    fn is_leaf(&self) -> bool {
-        self.leaf_sort().is_some()
-    }
-}
-
-/// Project an [`AnyPred`] onto a single sort's algebra `alg`, evaluating the
-/// boolean structure inside it. `leaf` extracts the inner predicate for `alg`'s
-/// sort; leaves of any other sort project to `⊥`.
-fn fold_pred<A, F>(alg: &A, p: &AnyPred, leaf: &F) -> A::Predicate
-where
-    A: BooleanAlgebra,
-    F: Fn(&AnyPred) -> Option<A::Predicate>,
-{
-    enum Task<'pred> {
-        Visit(&'pred AnyPred),
-        And,
-        Or,
-        Not,
-    }
-
-    let mut tasks = vec![Task::Visit(p)];
-    let mut values = Vec::new();
-    while let Some(task) = tasks.pop() {
-        match task {
-            Task::Visit(AnyPred::True) => values.push(alg.true_pred()),
-            Task::Visit(AnyPred::False) => values.push(alg.false_pred()),
-            Task::Visit(AnyPred::And(left, right)) => {
-                tasks.push(Task::And);
-                tasks.push(Task::Visit(right));
-                tasks.push(Task::Visit(left));
-            },
-            Task::Visit(AnyPred::Or(left, right)) => {
-                tasks.push(Task::Or);
-                tasks.push(Task::Visit(right));
-                tasks.push(Task::Visit(left));
-            },
-            Task::Visit(AnyPred::Not(body)) => {
-                tasks.push(Task::Not);
-                tasks.push(Task::Visit(body));
-            },
-            Task::Visit(other) if other.is_leaf() => {
-                values.push(leaf(other).unwrap_or_else(|| alg.false_pred()));
-            },
-            Task::Visit(_) => unreachable!("all non-leaf cases handled above"),
-            kind @ (Task::And | Task::Or) => {
-                let right = values.pop().expect("predicate fold lost right operand");
-                let left = values.pop().expect("predicate fold lost left operand");
-                values.push(match kind {
-                    Task::And => alg.and(&left, &right),
-                    Task::Or => alg.or(&left, &right),
-                    _ => unreachable!(),
-                });
-            },
-            Task::Not => {
-                let body = values.pop().expect("predicate fold lost negated operand");
-                values.push(alg.not(&body));
-            },
-        }
-    }
-    debug_assert_eq!(values.len(), 1);
-    values.pop().expect("predicate fold produced no value")
-}
-
-fn int_leaf(p: &AnyPred) -> Option<IntervalPred> {
-    if let AnyPred::Int(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn char_leaf(p: &AnyPred) -> Option<CharClassPred> {
-    if let AnyPred::Char(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn bool_leaf(p: &AnyPred) -> Option<BooleanTest> {
-    if let AnyPred::Bool(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn bigint_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigInt>> {
-    if let AnyPred::BigInt(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn bigrat_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigRational>> {
-    if let AnyPred::BigRat(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn fixed_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigRational>> {
-    if let AnyPred::Fixed(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn float_leaf(p: &AnyPred) -> Option<OrderedFieldPred<OrderedF64>> {
-    if let AnyPred::Float(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn str_leaf(p: &AnyPred) -> Option<StrPred> {
-    if let AnyPred::Str(x) = p {
-        Some(x.clone())
-    } else {
-        None
-    }
-}
-fn product_leaf(p: &AnyPred) -> Option<NaryProductPred<AnyPred>> {
-    if let AnyPred::Product(x) = p {
-        Some((**x).clone())
-    } else {
-        None
-    }
-}
-fn sum_leaf(p: &AnyPred) -> Option<SumPred<AnyPred>> {
-    if let AnyPred::Sum(x) = p {
-        Some((**x).clone())
-    } else {
-        None
-    }
-}
-fn list_leaf(p: &AnyPred) -> Option<RegexPred<AnyPred>> {
-    if let AnyPred::List(x) = p {
-        Some((**x).clone())
-    } else {
-        None
-    }
-}
-fn bag_leaf(p: &AnyPred) -> Option<BagPred<AnyPred>> {
-    if let AnyPred::Bag(x) = p {
-        Some((**x).clone())
-    } else {
-        None
-    }
-}
-fn tree_leaf(p: &AnyPred) -> Option<TreePred<AnyPred>> {
-    if let AnyPred::Tree(x) = p {
-        Some((**x).clone())
-    } else {
-        None
-    }
-}
-fn map_leaf(p: &AnyPred) -> Option<MapPred<AnyPred, AnyPred>> {
-    if let AnyPred::Map(x) = p {
-        Some((**x).clone())
-    } else {
-        None
     }
 }
 
@@ -565,61 +461,11 @@ impl BooleanAlgebra for AnyAlgebra {
     }
 
     fn is_satisfiable(&self, a: &AnyPred) -> bool {
-        match self {
-            AnyAlgebra::Int(g) => g.is_satisfiable(&fold_pred(g, a, &int_leaf)),
-            AnyAlgebra::Char(g) => g.is_satisfiable(&fold_pred(g, a, &char_leaf)),
-            AnyAlgebra::Bool(g) => g.is_satisfiable(&fold_pred(g, a, &bool_leaf)),
-            AnyAlgebra::BigInt(g) => g.is_satisfiable(&fold_pred(g, a, &bigint_leaf)),
-            AnyAlgebra::BigRat(g) => g.is_satisfiable(&fold_pred(g, a, &bigrat_leaf)),
-            AnyAlgebra::Fixed(g) => g.is_satisfiable(&fold_pred(g, a, &fixed_leaf)),
-            AnyAlgebra::Float(g) => g.is_satisfiable(&fold_pred(g, a, &float_leaf)),
-            AnyAlgebra::Str(g) => g.is_satisfiable(&fold_pred(g, a, &str_leaf)),
-            AnyAlgebra::Product(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &product_leaf)),
-            AnyAlgebra::Sum(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &sum_leaf)),
-            AnyAlgebra::List(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &list_leaf)),
-            AnyAlgebra::Bag(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &bag_leaf)),
-            AnyAlgebra::Tree(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &tree_leaf)),
-            AnyAlgebra::Map(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &map_leaf)),
-        }
+        decision::is_satisfiable(self, a)
     }
 
     fn witness(&self, a: &AnyPred) -> Option<AnyDomain> {
-        match self {
-            AnyAlgebra::Int(g) => g.witness(&fold_pred(g, a, &int_leaf)).map(AnyDomain::Int),
-            AnyAlgebra::Char(g) => g.witness(&fold_pred(g, a, &char_leaf)).map(AnyDomain::Char),
-            AnyAlgebra::Bool(g) => g.witness(&fold_pred(g, a, &bool_leaf)).map(AnyDomain::Bool),
-            AnyAlgebra::BigInt(g) => g
-                .witness(&fold_pred(g, a, &bigint_leaf))
-                .map(AnyDomain::BigInt),
-            AnyAlgebra::BigRat(g) => g
-                .witness(&fold_pred(g, a, &bigrat_leaf))
-                .map(AnyDomain::BigRat),
-            AnyAlgebra::Fixed(g) => g
-                .witness(&fold_pred(g, a, &fixed_leaf))
-                .map(AnyDomain::Fixed),
-            AnyAlgebra::Float(g) => g
-                .witness(&fold_pred(g, a, &float_leaf))
-                .map(AnyDomain::Float),
-            AnyAlgebra::Str(g) => g.witness(&fold_pred(g, a, &str_leaf)).map(AnyDomain::Str),
-            AnyAlgebra::Product(g) => g
-                .witness(&fold_pred(g.as_ref(), a, &product_leaf))
-                .map(AnyDomain::Product),
-            AnyAlgebra::Sum(g) => g
-                .witness(&fold_pred(g.as_ref(), a, &sum_leaf))
-                .map(|v| AnyDomain::Sum(Box::new(v))),
-            AnyAlgebra::List(g) => g
-                .witness(&fold_pred(g.as_ref(), a, &list_leaf))
-                .map(AnyDomain::List),
-            AnyAlgebra::Bag(g) => g
-                .witness(&fold_pred(g.as_ref(), a, &bag_leaf))
-                .map(AnyDomain::Bag),
-            AnyAlgebra::Tree(g) => g
-                .witness(&fold_pred(g.as_ref(), a, &tree_leaf))
-                .map(|v| AnyDomain::Tree(Box::new(v))),
-            AnyAlgebra::Map(g) => g
-                .witness(&fold_pred(g.as_ref(), a, &map_leaf))
-                .map(AnyDomain::Map),
-        }
+        decision::witness(self, a)
     }
 
     fn evaluate(&self, pred: &AnyPred, elem: &AnyDomain) -> bool {

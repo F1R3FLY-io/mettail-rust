@@ -49,6 +49,46 @@ pub enum RegexPred<P> {
     Compl(Box<RegexPred<P>>),
 }
 
+pub(crate) enum RegexNode<P> {
+    Empty,
+    Epsilon,
+    Elem(P),
+    Length(usize, Option<usize>),
+    Concat(Box<RegexPred<P>>, Box<RegexPred<P>>),
+    Alt(Box<RegexPred<P>>, Box<RegexPred<P>>),
+    Star(Box<RegexPred<P>>),
+    Inter(Box<RegexPred<P>>, Box<RegexPred<P>>),
+    Compl(Box<RegexPred<P>>),
+}
+
+impl<P> RegexPred<P> {
+    pub(crate) fn into_node(self) -> RegexNode<P> {
+        let predicate = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `ManuallyDrop` suppresses the source destructor. The match
+        // selects its active variant, and every non-Copy field in that variant
+        // is moved exactly once into the corresponding owned node.
+        unsafe {
+            match &*predicate {
+                RegexPred::Empty => RegexNode::Empty,
+                RegexPred::Epsilon => RegexNode::Epsilon,
+                RegexPred::Elem(value) => RegexNode::Elem(std::ptr::read(value)),
+                RegexPred::Length(lower, upper) => RegexNode::Length(*lower, *upper),
+                RegexPred::Concat(left, right) => {
+                    RegexNode::Concat(std::ptr::read(left), std::ptr::read(right))
+                },
+                RegexPred::Alt(left, right) => {
+                    RegexNode::Alt(std::ptr::read(left), std::ptr::read(right))
+                },
+                RegexPred::Star(value) => RegexNode::Star(std::ptr::read(value)),
+                RegexPred::Inter(left, right) => {
+                    RegexNode::Inter(std::ptr::read(left), std::ptr::read(right))
+                },
+                RegexPred::Compl(value) => RegexNode::Compl(std::ptr::read(value)),
+            }
+        }
+    }
+}
+
 #[path = "regex_sfa/lifecycle.rs"]
 mod lifecycle;
 
@@ -56,7 +96,7 @@ mod lifecycle;
 // Epsilon-NFA over element predicates (compilation target)
 // ══════════════════════════════════════════════════════════════════════════════
 
-struct EpsNfa<P> {
+pub(crate) struct EpsNfa<P> {
     n: usize,
     eps: Vec<(usize, usize)>,
     chr: Vec<(usize, P, usize)>,
@@ -65,7 +105,24 @@ struct EpsNfa<P> {
 }
 
 impl<P: Clone> EpsNfa<P> {
-    fn empty() -> Self {
+    pub(crate) fn from_parts(
+        n: usize,
+        eps: Vec<(usize, usize)>,
+        chr: Vec<(usize, P, usize)>,
+        initials: Vec<usize>,
+        accepts: Vec<usize>,
+    ) -> Self {
+        Self { n, eps, chr, initials, accepts }
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn into_parts(
+        self,
+    ) -> (usize, Vec<(usize, usize)>, Vec<(usize, P, usize)>, Vec<usize>, Vec<usize>) {
+        (self.n, self.eps, self.chr, self.initials, self.accepts)
+    }
+
+    pub(crate) fn empty() -> Self {
         EpsNfa {
             n: 1,
             eps: Vec::new(),
@@ -75,7 +132,7 @@ impl<P: Clone> EpsNfa<P> {
         }
     }
 
-    fn epsilon() -> Self {
+    pub(crate) fn epsilon() -> Self {
         EpsNfa {
             n: 1,
             eps: Vec::new(),
@@ -85,7 +142,7 @@ impl<P: Clone> EpsNfa<P> {
         }
     }
 
-    fn elem(class: P) -> Self {
+    pub(crate) fn elem(class: P) -> Self {
         EpsNfa {
             n: 2,
             eps: Vec::new(),
@@ -95,7 +152,7 @@ impl<P: Clone> EpsNfa<P> {
         }
     }
 
-    fn concat(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
+    pub(crate) fn concat(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
         let EpsNfa {
             n: a_n,
             eps: a_eps,
@@ -172,7 +229,7 @@ impl<P: Clone> EpsNfa<P> {
         }
     }
 
-    fn alt(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
+    pub(crate) fn alt(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
         let EpsNfa {
             n: a_n,
             eps: a_eps,
@@ -245,7 +302,7 @@ impl<P: Clone> EpsNfa<P> {
         }
     }
 
-    fn star(a: EpsNfa<P>) -> Self {
+    pub(crate) fn star(a: EpsNfa<P>) -> Self {
         let EpsNfa { n, mut eps, chr, initials, accepts } = a;
         eps.reserve(initials.len() + accepts.len());
         for initial in &initials {
@@ -285,7 +342,7 @@ impl<P: Clone> EpsNfa<P> {
         }
     }
 
-    fn epsilon_closures(&self) -> Vec<Vec<usize>> {
+    pub(crate) fn epsilon_closures(&self) -> Vec<Vec<usize>> {
         let mut adjacency = vec![Vec::new(); self.n];
         for &(from, to) in &self.eps {
             adjacency[from].push(to);
