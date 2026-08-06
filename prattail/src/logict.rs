@@ -527,7 +527,6 @@ pub trait ConstraintTheory: Clone + fmt::Debug + Send + Sync + 'static {
 ///
 /// - Gap 3 in `docs/design/predicated-types.md` §22
 /// - Strategy 3 (LogicT evaluation) selected for composability
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuantifiedFormula {
     /// Atomic relation query: `R(args)` — checks Ascent fixpoint.
     Atom {
@@ -631,42 +630,54 @@ impl QuantifiedFormula {
 
     /// Collect all free variables referenced in this formula (not bound by a quantifier).
     pub fn free_vars(&self) -> std::collections::HashSet<String> {
-        let mut free = std::collections::HashSet::new();
-        self.collect_free_vars(&mut free, &std::collections::HashSet::new());
-        free
-    }
+        enum Task<'formula> {
+            Visit(&'formula QuantifiedFormula),
+            LeaveBinding(&'formula str),
+        }
 
-    fn collect_free_vars(
-        &self,
-        free: &mut std::collections::HashSet<String>,
-        bound: &std::collections::HashSet<String>,
-    ) {
-        match self {
-            QuantifiedFormula::Atom { args, .. } => {
-                for arg in args {
-                    if let QuantifiedArg::Var(v) = arg {
-                        if !bound.contains(v) {
-                            free.insert(v.clone());
+        let mut free = std::collections::HashSet::new();
+        let mut bound_counts = std::collections::HashMap::<&str, usize>::new();
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(QuantifiedFormula::Atom { args, .. }) => {
+                    for arg in args {
+                        if let QuantifiedArg::Var(variable) = arg {
+                            if !bound_counts.contains_key(variable.as_str()) {
+                                free.insert(variable.clone());
+                            }
                         }
                     }
-                }
-            },
-            QuantifiedFormula::And(a, b)
-            | QuantifiedFormula::Or(a, b)
-            | QuantifiedFormula::Implies(a, b) => {
-                a.collect_free_vars(free, bound);
-                b.collect_free_vars(free, bound);
-            },
-            QuantifiedFormula::Not(inner) => {
-                inner.collect_free_vars(free, bound);
-            },
-            QuantifiedFormula::ForAll { var, body, .. }
-            | QuantifiedFormula::Exists { var, body, .. } => {
-                let mut inner_bound = bound.clone();
-                inner_bound.insert(var.clone());
-                body.collect_free_vars(free, &inner_bound);
-            },
+                },
+                Task::Visit(
+                    QuantifiedFormula::And(left, right)
+                    | QuantifiedFormula::Or(left, right)
+                    | QuantifiedFormula::Implies(left, right),
+                ) => {
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(QuantifiedFormula::Not(inner)) => tasks.push(Task::Visit(inner)),
+                Task::Visit(
+                    QuantifiedFormula::ForAll { var, body, .. }
+                    | QuantifiedFormula::Exists { var, body, .. },
+                ) => {
+                    *bound_counts.entry(var).or_default() += 1;
+                    tasks.push(Task::LeaveBinding(var));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::LeaveBinding(variable) => {
+                    let count = bound_counts
+                        .get_mut(variable)
+                        .expect("quantified free-variable PDA lost binding");
+                    *count -= 1;
+                    if *count == 0 {
+                        bound_counts.remove(variable);
+                    }
+                },
+            }
         }
+        free
     }
 }
 
@@ -679,33 +690,6 @@ impl QuantifiedArg {
     /// Convenience: create a constant argument.
     pub fn constant(value: impl Into<String>) -> Self {
         QuantifiedArg::Constant(value.into())
-    }
-}
-
-impl fmt::Display for QuantifiedFormula {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            QuantifiedFormula::Atom { relation, args } => {
-                write!(f, "{}(", relation)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", arg)?;
-                }
-                write!(f, ")")
-            },
-            QuantifiedFormula::And(a, b) => write!(f, "({} ∧ {})", a, b),
-            QuantifiedFormula::Or(a, b) => write!(f, "({} ∨ {})", a, b),
-            QuantifiedFormula::Not(inner) => write!(f, "¬{}", inner),
-            QuantifiedFormula::Implies(a, b) => write!(f, "({} ⇒ {})", a, b),
-            QuantifiedFormula::ForAll { var, domain, body } => {
-                write!(f, "∀{} ∈ {}. {}", var, domain, body)
-            },
-            QuantifiedFormula::Exists { var, domain, body } => {
-                write!(f, "∃{} ∈ {}. {}", var, domain, body)
-            },
-        }
     }
 }
 
@@ -793,65 +777,279 @@ where
     F: Fn(&str, &[String]) -> bool,
     G: Fn(&str) -> Vec<Vec<String>>,
 {
-    match formula {
-        QuantifiedFormula::Atom { relation, args } => {
-            let resolved: Vec<String> = args
-                .iter()
-                .map(|arg| match arg {
-                    QuantifiedArg::Var(v) => env
-                        .get(v)
-                        .cloned()
-                        .unwrap_or_else(|| panic!("unbound variable '{}' in formula", v)),
-                    QuantifiedArg::Constant(c) => c.clone(),
-                })
-                .collect();
-            relation_query(relation, &resolved)
-        },
+    evaluate_quantified_pda(formula, env, relation_query, domain_enumerate, bound)
+}
 
-        QuantifiedFormula::And(a, b) => {
-            evaluate_quantified(a, env, relation_query, domain_enumerate, bound)
-                && evaluate_quantified(b, env, relation_query, domain_enumerate, bound)
-        },
+#[derive(Clone, Copy)]
+enum FormulaBinary {
+    And,
+    Or,
+    Implies,
+}
 
-        QuantifiedFormula::Or(a, b) => {
-            evaluate_quantified(a, env, relation_query, domain_enumerate, bound)
-                || evaluate_quantified(b, env, relation_query, domain_enumerate, bound)
-        },
+#[derive(Clone, Copy)]
+enum FormulaQuantifier {
+    ForAll,
+    Exists,
+}
 
-        QuantifiedFormula::Not(inner) => {
-            !evaluate_quantified(inner, env, relation_query, domain_enumerate, bound)
-        },
+trait QuantifiedTruth: Copy {
+    fn from_bool(value: bool) -> Self;
+    fn not(self) -> Self;
+    fn binary_short_circuit(self, operation: FormulaBinary) -> Option<Self>;
+    fn combine(self, right: Self, operation: FormulaBinary) -> Self;
+    fn quantifier_identity(quantifier: FormulaQuantifier) -> Self;
+    fn accumulate(self, value: Self, quantifier: FormulaQuantifier) -> Self;
+    fn quantifier_is_decided(self, quantifier: FormulaQuantifier) -> bool;
+}
 
-        QuantifiedFormula::Implies(a, b) => {
-            !evaluate_quantified(a, env, relation_query, domain_enumerate, bound)
-                || evaluate_quantified(b, env, relation_query, domain_enumerate, bound)
-        },
+impl QuantifiedTruth for bool {
+    fn from_bool(value: bool) -> Self {
+        value
+    }
 
-        QuantifiedFormula::ForAll { var, domain, body } => {
-            let tuples = enumerate_domain(domain, domain_enumerate, bound);
-            tuples.iter().all(|tuple| {
-                // For single-column domains, bind the variable to the first element.
-                // For multi-column domains, bind var to the first column
-                // (projection — the common case for quantified guards).
-                let mut inner_env = env.clone();
-                if let Some(val) = tuple.first() {
-                    inner_env.insert(var.clone(), val.clone());
-                }
-                evaluate_quantified(body, &inner_env, relation_query, domain_enumerate, bound)
-            })
-        },
+    fn not(self) -> Self {
+        !self
+    }
 
-        QuantifiedFormula::Exists { var, domain, body } => {
-            let tuples = enumerate_domain(domain, domain_enumerate, bound);
-            tuples.iter().any(|tuple| {
-                let mut inner_env = env.clone();
-                if let Some(val) = tuple.first() {
-                    inner_env.insert(var.clone(), val.clone());
-                }
-                evaluate_quantified(body, &inner_env, relation_query, domain_enumerate, bound)
-            })
+    fn binary_short_circuit(self, operation: FormulaBinary) -> Option<Self> {
+        match (operation, self) {
+            (FormulaBinary::And, false) => Some(false),
+            (FormulaBinary::Or, true) => Some(true),
+            (FormulaBinary::Implies, false) => Some(true),
+            _ => None,
+        }
+    }
+
+    fn combine(self, right: Self, operation: FormulaBinary) -> Self {
+        match operation {
+            FormulaBinary::And => self && right,
+            FormulaBinary::Or => self || right,
+            FormulaBinary::Implies => !self || right,
+        }
+    }
+
+    fn quantifier_identity(quantifier: FormulaQuantifier) -> Self {
+        matches!(quantifier, FormulaQuantifier::ForAll)
+    }
+
+    fn accumulate(self, value: Self, quantifier: FormulaQuantifier) -> Self {
+        match quantifier {
+            FormulaQuantifier::ForAll => self && value,
+            FormulaQuantifier::Exists => self || value,
+        }
+    }
+
+    fn quantifier_is_decided(self, quantifier: FormulaQuantifier) -> bool {
+        match quantifier {
+            FormulaQuantifier::ForAll => !self,
+            FormulaQuantifier::Exists => self,
+        }
+    }
+}
+
+fn evaluate_quantified_pda<R, F, G>(
+    formula: &QuantifiedFormula,
+    env: &std::collections::HashMap<String, String>,
+    relation_query: &F,
+    domain_enumerate: &G,
+    bound: usize,
+) -> R
+where
+    R: QuantifiedTruth,
+    F: Fn(&str, &[String]) -> bool,
+    G: Fn(&str) -> Vec<Vec<String>>,
+{
+    enum Task<'formula, R> {
+        Visit(&'formula QuantifiedFormula),
+        Not,
+        BinaryAfterLeft {
+            operation: FormulaBinary,
+            right: &'formula QuantifiedFormula,
+        },
+        Combine {
+            operation: FormulaBinary,
+            left: R,
+        },
+        BeginQuantifier {
+            quantifier: FormulaQuantifier,
+            var: &'formula String,
+            domain: &'formula QuantifiedDomain,
+            body: &'formula QuantifiedFormula,
+        },
+        QuantifierContinue {
+            quantifier: FormulaQuantifier,
+            var: &'formula String,
+            body: &'formula QuantifiedFormula,
+            tuples: Vec<Vec<String>>,
+            next_index: usize,
+            previous: Option<String>,
+            accumulated: R,
         },
     }
+
+    fn restore_binding(
+        env: &mut std::collections::HashMap<String, String>,
+        variable: &str,
+        previous: Option<&String>,
+    ) {
+        match previous {
+            Some(value) => {
+                env.insert(variable.to_owned(), value.clone());
+            },
+            None => {
+                env.remove(variable);
+            },
+        }
+    }
+
+    fn finish_binding(
+        env: &mut std::collections::HashMap<String, String>,
+        variable: &str,
+        previous: Option<String>,
+    ) {
+        match previous {
+            Some(value) => {
+                env.insert(variable.to_owned(), value);
+            },
+            None => {
+                env.remove(variable);
+            },
+        }
+    }
+
+    let mut runtime_env = env.clone();
+    let mut tasks = vec![Task::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(QuantifiedFormula::Atom { relation, args }) => {
+                let resolved = args
+                    .iter()
+                    .map(|arg| match arg {
+                        QuantifiedArg::Var(variable) => {
+                            runtime_env.get(variable).cloned().unwrap_or_else(|| {
+                                panic!("unbound variable '{}' in formula", variable)
+                            })
+                        },
+                        QuantifiedArg::Constant(constant) => constant.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                values.push(R::from_bool(relation_query(relation, &resolved)));
+            },
+            Task::Visit(QuantifiedFormula::And(left, right)) => {
+                tasks.push(Task::BinaryAfterLeft { operation: FormulaBinary::And, right });
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(QuantifiedFormula::Or(left, right)) => {
+                tasks.push(Task::BinaryAfterLeft { operation: FormulaBinary::Or, right });
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(QuantifiedFormula::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(QuantifiedFormula::Implies(left, right)) => {
+                tasks.push(Task::BinaryAfterLeft { operation: FormulaBinary::Implies, right });
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(QuantifiedFormula::ForAll { var, domain, body }) => {
+                tasks.push(Task::BeginQuantifier {
+                    quantifier: FormulaQuantifier::ForAll,
+                    var,
+                    domain,
+                    body,
+                });
+            },
+            Task::Visit(QuantifiedFormula::Exists { var, domain, body }) => {
+                tasks.push(Task::BeginQuantifier {
+                    quantifier: FormulaQuantifier::Exists,
+                    var,
+                    domain,
+                    body,
+                });
+            },
+            Task::BeginQuantifier { quantifier, var, domain, body } => {
+                let tuples = enumerate_domain(domain, domain_enumerate, bound);
+                let accumulated = R::quantifier_identity(quantifier);
+                if tuples.is_empty() {
+                    values.push(accumulated);
+                    continue;
+                }
+
+                let previous = runtime_env.get(var).cloned();
+                if let Some(value) = tuples[0].first() {
+                    runtime_env.insert(var.clone(), value.clone());
+                }
+                tasks.push(Task::QuantifierContinue {
+                    quantifier,
+                    var,
+                    body,
+                    tuples,
+                    next_index: 1,
+                    previous,
+                    accumulated,
+                });
+                tasks.push(Task::Visit(body));
+            },
+            Task::Not => {
+                let value = values.pop().expect("quantified evaluator lost negand");
+                values.push(value.not());
+            },
+            Task::BinaryAfterLeft { operation, right } => {
+                let left = values.pop().expect("quantified evaluator lost binary LHS");
+                if let Some(result) = left.binary_short_circuit(operation) {
+                    values.push(result);
+                } else {
+                    tasks.push(Task::Combine { operation, left });
+                    tasks.push(Task::Visit(right));
+                }
+            },
+            Task::Combine { operation, left } => {
+                let right = values.pop().expect("quantified evaluator lost binary RHS");
+                values.push(left.combine(right, operation));
+            },
+            Task::QuantifierContinue {
+                quantifier,
+                var,
+                body,
+                tuples,
+                next_index,
+                previous,
+                accumulated,
+            } => {
+                let value = values
+                    .pop()
+                    .expect("quantified evaluator lost quantified body value");
+                let accumulated = accumulated.accumulate(value, quantifier);
+                if accumulated.quantifier_is_decided(quantifier) || next_index == tuples.len() {
+                    finish_binding(&mut runtime_env, var, previous);
+                    values.push(accumulated);
+                    continue;
+                }
+
+                let next_value = tuples[next_index].first().cloned();
+                restore_binding(&mut runtime_env, var, previous.as_ref());
+                if let Some(value) = next_value {
+                    runtime_env.insert(var.clone(), value);
+                }
+                tasks.push(Task::QuantifierContinue {
+                    quantifier,
+                    var,
+                    body,
+                    tuples,
+                    next_index: next_index + 1,
+                    previous,
+                    accumulated,
+                });
+                tasks.push(Task::Visit(body));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("quantified formula evaluator produced no value")
 }
 
 /// Enumerate tuples from a domain, respecting bounds for T3 safety.
@@ -950,26 +1148,74 @@ impl From<bool> for TriState {
     }
 }
 
+impl QuantifiedTruth for TriState {
+    fn from_bool(value: bool) -> Self {
+        value.into()
+    }
+
+    fn not(self) -> Self {
+        TriState::not(self)
+    }
+
+    fn binary_short_circuit(self, operation: FormulaBinary) -> Option<Self> {
+        match (operation, self) {
+            (FormulaBinary::And, TriState::False) => Some(TriState::False),
+            (FormulaBinary::Or, TriState::True) => Some(TriState::True),
+            // Preserve the theory evaluator's eager RHS evaluation for
+            // three-valued implication; unlike Boolean implication, `False`
+            // did not previously short-circuit this path.
+            _ => None,
+        }
+    }
+
+    fn combine(self, right: Self, operation: FormulaBinary) -> Self {
+        match operation {
+            FormulaBinary::And => self.and(right),
+            FormulaBinary::Or => self.or(right),
+            FormulaBinary::Implies => self.implies(right),
+        }
+    }
+
+    fn quantifier_identity(quantifier: FormulaQuantifier) -> Self {
+        match quantifier {
+            FormulaQuantifier::ForAll => TriState::True,
+            FormulaQuantifier::Exists => TriState::False,
+        }
+    }
+
+    fn accumulate(self, value: Self, quantifier: FormulaQuantifier) -> Self {
+        match quantifier {
+            FormulaQuantifier::ForAll => self.and(value),
+            FormulaQuantifier::Exists => self.or(value),
+        }
+    }
+
+    fn quantifier_is_decided(self, quantifier: FormulaQuantifier) -> bool {
+        match quantifier {
+            FormulaQuantifier::ForAll => self == TriState::False,
+            FormulaQuantifier::Exists => self == TriState::True,
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // evaluate_quantified_with_theory — theory-guided FOL evaluator
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Theory-guided variant of `evaluate_quantified`.
 ///
-/// Phase 6A (predicated types): walks the same `QuantifiedFormula` AST
-/// as `evaluate_quantified` but threads a `ConstraintTheory` instance
-/// through the recursion, returning a `TriState` instead of a `bool`.
+/// Phase 6A (predicated types) compatibility entrypoint. It evaluates the same
+/// [`QuantifiedFormula`] language as [`evaluate_quantified`] and lifts the result
+/// into [`TriState`]. Both entrypoints share one iterative evaluator.
 ///
-/// The theory's role is to refine the result: if the theory's
-/// propagation produces an inconsistent store for an atom, the atom is
-/// `False` regardless of what the relation_query callback says. The
-/// theory thereby acts as a sound *over-approximation* on top of the
-/// extensional relation.
-///
-/// For `ForAll`/`Exists`, the search uses the same bounded enumeration
-/// as `evaluate_quantified`. If the search exhausts without finding a
-/// definitive witness/counterexample (because some sub-evaluations
-/// were `Unknown`), the result is `Unknown`.
+/// A quantified atom contains a relation name and string arguments, not a
+/// `T::Constraint`, so this generic API has no sound conversion it can pass to
+/// [`ConstraintTheory::propagate`]. The `theory` parameter is therefore exercised
+/// once through [`ConstraintTheory::empty_store`] for backend-specific
+/// monomorphization, but atom truth still comes exclusively from `relation_query`.
+/// Because that callback is Boolean, the current API produces `True` or `False`,
+/// not `Unknown`. A caller that needs theory refinement must first lower its
+/// relation atoms into the theory's concrete constraint representation.
 ///
 /// # Returns
 ///
@@ -987,165 +1233,10 @@ where
     F: Fn(&str, &[String]) -> bool,
     G: Fn(&str) -> Vec<Vec<String>>,
 {
-    use QuantifiedFormula::*;
-
     // Defensive: keep the theory parameter exercised so the
     // monomorphization actually emits theory-specific code paths.
     let _ = theory.empty_store();
-
-    match formula {
-        Atom { relation, args } => {
-            let resolved: Vec<String> = args
-                .iter()
-                .map(|arg| match arg {
-                    QuantifiedArg::Var(v) => env
-                        .get(v)
-                        .cloned()
-                        .unwrap_or_else(|| panic!("unbound variable '{}' in formula", v)),
-                    QuantifiedArg::Constant(c) => c.clone(),
-                })
-                .collect();
-            relation_query(relation, &resolved).into()
-        },
-
-        And(a, b) => {
-            let ra = evaluate_quantified_with_theory(
-                a,
-                theory,
-                relation_query,
-                domain_enumerate,
-                env,
-                bound,
-            );
-            if ra == TriState::False {
-                return TriState::False;
-            }
-            let rb = evaluate_quantified_with_theory(
-                b,
-                theory,
-                relation_query,
-                domain_enumerate,
-                env,
-                bound,
-            );
-            ra.and(rb)
-        },
-
-        Or(a, b) => {
-            let ra = evaluate_quantified_with_theory(
-                a,
-                theory,
-                relation_query,
-                domain_enumerate,
-                env,
-                bound,
-            );
-            if ra == TriState::True {
-                return TriState::True;
-            }
-            let rb = evaluate_quantified_with_theory(
-                b,
-                theory,
-                relation_query,
-                domain_enumerate,
-                env,
-                bound,
-            );
-            ra.or(rb)
-        },
-
-        Not(inner) => evaluate_quantified_with_theory(
-            inner,
-            theory,
-            relation_query,
-            domain_enumerate,
-            env,
-            bound,
-        )
-        .not(),
-
-        Implies(a, b) => {
-            let ra = evaluate_quantified_with_theory(
-                a,
-                theory,
-                relation_query,
-                domain_enumerate,
-                env,
-                bound,
-            );
-            let rb = evaluate_quantified_with_theory(
-                b,
-                theory,
-                relation_query,
-                domain_enumerate,
-                env,
-                bound,
-            );
-            ra.implies(rb)
-        },
-
-        ForAll { var, domain, body } => {
-            let tuples = enumerate_domain(domain, domain_enumerate, bound);
-            if tuples.is_empty() {
-                return TriState::True; // ∀x ∈ ∅. φ ≡ ⊤
-            }
-            let mut had_unknown = false;
-            for tuple in &tuples {
-                let mut inner_env = env.clone();
-                if let Some(val) = tuple.first() {
-                    inner_env.insert(var.clone(), val.clone());
-                }
-                match evaluate_quantified_with_theory(
-                    body,
-                    theory,
-                    relation_query,
-                    domain_enumerate,
-                    &inner_env,
-                    bound,
-                ) {
-                    TriState::False => return TriState::False,
-                    TriState::Unknown => had_unknown = true,
-                    TriState::True => {},
-                }
-            }
-            if had_unknown {
-                TriState::Unknown
-            } else {
-                TriState::True
-            }
-        },
-
-        Exists { var, domain, body } => {
-            let tuples = enumerate_domain(domain, domain_enumerate, bound);
-            if tuples.is_empty() {
-                return TriState::False; // ∃x ∈ ∅. φ ≡ ⊥
-            }
-            let mut had_unknown = false;
-            for tuple in &tuples {
-                let mut inner_env = env.clone();
-                if let Some(val) = tuple.first() {
-                    inner_env.insert(var.clone(), val.clone());
-                }
-                match evaluate_quantified_with_theory(
-                    body,
-                    theory,
-                    relation_query,
-                    domain_enumerate,
-                    &inner_env,
-                    bound,
-                ) {
-                    TriState::True => return TriState::True,
-                    TriState::Unknown => had_unknown = true,
-                    TriState::False => {},
-                }
-            }
-            if had_unknown {
-                TriState::Unknown
-            } else {
-                TriState::False
-            }
-        },
-    }
+    evaluate_quantified_pda(formula, env, relation_query, domain_enumerate, bound)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1157,7 +1248,6 @@ where
 /// This is the `Predicate` type used by `TheoryAlgebra<T>` in its
 /// `BooleanAlgebra` implementation. It wraps theory-specific constraints
 /// in a standard Boolean AST.
-#[derive(Clone, Debug)]
 pub enum TheoryPred<T: ConstraintTheory> {
     /// Always true (unconstrained).
     True,
@@ -1173,42 +1263,8 @@ pub enum TheoryPred<T: ConstraintTheory> {
     Not(Box<TheoryPred<T>>),
 }
 
-impl<T: ConstraintTheory> PartialEq for TheoryPred<T>
-where
-    T::Constraint: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (TheoryPred::True, TheoryPred::True) => true,
-            (TheoryPred::False, TheoryPred::False) => true,
-            (TheoryPred::Atom(a), TheoryPred::Atom(b)) => a == b,
-            (TheoryPred::And(a1, a2), TheoryPred::And(b1, b2)) => a1 == b1 && a2 == b2,
-            (TheoryPred::Or(a1, a2), TheoryPred::Or(b1, b2)) => a1 == b1 && a2 == b2,
-            (TheoryPred::Not(a), TheoryPred::Not(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-
-impl<T: ConstraintTheory> Eq for TheoryPred<T> where T::Constraint: Eq {}
-
-impl<T: ConstraintTheory> Hash for TheoryPred<T>
-where
-    T::Constraint: Hash,
-{
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-        match self {
-            TheoryPred::True | TheoryPred::False => {},
-            TheoryPred::Atom(c) => c.hash(state),
-            TheoryPred::And(a, b) | TheoryPred::Or(a, b) => {
-                a.hash(state);
-                b.hash(state);
-            },
-            TheoryPred::Not(a) => a.hash(state),
-        }
-    }
-}
+#[path = "logict/lifecycle.rs"]
+mod lifecycle;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // TheoryAlgebra — Bridge ConstraintTheory to BooleanAlgebra
@@ -1247,75 +1303,179 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
         T::Store: Send + 'static,
         T::Constraint: Send + 'static,
     {
-        match pred {
-            TheoryPred::True => LogicStream::unit(store.clone()),
-            TheoryPred::False => LogicStream::empty(),
-            TheoryPred::Atom(c) => match self.theory.propagate(store, c) {
-                Some(new_store) => LogicStream::unit(new_store),
-                None => LogicStream::empty(),
+        enum Task<'predicate, T: ConstraintTheory> {
+            Visit {
+                predicate: &'predicate TheoryPred<T>,
+                store: T::Store,
+                negated: bool,
             },
-            TheoryPred::And(a, b) => {
-                let a_stores = self.collect_constraints(a, store);
-                let b_pred = (**b).clone();
-                let algebra_clone = self.clone();
-                a_stores.fair_conjoin(move |s| algebra_clone.collect_constraints(&b_pred, &s))
+            InterleaveAfterLeft {
+                right: &'predicate TheoryPred<T>,
+                right_store: T::Store,
+                negated: bool,
             },
-            TheoryPred::Or(a, b) => {
-                let a_stores = self.collect_constraints(a, store);
-                let b_stores = self.collect_constraints(b, store);
-                a_stores.interleave(b_stores)
+            Interleave {
+                left: LogicStream<T::Store>,
             },
-            TheoryPred::Not(inner) => {
-                // Negation in the constraint theory context is subtle.
-                // NOT(P) is satisfiable iff P is not a tautology.
-                // Since ConstraintTheory only supports forward propagation,
-                // we can't directly negate constraints. Instead, we handle
-                // negation structurally:
-                //
-                // For compound predicates, push negation inward (De Morgan):
-                //   NOT(A AND B) = NOT(A) OR NOT(B)
-                //   NOT(A OR B) = NOT(A) AND NOT(B)
-                //   NOT(NOT(A)) = A
-                //   NOT(True) = False, NOT(False) = True
-                //
-                // For atomic predicates NOT(Atom(c)), we return the store
-                // unchanged — the negation is tracked structurally in the
-                // TheoryPred and checked via evaluate() at witness time.
-                match inner.as_ref() {
-                    TheoryPred::True => LogicStream::empty(),
-                    TheoryPred::False => LogicStream::unit(store.clone()),
-                    TheoryPred::Not(inner2) => self.collect_constraints(inner2, store),
-                    TheoryPred::And(a, b) => {
-                        // NOT(A AND B) = NOT(A) OR NOT(B)
-                        let not_a = TheoryPred::Not(a.clone());
-                        let not_b = TheoryPred::Not(b.clone());
-                        let a_stores = self.collect_constraints(&not_a, store);
-                        let b_stores = self.collect_constraints(&not_b, store);
-                        a_stores.interleave(b_stores)
-                    },
-                    TheoryPred::Or(a, b) => {
-                        // NOT(A OR B) = NOT(A) AND NOT(B)
-                        let not_a = TheoryPred::Not(a.clone());
-                        let not_b = TheoryPred::Not(b.clone());
-                        let not_a_stores = self.collect_constraints(&not_a, store);
-                        let not_b_pred = not_b;
-                        let algebra_clone = self.clone();
-                        not_a_stores.fair_conjoin(move |s| {
-                            algebra_clone.collect_constraints(&not_b_pred, &s)
-                        })
-                    },
-                    TheoryPred::Atom(_) => {
-                        // For atomic negation NOT(c), we can't propagate the
-                        // negation through the theory. Instead, return the
-                        // store as-is — satisfiability of NOT(Atom(c)) is
-                        // determined by whether there exists a witness in
-                        // the store's domain that doesn't satisfy c.
-                        // The store is unconstrained w.r.t. the negation.
-                        LogicStream::unit(store.clone())
-                    },
-                }
+            ConjoinAfterLeft {
+                right: &'predicate TheoryPred<T>,
+                negated: bool,
+            },
+            ConjoinNext {
+                right: &'predicate TheoryPred<T>,
+                negated: bool,
+                stores: std::vec::IntoIter<T::Store>,
+                accumulated: LogicStream<T::Store>,
+            },
+            ConjoinAfterRight {
+                right: &'predicate TheoryPred<T>,
+                negated: bool,
+                stores: std::vec::IntoIter<T::Store>,
+                accumulated: LogicStream<T::Store>,
             },
         }
+
+        let mut tasks = vec![Task::Visit {
+            predicate: pred,
+            store: store.clone(),
+            negated: false,
+        }];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit {
+                    predicate: TheoryPred::True,
+                    store,
+                    negated: false,
+                }
+                | Task::Visit {
+                    predicate: TheoryPred::False,
+                    store,
+                    negated: true,
+                } => values.push(LogicStream::unit(store)),
+                Task::Visit {
+                    predicate: TheoryPred::False,
+                    negated: false,
+                    ..
+                }
+                | Task::Visit {
+                    predicate: TheoryPred::True,
+                    negated: true,
+                    ..
+                } => values.push(LogicStream::empty()),
+                Task::Visit {
+                    predicate: TheoryPred::Atom(_),
+                    store,
+                    negated: true,
+                } => {
+                    // ConstraintTheory has no general complement operation. Keep
+                    // negated atoms structural and validate them at witness time.
+                    values.push(LogicStream::unit(store));
+                },
+                Task::Visit {
+                    predicate: TheoryPred::Atom(constraint),
+                    store,
+                    negated: false,
+                } => values.push(match self.theory.propagate(&store, constraint) {
+                    Some(store) => LogicStream::unit(store),
+                    None => LogicStream::empty(),
+                }),
+                Task::Visit {
+                    predicate: TheoryPred::Not(inner),
+                    store,
+                    negated,
+                } => tasks.push(Task::Visit {
+                    predicate: inner,
+                    store,
+                    negated: !negated,
+                }),
+                Task::Visit {
+                    predicate: TheoryPred::And(left, right),
+                    store,
+                    negated: false,
+                } => {
+                    tasks.push(Task::ConjoinAfterLeft { right, negated: false });
+                    tasks.push(Task::Visit { predicate: left, store, negated: false });
+                },
+                Task::Visit {
+                    predicate: TheoryPred::Or(left, right),
+                    store,
+                    negated: true,
+                } => {
+                    tasks.push(Task::ConjoinAfterLeft { right, negated: true });
+                    tasks.push(Task::Visit { predicate: left, store, negated: true });
+                },
+                Task::Visit {
+                    predicate: TheoryPred::Or(left, right),
+                    store,
+                    negated: false,
+                } => {
+                    let right_store = store.clone();
+                    tasks.push(Task::InterleaveAfterLeft { right, right_store, negated: false });
+                    tasks.push(Task::Visit { predicate: left, store, negated: false });
+                },
+                Task::Visit {
+                    predicate: TheoryPred::And(left, right),
+                    store,
+                    negated: true,
+                } => {
+                    let right_store = store.clone();
+                    tasks.push(Task::InterleaveAfterLeft { right, right_store, negated: true });
+                    tasks.push(Task::Visit { predicate: left, store, negated: true });
+                },
+                Task::InterleaveAfterLeft { right, right_store, negated } => {
+                    let left = values
+                        .pop()
+                        .expect("theory predicate PDA lost disjunction LHS stream");
+                    tasks.push(Task::Interleave { left });
+                    tasks.push(Task::Visit {
+                        predicate: right,
+                        store: right_store,
+                        negated,
+                    });
+                },
+                Task::Interleave { left } => {
+                    let right = values
+                        .pop()
+                        .expect("theory predicate PDA lost disjunction RHS stream");
+                    values.push(left.interleave(right));
+                },
+                Task::ConjoinAfterLeft { right, negated } => {
+                    let left = values
+                        .pop()
+                        .expect("theory predicate PDA lost conjunction LHS stream");
+                    tasks.push(Task::ConjoinNext {
+                        right,
+                        negated,
+                        stores: left.collect_all().into_iter(),
+                        accumulated: LogicStream::empty(),
+                    });
+                },
+                Task::ConjoinNext { right, negated, mut stores, accumulated } => {
+                    if let Some(store) = stores.next() {
+                        tasks.push(Task::ConjoinAfterRight { right, negated, stores, accumulated });
+                        tasks.push(Task::Visit { predicate: right, store, negated });
+                    } else {
+                        values.push(accumulated);
+                    }
+                },
+                Task::ConjoinAfterRight { right, negated, stores, accumulated } => {
+                    let right_values = values
+                        .pop()
+                        .expect("theory predicate PDA lost conjunction RHS stream");
+                    tasks.push(Task::ConjoinNext {
+                        right,
+                        negated,
+                        stores,
+                        accumulated: accumulated.interleave(right_values),
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("theory predicate constraint PDA produced no stream")
     }
 }
 
@@ -1401,14 +1561,66 @@ where
     }
 
     fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
-        match pred {
-            TheoryPred::True => true,
-            TheoryPred::False => false,
-            TheoryPred::Atom(c) => self.theory.evaluate(c, elem),
-            TheoryPred::And(a, b) => self.evaluate(a, elem) && self.evaluate(b, elem),
-            TheoryPred::Or(a, b) => self.evaluate(a, elem) || self.evaluate(b, elem),
-            TheoryPred::Not(inner) => !self.evaluate(inner, elem),
+        enum Task<'predicate, T: ConstraintTheory> {
+            Visit(&'predicate TheoryPred<T>),
+            Not,
+            AndRight(&'predicate TheoryPred<T>),
+            OrRight(&'predicate TheoryPred<T>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TheoryPred::True) => values.push(true),
+                Task::Visit(TheoryPred::False) => values.push(false),
+                Task::Visit(TheoryPred::Atom(constraint)) => {
+                    values.push(self.theory.evaluate(constraint, elem));
+                },
+                Task::Visit(TheoryPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TheoryPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TheoryPred::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Not => {
+                    let value = values
+                        .pop()
+                        .expect("theory predicate evaluator lost negand");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    if values
+                        .pop()
+                        .expect("theory predicate evaluator lost conjunction LHS")
+                    {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    if values
+                        .pop()
+                        .expect("theory predicate evaluator lost disjunction LHS")
+                    {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("theory predicate evaluator produced no value")
     }
 }
 
