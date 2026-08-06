@@ -27,7 +27,6 @@ use crate::symbolic::BooleanAlgebra;
 ///
 /// Structural constructors (e.g. `Cons`, `Pair`) carry `payload = None`; scalar
 /// leaf constructors (e.g. an integer literal `Lit`) carry `payload = Some(d)`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SymTerm<D> {
     /// The head constructor.
     pub constructor: String,
@@ -36,6 +35,9 @@ pub struct SymTerm<D> {
     /// Child subterms.
     pub children: Vec<SymTerm<D>>,
 }
+
+#[path = "sym_tree/lifecycle.rs"]
+mod lifecycle;
 
 impl<D> SymTerm<D> {
     /// A structural node `c(children)` with no payload.
@@ -154,28 +156,86 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
 
     /// Bottom-up: the set of states the automaton can reach at the root of `term`.
     pub fn run(&self, term: &SymTerm<A::Domain>) -> HashSet<usize> {
-        let child_state_sets: Vec<HashSet<usize>> =
-            term.children.iter().map(|c| self.run(c)).collect();
-        let mut reached = HashSet::new();
-        for trans in &self.transitions {
-            if trans.constructor != term.constructor
-                || trans.child_states.len() != term.children.len()
-            {
-                continue;
-            }
-            if !self.payload_matches(&trans.payload_guard, &term.payload) {
-                continue;
-            }
-            let children_ok = trans
-                .child_states
-                .iter()
-                .zip(&child_state_sets)
-                .all(|(q, set)| set.contains(q));
-            if children_ok {
-                reached.insert(trans.target);
+        enum Task<'term, D> {
+            Visit(&'term SymTerm<D>),
+            Reduce(&'term SymTerm<D>),
+        }
+
+        let mut nullary_by_constructor = HashMap::new();
+        let mut by_constructor_and_first_child = HashMap::new();
+        for transition in &self.transitions {
+            if let Some(first_child) = transition.child_states.first() {
+                by_constructor_and_first_child
+                    .entry((transition.constructor.as_str(), *first_child))
+                    .or_insert_with(Vec::new)
+                    .push(transition);
+            } else {
+                nullary_by_constructor
+                    .entry(transition.constructor.as_str())
+                    .or_insert_with(Vec::new)
+                    .push(transition);
             }
         }
-        reached
+
+        let mut tasks = vec![Task::Visit(term)];
+        let mut values: Vec<HashSet<usize>> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(node) => {
+                    tasks.push(Task::Reduce(node));
+                    for child in node.children.iter().rev() {
+                        tasks.push(Task::Visit(child));
+                    }
+                },
+                Task::Reduce(node) => {
+                    let value_start = values
+                        .len()
+                        .checked_sub(node.children.len())
+                        .expect("symbolic tree run lost child state sets");
+                    let child_state_sets = &values[value_start..];
+                    let mut reached = HashSet::new();
+                    let mut consider = |transition: &TreeTrans<A::Predicate>| {
+                        if transition.child_states.len() != node.children.len() {
+                            return;
+                        }
+                        if !self.payload_matches(&transition.payload_guard, &node.payload) {
+                            return;
+                        }
+                        if transition
+                            .child_states
+                            .iter()
+                            .zip(child_state_sets)
+                            .all(|(state, reached)| reached.contains(state))
+                        {
+                            reached.insert(transition.target);
+                        }
+                    };
+                    if let Some(first_states) = child_state_sets.first() {
+                        for first_state in first_states {
+                            if let Some(transitions) = by_constructor_and_first_child
+                                .get(&(node.constructor.as_str(), *first_state))
+                            {
+                                for transition in transitions {
+                                    consider(transition);
+                                }
+                            }
+                        }
+                    } else if let Some(transitions) =
+                        nullary_by_constructor.get(node.constructor.as_str())
+                    {
+                        for transition in transitions {
+                            consider(transition);
+                        }
+                    }
+                    values.truncate(value_start);
+                    values.push(reached);
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("symbolic tree run produced no root state set")
     }
 
     /// Whether `term` is accepted (some reachable root state is accepting).
@@ -215,45 +275,98 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
 
     /// A minimal accepted term, or `None` if the language is empty.
     pub fn witness(&self) -> Option<SymTerm<A::Domain>> {
-        // Bottom-up: assign each state a smallest witness term.
-        let mut wit: HashMap<usize, SymTerm<A::Domain>> = HashMap::new();
+        struct WitnessNode<D> {
+            constructor: String,
+            payload: Option<D>,
+            children: Vec<usize>,
+            size: usize,
+        }
+
+        // Bottom-up: assign each state an arena index. Child witnesses are
+        // shared by index while the fixpoint grows, then the selected root is
+        // materialized exactly once; no progressively larger subterm is cloned.
+        let mut arena: Vec<WitnessNode<A::Domain>> = Vec::new();
+        let mut witness_by_state: HashMap<usize, usize> = HashMap::new();
         loop {
             let mut changed = false;
             for trans in &self.transitions {
-                if wit.contains_key(&trans.target) {
+                if witness_by_state.contains_key(&trans.target) {
                     continue;
                 }
                 if !self.guard_satisfiable(&trans.payload_guard) {
                     continue;
                 }
-                if !trans.child_states.iter().all(|q| wit.contains_key(q)) {
+                if !trans
+                    .child_states
+                    .iter()
+                    .all(|state| witness_by_state.contains_key(state))
+                {
                     continue;
                 }
                 let payload = match &trans.payload_guard {
                     None => None,
                     Some(g) => Some(self.algebra.witness(g)?),
                 };
-                let children: Vec<SymTerm<A::Domain>> =
-                    trans.child_states.iter().map(|q| wit[q].clone()).collect();
-                wit.insert(
-                    trans.target,
-                    SymTerm {
-                        constructor: trans.constructor.clone(),
-                        payload,
-                        children,
-                    },
-                );
+                let children: Vec<usize> = trans
+                    .child_states
+                    .iter()
+                    .map(|state| witness_by_state[state])
+                    .collect();
+                let size = 1 + children
+                    .iter()
+                    .map(|index| arena[*index].size)
+                    .sum::<usize>();
+                let index = arena.len();
+                arena.push(WitnessNode {
+                    constructor: trans.constructor.clone(),
+                    payload,
+                    children,
+                    size,
+                });
+                witness_by_state.insert(trans.target, index);
                 changed = true;
             }
             if !changed {
                 break;
             }
         }
-        self.accepting
+        let root = self
+            .accepting
             .iter()
-            .filter_map(|s| wit.get(s))
-            .cloned()
-            .min_by_key(term_size)
+            .filter_map(|state| witness_by_state.get(state).copied())
+            .min_by_key(|index| arena[*index].size)?;
+
+        enum Task {
+            Visit(usize),
+            Build(usize),
+        }
+        let mut tasks = vec![Task::Visit(root)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(index) => {
+                    tasks.push(Task::Build(index));
+                    for child in arena[index].children.iter().rev() {
+                        tasks.push(Task::Visit(*child));
+                    }
+                },
+                Task::Build(index) => {
+                    let node = &arena[index];
+                    let child_start = values
+                        .len()
+                        .checked_sub(node.children.len())
+                        .expect("symbolic tree witness lost children");
+                    let children = values.split_off(child_start);
+                    values.push(SymTerm {
+                        constructor: node.constructor.clone(),
+                        payload: node.payload.clone(),
+                        children,
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop()
     }
 
     /// Disjoint union: accepts `L(self) ∪ L(other)`.
@@ -335,10 +448,6 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
         }
         result
     }
-}
-
-fn term_size<D>(t: &SymTerm<D>) -> usize {
-    1 + t.children.iter().map(term_size).sum::<usize>()
 }
 
 /// All `n^k` index tuples (k-fold cartesian product of `0..n`).
@@ -525,7 +634,6 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A symbolic tree predicate over element-predicate type `P`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TreePred<P> {
     /// Matches every well-formed term.
     True,
@@ -598,35 +706,62 @@ impl<A: BooleanAlgebra> TreeAlgebra<A> {
 
     /// Compile a node pattern into an automaton accepting
     /// `constructor(children...)` matching the child patterns.
-    fn compile_node(
+    fn assemble_node(
         &self,
         constructor: &str,
         payload_guard: &Option<A::Predicate>,
-        children: &[TreePred<A::Predicate>],
+        mut child_autos: Vec<SymbolicTreeAutomaton<A>>,
     ) -> SymbolicTreeAutomaton<A> {
-        let child_autos: Vec<SymbolicTreeAutomaton<A>> =
-            children.iter().map(|ch| self.compile(ch)).collect();
-        let mut result = SymbolicTreeAutomaton::new(self.elem.clone());
-        result.arities = self.arities.clone();
-        let mut child_accepts: Vec<Vec<usize>> = Vec::with_capacity(child_autos.len());
-        for ca in &child_autos {
-            for (cc, &aa) in &ca.arities {
-                result.arities.insert(cc.clone(), aa);
+        let mut child_accepts = vec![Vec::new(); child_autos.len()];
+        let base_index = child_autos
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, automaton)| (automaton.transitions.len(), automaton.num_states))
+            .map(|(index, _)| index);
+        let mut result = if let Some(index) = base_index {
+            let automaton = std::mem::replace(
+                &mut child_autos[index],
+                SymbolicTreeAutomaton::new(self.elem.clone()),
+            );
+            child_accepts[index] = automaton.accepting.iter().copied().collect();
+            automaton
+        } else {
+            SymbolicTreeAutomaton::new(self.elem.clone())
+        };
+        for (child_index, child) in child_autos.into_iter().enumerate() {
+            if Some(child_index) == base_index {
+                continue;
             }
             let base = result.num_states;
-            result.num_states += ca.num_states;
-            for t in &ca.transitions {
-                result.transitions.push(TreeTrans {
-                    constructor: t.constructor.clone(),
-                    payload_guard: t.payload_guard.clone(),
-                    child_states: t.child_states.iter().map(|q| q + base).collect(),
-                    target: t.target + base,
-                });
+            result.num_states += child.num_states;
+            for (child_constructor, arity) in child.arities {
+                result.arities.insert(child_constructor, arity);
             }
-            child_accepts.push(ca.accepting.iter().map(|&q| q + base).collect());
+            result.transitions.reserve(child.transitions.len());
+            result
+                .transitions
+                .extend(child.transitions.into_iter().map(|transition| {
+                    TreeTrans {
+                        constructor: transition.constructor,
+                        payload_guard: transition.payload_guard,
+                        child_states: transition
+                            .child_states
+                            .into_iter()
+                            .map(|state| state + base)
+                            .collect(),
+                        target: transition.target + base,
+                    }
+                }));
+            child_accepts[child_index] = child
+                .accepting
+                .into_iter()
+                .map(|state| state + base)
+                .collect();
         }
+        result.arities.extend(self.arities.clone());
         let q = result.num_states;
         result.num_states += 1;
+        result.accepting.clear();
         result.set_accepting(q);
         for combo in cartesian(&child_accepts) {
             result.add_transition(TreeTrans {
@@ -656,16 +791,80 @@ impl<A: BooleanAlgebra> TreeAlgebra<A> {
 
     /// Compile a tree predicate into a symbolic tree automaton.
     fn compile(&self, p: &TreePred<A::Predicate>) -> SymbolicTreeAutomaton<A> {
-        match p {
-            TreePred::True | TreePred::Wild => self.universal(),
-            TreePred::False => self.empty_automaton(),
-            TreePred::Node { constructor, payload_guard, children } => {
-                self.compile_node(constructor, payload_guard, children)
+        enum Task<'pred, P> {
+            Visit(&'pred TreePred<P>),
+            Node {
+                constructor: &'pred str,
+                payload_guard: &'pred Option<P>,
+                child_count: usize,
             },
-            TreePred::And(a, b) => self.compile(a).intersect(&self.compile(b)),
-            TreePred::Or(a, b) => self.compile(a).union(&self.compile(b)),
-            TreePred::Not(x) => self.compile(x).complement(),
+            And,
+            Or,
+            Not,
         }
+
+        let mut tasks = vec![Task::Visit(p)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TreePred::True | TreePred::Wild) => values.push(self.universal()),
+                Task::Visit(TreePred::False) => values.push(self.empty_automaton()),
+                Task::Visit(TreePred::Node { constructor, payload_guard, children }) => {
+                    tasks.push(Task::Node {
+                        constructor,
+                        payload_guard,
+                        child_count: children.len(),
+                    });
+                    for child in children.iter().rev() {
+                        tasks.push(Task::Visit(child));
+                    }
+                },
+                Task::Visit(TreePred::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TreePred::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TreePred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Node { constructor, payload_guard, child_count } => {
+                    let value_start = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("tree predicate compilation lost child automata");
+                    let child_autos = values.split_off(value_start);
+                    values.push(self.assemble_node(constructor, payload_guard, child_autos));
+                },
+                Task::And => {
+                    let right = values
+                        .pop()
+                        .expect("tree compilation lost right intersection");
+                    let left = values
+                        .pop()
+                        .expect("tree compilation lost left intersection");
+                    values.push(left.intersect(&right));
+                },
+                Task::Or => {
+                    let right = values.pop().expect("tree compilation lost right union");
+                    let left = values.pop().expect("tree compilation lost left union");
+                    values.push(left.union(&right));
+                },
+                Task::Not => {
+                    let body = values.pop().expect("tree compilation lost complement body");
+                    values.push(body.complement());
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("tree predicate compilation produced no automaton")
     }
 }
 
