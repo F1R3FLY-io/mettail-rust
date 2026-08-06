@@ -711,37 +711,57 @@ fn wrap_pure_value_term(value: &Proc, out_channel: &str) -> Proc {
 /// `false`; process constructs report `true`. Send sugar is desugared first so every send shape
 /// is seen as a send. A free proc variable lowers to an `mtl#out` send, hence `true`.
 fn proc_has_machine_effects(proc: &Proc) -> bool {
-    if let Some(desugared) = desugar_surface_sugar_node(proc) {
-        return proc_has_machine_effects(&desugared);
+    enum Work<'a> {
+        Proc(&'a Proc),
+        Name(&'a Name),
     }
-    match proc {
-        Proc::POutput(..)
-        | Proc::PPersistOutput(..)
-        | Proc::POutputShort(..)
-        | Proc::PPersistOutputShort(..)
-        | Proc::PForUser(..)
-        | Proc::CommWhere(..)
-        | Proc::PNew(..)
-        | Proc::PVar(..) => true,
-        Proc::PPar(parts) => parts.iter_elements().any(proc_has_machine_effects),
-        Proc::PParInfix(left, right) => {
-            proc_has_machine_effects(left.as_ref()) || proc_has_machine_effects(right.as_ref())
-        },
-        Proc::GuardThen(cond, body) => {
-            proc_has_machine_effects(cond.as_ref()) || proc_has_machine_effects(body.as_ref())
-        },
-        // `*(@(P))` inlines `P`; effects ride inside. `*(x)` / `*(@Nil)` lower to value pars.
-        Proc::PDrop(name) => name_has_machine_effects(name.as_ref()),
-        _ => false,
-    }
-}
 
-fn name_has_machine_effects(name: &Name) -> bool {
-    match name {
-        Name::NQuote(proc) | Name::NQuoteShort(proc) => proc_has_machine_effects(proc.as_ref()),
-        Name::NParen(inner) => name_has_machine_effects(inner.as_ref()),
-        _ => false,
+    // Surface desugaring returns owned nodes. The arena gives those nodes the same stable
+    // reference lifetime as borrowed input nodes, so the worklist never clones a recursive
+    // subtree merely to keep a continuation alive.
+    let desugared_nodes = Arena::new();
+    let mut work = vec![Work::Proc(proc)];
+    while let Some(step) = work.pop() {
+        match step {
+            Work::Proc(proc) => {
+                if let Some(desugared) = desugar_surface_sugar_node(proc) {
+                    work.push(Work::Proc(desugared_nodes.alloc(desugared)));
+                    continue;
+                }
+                match proc {
+                    Proc::POutput(..)
+                    | Proc::PPersistOutput(..)
+                    | Proc::POutputShort(..)
+                    | Proc::PPersistOutputShort(..)
+                    | Proc::PForUser(..)
+                    | Proc::CommWhere(..)
+                    | Proc::PNew(..)
+                    | Proc::PVar(..) => return true,
+                    Proc::PPar(parts) => {
+                        let first = work.len();
+                        work.extend(parts.iter_elements().map(Work::Proc));
+                        work[first..].reverse();
+                    },
+                    Proc::PParInfix(left, right) | Proc::GuardThen(left, right) => {
+                        work.push(Work::Proc(right.as_ref()));
+                        work.push(Work::Proc(left.as_ref()));
+                    },
+                    // `*(@(P))` inlines `P`; effects ride inside. `*(x)` / `*(@Nil)` lower to
+                    // value pars.
+                    Proc::PDrop(name) => work.push(Work::Name(name.as_ref())),
+                    _ => {},
+                }
+            },
+            Work::Name(name) => match name {
+                Name::NQuote(proc) | Name::NQuoteShort(proc) => {
+                    work.push(Work::Proc(proc.as_ref()));
+                },
+                Name::NParen(inner) => work.push(Work::Name(inner.as_ref())),
+                _ => {},
+            },
+        }
     }
+    false
 }
 
 /// Two-stage checked-Dovetail+Rho Rholang backend — the production default for the REPL `exec` of
@@ -3708,84 +3728,99 @@ fn liftable_fold_parts(proc: &Proc) -> Option<(&Proc, FoldKind, i64)> {
 /// Returns `(operand, kind, width)`. Send sugar is desugared in place so folds inside sugar
 /// payloads (`c!(int(5,8), 7)`) are found; the traversal mirrors [`replace_fold`] exactly.
 fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
-    if let Some(desugared) = desugar_surface_sugar_node(proc) {
-        return find_fold(&desugared);
+    enum Work<'a> {
+        Proc(&'a Proc),
+        Name(&'a Name),
+        EmitFold(&'a Proc),
     }
-    match proc {
-        Proc::IntBinProc(a, _)
-        | Proc::UIntBinProc(a, _)
-        | Proc::FloatBinProc(a, _)
-        | Proc::FixedBinProc(a, _)
-        | Proc::BigintCastProc(a)
-        | Proc::BigratCastProc(a) => {
-            // Innermost-first: a nested fold inside the operand lifts before this one.
-            if let Some(found) = find_fold(a.as_ref()) {
-                return Some(found);
-            }
-            let (operand, kind, width) = liftable_fold_parts(proc)?;
-            Some((operand.clone(), kind, width))
-        },
-        Proc::POutput(_, payload)
-        | Proc::PPersistOutput(_, payload)
-        | Proc::POutputShort(_, payload)
-        | Proc::PPersistOutputShort(_, payload) => find_fold(payload.as_ref()),
-        Proc::PParInfix(left, right) => {
-            find_fold(left.as_ref()).or_else(|| find_fold(right.as_ref()))
-        },
-        Proc::PPar(parts) => parts.iter_elements().find_map(find_fold),
-        // Expression operands: a fold there becomes `*r` and the machine evaluates the
-        // expression after the trampoline COMM substitutes the folded value.
-        Proc::Add(a, b)
-        | Proc::Sub(a, b)
-        | Proc::Mul(a, b)
-        | Proc::Div(a, b)
-        | Proc::Mod(a, b)
-        | Proc::Eq(a, b)
-        | Proc::Ne(a, b)
-        | Proc::Lt(a, b)
-        | Proc::Gt(a, b)
-        | Proc::LtEq(a, b)
-        | Proc::GtEq(a, b)
-        | Proc::And(a, b)
-        | Proc::Or(a, b)
-        // M-0: `implies` is an ordinary binary expression operand position. Omitting it here
-        // would SILENTLY DROP a `fold` nested inside an implication (the fold would never be
-        // found, so never lifted, so never trampolined) — the same class of defect this
-        // three-helper traversal exists to prevent. See `replace_fold`/`rebuild_binary`.
-        | Proc::Implies(a, b) => find_fold(a.as_ref()).or_else(|| find_fold(b.as_ref())),
-        // M-1b: `matches` descends into its TARGET only. The target is an ordinary
-        // term, so a fold there lifts exactly as it would anywhere else. The
-        // FORMULA is a PATTERN: lifting a fold out of a pattern would replace a
-        // sub-pattern with `*r`, a runtime value that arrives only after the
-        // trampoline COMM — i.e. it would silently turn "match this shape" into
-        // "match whatever this evaluates to", which is not the same predicate.
-        // A fold inside a formula therefore stays put and, having no pattern
-        // denotation, is rejected by `lower_proc`'s typed fold-position error.
-        // Fail closed, never silently re-interpret.
-        Proc::Matches(target, _formula) => find_fold(target.as_ref()),
-        Proc::NegProc(a) | Proc::Not(a) => find_fold(a.as_ref()),
-        // `*(@(P))` inlines `P` — folds inside it lift at this scope.
-        Proc::PDrop(name) => find_fold_in_name(name.as_ref()),
-        // Ordered list literals: a fold element lifts (the literal is rebuilt around `*r`).
-        // Hashed collections (Map/Set/Bag/Pathmap) are NOT descended: replacing inside them
-        // would re-key the literal; a fold there fails closed via `lower_proc`'s typed error.
-        Proc::CastList(list) => match list.as_ref() {
-            List::ListLit(items) => items.iter().find_map(find_fold),
-            _ => None,
-        },
-        // Binder constructs (`PForUser` receive rows and `PNew`) have their bodies lifted
-        // separately, so we do not descend here; anything else has no liftable position.
-        Proc::PForUser(..) | Proc::PNew(..) => None,
-        _ => None,
-    }
-}
 
-fn find_fold_in_name(name: &Name) -> Option<(Proc, FoldKind, i64)> {
-    match name {
-        Name::NQuote(proc) | Name::NQuoteShort(proc) => find_fold(proc.as_ref()),
-        Name::NParen(inner) => find_fold_in_name(inner.as_ref()),
-        _ => None,
+    let desugared_nodes = Arena::new();
+    let mut work = vec![Work::Proc(proc)];
+    while let Some(step) = work.pop() {
+        match step {
+            Work::Proc(proc) => {
+                if let Some(desugared) = desugar_surface_sugar_node(proc) {
+                    work.push(Work::Proc(desugared_nodes.alloc(desugared)));
+                    continue;
+                }
+                match proc {
+                    Proc::IntBinProc(a, _)
+                    | Proc::UIntBinProc(a, _)
+                    | Proc::FloatBinProc(a, _)
+                    | Proc::FixedBinProc(a, _)
+                    | Proc::BigintCastProc(a)
+                    | Proc::BigratCastProc(a) => {
+                        // Post-order continuation: a nested fold in the operand wins before the
+                        // enclosing fold, exactly as in the recursive implementation.
+                        work.push(Work::EmitFold(proc));
+                        work.push(Work::Proc(a.as_ref()));
+                    },
+                    Proc::POutput(_, payload)
+                    | Proc::PPersistOutput(_, payload)
+                    | Proc::POutputShort(_, payload)
+                    | Proc::PPersistOutputShort(_, payload) => {
+                        work.push(Work::Proc(payload.as_ref()));
+                    },
+                    Proc::PParInfix(left, right)
+                    | Proc::Add(left, right)
+                    | Proc::Sub(left, right)
+                    | Proc::Mul(left, right)
+                    | Proc::Div(left, right)
+                    | Proc::Mod(left, right)
+                    | Proc::Eq(left, right)
+                    | Proc::Ne(left, right)
+                    | Proc::Lt(left, right)
+                    | Proc::Gt(left, right)
+                    | Proc::LtEq(left, right)
+                    | Proc::GtEq(left, right)
+                    | Proc::And(left, right)
+                    | Proc::Or(left, right)
+                    // M-0: `implies` is an ordinary binary expression operand position.
+                    | Proc::Implies(left, right) => {
+                        work.push(Work::Proc(right.as_ref()));
+                        work.push(Work::Proc(left.as_ref()));
+                    },
+                    Proc::PPar(parts) => {
+                        let first = work.len();
+                        work.extend(parts.iter_elements().map(Work::Proc));
+                        work[first..].reverse();
+                    },
+                    // M-1b: a `matches` formula is a pattern and therefore not a liftable
+                    // position. Only its target participates in this traversal.
+                    Proc::Matches(target, _formula) => {
+                        work.push(Work::Proc(target.as_ref()));
+                    },
+                    Proc::NegProc(a) | Proc::Not(a) => work.push(Work::Proc(a.as_ref())),
+                    // `*(@(P))` inlines `P` — folds inside it lift at this scope.
+                    Proc::PDrop(name) => work.push(Work::Name(name.as_ref())),
+                    // Ordered list literals are visited left-to-right. Hashed collections are
+                    // intentionally not descended because replacement would re-key them.
+                    Proc::CastList(list) => {
+                        if let List::ListLit(items) = list.as_ref() {
+                            work.extend(items.iter().rev().map(Work::Proc));
+                        }
+                    },
+                    // Binder bodies are lifted separately; all other constructors have no
+                    // liftable position.
+                    Proc::PForUser(..) | Proc::PNew(..) => {},
+                    _ => {},
+                }
+            },
+            Work::Name(name) => match name {
+                Name::NQuote(proc) | Name::NQuoteShort(proc) => {
+                    work.push(Work::Proc(proc.as_ref()));
+                },
+                Name::NParen(inner) => work.push(Work::Name(inner.as_ref())),
+                _ => {},
+            },
+            Work::EmitFold(proc) => {
+                if let Some((operand, kind, width)) = liftable_fold_parts(proc) {
+                    return Some((operand.clone(), kind, width));
+                }
+            },
+        }
     }
+    None
 }
 
 /// Rebuild a fold constructor with a replaced operand (widths keep their original literal).
@@ -3804,112 +3839,270 @@ fn rebuild_fold(orig: &Proc, operand: Arc<Proc>) -> Proc {
 /// Replace the first (innermost) liftable fold in `proc` with `r_drop` (`*r`), mirroring
 /// [`find_fold`]'s traversal (desugaring included). Sets `replaced` once a replacement is made.
 fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
-    if *replaced {
-        return proc.clone();
+    enum Job<'a> {
+        VisitProc(&'a Proc),
+        VisitName(&'a Name),
+        BuildProc {
+            proc: &'a Proc,
+            proc_base: usize,
+            name_base: usize,
+        },
+        BuildName {
+            name: &'a Name,
+            proc_base: usize,
+            name_base: usize,
+        },
     }
-    if let Some(desugared) = desugar_surface_sugar_node(proc) {
-        return replace_fold(&desugared, r_drop, replaced);
+
+    fn take_children<T>(values: &mut Vec<T>, base: usize, expected: usize) -> Vec<T> {
+        let children = values.split_off(base);
+        assert_eq!(children.len(), expected, "fold-rewrite continuation received the wrong arity");
+        children
     }
-    match proc {
-        Proc::IntBinProc(a, _)
-        | Proc::UIntBinProc(a, _)
-        | Proc::FloatBinProc(a, _)
-        | Proc::FixedBinProc(a, _)
-        | Proc::BigintCastProc(a)
-        | Proc::BigratCastProc(a) => {
-            let new_a = replace_fold(a.as_ref(), r_drop, replaced);
-            if *replaced {
-                return rebuild_fold(proc, Arc::new(new_a));
-            }
-            if liftable_fold_parts(proc).is_some() {
-                *replaced = true;
-                return r_drop.clone();
-            }
-            proc.clone()
-        },
-        Proc::POutput(name, payload) => {
-            Proc::POutput(name.clone(), Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)))
-        },
-        Proc::PPersistOutput(name, payload) => Proc::PPersistOutput(
-            name.clone(),
-            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
-        ),
-        // Short sends: replace the fold in the payload, keep the channel proc intact (mirrors
-        // `find_fold`, which descends only into the payload).
-        Proc::POutputShort(channel_proc, payload) => Proc::POutputShort(
-            channel_proc.clone(),
-            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
-        ),
-        Proc::PPersistOutputShort(channel_proc, payload) => Proc::PPersistOutputShort(
-            channel_proc.clone(),
-            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
-        ),
-        // Infix parallel: descend left then right. The top-of-function `*replaced` guard ensures the
-        // right branch is left untouched once the (single) innermost fold has been replaced.
-        Proc::PParInfix(left, right) => {
-            let new_left = replace_fold(left.as_ref(), r_drop, replaced);
-            let new_right = replace_fold(right.as_ref(), r_drop, replaced);
-            Proc::PParInfix(Arc::new(new_left), Arc::new(new_right))
-        },
-        Proc::PPar(parts) => Proc::PPar(
-            parts
-                .iter_elements()
-                .map(|part| replace_fold(part, r_drop, replaced))
-                .collect(),
-        ),
-        Proc::Add(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Sub(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Mul(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Div(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Mod(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Eq(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Ne(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Lt(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Gt(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::LtEq(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::GtEq(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::And(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        Proc::Or(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        // M-0 — mirrors the `Implies` arm of `find_fold`.
-        Proc::Implies(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
-        // M-1b — mirrors `find_fold`'s `Matches` arm EXACTLY: the target is
-        // descended into, the formula is copied verbatim. The asymmetry is
-        // deliberate and the two helpers must stay in step, or a fold would be
-        // FOUND in the target and REPLACED somewhere else.
-        Proc::Matches(target, formula) => Proc::Matches(
-            Arc::new(replace_fold(target.as_ref(), r_drop, replaced)),
-            formula.clone(),
-        ),
-        Proc::NegProc(a) => Proc::NegProc(Arc::new(replace_fold(a.as_ref(), r_drop, replaced))),
-        Proc::Not(a) => Proc::Not(Arc::new(replace_fold(a.as_ref(), r_drop, replaced))),
-        Proc::PDrop(name) => {
-            Proc::PDrop(Arc::new(replace_fold_in_name(name.as_ref(), r_drop, replaced)))
-        },
-        Proc::CastList(list) => match list.as_ref() {
-            List::ListLit(items) => Proc::CastList(Arc::new(List::ListLit(
-                items
-                    .iter()
-                    .map(|item| replace_fold(item, r_drop, replaced))
-                    .collect(),
-            ))),
-            _ => proc.clone(),
-        },
-        _ => proc.clone(),
+
+    let desugared_nodes = Arena::new();
+    let mut jobs = vec![Job::VisitProc(proc)];
+    let mut proc_values = Vec::new();
+    let mut name_values = Vec::new();
+
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::VisitProc(proc) => {
+                if *replaced {
+                    proc_values.push(proc.clone());
+                    continue;
+                }
+                if let Some(desugared) = desugar_surface_sugar_node(proc) {
+                    jobs.push(Job::VisitProc(desugared_nodes.alloc(desugared)));
+                    continue;
+                }
+
+                let proc_base = proc_values.len();
+                let name_base = name_values.len();
+                match proc {
+                    Proc::IntBinProc(a, _)
+                    | Proc::UIntBinProc(a, _)
+                    | Proc::FloatBinProc(a, _)
+                    | Proc::FixedBinProc(a, _)
+                    | Proc::BigintCastProc(a)
+                    | Proc::BigratCastProc(a)
+                    | Proc::POutput(_, a)
+                    | Proc::PPersistOutput(_, a)
+                    | Proc::POutputShort(_, a)
+                    | Proc::PPersistOutputShort(_, a)
+                    | Proc::Matches(a, _)
+                    | Proc::NegProc(a)
+                    | Proc::Not(a) => {
+                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                        jobs.push(Job::VisitProc(a.as_ref()));
+                    },
+                    Proc::PParInfix(left, right)
+                    | Proc::Add(left, right)
+                    | Proc::Sub(left, right)
+                    | Proc::Mul(left, right)
+                    | Proc::Div(left, right)
+                    | Proc::Mod(left, right)
+                    | Proc::Eq(left, right)
+                    | Proc::Ne(left, right)
+                    | Proc::Lt(left, right)
+                    | Proc::Gt(left, right)
+                    | Proc::LtEq(left, right)
+                    | Proc::GtEq(left, right)
+                    | Proc::And(left, right)
+                    | Proc::Or(left, right)
+                    | Proc::Implies(left, right) => {
+                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                        jobs.push(Job::VisitProc(right.as_ref()));
+                        jobs.push(Job::VisitProc(left.as_ref()));
+                    },
+                    Proc::PPar(parts) => {
+                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                        let first = jobs.len();
+                        jobs.extend(parts.iter_elements().map(Job::VisitProc));
+                        jobs[first..].reverse();
+                    },
+                    Proc::PDrop(name) => {
+                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                        jobs.push(Job::VisitName(name.as_ref()));
+                    },
+                    Proc::CastList(list) => {
+                        if let List::ListLit(items) = list.as_ref() {
+                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            jobs.extend(items.iter().rev().map(Job::VisitProc));
+                        } else {
+                            proc_values.push(proc.clone());
+                        }
+                    },
+                    _ => proc_values.push(proc.clone()),
+                }
+            },
+            Job::VisitName(name) => {
+                if *replaced {
+                    name_values.push(name.clone());
+                    continue;
+                }
+                let proc_base = proc_values.len();
+                let name_base = name_values.len();
+                match name {
+                    Name::NQuote(proc) | Name::NQuoteShort(proc) => {
+                        jobs.push(Job::BuildName { name, proc_base, name_base });
+                        jobs.push(Job::VisitProc(proc.as_ref()));
+                    },
+                    Name::NParen(inner) => {
+                        jobs.push(Job::BuildName { name, proc_base, name_base });
+                        jobs.push(Job::VisitName(inner.as_ref()));
+                    },
+                    _ => name_values.push(name.clone()),
+                }
+            },
+            Job::BuildProc { proc, proc_base, name_base } => {
+                let rebuilt = match proc {
+                    Proc::IntBinProc(..)
+                    | Proc::UIntBinProc(..)
+                    | Proc::FloatBinProc(..)
+                    | Proc::FixedBinProc(..)
+                    | Proc::BigintCastProc(..)
+                    | Proc::BigratCastProc(..) => {
+                        let mut children = take_children(&mut proc_values, proc_base, 1);
+                        let operand = children.pop().expect("one fold operand");
+                        if *replaced {
+                            rebuild_fold(proc, Arc::new(operand))
+                        } else if liftable_fold_parts(proc).is_some() {
+                            *replaced = true;
+                            r_drop.clone()
+                        } else {
+                            proc.clone()
+                        }
+                    },
+                    Proc::POutput(name, _) => {
+                        let payload = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one send payload");
+                        Proc::POutput(name.clone(), Arc::new(payload))
+                    },
+                    Proc::PPersistOutput(name, _) => {
+                        let payload = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one persistent-send payload");
+                        Proc::PPersistOutput(name.clone(), Arc::new(payload))
+                    },
+                    Proc::POutputShort(channel, _) => {
+                        let payload = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one short-send payload");
+                        Proc::POutputShort(channel.clone(), Arc::new(payload))
+                    },
+                    Proc::PPersistOutputShort(channel, _) => {
+                        let payload = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one persistent-short-send payload");
+                        Proc::PPersistOutputShort(channel.clone(), Arc::new(payload))
+                    },
+                    Proc::PParInfix(..)
+                    | Proc::Add(..)
+                    | Proc::Sub(..)
+                    | Proc::Mul(..)
+                    | Proc::Div(..)
+                    | Proc::Mod(..)
+                    | Proc::Eq(..)
+                    | Proc::Ne(..)
+                    | Proc::Lt(..)
+                    | Proc::Gt(..)
+                    | Proc::LtEq(..)
+                    | Proc::GtEq(..)
+                    | Proc::And(..)
+                    | Proc::Or(..)
+                    | Proc::Implies(..) => {
+                        let mut children =
+                            take_children(&mut proc_values, proc_base, 2).into_iter();
+                        let left = children.next().expect("left binary operand");
+                        let right = children.next().expect("right binary operand");
+                        rebuild_binary(proc, left, right)
+                    },
+                    Proc::PPar(..) => {
+                        let child_count = proc_values.len() - proc_base;
+                        Proc::PPar(
+                            take_children(&mut proc_values, proc_base, child_count)
+                                .into_iter()
+                                .collect(),
+                        )
+                    },
+                    Proc::Matches(_, formula) => {
+                        let target = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one matches target");
+                        Proc::Matches(Arc::new(target), formula.clone())
+                    },
+                    Proc::NegProc(..) => {
+                        let inner = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one negation operand");
+                        Proc::NegProc(Arc::new(inner))
+                    },
+                    Proc::Not(..) => {
+                        let inner = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one not operand");
+                        Proc::Not(Arc::new(inner))
+                    },
+                    Proc::PDrop(..) => {
+                        let name = take_children(&mut name_values, name_base, 1)
+                            .pop()
+                            .expect("one drop name");
+                        Proc::PDrop(Arc::new(name))
+                    },
+                    Proc::CastList(..) => {
+                        let child_count = proc_values.len() - proc_base;
+                        Proc::CastList(Arc::new(List::ListLit(take_children(
+                            &mut proc_values,
+                            proc_base,
+                            child_count,
+                        ))))
+                    },
+                    _ => unreachable!("only traversed constructors receive a continuation"),
+                };
+                assert_eq!(name_values.len(), name_base);
+                proc_values.push(rebuilt);
+            },
+            Job::BuildName { name, proc_base, name_base } => {
+                let rebuilt = match name {
+                    Name::NQuote(..) => {
+                        let proc = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one quoted proc");
+                        Name::NQuote(Arc::new(proc))
+                    },
+                    Name::NQuoteShort(..) => {
+                        let proc = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one short-quoted proc");
+                        Name::NQuoteShort(Arc::new(proc))
+                    },
+                    Name::NParen(..) => {
+                        let inner = take_children(&mut name_values, name_base, 1)
+                            .pop()
+                            .expect("one parenthesized name");
+                        Name::NParen(Arc::new(inner))
+                    },
+                    _ => unreachable!("only traversed names receive a continuation"),
+                };
+                name_values.push(rebuilt);
+            },
+        }
     }
+
+    assert_eq!(proc_values.len(), 1);
+    assert!(name_values.is_empty());
+    proc_values.pop().expect("fold rewrite result")
 }
 
 /// Rebuild a binary expression node with the fold replaced in its first-found operand (left then
 /// right, mirroring [`find_fold`]).
-fn rebuild_binary(
-    orig: &Proc,
-    a: &Arc<Proc>,
-    b: &Arc<Proc>,
-    r_drop: &Proc,
-    replaced: &mut bool,
-) -> Proc {
-    let new_a = Arc::new(replace_fold(a.as_ref(), r_drop, replaced));
-    let new_b = Arc::new(replace_fold(b.as_ref(), r_drop, replaced));
+fn rebuild_binary(orig: &Proc, a: Proc, b: Proc) -> Proc {
+    let new_a = Arc::new(a);
+    let new_b = Arc::new(b);
     match orig {
+        Proc::PParInfix(..) => Proc::PParInfix(new_a, new_b),
         Proc::Add(..) => Proc::Add(new_a, new_b),
         Proc::Sub(..) => Proc::Sub(new_a, new_b),
         Proc::Mul(..) => Proc::Mul(new_a, new_b),
@@ -3932,19 +4125,6 @@ fn rebuild_binary(
         // pattern that must never have a fold lifted out of it. `replace_fold`
         // therefore handles `Matches` with its own arm and never routes it here.
         _ => orig.clone(),
-    }
-}
-
-fn replace_fold_in_name(name: &Name, r_drop: &Proc, replaced: &mut bool) -> Name {
-    match name {
-        Name::NQuote(proc) => Name::NQuote(Arc::new(replace_fold(proc.as_ref(), r_drop, replaced))),
-        Name::NQuoteShort(proc) => {
-            Name::NQuoteShort(Arc::new(replace_fold(proc.as_ref(), r_drop, replaced)))
-        },
-        Name::NParen(inner) => {
-            Name::NParen(Arc::new(replace_fold_in_name(inner.as_ref(), r_drop, replaced)))
-        },
-        _ => name.clone(),
     }
 }
 

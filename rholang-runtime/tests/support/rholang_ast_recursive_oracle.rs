@@ -39,6 +39,234 @@ pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstL
     lower_proc(proc, env)
 }
 
+/// Bounded recursive reference for the AST machine-effect worklist. This remains test-only and is
+/// intentionally independent of the production traversal.
+fn proc_has_machine_effects_recursive(proc: &Proc) -> bool {
+    if let Some(desugared) = desugar_surface_sugar_node(proc) {
+        return proc_has_machine_effects_recursive(&desugared);
+    }
+    match proc {
+        Proc::POutput(..)
+        | Proc::PPersistOutput(..)
+        | Proc::POutputShort(..)
+        | Proc::PPersistOutputShort(..)
+        | Proc::PForUser(..)
+        | Proc::CommWhere(..)
+        | Proc::PNew(..)
+        | Proc::PVar(..) => true,
+        Proc::PPar(parts) => parts
+            .iter_elements()
+            .any(proc_has_machine_effects_recursive),
+        Proc::PParInfix(left, right) | Proc::GuardThen(left, right) => {
+            proc_has_machine_effects_recursive(left.as_ref())
+                || proc_has_machine_effects_recursive(right.as_ref())
+        },
+        Proc::PDrop(name) => name_has_machine_effects_recursive(name.as_ref()),
+        _ => false,
+    }
+}
+
+fn name_has_machine_effects_recursive(name: &Name) -> bool {
+    match name {
+        Name::NQuote(proc) | Name::NQuoteShort(proc) => {
+            proc_has_machine_effects_recursive(proc.as_ref())
+        },
+        Name::NParen(inner) => name_has_machine_effects_recursive(inner.as_ref()),
+        _ => false,
+    }
+}
+
+/// Bounded recursive reference for the innermost-first fold-search worklist.
+fn find_fold_recursive(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
+    if let Some(desugared) = desugar_surface_sugar_node(proc) {
+        return find_fold_recursive(&desugared);
+    }
+    match proc {
+        Proc::IntBinProc(a, _)
+        | Proc::UIntBinProc(a, _)
+        | Proc::FloatBinProc(a, _)
+        | Proc::FixedBinProc(a, _)
+        | Proc::BigintCastProc(a)
+        | Proc::BigratCastProc(a) => {
+            if let Some(found) = find_fold_recursive(a.as_ref()) {
+                return Some(found);
+            }
+            let (operand, kind, width) = liftable_fold_parts(proc)?;
+            Some((operand.clone(), kind, width))
+        },
+        Proc::POutput(_, payload)
+        | Proc::PPersistOutput(_, payload)
+        | Proc::POutputShort(_, payload)
+        | Proc::PPersistOutputShort(_, payload) => find_fold_recursive(payload.as_ref()),
+        Proc::PParInfix(left, right)
+        | Proc::Add(left, right)
+        | Proc::Sub(left, right)
+        | Proc::Mul(left, right)
+        | Proc::Div(left, right)
+        | Proc::Mod(left, right)
+        | Proc::Eq(left, right)
+        | Proc::Ne(left, right)
+        | Proc::Lt(left, right)
+        | Proc::Gt(left, right)
+        | Proc::LtEq(left, right)
+        | Proc::GtEq(left, right)
+        | Proc::And(left, right)
+        | Proc::Or(left, right)
+        | Proc::Implies(left, right) => {
+            find_fold_recursive(left.as_ref()).or_else(|| find_fold_recursive(right.as_ref()))
+        },
+        Proc::PPar(parts) => parts.iter_elements().find_map(find_fold_recursive),
+        Proc::Matches(target, _formula) => find_fold_recursive(target.as_ref()),
+        Proc::NegProc(a) | Proc::Not(a) => find_fold_recursive(a.as_ref()),
+        Proc::PDrop(name) => find_fold_in_name_recursive(name.as_ref()),
+        Proc::CastList(list) => match list.as_ref() {
+            List::ListLit(items) => items.iter().find_map(find_fold_recursive),
+            _ => None,
+        },
+        Proc::PForUser(..) | Proc::PNew(..) => None,
+        _ => None,
+    }
+}
+
+fn find_fold_in_name_recursive(name: &Name) -> Option<(Proc, FoldKind, i64)> {
+    match name {
+        Name::NQuote(proc) | Name::NQuoteShort(proc) => find_fold_recursive(proc.as_ref()),
+        Name::NParen(inner) => find_fold_in_name_recursive(inner.as_ref()),
+        _ => None,
+    }
+}
+
+fn replace_fold_recursive(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
+    if *replaced {
+        return proc.clone();
+    }
+    if let Some(desugared) = desugar_surface_sugar_node(proc) {
+        return replace_fold_recursive(&desugared, r_drop, replaced);
+    }
+    match proc {
+        Proc::IntBinProc(a, _)
+        | Proc::UIntBinProc(a, _)
+        | Proc::FloatBinProc(a, _)
+        | Proc::FixedBinProc(a, _)
+        | Proc::BigintCastProc(a)
+        | Proc::BigratCastProc(a) => {
+            let new_a = replace_fold_recursive(a.as_ref(), r_drop, replaced);
+            if *replaced {
+                return rebuild_fold(proc, Arc::new(new_a));
+            }
+            if liftable_fold_parts(proc).is_some() {
+                *replaced = true;
+                return r_drop.clone();
+            }
+            proc.clone()
+        },
+        Proc::POutput(name, payload) => Proc::POutput(
+            name.clone(),
+            Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
+        ),
+        Proc::PPersistOutput(name, payload) => Proc::PPersistOutput(
+            name.clone(),
+            Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
+        ),
+        Proc::POutputShort(channel, payload) => Proc::POutputShort(
+            channel.clone(),
+            Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
+        ),
+        Proc::PPersistOutputShort(channel, payload) => Proc::PPersistOutputShort(
+            channel.clone(),
+            Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
+        ),
+        Proc::PParInfix(left, right) => Proc::PParInfix(
+            Arc::new(replace_fold_recursive(left.as_ref(), r_drop, replaced)),
+            Arc::new(replace_fold_recursive(right.as_ref(), r_drop, replaced)),
+        ),
+        Proc::PPar(parts) => Proc::PPar(
+            parts
+                .iter_elements()
+                .map(|part| replace_fold_recursive(part, r_drop, replaced))
+                .collect(),
+        ),
+        Proc::Add(a, b)
+        | Proc::Sub(a, b)
+        | Proc::Mul(a, b)
+        | Proc::Div(a, b)
+        | Proc::Mod(a, b)
+        | Proc::Eq(a, b)
+        | Proc::Ne(a, b)
+        | Proc::Lt(a, b)
+        | Proc::Gt(a, b)
+        | Proc::LtEq(a, b)
+        | Proc::GtEq(a, b)
+        | Proc::And(a, b)
+        | Proc::Or(a, b)
+        | Proc::Implies(a, b) => rebuild_binary_recursive(proc, a, b, r_drop, replaced),
+        Proc::Matches(target, formula) => Proc::Matches(
+            Arc::new(replace_fold_recursive(target.as_ref(), r_drop, replaced)),
+            formula.clone(),
+        ),
+        Proc::NegProc(a) => {
+            Proc::NegProc(Arc::new(replace_fold_recursive(a.as_ref(), r_drop, replaced)))
+        },
+        Proc::Not(a) => Proc::Not(Arc::new(replace_fold_recursive(a.as_ref(), r_drop, replaced))),
+        Proc::PDrop(name) => {
+            Proc::PDrop(Arc::new(replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced)))
+        },
+        Proc::CastList(list) => match list.as_ref() {
+            List::ListLit(items) => Proc::CastList(Arc::new(List::ListLit(
+                items
+                    .iter()
+                    .map(|item| replace_fold_recursive(item, r_drop, replaced))
+                    .collect(),
+            ))),
+            _ => proc.clone(),
+        },
+        _ => proc.clone(),
+    }
+}
+
+fn rebuild_binary_recursive(
+    orig: &Proc,
+    a: &Arc<Proc>,
+    b: &Arc<Proc>,
+    r_drop: &Proc,
+    replaced: &mut bool,
+) -> Proc {
+    let new_a = Arc::new(replace_fold_recursive(a.as_ref(), r_drop, replaced));
+    let new_b = Arc::new(replace_fold_recursive(b.as_ref(), r_drop, replaced));
+    match orig {
+        Proc::Add(..) => Proc::Add(new_a, new_b),
+        Proc::Sub(..) => Proc::Sub(new_a, new_b),
+        Proc::Mul(..) => Proc::Mul(new_a, new_b),
+        Proc::Div(..) => Proc::Div(new_a, new_b),
+        Proc::Mod(..) => Proc::Mod(new_a, new_b),
+        Proc::Eq(..) => Proc::Eq(new_a, new_b),
+        Proc::Ne(..) => Proc::Ne(new_a, new_b),
+        Proc::Lt(..) => Proc::Lt(new_a, new_b),
+        Proc::Gt(..) => Proc::Gt(new_a, new_b),
+        Proc::LtEq(..) => Proc::LtEq(new_a, new_b),
+        Proc::GtEq(..) => Proc::GtEq(new_a, new_b),
+        Proc::And(..) => Proc::And(new_a, new_b),
+        Proc::Or(..) => Proc::Or(new_a, new_b),
+        Proc::Implies(..) => Proc::Implies(new_a, new_b),
+        _ => orig.clone(),
+    }
+}
+
+fn replace_fold_in_name_recursive(name: &Name, r_drop: &Proc, replaced: &mut bool) -> Name {
+    match name {
+        Name::NQuote(proc) => {
+            Name::NQuote(Arc::new(replace_fold_recursive(proc.as_ref(), r_drop, replaced)))
+        },
+        Name::NQuoteShort(proc) => {
+            Name::NQuoteShort(Arc::new(replace_fold_recursive(proc.as_ref(), r_drop, replaced)))
+        },
+        Name::NParen(inner) => {
+            Name::NParen(Arc::new(replace_fold_in_name_recursive(inner.as_ref(), r_drop, replaced)))
+        },
+        _ => name.clone(),
+    }
+}
+
 fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
     // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to its
@@ -1565,6 +1793,103 @@ mod differential {
     /// comparison, and so the failure messages already name a reading index.
     fn readings(term: &Proc) -> Vec<&Proc> {
         vec![term]
+    }
+
+    #[test]
+    fn analysis_worklists_match_the_bounded_recursive_oracles() {
+        let mut compared = 0usize;
+        for (source, family, _) in CORPUS {
+            let Some(term) = parse(source) else {
+                panic!("analysis differential corpus: `{source}` ({family}) no longer parses");
+            };
+            for (index, proc) in readings(&term).into_iter().enumerate() {
+                assert_eq!(
+                    super::super::proc_has_machine_effects(proc),
+                    proc_has_machine_effects_recursive(proc),
+                    "machine-effect worklist disagrees on `{source}` ({family}), reading {index}"
+                );
+                assert_eq!(
+                    format!("{:?}", super::super::find_fold(proc)),
+                    format!("{:?}", find_fold_recursive(proc)),
+                    "fold-search worklist disagrees on `{source}` ({family}), reading {index}"
+                );
+                let replacement = Proc::PZero;
+                let mut driven_replaced = false;
+                let mut recursive_replaced = false;
+                let driven = super::super::replace_fold(proc, &replacement, &mut driven_replaced);
+                let recursive = replace_fold_recursive(proc, &replacement, &mut recursive_replaced);
+                assert_eq!(
+                    driven_replaced, recursive_replaced,
+                    "fold-rewrite flag disagrees on `{source}` ({family}), reading {index}"
+                );
+                assert_eq!(
+                    rholang_proc_semantic_key(&driven),
+                    rholang_proc_semantic_key(&recursive),
+                    "fold-rewrite worklist disagrees on `{source}` ({family}), reading {index}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared >= CORPUS.len());
+
+        // Direct anti-regression witness: the surface corpus has no fold nested under a raw
+        // PParInfix, yet that constructor has its own reconstruction arm. Losing the rebuilt
+        // children while retaining `replaced = true` makes fold lifting rediscover the same fold
+        // indefinitely.
+        let infix = Proc::PParInfix(
+            Arc::new(Proc::BigintCastProc(Arc::new(Proc::PZero))),
+            Arc::new(Proc::PZero),
+        );
+        let replacement = Proc::PZero;
+        let mut driven_replaced = false;
+        let mut recursive_replaced = false;
+        let driven = super::super::replace_fold(&infix, &replacement, &mut driven_replaced);
+        let recursive = replace_fold_recursive(&infix, &replacement, &mut recursive_replaced);
+        assert!(driven_replaced && recursive_replaced);
+        assert_eq!(format!("{driven:?}"), format!("{recursive:?}"));
+    }
+
+    #[test]
+    fn analysis_worklists_are_stack_safe_at_depth_20k() {
+        const DEPTH: usize = 20_000;
+        std::thread::Builder::new()
+            .name("rholang-analysis-worklists-256k".to_string())
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let effect = Proc::POutput(
+                    Arc::new(Name::NQuote(Arc::new(Proc::PZero))),
+                    Arc::new(Proc::PZero),
+                );
+                let mut name = Name::NQuote(Arc::new(effect));
+                for _ in 0..DEPTH {
+                    name = Name::NParen(Arc::new(name));
+                }
+                assert!(super::super::proc_has_machine_effects(&Proc::PDrop(Arc::new(name))));
+
+                let mut fold = Proc::BigintCastProc(Arc::new(Proc::PZero));
+                for _ in 0..DEPTH {
+                    fold = Proc::Not(Arc::new(fold));
+                }
+                let found = super::super::find_fold(&fold)
+                    .expect("the depth-20,000 fold must remain reachable");
+                assert!(matches!(found.0, Proc::PZero));
+                assert_eq!(found.2, 0);
+
+                let mut replaced = false;
+                let rewritten = super::super::replace_fold(&fold, &Proc::PZero, &mut replaced);
+                assert!(replaced);
+                let mut cursor = &rewritten;
+                for _ in 0..DEPTH {
+                    let Proc::Not(inner) = cursor else {
+                        panic!("fold rewrite did not preserve the depth-20,000 Not spine");
+                    };
+                    cursor = inner.as_ref();
+                }
+                assert!(matches!(cursor, Proc::PZero));
+            })
+            .expect("spawn depth gate")
+            .join()
+            .expect("depth gate thread must not overflow or panic");
     }
 
     /// Run one implementation with the side registers cleared, and return everything it
