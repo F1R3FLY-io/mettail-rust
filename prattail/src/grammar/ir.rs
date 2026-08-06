@@ -45,7 +45,6 @@ pub struct RDRuleInfo {
 ///
 /// Originally defined in `prattail/src/recursive.rs:40`. Migrated here
 /// when `recursive.rs` was deleted in Stage 10.5b.
-#[derive(Debug, Clone)]
 pub enum RDSyntaxItem {
     /// A fixed terminal token to match (e.g., "(", "+", "error").
     Terminal(String),
@@ -108,6 +107,9 @@ pub enum RDSyntaxItem {
     /// produces a `mettail_runtime::BehavioralPred` value.
     GuardExpression { param_name: String },
 }
+
+#[path = "ir/rd_syntax_item_lifecycle.rs"]
+mod rd_syntax_item_lifecycle;
 
 /// Kind of collection.
 ///
