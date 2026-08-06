@@ -264,7 +264,8 @@ impl fmt::Display for LtlCheckResult {
 ///
 /// The parsed `LtlFormula` or an error message.
 pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
-    // Recursive descent parser for LTL formulas.
+    // Predictive precedence parser for LTL formulas.  The explicit job stack is
+    // the pushdown store: source nesting never consumes the native call stack.
     //
     // Precedence (tightest binding first):
     //   1. Atoms, parenthesized, true, false
@@ -400,107 +401,198 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
             }
         }
 
-        // Implies level (lowest precedence, right-associative)
-        fn parse_implies(&mut self) -> Result<LtlFormula, String> {
-            let mut lhs = self.parse_or()?;
-            if self.peek() == Some(&LtlToken::Implies) {
-                self.advance();
-                let rhs = self.parse_implies()?; // right-associative
-                lhs = LtlFormula::Implies(Box::new(lhs), Box::new(rhs));
-            }
-            Ok(lhs)
-        }
-
-        // Or level
-        fn parse_or(&mut self) -> Result<LtlFormula, String> {
-            let mut lhs = self.parse_and()?;
-            while self.peek() == Some(&LtlToken::Or) {
-                self.advance();
-                let rhs = self.parse_and()?;
-                lhs = LtlFormula::Or(Box::new(lhs), Box::new(rhs));
-            }
-            Ok(lhs)
-        }
-
-        // And level
-        fn parse_and(&mut self) -> Result<LtlFormula, String> {
-            let mut lhs = self.parse_until()?;
-            while self.peek() == Some(&LtlToken::And) {
-                self.advance();
-                let rhs = self.parse_until()?;
-                lhs = LtlFormula::And(Box::new(lhs), Box::new(rhs));
-            }
-            Ok(lhs)
-        }
-
-        // Until / Release / Weak-Until level (right-associative)
-        fn parse_until(&mut self) -> Result<LtlFormula, String> {
-            let lhs = self.parse_unary()?;
-            match self.peek() {
-                Some(&LtlToken::Until) => {
-                    self.advance();
-                    let rhs = self.parse_until()?; // right-associative
-                    Ok(LtlFormula::Until(Box::new(lhs), Box::new(rhs)))
-                },
-                Some(&LtlToken::Release) => {
-                    self.advance();
-                    let rhs = self.parse_until()?;
-                    Ok(LtlFormula::Release(Box::new(lhs), Box::new(rhs)))
-                },
-                Some(&LtlToken::WeakU) => {
-                    self.advance();
-                    let rhs = self.parse_until()?;
-                    Ok(LtlFormula::WeakUntil(Box::new(lhs), Box::new(rhs)))
-                },
-                _ => Ok(lhs),
-            }
-        }
-
-        // Unary prefix: !, X, G, F
-        fn parse_unary(&mut self) -> Result<LtlFormula, String> {
-            match self.peek() {
-                Some(&LtlToken::Not) => {
-                    self.advance();
-                    let inner = self.parse_unary()?;
-                    Ok(LtlFormula::Not(Box::new(inner)))
-                },
-                Some(&LtlToken::Next) => {
-                    self.advance();
-                    let inner = self.parse_unary()?;
-                    Ok(LtlFormula::Next(Box::new(inner)))
-                },
-                Some(&LtlToken::Globally) => {
-                    self.advance();
-                    let inner = self.parse_unary()?;
-                    Ok(LtlFormula::Always(Box::new(inner)))
-                },
-                Some(&LtlToken::Finally) => {
-                    self.advance();
-                    let inner = self.parse_unary()?;
-                    Ok(LtlFormula::Eventually(Box::new(inner)))
-                },
-                _ => self.parse_primary(),
-            }
-        }
-
-        // Primary: atoms, true, false, parenthesized
-        fn parse_primary(&mut self) -> Result<LtlFormula, String> {
-            match self.advance() {
-                Some(LtlToken::True) => Ok(LtlFormula::True),
-                Some(LtlToken::False) => Ok(LtlFormula::False),
-                Some(LtlToken::Ident(name)) => Ok(LtlFormula::Atom(name.clone())),
-                Some(LtlToken::LParen) => {
-                    let inner = self.parse_implies()?;
-                    self.expect(&LtlToken::RParen)?;
-                    Ok(inner)
-                },
-                Some(tok) => Err(format!("unexpected token {:?} in primary position", tok)),
-                None => Err("unexpected end of input".to_string()),
-            }
-        }
-
         fn parse(&mut self) -> Result<LtlFormula, String> {
-            let result = self.parse_implies()?;
+            #[derive(Clone, Copy)]
+            enum UnaryOp {
+                Not,
+                Next,
+                Globally,
+                Finally,
+            }
+
+            #[derive(Clone, Copy)]
+            enum BinaryOp {
+                Implies,
+                Or,
+                And,
+                Until,
+                Release,
+                WeakUntil,
+            }
+
+            enum Job {
+                ParseImplies,
+                AfterImpliesLeft,
+                ParseOr,
+                AfterOrLeft,
+                AfterOrRight(LtlFormula),
+                ParseAnd,
+                AfterAndLeft,
+                AfterAndRight(LtlFormula),
+                ParseUntil,
+                AfterUntilLeft,
+                ParseUnary,
+                FinishUnary(Vec<UnaryOp>),
+                ParsePrimary,
+                FinishParenthesized,
+                FinishBinary(BinaryOp, LtlFormula),
+            }
+
+            fn finish_binary(op: BinaryOp, lhs: LtlFormula, rhs: LtlFormula) -> LtlFormula {
+                match op {
+                    BinaryOp::Implies => LtlFormula::Implies(Box::new(lhs), Box::new(rhs)),
+                    BinaryOp::Or => LtlFormula::Or(Box::new(lhs), Box::new(rhs)),
+                    BinaryOp::And => LtlFormula::And(Box::new(lhs), Box::new(rhs)),
+                    BinaryOp::Until => LtlFormula::Until(Box::new(lhs), Box::new(rhs)),
+                    BinaryOp::Release => LtlFormula::Release(Box::new(lhs), Box::new(rhs)),
+                    BinaryOp::WeakUntil => LtlFormula::WeakUntil(Box::new(lhs), Box::new(rhs)),
+                }
+            }
+
+            let mut jobs = vec![Job::ParseImplies];
+            let mut values = Vec::new();
+            while let Some(job) = jobs.pop() {
+                match job {
+                    Job::ParseImplies => {
+                        jobs.push(Job::AfterImpliesLeft);
+                        jobs.push(Job::ParseOr);
+                    },
+                    Job::AfterImpliesLeft => {
+                        let lhs = values
+                            .pop()
+                            .expect("LTL parser PDA lost an implication LHS");
+                        if self.peek() == Some(&LtlToken::Implies) {
+                            self.advance();
+                            jobs.push(Job::FinishBinary(BinaryOp::Implies, lhs));
+                            jobs.push(Job::ParseImplies);
+                        } else {
+                            values.push(lhs);
+                        }
+                    },
+                    Job::ParseOr => {
+                        jobs.push(Job::AfterOrLeft);
+                        jobs.push(Job::ParseAnd);
+                    },
+                    Job::AfterOrLeft => {
+                        let lhs = values.pop().expect("LTL parser PDA lost an OR LHS");
+                        if self.peek() == Some(&LtlToken::Or) {
+                            self.advance();
+                            jobs.push(Job::AfterOrRight(lhs));
+                            jobs.push(Job::ParseAnd);
+                        } else {
+                            values.push(lhs);
+                        }
+                    },
+                    Job::AfterOrRight(lhs) => {
+                        let rhs = values.pop().expect("LTL parser PDA lost an OR RHS");
+                        let combined = finish_binary(BinaryOp::Or, lhs, rhs);
+                        if self.peek() == Some(&LtlToken::Or) {
+                            self.advance();
+                            jobs.push(Job::AfterOrRight(combined));
+                            jobs.push(Job::ParseAnd);
+                        } else {
+                            values.push(combined);
+                        }
+                    },
+                    Job::ParseAnd => {
+                        jobs.push(Job::AfterAndLeft);
+                        jobs.push(Job::ParseUntil);
+                    },
+                    Job::AfterAndLeft => {
+                        let lhs = values.pop().expect("LTL parser PDA lost an AND LHS");
+                        if self.peek() == Some(&LtlToken::And) {
+                            self.advance();
+                            jobs.push(Job::AfterAndRight(lhs));
+                            jobs.push(Job::ParseUntil);
+                        } else {
+                            values.push(lhs);
+                        }
+                    },
+                    Job::AfterAndRight(lhs) => {
+                        let rhs = values.pop().expect("LTL parser PDA lost an AND RHS");
+                        let combined = finish_binary(BinaryOp::And, lhs, rhs);
+                        if self.peek() == Some(&LtlToken::And) {
+                            self.advance();
+                            jobs.push(Job::AfterAndRight(combined));
+                            jobs.push(Job::ParseUntil);
+                        } else {
+                            values.push(combined);
+                        }
+                    },
+                    Job::ParseUntil => {
+                        jobs.push(Job::AfterUntilLeft);
+                        jobs.push(Job::ParseUnary);
+                    },
+                    Job::AfterUntilLeft => {
+                        let lhs = values.pop().expect("LTL parser PDA lost a temporal LHS");
+                        let op = match self.peek() {
+                            Some(&LtlToken::Until) => Some(BinaryOp::Until),
+                            Some(&LtlToken::Release) => Some(BinaryOp::Release),
+                            Some(&LtlToken::WeakU) => Some(BinaryOp::WeakUntil),
+                            _ => None,
+                        };
+                        if let Some(op) = op {
+                            self.advance();
+                            jobs.push(Job::FinishBinary(op, lhs));
+                            jobs.push(Job::ParseUntil);
+                        } else {
+                            values.push(lhs);
+                        }
+                    },
+                    Job::ParseUnary => {
+                        let mut prefixes = Vec::new();
+                        loop {
+                            let op = match self.peek() {
+                                Some(&LtlToken::Not) => Some(UnaryOp::Not),
+                                Some(&LtlToken::Next) => Some(UnaryOp::Next),
+                                Some(&LtlToken::Globally) => Some(UnaryOp::Globally),
+                                Some(&LtlToken::Finally) => Some(UnaryOp::Finally),
+                                _ => None,
+                            };
+                            let Some(op) = op else {
+                                break;
+                            };
+                            self.advance();
+                            prefixes.push(op);
+                        }
+                        jobs.push(Job::FinishUnary(prefixes));
+                        jobs.push(Job::ParsePrimary);
+                    },
+                    Job::FinishUnary(prefixes) => {
+                        let mut value = values.pop().expect("LTL parser PDA lost a unary body");
+                        for op in prefixes.into_iter().rev() {
+                            value = match op {
+                                UnaryOp::Not => LtlFormula::Not(Box::new(value)),
+                                UnaryOp::Next => LtlFormula::Next(Box::new(value)),
+                                UnaryOp::Globally => LtlFormula::Always(Box::new(value)),
+                                UnaryOp::Finally => LtlFormula::Eventually(Box::new(value)),
+                            };
+                        }
+                        values.push(value);
+                    },
+                    Job::ParsePrimary => match self.advance() {
+                        Some(LtlToken::True) => values.push(LtlFormula::True),
+                        Some(LtlToken::False) => values.push(LtlFormula::False),
+                        Some(LtlToken::Ident(name)) => values.push(LtlFormula::Atom(name.clone())),
+                        Some(LtlToken::LParen) => {
+                            jobs.push(Job::FinishParenthesized);
+                            jobs.push(Job::ParseImplies);
+                        },
+                        Some(tok) => {
+                            return Err(format!("unexpected token {:?} in primary position", tok));
+                        },
+                        None => return Err("unexpected end of input".to_string()),
+                    },
+                    Job::FinishParenthesized => self.expect(&LtlToken::RParen)?,
+                    Job::FinishBinary(op, lhs) => {
+                        let rhs = values.pop().expect("LTL parser PDA lost a binary RHS");
+                        values.push(finish_binary(op, lhs, rhs));
+                    },
+                }
+            }
+
+            let result = values.pop().expect("LTL parser PDA produced no result");
+            assert!(values.is_empty(), "LTL parser PDA produced extra results");
             if self.pos < self.tokens.len() {
                 return Err(format!(
                     "unexpected token {:?} after complete formula",
@@ -518,6 +610,10 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
     let mut parser = Parser { tokens, pos: 0 };
     parser.parse()
 }
+
+#[cfg(test)]
+#[path = "../tests/support/ltl_parser_recursive_oracle.rs"]
+mod parser_recursive_oracle;
 
 /// Compile an LTL formula to a Buchi automaton.
 ///
