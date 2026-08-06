@@ -82,7 +82,6 @@ pub struct RecursivePredicate {
 /// argument shape is decision-invariant. Widening `args` from
 /// `Vec<String>` to `Vec<LetPropArg>` is therefore a pure representation
 /// change — it never alters a satisfiability verdict.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LetPropArg {
     /// A variable reference: a formal parameter or a quantifier-bound
     /// variable that must be in scope at the call site.
@@ -123,15 +122,14 @@ impl LetPropArg {
     }
 
     fn collect_free_vars(&self, acc: &mut HashSet<String>) {
-        match self {
-            LetPropArg::Var(name) => {
-                acc.insert(name.clone());
-            },
-            LetPropArg::App { args, .. } => {
-                for arg in args {
-                    arg.collect_free_vars(acc);
-                }
-            },
+        let mut work = vec![self];
+        while let Some(arg) = work.pop() {
+            match arg {
+                LetPropArg::Var(name) => {
+                    acc.insert(name.clone());
+                },
+                LetPropArg::App { args, .. } => work.extend(args.iter().rev()),
+            }
         }
     }
 }
@@ -152,7 +150,6 @@ pub fn vars(names: &[&str]) -> Vec<LetPropArg> {
 /// Mirrors `BehavioralPred` but adds a `Recursive` variant for
 /// self-references and `Forall`/`Exists` for quantifiers. Lowered to
 /// `MuCalculusFormula` by `lower_to_mu_calculus`.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LetPropExpr {
     /// Always true.
     True,
@@ -183,6 +180,9 @@ pub enum LetPropExpr {
     /// Implication: `a => b ≡ ¬a ∨ b`.
     Implies(Box<LetPropExpr>, Box<LetPropExpr>),
 }
+
+#[path = "letprop/lifecycle.rs"]
+mod lifecycle;
 
 /// Errors that can arise from `letprop` parsing or lowering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,7 +256,32 @@ impl std::error::Error for LetPropError {}
 pub fn analyze_polarity(expr: &LetPropExpr) -> (Option<bool>, bool) {
     let mut positive = false;
     let mut negative = false;
-    analyze_polarity_inner(expr, false, &mut positive, &mut negative);
+    let mut work = vec![(expr, false)];
+    while let Some((expr, inside_negation)) = work.pop() {
+        match expr {
+            LetPropExpr::True | LetPropExpr::False | LetPropExpr::Atom { .. } => {},
+            LetPropExpr::Recursive { .. } => {
+                if inside_negation {
+                    negative = true;
+                } else {
+                    positive = true;
+                }
+            },
+            LetPropExpr::Forall { body, .. } | LetPropExpr::Exists { body, .. } => {
+                work.push((body, inside_negation));
+            },
+            LetPropExpr::Not(inner) => work.push((inner, !inside_negation)),
+            LetPropExpr::And(left, right) | LetPropExpr::Or(left, right) => {
+                work.push((right, inside_negation));
+                work.push((left, inside_negation));
+            },
+            LetPropExpr::Implies(antecedent, consequent) => {
+                // P ⟹ Q ≡ ¬P ∨ Q: the antecedent flips polarity.
+                work.push((consequent, inside_negation));
+                work.push((antecedent, !inside_negation));
+            },
+        }
+    }
     let mixed = positive && negative;
     let polarity = if positive {
         Some(true)
@@ -268,54 +293,40 @@ pub fn analyze_polarity(expr: &LetPropExpr) -> (Option<bool>, bool) {
     (polarity, mixed)
 }
 
-fn analyze_polarity_inner(
-    expr: &LetPropExpr,
-    inside_negation: bool,
-    positive: &mut bool,
-    negative: &mut bool,
-) {
-    match expr {
-        LetPropExpr::True | LetPropExpr::False | LetPropExpr::Atom { .. } => {},
-        LetPropExpr::Recursive { .. } => {
-            if inside_negation {
-                *negative = true;
-            } else {
-                *positive = true;
-            }
-        },
-        LetPropExpr::Forall { body, .. } | LetPropExpr::Exists { body, .. } => {
-            // Quantifiers are polarity-transparent: a `□`/`◇` modality
-            // is monotone in its body, so it does not flip the sign of a
-            // recursive reference nested inside it.
-            analyze_polarity_inner(body, inside_negation, positive, negative);
-        },
-        LetPropExpr::Not(inner) => {
-            analyze_polarity_inner(inner, !inside_negation, positive, negative);
-        },
-        LetPropExpr::And(a, b) | LetPropExpr::Or(a, b) => {
-            analyze_polarity_inner(a, inside_negation, positive, negative);
-            analyze_polarity_inner(b, inside_negation, positive, negative);
-        },
-        LetPropExpr::Implies(a, b) => {
-            // P ⟹ Q ≡ ¬P ∨ Q : antecedent flips polarity
-            analyze_polarity_inner(a, !inside_negation, positive, negative);
-            analyze_polarity_inner(b, inside_negation, positive, negative);
-        },
-    }
-}
-
 /// Render a `LetPropArg` list in surface form (`a, child(x)`), for
 /// diagnostics. Not on the hot path — only used to build the
 /// `ArgumentMismatch` payload.
 fn render_args(args: &[LetPropArg]) -> String {
-    args.iter().map(render_arg).collect::<Vec<_>>().join(", ")
-}
-
-fn render_arg(arg: &LetPropArg) -> String {
-    match arg {
-        LetPropArg::Var(name) => name.clone(),
-        LetPropArg::App { func, args } => format!("{}({})", func, render_args(args)),
+    enum Task<'arg> {
+        Arg(&'arg LetPropArg),
+        Text(&'arg str),
     }
+
+    fn push_args<'arg>(tasks: &mut Vec<Task<'arg>>, args: &'arg [LetPropArg]) {
+        for (index, arg) in args.iter().enumerate().rev() {
+            tasks.push(Task::Arg(arg));
+            if index > 0 {
+                tasks.push(Task::Text(", "));
+            }
+        }
+    }
+
+    let mut rendered = String::new();
+    let mut tasks = Vec::new();
+    push_args(&mut tasks, args);
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Text(text) => rendered.push_str(text),
+            Task::Arg(LetPropArg::Var(name)) => rendered.push_str(name),
+            Task::Arg(LetPropArg::App { func, args }) => {
+                rendered.push_str(func);
+                rendered.push('(');
+                tasks.push(Task::Text(")"));
+                push_args(&mut tasks, args);
+            },
+        }
+    }
+    rendered
 }
 
 /// Verify that every recursive reference's arguments are well-scoped.
@@ -362,23 +373,35 @@ fn walk_recursive_calls<F>(expr: &LetPropExpr, scope: &mut HashSet<String>, f: &
 where
     F: FnMut(&[LetPropArg], &HashSet<String>),
 {
-    match expr {
-        LetPropExpr::Recursive { args } => f(args, scope),
-        LetPropExpr::Forall { var, body } | LetPropExpr::Exists { var, body } => {
-            // Bring the bound variable into scope for the body, then
-            // restore (unless it shadowed an already-in-scope name).
-            let newly_bound = scope.insert(var.clone());
-            walk_recursive_calls(body, scope, f);
-            if newly_bound {
-                scope.remove(var);
-            }
-        },
-        LetPropExpr::Not(inner) => walk_recursive_calls(inner, scope, f),
-        LetPropExpr::And(a, b) | LetPropExpr::Or(a, b) | LetPropExpr::Implies(a, b) => {
-            walk_recursive_calls(a, scope, f);
-            walk_recursive_calls(b, scope, f);
-        },
-        _ => {},
+    enum Task<'expr> {
+        Visit(&'expr LetPropExpr),
+        ExitScope { var: &'expr str, newly_bound: bool },
+    }
+
+    let mut work = vec![Task::Visit(expr)];
+    while let Some(task) = work.pop() {
+        match task {
+            Task::Visit(LetPropExpr::Recursive { args }) => f(args, scope),
+            Task::Visit(LetPropExpr::Forall { var, body })
+            | Task::Visit(LetPropExpr::Exists { var, body }) => {
+                let newly_bound = scope.insert(var.clone());
+                work.push(Task::ExitScope { var, newly_bound });
+                work.push(Task::Visit(body));
+            },
+            Task::Visit(LetPropExpr::Not(inner)) => work.push(Task::Visit(inner)),
+            Task::Visit(LetPropExpr::And(left, right))
+            | Task::Visit(LetPropExpr::Or(left, right))
+            | Task::Visit(LetPropExpr::Implies(left, right)) => {
+                work.push(Task::Visit(right));
+                work.push(Task::Visit(left));
+            },
+            Task::Visit(LetPropExpr::True | LetPropExpr::False | LetPropExpr::Atom { .. }) => {},
+            Task::ExitScope { var, newly_bound } => {
+                if newly_bound {
+                    scope.remove(var);
+                }
+            },
+        }
     }
 }
 
@@ -438,68 +461,109 @@ pub fn lower_to_mu_calculus(pred: &RecursivePredicate) -> Result<MuCalculusFormu
 /// non-recursive body is still lowerable (as a modal `νX.□`/`◇` safety
 /// formula) rather than a `NotRecursive` error.
 pub fn has_quantifier(expr: &LetPropExpr) -> bool {
-    match expr {
-        LetPropExpr::Forall { .. } | LetPropExpr::Exists { .. } => true,
-        LetPropExpr::Not(inner) => has_quantifier(inner),
-        LetPropExpr::And(a, b) | LetPropExpr::Or(a, b) | LetPropExpr::Implies(a, b) => {
-            has_quantifier(a) || has_quantifier(b)
-        },
-        LetPropExpr::True
-        | LetPropExpr::False
-        | LetPropExpr::Atom { .. }
-        | LetPropExpr::Recursive { .. } => false,
+    let mut work = vec![expr];
+    while let Some(expr) = work.pop() {
+        match expr {
+            LetPropExpr::Forall { .. } | LetPropExpr::Exists { .. } => return true,
+            LetPropExpr::Not(inner) => work.push(inner),
+            LetPropExpr::And(left, right)
+            | LetPropExpr::Or(left, right)
+            | LetPropExpr::Implies(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            LetPropExpr::True
+            | LetPropExpr::False
+            | LetPropExpr::Atom { .. }
+            | LetPropExpr::Recursive { .. } => {},
+        }
     }
+    false
 }
 
-/// Recursive lowering of a `LetPropExpr` to `MuCalculusFormula`.
+/// Heap-backed lowering of a `LetPropExpr` to `MuCalculusFormula`.
 fn lower_expr(expr: &LetPropExpr, self_name: &str) -> MuCalculusFormula {
-    match expr {
-        LetPropExpr::True => MuCalculusFormula::True,
-        LetPropExpr::False => MuCalculusFormula::False,
-        LetPropExpr::Atom { relation, .. } => {
-            // Atomic relation queries become atom labels in the
-            // mu-calculus. The args are dropped at this layer because
-            // the mu-calculus is propositional — the runtime PATA
-            // evaluator will need to dispatch on (relation, args) at
-            // call time.
-            MuCalculusFormula::Atom(relation.clone())
-        },
-        LetPropExpr::Recursive { .. } => MuCalculusFormula::Var(self_name.to_string()),
-        // Quantifiers lower to the PATA tree engine's modal operators.
-        // `child_idx: 0` is the reserved ABSTRACT REDUCTION DIRECTION
-        // (`→*`), NOT an AST argument slot: it mirrors how `And`/`Or`/
-        // `Mu`/`Nu` already overload child-direction 0, and is
-        // decision-neutral because `check_emptiness` never matches the
-        // synthetic `_box_0`/`_diamond_0` transition symbols against real
-        // `Term` constructor labels (it works purely on the parity-game
-        // graph: priorities + branching + transition target lists). The
-        // bound `var` and the quantifier body's args are propositional at
-        // this layer (the runtime PATA evaluator dispatches on them).
-        LetPropExpr::Forall { body, .. } => MuCalculusFormula::Box {
-            child_idx: 0,
-            body: Box::new(lower_expr(body, self_name)),
-        },
-        LetPropExpr::Exists { body, .. } => MuCalculusFormula::Diamond {
-            child_idx: 0,
-            body: Box::new(lower_expr(body, self_name)),
-        },
-        LetPropExpr::Not(inner) => MuCalculusFormula::Not(Box::new(lower_expr(inner, self_name))),
-        LetPropExpr::And(a, b) => MuCalculusFormula::And(
-            Box::new(lower_expr(a, self_name)),
-            Box::new(lower_expr(b, self_name)),
-        ),
-        LetPropExpr::Or(a, b) => MuCalculusFormula::Or(
-            Box::new(lower_expr(a, self_name)),
-            Box::new(lower_expr(b, self_name)),
-        ),
-        LetPropExpr::Implies(a, b) => {
-            // P ⟹ Q ≡ ¬P ∨ Q
-            MuCalculusFormula::Or(
-                Box::new(MuCalculusFormula::Not(Box::new(lower_expr(a, self_name)))),
-                Box::new(lower_expr(b, self_name)),
-            )
-        },
+    enum Unary {
+        Box,
+        Diamond,
+        Not,
     }
+    enum Binary {
+        And,
+        Or,
+        Implies,
+    }
+    enum Task<'expr> {
+        Visit(&'expr LetPropExpr),
+        FinishUnary(Unary),
+        FinishBinary(Binary),
+    }
+
+    let mut tasks = vec![Task::Visit(expr)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(LetPropExpr::True) => values.push(MuCalculusFormula::True),
+            Task::Visit(LetPropExpr::False) => values.push(MuCalculusFormula::False),
+            Task::Visit(LetPropExpr::Atom { relation, .. }) => {
+                values.push(MuCalculusFormula::Atom(relation.clone()));
+            },
+            Task::Visit(LetPropExpr::Recursive { .. }) => {
+                values.push(MuCalculusFormula::Var(self_name.to_string()));
+            },
+            Task::Visit(LetPropExpr::Forall { body, .. }) => {
+                tasks.push(Task::FinishUnary(Unary::Box));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(LetPropExpr::Exists { body, .. }) => {
+                tasks.push(Task::FinishUnary(Unary::Diamond));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(LetPropExpr::Not(inner)) => {
+                tasks.push(Task::FinishUnary(Unary::Not));
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(LetPropExpr::And(left, right)) => {
+                tasks.push(Task::FinishBinary(Binary::And));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(LetPropExpr::Or(left, right)) => {
+                tasks.push(Task::FinishBinary(Binary::Or));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(LetPropExpr::Implies(left, right)) => {
+                tasks.push(Task::FinishBinary(Binary::Implies));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::FinishUnary(kind) => {
+                let body = Box::new(values.pop().expect("letprop lowering lost unary body"));
+                values.push(match kind {
+                    // Direction zero is the reserved abstract-reduction
+                    // direction used by the PATA tree engine.
+                    Unary::Box => MuCalculusFormula::Box { child_idx: 0, body },
+                    Unary::Diamond => MuCalculusFormula::Diamond { child_idx: 0, body },
+                    Unary::Not => MuCalculusFormula::Not(body),
+                });
+            },
+            Task::FinishBinary(kind) => {
+                let right = Box::new(values.pop().expect("letprop lowering lost right body"));
+                let left = Box::new(values.pop().expect("letprop lowering lost left body"));
+                values.push(match kind {
+                    Binary::And => MuCalculusFormula::And(left, right),
+                    Binary::Or => MuCalculusFormula::Or(left, right),
+                    // P ⟹ Q ≡ ¬P ∨ Q.
+                    Binary::Implies => {
+                        MuCalculusFormula::Or(Box::new(MuCalculusFormula::Not(left)), right)
+                    },
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("letprop lowering produced no formula")
 }
 
 /// Bridge to PATA (Phase 10C): compile a `RecursivePredicate` all
@@ -517,25 +581,25 @@ pub fn letprop_to_pata(
 /// Used by codegen to plan the runtime relation snapshot.
 pub fn collect_relations(expr: &LetPropExpr) -> HashSet<String> {
     let mut acc = HashSet::new();
-    collect_relations_inner(expr, &mut acc);
-    acc
-}
-
-fn collect_relations_inner(expr: &LetPropExpr, acc: &mut HashSet<String>) {
-    match expr {
-        LetPropExpr::Atom { relation, .. } => {
-            acc.insert(relation.clone());
-        },
-        LetPropExpr::Forall { body, .. } | LetPropExpr::Exists { body, .. } => {
-            collect_relations_inner(body, acc);
-        },
-        LetPropExpr::Not(inner) => collect_relations_inner(inner, acc),
-        LetPropExpr::And(a, b) | LetPropExpr::Or(a, b) | LetPropExpr::Implies(a, b) => {
-            collect_relations_inner(a, acc);
-            collect_relations_inner(b, acc);
-        },
-        _ => {},
+    let mut work = vec![expr];
+    while let Some(expr) = work.pop() {
+        match expr {
+            LetPropExpr::Atom { relation, .. } => {
+                acc.insert(relation.clone());
+            },
+            LetPropExpr::Forall { body, .. }
+            | LetPropExpr::Exists { body, .. }
+            | LetPropExpr::Not(body) => work.push(body),
+            LetPropExpr::And(left, right)
+            | LetPropExpr::Or(left, right)
+            | LetPropExpr::Implies(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            LetPropExpr::True | LetPropExpr::False | LetPropExpr::Recursive { .. } => {},
+        }
     }
+    acc
 }
 
 #[cfg(test)]
