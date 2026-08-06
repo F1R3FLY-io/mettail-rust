@@ -12,7 +12,6 @@ use super::*;
 /// Note: `PartialEq`, `Eq`, and `Hash` are manually implemented to avoid
 /// Rust's derive macro requiring `S: Eq + Hash` (we only need `S::Type: Eq + Hash`,
 /// which the `TypeSystem` trait already guarantees).
-#[derive(Clone, Debug)]
 pub enum TypePred<S: TypeSystem> {
     /// Always true.
     True,
@@ -30,42 +29,8 @@ pub enum TypePred<S: TypeSystem> {
     Not(Box<TypePred<S>>),
 }
 
-impl<S: TypeSystem> PartialEq for TypePred<S> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (TypePred::True, TypePred::True) | (TypePred::False, TypePred::False) => true,
-            (TypePred::HasType(a), TypePred::HasType(b)) => a == b,
-            (TypePred::Subtype { sub: s1, sup: p1 }, TypePred::Subtype { sub: s2, sup: p2 }) => {
-                s1 == s2 && p1 == p2
-            },
-            (TypePred::And(a1, b1), TypePred::And(a2, b2))
-            | (TypePred::Or(a1, b1), TypePred::Or(a2, b2)) => a1 == a2 && b1 == b2,
-            (TypePred::Not(a), TypePred::Not(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-
-impl<S: TypeSystem> Eq for TypePred<S> {}
-
-impl<S: TypeSystem> Hash for TypePred<S> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-        match self {
-            TypePred::True | TypePred::False => {},
-            TypePred::HasType(ty) => ty.hash(state),
-            TypePred::Subtype { sub, sup } => {
-                sub.hash(state);
-                sup.hash(state);
-            },
-            TypePred::And(a, b) | TypePred::Or(a, b) => {
-                a.hash(state);
-                b.hash(state);
-            },
-            TypePred::Not(inner) => inner.hash(state),
-        }
-    }
-}
+#[path = "refinement/type_pred_lifecycle.rs"]
+mod type_pred_lifecycle;
 
 /// Bridge from `TypeSystem` to `BooleanAlgebra`.
 ///
@@ -98,28 +63,70 @@ impl<S: TypeSystem> TypeSystemAlgebra<S> {
 
     /// Evaluate a type predicate in the current environment.
     pub fn evaluate_pred(&self, pred: &TypePred<S>) -> bool {
-        match pred {
-            TypePred::True => true,
-            TypePred::False => false,
-            TypePred::HasType(ty) => self.system.is_inhabited(&self.env, ty),
-            TypePred::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
-            TypePred::And(a, b) => self.evaluate_pred(a) && self.evaluate_pred(b),
-            TypePred::Or(a, b) => self.evaluate_pred(a) || self.evaluate_pred(b),
-            TypePred::Not(a) => !self.evaluate_pred(a),
-        }
+        evaluate_type_pred(pred, |node| match node {
+            TypePred::True => Some(true),
+            TypePred::False => Some(false),
+            TypePred::HasType(ty) => Some(self.system.is_inhabited(&self.env, ty)),
+            TypePred::Subtype { sub, sup } => Some(self.system.is_subtype(&self.env, sub, sup)),
+            TypePred::And(_, _) | TypePred::Or(_, _) | TypePred::Not(_) => None,
+        })
     }
 
     /// Check satisfiability of a type predicate.
     pub fn is_satisfiable_pred(&self, pred: &TypePred<S>) -> bool {
-        match pred {
-            TypePred::True => true,
-            TypePred::False => false,
-            TypePred::HasType(ty) => self.system.is_inhabited(&self.env, ty),
-            TypePred::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
-            TypePred::And(a, b) => self.is_satisfiable_pred(a) && self.is_satisfiable_pred(b),
-            TypePred::Or(a, b) => self.is_satisfiable_pred(a) || self.is_satisfiable_pred(b),
-            TypePred::Not(a) => !self.evaluate_pred(a),
+        enum Task<'pred, S: TypeSystem> {
+            Visit(&'pred TypePred<S>),
+            AndRight(&'pred TypePred<S>),
+            OrRight(&'pred TypePred<S>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TypePred::True) => values.push(true),
+                Task::Visit(TypePred::False) => values.push(false),
+                Task::Visit(TypePred::HasType(ty)) => {
+                    values.push(self.system.is_inhabited(&self.env, ty));
+                },
+                Task::Visit(TypePred::Subtype { sub, sup }) => {
+                    values.push(self.system.is_subtype(&self.env, sub, sup));
+                },
+                Task::Visit(TypePred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TypePred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TypePred::Not(inner)) => values.push(!self.evaluate_pred(inner)),
+                Task::AndRight(right) => {
+                    if values
+                        .pop()
+                        .expect("type-predicate satisfiability PDA lost its left value")
+                    {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    if values
+                        .pop()
+                        .expect("type-predicate satisfiability PDA lost its left value")
+                    {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("type-predicate satisfiability PDA produced no value")
     }
 
     /// Check if predicate a implies predicate b.
@@ -180,54 +187,158 @@ impl<S: TypeSystem> crate::symbolic::BooleanAlgebra for TypeSystemAlgebra<S> {
     }
 
     fn witness(&self, a: &TypePred<S>) -> Option<S::Type> {
-        match a {
-            TypePred::True => self.system.top(),
-            TypePred::False => None,
-            TypePred::HasType(ty) => {
-                if self.system.is_inhabited(&self.env, ty) {
-                    Some(ty.clone())
-                } else {
-                    None
-                }
-            },
-            TypePred::Subtype { sub, sup } => {
-                if self.system.is_subtype(&self.env, sub, sup) {
-                    Some(sub.clone())
-                } else {
-                    None
-                }
-            },
-            TypePred::And(a_inner, b_inner) => {
-                // For conjunction, need a witness that satisfies both
-                let wa = self.witness(a_inner)?;
-                let wb = self.witness(b_inner)?;
-                // Try meeting the two witnesses
-                self.system.meet(&self.env, &wa, &wb)
-            },
-            TypePred::Or(a_inner, b_inner) => {
-                self.witness(a_inner).or_else(|| self.witness(b_inner))
-            },
-            TypePred::Not(inner) => {
-                if !self.evaluate_pred(inner) {
-                    self.system.top()
-                } else {
-                    None
-                }
-            },
+        enum Task<'pred, S: TypeSystem> {
+            Visit(&'pred TypePred<S>),
+            AndRight(&'pred TypePred<S>),
+            AndMeet(S::Type),
+            OrRight(&'pred TypePred<S>),
         }
+
+        let mut tasks = vec![Task::Visit(a)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TypePred::True) => values.push(self.system.top()),
+                Task::Visit(TypePred::False) => values.push(None),
+                Task::Visit(TypePred::HasType(ty)) => {
+                    values.push(self.system.is_inhabited(&self.env, ty).then(|| ty.clone()))
+                },
+                Task::Visit(TypePred::Subtype { sub, sup }) => values.push(
+                    self.system
+                        .is_subtype(&self.env, sub, sup)
+                        .then(|| sub.clone()),
+                ),
+                Task::Visit(TypePred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TypePred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TypePred::Not(inner)) => values.push(
+                    (!self.evaluate_pred(inner))
+                        .then(|| self.system.top())
+                        .flatten(),
+                ),
+                Task::AndRight(right) => {
+                    if let Some(left) = values
+                        .pop()
+                        .expect("type-predicate witness PDA lost its left witness")
+                    {
+                        tasks.push(Task::AndMeet(left));
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(None);
+                    }
+                },
+                Task::AndMeet(left) => {
+                    let right = values
+                        .pop()
+                        .expect("type-predicate witness PDA lost its right witness");
+                    values.push(right.and_then(|right| self.system.meet(&self.env, &left, &right)));
+                },
+                Task::OrRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("type-predicate witness PDA lost its left witness");
+                    if left.is_some() {
+                        values.push(left);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("type-predicate witness PDA produced no value")
     }
 
     fn evaluate(&self, pred: &TypePred<S>, elem: &S::Type) -> bool {
-        match pred {
-            TypePred::True => true,
-            TypePred::False => false,
-            TypePred::HasType(ty) => self.system.is_subtype(&self.env, elem, ty),
-            TypePred::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
-            TypePred::And(a, b) => self.evaluate(a, elem) && self.evaluate(b, elem),
-            TypePred::Or(a, b) => self.evaluate(a, elem) || self.evaluate(b, elem),
-            TypePred::Not(inner) => !self.evaluate(inner, elem),
+        evaluate_type_pred(pred, |node| match node {
+            TypePred::True => Some(true),
+            TypePred::False => Some(false),
+            TypePred::HasType(ty) => Some(self.system.is_subtype(&self.env, elem, ty)),
+            TypePred::Subtype { sub, sup } => Some(self.system.is_subtype(&self.env, sub, sup)),
+            TypePred::And(_, _) | TypePred::Or(_, _) | TypePred::Not(_) => None,
+        })
+    }
+}
+
+fn evaluate_type_pred<S, F>(pred: &TypePred<S>, mut leaf: F) -> bool
+where
+    S: TypeSystem,
+    F: FnMut(&TypePred<S>) -> Option<bool>,
+{
+    enum Task<'pred, S: TypeSystem> {
+        Visit(&'pred TypePred<S>),
+        Not,
+        AndRight(&'pred TypePred<S>),
+        OrRight(&'pred TypePred<S>),
+    }
+
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(node) => {
+                if let Some(value) = leaf(node) {
+                    values.push(value);
+                } else {
+                    match node {
+                        TypePred::And(left, right) => {
+                            tasks.push(Task::AndRight(right));
+                            tasks.push(Task::Visit(left));
+                        },
+                        TypePred::Or(left, right) => {
+                            tasks.push(Task::OrRight(right));
+                            tasks.push(Task::Visit(left));
+                        },
+                        TypePred::Not(inner) => {
+                            tasks.push(Task::Not);
+                            tasks.push(Task::Visit(inner));
+                        },
+                        TypePred::True
+                        | TypePred::False
+                        | TypePred::HasType(_)
+                        | TypePred::Subtype { .. } => {
+                            unreachable!("type-predicate leaf evaluator omitted a leaf")
+                        },
+                    }
+                }
+            },
+            Task::Not => {
+                let value = values
+                    .pop()
+                    .expect("type-predicate PDA lost its negated value");
+                values.push(!value);
+            },
+            Task::AndRight(right) => {
+                if values
+                    .pop()
+                    .expect("type-predicate PDA lost its left conjunction value")
+                {
+                    tasks.push(Task::Visit(right));
+                } else {
+                    values.push(false);
+                }
+            },
+            Task::OrRight(right) => {
+                if values
+                    .pop()
+                    .expect("type-predicate PDA lost its left disjunction value")
+                {
+                    values.push(true);
+                } else {
+                    tasks.push(Task::Visit(right));
+                }
+            },
         }
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("type-predicate PDA produced no value")
 }
 
 // ==============================================================================
