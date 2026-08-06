@@ -61,9 +61,9 @@ use crate::observation::render_par_text;
 
 use mettail_prattail::algebra_tower::Sat3;
 use mettail_prattail::guard_formula::{
-    dont_know_policy, ground_verdict_with, static_verdict, str_equals, CmpOp, DontKnowPolicy,
-    GuardAssignment, GuardAtom, GuardAtomKind, GuardFormula, GuardSiteKind, GuardValue,
-    GuardVarMap, LinearForm, ScalarOperand, StaticVerdict, CONSENSUS_SUBSTRATE_CONFIG,
+    dont_know_policy, ground_verdict_with, static_verdict as substrate_static_verdict, str_equals,
+    CmpOp, DontKnowPolicy, GuardAssignment, GuardAtom, GuardAtomKind, GuardFormula, GuardSiteKind,
+    GuardValue, GuardVarMap, LinearForm, ScalarOperand, StaticVerdict, CONSENSUS_SUBSTRATE_CONFIG,
 };
 use mettail_prattail::ordered_field::OrderedF64;
 
@@ -98,7 +98,7 @@ impl ParGuardEncoding {
     /// The budget is `CONSENSUS_SUBSTRATE_CONFIG`, not a caller-chosen one — see that
     /// constant's documentation for why the guard path's budget is a consensus parameter.
     pub fn static_verdict(&self) -> StaticVerdict {
-        static_verdict(&self.formula, CONSENSUS_SUBSTRATE_CONFIG)
+        substrate_static_verdict(&self.formula, CONSENSUS_SUBSTRATE_CONFIG)
     }
 
     /// The fragment behind an opaque atom.
@@ -185,7 +185,7 @@ where
         resolved.push(resolve_atom(fragment));
     }
     let substituted = substitute_atoms(&encoding.formula, &atoms, &resolved)?;
-    static_verdict(&substituted, CONSENSUS_SUBSTRATE_CONFIG).settled()
+    substrate_static_verdict(&substituted, CONSENSUS_SUBSTRATE_CONFIG).settled()
 }
 
 /// Replace each opaque atom by the constant its resolver returned. `None` if any atom went

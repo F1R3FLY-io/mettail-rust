@@ -59,9 +59,9 @@ use std::sync::Arc;
 
 use mettail_prattail::algebra_tower::Sat3;
 use mettail_prattail::guard_formula::{
-    ground_verdict_with, linear_atom, prop_var, static_verdict, str_equals, CmpOp, GuardAssignment,
-    GuardAtom, GuardAtomKind, GuardFormula, GuardSiteKind, GuardValue, GuardVarMap, LinearForm,
-    ScalarOperand, StaticVerdict, CONSENSUS_SUBSTRATE_CONFIG,
+    ground_verdict_with, linear_atom, prop_var, static_verdict as substrate_static_verdict,
+    str_equals, CmpOp, GuardAssignment, GuardAtom, GuardAtomKind, GuardFormula, GuardSiteKind,
+    GuardValue, GuardVarMap, LinearForm, ScalarOperand, StaticVerdict, CONSENSUS_SUBSTRATE_CONFIG,
 };
 use mettail_prattail::guard_refusal::{
     GuardRefusal, GuardRefusalCause, GuardRefusalClass, RefusalProvenance,
@@ -154,7 +154,7 @@ impl GuardEncoding {
     /// decides whether a COMM fires, and two nodes with different budgets can reach different
     /// verdicts. See that constant's documentation.
     pub fn static_verdict(&self) -> StaticVerdict {
-        static_verdict(&self.formula, CONSENSUS_SUBSTRATE_CONFIG)
+        substrate_static_verdict(&self.formula, CONSENSUS_SUBSTRATE_CONFIG)
     }
 }
 
