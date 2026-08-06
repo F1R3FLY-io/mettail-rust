@@ -113,6 +113,9 @@ use crate::presburger::{
 use crate::string_algebra::{StrPred, StringAlgebra};
 use crate::symbolic::{BooleanAlgebra, IntervalAlgebra, IntervalPred, KatBooleanAlgebra};
 
+#[path = "guard_formula/lifecycle.rs"]
+mod lifecycle;
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SubstrateConfig — the named domain every static verdict is relative to
 // ══════════════════════════════════════════════════════════════════════════════
@@ -547,7 +550,6 @@ impl ScalarOperand {
 /// | [`Scalar`](GuardFormula::Scalar) | `Str` (any non-`Int` scalar) | the sort's [`BooleanAlgebra`] — exact |
 /// | [`ScalarRel`](GuardFormula::ScalarRel) | two non-`Int` variables | exact at run time; statically undecided ([`AnyPred`] is unary) |
 /// | [`Atom`](GuardFormula::Atom) | — | never decided here; see [`GuardAtomKind`] |
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GuardFormula {
     /// The guard `true`.
     True,
@@ -653,12 +655,15 @@ impl GuardFormula {
     }
 
     /// `¬φ`, collapsing a double negation and the two constants.
-    pub fn not(inner: GuardFormula) -> GuardFormula {
-        match inner {
+    pub fn not(mut inner: GuardFormula) -> GuardFormula {
+        match &mut inner {
             GuardFormula::True => GuardFormula::False,
             GuardFormula::False => GuardFormula::True,
-            GuardFormula::Not(x) => *x,
-            other => GuardFormula::Not(Box::new(other)),
+            GuardFormula::Not(child) => {
+                let child = std::mem::replace(child, Box::new(GuardFormula::True));
+                *child
+            },
+            _ => GuardFormula::Not(Box::new(inner)),
         }
     }
 
@@ -673,130 +678,121 @@ impl GuardFormula {
     /// This is the predicate the measurement harness uses for *"does this guard form reach
     /// Dovetail/SFT?"*.
     pub fn reaches_substrate(&self) -> bool {
-        match self {
-            GuardFormula::Atom(_) => false,
-            GuardFormula::True
-            | GuardFormula::False
-            | GuardFormula::Linear(_)
-            | GuardFormula::Prop(_)
-            | GuardFormula::Scalar { .. }
-            | GuardFormula::ScalarRel { .. } => true,
-            GuardFormula::Not(inner) => inner.reaches_substrate(),
-            GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-                a.reaches_substrate() && b.reaches_substrate()
-            },
-        }
+        !formula_nodes(self).any(|node| matches!(node, GuardFormula::Atom(_)))
     }
 
     /// Every opaque atom in this formula, in traversal order.
     pub fn atoms(&self) -> Vec<GuardAtom> {
-        let mut out = Vec::new();
-        self.collect_atoms(&mut out);
-        out
-    }
-
-    fn collect_atoms(&self, out: &mut Vec<GuardAtom>) {
-        match self {
-            GuardFormula::Atom(a) => out.push(*a),
-            GuardFormula::Not(inner) => inner.collect_atoms(out),
-            GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-                a.collect_atoms(out);
-                b.collect_atoms(out);
-            },
-            _ => {},
-        }
+        formula_nodes(self)
+            .filter_map(|node| match node {
+                GuardFormula::Atom(atom) => Some(*atom),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The `Int`-sorted variable indices this formula constrains.
     pub fn int_vars(&self) -> Vec<usize> {
         let mut out = Vec::new();
-        self.collect_int_vars(&mut out);
+        for node in formula_nodes(self) {
+            if let GuardFormula::Linear(pred) = node {
+                collect_presburger_vars(pred, &mut out);
+            }
+        }
         out.sort_unstable();
         out.dedup();
         out
-    }
-
-    fn collect_int_vars(&self, out: &mut Vec<usize>) {
-        match self {
-            GuardFormula::Linear(p) => collect_presburger_vars(p, out),
-            GuardFormula::Not(inner) => inner.collect_int_vars(out),
-            GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-                a.collect_int_vars(out);
-                b.collect_int_vars(out);
-            },
-            _ => {},
-        }
     }
 
     /// The boolean-sorted binder names this formula constrains.
     pub fn prop_names(&self) -> Vec<String> {
         let mut out = Vec::new();
-        self.collect_prop_names(&mut out);
+        for node in formula_nodes(self) {
+            if let GuardFormula::Prop(test) = node {
+                collect_test_atoms(test, &mut out);
+            }
+        }
         out.sort();
         out.dedup();
         out
     }
 
-    fn collect_prop_names(&self, out: &mut Vec<String>) {
-        match self {
-            GuardFormula::Prop(t) => collect_test_atoms(t, out),
-            GuardFormula::Not(inner) => inner.collect_prop_names(out),
-            GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-                a.collect_prop_names(out);
-                b.collect_prop_names(out);
-            },
-            _ => {},
-        }
-    }
-
     /// The non-integer scalar variable indices this formula constrains.
     pub fn scalar_vars(&self) -> Vec<usize> {
         let mut out = Vec::new();
-        self.collect_scalar_vars(&mut out);
+        for node in formula_nodes(self) {
+            match node {
+                GuardFormula::Scalar { var, .. } => out.push(*var),
+                GuardFormula::ScalarRel { left, right, .. } => {
+                    out.extend(left.var());
+                    out.extend(right.var());
+                },
+                _ => {},
+            }
+        }
         out.sort_unstable();
         out.dedup();
         out
     }
+}
 
-    fn collect_scalar_vars(&self, out: &mut Vec<usize>) {
-        match self {
-            GuardFormula::Scalar { var, .. } => out.push(*var),
-            GuardFormula::ScalarRel { left, right, .. } => {
-                out.extend(left.var());
-                out.extend(right.var());
+/// Pre-order guard-formula traversal. Right children are pushed before left children so the
+/// yielded order is exactly the recursive source order without using the native call stack.
+fn formula_nodes(root: &GuardFormula) -> impl Iterator<Item = &GuardFormula> {
+    let mut work = vec![root];
+    std::iter::from_fn(move || {
+        let node = work.pop()?;
+        match node {
+            GuardFormula::And(left, right)
+            | GuardFormula::Or(left, right)
+            | GuardFormula::Implies(left, right) => {
+                work.push(right);
+                work.push(left);
             },
-            GuardFormula::Not(inner) => inner.collect_scalar_vars(out),
-            GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-                a.collect_scalar_vars(out);
-                b.collect_scalar_vars(out);
+            GuardFormula::Not(inner) => work.push(inner),
+            GuardFormula::True
+            | GuardFormula::False
+            | GuardFormula::Linear(_)
+            | GuardFormula::Prop(_)
+            | GuardFormula::Scalar { .. }
+            | GuardFormula::ScalarRel { .. }
+            | GuardFormula::Atom(_) => {},
+        }
+        Some(node)
+    })
+}
+
+fn collect_presburger_vars(pred: &PresburgerPred, out: &mut Vec<usize>) {
+    let mut work = vec![pred];
+    while let Some(pred) = work.pop() {
+        match pred {
+            PresburgerPred::True | PresburgerPred::False => {},
+            PresburgerPred::Atom(constraint) => {
+                out.extend(constraint.terms.iter().map(|&(var, _)| var));
             },
-            _ => {},
+            PresburgerPred::And(left, right) | PresburgerPred::Or(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            PresburgerPred::Not(inner) | PresburgerPred::Exists { body: inner, .. } => {
+                work.push(inner);
+            },
         }
     }
 }
 
-fn collect_presburger_vars(pred: &PresburgerPred, out: &mut Vec<usize>) {
-    match pred {
-        PresburgerPred::True | PresburgerPred::False => {},
-        PresburgerPred::Atom(c) => out.extend(c.terms.iter().map(|&(v, _)| v)),
-        PresburgerPred::And(a, b) | PresburgerPred::Or(a, b) => {
-            collect_presburger_vars(a, out);
-            collect_presburger_vars(b, out);
-        },
-        PresburgerPred::Not(inner) => collect_presburger_vars(inner, out),
-        PresburgerPred::Exists { body, .. } => collect_presburger_vars(body, out),
-    }
-}
-
 fn collect_test_atoms(test: &BooleanTest, out: &mut Vec<String>) {
-    match test {
-        BooleanTest::True | BooleanTest::False => {},
-        BooleanTest::Atom(name) => out.push(name.clone()),
-        BooleanTest::Not(inner) => collect_test_atoms(inner, out),
-        BooleanTest::And(a, b) | BooleanTest::Or(a, b) => {
-            collect_test_atoms(a, out);
-            collect_test_atoms(b, out);
-        },
+    let mut work = vec![test];
+    while let Some(test) = work.pop() {
+        match test {
+            BooleanTest::True | BooleanTest::False => {},
+            BooleanTest::Atom(name) => out.push(name.clone()),
+            BooleanTest::Not(inner) => work.push(inner),
+            BooleanTest::And(left, right) | BooleanTest::Or(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+        }
     }
 }
 
@@ -1155,76 +1151,132 @@ enum FormulaGroup {
 }
 
 fn classify_group(formula: &GuardFormula) -> Option<FormulaGroup> {
-    let has_opaque = !formula.atoms().is_empty();
-    if has_opaque {
+    let summary = summarize_formula(formula);
+    if summary.has_opaque {
         return None;
     }
-    let int_vars = formula.int_vars();
-    let prop_names = formula.prop_names();
-    let scalar_vars = formula.scalar_vars();
-    let has_int = has_linear_atom(formula);
-    let has_prop = !prop_names.is_empty() || has_prop_constant_atom(formula);
-    let has_scalar = !scalar_vars.is_empty();
+    let has_scalar = !summary.scalar_vars.is_empty();
 
-    match (has_int, has_prop, has_scalar) {
+    match (summary.has_linear, summary.has_prop, has_scalar) {
         (false, false, false) => Some(FormulaGroup::Constant(fold_constant(formula)?)),
-        (true, false, false) => {
-            let _ = int_vars;
-            Some(FormulaGroup::Int)
-        },
+        (true, false, false) => Some(FormulaGroup::Int),
         (false, true, false) => Some(FormulaGroup::Bool),
         // A `ScalarRel` relates two variables, which no unary algebra can express, so a formula
         // containing one is never a single-variable scalar group.
-        (false, false, true) if scalar_vars.len() == 1 && !has_scalar_rel(formula) => {
-            Some(FormulaGroup::Scalar(scalar_vars[0]))
+        (false, false, true) if summary.scalar_vars.len() == 1 && !summary.has_scalar_rel => {
+            Some(FormulaGroup::Scalar(summary.scalar_vars[0]))
         },
         _ => None,
     }
 }
 
-fn has_linear_atom(formula: &GuardFormula) -> bool {
-    match formula {
-        GuardFormula::Linear(_) => true,
-        GuardFormula::Not(inner) => has_linear_atom(inner),
-        GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-            has_linear_atom(a) || has_linear_atom(b)
-        },
-        _ => false,
-    }
+#[derive(Default)]
+struct FormulaSummary {
+    has_opaque: bool,
+    has_linear: bool,
+    has_prop: bool,
+    has_scalar_rel: bool,
+    scalar_vars: Vec<usize>,
 }
 
-fn has_prop_constant_atom(formula: &GuardFormula) -> bool {
-    match formula {
-        GuardFormula::Prop(_) => true,
-        GuardFormula::Not(inner) => has_prop_constant_atom(inner),
-        GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-            has_prop_constant_atom(a) || has_prop_constant_atom(b)
-        },
-        _ => false,
+/// Collect the classification features in one pass. The former implementation independently
+/// walked the same formula seven times; this keeps classification linear with a small constant.
+fn summarize_formula(formula: &GuardFormula) -> FormulaSummary {
+    let mut summary = FormulaSummary::default();
+    for node in formula_nodes(formula) {
+        match node {
+            GuardFormula::Linear(_) => summary.has_linear = true,
+            GuardFormula::Prop(_) => summary.has_prop = true,
+            GuardFormula::Scalar { var, .. } => summary.scalar_vars.push(*var),
+            GuardFormula::ScalarRel { left, right, .. } => {
+                summary.has_scalar_rel = true;
+                summary.scalar_vars.extend(left.var());
+                summary.scalar_vars.extend(right.var());
+            },
+            GuardFormula::Atom(_) => summary.has_opaque = true,
+            GuardFormula::True
+            | GuardFormula::False
+            | GuardFormula::And(..)
+            | GuardFormula::Or(..)
+            | GuardFormula::Not(_)
+            | GuardFormula::Implies(..) => {},
+        }
     }
-}
-
-fn has_scalar_rel(formula: &GuardFormula) -> bool {
-    match formula {
-        GuardFormula::ScalarRel { .. } => true,
-        GuardFormula::Not(inner) => has_scalar_rel(inner),
-        GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
-            has_scalar_rel(a) || has_scalar_rel(b)
-        },
-        _ => false,
-    }
+    summary.scalar_vars.sort_unstable();
+    summary.scalar_vars.dedup();
+    summary
 }
 
 fn fold_constant(formula: &GuardFormula) -> Option<bool> {
-    match formula {
-        GuardFormula::True => Some(true),
-        GuardFormula::False => Some(false),
-        GuardFormula::Not(inner) => fold_constant(inner).map(|b| !b),
-        GuardFormula::And(a, b) => Some(fold_constant(a)? && fold_constant(b)?),
-        GuardFormula::Or(a, b) => Some(fold_constant(a)? || fold_constant(b)?),
-        GuardFormula::Implies(a, b) => Some(!fold_constant(a)? || fold_constant(b)?),
-        _ => None,
+    enum Task<'formula> {
+        Visit(&'formula GuardFormula),
+        Not,
+        AndRight(&'formula GuardFormula),
+        OrRight(&'formula GuardFormula),
+        ImpliesRight(&'formula GuardFormula),
     }
+
+    let mut tasks = vec![Task::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(GuardFormula::True) => values.push(Some(true)),
+            Task::Visit(GuardFormula::False) => values.push(Some(false)),
+            Task::Visit(GuardFormula::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(GuardFormula::And(left, right)) => {
+                tasks.push(Task::AndRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(GuardFormula::Or(left, right)) => {
+                tasks.push(Task::OrRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(GuardFormula::Implies(left, right)) => {
+                tasks.push(Task::ImpliesRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(
+                GuardFormula::Linear(_)
+                | GuardFormula::Prop(_)
+                | GuardFormula::Scalar { .. }
+                | GuardFormula::ScalarRel { .. }
+                | GuardFormula::Atom(_),
+            ) => values.push(None),
+            Task::Not => {
+                let value = values.pop().expect("constant-fold PDA lost negand");
+                values.push(value.map(|value| !value));
+            },
+            Task::AndRight(right) => match values
+                .pop()
+                .expect("constant-fold PDA lost conjunction LHS")
+            {
+                Some(true) => tasks.push(Task::Visit(right)),
+                Some(false) => values.push(Some(false)),
+                None => values.push(None),
+            },
+            Task::OrRight(right) => match values
+                .pop()
+                .expect("constant-fold PDA lost disjunction LHS")
+            {
+                Some(true) => values.push(Some(true)),
+                Some(false) => tasks.push(Task::Visit(right)),
+                None => values.push(None),
+            },
+            Task::ImpliesRight(right) => match values
+                .pop()
+                .expect("constant-fold PDA lost implication LHS")
+            {
+                Some(true) => tasks.push(Task::Visit(right)),
+                Some(false) => values.push(Some(true)),
+                None => values.push(None),
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("constant-fold PDA produced no value")
 }
 
 /// Flatten a formula into its top-level `∧` conjuncts, or `None` if the top level is not a
@@ -1241,77 +1293,154 @@ fn conjuncts(formula: &GuardFormula) -> Option<Vec<&GuardFormula>> {
 }
 
 fn push_conjuncts<'a>(formula: &'a GuardFormula, out: &mut Vec<&'a GuardFormula>) {
-    match formula {
-        GuardFormula::And(a, b) => {
-            push_conjuncts(a, out);
-            push_conjuncts(b, out);
-        },
-        other => out.push(other),
+    let mut work = vec![formula];
+    while let Some(formula) = work.pop() {
+        match formula {
+            GuardFormula::And(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            other => out.push(other),
+        }
     }
 }
 
 /// Fold an all-`Int` formula into a single [`PresburgerPred`], preserving the boolean structure
 /// (Presburger is closed under `∧`, `∨`, `¬`, so nothing is lost).
 fn to_presburger(formula: &GuardFormula) -> Option<PresburgerPred> {
-    Some(match formula {
-        GuardFormula::True => PresburgerPred::True,
-        GuardFormula::False => PresburgerPred::False,
-        GuardFormula::Linear(p) => p.clone(),
-        GuardFormula::And(a, b) => {
-            PresburgerPred::And(Box::new(to_presburger(a)?), Box::new(to_presburger(b)?))
+    try_fold_formula(
+        formula,
+        |node| match node {
+            GuardFormula::True => Some(PresburgerPred::True),
+            GuardFormula::False => Some(PresburgerPred::False),
+            GuardFormula::Linear(pred) => Some(pred.clone()),
+            _ => None,
         },
-        GuardFormula::Or(a, b) => {
-            PresburgerPred::Or(Box::new(to_presburger(a)?), Box::new(to_presburger(b)?))
+        |inner| PresburgerPred::Not(Box::new(inner)),
+        |kind, left, right| match kind {
+            FormulaConnective::And => PresburgerPred::And(Box::new(left), Box::new(right)),
+            FormulaConnective::Or => PresburgerPred::Or(Box::new(left), Box::new(right)),
+            FormulaConnective::Implies => {
+                PresburgerPred::Or(Box::new(PresburgerPred::Not(Box::new(left))), Box::new(right))
+            },
         },
-        GuardFormula::Not(inner) => PresburgerPred::Not(Box::new(to_presburger(inner)?)),
-        GuardFormula::Implies(a, b) => PresburgerPred::Or(
-            Box::new(PresburgerPred::Not(Box::new(to_presburger(a)?))),
-            Box::new(to_presburger(b)?),
-        ),
-        _ => return None,
-    })
+    )
 }
 
 /// Fold an all-`Bool` formula into a single [`BooleanTest`].
 fn to_boolean_test(formula: &GuardFormula) -> Option<BooleanTest> {
-    Some(match formula {
-        GuardFormula::True => BooleanTest::True,
-        GuardFormula::False => BooleanTest::False,
-        GuardFormula::Prop(t) => t.clone(),
-        GuardFormula::And(a, b) => {
-            BooleanTest::And(Box::new(to_boolean_test(a)?), Box::new(to_boolean_test(b)?))
+    try_fold_formula(
+        formula,
+        |node| match node {
+            GuardFormula::True => Some(BooleanTest::True),
+            GuardFormula::False => Some(BooleanTest::False),
+            GuardFormula::Prop(test) => Some(test.clone()),
+            _ => None,
         },
-        GuardFormula::Or(a, b) => {
-            BooleanTest::Or(Box::new(to_boolean_test(a)?), Box::new(to_boolean_test(b)?))
+        |inner| BooleanTest::Not(Box::new(inner)),
+        |kind, left, right| match kind {
+            FormulaConnective::And => BooleanTest::And(Box::new(left), Box::new(right)),
+            FormulaConnective::Or => BooleanTest::Or(Box::new(left), Box::new(right)),
+            FormulaConnective::Implies => {
+                BooleanTest::Or(Box::new(BooleanTest::Not(Box::new(left))), Box::new(right))
+            },
         },
-        GuardFormula::Not(inner) => BooleanTest::Not(Box::new(to_boolean_test(inner)?)),
-        GuardFormula::Implies(a, b) => BooleanTest::Or(
-            Box::new(BooleanTest::Not(Box::new(to_boolean_test(a)?))),
-            Box::new(to_boolean_test(b)?),
-        ),
-        _ => return None,
-    })
+    )
 }
 
 /// Fold a single-variable scalar formula into one [`AnyPred`].
 fn to_any_pred(formula: &GuardFormula, var: usize) -> Option<AnyPred> {
-    Some(match formula {
-        GuardFormula::True => AnyPred::True,
-        GuardFormula::False => AnyPred::False,
-        GuardFormula::Scalar { var: v, pred } if *v == var => pred.clone(),
-        GuardFormula::And(a, b) => {
-            AnyPred::And(Box::new(to_any_pred(a, var)?), Box::new(to_any_pred(b, var)?))
+    try_fold_formula(
+        formula,
+        |node| match node {
+            GuardFormula::True => Some(AnyPred::True),
+            GuardFormula::False => Some(AnyPred::False),
+            GuardFormula::Scalar { var: node_var, pred } if *node_var == var => Some(pred.clone()),
+            _ => None,
         },
-        GuardFormula::Or(a, b) => {
-            AnyPred::Or(Box::new(to_any_pred(a, var)?), Box::new(to_any_pred(b, var)?))
+        |inner| AnyPred::Not(Box::new(inner)),
+        |kind, left, right| match kind {
+            FormulaConnective::And => AnyPred::And(Box::new(left), Box::new(right)),
+            FormulaConnective::Or => AnyPred::Or(Box::new(left), Box::new(right)),
+            FormulaConnective::Implies => {
+                AnyPred::Or(Box::new(AnyPred::Not(Box::new(left))), Box::new(right))
+            },
         },
-        GuardFormula::Not(inner) => AnyPred::Not(Box::new(to_any_pred(inner, var)?)),
-        GuardFormula::Implies(a, b) => AnyPred::Or(
-            Box::new(AnyPred::Not(Box::new(to_any_pred(a, var)?))),
-            Box::new(to_any_pred(b, var)?),
-        ),
-        _ => return None,
-    })
+    )
+}
+
+#[derive(Clone, Copy)]
+enum FormulaConnective {
+    And,
+    Or,
+    Implies,
+}
+
+/// Shared post-order PDA for the three theory projections. A failed leaf is carried as `None`
+/// through its enclosing connective, matching the former recursive `?` propagation.
+fn try_fold_formula<T, Leaf, Negate, Combine>(
+    formula: &GuardFormula,
+    mut leaf: Leaf,
+    mut negate: Negate,
+    mut combine: Combine,
+) -> Option<T>
+where
+    Leaf: FnMut(&GuardFormula) -> Option<T>,
+    Negate: FnMut(T) -> T,
+    Combine: FnMut(FormulaConnective, T, T) -> T,
+{
+    enum Task<'formula> {
+        Visit(&'formula GuardFormula),
+        Not,
+        Binary(FormulaConnective),
+    }
+
+    let mut tasks = vec![Task::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(GuardFormula::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(GuardFormula::And(left, right)) => {
+                tasks.push(Task::Binary(FormulaConnective::And));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(GuardFormula::Or(left, right)) => {
+                tasks.push(Task::Binary(FormulaConnective::Or));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(GuardFormula::Implies(left, right)) => {
+                tasks.push(Task::Binary(FormulaConnective::Implies));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(node) => values.push(leaf(node)),
+            Task::Not => {
+                let inner = values.pop().expect("formula projection PDA lost negand");
+                values.push(inner.map(&mut negate));
+            },
+            Task::Binary(kind) => {
+                let right = values
+                    .pop()
+                    .expect("formula projection PDA lost binary RHS");
+                let left = values
+                    .pop()
+                    .expect("formula projection PDA lost binary LHS");
+                values.push(match (left, right) {
+                    (Some(left), Some(right)) => Some(combine(kind, left, right)),
+                    _ => None,
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("formula projection PDA produced no value")
 }
 
 /// Satisfiability of a single-variable [`AnyPred`], dispatched to the leaf sort's algebra.
@@ -1340,51 +1469,152 @@ fn scalar_satisfiable(pred: &AnyPred, config: SubstrateConfig) -> Sat3 {
 
 /// The single leaf sort of an `AnyPred` whose leaves are all of one sort, if there is one.
 fn leaf_sort_of(pred: &AnyPred) -> Option<Sort> {
-    match pred {
-        AnyPred::True | AnyPred::False => None,
-        AnyPred::And(a, b) | AnyPred::Or(a, b) => match (leaf_sort_of(a), leaf_sort_of(b)) {
-            (Some(x), Some(y)) if x == y => Some(x),
-            (Some(x), None) => Some(x),
-            (None, Some(y)) => Some(y),
-            _ => None,
-        },
-        AnyPred::Not(inner) => leaf_sort_of(inner),
-        other => other.leaf_sort(),
+    enum Task<'pred> {
+        Visit(&'pred AnyPred),
+        Not,
+        Binary,
     }
+
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(AnyPred::And(left, right)) | Task::Visit(AnyPred::Or(left, right)) => {
+                tasks.push(Task::Binary);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(AnyPred::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(AnyPred::True | AnyPred::False) => values.push(None),
+            Task::Visit(other) => values.push(other.leaf_sort()),
+            Task::Not => {
+                let inner = values.pop().expect("leaf-sort PDA lost negand");
+                values.push(inner);
+            },
+            Task::Binary => {
+                let right = values.pop().expect("leaf-sort PDA lost binary RHS");
+                let left = values.pop().expect("leaf-sort PDA lost binary LHS");
+                values.push(match (left, right) {
+                    (Some(left), Some(right)) if left == right => Some(left),
+                    (Some(left), None) => Some(left),
+                    (None, Some(right)) => Some(right),
+                    _ => None,
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("leaf-sort PDA produced no value")
 }
 
 /// Project a single-sort `AnyPred` down to a `StrPred`, preserving boolean structure.
 fn project_str(pred: &AnyPred) -> Option<StrPred> {
-    Some(match pred {
-        AnyPred::True => StrPred::any(),
-        AnyPred::False => StrPred::Empty,
-        AnyPred::Str(p) => p.clone(),
-        AnyPred::And(a, b) => StrPred::Inter(Box::new(project_str(a)?), Box::new(project_str(b)?)),
-        AnyPred::Or(a, b) => StrPred::Alt(Box::new(project_str(a)?), Box::new(project_str(b)?)),
-        AnyPred::Not(inner) => StrPred::Compl(Box::new(project_str(inner)?)),
-        _ => return None,
-    })
+    try_fold_any_pred(
+        pred,
+        |node| match node {
+            AnyPred::True => Some(StrPred::any()),
+            AnyPred::False => Some(StrPred::Empty),
+            AnyPred::Str(pred) => Some(pred.clone()),
+            _ => None,
+        },
+        |inner| StrPred::Compl(Box::new(inner)),
+        |kind, left, right| match kind {
+            AnyConnective::And => StrPred::Inter(Box::new(left), Box::new(right)),
+            AnyConnective::Or => StrPred::Alt(Box::new(left), Box::new(right)),
+        },
+    )
 }
 
 /// Project a single-sort `AnyPred` down to an `IntervalPred`, preserving boolean structure.
 fn project_interval(pred: &AnyPred) -> Option<IntervalPred> {
-    Some(match pred {
-        AnyPred::True => IntervalPred::True,
-        AnyPred::False => IntervalPred::False,
-        AnyPred::Int(p) => p.clone(),
-        // `IntervalPred` has no ∧/∨ constructor; the algebra normalizes unions, so a
-        // conjunction/disjunction is expressed through the algebra rather than the syntax.
-        AnyPred::And(a, b) => {
-            let algebra = SubstrateConfig::DEFAULT.interval_algebra();
-            algebra.and(&project_interval(a)?, &project_interval(b)?)
+    let algebra = SubstrateConfig::DEFAULT.interval_algebra();
+    try_fold_any_pred(
+        pred,
+        |node| match node {
+            AnyPred::True => Some(IntervalPred::True),
+            AnyPred::False => Some(IntervalPred::False),
+            AnyPred::Int(pred) => Some(pred.clone()),
+            _ => None,
         },
-        AnyPred::Or(a, b) => {
-            let algebra = SubstrateConfig::DEFAULT.interval_algebra();
-            algebra.or(&project_interval(a)?, &project_interval(b)?)
+        |inner| IntervalPred::Not(Box::new(inner)),
+        |kind, left, right| match kind {
+            // `IntervalPred` has no ∧/∨ constructor; the algebra normalizes unions, so the
+            // combination is expressed through the algebra rather than the syntax.
+            AnyConnective::And => algebra.and(&left, &right),
+            AnyConnective::Or => algebra.or(&left, &right),
         },
-        AnyPred::Not(inner) => IntervalPred::Not(Box::new(project_interval(inner)?)),
-        _ => return None,
-    })
+    )
+}
+
+#[derive(Clone, Copy)]
+enum AnyConnective {
+    And,
+    Or,
+}
+
+/// Shared post-order PDA for projections through the boolean shell of [`AnyPred`]. Structured
+/// predicate variants are leaves here: their own algebras own their internal traversal.
+fn try_fold_any_pred<T, Leaf, Negate, Combine>(
+    pred: &AnyPred,
+    mut leaf: Leaf,
+    mut negate: Negate,
+    mut combine: Combine,
+) -> Option<T>
+where
+    Leaf: FnMut(&AnyPred) -> Option<T>,
+    Negate: FnMut(T) -> T,
+    Combine: FnMut(AnyConnective, T, T) -> T,
+{
+    enum Task<'pred> {
+        Visit(&'pred AnyPred),
+        Not,
+        Binary(AnyConnective),
+    }
+
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(AnyPred::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(AnyPred::And(left, right)) => {
+                tasks.push(Task::Binary(AnyConnective::And));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(AnyPred::Or(left, right)) => {
+                tasks.push(Task::Binary(AnyConnective::Or));
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(node) => values.push(leaf(node)),
+            Task::Not => {
+                let inner = values.pop().expect("AnyPred projection PDA lost negand");
+                values.push(inner.map(&mut negate));
+            },
+            Task::Binary(kind) => {
+                let right = values
+                    .pop()
+                    .expect("AnyPred projection PDA lost binary RHS");
+                let left = values
+                    .pop()
+                    .expect("AnyPred projection PDA lost binary LHS");
+                values.push(match (left, right) {
+                    (Some(left), Some(right)) => Some(combine(kind, left, right)),
+                    _ => None,
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("AnyPred projection PDA produced no value")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1421,100 +1651,127 @@ pub fn ground_verdict_with<F>(
 where
     F: FnMut(GuardAtom) -> Sat3,
 {
-    match formula {
-        GuardFormula::True => Sat3::Sat,
-        GuardFormula::False => Sat3::Unsat,
-
-        GuardFormula::Linear(pred) => {
-            let mut required = Vec::new();
-            collect_presburger_vars(pred, &mut required);
-            required.sort_unstable();
-            required.dedup();
-            match assignment.int_assignment(&required) {
-                // ★ THREE-VALUED, not two. `evaluate_presburger_checked` answers `None` when the
-                // constraint's left-hand side is not representable; reading that as `false`
-                // would put a *wrong* verdict on a consensus-relevant predicate — and, under a
-                // `Not`, a wrong verdict in the FIRING direction. It is an undecided guard, so
-                // it takes the undecided path to `dont_know_policy` like every other one.
-                Some(int_assignment) => {
-                    match evaluate_presburger_checked(pred, &int_assignment, config.bit_width) {
-                        Some(decided) => Sat3::from_decidable(decided),
-                        None => Sat3::DontKnow,
-                    }
-                },
-                None => Sat3::DontKnow,
-            }
-        },
-
-        GuardFormula::Prop(test) => {
-            let mut required = Vec::new();
-            collect_test_atoms(test, &mut required);
-            required.sort();
-            required.dedup();
-            match assignment.truth_assignment(vars, &required) {
-                Some(truth) => {
-                    let algebra = KatBooleanAlgebra::from_test(test);
-                    Sat3::from_decidable(algebra.evaluate(test, &truth))
-                },
-                None => Sat3::DontKnow,
-            }
-        },
-
-        GuardFormula::Scalar { var, pred } => match (assignment.get(*var), vars.name(*var)) {
-            (Some(value), Some(name)) => {
-                let domain = value.to_any_domain(name);
-                match evaluate_scalar(pred, &domain, config) {
-                    Some(b) => Sat3::from_decidable(b),
-                    None => Sat3::DontKnow,
-                }
-            },
-            _ => Sat3::DontKnow,
-        },
-
-        GuardFormula::ScalarRel { op, left, right } => {
-            match (left.resolve(assignment), right.resolve(assignment)) {
-                (Some(a), Some(b)) => match op.decide(a, b) {
-                    Some(v) => Sat3::from_decidable(v),
-                    None => Sat3::DontKnow,
-                },
-                _ => Sat3::DontKnow,
-            }
-        },
-
-        // `a and b`: left-strict, then short-circuit on a decided-FALSE left.
-        GuardFormula::And(a, b) => {
-            match ground_verdict_with(a, assignment, vars, config, resolve_atom) {
-                Sat3::DontKnow => Sat3::DontKnow,
-                Sat3::Unsat => Sat3::Unsat,
-                Sat3::Sat => ground_verdict_with(b, assignment, vars, config, resolve_atom),
-            }
-        },
-
-        // `a or b`: dual — short-circuit on a decided-TRUE left.
-        GuardFormula::Or(a, b) => {
-            match ground_verdict_with(a, assignment, vars, config, resolve_atom) {
-                Sat3::DontKnow => Sat3::DontKnow,
-                Sat3::Sat => Sat3::Sat,
-                Sat3::Unsat => ground_verdict_with(b, assignment, vars, config, resolve_atom),
-            }
-        },
-
-        // `a implies b ≡ (not a) or b`, i.e. the `Or` discipline on the negated antecedent:
-        // a decided-FALSE antecedent short-circuits to true (vacuous truth).
-        GuardFormula::Implies(a, b) => {
-            match ground_verdict_with(a, assignment, vars, config, resolve_atom) {
-                Sat3::DontKnow => Sat3::DontKnow,
-                Sat3::Unsat => Sat3::Sat,
-                Sat3::Sat => ground_verdict_with(b, assignment, vars, config, resolve_atom),
-            }
-        },
-
-        GuardFormula::Not(inner) => {
-            ground_verdict_with(inner, assignment, vars, config, resolve_atom).not()
-        },
-
-        GuardFormula::Atom(atom) => resolve_atom(*atom),
+    enum Task<'formula> {
+        Visit(&'formula GuardFormula),
+        Not,
+        AndRight(&'formula GuardFormula),
+        OrRight(&'formula GuardFormula),
+        ImpliesRight(&'formula GuardFormula),
     }
+
+    let mut tasks = vec![Task::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(GuardFormula::True) => values.push(Sat3::Sat),
+            Task::Visit(GuardFormula::False) => values.push(Sat3::Unsat),
+
+            Task::Visit(GuardFormula::Linear(pred)) => {
+                let mut required = Vec::new();
+                collect_presburger_vars(pred, &mut required);
+                required.sort_unstable();
+                required.dedup();
+                let verdict = match assignment.int_assignment(&required) {
+                    // ★ THREE-VALUED, not two. An unrepresentable left-hand side is undecided,
+                    // never silently false (which would invert into a wrong firing verdict).
+                    Some(int_assignment) => {
+                        evaluate_presburger_checked(pred, &int_assignment, config.bit_width)
+                            .map_or(Sat3::DontKnow, Sat3::from_decidable)
+                    },
+                    None => Sat3::DontKnow,
+                };
+                values.push(verdict);
+            },
+
+            Task::Visit(GuardFormula::Prop(test)) => {
+                let mut required = Vec::new();
+                collect_test_atoms(test, &mut required);
+                required.sort();
+                required.dedup();
+                let verdict = match assignment.truth_assignment(vars, &required) {
+                    Some(truth) => {
+                        let algebra = KatBooleanAlgebra::from_test(test);
+                        Sat3::from_decidable(algebra.evaluate(test, &truth))
+                    },
+                    None => Sat3::DontKnow,
+                };
+                values.push(verdict);
+            },
+
+            Task::Visit(GuardFormula::Scalar { var, pred }) => {
+                let verdict = match (assignment.get(*var), vars.name(*var)) {
+                    (Some(value), Some(name)) => {
+                        let domain = value.to_any_domain(name);
+                        evaluate_scalar(pred, &domain, config)
+                            .map_or(Sat3::DontKnow, Sat3::from_decidable)
+                    },
+                    _ => Sat3::DontKnow,
+                };
+                values.push(verdict);
+            },
+
+            Task::Visit(GuardFormula::ScalarRel { op, left, right }) => {
+                let verdict = match (left.resolve(assignment), right.resolve(assignment)) {
+                    (Some(left), Some(right)) => op
+                        .decide(left, right)
+                        .map_or(Sat3::DontKnow, Sat3::from_decidable),
+                    _ => Sat3::DontKnow,
+                };
+                values.push(verdict);
+            },
+
+            // Each continuation consumes the left verdict before deciding whether the right
+            // subtree is scheduled. This preserves both short-circuiting and resolver calls.
+            Task::Visit(GuardFormula::And(left, right)) => {
+                tasks.push(Task::AndRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(GuardFormula::Or(left, right)) => {
+                tasks.push(Task::OrRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(GuardFormula::Implies(left, right)) => {
+                tasks.push(Task::ImpliesRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(GuardFormula::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(GuardFormula::Atom(atom)) => values.push(resolve_atom(*atom)),
+
+            Task::Not => {
+                let inner = values.pop().expect("ground-verdict PDA lost negand");
+                values.push(inner.not());
+            },
+            Task::AndRight(right) => match values
+                .pop()
+                .expect("ground-verdict PDA lost conjunction LHS")
+            {
+                Sat3::Sat => tasks.push(Task::Visit(right)),
+                Sat3::Unsat => values.push(Sat3::Unsat),
+                Sat3::DontKnow => values.push(Sat3::DontKnow),
+            },
+            Task::OrRight(right) => match values
+                .pop()
+                .expect("ground-verdict PDA lost disjunction LHS")
+            {
+                Sat3::Unsat => tasks.push(Task::Visit(right)),
+                Sat3::Sat => values.push(Sat3::Sat),
+                Sat3::DontKnow => values.push(Sat3::DontKnow),
+            },
+            Task::ImpliesRight(right) => match values
+                .pop()
+                .expect("ground-verdict PDA lost implication LHS")
+            {
+                Sat3::Sat => tasks.push(Task::Visit(right)),
+                Sat3::Unsat => values.push(Sat3::Sat),
+                Sat3::DontKnow => values.push(Sat3::DontKnow),
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("ground-verdict PDA produced no value")
 }
 
 /// [`ground_verdict_with`] with no atom resolver: every opaque atom is undecided.
@@ -1548,19 +1805,20 @@ fn evaluate_scalar(pred: &AnyPred, elem: &AnyDomain, config: SubstrateConfig) ->
 }
 
 fn project_bool(pred: &AnyPred) -> Option<BooleanTest> {
-    Some(match pred {
-        AnyPred::True => BooleanTest::True,
-        AnyPred::False => BooleanTest::False,
-        AnyPred::Bool(t) => t.clone(),
-        AnyPred::And(a, b) => {
-            BooleanTest::And(Box::new(project_bool(a)?), Box::new(project_bool(b)?))
+    try_fold_any_pred(
+        pred,
+        |node| match node {
+            AnyPred::True => Some(BooleanTest::True),
+            AnyPred::False => Some(BooleanTest::False),
+            AnyPred::Bool(test) => Some(test.clone()),
+            _ => None,
         },
-        AnyPred::Or(a, b) => {
-            BooleanTest::Or(Box::new(project_bool(a)?), Box::new(project_bool(b)?))
+        |inner| BooleanTest::Not(Box::new(inner)),
+        |kind, left, right| match kind {
+            AnyConnective::And => BooleanTest::And(Box::new(left), Box::new(right)),
+            AnyConnective::Or => BooleanTest::Or(Box::new(left), Box::new(right)),
         },
-        AnyPred::Not(inner) => BooleanTest::Not(Box::new(project_bool(inner)?)),
-        _ => return None,
-    })
+    )
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
