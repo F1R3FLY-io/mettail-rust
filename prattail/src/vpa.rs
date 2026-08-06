@@ -1333,35 +1333,23 @@ pub fn build_alphabet_from_syntax(
 
     // Recursively collect all terminals from a syntax item tree.
     fn collect_terminals(item: &crate::SyntaxItemSpec, out: &mut Vec<String>) {
-        match item {
-            crate::SyntaxItemSpec::Terminal(t) => {
-                out.push(t.clone());
-            },
-            crate::SyntaxItemSpec::Collection { separator, .. } => {
-                out.push(separator.clone());
-            },
-            crate::SyntaxItemSpec::Sep { body, separator, .. } => {
-                out.push(separator.clone());
-                collect_terminals(body, out);
-            },
-            crate::SyntaxItemSpec::Map { body_items } => {
-                for sub in body_items {
-                    collect_terminals(sub, out);
-                }
-            },
-            crate::SyntaxItemSpec::Zip { body, .. } => {
-                collect_terminals(body, out);
-            },
-            crate::SyntaxItemSpec::Optional { inner } => {
-                for sub in inner {
-                    collect_terminals(sub, out);
-                }
-            },
-            crate::SyntaxItemSpec::BinderCollection { separator, .. } => {
-                out.push(separator.clone());
-            },
-            // NonTerminal, IdentCapture, Binder — no terminals to extract.
-            _ => {},
+        for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+            match item {
+                crate::SyntaxItemSpec::Terminal(t) => {
+                    out.push(t.clone());
+                },
+                crate::SyntaxItemSpec::Collection { separator, .. } => {
+                    out.push(separator.clone());
+                },
+                crate::SyntaxItemSpec::Sep { separator, .. } => {
+                    out.push(separator.clone());
+                },
+                crate::SyntaxItemSpec::BinderCollection { separator, .. } => {
+                    out.push(separator.clone());
+                },
+                // NonTerminal, IdentCapture, Binder — no terminals to extract.
+                _ => {},
+            }
         }
     }
 

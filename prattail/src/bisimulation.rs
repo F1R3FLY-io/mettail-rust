@@ -367,19 +367,11 @@ pub fn analyze_from_bundle(
 /// the same notion of "structural child" the rest of the substrate uses.
 fn collect_nonterminal_targets<'a>(items: &'a [crate::SyntaxItemSpec], out: &mut Vec<&'a str>) {
     use crate::SyntaxItemSpec as Item;
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             Item::NonTerminal { category, .. } => out.push(category.as_str()),
             Item::Binder { category, .. } => out.push(category.as_str()),
             Item::Collection { element_category, .. } => out.push(element_category.as_str()),
-            Item::Optional { inner } => collect_nonterminal_targets(inner, out),
-            Item::Sep { body, .. } => {
-                collect_nonterminal_targets(std::slice::from_ref(body.as_ref()), out)
-            },
-            Item::Map { body_items } => collect_nonterminal_targets(body_items, out),
-            Item::Zip { body, .. } => {
-                collect_nonterminal_targets(std::slice::from_ref(body.as_ref()), out)
-            },
             // Terminal, IdentCapture, BinderCollection — no nonterminal target.
             _ => {},
         }

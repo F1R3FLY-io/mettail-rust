@@ -850,53 +850,57 @@ fn format_literal_rule(rule: &RuleSpec) -> String {
 
 /// Format a single syntax item as EBNF.
 fn format_syntax_item(item: &SyntaxItemSpec) -> String {
-    match item {
-        SyntaxItemSpec::Terminal(t) => format!("\"{}\"", t),
-        SyntaxItemSpec::NonTerminal { category, param_name: _ } => category.clone(),
-        SyntaxItemSpec::IdentCapture { param_name: _ } => "<ident>".to_string(),
-        SyntaxItemSpec::TokenKindCapture { kind_name, .. } => format!("<{}>", kind_name),
-        SyntaxItemSpec::Binder { param_name, category, .. } => {
-            format!("^{}:{}", param_name, category)
-        },
-        SyntaxItemSpec::Collection {
-            param_name: _,
-            element_category,
-            separator,
-            kind,
-            key_val_separator: _,
-        } => {
-            let kind_str = match kind {
-                CollectionKind::HashBag => "HashBag",
-                CollectionKind::HashSet => "HashSet",
-                CollectionKind::Vec => "Vec",
-                CollectionKind::HashMap => "HashMap",
-                CollectionKind::PathMap => "PathMap",
-            };
-            format!("{{ {} / \"{}\" }}  (* {} *)", element_category, separator, kind_str)
-        },
-        SyntaxItemSpec::Sep { body, separator, .. } => {
-            let body_str = format_syntax_item(body.as_ref());
-            format!("{{ {} / \"{}\" }}", body_str, separator)
-        },
-        SyntaxItemSpec::Map { body_items } => {
-            let items: Vec<String> = body_items.iter().map(format_syntax_item).collect();
-            items.join(" ")
-        },
-        SyntaxItemSpec::Zip { body, .. } => {
-            // Zip is transparent — delegate to body
-            format_syntax_item(body.as_ref())
-        },
-        SyntaxItemSpec::BinderCollection { param_name, separator } => {
-            format!("{{ ^{} / \"{}\" }}", param_name, separator)
-        },
-        SyntaxItemSpec::Optional { inner } => {
-            let items: Vec<String> = inner.iter().map(format_syntax_item).collect();
-            format!("[ {} ]", items.join(" "))
-        },
-        SyntaxItemSpec::GuardExpression { param_name } => {
-            format!("<guard:{}>", param_name)
-        },
+    let mut values = Vec::new();
+    for node in crate::syntax_item::postorder(std::slice::from_ref(item)) {
+        let rendered = match node {
+            SyntaxItemSpec::Terminal(text) => format!("\"{text}\""),
+            SyntaxItemSpec::NonTerminal { category, .. } => category.clone(),
+            SyntaxItemSpec::IdentCapture { .. } => "<ident>".to_string(),
+            SyntaxItemSpec::TokenKindCapture { kind_name, .. } => format!("<{kind_name}>"),
+            SyntaxItemSpec::Binder { param_name, category, .. } => {
+                format!("^{param_name}:{category}")
+            },
+            SyntaxItemSpec::Collection { element_category, separator, kind, .. } => {
+                let kind_name = match kind {
+                    CollectionKind::HashBag => "HashBag",
+                    CollectionKind::HashSet => "HashSet",
+                    CollectionKind::Vec => "Vec",
+                    CollectionKind::HashMap => "HashMap",
+                    CollectionKind::PathMap => "PathMap",
+                };
+                format!("{{ {element_category} / \"{separator}\" }}  (* {kind_name} *)")
+            },
+            SyntaxItemSpec::Sep { separator, .. } => {
+                let body = values.pop().expect("EBNF formatting PDA lost its Sep body");
+                format!("{{ {body} / \"{separator}\" }}")
+            },
+            SyntaxItemSpec::Map { body_items } => {
+                let first = values
+                    .len()
+                    .checked_sub(body_items.len())
+                    .expect("EBNF formatting PDA lost Map children");
+                values.split_off(first).join(" ")
+            },
+            SyntaxItemSpec::Zip { .. } => {
+                // Zip is transparent — its body has already been rendered.
+                values.pop().expect("EBNF formatting PDA lost its Zip body")
+            },
+            SyntaxItemSpec::BinderCollection { param_name, separator } => {
+                format!("{{ ^{param_name} / \"{separator}\" }}")
+            },
+            SyntaxItemSpec::Optional { inner } => {
+                let first = values
+                    .len()
+                    .checked_sub(inner.len())
+                    .expect("EBNF formatting PDA lost Optional children");
+                format!("[ {} ]", values.split_off(first).join(" "))
+            },
+            SyntaxItemSpec::GuardExpression { param_name } => format!("<guard:{param_name}>"),
+        };
+        values.push(rendered);
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("EBNF formatting PDA produced no value")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1651,72 +1655,7 @@ mod tests {
     }
 
     fn convert_syntax_item(item: &SyntaxItemSpec) -> RDSyntaxItem {
-        match item {
-            SyntaxItemSpec::Terminal(t) => RDSyntaxItem::Terminal(t.clone()),
-            SyntaxItemSpec::NonTerminal { category, param_name } => RDSyntaxItem::NonTerminal {
-                category: category.clone(),
-                param_name: param_name.clone(),
-            },
-            SyntaxItemSpec::IdentCapture { param_name } => {
-                RDSyntaxItem::IdentCapture { param_name: param_name.clone() }
-            },
-            SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
-                RDSyntaxItem::TokenKindCapture {
-                    param_name: param_name.clone(),
-                    kind_name: kind_name.clone(),
-                }
-            },
-            SyntaxItemSpec::Binder { param_name, category, .. } => RDSyntaxItem::Binder {
-                param_name: param_name.clone(),
-                binder_category: category.clone(),
-            },
-            SyntaxItemSpec::Collection {
-                param_name,
-                element_category,
-                separator,
-                kind,
-                key_val_separator: _,
-            } => RDSyntaxItem::Collection {
-                param_name: param_name.clone(),
-                element_category: element_category.clone(),
-                separator: separator.clone(),
-                key_val_separator: None,
-                kind: *kind,
-            },
-            SyntaxItemSpec::Sep { body, separator, kind } => RDSyntaxItem::Sep {
-                body: Box::new(convert_syntax_item(body)),
-                separator: separator.clone(),
-                kind: *kind,
-            },
-            SyntaxItemSpec::Map { body_items } => RDSyntaxItem::Map {
-                body_items: body_items.iter().map(convert_syntax_item).collect(),
-            },
-            SyntaxItemSpec::Zip {
-                left_name,
-                right_name,
-                left_category,
-                right_category,
-                body,
-            } => RDSyntaxItem::Zip {
-                left_name: left_name.clone(),
-                right_name: right_name.clone(),
-                left_category: left_category.clone(),
-                right_category: right_category.clone(),
-                body: Box::new(convert_syntax_item(body)),
-            },
-            SyntaxItemSpec::BinderCollection { param_name, separator } => {
-                RDSyntaxItem::BinderCollection {
-                    param_name: param_name.clone(),
-                    separator: separator.clone(),
-                }
-            },
-            SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
-                inner: inner.iter().map(convert_syntax_item).collect(),
-            },
-            SyntaxItemSpec::GuardExpression { param_name } => {
-                RDSyntaxItem::GuardExpression { param_name: param_name.clone() }
-            },
-        }
+        item.to_recursive_descent_item()
     }
 
     // ── Snapshot test ──────────────────────────────────────────────────────

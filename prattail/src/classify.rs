@@ -85,17 +85,9 @@ pub fn classify_rule(
 /// When `check_multi` is true, looks for `Binder { is_multi: true }`.
 /// When false, looks for `Binder { is_multi: false }`.
 fn has_binder_recursive(syntax: &[SyntaxItemSpec], check_multi: bool) -> bool {
-    syntax.iter().any(|item| match item {
+    crate::syntax_item::preorder(syntax).any(|item| match item {
         SyntaxItemSpec::Binder { is_multi, .. } => *is_multi == check_multi,
         SyntaxItemSpec::BinderCollection { .. } => check_multi,
-        SyntaxItemSpec::Sep { body, .. } => {
-            has_binder_recursive(std::slice::from_ref(body.as_ref()), check_multi)
-        },
-        SyntaxItemSpec::Map { body_items } => has_binder_recursive(body_items, check_multi),
-        SyntaxItemSpec::Zip { body, .. } => {
-            has_binder_recursive(std::slice::from_ref(body.as_ref()), check_multi)
-        },
-        SyntaxItemSpec::Optional { inner } => has_binder_recursive(inner, check_multi),
         _ => false,
     })
 }

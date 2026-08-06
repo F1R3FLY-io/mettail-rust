@@ -96,22 +96,12 @@ pub struct RankedAlphabet {
 /// recognizer — the agreement is only meaningful if both sides derive the
 /// alphabet identically.
 pub fn collect_structural_child_categories(items: &[SyntaxItemSpec], out: &mut Vec<String>) {
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             SyntaxItemSpec::NonTerminal { category, .. } => out.push(category.clone()),
             SyntaxItemSpec::Binder { category, .. } => out.push(category.clone()),
             SyntaxItemSpec::Collection { element_category, .. } => {
                 out.push(element_category.clone())
-            },
-            SyntaxItemSpec::Optional { inner } => collect_structural_child_categories(inner, out),
-            SyntaxItemSpec::Sep { body, .. } => {
-                collect_structural_child_categories(std::slice::from_ref(body.as_ref()), out)
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                collect_structural_child_categories(body_items, out)
-            },
-            SyntaxItemSpec::Zip { body, .. } => {
-                collect_structural_child_categories(std::slice::from_ref(body.as_ref()), out)
             },
             // Terminal, IdentCapture, BinderCollection — no structural child.
             _ => {},

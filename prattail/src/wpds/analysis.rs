@@ -512,20 +512,15 @@ fn find_missing_callers(
 
 /// Check if a syntax item references a given category.
 fn references_category(item: &SyntaxItemSpec, target: &str) -> bool {
-    match item {
+    crate::syntax_item::preorder(std::slice::from_ref(item)).any(|item| match item {
         SyntaxItemSpec::NonTerminal { category, .. } => category == target,
         SyntaxItemSpec::Binder { category, .. } => category == target,
         SyntaxItemSpec::Collection { element_category, .. } => element_category == target,
-        SyntaxItemSpec::Sep { body, .. } => references_category(body, target),
-        SyntaxItemSpec::Map { body_items } => {
-            body_items.iter().any(|i| references_category(i, target))
+        SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+            left_category == target || right_category == target
         },
-        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            left_category == target || right_category == target || references_category(body, target)
-        },
-        SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| references_category(i, target)),
         _ => false,
-    }
+    })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

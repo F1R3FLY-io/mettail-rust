@@ -489,17 +489,13 @@ fn render_hm_type(ty: &HmType) -> String {
 /// uses.
 fn collect_field_sorts(items: &[crate::SyntaxItemSpec], out: &mut Vec<HmType>) {
     use crate::SyntaxItemSpec as Item;
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             Item::NonTerminal { category, .. } => out.push(HmType::Mono(category.clone())),
             Item::Binder { category, .. } => out.push(HmType::Mono(category.clone())),
             Item::Collection { element_category, .. } => {
                 out.push(HmType::Mono(element_category.clone()))
             },
-            Item::Optional { inner } => collect_field_sorts(inner, out),
-            Item::Sep { body, .. } => collect_field_sorts(std::slice::from_ref(body.as_ref()), out),
-            Item::Map { body_items } => collect_field_sorts(body_items, out),
-            Item::Zip { body, .. } => collect_field_sorts(std::slice::from_ref(body.as_ref()), out),
             // Terminal, IdentCapture, BinderCollection — no field sort.
             _ => {},
         }

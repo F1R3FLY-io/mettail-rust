@@ -685,110 +685,115 @@ fn items_to_term(
     items: &[crate::SyntaxItemSpec],
     param_index: &mut HashMap<String, usize>,
 ) -> TermExpr {
-    if items.is_empty() {
-        return TermExpr::Const("ε".into());
+    enum Task<'item> {
+        Items(&'item [crate::SyntaxItemSpec]),
+        Item(&'item crate::SyntaxItemSpec),
+        Sequence(usize),
+        Optional,
+        Sep,
+        Map(usize),
     }
 
-    if items.len() == 1 {
-        return item_to_term(&items[0], param_index);
+    fn take_args(values: &mut Vec<TermExpr>, count: usize) -> Vec<TermExpr> {
+        let first = values
+            .len()
+            .checked_sub(count)
+            .expect("syntax-to-term PDA lost child terms");
+        values.split_off(first)
     }
 
-    let child_terms: Vec<TermExpr> = items
-        .iter()
-        .map(|it| item_to_term(it, param_index))
-        .collect();
-    TermExpr::App { head: "seq".into(), args: child_terms }
-}
-
-/// Convert a single [`SyntaxItemSpec`] to a `TermExpr`.
-fn item_to_term(
-    item: &crate::SyntaxItemSpec,
-    param_index: &mut HashMap<String, usize>,
-) -> TermExpr {
-    match item {
-        crate::SyntaxItemSpec::Terminal(tok) => TermExpr::Const(tok.clone()),
-
-        crate::SyntaxItemSpec::IdentCapture { param_name } => {
-            let next = param_index.len();
-            let idx = *param_index.entry(param_name.clone()).or_insert(next);
-            TermExpr::Var(idx)
-        },
-
-        crate::SyntaxItemSpec::TokenKindCapture { param_name, .. } => {
-            let next = param_index.len();
-            let idx = *param_index.entry(param_name.clone()).or_insert(next);
-            TermExpr::Var(idx)
-        },
-
-        crate::SyntaxItemSpec::Binder { param_name, .. } => {
-            let next = param_index.len();
-            let idx = *param_index.entry(param_name.clone()).or_insert(next);
-            TermExpr::Var(idx)
-        },
-
-        crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-            TermExpr::App { head: category.clone(), args: vec![] }
-        },
-
-        crate::SyntaxItemSpec::Optional { inner } => {
-            let inner_term = items_to_term(inner, param_index);
-            TermExpr::App {
-                head: "optional".into(),
-                args: vec![inner_term],
-            }
-        },
-
-        crate::SyntaxItemSpec::Collection { element_category, .. } => TermExpr::App {
-            head: "collection".into(),
-            args: vec![TermExpr::App {
-                head: element_category.clone(),
-                args: vec![],
-            }],
-        },
-
-        // For Sep/Map/Zip/BinderCollection we produce an opaque App so they
-        // participate in structural unification without special-casing.
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            let body_term = item_to_term(body, param_index);
-            TermExpr::App {
-                head: "sep".into(),
-                args: vec![body_term],
-            }
-        },
-
-        crate::SyntaxItemSpec::Map { body_items } => {
-            let child_terms: Vec<TermExpr> = body_items
-                .iter()
-                .map(|it| item_to_term(it, param_index))
-                .collect();
-            TermExpr::App { head: "map".into(), args: child_terms }
-        },
-
-        crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => TermExpr::App {
-            head: "zip".into(),
-            args: vec![
-                TermExpr::App {
-                    head: left_category.clone(),
+    let mut tasks = vec![Task::Items(items)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Items([]) => values.push(TermExpr::Const("ε".into())),
+            Task::Items([item]) => tasks.push(Task::Item(item)),
+            Task::Items(sequence) => {
+                tasks.push(Task::Sequence(sequence.len()));
+                tasks.extend(sequence.iter().rev().map(Task::Item));
+            },
+            Task::Item(crate::SyntaxItemSpec::Terminal(token)) => {
+                values.push(TermExpr::Const(token.clone()));
+            },
+            Task::Item(
+                crate::SyntaxItemSpec::IdentCapture { param_name }
+                | crate::SyntaxItemSpec::TokenKindCapture { param_name, .. }
+                | crate::SyntaxItemSpec::Binder { param_name, .. }
+                | crate::SyntaxItemSpec::GuardExpression { param_name },
+            ) => {
+                let next = param_index.len();
+                let index = *param_index.entry(param_name.clone()).or_insert(next);
+                values.push(TermExpr::Var(index));
+            },
+            Task::Item(crate::SyntaxItemSpec::NonTerminal { category, .. }) => {
+                values.push(TermExpr::App { head: category.clone(), args: vec![] });
+            },
+            Task::Item(crate::SyntaxItemSpec::Optional { inner }) => {
+                tasks.push(Task::Optional);
+                tasks.push(Task::Items(inner));
+            },
+            Task::Item(crate::SyntaxItemSpec::Collection { element_category, .. }) => {
+                values.push(TermExpr::App {
+                    head: "collection".into(),
+                    args: vec![TermExpr::App {
+                        head: element_category.clone(),
+                        args: vec![],
+                    }],
+                });
+            },
+            Task::Item(crate::SyntaxItemSpec::Sep { body, .. }) => {
+                tasks.push(Task::Sep);
+                tasks.push(Task::Item(body));
+            },
+            Task::Item(crate::SyntaxItemSpec::Map { body_items }) => {
+                tasks.push(Task::Map(body_items.len()));
+                tasks.extend(body_items.iter().rev().map(Task::Item));
+            },
+            // Zip remains intentionally opaque, matching the prior model: its
+            // body is not part of structural-unification term generation.
+            Task::Item(crate::SyntaxItemSpec::Zip { left_category, right_category, .. }) => values
+                .push(TermExpr::App {
+                    head: "zip".into(),
+                    args: vec![
+                        TermExpr::App {
+                            head: left_category.clone(),
+                            args: vec![],
+                        },
+                        TermExpr::App {
+                            head: right_category.clone(),
+                            args: vec![],
+                        },
+                    ],
+                }),
+            Task::Item(crate::SyntaxItemSpec::BinderCollection { .. }) => {
+                values.push(TermExpr::App {
+                    head: "binder_collection".into(),
                     args: vec![],
-                },
-                TermExpr::App {
-                    head: right_category.clone(),
-                    args: vec![],
-                },
-            ],
-        },
-
-        crate::SyntaxItemSpec::BinderCollection { .. } => TermExpr::App {
-            head: "binder_collection".into(),
-            args: vec![],
-        },
-
-        crate::SyntaxItemSpec::GuardExpression { param_name } => {
-            let next = param_index.len();
-            let idx = *param_index.entry(param_name.clone()).or_insert(next);
-            TermExpr::Var(idx)
-        },
+                });
+            },
+            Task::Sequence(count) => {
+                let args = take_args(&mut values, count);
+                values.push(TermExpr::App { head: "seq".into(), args });
+            },
+            Task::Optional => {
+                let inner = values.pop().expect("syntax-to-term PDA lost Optional body");
+                values.push(TermExpr::App {
+                    head: "optional".into(),
+                    args: vec![inner],
+                });
+            },
+            Task::Sep => {
+                let body = values.pop().expect("syntax-to-term PDA lost Sep body");
+                values.push(TermExpr::App { head: "sep".into(), args: vec![body] });
+            },
+            Task::Map(count) => {
+                let args = take_args(&mut values, count);
+                values.push(TermExpr::App { head: "map".into(), args });
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("syntax-to-term PDA produced no value")
 }
 
 /// Check whether a term is *tautological* — i.e., it consists only of

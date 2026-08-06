@@ -1080,57 +1080,45 @@ fn collect_nonterminal_refs(
     adj: &mut [HashSet<usize>],
     self_recursive: &mut HashSet<usize>,
 ) {
-    match item {
-        crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-            if let Some(&dst) = cat_to_idx.get(category) {
-                adj[src].insert(dst);
-                if src == dst {
-                    self_recursive.insert(src);
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Binder { category, .. } => {
-            if let Some(&dst) = cat_to_idx.get(category) {
-                adj[src].insert(dst);
-                if src == dst {
-                    self_recursive.insert(src);
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Collection { element_category, .. } => {
-            if let Some(&dst) = cat_to_idx.get(element_category) {
-                adj[src].insert(dst);
-                if src == dst {
-                    self_recursive.insert(src);
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            collect_nonterminal_refs(body, cat_to_idx, src, adj, self_recursive);
-        },
-        crate::SyntaxItemSpec::Map { body_items } => {
-            for sub in body_items {
-                collect_nonterminal_refs(sub, cat_to_idx, src, adj, self_recursive);
-            }
-        },
-        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            for ref_cat in [left_category, right_category] {
-                if let Some(&dst) = cat_to_idx.get(ref_cat) {
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+                if let Some(&dst) = cat_to_idx.get(category) {
                     adj[src].insert(dst);
                     if src == dst {
                         self_recursive.insert(src);
                     }
                 }
-            }
-            collect_nonterminal_refs(body, cat_to_idx, src, adj, self_recursive);
-        },
-        crate::SyntaxItemSpec::Optional { inner } => {
-            for sub in inner {
-                collect_nonterminal_refs(sub, cat_to_idx, src, adj, self_recursive);
-            }
-        },
-        // Terminal, IdentCapture, BinderCollection -- no category refs.
-        _ => {},
+            },
+            crate::SyntaxItemSpec::Binder { category, .. } => {
+                if let Some(&dst) = cat_to_idx.get(category) {
+                    adj[src].insert(dst);
+                    if src == dst {
+                        self_recursive.insert(src);
+                    }
+                }
+            },
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                if let Some(&dst) = cat_to_idx.get(element_category) {
+                    adj[src].insert(dst);
+                    if src == dst {
+                        self_recursive.insert(src);
+                    }
+                }
+            },
+            crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                for ref_cat in [left_category, right_category] {
+                    if let Some(&dst) = cat_to_idx.get(ref_cat) {
+                        adj[src].insert(dst);
+                        if src == dst {
+                            self_recursive.insert(src);
+                        }
+                    }
+                }
+            },
+            // Terminal, IdentCapture, BinderCollection -- no category refs.
+            _ => {},
+        }
     }
 }
 
@@ -2114,24 +2102,17 @@ mod proptest_tests {
         rules: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     ) -> bool {
         fn item_refs_cat(item: &crate::SyntaxItemSpec, cat: &str) -> bool {
-            match item {
+            crate::syntax_item::preorder(std::slice::from_ref(item)).any(|item| match item {
                 crate::SyntaxItemSpec::NonTerminal { category, .. } => category == cat,
                 crate::SyntaxItemSpec::Binder { category, .. } => category == cat,
                 crate::SyntaxItemSpec::Collection { element_category, .. } => {
                     element_category == cat
                 },
-                crate::SyntaxItemSpec::Sep { body, .. } => item_refs_cat(body, cat),
-                crate::SyntaxItemSpec::Map { body_items } => {
-                    body_items.iter().any(|sub| item_refs_cat(sub, cat))
-                },
-                crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-                    left_category == cat || right_category == cat || item_refs_cat(body, cat)
-                },
-                crate::SyntaxItemSpec::Optional { inner } => {
-                    inner.iter().any(|sub| item_refs_cat(sub, cat))
+                crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                    left_category == cat || right_category == cat
                 },
                 _ => false,
-            }
+            })
         }
 
         rules.iter().any(|(_, rule_cat, items)| {

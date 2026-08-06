@@ -1104,56 +1104,44 @@ fn collect_category_refs(
     src: usize,
     connected_to: &mut [HashSet<usize>],
 ) {
-    match item {
-        crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-            if category != rule_cat {
-                if let Some(&dst) = cat_to_idx.get(category.as_str()) {
-                    connected_to[src].insert(dst);
-                    connected_to[dst].insert(src);
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Binder { category, .. } => {
-            if category != rule_cat {
-                if let Some(&dst) = cat_to_idx.get(category.as_str()) {
-                    connected_to[src].insert(dst);
-                    connected_to[dst].insert(src);
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Collection { element_category, .. } => {
-            if element_category != rule_cat {
-                if let Some(&dst) = cat_to_idx.get(element_category.as_str()) {
-                    connected_to[src].insert(dst);
-                    connected_to[dst].insert(src);
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            collect_category_refs(body, rule_cat, cat_to_idx, src, connected_to);
-        },
-        crate::SyntaxItemSpec::Map { body_items } => {
-            for sub in body_items {
-                collect_category_refs(sub, rule_cat, cat_to_idx, src, connected_to);
-            }
-        },
-        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            for ref_cat in [left_category.as_str(), right_category.as_str()] {
-                if ref_cat != rule_cat {
-                    if let Some(&dst) = cat_to_idx.get(ref_cat) {
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+                if category != rule_cat {
+                    if let Some(&dst) = cat_to_idx.get(category.as_str()) {
                         connected_to[src].insert(dst);
                         connected_to[dst].insert(src);
                     }
                 }
-            }
-            collect_category_refs(body, rule_cat, cat_to_idx, src, connected_to);
-        },
-        crate::SyntaxItemSpec::Optional { inner } => {
-            for sub in inner {
-                collect_category_refs(sub, rule_cat, cat_to_idx, src, connected_to);
-            }
-        },
-        _ => {},
+            },
+            crate::SyntaxItemSpec::Binder { category, .. } => {
+                if category != rule_cat {
+                    if let Some(&dst) = cat_to_idx.get(category.as_str()) {
+                        connected_to[src].insert(dst);
+                        connected_to[dst].insert(src);
+                    }
+                }
+            },
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                if element_category != rule_cat {
+                    if let Some(&dst) = cat_to_idx.get(element_category.as_str()) {
+                        connected_to[src].insert(dst);
+                        connected_to[dst].insert(src);
+                    }
+                }
+            },
+            crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                for ref_cat in [left_category.as_str(), right_category.as_str()] {
+                    if ref_cat != rule_cat {
+                        if let Some(&dst) = cat_to_idx.get(ref_cat) {
+                            connected_to[src].insert(dst);
+                            connected_to[dst].insert(src);
+                        }
+                    }
+                }
+            },
+            _ => {},
+        }
     }
 }
 
@@ -3231,72 +3219,60 @@ mod proptest_tests {
         rule_cat: &str,
         connections: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
     ) {
-        match item {
-            SyntaxItemSpec::NonTerminal { category, .. } => {
-                if category != rule_cat {
-                    connections
-                        .entry(rule_cat.to_string())
-                        .or_default()
-                        .insert(category.clone());
-                    connections
-                        .entry(category.clone())
-                        .or_default()
-                        .insert(rule_cat.to_string());
-                }
-            },
-            SyntaxItemSpec::Binder { category, .. } => {
-                if category != rule_cat {
-                    connections
-                        .entry(rule_cat.to_string())
-                        .or_default()
-                        .insert(category.clone());
-                    connections
-                        .entry(category.clone())
-                        .or_default()
-                        .insert(rule_cat.to_string());
-                }
-            },
-            SyntaxItemSpec::Collection { element_category, .. } => {
-                if element_category != rule_cat {
-                    connections
-                        .entry(rule_cat.to_string())
-                        .or_default()
-                        .insert(element_category.clone());
-                    connections
-                        .entry(element_category.clone())
-                        .or_default()
-                        .insert(rule_cat.to_string());
-                }
-            },
-            SyntaxItemSpec::Sep { body, .. } => {
-                collect_cross_refs(body, rule_cat, connections);
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                for sub in body_items {
-                    collect_cross_refs(sub, rule_cat, connections);
-                }
-            },
-            SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-                for ref_cat in [left_category.as_str(), right_category.as_str()] {
-                    if ref_cat != rule_cat {
+        for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+            match item {
+                SyntaxItemSpec::NonTerminal { category, .. } => {
+                    if category != rule_cat {
                         connections
                             .entry(rule_cat.to_string())
                             .or_default()
-                            .insert(ref_cat.to_string());
+                            .insert(category.clone());
                         connections
-                            .entry(ref_cat.to_string())
+                            .entry(category.clone())
                             .or_default()
                             .insert(rule_cat.to_string());
                     }
-                }
-                collect_cross_refs(body, rule_cat, connections);
-            },
-            SyntaxItemSpec::Optional { inner } => {
-                for sub in inner {
-                    collect_cross_refs(sub, rule_cat, connections);
-                }
-            },
-            _ => {},
+                },
+                SyntaxItemSpec::Binder { category, .. } => {
+                    if category != rule_cat {
+                        connections
+                            .entry(rule_cat.to_string())
+                            .or_default()
+                            .insert(category.clone());
+                        connections
+                            .entry(category.clone())
+                            .or_default()
+                            .insert(rule_cat.to_string());
+                    }
+                },
+                SyntaxItemSpec::Collection { element_category, .. } => {
+                    if element_category != rule_cat {
+                        connections
+                            .entry(rule_cat.to_string())
+                            .or_default()
+                            .insert(element_category.clone());
+                        connections
+                            .entry(element_category.clone())
+                            .or_default()
+                            .insert(rule_cat.to_string());
+                    }
+                },
+                SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                    for ref_cat in [left_category.as_str(), right_category.as_str()] {
+                        if ref_cat != rule_cat {
+                            connections
+                                .entry(rule_cat.to_string())
+                                .or_default()
+                                .insert(ref_cat.to_string());
+                            connections
+                                .entry(ref_cat.to_string())
+                                .or_default()
+                                .insert(rule_cat.to_string());
+                        }
+                    }
+                },
+                _ => {},
+            }
         }
     }
 

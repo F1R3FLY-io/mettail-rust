@@ -334,44 +334,36 @@ fn collect_cross_category_refs(
     current_cat: &str,
     refs: &mut HashSet<String>,
 ) {
-    match item {
-        SyntaxItemSpec::NonTerminal { category, .. } | SyntaxItemSpec::Binder { category, .. } => {
-            if category != current_cat {
-                refs.insert(category.clone());
-            }
-        },
-        SyntaxItemSpec::Collection { element_category, .. } => {
-            if element_category != current_cat {
-                refs.insert(element_category.clone());
-            }
-        },
-        SyntaxItemSpec::Sep { body, .. } => {
-            collect_cross_category_refs(body, current_cat, refs);
-        },
-        SyntaxItemSpec::Map { body_items } => {
-            for nested in body_items {
-                collect_cross_category_refs(nested, current_cat, refs);
-            }
-        },
-        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            if left_category != current_cat {
-                refs.insert(left_category.clone());
-            }
-            if right_category != current_cat {
-                refs.insert(right_category.clone());
-            }
-            collect_cross_category_refs(body, current_cat, refs);
-        },
-        SyntaxItemSpec::Optional { inner } => {
-            for nested in inner {
-                collect_cross_category_refs(nested, current_cat, refs);
-            }
-        },
-        SyntaxItemSpec::Terminal(_)
-        | SyntaxItemSpec::IdentCapture { .. }
-        | SyntaxItemSpec::TokenKindCapture { .. }
-        | SyntaxItemSpec::BinderCollection { .. }
-        | SyntaxItemSpec::GuardExpression { .. } => {},
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            SyntaxItemSpec::NonTerminal { category, .. }
+            | SyntaxItemSpec::Binder { category, .. } => {
+                if category != current_cat {
+                    refs.insert(category.clone());
+                }
+            },
+            SyntaxItemSpec::Collection { element_category, .. } => {
+                if element_category != current_cat {
+                    refs.insert(element_category.clone());
+                }
+            },
+            SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                if left_category != current_cat {
+                    refs.insert(left_category.clone());
+                }
+                if right_category != current_cat {
+                    refs.insert(right_category.clone());
+                }
+            },
+            SyntaxItemSpec::Terminal(_)
+            | SyntaxItemSpec::IdentCapture { .. }
+            | SyntaxItemSpec::TokenKindCapture { .. }
+            | SyntaxItemSpec::BinderCollection { .. }
+            | SyntaxItemSpec::GuardExpression { .. }
+            | SyntaxItemSpec::Sep { .. }
+            | SyntaxItemSpec::Map { .. }
+            | SyntaxItemSpec::Optional { .. } => {},
+        }
     }
 }
 

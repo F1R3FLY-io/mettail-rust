@@ -46,53 +46,41 @@ fn collect_syntax_refs(
     target_idx: usize,
     pairs: &mut Vec<(usize, usize)>,
 ) {
-    match item {
-        crate::SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } => {
-            if nt_cat != rule_cat {
-                if let Some(&src_idx) = cat_to_idx.get(nt_cat) {
-                    pairs.push((src_idx, target_idx));
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Binder { category: ref b_cat, .. } => {
-            if b_cat != rule_cat {
-                if let Some(&src_idx) = cat_to_idx.get(b_cat) {
-                    pairs.push((src_idx, target_idx));
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Collection { element_category: ref e_cat, .. } => {
-            if e_cat != rule_cat {
-                if let Some(&src_idx) = cat_to_idx.get(e_cat) {
-                    pairs.push((src_idx, target_idx));
-                }
-            }
-        },
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            collect_syntax_refs(body, rule_cat, cat_to_idx, target_idx, pairs);
-        },
-        crate::SyntaxItemSpec::Map { body_items } => {
-            for sub in body_items {
-                collect_syntax_refs(sub, rule_cat, cat_to_idx, target_idx, pairs);
-            }
-        },
-        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            for ref_cat in [left_category.as_str(), right_category.as_str()] {
-                if ref_cat != rule_cat {
-                    if let Some(&src_idx) = cat_to_idx.get(ref_cat) {
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            crate::SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } => {
+                if nt_cat != rule_cat {
+                    if let Some(&src_idx) = cat_to_idx.get(nt_cat) {
                         pairs.push((src_idx, target_idx));
                     }
                 }
-            }
-            collect_syntax_refs(body, rule_cat, cat_to_idx, target_idx, pairs);
-        },
-        crate::SyntaxItemSpec::Optional { inner } => {
-            for sub in inner {
-                collect_syntax_refs(sub, rule_cat, cat_to_idx, target_idx, pairs);
-            }
-        },
-        // Terminal, IdentCapture, BinderCollection — no cross-category refs
-        _ => {},
+            },
+            crate::SyntaxItemSpec::Binder { category: ref b_cat, .. } => {
+                if b_cat != rule_cat {
+                    if let Some(&src_idx) = cat_to_idx.get(b_cat) {
+                        pairs.push((src_idx, target_idx));
+                    }
+                }
+            },
+            crate::SyntaxItemSpec::Collection { element_category: ref e_cat, .. } => {
+                if e_cat != rule_cat {
+                    if let Some(&src_idx) = cat_to_idx.get(e_cat) {
+                        pairs.push((src_idx, target_idx));
+                    }
+                }
+            },
+            crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                for ref_cat in [left_category.as_str(), right_category.as_str()] {
+                    if ref_cat != rule_cat {
+                        if let Some(&src_idx) = cat_to_idx.get(ref_cat) {
+                            pairs.push((src_idx, target_idx));
+                        }
+                    }
+                }
+            },
+            // Terminal, IdentCapture, BinderCollection — no cross-category refs
+            _ => {},
+        }
     }
 }
 

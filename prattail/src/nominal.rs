@@ -845,7 +845,7 @@ fn collect_binders_recursive(
     binder_to_rules: &mut HashMap<String, Vec<(String, String)>>,
     binder_categories: &mut HashMap<String, HashSet<String>>,
 ) {
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             crate::SyntaxItemSpec::Binder { param_name, .. } => {
                 binder_to_rules
@@ -866,42 +866,6 @@ fn collect_binders_recursive(
                     .entry(param_name.clone())
                     .or_default()
                     .insert(category.to_string());
-            },
-            crate::SyntaxItemSpec::Optional { inner } => {
-                collect_binders_recursive(
-                    inner,
-                    rule_label,
-                    category,
-                    binder_to_rules,
-                    binder_categories,
-                );
-            },
-            crate::SyntaxItemSpec::Map { body_items } => {
-                collect_binders_recursive(
-                    body_items,
-                    rule_label,
-                    category,
-                    binder_to_rules,
-                    binder_categories,
-                );
-            },
-            crate::SyntaxItemSpec::Sep { body, .. } => {
-                collect_binders_recursive(
-                    std::slice::from_ref(body.as_ref()),
-                    rule_label,
-                    category,
-                    binder_to_rules,
-                    binder_categories,
-                );
-            },
-            crate::SyntaxItemSpec::Zip { body, .. } => {
-                collect_binders_recursive(
-                    std::slice::from_ref(body.as_ref()),
-                    rule_label,
-                    category,
-                    binder_to_rules,
-                    binder_categories,
-                );
             },
             _ => {},
         }

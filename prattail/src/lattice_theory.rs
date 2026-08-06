@@ -716,55 +716,35 @@ fn collect_rule_nonterminals(
     cat_to_id: &HashMap<String, TypeId>,
     out: &mut HashSet<TypeId>,
 ) {
-    for item in items {
-        collect_item_nonterminals(item, src_id, cat_to_id, out);
-    }
-}
-
-/// Recursively extract non-terminal TypeIds from a single `SyntaxItemSpec`.
-fn collect_item_nonterminals(
-    item: &crate::SyntaxItemSpec,
-    src_id: TypeId,
-    cat_to_id: &HashMap<String, TypeId>,
-    out: &mut HashSet<TypeId>,
-) {
-    match item {
-        crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-            if let Some(&tid) = cat_to_id.get(category.as_str()) {
-                out.insert(tid);
-            }
-        },
-        crate::SyntaxItemSpec::Binder { category, .. } => {
-            if let Some(&tid) = cat_to_id.get(category.as_str()) {
-                out.insert(tid);
-            }
-        },
-        crate::SyntaxItemSpec::Collection { element_category, .. } => {
-            if let Some(&tid) = cat_to_id.get(element_category.as_str()) {
-                out.insert(tid);
-            }
-        },
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            collect_item_nonterminals(body, src_id, cat_to_id, out);
-        },
-        crate::SyntaxItemSpec::Optional { inner } => {
-            // Optional wraps a Vec<SyntaxItemSpec>.
-            collect_rule_nonterminals(inner, src_id, cat_to_id, out);
-        },
-        crate::SyntaxItemSpec::Map { body_items } => {
-            collect_rule_nonterminals(body_items, src_id, cat_to_id, out);
-        },
-        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            if let Some(&tid) = cat_to_id.get(left_category.as_str()) {
-                out.insert(tid);
-            }
-            if let Some(&tid) = cat_to_id.get(right_category.as_str()) {
-                out.insert(tid);
-            }
-            collect_item_nonterminals(body, src_id, cat_to_id, out);
-        },
-        // Terminal, IdentCapture, BinderCollection — no non-terminal references.
-        _ => {},
+    let _ = src_id;
+    for item in crate::syntax_item::preorder(items) {
+        match item {
+            crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+                if let Some(&tid) = cat_to_id.get(category.as_str()) {
+                    out.insert(tid);
+                }
+            },
+            crate::SyntaxItemSpec::Binder { category, .. } => {
+                if let Some(&tid) = cat_to_id.get(category.as_str()) {
+                    out.insert(tid);
+                }
+            },
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                if let Some(&tid) = cat_to_id.get(element_category.as_str()) {
+                    out.insert(tid);
+                }
+            },
+            crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                if let Some(&tid) = cat_to_id.get(left_category.as_str()) {
+                    out.insert(tid);
+                }
+                if let Some(&tid) = cat_to_id.get(right_category.as_str()) {
+                    out.insert(tid);
+                }
+            },
+            // Terminal, IdentCapture, BinderCollection — no non-terminal references.
+            _ => {},
+        }
     }
 }
 

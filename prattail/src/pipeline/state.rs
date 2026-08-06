@@ -614,7 +614,7 @@ pub(crate) fn capitalize_first(s: &str) -> String {
 /// like `Sep`/`Map`/`Zip` body items and separators.
 pub(crate) fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
     let mut terminals = Vec::new();
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
             SyntaxItemSpec::Collection { separator, key_val_separator, .. } => {
@@ -626,18 +626,8 @@ pub(crate) fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<Strin
             SyntaxItemSpec::BinderCollection { separator, .. } => {
                 terminals.push(separator.clone());
             },
-            SyntaxItemSpec::Sep { body, separator, .. } => {
-                terminals.extend(collect_terminals_recursive(std::slice::from_ref(body.as_ref())));
+            SyntaxItemSpec::Sep { separator, .. } => {
                 terminals.push(separator.clone());
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                terminals.extend(collect_terminals_recursive(body_items));
-            },
-            SyntaxItemSpec::Zip { body, .. } => {
-                terminals.extend(collect_terminals_recursive(std::slice::from_ref(body.as_ref())));
-            },
-            SyntaxItemSpec::Optional { inner } => {
-                terminals.extend(collect_terminals_recursive(inner));
             },
             _ => {},
         }

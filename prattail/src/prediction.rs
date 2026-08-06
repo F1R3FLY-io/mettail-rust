@@ -510,33 +510,23 @@ fn propagate_follow_through_items(
     tail: &FirstSet,
 ) -> bool {
     let mut changed = false;
-    for j in 0..items.len() {
-        if let crate::SyntaxItemSpec::NonTerminal { category, .. } = &items[j] {
-            let body_suffix = &items[j + 1..];
-            let (body_suffix_first, body_suffix_nullable) =
-                first_of_suffix(body_suffix, first_sets);
-            changed |= add_first_to_follow(follow_sets, category, &body_suffix_first);
-            if body_suffix_nullable {
-                changed |= add_first_to_follow(follow_sets, category, tail);
+    let _ = rule_category;
+    let mut pending = vec![items];
+    while let Some(sequence) = pending.pop() {
+        for (index, item) in sequence.iter().enumerate() {
+            if let crate::SyntaxItemSpec::NonTerminal { category, .. } = item {
+                let body_suffix = &sequence[index + 1..];
+                let (body_suffix_first, body_suffix_nullable) =
+                    first_of_suffix(body_suffix, first_sets);
+                changed |= add_first_to_follow(follow_sets, category, &body_suffix_first);
+                if body_suffix_nullable {
+                    changed |= add_first_to_follow(follow_sets, category, tail);
+                }
+            } else if let crate::SyntaxItemSpec::Map { body_items } = item {
+                pending.push(body_items);
+            } else if let crate::SyntaxItemSpec::Zip { body, .. } = item {
+                pending.push(std::slice::from_ref(body.as_ref()));
             }
-        } else if let crate::SyntaxItemSpec::Map { body_items } = &items[j] {
-            // Recurse into Map body_items with the same tail
-            changed |= propagate_follow_through_items(
-                body_items,
-                rule_category,
-                first_sets,
-                follow_sets,
-                tail,
-            );
-        } else if let crate::SyntaxItemSpec::Zip { body, .. } = &items[j] {
-            // Recurse into Zip body
-            changed |= propagate_follow_through_items(
-                std::slice::from_ref(body.as_ref()),
-                rule_category,
-                first_sets,
-                follow_sets,
-                tail,
-            );
         }
     }
     changed
@@ -553,87 +543,97 @@ fn first_of_suffix(
 ) -> (FirstSet, bool) {
     let mut result = FirstSet::new();
     let mut nullable = true; // empty suffix is nullable
+    let mut pending = vec![(items, true)];
 
-    for item in items {
-        match item {
-            crate::SyntaxItemSpec::Terminal(t) => {
-                result.insert(&terminal_to_variant_name(t));
-                nullable = false;
-                break; // Terminal is not nullable
-            },
-            crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-                if let Some(cat_first) = first_sets.get(category) {
-                    for token in &cat_first.tokens {
-                        result.insert(token);
-                    }
-                    if !cat_first.nullable {
+    while let Some((sequence, controls_nullable)) = pending.pop() {
+        for item in sequence {
+            match item {
+                crate::SyntaxItemSpec::Terminal(t) => {
+                    result.insert(&terminal_to_variant_name(t));
+                    if controls_nullable {
                         nullable = false;
+                    }
+                    break; // Terminal is not nullable
+                },
+                crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+                    if let Some(cat_first) = first_sets.get(category) {
+                        for token in &cat_first.tokens {
+                            result.insert(token);
+                        }
+                        if !cat_first.nullable {
+                            if controls_nullable {
+                                nullable = false;
+                            }
+                            break;
+                        }
+                        // Category is nullable — continue to next item
+                    } else {
+                        if controls_nullable {
+                            nullable = false;
+                        }
                         break;
                     }
-                    // Category is nullable — continue to next item
-                } else {
-                    nullable = false;
-                    break;
-                }
-            },
-            crate::SyntaxItemSpec::TokenKindCapture { kind_name, .. } => {
-                // L9-3: a specific custom token kind — FIRST is that kind's
-                // variant name; a required token is not nullable.
-                result.insert(kind_name);
-                nullable = false;
-                break;
-            },
-            crate::SyntaxItemSpec::IdentCapture { .. } | crate::SyntaxItemSpec::Binder { .. } => {
-                result.insert("Ident");
-                nullable = false;
-                break; // Identifiers are not nullable
-            },
-            crate::SyntaxItemSpec::BinderCollection { .. } => {
-                result.insert("Ident");
-                // Binder collections can be empty (0 elements), so nullable — continue
-            },
-            crate::SyntaxItemSpec::Collection { element_category, .. } => {
-                // FIRST of a collection = FIRST of the element category
-                if let Some(cat_first) = first_sets.get(element_category) {
-                    for token in &cat_first.tokens {
-                        result.insert(token);
+                },
+                crate::SyntaxItemSpec::TokenKindCapture { kind_name, .. } => {
+                    // L9-3: a specific custom token kind — FIRST is that kind's
+                    // variant name; a required token is not nullable.
+                    result.insert(kind_name);
+                    if controls_nullable {
+                        nullable = false;
                     }
-                }
-                // Collections can be empty (0 elements), so nullable — continue
-            },
-            crate::SyntaxItemSpec::Sep { body, .. } => {
-                // FIRST = FIRST of body; Sep is nullable (0 iterations)
-                let (body_first, _) =
-                    first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
-                result.union(&body_first);
-            },
-            crate::SyntaxItemSpec::Map { body_items } => {
-                // FIRST = FIRST of body_items sequence
-                let (map_first, _) = first_of_suffix(body_items, first_sets);
-                result.union(&map_first);
-                // Map is not inherently nullable unless its body_items are
-                // For FIRST computation, we continue to be safe
-            },
-            crate::SyntaxItemSpec::Zip { body, .. } => {
-                // FIRST = FIRST of body; Zip delegates to body
-                let (body_first, _) =
-                    first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
-                result.union(&body_first);
-            },
-            crate::SyntaxItemSpec::Optional { inner } => {
-                // FIRST of Optional = FIRST of inner items
-                let (inner_first, _) = first_of_suffix(inner, first_sets);
-                result.union(&inner_first);
-                // Optional is nullable by definition — continue
-            },
-            crate::SyntaxItemSpec::GuardExpression { .. } => {
-                // Phase 2F: guard expression is non-nullable; FIRST is
-                // an identifier (first token of a predicate expression
-                // is always an identifier or an opening paren).
-                result.insert("Ident");
-                nullable = false;
-                break;
-            },
+                    break;
+                },
+                crate::SyntaxItemSpec::IdentCapture { .. }
+                | crate::SyntaxItemSpec::Binder { .. } => {
+                    result.insert("Ident");
+                    if controls_nullable {
+                        nullable = false;
+                    }
+                    break; // Identifiers are not nullable
+                },
+                crate::SyntaxItemSpec::BinderCollection { .. } => {
+                    result.insert("Ident");
+                    // Binder collections can be empty (0 elements), so nullable — continue
+                },
+                crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                    // FIRST of a collection = FIRST of the element category
+                    if let Some(cat_first) = first_sets.get(element_category) {
+                        for token in &cat_first.tokens {
+                            result.insert(token);
+                        }
+                    }
+                    // Collections can be empty (0 elements), so nullable — continue
+                },
+                crate::SyntaxItemSpec::Sep { body, .. } => {
+                    // FIRST = FIRST of body; Sep is nullable (0 iterations)
+                    pending.push((std::slice::from_ref(body.as_ref()), false));
+                },
+                crate::SyntaxItemSpec::Map { body_items } => {
+                    // FIRST = FIRST of body_items sequence
+                    pending.push((body_items, false));
+                    // Map is not inherently nullable unless its body_items are
+                    // For FIRST computation, we continue to be safe
+                },
+                crate::SyntaxItemSpec::Zip { body, .. } => {
+                    // FIRST = FIRST of body; Zip delegates to body
+                    pending.push((std::slice::from_ref(body.as_ref()), false));
+                },
+                crate::SyntaxItemSpec::Optional { inner } => {
+                    // FIRST of Optional = FIRST of inner items
+                    pending.push((inner, false));
+                    // Optional is nullable by definition — continue
+                },
+                crate::SyntaxItemSpec::GuardExpression { .. } => {
+                    // Phase 2F: guard expression is non-nullable; FIRST is
+                    // an identifier (first token of a predicate expression
+                    // is always an identifier or an opening paren).
+                    result.insert("Ident");
+                    if controls_nullable {
+                        nullable = false;
+                    }
+                    break;
+                },
+            }
         }
     }
 
@@ -881,105 +881,11 @@ pub fn build_first_set_deps(
     (depends_on, dependents_of)
 }
 
-// ── B-M1 RETIREMENT (DEFECT-B) ───────────────────────────────────────────────
-// `build_follow_set_deps` and its only helper `collect_follow_referenced_categories`
-// are DISABLED (not deleted). They built the WRONG-DIRECTION `dependents_of` map
-// for the FOLLOW worklist: the scheme was copied from `build_first_set_deps`
-// (above) without inverting its direction. For FIRST, processing A's rules WRITES
-// FIRST(A) reading FIRST(refs), so dirtiness flows to A's downstream readers and
-// that direction is correct. For FOLLOW, processing A's rules WRITES FOLLOW(refs)
-// reading FOLLOW(A) (via `copy_follow(A → ref)`), so the ONLY reader of FOLLOW(X)
-// is X's OWN input processing — the changed category must re-mark ITSELF, which
-// `compute_follow_sets_incremental` now does directly. This map is therefore
-// unnecessary, and marking `dependents_of[X]` (one edge downstream) was the
-// root cause of the nondeterministic FOLLOW under-approximation. The FIRST-side
-// `build_first_set_deps` above is correctly directed and stays live. Retained
-// commented for revival/reference only.
-/*
-/// Build a dependency graph for FOLLOW set computation.
-///
-/// Returns `dependents_of: HashMap<category, Vec<downstream_category>>` where
-/// category A is a downstream dependent of category B if a rule in A's category
-/// references B as a NonTerminal (so FOLLOW(B) depends on FOLLOW(A) and FIRST
-/// of the suffix after B).
-///
-/// The FOLLOW set propagation rule is:
-/// - If `B` appears in a rule of category `A`, then `FOLLOW(B)` may include
-///   `FOLLOW(A)` (when the suffix after `B` is nullable).
-/// - If `B` appears before `C` in a rule, then `FOLLOW(B)` may include
-///   `FIRST(C)`.
-///
-/// So when `FOLLOW(A)` changes, all categories referenced by rules in `A` need
-/// revisiting. When `FIRST(C)` is stable (already computed), only FOLLOW
-/// propagation matters.
-pub fn build_follow_set_deps(
-    inputs: &[FollowSetInput],
-    categories: &[String],
-) -> HashMap<String, Vec<String>> {
-    // dependents_of[X] = categories whose FOLLOW may change when FOLLOW(X) changes
-    let mut dependents_of: HashMap<String, Vec<String>> = HashMap::with_capacity(categories.len());
-    for cat in categories {
-        dependents_of.insert(cat.clone(), Vec::new());
-    }
-
-    for input in inputs {
-        let referenced = collect_follow_referenced_categories(&input.syntax);
-        // When FOLLOW(input.category) changes, all referenced categories' FOLLOW
-        // sets may also change (via the copy_follow path).
-        for ref_cat in &referenced {
-            if let Some(deps) = dependents_of.get_mut(&input.category) {
-                if !deps.contains(ref_cat) {
-                    deps.push(ref_cat.clone());
-                }
-            }
-        }
-    }
-
-    dependents_of
-}
-
-/// Collect all category names referenced as NonTerminals or Collections in
-/// a sequence of syntax items (recursive).
-fn collect_follow_referenced_categories(items: &[crate::SyntaxItemSpec]) -> HashSet<String> {
-    let mut referenced = HashSet::new();
-    for item in items {
-        match item {
-            crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-                referenced.insert(category.clone());
-            },
-            crate::SyntaxItemSpec::Collection { element_category, .. } => {
-                referenced.insert(element_category.clone());
-            },
-            crate::SyntaxItemSpec::Binder { category, .. } => {
-                referenced.insert(category.clone());
-            },
-            crate::SyntaxItemSpec::Sep { body, .. } => {
-                let inner =
-                    collect_follow_referenced_categories(std::slice::from_ref(body.as_ref()));
-                referenced.extend(inner);
-            },
-            crate::SyntaxItemSpec::Map { body_items } => {
-                let inner = collect_follow_referenced_categories(body_items);
-                referenced.extend(inner);
-            },
-            crate::SyntaxItemSpec::Zip { body, left_category, right_category, .. } => {
-                referenced.insert(left_category.clone());
-                referenced.insert(right_category.clone());
-                let inner =
-                    collect_follow_referenced_categories(std::slice::from_ref(body.as_ref()));
-                referenced.extend(inner);
-            },
-            crate::SyntaxItemSpec::Optional { inner } => {
-                let cats = collect_follow_referenced_categories(inner);
-                referenced.extend(cats);
-            },
-            _ => {},
-        }
-    }
-    referenced
-}
-*/
-// ── end B-M1 RETIREMENT ──────────────────────────────────────────────────────
+// B-M1 retirement (DEFECT-B): a former FOLLOW `dependents_of` graph propagated
+// dirtiness in the FIRST-set direction and caused nondeterministic FOLLOW
+// under-approximation. FOLLOW convergence now re-marks the category whose set
+// changed. The incorrect implementation was deleted; the FIRST dependency graph
+// above remains valid because its data flow has the opposite direction.
 
 /// Compute FIRST sets using dependency-graph-driven incremental iteration.
 ///
@@ -1786,7 +1692,7 @@ fn collect_referenced_categories(
     items: &[crate::SyntaxItemSpec],
     referenced: &mut std::collections::HashSet<String>,
 ) {
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             crate::SyntaxItemSpec::NonTerminal { category, .. } => {
                 referenced.insert(category.clone());
@@ -1794,19 +1700,9 @@ fn collect_referenced_categories(
             crate::SyntaxItemSpec::Collection { element_category, .. } => {
                 referenced.insert(element_category.clone());
             },
-            crate::SyntaxItemSpec::Sep { body, .. } => {
-                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
-            },
-            crate::SyntaxItemSpec::Map { body_items } => {
-                collect_referenced_categories(body_items, referenced);
-            },
-            crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
+            crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
-                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
-            },
-            crate::SyntaxItemSpec::Optional { inner } => {
-                collect_referenced_categories(inner, referenced);
             },
             crate::SyntaxItemSpec::Binder { category, .. } => {
                 referenced.insert(category.clone());

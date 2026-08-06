@@ -1116,7 +1116,6 @@ pub struct RuleSpec {
 }
 
 /// A syntax item in a rule.
-#[derive(Debug, Clone)]
 pub enum SyntaxItemSpec {
     /// A terminal token (e.g., "(", "+", "error").
     Terminal(String),
@@ -1194,6 +1193,8 @@ pub enum SyntaxItemSpec {
     /// AFTER the trigger literal has been consumed.
     GuardExpression { param_name: String },
 }
+
+mod syntax_item;
 
 /// Minimal input for constructing a `RuleSpec`.
 ///

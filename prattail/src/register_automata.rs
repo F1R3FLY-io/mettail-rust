@@ -815,61 +815,49 @@ fn collect_register_ops(
     has_store: &mut [bool],
     has_test: &mut [bool],
 ) {
-    match item {
-        // IdentCapture produces a Store for the rule's category register
-        crate::SyntaxItemSpec::IdentCapture { .. } => {
-            if let Some(&reg) = cat_to_reg.get(rule_cat) {
-                has_store[reg] = true;
-            }
-        },
-        // Binder produces a Store for the binder's category register
-        crate::SyntaxItemSpec::Binder { category, .. } => {
-            if let Some(&reg) = cat_to_reg.get(category.as_str()) {
-                has_store[reg] = true;
-            }
-        },
-        // BinderCollection produces a Store for the rule's category register
-        crate::SyntaxItemSpec::BinderCollection { .. } => {
-            if let Some(&reg) = cat_to_reg.get(rule_cat) {
-                has_store[reg] = true;
-            }
-        },
-        // NonTerminal reference produces a TestEq (reads the category's register)
-        crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-            if let Some(&reg) = cat_to_reg.get(category.as_str()) {
-                has_test[reg] = true;
-            }
-        },
-        // Collection reference produces a TestEq
-        crate::SyntaxItemSpec::Collection { element_category, .. } => {
-            if let Some(&reg) = cat_to_reg.get(element_category.as_str()) {
-                has_test[reg] = true;
-            }
-        },
-        // Recurse into compound items
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            collect_register_ops(body, rule_cat, cat_to_reg, has_store, has_test);
-        },
-        crate::SyntaxItemSpec::Map { body_items } => {
-            for sub in body_items {
-                collect_register_ops(sub, rule_cat, cat_to_reg, has_store, has_test);
-            }
-        },
-        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            for ref_cat in [left_category.as_str(), right_category.as_str()] {
-                if let Some(&reg) = cat_to_reg.get(ref_cat) {
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            // IdentCapture produces a Store for the rule's category register
+            crate::SyntaxItemSpec::IdentCapture { .. } => {
+                if let Some(&reg) = cat_to_reg.get(rule_cat) {
+                    has_store[reg] = true;
+                }
+            },
+            // Binder produces a Store for the binder's category register
+            crate::SyntaxItemSpec::Binder { category, .. } => {
+                if let Some(&reg) = cat_to_reg.get(category.as_str()) {
+                    has_store[reg] = true;
+                }
+            },
+            // BinderCollection produces a Store for the rule's category register
+            crate::SyntaxItemSpec::BinderCollection { .. } => {
+                if let Some(&reg) = cat_to_reg.get(rule_cat) {
+                    has_store[reg] = true;
+                }
+            },
+            // NonTerminal reference produces a TestEq (reads the category's register)
+            crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+                if let Some(&reg) = cat_to_reg.get(category.as_str()) {
                     has_test[reg] = true;
                 }
-            }
-            collect_register_ops(body, rule_cat, cat_to_reg, has_store, has_test);
-        },
-        crate::SyntaxItemSpec::Optional { inner } => {
-            for sub in inner {
-                collect_register_ops(sub, rule_cat, cat_to_reg, has_store, has_test);
-            }
-        },
-        // Terminal — no register ops
-        _ => {},
+            },
+            // Collection reference produces a TestEq
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                if let Some(&reg) = cat_to_reg.get(element_category.as_str()) {
+                    has_test[reg] = true;
+                }
+            },
+            // Recurse into compound items
+            crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                for ref_cat in [left_category.as_str(), right_category.as_str()] {
+                    if let Some(&reg) = cat_to_reg.get(ref_cat) {
+                        has_test[reg] = true;
+                    }
+                }
+            },
+            // Terminal — no register ops
+            _ => {},
+        }
     }
 }
 
@@ -1704,38 +1692,27 @@ mod proptest_tests {
         rule_cat: &str,
         referenced: &mut std::collections::HashSet<String>,
     ) {
-        match item {
-            SyntaxItemSpec::NonTerminal { category, .. } => {
-                referenced.insert(category.clone());
-            },
-            SyntaxItemSpec::Collection { element_category, .. } => {
-                referenced.insert(element_category.clone());
-            },
-            SyntaxItemSpec::Binder { category, .. } => {
-                // Binder produces Store, not TestEq — but we track the
-                // category for prop_referenced_category_not_dead which
-                // needs NonTerminal/Collection references specifically.
-                let _ = category;
-            },
-            SyntaxItemSpec::Sep { body, .. } => {
-                collect_nt_refs(body, rule_cat, referenced);
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                for sub in body_items {
-                    collect_nt_refs(sub, rule_cat, referenced);
-                }
-            },
-            SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-                referenced.insert(left_category.clone());
-                referenced.insert(right_category.clone());
-                collect_nt_refs(body, rule_cat, referenced);
-            },
-            SyntaxItemSpec::Optional { inner } => {
-                for sub in inner {
-                    collect_nt_refs(sub, rule_cat, referenced);
-                }
-            },
-            _ => {},
+        let _ = rule_cat;
+        for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+            match item {
+                SyntaxItemSpec::NonTerminal { category, .. } => {
+                    referenced.insert(category.clone());
+                },
+                SyntaxItemSpec::Collection { element_category, .. } => {
+                    referenced.insert(element_category.clone());
+                },
+                SyntaxItemSpec::Binder { category, .. } => {
+                    // Binder produces Store, not TestEq — but we track the
+                    // category for prop_referenced_category_not_dead which
+                    // needs NonTerminal/Collection references specifically.
+                    let _ = category;
+                },
+                SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                    referenced.insert(left_category.clone());
+                    referenced.insert(right_category.clone());
+                },
+                _ => {},
+            }
         }
     }
 

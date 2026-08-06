@@ -1165,30 +1165,16 @@ pub fn analyze_from_bundle(
         channel_refs: &mut Vec<String>,
         channel_seen: &mut HashSet<String>,
     ) {
-        match item {
-            SyntaxItemSpec::Terminal(t) if t == "|" || t == "||" || t == "par" => {
-                transition_names.push(format!("{}::{}", rule_label, t));
-            },
-            SyntaxItemSpec::NonTerminal { category, .. } => {
-                remember(category, channel_refs, channel_seen);
-            },
-            SyntaxItemSpec::Optional { inner } => {
-                for sub in inner {
-                    scan_item(sub, rule_label, transition_names, channel_refs, channel_seen);
-                }
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                for sub in body_items {
-                    scan_item(sub, rule_label, transition_names, channel_refs, channel_seen);
-                }
-            },
-            SyntaxItemSpec::Sep { body, .. } => {
-                scan_item(body, rule_label, transition_names, channel_refs, channel_seen);
-            },
-            SyntaxItemSpec::Zip { body, .. } => {
-                scan_item(body, rule_label, transition_names, channel_refs, channel_seen);
-            },
-            _ => {},
+        for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+            match item {
+                SyntaxItemSpec::Terminal(t) if t == "|" || t == "||" || t == "par" => {
+                    transition_names.push(format!("{}::{}", rule_label, t));
+                },
+                SyntaxItemSpec::NonTerminal { category, .. } => {
+                    remember(category, channel_refs, channel_seen);
+                },
+                _ => {},
+            }
         }
     }
 

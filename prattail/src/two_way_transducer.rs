@@ -904,37 +904,28 @@ fn syntax_dependency_graph(
 }
 
 fn collect_syntax_dependencies(item: &crate::SyntaxItemSpec, out: &mut HashSet<String>) {
-    match item {
-        crate::SyntaxItemSpec::NonTerminal { category, .. }
-        | crate::SyntaxItemSpec::Binder { category, .. } => {
-            out.insert(category.clone());
-        },
-        crate::SyntaxItemSpec::Collection { element_category, .. } => {
-            out.insert(element_category.clone());
-        },
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            collect_syntax_dependencies(body, out);
-        },
-        crate::SyntaxItemSpec::Map { body_items } => {
-            for nested in body_items {
-                collect_syntax_dependencies(nested, out);
-            }
-        },
-        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            out.insert(left_category.clone());
-            out.insert(right_category.clone());
-            collect_syntax_dependencies(body, out);
-        },
-        crate::SyntaxItemSpec::Optional { inner } => {
-            for nested in inner {
-                collect_syntax_dependencies(nested, out);
-            }
-        },
-        crate::SyntaxItemSpec::Terminal(_)
-        | crate::SyntaxItemSpec::IdentCapture { .. }
-        | crate::SyntaxItemSpec::TokenKindCapture { .. }
-        | crate::SyntaxItemSpec::BinderCollection { .. }
-        | crate::SyntaxItemSpec::GuardExpression { .. } => {},
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            crate::SyntaxItemSpec::NonTerminal { category, .. }
+            | crate::SyntaxItemSpec::Binder { category, .. } => {
+                out.insert(category.clone());
+            },
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                out.insert(element_category.clone());
+            },
+            crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                out.insert(left_category.clone());
+                out.insert(right_category.clone());
+            },
+            crate::SyntaxItemSpec::Terminal(_)
+            | crate::SyntaxItemSpec::IdentCapture { .. }
+            | crate::SyntaxItemSpec::TokenKindCapture { .. }
+            | crate::SyntaxItemSpec::BinderCollection { .. }
+            | crate::SyntaxItemSpec::GuardExpression { .. }
+            | crate::SyntaxItemSpec::Sep { .. }
+            | crate::SyntaxItemSpec::Map { .. }
+            | crate::SyntaxItemSpec::Optional { .. } => {},
+        }
     }
 }
 

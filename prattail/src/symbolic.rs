@@ -1815,26 +1815,19 @@ impl fmt::Display for SymbolicAnalysis {
 /// Recursively descends into `Optional` and `Map` wrappers to find the
 /// terminal tokens that can start a match for this syntax item.
 fn collect_leading_terminals(item: &crate::SyntaxItemSpec, out: &mut HashSet<String>) {
-    match item {
-        crate::SyntaxItemSpec::Terminal(t) => {
-            out.insert(t.clone());
-        },
-        crate::SyntaxItemSpec::Optional { inner } => {
-            if let Some(first) = inner.first() {
-                collect_leading_terminals(first, out);
-            }
-        },
-        crate::SyntaxItemSpec::Map { body_items } => {
-            if let Some(first) = body_items.first() {
-                collect_leading_terminals(first, out);
-            }
-        },
-        crate::SyntaxItemSpec::Sep { body, .. } => {
-            collect_leading_terminals(body, out);
-        },
-        // NonTerminal, IdentCapture, Binder, Collection, Zip, BinderCollection
-        // don't contribute concrete terminal tokens to the guard.
-        _ => {},
+    let mut current = Some(item);
+    while let Some(node) = current.take() {
+        match node {
+            crate::SyntaxItemSpec::Terminal(text) => {
+                out.insert(text.clone());
+            },
+            crate::SyntaxItemSpec::Optional { inner } => current = inner.first(),
+            crate::SyntaxItemSpec::Map { body_items } => current = body_items.first(),
+            crate::SyntaxItemSpec::Sep { body, .. } => current = Some(body),
+            // NonTerminal, IdentCapture, Binder, Collection, Zip, and
+            // BinderCollection do not contribute a concrete leading token.
+            _ => {},
+        }
     }
 }
 

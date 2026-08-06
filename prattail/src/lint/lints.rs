@@ -140,7 +140,7 @@ pub(crate) fn lint_g02_unused_category(ctx: &LintContext, diagnostics: &mut Vec<
 
 /// Recursively collect all category names referenced in syntax items.
 fn collect_referenced_categories(items: &[SyntaxItemSpec], referenced: &mut HashSet<String>) {
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             SyntaxItemSpec::NonTerminal { category, .. } => {
                 referenced.insert(category.clone());
@@ -148,19 +148,9 @@ fn collect_referenced_categories(items: &[SyntaxItemSpec], referenced: &mut Hash
             SyntaxItemSpec::Collection { element_category, .. } => {
                 referenced.insert(element_category.clone());
             },
-            SyntaxItemSpec::Sep { body, .. } => {
-                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                collect_referenced_categories(body_items, referenced);
-            },
-            SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
+            SyntaxItemSpec::Zip { left_category, right_category, .. } => {
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
-                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
-            },
-            SyntaxItemSpec::Optional { inner } => {
-                collect_referenced_categories(inner, referenced);
             },
             SyntaxItemSpec::Binder { category, .. } => {
                 referenced.insert(category.clone());
@@ -354,33 +344,17 @@ pub(crate) fn lint_g04_duplicate_rule_label(
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn collect_binding_sort_categories(item: &SyntaxItemSpec, out: &mut HashSet<String>) {
-    match item {
-        SyntaxItemSpec::Binder { category, .. } => {
-            out.insert(category.clone());
-        },
-        SyntaxItemSpec::Sep { body, .. } => collect_binding_sort_categories(body, out),
-        SyntaxItemSpec::Map { body_items } => {
-            for item in body_items {
-                collect_binding_sort_categories(item, out);
-            }
-        },
-        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            out.insert(left_category.clone());
-            out.insert(right_category.clone());
-            collect_binding_sort_categories(body, out);
-        },
-        SyntaxItemSpec::Optional { inner } => {
-            for item in inner {
-                collect_binding_sort_categories(item, out);
-            }
-        },
-        SyntaxItemSpec::Terminal(_)
-        | SyntaxItemSpec::NonTerminal { .. }
-        | SyntaxItemSpec::IdentCapture { .. }
-        | SyntaxItemSpec::TokenKindCapture { .. }
-        | SyntaxItemSpec::BinderCollection { .. }
-        | SyntaxItemSpec::Collection { .. }
-        | SyntaxItemSpec::GuardExpression { .. } => {},
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            SyntaxItemSpec::Binder { category, .. } => {
+                out.insert(category.clone());
+            },
+            SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                out.insert(left_category.clone());
+                out.insert(right_category.clone());
+            },
+            _ => {},
+        }
     }
 }
 
@@ -502,46 +476,49 @@ pub(crate) fn lint_g06_shadowed_operator(ctx: &LintContext, diagnostics: &mut Ve
 
 /// Normalize a syntax item sequence to a comparable string for G07.
 fn syntax_signature(syntax: &[SyntaxItemSpec]) -> String {
-    let mut parts = Vec::with_capacity(syntax.len());
-    for item in syntax {
-        match item {
-            SyntaxItemSpec::Terminal(t) => parts.push(format!("T({})", t)),
-            SyntaxItemSpec::NonTerminal { category, .. } => parts.push(format!("NT({})", category)),
-            SyntaxItemSpec::IdentCapture { .. } => parts.push("IDENT".to_string()),
-            SyntaxItemSpec::TokenKindCapture { kind_name, .. } => {
-                parts.push(format!("TK({})", kind_name))
-            },
+    fn take_joined(values: &mut Vec<String>, count: usize) -> String {
+        let first = values
+            .len()
+            .checked_sub(count)
+            .expect("syntax-signature PDA lost child signatures");
+        values.split_off(first).join("|")
+    }
+
+    let mut values = Vec::with_capacity(syntax.len());
+    for item in crate::syntax_item::postorder(syntax) {
+        let part = match item {
+            SyntaxItemSpec::Terminal(text) => format!("T({text})"),
+            SyntaxItemSpec::NonTerminal { category, .. } => format!("NT({category})"),
+            SyntaxItemSpec::IdentCapture { .. } => "IDENT".to_string(),
+            SyntaxItemSpec::TokenKindCapture { kind_name, .. } => format!("TK({kind_name})"),
             SyntaxItemSpec::Binder { category, is_multi, .. } => {
-                parts.push(format!("BIND({},{})", category, is_multi))
+                format!("BIND({category},{is_multi})")
             },
             SyntaxItemSpec::Collection { element_category, separator, kind, .. } => {
-                parts.push(format!("COL({},{},{:?})", element_category, separator, kind))
+                format!("COL({element_category},{separator},{kind:?})")
             },
-            SyntaxItemSpec::Sep { body, separator, .. } => {
-                let body_sig = syntax_signature(std::slice::from_ref(body.as_ref()));
-                parts.push(format!("SEP({},{})", body_sig, separator))
+            SyntaxItemSpec::Sep { separator, .. } => {
+                let body = values.pop().expect("syntax-signature PDA lost Sep body");
+                format!("SEP({body},{separator})")
             },
             SyntaxItemSpec::Map { body_items } => {
-                let inner = syntax_signature(body_items);
-                parts.push(format!("MAP({})", inner))
+                format!("MAP({})", take_joined(&mut values, body_items.len()))
             },
-            SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-                let body_sig = syntax_signature(std::slice::from_ref(body.as_ref()));
-                parts.push(format!("ZIP({},{},{})", left_category, right_category, body_sig))
+            SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                let body = values.pop().expect("syntax-signature PDA lost Zip body");
+                format!("ZIP({left_category},{right_category},{body})")
             },
             SyntaxItemSpec::BinderCollection { separator, .. } => {
-                parts.push(format!("BCOL({})", separator))
+                format!("BCOL({separator})")
             },
             SyntaxItemSpec::Optional { inner } => {
-                let inner_sig = syntax_signature(inner);
-                parts.push(format!("OPT({})", inner_sig))
+                format!("OPT({})", take_joined(&mut values, inner.len()))
             },
-            SyntaxItemSpec::GuardExpression { param_name } => {
-                parts.push(format!("GUARD({})", param_name))
-            },
-        }
+            SyntaxItemSpec::GuardExpression { param_name } => format!("GUARD({param_name})"),
+        };
+        values.push(part);
     }
-    parts.join("|")
+    values.join("|")
 }
 
 pub(crate) fn lint_g07_identical_rules(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
@@ -650,118 +627,127 @@ impl DebruijnEnv {
 pub(crate) fn syntax_item_debruijn_bytes(items: &[SyntaxItemSpec]) -> Vec<u8> {
     let mut env = DebruijnEnv::new();
     let mut buf = Vec::with_capacity(items.len() * 4);
-    for item in items {
-        encode_syntax_item(item, &mut env, &mut buf);
-    }
+    encode_syntax_items(items, &mut env, &mut buf);
     buf
 }
 
-/// Encode a single `SyntaxItemSpec` into the De Bruijn byte buffer.
-fn encode_syntax_item(item: &SyntaxItemSpec, env: &mut DebruijnEnv, buf: &mut Vec<u8>) {
-    match item {
-        SyntaxItemSpec::Terminal(token) => {
-            buf.push(0x0A); // Terminal tag
-            let bytes = token.as_bytes();
-            buf.push(bytes.len() as u8);
-            buf.extend_from_slice(bytes);
-        },
-        SyntaxItemSpec::NonTerminal { category, param_name } => {
-            // Variable reference for the param_name (De Bruijn encoded)
-            buf.push(env.resolve(param_name));
-            buf.push(0x01); // NonTerminal tag
-            let cat_bytes = category.as_bytes();
-            buf.push(cat_bytes.len() as u8);
-            buf.extend_from_slice(cat_bytes);
-        },
-        SyntaxItemSpec::IdentCapture { param_name } => {
-            buf.push(env.resolve(param_name));
-            buf.push(0x04); // IdentCapture tag
-        },
-        SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
-            buf.push(env.resolve(param_name));
-            buf.push(0x0B); // TokenKindCapture tag (L9-3)
-            let k = kind_name.as_bytes();
-            buf.push(k.len() as u8);
-            buf.extend_from_slice(k);
-        },
-        SyntaxItemSpec::Binder { param_name, category, is_multi } => {
-            buf.push(env.resolve(param_name));
-            buf.push(0x02); // Binder tag
-            buf.push(if *is_multi { 1 } else { 0 });
-            let cat_bytes = category.as_bytes();
-            buf.push(cat_bytes.len() as u8);
-            buf.extend_from_slice(cat_bytes);
-        },
-        SyntaxItemSpec::Collection {
-            param_name,
-            element_category,
-            separator,
-            key_val_separator: _,
-            kind,
-        } => {
-            buf.push(env.resolve(param_name));
-            buf.push(0x03); // Collection tag
-            let cat_bytes = element_category.as_bytes();
-            buf.push(cat_bytes.len() as u8);
-            buf.extend_from_slice(cat_bytes);
-            let sep_bytes = separator.as_bytes();
-            buf.push(sep_bytes.len() as u8);
-            buf.extend_from_slice(sep_bytes);
-            buf.push(*kind as u8);
-        },
-        SyntaxItemSpec::Sep { body, separator, kind } => {
-            buf.push(0x05); // Sep tag
-            let sep_bytes = separator.as_bytes();
-            buf.push(sep_bytes.len() as u8);
-            buf.extend_from_slice(sep_bytes);
-            buf.push(*kind as u8);
-            encode_syntax_item(body, env, buf);
-            buf.push(0x0B); // End tag
-        },
-        SyntaxItemSpec::Map { body_items } => {
-            buf.push(0x06); // Map tag
-            for sub in body_items {
-                encode_syntax_item(sub, env, buf);
-            }
-            buf.push(0x0B); // End tag
-        },
-        SyntaxItemSpec::Zip {
-            left_name,
-            right_name,
-            left_category,
-            right_category,
-            body,
-        } => {
-            buf.push(env.resolve(left_name));
-            buf.push(env.resolve(right_name));
-            buf.push(0x07); // Zip tag
-            let lc = left_category.as_bytes();
-            buf.push(lc.len() as u8);
-            buf.extend_from_slice(lc);
-            let rc = right_category.as_bytes();
-            buf.push(rc.len() as u8);
-            buf.extend_from_slice(rc);
-            encode_syntax_item(body, env, buf);
-            buf.push(0x0B); // End tag
-        },
-        SyntaxItemSpec::BinderCollection { param_name, separator } => {
-            buf.push(env.resolve(param_name));
-            buf.push(0x08); // BinderCollection tag
-            let sep_bytes = separator.as_bytes();
-            buf.push(sep_bytes.len() as u8);
-            buf.extend_from_slice(sep_bytes);
-        },
-        SyntaxItemSpec::Optional { inner } => {
-            buf.push(0x09); // Optional tag
-            for sub in inner {
-                encode_syntax_item(sub, env, buf);
-            }
-            buf.push(0x0B); // End tag
-        },
-        SyntaxItemSpec::GuardExpression { param_name } => {
-            buf.push(env.resolve(param_name));
-            buf.push(0x0C); // GuardExpression tag (Phase 2F)
-        },
+/// Encode syntax items into the De Bruijn byte buffer with explicit exit frames.
+fn encode_syntax_items(items: &[SyntaxItemSpec], env: &mut DebruijnEnv, buf: &mut Vec<u8>) {
+    enum Task<'item> {
+        Item(&'item SyntaxItemSpec),
+        End,
+    }
+
+    let mut tasks: Vec<_> = items.iter().rev().map(Task::Item).collect();
+    while let Some(task) = tasks.pop() {
+        let item = match task {
+            Task::End => {
+                buf.push(0x0B);
+                continue;
+            },
+            Task::Item(item) => item,
+        };
+        match item {
+            SyntaxItemSpec::Terminal(token) => {
+                buf.push(0x0A); // Terminal tag
+                let bytes = token.as_bytes();
+                buf.push(bytes.len() as u8);
+                buf.extend_from_slice(bytes);
+            },
+            SyntaxItemSpec::NonTerminal { category, param_name } => {
+                // Variable reference for the param_name (De Bruijn encoded)
+                buf.push(env.resolve(param_name));
+                buf.push(0x01); // NonTerminal tag
+                let cat_bytes = category.as_bytes();
+                buf.push(cat_bytes.len() as u8);
+                buf.extend_from_slice(cat_bytes);
+            },
+            SyntaxItemSpec::IdentCapture { param_name } => {
+                buf.push(env.resolve(param_name));
+                buf.push(0x04); // IdentCapture tag
+            },
+            SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
+                buf.push(env.resolve(param_name));
+                buf.push(0x0B); // TokenKindCapture tag (L9-3)
+                let k = kind_name.as_bytes();
+                buf.push(k.len() as u8);
+                buf.extend_from_slice(k);
+            },
+            SyntaxItemSpec::Binder { param_name, category, is_multi } => {
+                buf.push(env.resolve(param_name));
+                buf.push(0x02); // Binder tag
+                buf.push(if *is_multi { 1 } else { 0 });
+                let cat_bytes = category.as_bytes();
+                buf.push(cat_bytes.len() as u8);
+                buf.extend_from_slice(cat_bytes);
+            },
+            SyntaxItemSpec::Collection {
+                param_name,
+                element_category,
+                separator,
+                key_val_separator: _,
+                kind,
+            } => {
+                buf.push(env.resolve(param_name));
+                buf.push(0x03); // Collection tag
+                let cat_bytes = element_category.as_bytes();
+                buf.push(cat_bytes.len() as u8);
+                buf.extend_from_slice(cat_bytes);
+                let sep_bytes = separator.as_bytes();
+                buf.push(sep_bytes.len() as u8);
+                buf.extend_from_slice(sep_bytes);
+                buf.push(*kind as u8);
+            },
+            SyntaxItemSpec::Sep { body, separator, kind } => {
+                buf.push(0x05); // Sep tag
+                let sep_bytes = separator.as_bytes();
+                buf.push(sep_bytes.len() as u8);
+                buf.extend_from_slice(sep_bytes);
+                buf.push(*kind as u8);
+                tasks.push(Task::End);
+                tasks.push(Task::Item(body));
+            },
+            SyntaxItemSpec::Map { body_items } => {
+                buf.push(0x06); // Map tag
+                tasks.push(Task::End);
+                tasks.extend(body_items.iter().rev().map(Task::Item));
+            },
+            SyntaxItemSpec::Zip {
+                left_name,
+                right_name,
+                left_category,
+                right_category,
+                body,
+            } => {
+                buf.push(env.resolve(left_name));
+                buf.push(env.resolve(right_name));
+                buf.push(0x07); // Zip tag
+                let lc = left_category.as_bytes();
+                buf.push(lc.len() as u8);
+                buf.extend_from_slice(lc);
+                let rc = right_category.as_bytes();
+                buf.push(rc.len() as u8);
+                buf.extend_from_slice(rc);
+                tasks.push(Task::End);
+                tasks.push(Task::Item(body));
+            },
+            SyntaxItemSpec::BinderCollection { param_name, separator } => {
+                buf.push(env.resolve(param_name));
+                buf.push(0x08); // BinderCollection tag
+                let sep_bytes = separator.as_bytes();
+                buf.push(sep_bytes.len() as u8);
+                buf.extend_from_slice(sep_bytes);
+            },
+            SyntaxItemSpec::Optional { inner } => {
+                buf.push(0x09); // Optional tag
+                tasks.push(Task::End);
+                tasks.extend(inner.iter().rev().map(Task::Item));
+            },
+            SyntaxItemSpec::GuardExpression { param_name } => {
+                buf.push(env.resolve(param_name));
+                buf.push(0x0C); // GuardExpression tag (Phase 2F)
+            },
+        }
     }
 }
 
@@ -969,49 +955,40 @@ fn add_g08_syntax_value_edges<'a>(
     target_category: &'a str,
     adjacency: &mut HashMap<&'a str, HashSet<&'a str>>,
 ) {
-    match item {
-        SyntaxItemSpec::NonTerminal { category, .. } => {
-            adjacency
-                .entry(category.as_str())
-                .or_default()
-                .insert(target_category);
-        },
-        SyntaxItemSpec::Collection { element_category, .. } => {
-            adjacency
-                .entry(element_category.as_str())
-                .or_default()
-                .insert(target_category);
-        },
-        SyntaxItemSpec::Sep { body, .. } => {
-            add_g08_syntax_value_edges(body, target_category, adjacency);
-        },
-        SyntaxItemSpec::Map { body_items } => {
-            for item in body_items {
-                add_g08_syntax_value_edges(item, target_category, adjacency);
-            }
-        },
-        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
-            adjacency
-                .entry(left_category.as_str())
-                .or_default()
-                .insert(target_category);
-            adjacency
-                .entry(right_category.as_str())
-                .or_default()
-                .insert(target_category);
-            add_g08_syntax_value_edges(body, target_category, adjacency);
-        },
-        SyntaxItemSpec::Optional { inner } => {
-            for item in inner {
-                add_g08_syntax_value_edges(item, target_category, adjacency);
-            }
-        },
-        SyntaxItemSpec::Terminal(_)
-        | SyntaxItemSpec::IdentCapture { .. }
-        | SyntaxItemSpec::TokenKindCapture { .. }
-        | SyntaxItemSpec::Binder { .. }
-        | SyntaxItemSpec::BinderCollection { .. }
-        | SyntaxItemSpec::GuardExpression { .. } => {},
+    for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+        match item {
+            SyntaxItemSpec::NonTerminal { category, .. } => {
+                adjacency
+                    .entry(category.as_str())
+                    .or_default()
+                    .insert(target_category);
+            },
+            SyntaxItemSpec::Collection { element_category, .. } => {
+                adjacency
+                    .entry(element_category.as_str())
+                    .or_default()
+                    .insert(target_category);
+            },
+            SyntaxItemSpec::Zip { left_category, right_category, .. } => {
+                adjacency
+                    .entry(left_category.as_str())
+                    .or_default()
+                    .insert(target_category);
+                adjacency
+                    .entry(right_category.as_str())
+                    .or_default()
+                    .insert(target_category);
+            },
+            SyntaxItemSpec::Terminal(_)
+            | SyntaxItemSpec::IdentCapture { .. }
+            | SyntaxItemSpec::TokenKindCapture { .. }
+            | SyntaxItemSpec::Binder { .. }
+            | SyntaxItemSpec::BinderCollection { .. }
+            | SyntaxItemSpec::GuardExpression { .. }
+            | SyntaxItemSpec::Sep { .. }
+            | SyntaxItemSpec::Map { .. }
+            | SyntaxItemSpec::Optional { .. } => {},
+        }
     }
 }
 
@@ -1076,25 +1053,15 @@ pub(crate) fn lint_g09_unbalanced_delimiters(
 /// Collect all terminal strings from syntax items (flat, including nested).
 fn collect_terminals_flat(items: &[SyntaxItemSpec]) -> Vec<String> {
     let mut terminals = Vec::new();
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
             SyntaxItemSpec::Collection { separator, .. }
             | SyntaxItemSpec::BinderCollection { separator, .. } => {
                 terminals.push(separator.clone());
             },
-            SyntaxItemSpec::Sep { body, separator, .. } => {
-                terminals.extend(collect_terminals_flat(std::slice::from_ref(body.as_ref())));
+            SyntaxItemSpec::Sep { separator, .. } => {
                 terminals.push(separator.clone());
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                terminals.extend(collect_terminals_flat(body_items));
-            },
-            SyntaxItemSpec::Zip { body, .. } => {
-                terminals.extend(collect_terminals_flat(std::slice::from_ref(body.as_ref())));
-            },
-            SyntaxItemSpec::Optional { inner } => {
-                terminals.extend(collect_terminals_flat(inner));
             },
             _ => {},
         }

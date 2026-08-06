@@ -909,33 +909,19 @@ pub fn analyze_from_bundle(
         category: &str,
         positions: &mut HashSet<(String, String)>,
     ) {
-        match item {
-            SyntaxItemSpec::IdentCapture { param_name } => {
-                positions.insert((category.to_string(), param_name.clone()));
-            },
-            SyntaxItemSpec::Binder { param_name, .. } => {
-                positions.insert((category.to_string(), param_name.clone()));
-            },
-            SyntaxItemSpec::BinderCollection { param_name, .. } => {
-                positions.insert((category.to_string(), param_name.clone()));
-            },
-            SyntaxItemSpec::Optional { inner } => {
-                for sub in inner {
-                    collect_vars(sub, category, positions);
-                }
-            },
-            SyntaxItemSpec::Map { body_items } => {
-                for sub in body_items {
-                    collect_vars(sub, category, positions);
-                }
-            },
-            SyntaxItemSpec::Sep { body, .. } => {
-                collect_vars(body, category, positions);
-            },
-            SyntaxItemSpec::Zip { body, .. } => {
-                collect_vars(body, category, positions);
-            },
-            _ => {},
+        for item in crate::syntax_item::preorder(std::slice::from_ref(item)) {
+            match item {
+                SyntaxItemSpec::IdentCapture { param_name } => {
+                    positions.insert((category.to_string(), param_name.clone()));
+                },
+                SyntaxItemSpec::Binder { param_name, .. } => {
+                    positions.insert((category.to_string(), param_name.clone()));
+                },
+                SyntaxItemSpec::BinderCollection { param_name, .. } => {
+                    positions.insert((category.to_string(), param_name.clone()));
+                },
+                _ => {},
+            }
         }
     }
 

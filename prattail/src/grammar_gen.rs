@@ -174,22 +174,11 @@ fn is_leaf_rule(rule: &RuleSpec, cat_names: &[String]) -> bool {
 
 /// Check if a syntax item contains a NonTerminal referencing a grammar category.
 fn has_nonterminal(item: &SyntaxItemSpec, cat_names: &[String]) -> bool {
-    match item {
+    crate::syntax_item::preorder(std::slice::from_ref(item)).any(|item| match item {
         SyntaxItemSpec::NonTerminal { category, .. } => cat_names.contains(category),
         SyntaxItemSpec::Collection { element_category, .. } => cat_names.contains(element_category),
-        SyntaxItemSpec::Sep { body, .. } => has_nonterminal(body.as_ref(), cat_names),
-        SyntaxItemSpec::Map { body_items } => {
-            body_items.iter().any(|bi| has_nonterminal(bi, cat_names))
-        },
-        SyntaxItemSpec::Zip { body, .. } => has_nonterminal(body.as_ref(), cat_names),
-        SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| has_nonterminal(i, cat_names)),
-        SyntaxItemSpec::Terminal(_)
-        | SyntaxItemSpec::IdentCapture { .. }
-        | SyntaxItemSpec::TokenKindCapture { .. }
-        | SyntaxItemSpec::Binder { .. }
-        | SyntaxItemSpec::BinderCollection { .. }
-        | SyntaxItemSpec::GuardExpression { .. } => false,
-    }
+        _ => false,
+    })
 }
 
 /// Build a strategy for a category, using `prop_recursive` for depth-bounded
@@ -386,118 +375,96 @@ fn syntax_item_strategy(
     inner: &BoxedStrategy<String>,
     current_cat: &str,
 ) -> BoxedStrategy<String> {
-    match item {
-        SyntaxItemSpec::Terminal(t) => Just(t.clone()).boxed(),
-
-        SyntaxItemSpec::NonTerminal { category, .. } => {
-            if category == current_cat {
-                inner.clone()
-            } else if cat_names.contains(category) {
-                cross_category_leaf_strategy(rules_by_cat, category)
-            } else {
-                Just(fallback_ident()).boxed()
-            }
-        },
-
-        SyntaxItemSpec::IdentCapture { .. } => arb_ident(),
-
-        // L9-3: a custom-kind capture is a text leaf for property generation
-        // (INERT until the front-end lands; no modal grammar reaches here yet).
-        SyntaxItemSpec::TokenKindCapture { .. } => arb_ident(),
-
-        SyntaxItemSpec::Binder { .. } => arb_binder(),
-
-        SyntaxItemSpec::BinderCollection { separator, .. } => {
-            let sep = separator.clone();
-            prop::collection::vec(arb_binder(), 1..=3)
-                .prop_map(move |v| v.join(&format!(" {} ", sep)))
-                .boxed()
-        },
-
-        SyntaxItemSpec::Collection { element_category, separator, .. } => {
-            let elem_strat = if element_category == current_cat {
-                inner.clone()
-            } else if cat_names.contains(element_category) {
-                cross_category_leaf_strategy(rules_by_cat, element_category)
-            } else {
-                Just(fallback_ident()).boxed()
-            };
-
-            let sep = separator.clone();
-            prop::collection::vec(elem_strat, 1..=3)
-                .prop_map(move |v| v.join(&format!(" {} ", sep)))
-                .boxed()
-        },
-
-        SyntaxItemSpec::Sep { body, separator, .. } => {
-            // Generate 1-3 copies of the body pattern joined by separator
-            let body_strat =
-                syntax_item_strategy(body.as_ref(), rules_by_cat, cat_names, inner, current_cat);
-            let sep = separator.clone();
-            prop::collection::vec(body_strat, 1..=3)
-                .prop_map(move |v| v.join(&format!(" {} ", sep)))
-                .boxed()
-        },
-
-        SyntaxItemSpec::Map { body_items } => {
-            // Generate each body item and join them together
-            let body_strat: Vec<BoxedStrategy<String>> = body_items
-                .iter()
-                .map(|bi| syntax_item_strategy(bi, rules_by_cat, cat_names, inner, current_cat))
-                .collect();
-
-            if body_strat.is_empty() {
-                Just(fallback_ident()).boxed()
-            } else {
-                body_strat
-                    .into_iter()
-                    .fold(Just(String::new()).boxed(), |acc, next| {
-                        (acc, next)
-                            .prop_map(|(a, b)| if a.is_empty() { b } else { smart_join(&a, &b) })
-                            .boxed()
-                    })
-            }
-        },
-
-        SyntaxItemSpec::Zip { body, .. } => {
-            // Zip delegates to its body for generation
-            syntax_item_strategy(body.as_ref(), rules_by_cat, cat_names, inner, current_cat)
-        },
-
-        SyntaxItemSpec::Optional { inner: opt_items } => {
-            let inner_strats: Vec<BoxedStrategy<String>> = opt_items
-                .iter()
-                .map(|i| syntax_item_strategy(i, rules_by_cat, cat_names, inner, current_cat))
-                .collect();
-
-            if inner_strats.is_empty() {
-                Just(String::new()).boxed()
-            } else {
-                let combined =
-                    inner_strats
-                        .into_iter()
-                        .fold(Just(String::new()).boxed(), |acc, next| {
-                            (acc, next)
-                                .prop_map(
-                                    |(a, b)| {
-                                        if a.is_empty() {
-                                            b
-                                        } else {
-                                            smart_join(&a, &b)
-                                        }
-                                    },
-                                )
-                                .boxed()
-                        });
-
-                prop_oneof![Just(String::new()), combined,].boxed()
-            }
-        },
-
-        SyntaxItemSpec::GuardExpression { param_name } => {
-            Just(guard_predicate_for_param(param_name)).boxed()
-        },
+    fn take_strategies(
+        values: &mut Vec<BoxedStrategy<String>>,
+        count: usize,
+    ) -> Vec<BoxedStrategy<String>> {
+        let first = values
+            .len()
+            .checked_sub(count)
+            .expect("syntax strategy PDA lost child strategies");
+        values.split_off(first)
     }
+
+    fn join_strategies(strategies: Vec<BoxedStrategy<String>>) -> BoxedStrategy<String> {
+        strategies
+            .into_iter()
+            .fold(Just(String::new()).boxed(), |acc, next| {
+                (acc, next)
+                    .prop_map(|(a, b)| if a.is_empty() { b } else { smart_join(&a, &b) })
+                    .boxed()
+            })
+    }
+
+    let mut values: Vec<BoxedStrategy<String>> = Vec::new();
+    for node in crate::syntax_item::postorder(std::slice::from_ref(item)) {
+        let strategy = match node {
+            SyntaxItemSpec::Terminal(text) => Just(text.clone()).boxed(),
+            SyntaxItemSpec::NonTerminal { category, .. } => {
+                if category == current_cat {
+                    inner.clone()
+                } else if cat_names.contains(category) {
+                    cross_category_leaf_strategy(rules_by_cat, category)
+                } else {
+                    Just(fallback_ident()).boxed()
+                }
+            },
+            SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::TokenKindCapture { .. } => {
+                arb_ident()
+            },
+            SyntaxItemSpec::Binder { .. } => arb_binder(),
+            SyntaxItemSpec::BinderCollection { separator, .. } => {
+                let separator = separator.clone();
+                prop::collection::vec(arb_binder(), 1..=3)
+                    .prop_map(move |values| values.join(&format!(" {separator} ")))
+                    .boxed()
+            },
+            SyntaxItemSpec::Collection { element_category, separator, .. } => {
+                let element = if element_category == current_cat {
+                    inner.clone()
+                } else if cat_names.contains(element_category) {
+                    cross_category_leaf_strategy(rules_by_cat, element_category)
+                } else {
+                    Just(fallback_ident()).boxed()
+                };
+                let separator = separator.clone();
+                prop::collection::vec(element, 1..=3)
+                    .prop_map(move |values| values.join(&format!(" {separator} ")))
+                    .boxed()
+            },
+            SyntaxItemSpec::Sep { separator, .. } => {
+                let body = values.pop().expect("syntax strategy PDA lost Sep body");
+                let separator = separator.clone();
+                prop::collection::vec(body, 1..=3)
+                    .prop_map(move |values: Vec<String>| values.join(&format!(" {separator} ")))
+                    .boxed()
+            },
+            SyntaxItemSpec::Map { body_items } => {
+                let children = take_strategies(&mut values, body_items.len());
+                if children.is_empty() {
+                    Just(fallback_ident()).boxed()
+                } else {
+                    join_strategies(children)
+                }
+            },
+            SyntaxItemSpec::Zip { .. } => values.pop().expect("syntax strategy PDA lost Zip body"),
+            SyntaxItemSpec::Optional { inner: optional_items } => {
+                let children = take_strategies(&mut values, optional_items.len());
+                if children.is_empty() {
+                    Just(String::new()).boxed()
+                } else {
+                    let combined = join_strategies(children);
+                    prop_oneof![Just(String::new()), combined].boxed()
+                }
+            },
+            SyntaxItemSpec::GuardExpression { param_name } => {
+                Just(guard_predicate_for_param(param_name)).boxed()
+            },
+        };
+        values.push(strategy);
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("syntax strategy PDA produced no value")
 }
 
 /// Build a leaf-only strategy for a cross-category reference.

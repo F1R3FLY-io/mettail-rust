@@ -350,7 +350,7 @@ fn validate_category_refs(
     valid_categories: &BTreeSet<String>,
     errors: &mut Vec<CompositionError>,
 ) {
-    for item in items {
+    for item in crate::syntax_item::preorder(items) {
         match item {
             SyntaxItemSpec::Terminal(_)
             | SyntaxItemSpec::IdentCapture { .. }
@@ -385,20 +385,7 @@ fn validate_category_refs(
                 }
             },
 
-            SyntaxItemSpec::Sep { body, .. } => {
-                validate_category_refs(
-                    std::slice::from_ref(body.as_ref()),
-                    rule_label,
-                    valid_categories,
-                    errors,
-                );
-            },
-
-            SyntaxItemSpec::Map { body_items } => {
-                validate_category_refs(body_items, rule_label, valid_categories, errors);
-            },
-
-            SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
+            SyntaxItemSpec::Zip { left_category, right_category, .. } => {
                 if !valid_categories.contains(left_category) {
                     errors.push(CompositionError::InvalidCategoryReference {
                         rule_label: rule_label.to_string(),
@@ -411,17 +398,11 @@ fn validate_category_refs(
                         referenced_category: right_category.clone(),
                     });
                 }
-                validate_category_refs(
-                    std::slice::from_ref(body.as_ref()),
-                    rule_label,
-                    valid_categories,
-                    errors,
-                );
             },
 
-            SyntaxItemSpec::Optional { inner } => {
-                validate_category_refs(inner, rule_label, valid_categories, errors);
-            },
+            SyntaxItemSpec::Sep { .. }
+            | SyntaxItemSpec::Map { .. }
+            | SyntaxItemSpec::Optional { .. } => {},
         }
     }
 }
