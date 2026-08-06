@@ -232,7 +232,6 @@ impl fmt::Display for LinearConstraint {
 ///
 /// Supports the full first-order fragment over linear integer arithmetic with
 /// bounded quantification (existential projection via NFA variable elimination).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PresburgerPred {
     /// Always true.
     True,
@@ -251,6 +250,9 @@ pub enum PresburgerPred {
     /// Implemented via NFA projection (drop the bit dimension for variable `var`).
     Exists { var: usize, body: Box<PresburgerPred> },
 }
+
+#[path = "presburger/lifecycle.rs"]
+mod lifecycle;
 
 impl PresburgerPred {
     /// Convenience: `a ≤ b` atom.
@@ -290,27 +292,79 @@ impl PresburgerPred {
 
     /// Number of distinct variables referenced in the entire formula.
     pub fn num_vars(&self) -> usize {
-        match self {
-            PresburgerPred::True | PresburgerPred::False => 0,
-            PresburgerPred::Atom(c) => c.num_vars(),
-            PresburgerPred::And(a, b) | PresburgerPred::Or(a, b) => a.num_vars().max(b.num_vars()),
-            PresburgerPred::Not(inner) => inner.num_vars(),
-            PresburgerPred::Exists { var, body } => (*var + 1).max(body.num_vars()),
+        let mut max_vars = 0;
+        let mut work = vec![self];
+        while let Some(pred) = work.pop() {
+            match pred {
+                PresburgerPred::True | PresburgerPred::False => {},
+                PresburgerPred::Atom(constraint) => {
+                    max_vars = max_vars.max(constraint.num_vars());
+                },
+                PresburgerPred::Not(inner) => work.push(inner),
+                PresburgerPred::Exists { var, body } => {
+                    max_vars = max_vars.max(*var + 1);
+                    work.push(body);
+                },
+                PresburgerPred::And(left, right) | PresburgerPred::Or(left, right) => {
+                    work.push(right);
+                    work.push(left);
+                },
+            }
         }
+        max_vars
     }
 }
 
 impl fmt::Display for PresburgerPred {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PresburgerPred::True => write!(f, "true"),
-            PresburgerPred::False => write!(f, "false"),
-            PresburgerPred::Atom(c) => write!(f, "{}", c),
-            PresburgerPred::And(a, b) => write!(f, "({} /\\ {})", a, b),
-            PresburgerPred::Or(a, b) => write!(f, "({} \\/ {})", a, b),
-            PresburgerPred::Not(inner) => write!(f, "~({})", inner),
-            PresburgerPred::Exists { var, body } => write!(f, "(exists x{}. {})", var, body),
+        enum Task<'pred> {
+            Visit(&'pred PresburgerPred),
+            Constraint(&'pred LinearConstraint),
+            Text(&'static str),
         }
+
+        fn push_binary<'pred>(
+            tasks: &mut Vec<Task<'pred>>,
+            left: &'pred PresburgerPred,
+            right: &'pred PresburgerPred,
+            operator: &'static str,
+        ) {
+            tasks.push(Task::Text(")"));
+            tasks.push(Task::Visit(right));
+            tasks.push(Task::Text(operator));
+            tasks.push(Task::Visit(left));
+            tasks.push(Task::Text("("));
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => f.write_str(text)?,
+                Task::Constraint(constraint) => write!(f, "{constraint}")?,
+                Task::Visit(PresburgerPred::True) => f.write_str("true")?,
+                Task::Visit(PresburgerPred::False) => f.write_str("false")?,
+                Task::Visit(PresburgerPred::Atom(constraint)) => {
+                    tasks.push(Task::Constraint(constraint));
+                },
+                Task::Visit(PresburgerPred::And(left, right)) => {
+                    push_binary(&mut tasks, left, right, " /\\ ");
+                },
+                Task::Visit(PresburgerPred::Or(left, right)) => {
+                    push_binary(&mut tasks, left, right, " \\/ ");
+                },
+                Task::Visit(PresburgerPred::Not(inner)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(inner));
+                    tasks.push(Task::Text("~("));
+                },
+                Task::Visit(PresburgerPred::Exists { var, body }) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(body));
+                    write!(f, "(exists x{var}. ")?;
+                },
+            }
+        }
+        Ok(())
     }
 }
 
@@ -384,59 +438,145 @@ pub fn evaluate_presburger_checked(
     assignment: &IntAssignment,
     bit_width: usize,
 ) -> Option<bool> {
-    match pred {
-        PresburgerPred::True => Some(true),
-        PresburgerPred::False => Some(false),
-        PresburgerPred::Atom(c) => c.evaluate_checked(assignment),
-        PresburgerPred::And(a, b) => {
-            match (
-                evaluate_presburger_checked(a, assignment, bit_width),
-                evaluate_presburger_checked(b, assignment, bit_width),
-            ) {
-                (Some(false), _) | (_, Some(false)) => Some(false),
-                (Some(true), Some(true)) => Some(true),
-                _ => None,
-            }
+    enum Task<'pred> {
+        Visit(&'pred PresburgerPred),
+        Not,
+        And,
+        Or,
+        ExistsAfterBody {
+            var: usize,
+            body: &'pred PresburgerPred,
+            next_value: i64,
+            upper_bound: i64,
+            old_len: usize,
+            old_value: Option<i64>,
+            saw_undetermined: bool,
         },
-        PresburgerPred::Or(a, b) => {
-            match (
-                evaluate_presburger_checked(a, assignment, bit_width),
-                evaluate_presburger_checked(b, assignment, bit_width),
-            ) {
-                (Some(true), _) | (_, Some(true)) => Some(true),
-                (Some(false), Some(false)) => Some(false),
-                _ => None,
-            }
-        },
-        PresburgerPred::Not(inner) => {
-            evaluate_presburger_checked(inner, assignment, bit_width).map(|decided| !decided)
-        },
-        PresburgerPred::Exists { var, body } => {
-            // Bounded search: try all values in the bit-width range.
-            // For small bit widths this is feasible; for larger ones,
-            // use NFA-based satisfiability instead.
-            let half = 1i64 << (bit_width - 1);
-            let lo = -half;
-            let hi = half;
-            let mut saw_undetermined = false;
-            let mut ext = assignment.clone();
-            while ext.0.len() <= *var {
-                ext.0.push(0);
-            }
-            for val in lo..hi {
-                ext.0[*var] = val;
-                match evaluate_presburger_checked(body, &ext, bit_width) {
-                    Some(true) => return Some(true),
+    }
+
+    fn restore_assignment(
+        assignment: &mut IntAssignment,
+        var: usize,
+        old_len: usize,
+        old_value: Option<i64>,
+    ) {
+        if let Some(old_value) = old_value {
+            assignment.0[var] = old_value;
+        } else {
+            assignment.0.truncate(old_len);
+        }
+    }
+
+    let mut ext = assignment.clone();
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(PresburgerPred::True) => values.push(Some(true)),
+            Task::Visit(PresburgerPred::False) => values.push(Some(false)),
+            Task::Visit(PresburgerPred::Atom(constraint)) => {
+                values.push(constraint.evaluate_checked(&ext));
+            },
+            Task::Visit(PresburgerPred::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(PresburgerPred::And(left, right)) => {
+                tasks.push(Task::And);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(PresburgerPred::Or(left, right)) => {
+                tasks.push(Task::Or);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(PresburgerPred::Exists { var, body }) => {
+                // Explore the configured bounded domain with an explicit
+                // continuation frame, restoring shadowed bindings on exit.
+                let half = 1i64 << (bit_width - 1);
+                let lower_bound = -half;
+                let upper_bound = half;
+                let old_len = ext.0.len();
+                let old_value = ext.0.get(*var).copied();
+                if ext.0.len() <= *var {
+                    ext.0.resize(*var + 1, 0);
+                }
+                ext.0[*var] = lower_bound;
+                tasks.push(Task::ExistsAfterBody {
+                    var: *var,
+                    body,
+                    next_value: lower_bound + 1,
+                    upper_bound,
+                    old_len,
+                    old_value,
+                    saw_undetermined: false,
+                });
+                tasks.push(Task::Visit(body));
+            },
+            Task::Not => {
+                let value = values.pop().expect("Presburger evaluator lost not body");
+                values.push(value.map(|decided| !decided));
+            },
+            Task::And => {
+                let right = values.pop().expect("Presburger evaluator lost right body");
+                let left = values.pop().expect("Presburger evaluator lost left body");
+                values.push(match (left, right) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                });
+            },
+            Task::Or => {
+                let right = values.pop().expect("Presburger evaluator lost right body");
+                let left = values.pop().expect("Presburger evaluator lost left body");
+                values.push(match (left, right) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                });
+            },
+            Task::ExistsAfterBody {
+                var,
+                body,
+                next_value,
+                upper_bound,
+                old_len,
+                old_value,
+                mut saw_undetermined,
+            } => {
+                match values.pop().expect("Presburger evaluator lost exists body") {
+                    Some(true) => {
+                        restore_assignment(&mut ext, var, old_len, old_value);
+                        values.push(Some(true));
+                        continue;
+                    },
                     Some(false) => {},
                     None => saw_undetermined = true,
                 }
-            }
-            match saw_undetermined {
-                true => None,
-                false => Some(false),
-            }
-        },
+                if next_value < upper_bound {
+                    ext.0[var] = next_value;
+                    tasks.push(Task::ExistsAfterBody {
+                        var,
+                        body,
+                        next_value: next_value + 1,
+                        upper_bound,
+                        old_len,
+                        old_value,
+                        saw_undetermined,
+                    });
+                    tasks.push(Task::Visit(body));
+                } else {
+                    restore_assignment(&mut ext, var, old_len, old_value);
+                    values.push(if saw_undetermined { None } else { Some(false) });
+                }
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("Presburger evaluator produced no value")
 }
 
 /// Evaluate a Presburger predicate on a concrete assignment.
@@ -491,60 +631,89 @@ pub fn evaluate_presburger(
 ///   building NFA(EXISTS x. A) then complementing. We use a specialized
 ///   complement that works on the already-projected NFA.
 fn push_negation_inward(pred: &PresburgerPred) -> PresburgerPred {
-    match pred {
-        PresburgerPred::True | PresburgerPred::False | PresburgerPred::Atom(_) => pred.clone(),
-        PresburgerPred::And(a, b) => PresburgerPred::And(
-            Box::new(push_negation_inward(a)),
-            Box::new(push_negation_inward(b)),
-        ),
-        PresburgerPred::Or(a, b) => {
-            PresburgerPred::Or(Box::new(push_negation_inward(a)), Box::new(push_negation_inward(b)))
-        },
-        PresburgerPred::Not(inner) => negate_pred(inner),
-        PresburgerPred::Exists { var, body } => PresburgerPred::Exists {
-            var: *var,
-            body: Box::new(push_negation_inward(body)),
-        },
+    #[derive(Clone, Copy)]
+    enum BinaryKind {
+        And,
+        Or,
     }
-}
+    enum Task<'pred> {
+        Visit(&'pred PresburgerPred, bool),
+        Binary(BinaryKind),
+        Exists { var: usize, wrap_not: bool },
+    }
 
-/// Negate a predicate, pushing the negation inward.
-fn negate_pred(pred: &PresburgerPred) -> PresburgerPred {
-    match pred {
-        PresburgerPred::True => PresburgerPred::False,
-        PresburgerPred::False => PresburgerPred::True,
-        PresburgerPred::Atom(c) => {
-            // NOT(Σ aᵢxᵢ ≤ b) = Σ aᵢxᵢ > b = Σ (-aᵢ)xᵢ ≤ -(b+1)
-            PresburgerPred::Atom(LinearConstraint::from_gt(c.terms.clone(), c.rhs))
-        },
-        PresburgerPred::And(a, b) => {
-            // De Morgan: NOT(A AND B) = NOT(A) OR NOT(B)
-            PresburgerPred::Or(Box::new(negate_pred(a)), Box::new(negate_pred(b)))
-        },
-        PresburgerPred::Or(a, b) => {
-            // De Morgan: NOT(A OR B) = NOT(A) AND NOT(B)
-            PresburgerPred::And(Box::new(negate_pred(a)), Box::new(negate_pred(b)))
-        },
-        PresburgerPred::Not(inner) => {
-            // Double negation: NOT(NOT(A)) = A
-            push_negation_inward(inner)
-        },
-        PresburgerPred::Exists { var, body } => {
-            // NOT(EXISTS x. A) = FORALL x. NOT(A)
-            // For bounded integers: FORALL x. P(x) = NOT(EXISTS x. NOT(P(x)))
-            // We keep this as a Not-wrapped Exists and handle it specially in NFA compilation.
-            // Actually, we can express FORALL x. P as: NOT(EXISTS x. NOT(P)).
-            // But we're trying to eliminate Not! Instead, we express it using
-            // complement: build NFA for EXISTS x. body, then complement.
-            //
-            // For the NFA compilation, we keep this as-is and handle it
-            // in compile_nnf as a special case.
-            PresburgerPred::Not(Box::new(PresburgerPred::Exists {
-                var: *var,
-                body: Box::new(push_negation_inward(body)),
-            }))
-        },
+    let mut tasks = vec![Task::Visit(pred, false)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(PresburgerPred::True, negated) => values.push(if negated {
+                PresburgerPred::False
+            } else {
+                PresburgerPred::True
+            }),
+            Task::Visit(PresburgerPred::False, negated) => values.push(if negated {
+                PresburgerPred::True
+            } else {
+                PresburgerPred::False
+            }),
+            Task::Visit(PresburgerPred::Atom(constraint), negated) => {
+                values.push(PresburgerPred::Atom(if negated {
+                    LinearConstraint::from_gt(constraint.terms.clone(), constraint.rhs)
+                } else {
+                    constraint.clone()
+                }));
+            },
+            Task::Visit(PresburgerPred::Not(inner), negated) => {
+                tasks.push(Task::Visit(inner, !negated));
+            },
+            Task::Visit(PresburgerPred::And(left, right), negated) => {
+                let kind = if negated {
+                    BinaryKind::Or
+                } else {
+                    BinaryKind::And
+                };
+                tasks.push(Task::Binary(kind));
+                tasks.push(Task::Visit(right, negated));
+                tasks.push(Task::Visit(left, negated));
+            },
+            Task::Visit(PresburgerPred::Or(left, right), negated) => {
+                let kind = if negated {
+                    BinaryKind::And
+                } else {
+                    BinaryKind::Or
+                };
+                tasks.push(Task::Binary(kind));
+                tasks.push(Task::Visit(right, negated));
+                tasks.push(Task::Visit(left, negated));
+            },
+            Task::Visit(PresburgerPred::Exists { var, body }, negated) => {
+                // Negated existential quantifiers stay wrapped for the fixed-
+                // length complement path; their bodies are normalized without
+                // propagating the outer negation.
+                tasks.push(Task::Exists { var: *var, wrap_not: negated });
+                tasks.push(Task::Visit(body, false));
+            },
+            Task::Binary(kind) => {
+                let right = Box::new(values.pop().expect("Presburger NNF lost right body"));
+                let left = Box::new(values.pop().expect("Presburger NNF lost left body"));
+                values.push(match kind {
+                    BinaryKind::And => PresburgerPred::And(left, right),
+                    BinaryKind::Or => PresburgerPred::Or(left, right),
+                });
+            },
+            Task::Exists { var, wrap_not } => {
+                let body = Box::new(values.pop().expect("Presburger NNF lost exists body"));
+                let exists = PresburgerPred::Exists { var, body };
+                values.push(if wrap_not {
+                    PresburgerPred::Not(Box::new(exists))
+                } else {
+                    exists
+                });
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("Presburger NNF produced no result")
 }
 
 /// # Representation
@@ -720,32 +889,69 @@ impl PresburgerNfa {
     /// Precondition: `pred` is in NNF (Not only appears on atoms, and
     /// atomic Not has been resolved to a positive constraint).
     fn compile_nnf(pred: &PresburgerPred, num_vars: usize, bit_width: usize) -> Self {
-        match pred {
-            PresburgerPred::True => Self::universal(num_vars, bit_width),
-            PresburgerPred::False => Self::empty_language(num_vars, bit_width),
-            PresburgerPred::Atom(c) => Self::from_constraint(c, num_vars, bit_width),
-            PresburgerPred::And(a, b) => {
-                let nfa_a = Self::compile_nnf(a, num_vars, bit_width);
-                let nfa_b = Self::compile_nnf(b, num_vars, bit_width);
-                intersect_nfa(&nfa_a, &nfa_b)
-            },
-            PresburgerPred::Or(a, b) => {
-                let nfa_a = Self::compile_nnf(a, num_vars, bit_width);
-                let nfa_b = Self::compile_nnf(b, num_vars, bit_width);
-                union_nfa(&nfa_a, &nfa_b)
-            },
-            PresburgerPred::Not(inner) => {
-                // After NNF conversion, Not only appears wrapping Exists
-                // (representing FORALL = NOT EXISTS). Handle by building the
-                // inner NFA and complementing using the fixed-length complement.
-                let nfa_inner = Self::compile_nnf(inner, num_vars, bit_width);
-                complement_fixed_length(&nfa_inner)
-            },
-            PresburgerPred::Exists { var, body } => {
-                let nfa_body = Self::compile_nnf(body, num_vars, bit_width);
-                project_nfa(&nfa_body, *var)
-            },
+        #[derive(Clone, Copy)]
+        enum BinaryKind {
+            Intersect,
+            Union,
         }
+        enum Task<'pred> {
+            Visit(&'pred PresburgerPred),
+            Complement,
+            Project(usize),
+            Binary(BinaryKind),
+        }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(PresburgerPred::True) => {
+                    values.push(Self::universal(num_vars, bit_width));
+                },
+                Task::Visit(PresburgerPred::False) => {
+                    values.push(Self::empty_language(num_vars, bit_width));
+                },
+                Task::Visit(PresburgerPred::Atom(constraint)) => {
+                    values.push(Self::from_constraint(constraint, num_vars, bit_width));
+                },
+                Task::Visit(PresburgerPred::And(left, right)) => {
+                    tasks.push(Task::Binary(BinaryKind::Intersect));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(PresburgerPred::Or(left, right)) => {
+                    tasks.push(Task::Binary(BinaryKind::Union));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(PresburgerPred::Not(inner)) => {
+                    tasks.push(Task::Complement);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(PresburgerPred::Exists { var, body }) => {
+                    tasks.push(Task::Project(*var));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Complement => {
+                    let inner = values.pop().expect("Presburger compiler lost not body");
+                    values.push(complement_fixed_length(&inner));
+                },
+                Task::Project(var) => {
+                    let body = values.pop().expect("Presburger compiler lost exists body");
+                    values.push(project_nfa(&body, var));
+                },
+                Task::Binary(kind) => {
+                    let right = values.pop().expect("Presburger compiler lost right body");
+                    let left = values.pop().expect("Presburger compiler lost left body");
+                    values.push(match kind {
+                        BinaryKind::Intersect => intersect_nfa(&left, &right),
+                        BinaryKind::Union => union_nfa(&left, &right),
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("Presburger compiler produced no NFA")
     }
 
     /// Build a universal NFA (accepts all fixed-length inputs).
