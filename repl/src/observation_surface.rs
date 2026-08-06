@@ -42,6 +42,7 @@ use mettail_rholang_codegen::{
     PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_runtime::RuntimeObservationValue;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A reconstructed-grammar surface renderer for one language's observation values.
@@ -112,11 +113,140 @@ impl FreshNames {
             let candidate = format!("x{}", self.next);
             self.next += 1;
             if !self.used.contains(&candidate) {
-                self.used.insert(candidate.clone());
+                // `next` never repeats, so only the names reserved before generation (the free
+                // names) need membership storage. Retaining every emitted binder here would add
+                // O(depth) tree nodes and O(log depth) insertion work without changing freshness.
                 return candidate;
             }
         }
     }
+}
+
+type RenderId = usize;
+
+/// Flat ownership arena for a rendered output DAG.
+///
+/// A nested constructor must not repeatedly copy the complete string rendered by its child: a
+/// unary spine would make that recurrence quadratic. Nodes therefore refer to earlier nodes by
+/// integer index, and the completed DAG is streamed into one exactly-sized `String` by an
+/// explicit work stack. The arena is also important on the error path: it contains no recursively
+/// owned Rust value, so abandoning a partially rendered observation cannot recurse through Drop.
+struct RenderArena<'a> {
+    nodes: Vec<RenderNode<'a>>,
+}
+
+struct RenderNode<'a> {
+    kind: RenderNodeKind<'a>,
+    byte_len: usize,
+}
+
+enum RenderNodeKind<'a> {
+    Text(Cow<'a, str>),
+    Concat(Vec<RenderId>),
+}
+
+impl<'a> RenderArena<'a> {
+    fn new() -> Self {
+        Self { nodes: Vec::new() }
+    }
+
+    fn text(&mut self, text: impl Into<Cow<'a, str>>) -> RenderId {
+        let text = text.into();
+        let id = self.nodes.len();
+        self.nodes.push(RenderNode {
+            byte_len: text.len(),
+            kind: RenderNodeKind::Text(text),
+        });
+        id
+    }
+
+    fn concat(&mut self, parts: Vec<RenderId>) -> RenderId {
+        if let [only] = parts.as_slice() {
+            return *only;
+        }
+        let byte_len = parts
+            .iter()
+            .map(|id| self.nodes[*id].byte_len)
+            .try_fold(0usize, usize::checked_add)
+            .expect("a rendered observation cannot exceed addressable memory");
+        let id = self.nodes.len();
+        self.nodes.push(RenderNode {
+            kind: RenderNodeKind::Concat(parts),
+            byte_len,
+        });
+        id
+    }
+
+    fn join(&mut self, parts: Vec<RenderId>, separator: Cow<'a, str>) -> RenderId {
+        if parts.is_empty() {
+            return self.text("");
+        }
+        if parts.len() == 1 {
+            return parts[0];
+        }
+        let mut joined = Vec::with_capacity(parts.len().saturating_mul(2).saturating_sub(1));
+        let mut parts = parts.into_iter();
+        joined.push(parts.next().expect("nonempty parts checked above"));
+        for part in parts {
+            joined.push(self.text(separator.clone()));
+            joined.push(part);
+        }
+        self.concat(joined)
+    }
+
+    fn materialize(&self, root: RenderId) -> String {
+        let mut output = String::with_capacity(self.nodes[root].byte_len);
+        let mut work = vec![root];
+        while let Some(id) = work.pop() {
+            match &self.nodes[id].kind {
+                RenderNodeKind::Text(text) => output.push_str(text),
+                RenderNodeKind::Concat(parts) => work.extend(parts.iter().rev().copied()),
+            }
+        }
+        output
+    }
+}
+
+/// One continuation of the surface-rendering pushdown automaton.
+///
+/// The context and old-style grammar continuations deliberately advance one child at a time.
+/// That preserves the recursive implementation's left-to-right failure order: an invalid earlier
+/// child still wins over a malformed later grammar slot.
+enum RenderJob<'a> {
+    Visit(&'a RuntimeObservationValue),
+    FinishLambda {
+        rule: &'a GrammarRule,
+        binder: String,
+        body_ident: String,
+        fresh_name: String,
+    },
+    ContinueBag {
+        entries: &'a [(RuntimeObservationValue, usize)],
+        index: usize,
+        rendered: Vec<String>,
+        pending_count: Option<usize>,
+        separator: &'a str,
+        delimiters: Option<&'a (String, String)>,
+    },
+    ContinueContext {
+        constructor: &'a str,
+        children: &'a [RuntimeObservationValue],
+        context: &'a [TermParam],
+        pattern: &'a [SyntaxExpr],
+        param_index: usize,
+        child_index: usize,
+        slots: BTreeMap<String, RenderId>,
+        pending_name: Option<String>,
+    },
+    ContinueOldStyle {
+        constructor: &'a str,
+        children: &'a [RuntimeObservationValue],
+        items: &'a [GrammarItem],
+        item_index: usize,
+        child_index: usize,
+        tokens: Vec<RenderId>,
+        pending_child: bool,
+    },
 }
 
 impl SurfaceRenderer {
@@ -195,265 +325,441 @@ impl SurfaceRenderer {
 
     /// Render one value under `binders` (the generated fresh names of the enclosing
     /// `^lambda` scopes, outermost first).
-    fn render_value(
-        &self,
-        value: &RuntimeObservationValue,
+    fn render_value<'a>(
+        &'a self,
+        value: &'a RuntimeObservationValue,
         binders: &mut Vec<String>,
         free_names: &FreeNameTable,
         fresh: &mut FreshNames,
     ) -> Result<String, String> {
-        match value {
-            RuntimeObservationValue::Term { constructor, children } => {
-                match constructor.as_str() {
-                    FREE_VAR_REFLECT_LABEL => {
-                        let [leaf] = children.as_slice() else {
-                            return Err(format!("^free carries one debug leaf: {children:?}"));
-                        };
-                        let RuntimeObservationValue::Term { constructor: debug, children: none } =
-                            leaf
-                        else {
-                            return Err(format!("^free leaf is a nullary tag: {leaf:?}"));
-                        };
-                        if !none.is_empty() {
-                            return Err(format!("^free leaf is nullary: {leaf:?}"));
-                        }
-                        free_names.by_debug.get(debug).cloned().ok_or_else(|| {
-                            format!("^free({debug}) missed the collection pass — renderer defect")
-                        })
-                    },
-                    BOUND_VAR_REFLECT_LABEL => {
-                        let [peano] = children.as_slice() else {
-                            return Err(format!("^bound carries one Peano leaf: {children:?}"));
-                        };
-                        let depth = peano_value(peano)?;
-                        binders.iter().rev().nth(depth).cloned().ok_or_else(|| {
-                            format!(
-                                "^bound({depth}) exceeds the {} enclosing binder scope(s) — \
-                                     a dangling de Bruijn index",
-                                binders.len()
-                            )
-                        })
-                    },
-                    LAMBDA_REFLECT_LABEL => {
-                        let [body] = children.as_slice() else {
-                            return Err(format!("^lambda carries one body: {children:?}"));
-                        };
-                        let rule = self.unique_binder_rule()?;
-                        let Some([TermParam::Abstraction { binder, body: body_ident, .. }]) =
-                            rule.term_context.as_deref()
-                        else {
-                            unreachable!("unique_binder_rule guarantees the shape");
-                        };
-                        let fresh_name = fresh.generate();
-                        binders.push(fresh_name.clone());
-                        let body_text = self.render_value(body, binders, free_names, fresh)?;
-                        binders.pop();
-                        let pattern = rule.syntax_pattern.as_deref().ok_or_else(|| {
-                            format!("binder production {} has no syntax pattern", rule.label)
-                        })?;
-                        let mut tokens = Vec::with_capacity(pattern.len());
-                        for item in pattern {
-                            match item {
-                                SyntaxExpr::Literal(text) => tokens.push(text.trim().to_string()),
-                                SyntaxExpr::Param(ident) if ident == binder => {
-                                    tokens.push(fresh_name.clone())
-                                },
-                                SyntaxExpr::Param(ident) if ident == body_ident => {
-                                    tokens.push(body_text.clone())
-                                },
-                                SyntaxExpr::Param(other) => {
-                                    return Err(format!(
-                                        "binder production {} references unknown parameter {other}",
-                                        rule.label
-                                    ));
-                                },
-                                SyntaxExpr::Op(_) => {
-                                    return Err(format!(
-                                        "binder production {} uses pattern ops — unsupported for \
-                                         de-reflection",
-                                        rule.label
-                                    ));
-                                },
-                                // L9-3/L9-4: a token-text (`b@Tok`) / guest-body
-                                // (`*flt(…)`) capture is opaque foreign data with no
-                                // host-side de-reflection surface.
-                                SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
-                                    return Err(format!(
-                                        "binder production {} uses a token/guest-body capture — \
-                                         unsupported for de-reflection",
-                                        rule.label
-                                    ));
-                                },
-                            }
-                        }
-                        Ok(tokens.join(" "))
-                    },
-                    MULTILAMBDA_REFLECT_LABEL => {
-                        Err("^multilambda de-reflection is not supported (no production language \
-                         reflects multi-binder scopes yet)"
-                            .to_string())
-                    },
-                    _ => self.render_constructor(constructor, children, binders, free_names, fresh),
-                }
-            },
-            RuntimeObservationValue::Bag(entries) => {
-                let (rule, separator, delimiters) = self.unique_bag_rule()?;
-                let _ = rule;
-                let mut rendered = Vec::with_capacity(entries.len());
-                for (element, count) in entries {
-                    let text = self.render_value(element, binders, free_names, fresh)?;
-                    for _ in 0..*count {
-                        rendered.push(text.clone());
-                    }
-                }
-                // The deterministic print-order pin: multiset iteration order is
-                // hash-dependent, so rendered elements are SORTED (byte order).
-                rendered.sort();
-                let joined = rendered.join(&format!(" {separator} "));
-                match delimiters {
-                    Some((open, close)) => {
-                        if rendered.is_empty() {
-                            Ok(format!("{open}{close}"))
-                        } else {
-                            Ok(format!("{open} {joined} {close}"))
-                        }
-                    },
-                    None => Ok(joined),
-                }
-            },
-            RuntimeObservationValue::Int(value) => Ok(value.to_string()),
-            RuntimeObservationValue::Bool(value) => Ok(value.to_string()),
-            other => Err(format!("observation shape has no surface de-reflection: {other:?}")),
-        }
-    }
+        let mut arena = RenderArena::new();
+        let mut results = Vec::<RenderId>::new();
+        let mut jobs = vec![RenderJob::Visit(value)];
 
-    /// Render an ordinary constructor node through its grammar production.
-    fn render_constructor(
-        &self,
-        constructor: &str,
-        children: &[RuntimeObservationValue],
-        binders: &mut Vec<String>,
-        free_names: &FreeNameTable,
-        fresh: &mut FreshNames,
-    ) -> Result<String, String> {
-        let rule = self
-            .def
-            .terms
-            .iter()
-            .find(|rule| rule.label == constructor)
-            .ok_or_else(|| {
-                format!("constructor {constructor} has no production in language {}", self.def.name)
-            })?;
-
-        // Judgement-style production: map term-context parameters to children
-        // positionally, then emit the syntax pattern.
-        if let (Some(context), Some(pattern)) =
-            (rule.term_context.as_deref(), rule.syntax_pattern.as_deref())
-        {
-            let mut slots: BTreeMap<String, String> = BTreeMap::new();
-            let mut child_iter = children.iter();
-            for param in context {
-                match param {
-                    TermParam::Simple { name, .. } => {
-                        let child = child_iter.next().ok_or_else(|| {
-                            format!("{constructor} is missing a child for parameter {name}")
-                        })?;
-                        let text = self.render_value(child, binders, free_names, fresh)?;
-                        slots.insert(name.to_string(), text);
+        while let Some(job) = jobs.pop() {
+            match job {
+                RenderJob::Visit(value) => match value {
+                    RuntimeObservationValue::Term { constructor, children } => {
+                        match constructor.as_str() {
+                            FREE_VAR_REFLECT_LABEL => {
+                                let [leaf] = children.as_slice() else {
+                                    return Err(format!(
+                                        "^free carries one debug leaf: {children:?}"
+                                    ));
+                                };
+                                let RuntimeObservationValue::Term {
+                                    constructor: debug,
+                                    children: none,
+                                } = leaf
+                                else {
+                                    return Err(format!("^free leaf is a nullary tag: {leaf:?}"));
+                                };
+                                if !none.is_empty() {
+                                    return Err(format!("^free leaf is nullary: {leaf:?}"));
+                                }
+                                let name =
+                                    free_names.by_debug.get(debug).cloned().ok_or_else(|| {
+                                        format!(
+                                            "^free({debug}) missed the collection pass — renderer \
+                                             defect"
+                                        )
+                                    })?;
+                                results.push(arena.text(Cow::Owned(name)));
+                            },
+                            BOUND_VAR_REFLECT_LABEL => {
+                                let [peano] = children.as_slice() else {
+                                    return Err(format!(
+                                        "^bound carries one Peano leaf: {children:?}"
+                                    ));
+                                };
+                                let depth = peano_value(peano)?;
+                                let name = depth
+                                    .checked_add(1)
+                                    .and_then(|offset| binders.len().checked_sub(offset))
+                                    .and_then(|index| binders.get(index))
+                                    .cloned()
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "^bound({depth}) exceeds the {} enclosing binder \
+                                             scope(s) — a dangling de Bruijn index",
+                                            binders.len()
+                                        )
+                                    })?;
+                                results.push(arena.text(Cow::Owned(name)));
+                            },
+                            LAMBDA_REFLECT_LABEL => {
+                                let [body] = children.as_slice() else {
+                                    return Err(format!("^lambda carries one body: {children:?}"));
+                                };
+                                let rule = self.unique_binder_rule()?;
+                                let Some([TermParam::Abstraction { binder, body: body_ident, .. }]) =
+                                    rule.term_context.as_deref()
+                                else {
+                                    unreachable!("unique_binder_rule guarantees the shape");
+                                };
+                                let fresh_name = fresh.generate();
+                                binders.push(fresh_name.clone());
+                                jobs.push(RenderJob::FinishLambda {
+                                    rule,
+                                    binder: binder.to_string(),
+                                    body_ident: body_ident.to_string(),
+                                    fresh_name,
+                                });
+                                jobs.push(RenderJob::Visit(body));
+                            },
+                            MULTILAMBDA_REFLECT_LABEL => {
+                                return Err(
+                                    "^multilambda de-reflection is not supported (no production \
+                                     language reflects multi-binder scopes yet)"
+                                        .to_string(),
+                                );
+                            },
+                            _ => {
+                                let rule = self
+                                    .def
+                                    .terms
+                                    .iter()
+                                    .find(|rule| rule.label == *constructor)
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "constructor {constructor} has no production in \
+                                             language {}",
+                                            self.def.name
+                                        )
+                                    })?;
+                                if let (Some(context), Some(pattern)) =
+                                    (rule.term_context.as_deref(), rule.syntax_pattern.as_deref())
+                                {
+                                    jobs.push(RenderJob::ContinueContext {
+                                        constructor,
+                                        children,
+                                        context,
+                                        pattern,
+                                        param_index: 0,
+                                        child_index: 0,
+                                        slots: BTreeMap::new(),
+                                        pending_name: None,
+                                    });
+                                } else {
+                                    jobs.push(RenderJob::ContinueOldStyle {
+                                        constructor,
+                                        children,
+                                        items: &rule.items,
+                                        item_index: 0,
+                                        child_index: 0,
+                                        tokens: Vec::with_capacity(rule.items.len()),
+                                        pending_child: false,
+                                    });
+                                }
+                            },
+                        }
+                    },
+                    RuntimeObservationValue::Bag(entries) => {
+                        let (_rule, separator, delimiters) = self.unique_bag_rule()?;
+                        jobs.push(RenderJob::ContinueBag {
+                            entries,
+                            index: 0,
+                            rendered: Vec::with_capacity(entries.len()),
+                            pending_count: None,
+                            separator,
+                            delimiters,
+                        });
+                    },
+                    RuntimeObservationValue::Int(value) => {
+                        results.push(arena.text(Cow::Owned(value.to_string())));
+                    },
+                    RuntimeObservationValue::Bool(value) => {
+                        results.push(arena.text(Cow::Owned(value.to_string())));
                     },
                     other => {
                         return Err(format!(
-                            "{constructor} carries a non-simple parameter {other:?} — such \
-                             constructors reflect as ^lambda, never by label"
+                            "observation shape has no surface de-reflection: {other:?}"
                         ));
                     },
-                }
+                },
+                RenderJob::FinishLambda { rule, binder, body_ident, fresh_name } => {
+                    let body = results
+                        .pop()
+                        .expect("a completed lambda body leaves one render result");
+                    binders
+                        .pop()
+                        .expect("a completed lambda body has one enclosing binder");
+                    let pattern = rule.syntax_pattern.as_deref().ok_or_else(|| {
+                        format!("binder production {} has no syntax pattern", rule.label)
+                    })?;
+                    let mut tokens = Vec::with_capacity(pattern.len());
+                    for item in pattern {
+                        match item {
+                            SyntaxExpr::Literal(text) => {
+                                tokens.push(arena.text(Cow::Borrowed(text.trim())));
+                            },
+                            SyntaxExpr::Param(ident) if ident.to_string() == binder => {
+                                tokens.push(arena.text(Cow::Owned(fresh_name.clone())));
+                            },
+                            SyntaxExpr::Param(ident) if ident.to_string() == body_ident => {
+                                tokens.push(body);
+                            },
+                            SyntaxExpr::Param(other) => {
+                                return Err(format!(
+                                    "binder production {} references unknown parameter {other}",
+                                    rule.label
+                                ));
+                            },
+                            SyntaxExpr::Op(_) => {
+                                return Err(format!(
+                                    "binder production {} uses pattern ops — unsupported for \
+                                     de-reflection",
+                                    rule.label
+                                ));
+                            },
+                            SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
+                                return Err(format!(
+                                    "binder production {} uses a token/guest-body capture — \
+                                     unsupported for de-reflection",
+                                    rule.label
+                                ));
+                            },
+                        }
+                    }
+                    results.push(arena.join(tokens, Cow::Borrowed(" ")));
+                },
+                RenderJob::ContinueBag {
+                    entries,
+                    index,
+                    mut rendered,
+                    pending_count,
+                    separator,
+                    delimiters,
+                } => {
+                    if let Some(count) = pending_count {
+                        let element = arena.materialize(
+                            results
+                                .pop()
+                                .expect("a completed bag element leaves one render result"),
+                        );
+                        rendered.extend(std::iter::repeat_n(element, count));
+                    }
+                    if index == entries.len() {
+                        rendered.sort();
+                        let joined = rendered.join(&format!(" {separator} "));
+                        let text = match delimiters {
+                            Some((open, close)) if rendered.is_empty() => {
+                                format!("{open}{close}")
+                            },
+                            Some((open, close)) => format!("{open} {joined} {close}"),
+                            None => joined,
+                        };
+                        results.push(arena.text(Cow::Owned(text)));
+                    } else {
+                        let (element, count) = &entries[index];
+                        jobs.push(RenderJob::ContinueBag {
+                            entries,
+                            index: index + 1,
+                            rendered,
+                            pending_count: Some(*count),
+                            separator,
+                            delimiters,
+                        });
+                        jobs.push(RenderJob::Visit(element));
+                    }
+                },
+                RenderJob::ContinueContext {
+                    constructor,
+                    children,
+                    context,
+                    pattern,
+                    mut param_index,
+                    mut child_index,
+                    mut slots,
+                    pending_name,
+                } => {
+                    if let Some(name) = pending_name {
+                        slots.insert(
+                            name,
+                            results
+                                .pop()
+                                .expect("a completed constructor child leaves one render result"),
+                        );
+                    }
+                    loop {
+                        if param_index == context.len() {
+                            if child_index != children.len() {
+                                return Err(format!(
+                                    "{constructor} has more children than production parameters \
+                                     ({})",
+                                    children.len()
+                                ));
+                            }
+                            let mut tokens = Vec::with_capacity(pattern.len());
+                            for item in pattern {
+                                match item {
+                                    SyntaxExpr::Literal(text) => {
+                                        tokens.push(arena.text(Cow::Borrowed(text.trim())));
+                                    },
+                                    SyntaxExpr::Param(ident) => {
+                                        let key = ident.to_string();
+                                        let rendered =
+                                            slots.get(&key).copied().ok_or_else(|| {
+                                                format!(
+                                                    "{constructor} pattern references unknown \
+                                                 parameter {ident}"
+                                                )
+                                            })?;
+                                        tokens.push(rendered);
+                                    },
+                                    SyntaxExpr::Op(_) => {
+                                        return Err(format!(
+                                            "{constructor} uses pattern ops — unsupported for \
+                                             de-reflection"
+                                        ));
+                                    },
+                                    SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
+                                        return Err(format!(
+                                            "{constructor} uses a token/guest-body capture — \
+                                             unsupported for de-reflection"
+                                        ));
+                                    },
+                                }
+                            }
+                            results.push(arena.join(tokens, Cow::Borrowed(" ")));
+                            break;
+                        }
+
+                        match &context[param_index] {
+                            TermParam::Simple { name, .. } => {
+                                let child = children.get(child_index).ok_or_else(|| {
+                                    format!("{constructor} is missing a child for parameter {name}")
+                                })?;
+                                param_index += 1;
+                                child_index += 1;
+                                jobs.push(RenderJob::ContinueContext {
+                                    constructor,
+                                    children,
+                                    context,
+                                    pattern,
+                                    param_index,
+                                    child_index,
+                                    slots,
+                                    pending_name: Some(name.to_string()),
+                                });
+                                jobs.push(RenderJob::Visit(child));
+                                break;
+                            },
+                            other => {
+                                return Err(format!(
+                                    "{constructor} carries a non-simple parameter {other:?} — \
+                                     such constructors reflect as ^lambda, never by label"
+                                ));
+                            },
+                        }
+                    }
+                },
+                RenderJob::ContinueOldStyle {
+                    constructor,
+                    children,
+                    items,
+                    mut item_index,
+                    child_index,
+                    mut tokens,
+                    pending_child,
+                } => {
+                    if pending_child {
+                        tokens.push(
+                            results
+                                .pop()
+                                .expect("a completed old-style child leaves one render result"),
+                        );
+                    }
+                    loop {
+                        if item_index == items.len() {
+                            if child_index != children.len() {
+                                return Err(format!(
+                                    "{constructor} has more children than production slots ({})",
+                                    children.len()
+                                ));
+                            }
+                            results.push(arena.join(tokens, Cow::Borrowed(" ")));
+                            break;
+                        }
+
+                        match &items[item_index] {
+                            GrammarItem::Terminal(text) => {
+                                tokens.push(arena.text(Cow::Borrowed(text.trim())));
+                                item_index += 1;
+                            },
+                            GrammarItem::NonTerminal { .. } => {
+                                let child = children.get(child_index).ok_or_else(|| {
+                                    format!(
+                                        "{constructor} is missing a child for a nonterminal slot"
+                                    )
+                                })?;
+                                jobs.push(RenderJob::ContinueOldStyle {
+                                    constructor,
+                                    children,
+                                    items,
+                                    item_index: item_index + 1,
+                                    child_index: child_index + 1,
+                                    tokens,
+                                    pending_child: true,
+                                });
+                                jobs.push(RenderJob::Visit(child));
+                                break;
+                            },
+                            GrammarItem::Binder { .. } => {
+                                return Err(format!(
+                                    "{constructor} declares an old-style binder item — such \
+                                     constructors reflect as ^lambda, never by label"
+                                ));
+                            },
+                            GrammarItem::Collection { .. } => {
+                                let child = children.get(child_index).ok_or_else(|| {
+                                    format!("{constructor} is missing its collection child")
+                                })?;
+                                jobs.push(RenderJob::ContinueOldStyle {
+                                    constructor,
+                                    children,
+                                    items,
+                                    item_index: item_index + 1,
+                                    child_index: child_index + 1,
+                                    tokens,
+                                    pending_child: true,
+                                });
+                                jobs.push(RenderJob::Visit(child));
+                                break;
+                            },
+                        }
+                    }
+                },
             }
-            if child_iter.next().is_some() {
-                return Err(format!(
-                    "{constructor} has more children than production parameters ({})",
-                    children.len()
-                ));
-            }
-            let mut tokens = Vec::with_capacity(pattern.len());
-            for item in pattern {
-                match item {
-                    SyntaxExpr::Literal(text) => tokens.push(text.trim().to_string()),
-                    SyntaxExpr::Param(ident) => {
-                        let text = slots.get(&ident.to_string()).ok_or_else(|| {
-                            format!("{constructor} pattern references unknown parameter {ident}")
-                        })?;
-                        tokens.push(text.clone());
-                    },
-                    SyntaxExpr::Op(_) => {
-                        return Err(format!(
-                            "{constructor} uses pattern ops — unsupported for de-reflection"
-                        ));
-                    },
-                    // L9-3/L9-4: opaque token-text / guest-body captures have no
-                    // host-side de-reflection surface.
-                    SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
-                        return Err(format!(
-                            "{constructor} uses a token/guest-body capture — unsupported for \
-                             de-reflection"
-                        ));
-                    },
-                }
-            }
-            return Ok(tokens.join(" "));
         }
 
-        // Old-style (BNFC) production: emit terminals verbatim; each NonTerminal consumes
-        // the next child.
-        let mut tokens = Vec::with_capacity(rule.items.len());
-        let mut child_iter = children.iter();
-        for item in &rule.items {
-            match item {
-                GrammarItem::Terminal(text) => tokens.push(text.trim().to_string()),
-                GrammarItem::NonTerminal { .. } => {
-                    let child = child_iter.next().ok_or_else(|| {
-                        format!("{constructor} is missing a child for a nonterminal slot")
-                    })?;
-                    tokens.push(self.render_value(child, binders, free_names, fresh)?);
-                },
-                GrammarItem::Binder { .. } => {
-                    return Err(format!(
-                        "{constructor} declares an old-style binder item — such constructors \
-                         reflect as ^lambda, never by label"
-                    ));
-                },
-                GrammarItem::Collection { .. } => {
-                    let child = child_iter
-                        .next()
-                        .ok_or_else(|| format!("{constructor} is missing its collection child"))?;
-                    tokens.push(self.render_value(child, binders, free_names, fresh)?);
-                },
-            }
-        }
-        if child_iter.next().is_some() {
-            return Err(format!(
-                "{constructor} has more children than production slots ({})",
-                children.len()
-            ));
-        }
-        Ok(tokens.join(" "))
+        let [root] = results.as_slice() else {
+            panic!("surface renderer PDA ended with {} result(s), expected one", results.len());
+        };
+        debug_assert!(binders.is_empty(), "surface renderer leaked binder frames");
+        Ok(arena.materialize(*root))
     }
 }
 
 /// Decode a reflected Peano numeral `S^n(Z)`.
 fn peano_value(value: &RuntimeObservationValue) -> Result<usize, String> {
-    match value {
-        RuntimeObservationValue::Term { constructor, children }
-            if constructor == PEANO_ZERO_REFLECT_LABEL && children.is_empty() =>
-        {
-            Ok(0)
-        },
-        RuntimeObservationValue::Term { constructor, children }
-            if constructor == PEANO_SUCC_REFLECT_LABEL && children.len() == 1 =>
-        {
-            Ok(1 + peano_value(&children[0])?)
-        },
-        other => Err(format!("not a reflected Peano numeral: {other:?}")),
+    let mut cursor = value;
+    let mut depth = 0usize;
+    loop {
+        match cursor {
+            RuntimeObservationValue::Term { constructor, children }
+                if constructor == PEANO_ZERO_REFLECT_LABEL && children.is_empty() =>
+            {
+                return Ok(depth);
+            },
+            RuntimeObservationValue::Term { constructor, children }
+                if constructor == PEANO_SUCC_REFLECT_LABEL && children.len() == 1 =>
+            {
+                depth += 1;
+                cursor = &children[0];
+            },
+            other => return Err(format!("not a reflected Peano numeral: {other:?}")),
+        }
     }
 }
 
@@ -464,38 +770,43 @@ fn collect_free_names(
     value: &RuntimeObservationValue,
     table: &mut FreeNameTable,
 ) -> Result<(), String> {
-    match value {
-        RuntimeObservationValue::Term { constructor, children }
-            if constructor == FREE_VAR_REFLECT_LABEL =>
-        {
-            let [RuntimeObservationValue::Term { constructor: debug, children: none }] =
-                children.as_slice()
-            else {
-                return Err(format!("^free carries one nullary debug leaf: {children:?}"));
-            };
-            if !none.is_empty() {
-                return Err(format!("^free debug leaf is nullary: {children:?}"));
-            }
-            table.assign(debug);
-            Ok(())
-        },
-        RuntimeObservationValue::Term { children, .. } => children
-            .iter()
-            .try_for_each(|child| collect_free_names(child, table)),
-        RuntimeObservationValue::List(items)
-        | RuntimeObservationValue::Tuple(items)
-        | RuntimeObservationValue::Set(items) => items
-            .iter()
-            .try_for_each(|item| collect_free_names(item, table)),
-        RuntimeObservationValue::Bag(entries) => entries
-            .iter()
-            .try_for_each(|(element, _)| collect_free_names(element, table)),
-        RuntimeObservationValue::Map(entries) => entries.iter().try_for_each(|(key, value)| {
-            collect_free_names(key, table)?;
-            collect_free_names(value, table)
-        }),
-        _ => Ok(()),
+    let mut work = vec![value];
+    while let Some(value) = work.pop() {
+        match value {
+            RuntimeObservationValue::Term { constructor, children }
+                if constructor == FREE_VAR_REFLECT_LABEL =>
+            {
+                let [RuntimeObservationValue::Term { constructor: debug, children: none }] =
+                    children.as_slice()
+                else {
+                    return Err(format!("^free carries one nullary debug leaf: {children:?}"));
+                };
+                if !none.is_empty() {
+                    return Err(format!("^free debug leaf is nullary: {children:?}"));
+                }
+                table.assign(debug);
+            },
+            RuntimeObservationValue::Term { children, .. } => {
+                work.extend(children.iter().rev());
+            },
+            RuntimeObservationValue::List(items)
+            | RuntimeObservationValue::Tuple(items)
+            | RuntimeObservationValue::Set(items) => {
+                work.extend(items.iter().rev());
+            },
+            RuntimeObservationValue::Bag(entries) => {
+                work.extend(entries.iter().rev().map(|(element, _)| element));
+            },
+            RuntimeObservationValue::Map(entries) => {
+                for (key, value) in entries.iter().rev() {
+                    work.push(value);
+                    work.push(key);
+                }
+            },
+            _ => {},
+        }
     }
+    Ok(())
 }
 
 /// Whether de-reflection applies to this observation value at all: constructor terms and
@@ -503,3 +814,7 @@ fn collect_free_names(
 pub fn is_surface_renderable_shape(value: &RuntimeObservationValue) -> bool {
     matches!(value, RuntimeObservationValue::Term { .. } | RuntimeObservationValue::Bag(_))
 }
+
+#[cfg(test)]
+#[path = "../tests/support/observation_surface_recursive_oracle.rs"]
+mod recursive_oracle;

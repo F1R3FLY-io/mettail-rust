@@ -433,10 +433,6 @@ const RECURSION_DISPOSITIONS: &[(&str, Disposition)] = &[
              anchor, and without it `measured_shape` would answer `Flat` for everything",
         ),
     ),
-    (
-        "repl/src/observation_surface.rs",
-        Disposition::NotATermDepthCycle("REPL rendering surface"),
-    ),
 ];
 
 fn workspace_root() -> PathBuf {
