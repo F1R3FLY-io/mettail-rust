@@ -62,7 +62,6 @@ use crate::logict::{ConstraintTheory, LogicStream};
 ///     args: vec![x, a],
 /// };
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TermExpr {
     /// A variable (identified by index).
     Var(usize),
@@ -77,24 +76,8 @@ pub enum TermExpr {
     },
 }
 
-impl fmt::Display for TermExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TermExpr::Var(idx) => write!(f, "x{}", idx),
-            TermExpr::Const(name) => write!(f, "{}", name),
-            TermExpr::App { head, args } => {
-                write!(f, "{}(", head)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", arg)?;
-                }
-                write!(f, ")")
-            },
-        }
-    }
-}
+#[path = "unification/lifecycle.rs"]
+mod lifecycle;
 
 impl TermExpr {
     /// Apply a substitution to this term, replacing bound variables with their
@@ -109,24 +92,48 @@ impl TermExpr {
     /// 3. For `App(f, args)`, recursively apply to each argument.
     /// 4. `Const` values are unchanged.
     pub fn apply_substitution(&self, subst: &HashMap<usize, TermExpr>) -> TermExpr {
-        match self {
-            TermExpr::Var(idx) => {
-                if let Some(bound) = subst.get(idx) {
-                    // Follow transitive bindings: if x ↦ y and y ↦ t, return t.
-                    bound.apply_substitution(subst)
-                } else {
-                    self.clone()
-                }
-            },
-            TermExpr::Const(_) => self.clone(),
-            TermExpr::App { head, args } => {
-                let applied_args: Vec<TermExpr> = args
-                    .iter()
-                    .map(|arg| arg.apply_substitution(subst))
-                    .collect();
-                TermExpr::App { head: head.clone(), args: applied_args }
-            },
+        enum Task<'term> {
+            Visit(&'term TermExpr),
+            App { head: String, child_count: usize },
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TermExpr::Var(index)) => {
+                    if let Some(bound) = subst.get(index) {
+                        tasks.push(Task::Visit(bound));
+                    } else {
+                        values.push(TermExpr::Var(*index));
+                    }
+                },
+                Task::Visit(TermExpr::Const(name)) => {
+                    values.push(TermExpr::Const(name.clone()));
+                },
+                Task::Visit(TermExpr::App { head, args }) => {
+                    tasks.push(Task::App {
+                        head: head.clone(),
+                        child_count: args.len(),
+                    });
+                    for child in args.iter().rev() {
+                        tasks.push(Task::Visit(child));
+                    }
+                },
+                Task::App { head, child_count } => {
+                    let first = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("term substitution PDA lost child results");
+                    let args = values.split_off(first);
+                    values.push(TermExpr::App { head, args });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("term substitution PDA produced no value")
     }
 
     /// Check whether variable `var` occurs anywhere in `term`.
@@ -213,18 +220,22 @@ impl TermSignature {
     /// Variables and constants are always well-formed. An `App(f, args)` is
     /// well-formed iff `f` is a registered constructor and `|args| == arity(f)`.
     pub fn is_well_formed(&self, term: &TermExpr) -> bool {
-        match term {
-            TermExpr::Var(_) | TermExpr::Const(_) => true,
-            TermExpr::App { head, args } => {
-                if let Some(&arity) = self.constructors.get(head) {
-                    args.len() == arity && args.iter().all(|a| self.is_well_formed(a))
-                } else {
-                    // Unknown constructor — accept if signature is open
-                    // (for structural unification, we allow unregistered constructors)
-                    args.iter().all(|a| self.is_well_formed(a))
+        let mut work = vec![term];
+        while let Some(node) = work.pop() {
+            if let TermExpr::App { head, args } = node {
+                if self
+                    .constructors
+                    .get(head)
+                    .is_some_and(|arity| args.len() != *arity)
+                {
+                    return false;
                 }
-            },
+                for child in args.iter().rev() {
+                    work.push(child);
+                }
+            }
         }
+        true
     }
 }
 
@@ -784,14 +795,22 @@ fn item_to_term(
 /// variables (no constants or ground constructors), meaning any input
 /// satisfies it.
 fn is_tautological(term: &TermExpr) -> bool {
-    match term {
-        TermExpr::Var(_) => true,
-        TermExpr::Const(_) => false,
-        TermExpr::App { args, .. } => {
-            // Pure-variable App: all args must themselves be tautological.
-            !args.is_empty() && args.iter().all(is_tautological)
-        },
+    let mut work = vec![term];
+    while let Some(node) = work.pop() {
+        match node {
+            TermExpr::Var(_) => {},
+            TermExpr::Const(_) => return false,
+            TermExpr::App { args, .. } => {
+                if args.is_empty() {
+                    return false;
+                }
+                for child in args.iter().rev() {
+                    work.push(child);
+                }
+            },
+        }
     }
+    true
 }
 
 /// Check whether a term is *satisfiable* — whether any ground instantiation
@@ -974,14 +993,42 @@ pub fn analyze_from_bundle(
 /// Used to alpha-rename a term so its variables do not clash with those
 /// from another term before attempting unification.
 fn rename_vars(term: &TermExpr, offset: usize) -> TermExpr {
-    match term {
-        TermExpr::Var(idx) => TermExpr::Var(idx + offset),
-        TermExpr::Const(_) => term.clone(),
-        TermExpr::App { head, args } => TermExpr::App {
-            head: head.clone(),
-            args: args.iter().map(|a| rename_vars(a, offset)).collect(),
-        },
+    enum Task<'term> {
+        Visit(&'term TermExpr),
+        App { head: String, child_count: usize },
     }
+
+    let mut tasks = vec![Task::Visit(term)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(TermExpr::Var(index)) => values.push(TermExpr::Var(index + offset)),
+            Task::Visit(TermExpr::Const(name)) => {
+                values.push(TermExpr::Const(name.clone()));
+            },
+            Task::Visit(TermExpr::App { head, args }) => {
+                tasks.push(Task::App {
+                    head: head.clone(),
+                    child_count: args.len(),
+                });
+                for child in args.iter().rev() {
+                    tasks.push(Task::Visit(child));
+                }
+            },
+            Task::App { head, child_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("variable-renaming PDA lost child results");
+                let args = values.split_off(first);
+                values.push(TermExpr::App { head, args });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("variable-renaming PDA produced no value")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
