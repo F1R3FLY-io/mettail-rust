@@ -3052,6 +3052,17 @@ impl ActionArg {
             _ => None,
         }
     }
+    /// Consume a `BinderScope` argument without cloning its handle.
+    ///
+    /// `ActionArg` has an explicit iterative destructor, so callers must use this accessor
+    /// instead of destructuring the enum by value.
+    pub fn into_binder_scope(self) -> Option<BinderHandle> {
+        self.into_binder_scope_value().ok()
+    }
+    /// Consume an `Ident` argument and move out its name.
+    pub fn into_ident_name(self) -> Option<String> {
+        self.into_ident_name_value().ok()
+    }
     /// Consume this `Collection` arg and downcast to `T`.
     ///
     /// Stage 3.6 / ι Phase 1 (2026-05-01): see `into_term` for Arc/Clone

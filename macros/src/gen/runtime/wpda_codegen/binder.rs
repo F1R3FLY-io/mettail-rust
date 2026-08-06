@@ -3409,14 +3409,12 @@ pub(crate) fn emit_binder_action_entry(
                 // Scope::new(Binder(get_or_create_var(#binder_name)),
                 // Box::new(body))))`.
                 extracts.push(quote! {
-                    let #var = match iter.next() {
-                        Some(mettail_prattail::wpda_runtime::ActionArg::BinderScope(h)) => {
-                            match h.names.into_iter().next() {
-                                Some(name) => name,
-                                None => return,
-                            }
+                    let #var = match iter.next().and_then(|a| a.into_binder_scope()) {
+                        Some(h) => match h.names.into_iter().next() {
+                            Some(name) => name,
+                            None => return,
                         },
-                        _ => return,
+                        None => return,
                     };
                 });
                 binder_name_holders.push(var.clone());
@@ -3523,9 +3521,9 @@ pub(crate) fn emit_binder_action_entry(
             },
             ActionArgKind::BinderList => {
                 extracts.push(quote! {
-                    let #var = match iter.next() {
-                        Some(mettail_prattail::wpda_runtime::ActionArg::BinderScope(h)) => h.names,
-                        _ => return,
+                    let #var = match iter.next().and_then(|a| a.into_binder_scope()) {
+                        Some(h) => h.names,
+                        None => return,
                     };
                 });
                 binder_list_holder = Some(var.clone());
@@ -3645,10 +3643,8 @@ pub(crate) fn emit_binder_action_entry(
                         ActionArgKind::BinderName => quote! {
                             let #inner_var: Option<String> =
                                 match #opt_var.as_mut() {
-                                    Some(inner_iter) => match inner_iter.next() {
-                                        Some(mettail_prattail::wpda_runtime::ActionArg::Ident { name, .. }) => Some(name),
-                                        _ => None,
-                                    },
+                                    Some(inner_iter) => inner_iter.next()
+                                        .and_then(|a| a.into_ident_name()),
                                     None => None,
                                 };
                         },
@@ -3663,10 +3659,9 @@ pub(crate) fn emit_binder_action_entry(
                         ActionArgKind::BinderList => quote! {
                             let #inner_var: Option<Vec<String>> =
                                 match #opt_var.as_mut() {
-                                    Some(inner_iter) => match inner_iter.next() {
-                                        Some(mettail_prattail::wpda_runtime::ActionArg::BinderScope(h)) => Some(h.names),
-                                        _ => None,
-                                    },
+                                    Some(inner_iter) => inner_iter.next()
+                                        .and_then(|a| a.into_binder_scope())
+                                        .map(|h| h.names),
                                     None => None,
                                 };
                         },

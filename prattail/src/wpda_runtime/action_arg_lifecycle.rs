@@ -115,6 +115,26 @@ impl ActionArg {
             Err(ManuallyDrop::into_inner(this))
         }
     }
+
+    pub(super) fn into_binder_scope_value(self) -> Result<super::BinderHandle, Self> {
+        let mut this = ManuallyDrop::new(self);
+        unsafe {
+            if let ActionArg::BinderScope(handle) = &mut *this {
+                return Ok(ptr::read(handle));
+            }
+            Err(ManuallyDrop::into_inner(this))
+        }
+    }
+
+    pub(super) fn into_ident_name_value(self) -> Result<String, Self> {
+        let mut this = ManuallyDrop::new(self);
+        unsafe {
+            if let ActionArg::Ident { name, .. } = &mut *this {
+                return Ok(ptr::read(name));
+            }
+            Err(ManuallyDrop::into_inner(this))
+        }
+    }
 }
 
 impl Drop for ActionArg {

@@ -6,204 +6,210 @@ use crate::rholang::receive;
 use mettail_runtime::{Language, Term, TermType, VarTypeInfo};
 
 fn infer_receive_pattern_names(pat: &Proc, out: &mut Vec<String>) {
-    match pat {
-        Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
-            if let Some(name) = &fv.pretty_name {
-                out.push(name.clone());
-            }
-        },
-        Proc::CastList(xs) => {
-            if let List::ListLit(items) = xs.as_ref() {
-                for item in items {
-                    infer_receive_pattern_names(item, out);
+    let mut work = vec![pat];
+    while let Some(pat) = work.pop() {
+        let first_child = work.len();
+        match pat {
+            Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
+                if let Some(name) = &fv.pretty_name {
+                    out.push(name.clone());
                 }
-            }
-        },
-        Proc::CastBag(xs) => {
-            if let Bag::BagLit(items) = xs.as_ref() {
-                for (item, count) in items.iter() {
-                    for _ in 0..count {
-                        infer_receive_pattern_names(item, out);
+            },
+            Proc::CastList(xs) => {
+                if let List::ListLit(items) = xs.as_ref() {
+                    work.extend(items);
+                }
+            },
+            Proc::CastBag(xs) => {
+                if let Bag::BagLit(items) = xs.as_ref() {
+                    for (item, count) in items.iter() {
+                        work.extend(std::iter::repeat_n(item, count));
                     }
                 }
-            }
-        },
-        Proc::CastMap(m) => {
-            if let Map::MapLit(items) = m.as_ref() {
-                for (_, value) in items.iter() {
-                    infer_receive_pattern_names(value, out);
+            },
+            Proc::CastMap(m) => {
+                if let Map::MapLit(items) = m.as_ref() {
+                    work.extend(items.iter().map(|(_, value)| value));
                 }
-            }
-        },
-        Proc::CastPathmap(m) => {
-            if let Pathmap::PathmapLit(items) = m.as_ref() {
-                for entry in items.iter() {
-                    if let Some(inner) = entry.value() {
-                        infer_receive_pattern_names(inner, out);
-                    }
+            },
+            Proc::CastPathmap(m) => {
+                if let Pathmap::PathmapLit(items) = m.as_ref() {
+                    work.extend(items.iter().filter_map(|entry| entry.value()));
                 }
-            }
-        },
-        Proc::CastReadZipper(z) => {
-            if let ReadZipper::Lit(inner) = z.as_ref() {
-                for entry in inner.as_ref().0.iter() {
-                    if let Some(v) = entry.value() {
-                        infer_receive_pattern_names(v, out);
-                    }
+            },
+            Proc::CastReadZipper(z) => {
+                if let ReadZipper::Lit(inner) = z.as_ref() {
+                    work.extend(inner.as_ref().0.iter().filter_map(|entry| entry.value()));
                 }
-            }
-        },
-        Proc::CastWriteZipper(z) => {
-            if let WriteZipper::Lit(inner) = z.as_ref() {
-                for entry in inner.as_ref().0.iter() {
-                    if let Some(value) = entry.value() {
-                        infer_receive_pattern_names(value, out);
-                    }
+            },
+            Proc::CastWriteZipper(z) => {
+                if let WriteZipper::Lit(inner) = z.as_ref() {
+                    work.extend(inner.as_ref().0.iter().filter_map(|entry| entry.value()));
                 }
-            }
-        },
-        Proc::CastSet(s) => {
-            if let Set::SetLit(items) = s.as_ref() {
-                for item in items.iter() {
-                    infer_receive_pattern_names(item, out);
+            },
+            Proc::CastSet(s) => {
+                if let Set::SetLit(items) = s.as_ref() {
+                    work.extend(items.iter());
                 }
-            }
-        },
-        _ => {},
+            },
+            _ => {},
+        }
+        work[first_child..].reverse();
     }
 }
 
-fn name_uses_var(name: &Name, var_name: &str) -> bool {
-    match name {
-        Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
-            fv.pretty_name.as_deref() == Some(var_name)
-        },
-        Name::NQuote(p) => proc_uses_name_var(p, var_name) || proc_uses_proc_var(p, var_name),
-        _ => false,
-    }
+#[derive(Clone, Copy)]
+enum VarUseKind {
+    Name,
+    Proc,
 }
 
-fn input_bind_uses_name_var(bind: &InputBind, var_name: &str) -> bool {
-    match bind {
-        InputBind::InputBind(lhs, n) => {
-            let pat = receive::name_pattern_to_proc(lhs.as_ref());
-            proc_uses_name_var(&pat, var_name) || name_uses_var(n, var_name)
-        },
-        InputBind::InputBindQuoted(pat, n) => {
-            proc_uses_name_var(pat, var_name) || name_uses_var(n, var_name)
-        },
-        InputBind::InputBindQuery(lhs, n, args) => {
-            let pat = receive::name_pattern_to_proc(lhs.as_ref());
-            proc_uses_name_var(&pat, var_name)
-                || name_uses_var(n, var_name)
-                || args.iter().any(|a| proc_uses_name_var(a, var_name))
-        },
-        InputBind::InputBindQuotedQuery(pat, n, args) => {
-            proc_uses_name_var(pat, var_name)
-                || name_uses_var(n, var_name)
-                || args.iter().any(|a| proc_uses_name_var(a, var_name))
-        },
-        _ => false,
-    }
+enum VarUseWork<'a> {
+    Proc(&'a Proc, VarUseKind),
+    Name(&'a Name),
+    PatternName(&'a Name, VarUseKind),
+    InputBind(&'a InputBind, VarUseKind),
+    ForRow(&'a ForRow, VarUseKind),
 }
 
-fn input_bind_uses_proc_var(bind: &InputBind, var_name: &str) -> bool {
-    match bind {
-        InputBind::InputBind(lhs, n) => {
-            let pat = receive::name_pattern_to_proc(lhs.as_ref());
-            proc_uses_proc_var(&pat, var_name) || name_uses_var(n, var_name)
-        },
-        InputBind::InputBindQuoted(pat, n) => {
-            proc_uses_proc_var(pat, var_name) || name_uses_var(n, var_name)
-        },
-        InputBind::InputBindQuery(lhs, n, args) => {
-            let pat = receive::name_pattern_to_proc(lhs.as_ref());
-            proc_uses_proc_var(&pat, var_name)
-                || name_uses_var(n, var_name)
-                || args.iter().any(|a| proc_uses_proc_var(a, var_name))
-        },
-        InputBind::InputBindQuotedQuery(pat, n, args) => {
-            proc_uses_proc_var(pat, var_name)
-                || name_uses_var(n, var_name)
-                || args.iter().any(|a| proc_uses_proc_var(a, var_name))
-        },
-        _ => false,
-    }
+/// Stack-safe executor for the mutually recursive `Proc`/`Name`/receive-row variable-use
+/// predicates. Work is pushed in reverse source order so short-circuit behavior matches the
+/// former recursive implementation exactly.
+fn proc_uses_var(term: &Proc, var_name: &str, root_kind: VarUseKind) -> bool {
+    var_use_work_contains(vec![VarUseWork::Proc(term, root_kind)], var_name)
 }
 
-fn for_row_uses_name_var(row: &ForRow, var_name: &str) -> bool {
-    match row {
-        ForRow::ForRowSingleNoWhere(b) => input_bind_uses_name_var(b.as_ref(), var_name),
-        ForRow::ForRowSingleWhere(b, cond) => {
-            input_bind_uses_name_var(b.as_ref(), var_name) || proc_uses_name_var(cond, var_name)
-        },
-        ForRow::ForRowNoWhere(b, bs) => {
-            input_bind_uses_name_var(b.as_ref(), var_name)
-                || bs.iter().any(|ib| input_bind_uses_name_var(ib, var_name))
-        },
-        ForRow::ForRowWhere(b, bs, cond) => {
-            input_bind_uses_name_var(b.as_ref(), var_name)
-                || bs.iter().any(|ib| input_bind_uses_name_var(ib, var_name))
-                || proc_uses_name_var(cond, var_name)
-        },
-        _ => false,
-    }
+fn receive_continuation_uses_var(
+    rows: &[ForRow],
+    body: &Proc,
+    var_name: &str,
+    kind: VarUseKind,
+) -> bool {
+    let mut work = Vec::with_capacity(rows.len().saturating_add(1));
+    work.push(VarUseWork::Proc(body, kind));
+    work.extend(rows.iter().rev().map(|row| VarUseWork::ForRow(row, kind)));
+    var_use_work_contains(work, var_name)
 }
 
-fn for_row_uses_proc_var(row: &ForRow, var_name: &str) -> bool {
-    match row {
-        ForRow::ForRowSingleNoWhere(b) => input_bind_uses_proc_var(b.as_ref(), var_name),
-        ForRow::ForRowSingleWhere(b, cond) => {
-            input_bind_uses_proc_var(b.as_ref(), var_name) || proc_uses_proc_var(cond, var_name)
-        },
-        ForRow::ForRowNoWhere(b, bs) => {
-            input_bind_uses_proc_var(b.as_ref(), var_name)
-                || bs.iter().any(|ib| input_bind_uses_proc_var(ib, var_name))
-        },
-        ForRow::ForRowWhere(b, bs, cond) => {
-            input_bind_uses_proc_var(b.as_ref(), var_name)
-                || bs.iter().any(|ib| input_bind_uses_proc_var(ib, var_name))
-                || proc_uses_proc_var(cond, var_name)
-        },
-        _ => false,
+fn var_use_work_contains(mut work: Vec<VarUseWork<'_>>, var_name: &str) -> bool {
+    while let Some(task) = work.pop() {
+        match task {
+            VarUseWork::Proc(term, kind) => match term {
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv)))
+                    if matches!(kind, VarUseKind::Proc)
+                        && fv.pretty_name.as_deref() == Some(var_name) =>
+                {
+                    return true;
+                },
+                Proc::PPar(ps) => {
+                    let first_child = work.len();
+                    work.extend(ps.iter().map(|(proc, _)| VarUseWork::Proc(proc, kind)));
+                    work[first_child..].reverse();
+                },
+                Proc::POutput(name, payload) => {
+                    work.push(VarUseWork::Proc(payload, kind));
+                    work.push(VarUseWork::Name(name));
+                },
+                Proc::PDrop(name) => work.push(VarUseWork::Name(name)),
+                Proc::PForUser(rows, body) => {
+                    work.push(VarUseWork::Proc(body, kind));
+                    work.extend(rows.iter().rev().map(|row| VarUseWork::ForRow(row, kind)));
+                },
+                Proc::GuardThen(cond, body) => {
+                    work.push(VarUseWork::Proc(body, kind));
+                    work.push(VarUseWork::Proc(cond, kind));
+                },
+                Proc::PNew(scope) => work.push(VarUseWork::Proc(scope.unsafe_body(), kind)),
+                _ => {},
+            },
+            // `receive::name_pattern_to_proc` expressed as borrowed work: this preserves its
+            // exact conversion semantics without cloning a quoted subtree merely to inspect it.
+            VarUseWork::PatternName(name, kind) => match name {
+                Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv)))
+                    if matches!(kind, VarUseKind::Proc)
+                        && fv.pretty_name.as_deref() == Some(var_name) =>
+                {
+                    return true;
+                },
+                Name::NQuote(proc) | Name::NQuoteShort(proc) => {
+                    work.push(VarUseWork::Proc(proc, kind));
+                },
+                Name::NParen(inner) => work.push(VarUseWork::PatternName(inner, kind)),
+                _ => {},
+            },
+            VarUseWork::Name(name) => match name {
+                Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv)))
+                    if fv.pretty_name.as_deref() == Some(var_name) =>
+                {
+                    return true;
+                },
+                Name::NQuote(proc) => {
+                    work.push(VarUseWork::Proc(proc, VarUseKind::Proc));
+                    work.push(VarUseWork::Proc(proc, VarUseKind::Name));
+                },
+                _ => {},
+            },
+            VarUseWork::InputBind(bind, kind) => match bind {
+                InputBind::InputBind(lhs, name) => {
+                    work.push(VarUseWork::Name(name));
+                    work.push(VarUseWork::PatternName(lhs, kind));
+                },
+                InputBind::InputBindQuoted(pattern, name) => {
+                    work.push(VarUseWork::Name(name));
+                    work.push(VarUseWork::Proc(pattern, kind));
+                },
+                InputBind::InputBindQuery(lhs, name, args) => {
+                    work.extend(args.iter().rev().map(|arg| VarUseWork::Proc(arg, kind)));
+                    work.push(VarUseWork::Name(name));
+                    work.push(VarUseWork::PatternName(lhs, kind));
+                },
+                InputBind::InputBindQuotedQuery(pattern, name, args) => {
+                    work.extend(args.iter().rev().map(|arg| VarUseWork::Proc(arg, kind)));
+                    work.push(VarUseWork::Name(name));
+                    work.push(VarUseWork::Proc(pattern, kind));
+                },
+                _ => {},
+            },
+            VarUseWork::ForRow(row, kind) => match row {
+                ForRow::ForRowSingleNoWhere(bind) => {
+                    work.push(VarUseWork::InputBind(bind, kind));
+                },
+                ForRow::ForRowSingleWhere(bind, cond) => {
+                    work.push(VarUseWork::Proc(cond, kind));
+                    work.push(VarUseWork::InputBind(bind, kind));
+                },
+                ForRow::ForRowNoWhere(bind, binds) => {
+                    work.extend(
+                        binds
+                            .iter()
+                            .rev()
+                            .map(|bind| VarUseWork::InputBind(bind, kind)),
+                    );
+                    work.push(VarUseWork::InputBind(bind, kind));
+                },
+                ForRow::ForRowWhere(bind, binds, cond) => {
+                    work.push(VarUseWork::Proc(cond, kind));
+                    work.extend(
+                        binds
+                            .iter()
+                            .rev()
+                            .map(|bind| VarUseWork::InputBind(bind, kind)),
+                    );
+                    work.push(VarUseWork::InputBind(bind, kind));
+                },
+                _ => {},
+            },
+        }
     }
+    false
 }
 
 fn proc_uses_name_var(term: &Proc, var_name: &str) -> bool {
-    match term {
-        Proc::PPar(ps) => ps.iter().any(|(p, _)| proc_uses_name_var(p, var_name)),
-        Proc::POutput(n, q) => name_uses_var(n, var_name) || proc_uses_name_var(q, var_name),
-        Proc::PDrop(n) => name_uses_var(n, var_name),
-        Proc::PForUser(rows, body) => {
-            rows.iter().any(|r| for_row_uses_name_var(r, var_name))
-                || proc_uses_name_var(body, var_name)
-        },
-        Proc::GuardThen(cond, body) => {
-            proc_uses_name_var(cond, var_name) || proc_uses_name_var(body, var_name)
-        },
-        Proc::PNew(scope) => proc_uses_name_var(scope.unsafe_body(), var_name),
-        _ => false,
-    }
+    proc_uses_var(term, var_name, VarUseKind::Name)
 }
 
 fn proc_uses_proc_var(term: &Proc, var_name: &str) -> bool {
-    match term {
-        Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
-            fv.pretty_name.as_deref() == Some(var_name)
-        },
-        Proc::PPar(ps) => ps.iter().any(|(p, _)| proc_uses_proc_var(p, var_name)),
-        Proc::POutput(n, q) => name_uses_var(n, var_name) || proc_uses_proc_var(q, var_name),
-        Proc::PDrop(n) => name_uses_var(n, var_name),
-        Proc::PForUser(rows, body) => {
-            rows.iter().any(|r| for_row_uses_proc_var(r, var_name))
-                || proc_uses_proc_var(body, var_name)
-        },
-        Proc::GuardThen(cond, body) => {
-            proc_uses_proc_var(cond, var_name) || proc_uses_proc_var(body, var_name)
-        },
-        Proc::PNew(scope) => proc_uses_proc_var(scope.unsafe_body(), var_name),
-        _ => false,
-    }
+    proc_uses_var(term, var_name, VarUseKind::Proc)
 }
 
 fn infer_var_type_pfor_user(proc: &Proc, var_name: &str) -> Option<TermType> {
@@ -218,54 +224,78 @@ fn infer_var_type_in_receive_rows(
     body: &Proc,
     var_name: &str,
 ) -> Option<TermType> {
-    if rows.is_empty() {
-        return None;
-    }
-    let cont = receive::pfor_continuation_after_first_row(rows, body);
-    match &rows[0] {
-        ForRow::ForRowSingleNoWhere(b) => {
-            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
-                let mut names = Vec::new();
-                infer_receive_pattern_names(&pat, &mut names);
-                if names.iter().any(|n| n == var_name) {
-                    return Some(infer_receive_var_type(&cont, None, var_name));
+    for row_index in 0..rows.len() {
+        let remaining_rows = &rows[row_index..];
+        match &remaining_rows[0] {
+            ForRow::ForRowSingleNoWhere(b) => {
+                if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
+                    let mut names = Vec::new();
+                    infer_receive_pattern_names(&pat, &mut names);
+                    if names.iter().any(|n| n == var_name) {
+                        return Some(infer_receive_var_type(
+                            &remaining_rows[1..],
+                            body,
+                            None,
+                            var_name,
+                        ));
+                    }
                 }
-            }
-        },
-        ForRow::ForRowSingleWhere(b, cond) => {
-            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
-                let mut names = Vec::new();
-                infer_receive_pattern_names(&pat, &mut names);
-                if names.iter().any(|n| n == var_name) {
-                    return Some(infer_receive_var_type(&cont, Some(cond.as_ref()), var_name));
+            },
+            ForRow::ForRowSingleWhere(b, cond) => {
+                if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
+                    let mut names = Vec::new();
+                    infer_receive_pattern_names(&pat, &mut names);
+                    if names.iter().any(|n| n == var_name) {
+                        return Some(infer_receive_var_type(
+                            &remaining_rows[1..],
+                            body,
+                            Some(cond.as_ref()),
+                            var_name,
+                        ));
+                    }
                 }
-            }
-        },
-        ForRow::ForRowNoWhere(b, bs) => {
-            let mut names = Vec::new();
-            names_from_binds(b.as_ref(), bs, &mut names);
-            if names.iter().any(|n| n == var_name) {
-                let true_lit = Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)));
-                return Some(infer_receive_var_type(&cont, Some(&true_lit), var_name));
-            }
-        },
-        ForRow::ForRowWhere(b, bs, cond) => {
-            let mut names = Vec::new();
-            names_from_binds(b.as_ref(), bs, &mut names);
-            if names.iter().any(|n| n == var_name) {
-                return Some(infer_receive_var_type(&cont, Some(cond.as_ref()), var_name));
-            }
-        },
-        _ => {},
+            },
+            ForRow::ForRowNoWhere(b, bs) => {
+                let mut names = Vec::new();
+                names_from_binds(b.as_ref(), bs, &mut names);
+                if names.iter().any(|n| n == var_name) {
+                    let true_lit = Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)));
+                    return Some(infer_receive_var_type(
+                        &remaining_rows[1..],
+                        body,
+                        Some(&true_lit),
+                        var_name,
+                    ));
+                }
+            },
+            ForRow::ForRowWhere(b, bs, cond) => {
+                let mut names = Vec::new();
+                names_from_binds(b.as_ref(), bs, &mut names);
+                if names.iter().any(|n| n == var_name) {
+                    return Some(infer_receive_var_type(
+                        &remaining_rows[1..],
+                        body,
+                        Some(cond.as_ref()),
+                        var_name,
+                    ));
+                }
+            },
+            _ => {},
+        }
     }
-    infer_var_type_in_receive_rows(&rows[1..], body, var_name)
+    None
 }
 
-fn infer_receive_var_type(body: &Proc, cond: Option<&Proc>, var_name: &str) -> TermType {
-    let uses_name =
-        proc_uses_name_var(body, var_name) || cond.is_some_and(|c| proc_uses_name_var(c, var_name));
-    let uses_proc =
-        proc_uses_proc_var(body, var_name) || cond.is_some_and(|c| proc_uses_proc_var(c, var_name));
+fn infer_receive_var_type(
+    remaining_rows: &[ForRow],
+    body: &Proc,
+    cond: Option<&Proc>,
+    var_name: &str,
+) -> TermType {
+    let uses_name = receive_continuation_uses_var(remaining_rows, body, var_name, VarUseKind::Name)
+        || cond.is_some_and(|c| proc_uses_name_var(c, var_name));
+    let uses_proc = receive_continuation_uses_var(remaining_rows, body, var_name, VarUseKind::Proc)
+        || cond.is_some_and(|c| proc_uses_proc_var(c, var_name));
     if uses_name {
         TermType::Base("Name".to_string())
     } else if uses_proc {
@@ -286,100 +316,121 @@ fn names_from_binds(b: &InputBind, bs: &[InputBind], out: &mut Vec<String>) {
     }
 }
 
-/// Collect receive-bound names from a `PForUser` the same way we did for nested `PFor*`.
-fn collect_pfor_user_receive_vars(
-    rows: &[ForRow],
-    body: &Proc,
-    result: &mut Vec<VarTypeInfo>,
-    seen: &mut std::collections::HashSet<String>,
-) {
-    if rows.is_empty() {
-        collect_rholang_var_types(body, result, seen);
-        return;
-    }
-    let cont = receive::pfor_continuation_after_first_row(rows, body);
-    match &rows[0] {
-        ForRow::ForRowSingleNoWhere(b) => {
-            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
-                let mut names = Vec::new();
-                infer_receive_pattern_names(&pat, &mut names);
-                for name in names {
-                    if seen.insert(name.clone()) {
-                        result.push(VarTypeInfo {
-                            name: name.clone(),
-                            ty: infer_receive_var_type(&cont, None, &name),
-                        });
-                    }
-                }
-            }
-        },
-        ForRow::ForRowSingleWhere(b, cond) => {
-            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
-                let mut names = Vec::new();
-                infer_receive_pattern_names(&pat, &mut names);
-                for name in names {
-                    if seen.insert(name.clone()) {
-                        result.push(VarTypeInfo {
-                            name: name.clone(),
-                            ty: infer_receive_var_type(&cont, Some(cond.as_ref()), &name),
-                        });
-                    }
-                }
-            }
-            collect_rholang_var_types(cond.as_ref(), result, seen);
-        },
-        ForRow::ForRowNoWhere(b, bs) => {
-            let mut names = Vec::new();
-            names_from_binds(b.as_ref(), bs, &mut names);
-            let true_lit = Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)));
-            for name in names {
-                if seen.insert(name.clone()) {
-                    result.push(VarTypeInfo {
-                        name: name.clone(),
-                        ty: infer_receive_var_type(&cont, Some(&true_lit), &name),
-                    });
-                }
-            }
-        },
-        ForRow::ForRowWhere(b, bs, cond) => {
-            let mut names = Vec::new();
-            names_from_binds(b.as_ref(), bs, &mut names);
-            for name in names {
-                if seen.insert(name.clone()) {
-                    result.push(VarTypeInfo {
-                        name: name.clone(),
-                        ty: infer_receive_var_type(&cont, Some(cond.as_ref()), &name),
-                    });
-                }
-            }
-            collect_rholang_var_types(cond.as_ref(), result, seen);
-        },
-        _ => {},
-    }
-    collect_pfor_user_receive_vars(&rows[1..], body, result, seen);
-}
-
 fn collect_rholang_var_types(
     term: &Proc,
     result: &mut Vec<VarTypeInfo>,
     seen: &mut std::collections::HashSet<String>,
 ) {
-    match term {
-        Proc::PForUser(rows, body) => {
-            collect_pfor_user_receive_vars(rows, body, result, seen);
-        },
-        Proc::PPar(ps) => {
-            for (p, _) in ps.iter() {
-                collect_rholang_var_types(p, result, seen);
-            }
-        },
-        Proc::GuardThen(cond, body) => {
-            collect_rholang_var_types(cond, result, seen);
-            collect_rholang_var_types(body, result, seen);
-        },
-        Proc::POutput(_, q) => collect_rholang_var_types(q, result, seen),
-        Proc::PNew(scope) => collect_rholang_var_types(scope.unsafe_body(), result, seen),
-        _ => {},
+    enum CollectWork<'a> {
+        Proc(&'a Proc),
+        ReceiveRows(&'a [ForRow], &'a Proc),
+    }
+
+    let mut work = vec![CollectWork::Proc(term)];
+    while let Some(task) = work.pop() {
+        match task {
+            CollectWork::Proc(term) => match term {
+                Proc::PForUser(rows, body) => {
+                    work.push(CollectWork::ReceiveRows(rows, body));
+                },
+                Proc::PPar(procs) => {
+                    let first_child = work.len();
+                    work.extend(procs.iter().map(|(proc, _)| CollectWork::Proc(proc)));
+                    work[first_child..].reverse();
+                },
+                Proc::GuardThen(cond, body) => {
+                    work.push(CollectWork::Proc(body));
+                    work.push(CollectWork::Proc(cond));
+                },
+                Proc::POutput(_, payload) => work.push(CollectWork::Proc(payload)),
+                Proc::PNew(scope) => work.push(CollectWork::Proc(scope.unsafe_body())),
+                _ => {},
+            },
+            CollectWork::ReceiveRows([], body) => work.push(CollectWork::Proc(body)),
+            CollectWork::ReceiveRows(rows, body) => {
+                let mut condition = None;
+                match &rows[0] {
+                    ForRow::ForRowSingleNoWhere(bind) => {
+                        if let Some(pattern) = receive::bind_pattern_proc(bind.as_ref()) {
+                            let mut names = Vec::new();
+                            infer_receive_pattern_names(&pattern, &mut names);
+                            for name in names {
+                                if seen.insert(name.clone()) {
+                                    result.push(VarTypeInfo {
+                                        ty: infer_receive_var_type(&rows[1..], body, None, &name),
+                                        name,
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    ForRow::ForRowSingleWhere(bind, cond) => {
+                        if let Some(pattern) = receive::bind_pattern_proc(bind.as_ref()) {
+                            let mut names = Vec::new();
+                            infer_receive_pattern_names(&pattern, &mut names);
+                            for name in names {
+                                if seen.insert(name.clone()) {
+                                    result.push(VarTypeInfo {
+                                        ty: infer_receive_var_type(
+                                            &rows[1..],
+                                            body,
+                                            Some(cond.as_ref()),
+                                            &name,
+                                        ),
+                                        name,
+                                    });
+                                }
+                            }
+                        }
+                        condition = Some(cond.as_ref());
+                    },
+                    ForRow::ForRowNoWhere(bind, binds) => {
+                        let mut names = Vec::new();
+                        names_from_binds(bind.as_ref(), binds, &mut names);
+                        let true_lit = Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)));
+                        for name in names {
+                            if seen.insert(name.clone()) {
+                                result.push(VarTypeInfo {
+                                    ty: infer_receive_var_type(
+                                        &rows[1..],
+                                        body,
+                                        Some(&true_lit),
+                                        &name,
+                                    ),
+                                    name,
+                                });
+                            }
+                        }
+                    },
+                    ForRow::ForRowWhere(bind, binds, cond) => {
+                        let mut names = Vec::new();
+                        names_from_binds(bind.as_ref(), binds, &mut names);
+                        for name in names {
+                            if seen.insert(name.clone()) {
+                                result.push(VarTypeInfo {
+                                    ty: infer_receive_var_type(
+                                        &rows[1..],
+                                        body,
+                                        Some(cond.as_ref()),
+                                        &name,
+                                    ),
+                                    name,
+                                });
+                            }
+                        }
+                        condition = Some(cond.as_ref());
+                    },
+                    _ => {},
+                }
+
+                // The recursive traversal visited a row's condition before the next row, then
+                // visited the receive body after all rows. LIFO insertion keeps that order.
+                work.push(CollectWork::ReceiveRows(&rows[1..], body));
+                if let Some(condition) = condition {
+                    work.push(CollectWork::Proc(condition));
+                }
+            },
+        }
     }
 }
 

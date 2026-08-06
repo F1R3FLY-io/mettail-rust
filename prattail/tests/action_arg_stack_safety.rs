@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use mettail_prattail::wpda_runtime::ActionArg;
+use mettail_prattail::wpda_runtime::{ActionArg, BinderHandle};
 
 const DEPTH: usize = 20_000;
 const STACK_BYTES: usize = 256 * 1024;
@@ -39,6 +39,20 @@ fn action_arg_clone_preserves_type_erased_arc_identity() {
         .expect("cloned term payload");
 
     assert!(Arc::ptr_eq(&payload, &cloned));
+}
+
+#[test]
+fn action_arg_consuming_scalar_accessors_move_payloads_out_of_drop_type() {
+    let handle = ActionArg::BinderScope(BinderHandle::new(vec!["x".into(), "y".into()], 3))
+        .into_binder_scope()
+        .expect("binder scope");
+    assert_eq!(handle.names, ["x", "y"]);
+    assert_eq!(handle.depth, 3);
+
+    let name = ActionArg::Ident { name: "bound".into(), pos: 7 }
+        .into_ident_name()
+        .expect("identifier");
+    assert_eq!(name, "bound");
 }
 
 #[test]
