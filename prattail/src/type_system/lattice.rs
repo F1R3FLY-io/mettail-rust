@@ -31,7 +31,6 @@ impl Default for LatticeTypeEnv {
 /// Reuses the same structure as `TermExpr` in unification.rs but specialized
 /// for type-level reasoning: variables are looked up in the type environment,
 /// constants have fixed types, and applications infer from constructor types.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LatticeTerm {
     /// A variable (looked up in the type environment).
     Var(String),
@@ -50,6 +49,9 @@ pub enum LatticeTerm {
         args: Vec<LatticeTerm>,
     },
 }
+
+#[path = "lattice/lifecycle.rs"]
+mod lifecycle;
 
 /// Lattice type system — wraps `LatticeTheory` into the `TypeSystem` trait.
 ///
@@ -114,23 +116,69 @@ impl LatticeTypeSystem {
         term: &LatticeTerm,
         store: &mut LatticeStore,
     ) -> Option<TypeId> {
-        match term {
-            LatticeTerm::Var(name) => env.bindings.get(name).copied(),
-            LatticeTerm::Const { ty, .. } => Some(*ty),
-            LatticeTerm::App { head, args } => {
-                let (expected_arg_types, result_type) = self.constructor_types.get(head)?;
-                if args.len() != expected_arg_types.len() {
-                    return None;
-                }
-                for (arg, expected_ty) in args.iter().zip(expected_arg_types.iter()) {
-                    let arg_ty = self.infer_single(env, arg, store)?;
-                    if !self.theory.is_subtype(store, arg_ty, *expected_ty) {
-                        return None;
-                    }
-                }
-                Some(*result_type)
+        enum Task<'term> {
+            Visit(&'term LatticeTerm),
+            CheckArgument {
+                args: &'term [LatticeTerm],
+                expected: &'term [TypeId],
+                result: TypeId,
+                index: usize,
             },
         }
+
+        let mut tasks = vec![Task::Visit(term)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(LatticeTerm::Var(name)) => {
+                    values.push(env.bindings.get(name).copied());
+                },
+                Task::Visit(LatticeTerm::Const { ty, .. }) => values.push(Some(*ty)),
+                Task::Visit(LatticeTerm::App { head, args }) => {
+                    let Some((expected, result)) = self.constructor_types.get(head) else {
+                        values.push(None);
+                        continue;
+                    };
+                    if args.len() != expected.len() {
+                        values.push(None);
+                    } else if args.is_empty() {
+                        values.push(Some(*result));
+                    } else {
+                        tasks.push(Task::CheckArgument {
+                            args,
+                            expected,
+                            result: *result,
+                            index: 0,
+                        });
+                        tasks.push(Task::Visit(&args[0]));
+                    }
+                },
+                Task::CheckArgument { args, expected, result, index } => {
+                    let Some(actual) = values
+                        .pop()
+                        .expect("lattice inference PDA lost an argument result")
+                    else {
+                        values.push(None);
+                        continue;
+                    };
+                    if !self.theory.is_subtype(store, actual, expected[index]) {
+                        values.push(None);
+                        continue;
+                    }
+                    let next = index + 1;
+                    if next == args.len() {
+                        values.push(Some(result));
+                    } else {
+                        tasks.push(Task::CheckArgument { args, expected, result, index: next });
+                        tasks.push(Task::Visit(&args[next]));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("lattice inference PDA produced no result")
     }
 }
 
