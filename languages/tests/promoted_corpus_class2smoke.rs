@@ -74,7 +74,15 @@ use crate::class2smoke::*;
 fn corpus_0_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::Choose(std::sync::Arc::new(Proc::Choose(std::sync::Arc::new(Proc::PZero), vec![])), vec![Proc::Choose(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), vec![])]);
+    let term: Proc = Proc::Choose(
+        std::sync::Arc::new(Proc::Choose(std::sync::Arc::new(Proc::PZero), vec![])),
+        vec![Proc::Choose(
+            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))),
+            vec![],
+        )],
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -92,9 +100,9 @@ fn corpus_0_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 1 — seed `cc 4756f946a6070a449c3d0568c24b0f233e36a568aa3e556d0a663d29d57c06e7`.
@@ -110,7 +118,26 @@ fn corpus_0_proc() {
 fn corpus_1_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::Choose(std::sync::Arc::new(Proc::Choose(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), vec![Proc::PZero])), vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::Choose(std::sync::Arc::new(Proc::Choose(std::sync::Arc::new(Proc::PZero), vec![])), vec![Proc::PZero])]);
+    let term: Proc = Proc::Choose(
+        std::sync::Arc::new(Proc::Choose(
+            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))),
+            vec![Proc::PZero],
+        )),
+        vec![
+            Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))),
+            Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))),
+            Proc::Choose(
+                std::sync::Arc::new(Proc::Choose(std::sync::Arc::new(Proc::PZero), vec![])),
+                vec![Proc::PZero],
+            ),
+        ],
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -128,9 +155,9 @@ fn corpus_1_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 2 — seed `cc 3698d656e8b4e4b8c418a616559ce6aaa51db97ddc3d916cb84281ffe1d7e9f2`.
@@ -151,7 +178,53 @@ fn corpus_1_proc() {
 fn corpus_2_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::Choose(std::sync::Arc::new(Proc::Choose(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])), vec![Proc::Choose(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]), Proc::Choose(std::sync::Arc::new(Proc::Choose(std::sync::Arc::new(Proc::PZero), vec![Proc::PZero])), vec![Proc::Choose(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), vec![Proc::PZero, Proc::PZero]), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])]);
+    let term: Proc = Proc::Choose(
+        std::sync::Arc::new(Proc::Choose(
+            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))),
+            vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ],
+        )),
+        vec![
+            Proc::Choose(
+                std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                    mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                ))),
+                vec![
+                    Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                    Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                ],
+            ),
+            Proc::Choose(
+                std::sync::Arc::new(Proc::Choose(
+                    std::sync::Arc::new(Proc::PZero),
+                    vec![Proc::PZero],
+                )),
+                vec![
+                    Proc::Choose(
+                        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                            mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                        ))),
+                        vec![Proc::PZero, Proc::PZero],
+                    ),
+                    Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                ],
+            ),
+        ],
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -169,7 +242,7 @@ fn corpus_2_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

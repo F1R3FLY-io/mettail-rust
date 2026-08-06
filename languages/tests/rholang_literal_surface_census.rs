@@ -62,12 +62,36 @@ struct SurfaceWitness {
 /// `literals { … }` block for a new category therefore fails this gate until a witness appears,
 /// which is the property a hand-listed census can never have.
 const SURFACE_WITNESSES: &[SurfaceWitness] = &[
-    SurfaceWitness { category: "Int", witness: "7", rendered: "7" },
-    SurfaceWitness { category: "BigInt", witness: "7n", rendered: "7n" },
-    SurfaceWitness { category: "BigRat", witness: "3r", rendered: "3r" },
-    SurfaceWitness { category: "Fixed", witness: "1.50p2", rendered: "1.50p2" },
-    SurfaceWitness { category: "Float", witness: "1.5", rendered: "1.5" },
-    SurfaceWitness { category: "Bytes", witness: r#"b"deadbeef""#, rendered: r#"b"deadbeef""# },
+    SurfaceWitness {
+        category: "Int",
+        witness: "7",
+        rendered: "7",
+    },
+    SurfaceWitness {
+        category: "BigInt",
+        witness: "7n",
+        rendered: "7n",
+    },
+    SurfaceWitness {
+        category: "BigRat",
+        witness: "3r",
+        rendered: "3r",
+    },
+    SurfaceWitness {
+        category: "Fixed",
+        witness: "1.50p2",
+        rendered: "1.50p2",
+    },
+    SurfaceWitness {
+        category: "Float",
+        witness: "1.5",
+        rendered: "1.5",
+    },
+    SurfaceWitness {
+        category: "Bytes",
+        witness: r#"b"deadbeef""#,
+        rendered: r#"b"deadbeef""#,
+    },
 ];
 
 /// Categories for which the grammar declares a `literals { Cat { pattern: …; eval: … } }` block.

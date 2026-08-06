@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use mettail_rholang_codegen::{
-    FREE_VAR_REFLECT_LABEL, FltHole, GroundTerm, reflect_flt_construction, reflect_flt_pattern,
-    reflect_ground_term_par,
+    reflect_flt_construction, reflect_flt_pattern, reflect_ground_term_par, FltHole, GroundTerm,
+    FREE_VAR_REFLECT_LABEL,
 };
 
 #[test]

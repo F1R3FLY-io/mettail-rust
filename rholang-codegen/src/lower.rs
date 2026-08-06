@@ -571,9 +571,8 @@ fn lower_rule(def: &LanguageDef, rule: &GrammarRule) -> Option<LoweredRule> {
 /// `rejected` (the "miss nothing" guarantee — nothing is silently dropped).
 pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
     // E-3 Stage-0: SELF-time phase span (no-op without an active collection window).
-    let _lower_language_def_span = crate::pipeline_spans::phase_span(
-        crate::pipeline_spans::PipelinePhase::LowerLanguageDef,
-    );
+    let _lower_language_def_span =
+        crate::pipeline_spans::phase_span(crate::pipeline_spans::PipelinePhase::LowerLanguageDef);
     let mut lowered = Vec::new();
     let mut scalar_contract_abi = Vec::new();
     let mut rejected = Vec::new();

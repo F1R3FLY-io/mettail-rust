@@ -449,13 +449,8 @@ fn generate_eq_variant_arm(
         // `&Vec<Proc>` calls `Proc::eq` per element, re-entering this very driver
         // by host recursion with no access to `stack`.
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
-            let stmts = eq_collection_stmts(
-                element_cat,
-                coll_type,
-                &quote! { a },
-                &quote! { b },
-                language,
-            );
+            let stmts =
+                eq_collection_stmts(element_cat, coll_type, &quote! { a }, &quote! { b }, language);
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #stmts
@@ -479,13 +474,8 @@ fn generate_eq_variant_arm(
         // ★ #162 — the category-DIRECT collection field (`PPar . ps:HashBag(Proc)`),
         // the same boundary as `CollectionLiteral` above.
         VariantKind::Collection { label, element_cat, coll_type } => {
-            let stmts = eq_collection_stmts(
-                element_cat,
-                coll_type,
-                &quote! { a },
-                &quote! { b },
-                language,
-            );
+            let stmts =
+                eq_collection_stmts(element_cat, coll_type, &quote! { a }, &quote! { b }, language);
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #stmts
@@ -1010,7 +1000,10 @@ fn cmp_arm_stmts(
         }
     };
 
-    let split = fields.iter().position(is_stack_expressible).unwrap_or(fields.len());
+    let split = fields
+        .iter()
+        .position(is_stack_expressible)
+        .unwrap_or(fields.len());
 
     let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
@@ -1403,10 +1396,7 @@ mod carrier_cell_census {
             ("Child", field(false, None, false, false, None)),
             ("OptionalChild", field(false, None, false, true, None)),
             ("Collection", field(true, Some(CollectionType::Vec), false, false, None)),
-            (
-                "OptionalCollection",
-                field(true, Some(CollectionType::Vec), false, true, None),
-            ),
+            ("OptionalCollection", field(true, Some(CollectionType::Vec), false, true, None)),
         ]
     }
 
@@ -1455,15 +1445,8 @@ mod carrier_cell_census {
         for (position, scope) in positions() {
             for (carrier, f) in one_per_carrier() {
                 let fields = [f];
-                let eq = rendered(eq_arm_stmts(
-                    &fields,
-                    &left,
-                    &right,
-                    scope.clone(),
-                    &language,
-                ));
-                let cmp =
-                    rendered(cmp_arm_stmts(&fields, &left, &right, scope.clone(), &language));
+                let eq = rendered(eq_arm_stmts(&fields, &left, &right, scope.clone(), &language));
+                let cmp = rendered(cmp_arm_stmts(&fields, &left, &right, scope.clone(), &language));
                 cells += 1;
 
                 // Anti-vacuity: an emitter that produced nothing would satisfy
@@ -1658,7 +1641,8 @@ mod carrier_cell_census {
     #[test]
     fn the_scope_group_is_emitted_once_and_last() {
         let language = crate::gen::collection_literal_language_for_tests();
-        let fields = [field(false, None, false, false, None), field(false, None, true, false, None)];
+        let fields =
+            [field(false, None, false, false, None), field(false, None, true, false, None)];
         let left = vec![format_ident!("l0"), format_ident!("l1")];
         let right = vec![format_ident!("r0"), format_ident!("r1")];
         let scope = quote! { { __scope_group(); } };

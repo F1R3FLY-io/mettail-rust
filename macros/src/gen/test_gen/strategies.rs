@@ -370,7 +370,6 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
     variants
 }
 
-
 /// (A4) How many builtin `m:Ident` params the rule named `(cat, label)` declares.
 ///
 /// The tape builder reads `FieldInfo::opaque_leaf`, which cannot tell an `m:Ident` param from
@@ -474,8 +473,6 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                     .iter()
                     .any(|f| language.types.iter().any(|t| t.name == f.category));
 
-
-
                 // (A4) A variant whose fields are ALL token-text leaves (`m:Ident`, `v@Tok`)
                 // is a LEAF, not a drop. It has no category child to recurse into, so
                 // `has_recursive_field` is false and it used to `continue` — vanishing from
@@ -533,8 +530,6 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                     ));
                     continue;
                 }
-
-
 
                 let label_str = label.to_string();
                 let code = generate_regular_build_code(&cat, &label_str, fields, language);

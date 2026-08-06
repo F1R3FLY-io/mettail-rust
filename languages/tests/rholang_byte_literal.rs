@@ -196,10 +196,7 @@ fn an_odd_digit_count_is_not_a_byte_array() {
 #[test]
 fn a_string_literal_has_no_byte_array_reading() {
     let readings = all_readings(r#""deadbeef""#);
-    assert!(
-        !readings.is_empty(),
-        "the control: a string literal must still parse",
-    );
+    assert!(!readings.is_empty(), "the control: a string literal must still parse",);
     assert!(
         readings.iter().all(|t| matches!(t, Proc::CastStr(_))),
         "every reading of a `\"…\"` literal must be a `CastStr`; a `CastBytes` reading means the \

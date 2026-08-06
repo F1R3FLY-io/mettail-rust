@@ -984,7 +984,11 @@ struct RuleBp {
 /// Read `label`'s precedence out of the shared table, in the same case order
 /// `display.rs` uses: postfix, then mixfix, then regular infix, then unary
 /// prefix, then "not an operator".
-fn rule_bp(label: &str, arg_slots: usize, bp: &crate::gen::syntax::display::BpLookup) -> Option<RuleBp> {
+fn rule_bp(
+    label: &str,
+    arg_slots: usize,
+    bp: &crate::gen::syntax::display::BpLookup,
+) -> Option<RuleBp> {
     if let Some(info) = bp.infix.get(label) {
         let child_min_bps: Vec<u8> = if info.is_postfix {
             // Postfix: the single operand carries the operator's left power.
@@ -1023,7 +1027,8 @@ fn rule_bp(label: &str, arg_slots: usize, bp: &crate::gen::syntax::display::BpLo
 /// The `min_bp` for argument slot `index`, or `0` when the rule is not
 /// precedence-governed.
 fn child_min_bp(bp: Option<&RuleBp>, index: usize) -> u8 {
-    bp.and_then(|b| b.child_min_bps.get(index).copied()).unwrap_or(0)
+    bp.and_then(|b| b.child_min_bps.get(index).copied())
+        .unwrap_or(0)
 }
 
 /// The surface of `name` when it denotes a NULLARY constructor, else `None`.
@@ -1089,10 +1094,8 @@ fn render_pattern(pattern: &Pattern, ctx: RenderCtx<'_>, min_bp: u8) -> String {
         // need a bracket and each is rendered at `0`. This is the same rule the
         // generated `Display` collection twin follows.
         Pattern::Collection { elements, rest, .. } => {
-            let mut parts: Vec<String> = elements
-                .iter()
-                .map(|e| render_pattern(e, ctx, 0))
-                .collect();
+            let mut parts: Vec<String> =
+                elements.iter().map(|e| render_pattern(e, ctx, 0)).collect();
 
             if let Some(r) = rest {
                 parts.push(format!("...{}", r));
@@ -1126,9 +1129,7 @@ fn render_pattern_term(pt: &PatternTerm, ctx: RenderCtx<'_>, min_bp: u8) -> Stri
         // constructor, in which case it denotes that constructor and renders as
         // its surface — see [`nullary_constructor_surface`]. A nullary
         // constructor's surface is a literal, so no threshold can bracket it.
-        PatternTerm::Var(v) => {
-            nullary_constructor_surface(v, ctx).unwrap_or_else(|| v.to_string())
-        },
+        PatternTerm::Var(v) => nullary_constructor_surface(v, ctx).unwrap_or_else(|| v.to_string()),
 
         PatternTerm::Apply { constructor, args } => {
             // Try to find the grammar rule for this constructor
@@ -1292,17 +1293,11 @@ fn apply_args_to_syntax(
 ///
 /// Elements are rendered bare: a collection slot is fenced by the rule's own
 /// open/close literals, so no element can bind loosely enough to need a bracket.
-fn render_collection_with_sep(
-    pattern: &Pattern,
-    separator: &str,
-    ctx: RenderCtx<'_>,
-) -> String {
+fn render_collection_with_sep(pattern: &Pattern, separator: &str, ctx: RenderCtx<'_>) -> String {
     match pattern {
         Pattern::Collection { elements, rest, .. } => {
-            let mut parts: Vec<String> = elements
-                .iter()
-                .map(|e| render_pattern(e, ctx, 0))
-                .collect();
+            let mut parts: Vec<String> =
+                elements.iter().map(|e| render_pattern(e, ctx, 0)).collect();
 
             if let Some(r) = rest {
                 parts.push(format!("...{}", r));
@@ -1827,10 +1822,7 @@ mod tests {
              Got lhs = {lhs}",
         );
 
-        assert_ne!(
-            lhs, rhs,
-            "and therefore the axiom is no longer a tautology: {lhs} = {rhs}",
-        );
+        assert_ne!(lhs, rhs, "and therefore the axiom is no longer a tautology: {lhs} = {rhs}",);
     }
 
     /// ANTI-VACUITY for the cell above: the two sides really are DIFFERENT
@@ -1852,9 +1844,8 @@ mod tests {
             let Pattern::Term(PatternTerm::Apply { args, .. }) = pattern else {
                 return None;
             };
-            args.iter().position(|a| {
-                matches!(a, Pattern::Term(PatternTerm::Apply { .. }))
-            })
+            args.iter()
+                .position(|a| matches!(a, Pattern::Term(PatternTerm::Apply { .. })))
         }
         assert_eq!(
             nested_arg_index(&assoc.left),
@@ -1959,8 +1950,7 @@ mod tests {
                 syntax_pattern.len() == 1 && matches!(syntax_pattern[0], SyntaxExpr::Param(_))
             },
             None => {
-                rule.items.len() == 1
-                    && matches!(rule.items[0], GrammarItem::NonTerminal { .. })
+                rule.items.len() == 1 && matches!(rule.items[0], GrammarItem::NonTerminal { .. })
             },
         }
     }

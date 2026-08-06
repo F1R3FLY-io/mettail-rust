@@ -2168,13 +2168,12 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     let (rules, dispositions) = rule_block(language, None);
     // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
     // disposition, in which case it is a `compile_error!` naming the constructs.
-    let disposition_refusal =
-        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
-            language,
-            &dispositions,
-            false,
-            "generate_dovetail_report (EGraph<String> path)",
-        );
+    let disposition_refusal = crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+        language,
+        &dispositions,
+        false,
+        "generate_dovetail_report (EGraph<String> path)",
+    );
     let unsupported_lits: Vec<LitStr> =
         crate::gen::runtime::disposition::legacy_unsupported_messages(&dispositions)
             .iter()

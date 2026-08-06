@@ -320,12 +320,11 @@ fn generate_push_children_arm(
             match plan_for(element_cat, coll_type, OrderSensitivity::OrderAgnostic, language) {
                 CollectionPlan::PerElement { element_cat, coll_type } => {
                     let task_variant = format_ident!("Drop{}", element_cat);
-                    let pushes =
-                        for_each_owned_subterm(&coll_type, &quote! { coll }, &|owned| {
-                            quote! {
-                                stack.push(DropTask::#task_variant(#owned));
-                            }
-                        });
+                    let pushes = for_each_owned_subterm(&coll_type, &quote! { coll }, &|owned| {
+                        quote! {
+                            stack.push(DropTask::#task_variant(#owned));
+                        }
+                    });
                     quote! {
                         #category::#label(ref mut coll) => {
                             #pushes

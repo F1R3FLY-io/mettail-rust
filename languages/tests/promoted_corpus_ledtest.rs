@@ -91,9 +91,9 @@ fn corpus_0_num() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 1 — seed `cc e55c3e0f76c450afcf7f77131d07fb218d219147918271b992f7879a5f43f827`.
@@ -106,7 +106,10 @@ fn corpus_0_num() {
 fn corpus_1_num() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Num = Num::PredToNum(std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))), std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))))));
+    let term: Num = Num::PredToNum(std::sync::Arc::new(Pred::EqNum(
+        std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))),
+        std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -124,9 +127,9 @@ fn corpus_1_num() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 2 — seed `cc ec7bec4ce46db364d17cca03084c568d44f55dadbc618237e6f6aa475d1870ac`.
@@ -140,7 +143,13 @@ fn corpus_1_num() {
 fn corpus_2_expr() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Expr = Expr::CastNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))), std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(1275159884i32)), std::sync::Arc::new(Num::NumLit(1699479909i32)))))));
+    let term: Expr = Expr::CastNum(std::sync::Arc::new(Num::AddNum(
+        std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))),
+        std::sync::Arc::new(Num::AddNum(
+            std::sync::Arc::new(Num::NumLit(1275159884i32)),
+            std::sync::Arc::new(Num::NumLit(1699479909i32)),
+        )),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -150,7 +159,8 @@ fn corpus_2_expr() {
     //     `UniqueId` comes from a global counter (and `FreeVar` equality is by
     //     unique_id alone, with the name fixing the identity through the var
     //     cache), and a `HashBag` is a multiset whose `PartialEq` ignores order.
-    let recorded = "CastNum(AddNum(PredToNum(BoolLit(true)), AddNum(NumLit(1275159884), NumLit(1699479909))))";
+    let recorded =
+        "CastNum(AddNum(PredToNum(BoolLit(true)), AddNum(NumLit(1275159884), NumLit(1699479909))))";
     assert_eq!(
         canonicalize_debug(&format!("{:?}", term)),
         recorded,
@@ -158,9 +168,9 @@ fn corpus_2_expr() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 3 — seed `cc bac9d5a7392970edfb33ab4b9964ed880b13b9ca08fdc80ec56b3f634eeecc14`.
@@ -173,7 +183,13 @@ fn corpus_2_expr() {
 fn corpus_3_pred() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Pred = Pred::AndPred(std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Pred::BoolLit(false)));
+    let term: Pred = Pred::AndPred(
+        std::sync::Arc::new(Pred::EqNum(
+            std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)))),
+            std::sync::Arc::new(Num::NumLit(0i32)),
+        )),
+        std::sync::Arc::new(Pred::BoolLit(false)),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -191,9 +207,9 @@ fn corpus_3_pred() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 4 — seed `cc c2a4d37839b38fb8a897fa5d95f45c634784b4813a6b8b3b740852178a8e3630`.
@@ -207,7 +223,17 @@ fn corpus_3_pred() {
 fn corpus_4_pred() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Pred = Pred::EqNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::ExprToNum(std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))))), std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::BoolLit(false)))))));
+    let term: Pred = Pred::EqNum(
+        std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::ExprToNum(std::sync::Arc::new(
+            Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))),
+        ))))),
+        std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::AndPred(
+            std::sync::Arc::new(Pred::BoolLit(true)),
+            std::sync::Arc::new(Pred::BoolLit(false)),
+        )))),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -225,7 +251,7 @@ fn corpus_4_pred() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

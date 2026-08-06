@@ -1121,7 +1121,10 @@ mod tests {
         };
         let path = dir.join("declined_arithmetic.jsonl");
         write_trace_jsonl(&arithmetic, &path).expect("write should succeed");
-        match read_trace_jsonl(&path).expect("read should succeed").outcome {
+        match read_trace_jsonl(&path)
+            .expect("read should succeed")
+            .outcome
+        {
             TraceOutcome::Declined {
                 term,
                 steps,
@@ -1165,14 +1168,11 @@ mod tests {
         };
         let path = dir.join("declined_declared.jsonl");
         write_trace_jsonl(&declared, &path).expect("write should succeed");
-        match read_trace_jsonl(&path).expect("read should succeed").outcome {
-            TraceOutcome::Declined {
-                operation,
-                reason,
-                detail,
-                all,
-                ..
-            } => {
+        match read_trace_jsonl(&path)
+            .expect("read should succeed")
+            .outcome
+        {
+            TraceOutcome::Declined { operation, reason, detail, all, .. } => {
                 assert_eq!(
                     operation, None,
                     "★ a `.expect(msg)` decline names no operation, and `null` must read back as \

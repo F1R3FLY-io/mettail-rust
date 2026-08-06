@@ -1162,7 +1162,8 @@ fn convert_grammar_items(
                 // kind. The string test is retained: it is what an UNDECLARED `Ident`
                 // reference resolved through before the kind existed, and both routes
                 // must keep producing the same `IdentCapture`.
-                if matches!(kind, NonTerminalKind::Var | NonTerminalKind::Ident) || nt_str == "Ident"
+                if matches!(kind, NonTerminalKind::Var | NonTerminalKind::Ident)
+                    || nt_str == "Ident"
                 {
                     items.push(SyntaxItemSpec::IdentCapture { param_name: nt_str.to_lowercase() });
                 } else if cat_names.contains(&nt_str) {

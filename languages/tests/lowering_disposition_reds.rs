@@ -106,8 +106,11 @@ fn assert_declined_because<'a>(
         kind.noun(),
         render(inventory),
     );
-    let declined: Vec<&LoweringDispositionDef> =
-        recorded.iter().copied().filter(|d| d.is_declined()).collect();
+    let declined: Vec<&LoweringDispositionDef> = recorded
+        .iter()
+        .copied()
+        .filter(|d| d.is_declined())
+        .collect();
     assert!(
         !declined.is_empty(),
         "{} `{construct}` is recorded but NOT as Declined; it is lowered nowhere, so anything \
@@ -166,7 +169,9 @@ fn red_a_binder_equation_declination_is_recorded_with_its_reason() {
         render(inventory),
     );
     assert!(
-        declined.iter().any(|d| d.detail.starts_with("reverse LHS:")),
+        declined
+            .iter()
+            .any(|d| d.detail.starts_with("reverse LHS:")),
         "the reverse orientation's refusal must be recorded.{}",
         render(inventory),
     );
@@ -258,7 +263,8 @@ fn red_b_typed_path_declinations_are_recorded_on_every_construct_class() {
         render(inventory),
     );
     assert_eq!(
-        head[0].detail, "TypedDropDemo::fold::Term_Head",
+        head[0].detail,
+        "TypedDropDemo::fold::Term_Head",
         "a Delivered disposition carries the label of the rule it emitted.{}",
         render(inventory),
     );
@@ -276,7 +282,8 @@ fn red_b_typed_path_declinations_are_recorded_on_every_construct_class() {
         render(inventory),
     );
     assert_eq!(
-        id[0].detail, "TypedDropDemo::fold::Term_Id",
+        id[0].detail,
+        "TypedDropDemo::fold::Term_Id",
         "a Delivered disposition carries the label of the rule it emitted.{}",
         render(inventory),
     );
@@ -353,7 +360,12 @@ fn red_c_congruence_rewrite_is_delivered_elsewhere_not_declined() {
     // IS lowered here, so the walk demonstrably distinguishes the two cases rather than
     // answering `DeliveredElsewhere` for everything.
     let kernel = dispositions_for(inventory, LoweredConstructKind::Rewrite, "AToB");
-    assert_eq!(kernel.len(), 1, "`AToB` must have exactly one disposition.{}", render(inventory));
+    assert_eq!(
+        kernel.len(),
+        1,
+        "`AToB` must have exactly one disposition.{}",
+        render(inventory)
+    );
     assert_eq!(
         kernel[0].outcome,
         LoweringOutcomeKind::Delivered,
@@ -361,11 +373,17 @@ fn red_c_congruence_rewrite_is_delivered_elsewhere_not_declined() {
         render(inventory),
     );
     assert_eq!(
-        kernel[0].detail, "CongruenceLaneDemo::rewrite::AToB",
+        kernel[0].detail,
+        "CongruenceLaneDemo::rewrite::AToB",
         "a Delivered disposition carries the label of the rule it emitted.{}",
         render(inventory),
     );
-    assert_eq!(kernel[0].lane, None, "a rule lowered here has no OTHER lane.{}", render(inventory));
+    assert_eq!(
+        kernel[0].lane,
+        None,
+        "a rule lowered here has no OTHER lane.{}",
+        render(inventory)
+    );
 
     // Nothing on this grammar is declined at all, and that zero is positively controlled by the
     // two assertions above: the walk saw both rewrites and gave them different dispositions.

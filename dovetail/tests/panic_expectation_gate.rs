@@ -481,7 +481,9 @@ fn the_walk_reaches_the_workspace() {
     // some unrelated tree that merely happens to be large.
     let files = tracked_rust_files();
     assert!(
-        files.iter().any(|p| p == "dovetail/tests/panic_expectation_gate.rs"),
+        files
+            .iter()
+            .any(|p| p == "dovetail/tests/panic_expectation_gate.rs"),
         "the walk did not reach this file, so its idea of `tracked source` is not this \
          repository's"
     );
@@ -500,12 +502,8 @@ fn the_scanner_finds_a_planted_attribute() {
         "#[test]\n#[{}(expected = \"boom\")]\nfn plants_a_violation() {{ panic!(\"boom\") }}\n",
         PANIC_EXPECTING_ATTRIBUTE
     );
-    let found = scan_source(
-        "synthetic/planted_violation.rs",
-        &planted,
-        PANIC_EXPECTING_ATTRIBUTE,
-        false,
-    );
+    let found =
+        scan_source("synthetic/planted_violation.rs", &planted, PANIC_EXPECTING_ATTRIBUTE, false);
     assert_eq!(found.len(), 1, "the planted attribute was not reported: {found:?}");
     assert_eq!(found[0].path, "synthetic/planted_violation.rs");
     assert_eq!(found[0].line, 2, "the reported line must be the attribute's");
@@ -516,7 +514,8 @@ fn the_scanner_finds_a_planted_attribute() {
         "#[test]\n#[cfg_attr(debug_assertions, {}(expected = \"boom\"))]\nfn also() {{}}\n",
         PANIC_EXPECTING_ATTRIBUTE
     );
-    let found = scan_source("synthetic/conditional.rs", &conditional, PANIC_EXPECTING_ATTRIBUTE, false);
+    let found =
+        scan_source("synthetic/conditional.rs", &conditional, PANIC_EXPECTING_ATTRIBUTE, false);
     assert_eq!(found.len(), 1, "a cfg_attr-conditional attribute must be reported too");
 
     // …and the interceptor needle finds a planted interceptor.
@@ -579,7 +578,8 @@ fn the_scanner_ignores_comments_and_string_literals() {
     );
     // … and MUST be seen when they are kept, which is what makes the generator
     // entries in the allowlist meaningful.
-    let emitted = format!("fn e() {{ out.push_str(r#\"std::panic::{}\"#); }}\n", UNWIND_INTERCEPTOR);
+    let emitted =
+        format!("fn e() {{ out.push_str(r#\"std::panic::{}\"#); }}\n", UNWIND_INTERCEPTOR);
     assert_eq!(
         scan_source("synthetic/emitted.rs", &emitted, UNWIND_INTERCEPTOR, true).len(),
         1,

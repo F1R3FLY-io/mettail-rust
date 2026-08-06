@@ -44,8 +44,8 @@
 
 #![allow(clippy::needless_borrow)]
 
-use mettail_testkit::ctor::canonicalize_debug;
 use mettail_languages::calculator::*;
+use mettail_testkit::ctor::canonicalize_debug;
 
 /// Corpus entry 0 — seed `cc 9b64dcbd8882433a0ed91bfa0064515dbab73a168a4e3699be9bfec9a06f62ad`.
 ///
@@ -59,7 +59,28 @@ use mettail_languages::calculator::*;
 fn corpus_0_bool() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Bool = Bool::GtStr(std::sync::Arc::new(Str::Concat(std::sync::Arc::new(Str::Concat(std::sync::Arc::new(Str::StringLit(std::string::String::from("ae"))), std::sync::Arc::new(Str::StringLit(std::string::String::from("aaa"))))), std::sync::Arc::new(Str::Concat(std::sync::Arc::new(Str::StringLit(std::string::String::from("a"))), std::sync::Arc::new(Str::StringLit(std::string::String::from("aaaaaaa"))))))), std::sync::Arc::new(Str::AddStr(std::sync::Arc::new(Str::AddStr(std::sync::Arc::new(Str::StringLit(std::string::String::from("bxwa"))), std::sync::Arc::new(Str::StringLit(std::string::String::from("haaa"))))), std::sync::Arc::new(Str::Concat(std::sync::Arc::new(Str::StringLit(std::string::String::from("a"))), std::sync::Arc::new(Str::StringLit(std::string::String::from("aaaaaaa"))))))));
+    let term: Bool = Bool::GtStr(
+        std::sync::Arc::new(Str::Concat(
+            std::sync::Arc::new(Str::Concat(
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("ae"))),
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("aaa"))),
+            )),
+            std::sync::Arc::new(Str::Concat(
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("a"))),
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("aaaaaaa"))),
+            )),
+        )),
+        std::sync::Arc::new(Str::AddStr(
+            std::sync::Arc::new(Str::AddStr(
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("bxwa"))),
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("haaa"))),
+            )),
+            std::sync::Arc::new(Str::Concat(
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("a"))),
+                std::sync::Arc::new(Str::StringLit(std::string::String::from("aaaaaaa"))),
+            )),
+        )),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -77,9 +98,9 @@ fn corpus_0_bool() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 1 — seed `cc 966b86e06085e4b9871d7c7c370cd6558e397d920d6caddf45dd43a44768b553`.
@@ -92,7 +113,17 @@ fn corpus_0_bool() {
 fn corpus_1_uint32() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: UInt32 = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::EqInt(std::sync::Arc::new(Int::Tern(std::sync::Arc::new(Int::Err), std::sync::Arc::new(Int::NumLit(475223836i32)), std::sync::Arc::new(Int::Err))), std::sync::Arc::new(Int::DivInt(std::sync::Arc::new(Int::CastErrInt), std::sync::Arc::new(Int::Err))))));
+    let term: UInt32 = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::EqInt(
+        std::sync::Arc::new(Int::Tern(
+            std::sync::Arc::new(Int::Err),
+            std::sync::Arc::new(Int::NumLit(475223836i32)),
+            std::sync::Arc::new(Int::Err),
+        )),
+        std::sync::Arc::new(Int::DivInt(
+            std::sync::Arc::new(Int::CastErrInt),
+            std::sync::Arc::new(Int::Err),
+        )),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -102,7 +133,8 @@ fn corpus_1_uint32() {
     //     `UniqueId` comes from a global counter (and `FreeVar` equality is by
     //     unique_id alone, with the name fixing the identity through the var
     //     cache), and a `HashBag` is a multiset whose `PartialEq` ignores order.
-    let recorded = "BoolToUInt32(EqInt(Tern(Err, NumLit(475223836), Err), DivInt(CastErrInt, Err)))";
+    let recorded =
+        "BoolToUInt32(EqInt(Tern(Err, NumLit(475223836), Err), DivInt(CastErrInt, Err)))";
     assert_eq!(
         canonicalize_debug(&format!("{:?}", term)),
         recorded,
@@ -110,9 +142,9 @@ fn corpus_1_uint32() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 2 — seed `cc 9c8a9bf9fa8b23af0717837cba86ce72746fea27f12873b86b7644ebbe21664c`.
@@ -125,7 +157,10 @@ fn corpus_1_uint32() {
 fn corpus_2_int() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Int = Int::BoolToInt(std::sync::Arc::new(Bool::LtEqInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::Err))), std::sync::Arc::new(Int::Fact(std::sync::Arc::new(Int::Err))))));
+    let term: Int = Int::BoolToInt(std::sync::Arc::new(Bool::LtEqInt(
+        std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::Err))),
+        std::sync::Arc::new(Int::Fact(std::sync::Arc::new(Int::Err))),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -143,9 +178,9 @@ fn corpus_2_int() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 3 — seed `cc 6655eef3551c5d63a23e028e7786f9814a641349250fb0cac8bdffc9bf82ed75`.
@@ -159,7 +194,15 @@ fn corpus_2_int() {
 fn corpus_3_bool() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Bool = Bool::NeInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::KeysMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::from_iter(vec![]))))))), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)))))));
+    let term: Bool = Bool::NeInt(
+        std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::KeysMap(std::sync::Arc::new(
+            Map::MapLit(mettail_runtime::HashMapLit::from_iter(vec![])),
+        ))))),
+        std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::And(
+            std::sync::Arc::new(Bool::BoolLit(false)),
+            std::sync::Arc::new(Bool::BoolLit(true)),
+        )))),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -177,9 +220,9 @@ fn corpus_3_bool() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 4 — seed `cc b79988dabdf309ac950bcdffa27e9e80ae2c944793474490336c991ed96879ce`.
@@ -192,7 +235,17 @@ fn corpus_3_bool() {
 fn corpus_4_bool() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Bool = Bool::GtEqInt(std::sync::Arc::new(Int::Tern(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::Err))), std::sync::Arc::new(Int::BitNotInt(std::sync::Arc::new(Int::Err))), std::sync::Arc::new(Int::FloatToInt(std::sync::Arc::new(Float::CastErrFloat))))), std::sync::Arc::new(Int::Err));
+    let term: Bool = Bool::GtEqInt(
+        std::sync::Arc::new(Int::Tern(
+            std::sync::Arc::new(Int::AddInt(
+                std::sync::Arc::new(Int::NumLit(0i32)),
+                std::sync::Arc::new(Int::Err),
+            )),
+            std::sync::Arc::new(Int::BitNotInt(std::sync::Arc::new(Int::Err))),
+            std::sync::Arc::new(Int::FloatToInt(std::sync::Arc::new(Float::CastErrFloat))),
+        )),
+        std::sync::Arc::new(Int::Err),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -202,7 +255,8 @@ fn corpus_4_bool() {
     //     `UniqueId` comes from a global counter (and `FreeVar` equality is by
     //     unique_id alone, with the name fixing the identity through the var
     //     cache), and a `HashBag` is a multiset whose `PartialEq` ignores order.
-    let recorded = "GtEqInt(Tern(AddInt(NumLit(0), Err), BitNotInt(Err), FloatToInt(CastErrFloat)), Err)";
+    let recorded =
+        "GtEqInt(Tern(AddInt(NumLit(0), Err), BitNotInt(Err), FloatToInt(CastErrFloat)), Err)";
     assert_eq!(
         canonicalize_debug(&format!("{:?}", term)),
         recorded,
@@ -210,9 +264,9 @@ fn corpus_4_bool() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 5 — seed `cc 33ee3dd75713058d83ee16522cf93b909a4614e3276201c176114023dd7ce517`.
@@ -226,7 +280,18 @@ fn corpus_4_bool() {
 fn corpus_5_fixed() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Fixed = Fixed::AddFixed(std::sync::Arc::new(Fixed::AddFixed(std::sync::Arc::new(Fixed::NegFixed(std::sync::Arc::new(Fixed::CastErrFixed))), std::sync::Arc::new(Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(0i64), 0u32))))))), std::sync::Arc::new(Fixed::FixedBin(std::sync::Arc::new(Proc::ProcUInt32(std::sync::Arc::new(UInt32::CastErrUInt32))), std::sync::Arc::new(Int::Err))));
+    let term: Fixed = Fixed::AddFixed(
+        std::sync::Arc::new(Fixed::AddFixed(
+            std::sync::Arc::new(Fixed::NegFixed(std::sync::Arc::new(Fixed::CastErrFixed))),
+            std::sync::Arc::new(Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(
+                mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(0i64), 0u32),
+            )))),
+        )),
+        std::sync::Arc::new(Fixed::FixedBin(
+            std::sync::Arc::new(Proc::ProcUInt32(std::sync::Arc::new(UInt32::CastErrUInt32))),
+            std::sync::Arc::new(Int::Err),
+        )),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -244,9 +309,9 @@ fn corpus_5_fixed() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 6 — seed `cc c1685875c8662d63ef3f8085a30ea87ad80221f82e62397face71cd1dc57b911`.
@@ -261,7 +326,27 @@ fn corpus_5_fixed() {
 fn corpus_6_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::ProcBigRat(std::sync::Arc::new(BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from(0i64), num_bigint::BigInt::from(1i64))))), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from(0i64), num_bigint::BigInt::from(1i64))))))), std::sync::Arc::new(BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))))));
+    let term: Proc = Proc::ProcBigRat(std::sync::Arc::new(BigRat::BitAndBigRat(
+        std::sync::Arc::new(BigRat::BitAndBigRat(
+            std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                num_rational::BigRational::new(
+                    num_bigint::BigInt::from(0i64),
+                    num_bigint::BigInt::from(1i64),
+                ),
+            ))),
+            std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                num_rational::BigRational::new(
+                    num_bigint::BigInt::from(0i64),
+                    num_bigint::BigInt::from(1i64),
+                ),
+            ))),
+        )),
+        std::sync::Arc::new(BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(
+            mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )),
+        )))),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -279,9 +364,9 @@ fn corpus_6_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 7 — seed `cc 28ad1a5a21dbac4caef32ff93a83ac62b056e86dec92f1be7c62815c7bbf8271`.
@@ -295,7 +380,19 @@ fn corpus_6_proc() {
 fn corpus_7_bigrat() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: BigRat = BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from(0i64), num_bigint::BigInt::from(1i64))))), std::sync::Arc::new(BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))));
+    let term: BigRat = BigRat::AddBigRat(
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+            num_rational::BigRational::new(
+                num_bigint::BigInt::from(0i64),
+                num_bigint::BigInt::from(1i64),
+            ),
+        ))),
+        std::sync::Arc::new(BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(
+            mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )),
+        )))),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -313,9 +410,9 @@ fn corpus_7_bigrat() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 8 — seed `cc 0be7f6367e06ccf4d41dc047cc18c6e76df9ff14ab821698f48de068525ee5d1`.
@@ -330,7 +427,28 @@ fn corpus_7_bigrat() {
 fn corpus_8_bool() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Bool = Bool::GtEqBool(std::sync::Arc::new(Bool::GtEqBool(std::sync::Arc::new(Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))))), std::sync::Arc::new(Bool::GtEqBool(std::sync::Arc::new(Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))))));
+    let term: Bool = Bool::GtEqBool(
+        std::sync::Arc::new(Bool::GtEqBool(
+            std::sync::Arc::new(Bool::GtEqBool(
+                std::sync::Arc::new(Bool::BoolLit(true)),
+                std::sync::Arc::new(Bool::BoolLit(true)),
+            )),
+            std::sync::Arc::new(Bool::GtEqBool(
+                std::sync::Arc::new(Bool::BoolLit(true)),
+                std::sync::Arc::new(Bool::BoolLit(true)),
+            )),
+        )),
+        std::sync::Arc::new(Bool::GtEqBool(
+            std::sync::Arc::new(Bool::GtEqBool(
+                std::sync::Arc::new(Bool::BoolLit(true)),
+                std::sync::Arc::new(Bool::BoolLit(true)),
+            )),
+            std::sync::Arc::new(Bool::GtEqBool(
+                std::sync::Arc::new(Bool::BoolLit(true)),
+                std::sync::Arc::new(Bool::BoolLit(true)),
+            )),
+        )),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -348,9 +466,9 @@ fn corpus_8_bool() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 9 — seed `cc cdf91c397202ae497ef6dec68764b3eec85f9603fd0ba3980cf5b7a0d9a5ee64`.
@@ -364,7 +482,22 @@ fn corpus_8_bool() {
 fn corpus_9_float() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Float = Float::BoolToFloat(std::sync::Arc::new(Bool::EqFixed(std::sync::Arc::new(Fixed::AddFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(0i64), 0u32))), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(-2147483648i64), 0u32))))), std::sync::Arc::new(Fixed::SubFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed))))));
+    let term: Float = Float::BoolToFloat(std::sync::Arc::new(Bool::EqFixed(
+        std::sync::Arc::new(Fixed::AddFixed(
+            std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(
+                num_bigint::BigInt::from(0i64),
+                0u32,
+            ))),
+            std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(
+                num_bigint::BigInt::from(-2147483648i64),
+                0u32,
+            ))),
+        )),
+        std::sync::Arc::new(Fixed::SubFixed(
+            std::sync::Arc::new(Fixed::CastErrFixed),
+            std::sync::Arc::new(Fixed::CastErrFixed),
+        )),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -382,9 +515,9 @@ fn corpus_9_float() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 10 — seed `cc b35c625b1da7b4dfcdddbfc5a8c36d4c034e57a0544764b58cf4ccdeb0a799fe`.
@@ -399,7 +532,22 @@ fn corpus_9_float() {
 fn corpus_10_bigrat() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: BigRat = BigRat::MulBigRat(std::sync::Arc::new(BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from(0i64), num_bigint::BigInt::from(1i64))))), std::sync::Arc::new(BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))))), std::sync::Arc::new(BigRat::Err));
+    let term: BigRat = BigRat::MulBigRat(
+        std::sync::Arc::new(BigRat::AddBigRat(
+            std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                num_rational::BigRational::new(
+                    num_bigint::BigInt::from(0i64),
+                    num_bigint::BigInt::from(1i64),
+                ),
+            ))),
+            std::sync::Arc::new(BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(
+                mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                )),
+            )))),
+        )),
+        std::sync::Arc::new(BigRat::Err),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -417,9 +565,9 @@ fn corpus_10_bigrat() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 11 — seed `cc 9a9da5768e9356ec09d7fdf86fd3f8f3d36508ed1aa4b45b849f154091a82825`.
@@ -434,7 +582,38 @@ fn corpus_10_bigrat() {
 fn corpus_11_bigrat() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: BigRat = BigRat::MulBigRat(std::sync::Arc::new(BigRat::MulBigRat(std::sync::Arc::new(BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from(0i64), num_bigint::BigInt::from(1i64))))), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from(0i64), num_bigint::BigInt::from(1i64))))))), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from(0i64), num_bigint::BigInt::from(1i64))))))), std::sync::Arc::new(BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(0i64), 0u32))))), std::sync::Arc::new(BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(0i64), 0u32))))))));
+    let term: BigRat = BigRat::MulBigRat(
+        std::sync::Arc::new(BigRat::MulBigRat(
+            std::sync::Arc::new(BigRat::AddBigRat(
+                std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                    num_rational::BigRational::new(
+                        num_bigint::BigInt::from(0i64),
+                        num_bigint::BigInt::from(1i64),
+                    ),
+                ))),
+                std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                    num_rational::BigRational::new(
+                        num_bigint::BigInt::from(0i64),
+                        num_bigint::BigInt::from(1i64),
+                    ),
+                ))),
+            )),
+            std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                num_rational::BigRational::new(
+                    num_bigint::BigInt::from(0i64),
+                    num_bigint::BigInt::from(1i64),
+                ),
+            ))),
+        )),
+        std::sync::Arc::new(BigRat::BitAndBigRat(
+            std::sync::Arc::new(BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(
+                mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(0i64), 0u32),
+            )))),
+            std::sync::Arc::new(BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(
+                mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(0i64), 0u32),
+            )))),
+        )),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -452,7 +631,7 @@ fn corpus_11_bigrat() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

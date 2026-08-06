@@ -354,7 +354,13 @@ impl LexicographicWeight {
         src_idx: u16,
         rule_idx: u16,
     ) -> Self {
-        LexicographicWeight { open_len: 0, primary, lex_alt_idx, src_idx, rule_idx }
+        LexicographicWeight {
+            open_len: 0,
+            primary,
+            lex_alt_idx,
+            src_idx,
+            rule_idx,
+        }
     }
 
     /// Construct a weight from a raw tropical cost and indices.
@@ -1043,8 +1049,8 @@ mod tests {
     /// The two recorded triples, reconstructed through the generator's own constructor.
     ///
     /// Returned as `(label, a, b, c)` so a failure names the entry it came from.
-    fn recorded_triples() -> [(&'static str, LexicographicWeight, LexicographicWeight,
-                              LexicographicWeight); 2] {
+    fn recorded_triples(
+    ) -> [(&'static str, LexicographicWeight, LexicographicWeight, LexicographicWeight); 2] {
         [
             (
                 "cc 8a3ffdd5af5bb3816fc792ec736e2734b725a5fcdfee30809a250a8494797e04",
@@ -1081,10 +1087,7 @@ mod tests {
                     "{label}: primary does not match the recorded text"
                 );
                 assert_eq!(weight.src_idx, src, "{label}: src does not match the recorded text");
-                assert_eq!(
-                    weight.rule_idx, rule,
-                    "{label}: rule does not match the recorded text"
-                );
+                assert_eq!(weight.rule_idx, rule, "{label}: rule does not match the recorded text");
                 // The two fields the three-field format omitted. They are asserted, not
                 // assumed: the omission was lossless only because `from_cost` pins them.
                 assert_eq!(
@@ -1107,11 +1110,7 @@ mod tests {
     fn the_recorded_triples_satisfy_every_three_argument_axiom() {
         for (label, a, b, c) in recorded_triples() {
             // ⊕ is associative.
-            assert_eq!(
-                a.plus(&b).plus(&c),
-                a.plus(&b.plus(&c)),
-                "{label}: ⊕ associativity"
-            );
+            assert_eq!(a.plus(&b).plus(&c), a.plus(&b.plus(&c)), "{label}: ⊕ associativity");
 
             // ⊗ is associative up to the same ε the property test uses; exact equality does
             // not hold because tropical ⊗ adds `f64` costs. The tolerance is copied from

@@ -72,8 +72,8 @@ use quote::quote;
 
 use mettail_ast::language::LanguageDef;
 
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use crate::gen::native::native_type_to_full_string;
+use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 
 /// Marker opening the machine-readable schema inside the emitted file.
 ///
@@ -239,10 +239,9 @@ fn variant_line(category: &str, variant: &VariantKind, language: &LanguageDef) -
 
         VariantKind::Literal { label } => format!("V {category} {label} literal\n"),
 
-        VariantKind::CollectionLiteral { label, element_cat, coll_type } => format!(
-            "V {category} {label} collit collit:{:?}:{element_cat}\n",
-            coll_type
-        ),
+        VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
+            format!("V {category} {label} collit collit:{:?}:{element_cat}\n", coll_type)
+        },
 
         VariantKind::Var { label } => format!("V {category} {label} var var\n"),
 
@@ -256,12 +255,16 @@ fn variant_line(category: &str, variant: &VariantKind, language: &LanguageDef) -
             line
         },
 
-        VariantKind::Collection { label, element_cat, coll_type } => format!(
-            "V {category} {label} coll coll:{:?}:{element_cat}\n",
-            coll_type
-        ),
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            format!("V {category} {label} coll coll:{:?}:{element_cat}\n", coll_type)
+        },
 
-        VariantKind::Binder { label, pre_scope_fields, binder_cat, body_cat } => {
+        VariantKind::Binder {
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+        } => {
             let mut line = format!("V {category} {label} binder");
             for field in pre_scope_fields {
                 line.push(' ');
@@ -271,7 +274,12 @@ fn variant_line(category: &str, variant: &VariantKind, language: &LanguageDef) -
             line
         },
 
-        VariantKind::MultiBinder { label, pre_scope_fields, binder_cat, body_cat } => {
+        VariantKind::MultiBinder {
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+        } => {
             let mut line = format!("V {category} {label} multibinder");
             for field in pre_scope_fields {
                 line.push(' ');

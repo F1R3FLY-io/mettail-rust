@@ -139,7 +139,10 @@ fn sort_of_native_type_str(native: &str) -> Option<Sort> {
 /// native type is one indirection away through `metadata.types()`
 /// (`TypeDef { name, native_type }`). A leading `Option<…>` wrapper (emitted for
 /// opt-group fields) is stripped first so the inner category drives the sort.
-fn field_category_sort(field_ty: &str, native_by_category: &[(&str, Option<&str>)]) -> Option<Sort> {
+fn field_category_sort(
+    field_ty: &str,
+    native_by_category: &[(&str, Option<&str>)],
+) -> Option<Sort> {
     // Strip a single leading `Option<…>` wrapper to reach the inner category.
     let inner = field_ty
         .strip_prefix("Option<")
@@ -317,9 +320,9 @@ mod tests {
     #[test]
     fn native_matcher_mirrors_nativekind_scalars() {
         // Bounded-integer widths all collapse to Int.
-        for s in ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64",
-            "u128", "usize"]
-        {
+        for s in [
+            "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+        ] {
             assert_eq!(sort_of_native_type_str(s), Some(Sort::Int), "{s}");
         }
         assert_eq!(sort_of_native_type_str("f32"), Some(Sort::Float));
@@ -386,9 +389,21 @@ mod tests {
     }
 
     static PROBE_TYPES: &[TypeDef] = &[
-        TypeDef { name: "Proc", native_type: None, is_primary: true },
-        TypeDef { name: "Name", native_type: None, is_primary: false },
-        TypeDef { name: "Int", native_type: Some("i32"), is_primary: false },
+        TypeDef {
+            name: "Proc",
+            native_type: None,
+            is_primary: true,
+        },
+        TypeDef {
+            name: "Name",
+            native_type: None,
+            is_primary: false,
+        },
+        TypeDef {
+            name: "Int",
+            native_type: Some("i32"),
+            is_primary: false,
+        },
     ];
 
     impl LanguageMetadata for ProbeMeta {
@@ -463,17 +478,18 @@ mod tests {
             syntax: "^x.body",
             description: None,
             fields: &[
-                FieldDef { name: "^x.body", ty: "[Proc -> Proc]", is_binder: true },
+                FieldDef {
+                    name: "^x.body",
+                    ty: "[Proc -> Proc]",
+                    is_binder: true,
+                },
                 FieldDef { name: "k", ty: "Int", is_binder: false },
             ],
         }];
         let m = ProbeMeta { terms: TERMS, rewrites: &[] };
         let r = check_guard_decidability(&m);
         // 1 binder (T2) + 1 Int structural (T1).
-        assert_eq!(
-            (r.total_guards, r.compile_time_decidable, r.runtime_decidable),
-            (2, 1, 1)
-        );
+        assert_eq!((r.total_guards, r.compile_time_decidable, r.runtime_decidable), (2, 1, 1));
         assert_eq!(r.worst_tier, "T2 (runtime decidable)");
     }
 
@@ -487,8 +503,16 @@ mod tests {
             syntax: "?guard",
             description: None,
             fields: &[
-                FieldDef { name: "?guard", ty: "Guard", is_binder: false },
-                FieldDef { name: "?opt", ty: "Option<Guard>", is_binder: false },
+                FieldDef {
+                    name: "?guard",
+                    ty: "Guard",
+                    is_binder: false,
+                },
+                FieldDef {
+                    name: "?opt",
+                    ty: "Option<Guard>",
+                    is_binder: false,
+                },
                 FieldDef { name: "n", ty: "Name", is_binder: false },
             ],
         }];
@@ -513,10 +537,7 @@ mod tests {
         let m = ProbeMeta { terms: &[], rewrites: REWRITES };
         let r = check_guard_decidability(&m);
         // 1 freshness condition + 1 congruence premise ⇒ 2 × T2.
-        assert_eq!(
-            (r.total_guards, r.compile_time_decidable, r.runtime_decidable),
-            (2, 0, 2)
-        );
+        assert_eq!((r.total_guards, r.compile_time_decidable, r.runtime_decidable), (2, 0, 2));
         assert_eq!(r.worst_tier, "T2 (runtime decidable)");
     }
 
@@ -537,7 +558,11 @@ mod tests {
                 type_name: "Proc",
                 syntax: "^x.p",
                 description: None,
-                fields: &[FieldDef { name: "^x.p", ty: "[Name -> Proc]", is_binder: true }],
+                fields: &[FieldDef {
+                    name: "^x.p",
+                    ty: "[Name -> Proc]",
+                    is_binder: true,
+                }],
             },
         ];
         static REWRITES: &[RewriteDef] = &[RewriteDef {
@@ -552,7 +577,13 @@ mod tests {
         let r = check_guard_decidability(&m);
         // T1: 1 Int field. T2: 1 binder + 1 congruence premise = 2.
         assert_eq!(
-            (r.total_guards, r.compile_time_decidable, r.runtime_decidable, r.semi_decidable, r.undecidable),
+            (
+                r.total_guards,
+                r.compile_time_decidable,
+                r.runtime_decidable,
+                r.semi_decidable,
+                r.undecidable
+            ),
             (3, 1, 2, 0, 0)
         );
         assert_eq!(r.worst_tier, "T2 (runtime decidable)");

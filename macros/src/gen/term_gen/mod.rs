@@ -380,7 +380,9 @@ mod ident_pool_refusal_red {
         );
         assert!(!samples.is_empty(), "the pool must be non-empty: {samples:?}");
         assert!(
-            samples.iter().all(|s| s.chars().all(|c| c.is_ascii_lowercase())),
+            samples
+                .iter()
+                .all(|s| s.chars().all(|c| c.is_ascii_lowercase())),
             "and every sample must satisfy the declared pattern: {samples:?}",
         );
     }

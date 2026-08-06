@@ -409,10 +409,10 @@ fn has_collection_item(rule: &GrammarRule) -> bool {
 
 /// `random.rs:377` — a MultiAbstraction rule the multi-binder arm cannot serve.
 pub(crate) fn term_multi_binder_gap(rule: &GrammarRule) -> Option<GeneratorGap> {
-    let is_multi_binder = rule
-        .term_context
-        .as_ref()
-        .is_some_and(|ctx| ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. })));
+    let is_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
+        ctx.iter()
+            .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+    });
     if !is_multi_binder {
         return None;
     }
@@ -432,7 +432,10 @@ pub(crate) fn term_collection_arity_gap(rule: &GrammarRule) -> Option<GeneratorG
     }
     let ctx = rule.term_context.as_ref();
     if ctx.is_some_and(|ctx| {
-        ctx.iter().filter(|p| matches!(p, TermParam::Simple { .. })).count() > 1
+        ctx.iter()
+            .filter(|p| matches!(p, TermParam::Simple { .. }))
+            .count()
+            > 1
     }) {
         return Some(GeneratorGap::Class2CollectionArity);
     }
@@ -503,9 +506,7 @@ pub(crate) fn is_depth_zero_shape(rule: &GrammarRule) -> bool {
     let non_terminals = rule
         .items
         .iter()
-        .filter(|item| {
-            matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Binder { .. })
-        })
+        .filter(|item| matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Binder { .. }))
         .count();
     if non_terminals == 0 {
         return true;
@@ -590,11 +591,16 @@ mod tests {
                 .or_default()
                 .entry(gap.as_str())
                 .or_default() += 1;
-            langs_per_generator.entry(generator).or_default().insert(lang);
+            langs_per_generator
+                .entry(generator)
+                .or_default()
+                .insert(lang);
         }
 
-        let distinct: BTreeSet<(&str, &str, &str)> =
-            rows.keys().map(|(l, c, lbl, _)| (l.as_str(), c.as_str(), lbl.as_str())).collect();
+        let distinct: BTreeSet<(&str, &str, &str)> = rows
+            .keys()
+            .map(|(l, c, lbl, _)| (l.as_str(), c.as_str(), lbl.as_str()))
+            .collect();
         let mut out = format!(
             "\n  ══ THE GENERATOR-GAP LEDGER ══\n\
              \x20  {} (language, category, label, generator) row(s) over {} DISTINCT rule(s)\n\
@@ -613,7 +619,9 @@ mod tests {
         for generator in Generator::ALL {
             let gaps = per_generator.get(generator.as_str());
             let total: usize = gaps.map_or(0, |g| g.values().sum());
-            let langs = langs_per_generator.get(generator.as_str()).map_or(0, BTreeSet::len);
+            let langs = langs_per_generator
+                .get(generator.as_str())
+                .map_or(0, BTreeSet::len);
             out.push_str(&format!(
                 "\n  {:<16} {total:>4} refusal(s) across {langs:>2} language(s)\n",
                 generator.as_str()
@@ -635,7 +643,9 @@ mod tests {
         for a in Generator::ALL {
             out.push_str(&format!("   {:<14}", a.as_str()));
             for b in Generator::ALL {
-                let n = refused_by(rows, a).intersection(&refused_by(rows, b)).count();
+                let n = refused_by(rows, a)
+                    .intersection(&refused_by(rows, b))
+                    .count();
                 out.push_str(&format!("{n:>11}  "));
             }
             out.push('\n');
@@ -707,7 +717,9 @@ mod tests {
         // exactly the outcome #150 predicted when it asked for a corpus derivation "covering all
         // 54 INCLUDING the 21 with emit_tests: false, whose gaps are otherwise unobservable".
         let pair = |a: Generator, b: Generator| {
-            refused_by(&rows, a).intersection(&refused_by(&rows, b)).count()
+            refused_by(&rows, a)
+                .intersection(&refused_by(&rows, b))
+                .count()
         };
         assert_eq!(
             (

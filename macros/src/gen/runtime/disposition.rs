@@ -191,12 +191,9 @@ impl LoweringDisposition {
     /// the exact `format!` output the four `unsupported.push(…)` sites used to build.
     fn legacy_message(&self) -> Option<String> {
         match (&self.outcome, self.legacy_diagnostic) {
-            (LoweringOutcome::Declined { reason }, true) => Some(format!(
-                "{} `{}` {}",
-                self.construct_kind.noun(),
-                self.construct,
-                reason,
-            )),
+            (LoweringOutcome::Declined { reason }, true) => {
+                Some(format!("{} `{}` {}", self.construct_kind.noun(), self.construct, reason,))
+            },
             _ => None,
         }
     }

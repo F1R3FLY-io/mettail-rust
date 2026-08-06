@@ -480,8 +480,10 @@ fn hash_arm_stmts(
     scope_pushes: Option<TokenStream>,
     language: &LanguageDef,
 ) -> Vec<TokenStream> {
-    let expressible: Vec<bool> =
-        fields.iter().map(|f| hash_field_is_stack_expressible(f, language)).collect();
+    let expressible: Vec<bool> = fields
+        .iter()
+        .map(|f| hash_field_is_stack_expressible(f, language))
+        .collect();
     let split = expressible.iter().position(|e| *e).unwrap_or(fields.len());
     // A leaf whose bytes must land AFTER a descent — the shape no task can carry.
     let leaf_after_descent = expressible.iter().skip(split).any(|e| !*e);

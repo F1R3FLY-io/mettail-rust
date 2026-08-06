@@ -52,7 +52,9 @@ fn main() -> ExitCode {
         eprintln!(
             "usage: {} <target/generated/<lang>/rust_ctor.rs> <corpus.proptest-regressions> \
              [--category C]",
-            args.first().map(String::as_str).unwrap_or("harvest_proptest_corpus")
+            args.first()
+                .map(String::as_str)
+                .unwrap_or("harvest_proptest_corpus")
         );
         return ExitCode::from(2);
     }
@@ -101,7 +103,12 @@ fn main() -> ExitCode {
         })
         .collect();
 
-    println!("// ── {} — {} corpus entr{} ──", schema.language, entries.len(), if entries.len() == 1 { "y" } else { "ies" });
+    println!(
+        "// ── {} — {} corpus entr{} ──",
+        schema.language,
+        entries.len(),
+        if entries.len() == 1 { "y" } else { "ies" }
+    );
     println!("// schema: {schema_path}");
     println!("// corpus: {corpus_path}");
     println!();
@@ -115,7 +122,11 @@ fn main() -> ExitCode {
         let bindings = match parse_shrinks_to(text) {
             Ok(b) => b,
             Err(e) => {
-                unresolved.push((index, seed, vec![format!("cannot parse the recorded text: {e}")]));
+                unresolved.push((
+                    index,
+                    seed,
+                    vec![format!("cannot parse the recorded text: {e}")],
+                ));
                 continue;
             },
         };
@@ -139,7 +150,11 @@ fn main() -> ExitCode {
 
         let candidates: Vec<String> = match &forced_category {
             Some(c) => vec![c.clone()],
-            None => schema.categories().into_iter().map(str::to_string).collect(),
+            None => schema
+                .categories()
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
         };
 
         let mut hits: Vec<(String, String)> = Vec::new();
@@ -206,7 +221,10 @@ fn emit_test(index: usize, seed: &str, recorded: &str, hits: &[(String, String)]
             "/// ⚠ The term emits under {} categories: {}. `{category}` is used; the \
              others are listed so the choice is visible rather than silent.",
             hits.len(),
-            hits.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>().join(", ")
+            hits.iter()
+                .map(|(c, _)| c.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         println!("///");
     }

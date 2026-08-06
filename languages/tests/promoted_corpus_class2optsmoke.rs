@@ -91,7 +91,7 @@ fn corpus_0_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

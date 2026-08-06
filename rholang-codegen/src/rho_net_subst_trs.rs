@@ -82,15 +82,13 @@ use models::rust::utils::{
 
 use crate::rho_net_lower::{
     ground_marker_tag_par, is_marked_object_label, par_carries_ground_marker,
-    reflect_ground_term_par, reflect_tag, BOUND_VAR_REFLECT_LABEL,
-    CMP_RESERVED_LABEL, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
-    DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
-    FIRED_RESERVED_LABEL, FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL,
-    FLOAT_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm,
-    LAMBDA_REFLECT_LABEL,
-    MULTILAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, PRED_RESERVED_LABEL,
-    SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
-    SUBST_RESERVED_LABEL,
+    reflect_ground_term_par, reflect_tag, GroundTerm, BOUND_VAR_REFLECT_LABEL, CMP_RESERVED_LABEL,
+    DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL, DRIVE_FUEL_RESERVED_LABEL,
+    DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL, FLOAT_HOIST_RESERVED_LABEL,
+    FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    MULTILAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    PRED_RESERVED_LABEL, SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL,
+    SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
 };
 
 /// The internal `^cmp`-result tags — `^`-prefixed so they cannot collide with any user constructor
@@ -252,7 +250,10 @@ pub(crate) fn free_bits(free: &[usize]) -> Vec<u8> {
 
 /// A `BoundVar(i)` reference — free in `{i}`.
 pub(crate) fn bv(i: usize) -> Node {
-    Node { par: new_boundvar_par(i as i32, Vec::new(), false), free: vec![i] }
+    Node {
+        par: new_boundvar_par(i as i32, Vec::new(), false),
+        free: vec![i],
+    }
 }
 
 /// A GROUND `Par` (a reflected term, a tag, a reserved channel) — no free variables.
@@ -291,10 +292,18 @@ pub(crate) fn nullary_term(fp: &str, label: &str) -> Par {
 
 /// An `EList[children…]` process value, free in the union of the children's free-sets.
 fn elist(children: Vec<Node>) -> Node {
-    let free = union_free(&children.iter().map(|c| c.free.as_slice()).collect::<Vec<_>>());
+    let free = union_free(
+        &children
+            .iter()
+            .map(|c| c.free.as_slice())
+            .collect::<Vec<_>>(),
+    );
     let ps: Vec<Par> = children.into_iter().map(|c| c.par).collect();
     let bits = free_bits(&free);
-    Node { par: new_elist_par(ps, bits.clone(), false, None, bits, false), free }
+    Node {
+        par: new_elist_par(ps, bits.clone(), false, None, bits, false),
+        free,
+    }
 }
 
 /// A tagged reflected value `EList[ GPrivate(⌜label⌝), children… ]` (`^bound(n)`, `^lambda(b)`,
@@ -315,7 +324,9 @@ pub(crate) fn tagged(fp: &str, label: &str, children: Vec<Node>) -> Node {
         let is_ground = match label {
             BOUND_VAR_REFLECT_LABEL => false,
             FREE_VAR_REFLECT_LABEL => true,
-            _ => children.iter().all(|child| par_carries_ground_marker(&child.par, fp)),
+            _ => children
+                .iter()
+                .all(|child| par_carries_ground_marker(&child.par, fp)),
         };
         items.push(ground(ground_marker_tag_par(fp, is_ground)));
     }
@@ -330,7 +341,10 @@ pub(crate) fn send(chan: Node, data: Vec<Node>) -> Node {
     let free = union_free(&free_refs);
     let ps: Vec<Par> = data.into_iter().map(|d| d.par).collect();
     let bits = free_bits(&free);
-    Node { par: new_send_par(chan.par, ps, false, bits.clone(), false, bits, false), free }
+    Node {
+        par: new_send_par(chan.par, ps, false, bits.clone(), false, bits, false),
+        free,
+    }
 }
 
 /// One `Match` case: a `(pattern, free_count, body)` where `pattern` is a GROUND-relative pattern
@@ -367,10 +381,7 @@ pub(crate) fn match_guarded(target: Node, cases: Vec<(Case, Option<Par>)>) -> No
             // `locally_free` is the reducer's index-per-byte bit vector
             // (`models::create_bit_vector`: `bit_vector[index] = 1`), so the highest
             // referenced De Bruijn index is the last set position.
-            let highest_set = guard
-                .locally_free
-                .iter()
-                .rposition(|&bit| bit != 0);
+            let highest_set = guard.locally_free.iter().rposition(|&bit| bit != 0);
             assert!(
                 highest_set.is_none_or(|index| index < case.free_count),
                 "match_guarded: a case guard references BoundVar(s) beyond the case's own \
@@ -389,7 +400,10 @@ pub(crate) fn match_guarded(target: Node, cases: Vec<(Case, Option<Par>)>) -> No
     }
     let free = union_free(&free_sets.iter().map(|s| s.as_slice()).collect::<Vec<_>>());
     let bits = free_bits(&free);
-    Node { par: new_match_par(target.par, match_cases, bits.clone(), false, bits, false), free }
+    Node {
+        par: new_match_par(target.par, match_cases, bits.clone(), false, bits, false),
+        free,
+    }
 }
 
 /// `new r₀, …, r_{n-1} in { body }` — the `n` fresh names bind innermost (`r_{n-1} = BoundVar(0)`,
@@ -427,7 +441,9 @@ fn polyadic_receive(source: Par, n_formals: usize, body: Node, persistent: bool)
     // bind innermost.
     let free = shift_down(&body.free, n_formals);
     let bits = free_bits(&free);
-    let patterns: Vec<Par> = (0..n_formals).map(|i| new_freevar_par(i as i32, Vec::new())).collect();
+    let patterns: Vec<Par> = (0..n_formals)
+        .map(|i| new_freevar_par(i as i32, Vec::new()))
+        .collect();
     let receive = Receive {
         binds: vec![ReceiveBind {
             patterns,
@@ -443,7 +459,10 @@ fn polyadic_receive(source: Par, n_formals: usize, body: Node, persistent: bool)
         connective_used: false,
         condition: None,
     };
-    Node { par: Par::default().with_receives(vec![receive]), free }
+    Node {
+        par: Par::default().with_receives(vec![receive]),
+        free,
+    }
 }
 
 /// A single non-persistent `for(@x <- source){ body }` (used for a fresh return-channel read).
@@ -468,7 +487,10 @@ pub(crate) fn for1(source: Node, body: Node) -> Node {
         connective_used: false,
         condition: None,
     };
-    Node { par: Par::default().with_receives(vec![receive]), free }
+    Node {
+        par: Par::default().with_receives(vec![receive]),
+        free,
+    }
 }
 
 /// An atomic n-ary continuation JOIN `for(@s₀ <- r₀ & … & @s_{n-1} <- r_{n-1}){ body }` — `n`
@@ -483,8 +505,12 @@ pub(crate) fn join(sources: Vec<Node>, body: Node) -> Node {
     let n = sources.len();
     // The `n` sources are read in the OUTER frame; the `n` formals flatten bind-0-first and bind
     // innermost in `body`.
-    let source_free: Vec<usize> =
-        union_free(&sources.iter().map(|s| s.free.as_slice()).collect::<Vec<_>>());
+    let source_free: Vec<usize> = union_free(
+        &sources
+            .iter()
+            .map(|s| s.free.as_slice())
+            .collect::<Vec<_>>(),
+    );
     let free = union_free(&[source_free.as_slice(), shift_down(&body.free, n).as_slice()]);
     let bits = free_bits(&free);
     let binds: Vec<ReceiveBind> = sources
@@ -506,7 +532,10 @@ pub(crate) fn join(sources: Vec<Node>, body: Node) -> Node {
         connective_used: false,
         condition: None,
     };
-    Node { par: Par::default().with_receives(vec![receive]), free }
+    Node {
+        par: Par::default().with_receives(vec![receive]),
+        free,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -559,11 +588,17 @@ fn ground_guard_case(fp: &str, env: &Env) -> Case {
         vec![new_wildcard_par(Vec::new(), true), ground_marker_tag_par(fp, true)],
         Vec::new(),
         true,
-        Some(Var { var_instance: Some(VarInstance::Wildcard(WildcardMsg {})) }),
+        Some(Var {
+            var_instance: Some(VarInstance::Wildcard(WildcardMsg {})),
+        }),
         Vec::new(),
         true,
     );
-    Case { pattern, free_count: 0, body: send(env.var("ret"), vec![env.var("t")]) }
+    Case {
+        pattern,
+        free_count: 0,
+        body: send(env.var("ret"), vec![env.var("t")]),
+    }
 }
 
 /// A GROUND nullary pattern `EList[ GPrivate(⌜label⌝) ]` (Peano `Z`, a `^cmp` result) — no free
@@ -586,7 +621,9 @@ pub(crate) struct Env {
 impl Env {
     /// A receiver's root frame: `formals[0]` outermost … `formals.last()` = `BoundVar(0)`.
     pub(crate) fn root(formals: &[&str]) -> Env {
-        Env { names: formals.iter().map(|s| s.to_string()).collect() }
+        Env {
+            names: formals.iter().map(|s| s.to_string()).collect(),
+        }
     }
 
     /// Extend the frame with a binder's formals (innermost last).
@@ -708,7 +745,10 @@ pub(crate) fn pred_receiver_par(fp: &str) -> Par {
             Case {
                 pattern: pat_nullary(fp, PEANO_ZERO_REFLECT_LABEL),
                 free_count: 0,
-                body: send(env.var("ret"), vec![ground(nullary_term(fp, PEANO_ZERO_REFLECT_LABEL))]),
+                body: send(
+                    env.var("ret"),
+                    vec![ground(nullary_term(fp, PEANO_ZERO_REFLECT_LABEL))],
+                ),
             },
             Case {
                 pattern: pat_tagged(fp, PEANO_SUCC_REFLECT_LABEL, vec![pat_free(0)]),
@@ -857,7 +897,10 @@ fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
                     );
                     let observe = for1(env.var("r"), {
                         let env = env.push(&["rb"]);
-                        send(env.var("ret"), vec![tagged(fp, LAMBDA_REFLECT_LABEL, vec![env.var("rb")])])
+                        send(
+                            env.var("ret"),
+                            vec![tagged(fp, LAMBDA_REFLECT_LABEL, vec![env.var("rb")])],
+                        )
                     });
                     par2(recur, observe)
                 })
@@ -1036,7 +1079,10 @@ fn subst_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
                     );
                     let observe = for1(env.var("r"), {
                         let env = env.push(&["rb"]);
-                        send(env.var("ret"), vec![tagged(fp, LAMBDA_REFLECT_LABEL, vec![env.var("rb")])])
+                        send(
+                            env.var("ret"),
+                            vec![tagged(fp, LAMBDA_REFLECT_LABEL, vec![env.var("rb")])],
+                        )
                     });
                     par2(recur, observe)
                 })
@@ -1124,7 +1170,8 @@ fn object_congruence_cases(
                         let join_sources: Vec<Node> =
                             ret_names.iter().map(|r| env.var(r)).collect();
                         let join_node = join(join_sources, {
-                            let s_names: Vec<String> = (0..arity).map(|i| format!("s{i}")).collect();
+                            let s_names: Vec<String> =
+                                (0..arity).map(|i| format!("s{i}")).collect();
                             let s_refs: Vec<&str> = s_names.iter().map(String::as_str).collect();
                             let env = env.push(&s_refs);
                             let assembled: Vec<Node> = s_names.iter().map(|s| env.var(s)).collect();
@@ -1222,14 +1269,15 @@ pub(crate) fn object_congruence_constructors(def: &LanguageDef) -> Vec<(String, 
 /// remap can never drift from the TRS's.
 pub(crate) fn is_binder_term(term: &mettail_ast::grammar::GrammarRule) -> bool {
     if let Some(params) = &term.term_context {
-        if params
-            .iter()
-            .any(|p| matches!(p, TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. }))
-        {
+        if params.iter().any(|p| {
+            matches!(p, TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. })
+        }) {
             return true;
         }
     }
-    term.items.iter().any(|item| matches!(item, GrammarItem::Binder { .. }))
+    term.items
+        .iter()
+        .any(|item| matches!(item, GrammarItem::Binder { .. }))
 }
 
 /// The reflected arity of a plain STRUCTURAL constructor: the count of `Simple` term-context params
@@ -1326,7 +1374,11 @@ pub fn subst_seed_send_par(fingerprint: &str, arg: Par, body: Par, out_channel: 
             ground(nullary_term(fingerprint, PEANO_ZERO_REFLECT_LABEL)),
             ground(arg),
             ground(body),
-            ground(models::rust::utils::new_gstring_par(out_channel.to_string(), Vec::new(), false)),
+            ground(models::rust::utils::new_gstring_par(
+                out_channel.to_string(),
+                Vec::new(),
+                false,
+            )),
         ],
     )
     .par

@@ -96,9 +96,11 @@ fn layout_a_entries() -> Vec<(String, String)> {
                 && dir.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions")
                 || path
                     .parent()
-                    .and_then(|p| p.ancestors().find(|a| {
-                        a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions")
-                    }))
+                    .and_then(|p| {
+                        p.ancestors().find(|a| {
+                            a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions")
+                        })
+                    })
                     .is_some()
                     && path.extension().and_then(|e| e.to_str()) == Some("txt")
             {
@@ -228,10 +230,13 @@ fn generated_schemas() -> Vec<(String, Schema)> {
             continue;
         }
         let text = fs::read_to_string(&path).expect("read the generated schema");
-        let schema = Schema::parse(&text)
-            .unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+        let schema =
+            Schema::parse(&text).unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
         out.push((
-            dir.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string(),
+            dir.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+                .to_string(),
             schema,
         ));
     }
@@ -267,10 +272,7 @@ fn every_generated_schema_parses() {
             !schema.variants.is_empty(),
             "the schema for `{lang}` declares no variants; it would reject every term"
         );
-        assert!(
-            !schema.language.is_empty(),
-            "the schema for `{lang}` carries no `LANG` record"
-        );
+        assert!(!schema.language.is_empty(), "the schema for `{lang}` carries no `LANG` record");
     }
 }
 
@@ -499,9 +501,9 @@ fn the_departed_constructors_have_their_recorded_disposition() {
         .expect("a syntactically well-formed call");
     match emit_category(rholang, "Proc", &node) {
         Err(EmitError::UnknownConstructor { label }) => assert_eq!(label, "PInputs"),
-        other => panic!(
-            "a departed constructor must be reported as `UnknownConstructor`, got {other:?}"
-        ),
+        other => {
+            panic!("a departed constructor must be reported as `UnknownConstructor`, got {other:?}")
+        },
     }
 
     // ── Tier 2, end to end: the archived term EMITS once the rename is applied. ──
@@ -524,8 +526,8 @@ fn the_departed_constructors_have_their_recorded_disposition() {
     // half that CAN be mechanised, and the doc comment is the half that cannot.
     let renamed = "Or(BigintCastProc(MKeys(PZero)), POutput(NVar(OrdVar(Free(FreeVar { \
                    unique_id: UniqueId(0), pretty_name: Some(\"a\") }))), MKeys(PZero)))";
-    let node = mettail_testkit::ctor::parse_debug_value(renamed)
-        .expect("the renamed archive text parses");
+    let node =
+        mettail_testkit::ctor::parse_debug_value(renamed).expect("the renamed archive text parses");
     emit_category(rholang, "Proc", &node).unwrap_or_else(|e| {
         panic!(
             "the Tier-2 rename does not round-trip: with `KeysMap` replaced by `MKeys`, \
@@ -705,8 +707,10 @@ fn every_seed_a_source_file_cites_is_a_seed_some_corpus_records() {
             let mut rest = line;
             while let Some(idx) = rest.find("cc ") {
                 let after = &rest[idx + 3..];
-                let hex: String =
-                    after.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+                let hex: String = after
+                    .chars()
+                    .take_while(|c| c.is_ascii_hexdigit())
+                    .collect();
                 rest = &after[hex.len().min(after.len())..];
                 if hex.len() != 64 {
                     continue;
@@ -862,7 +866,10 @@ fn every_recorded_counterexample_carries_a_disposition() {
         let mut rest = text.as_str();
         while let Some(idx) = rest.find("cc ") {
             let after = &rest[idx + 3..];
-            let hex: String = after.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            let hex: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .collect();
             rest = &after[hex.len()..];
             if hex.len() == 64 {
                 cited.insert(hex);

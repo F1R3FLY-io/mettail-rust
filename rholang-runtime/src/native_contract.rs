@@ -44,13 +44,13 @@ use std::future::Future;
 use std::pin::Pin;
 
 use mettail_rholang_codegen::{
-    BandAllocationError, GroundTerm, NATIVE_HANDLER_BAND, NativeHandlerSpec,
     check_body_refs_pairwise_distinct, native_contract_body_ref, native_contract_channel,
-    reflect_ground_term_par,
+    reflect_ground_term_par, BandAllocationError, GroundTerm, NativeHandlerSpec,
+    NATIVE_HANDLER_BAND,
 };
-use models::rhoapi::Par;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
+use models::rhoapi::Par;
 use models::rust::utils::new_gstring_par;
 use prost::Message;
 use rholang::rust::interpreter::contract_call::ContractCall;

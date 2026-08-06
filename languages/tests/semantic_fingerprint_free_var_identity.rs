@@ -153,14 +153,20 @@ fn parse_twice(source: &str) -> (Proc, Proc) {
 const SOURCES_WITH_A_FREE_VARIABLE: &[(&str, &str)] = &[
     ("bare var — the MINIMAL witness, no binder and no collection", "a"),
     ("var in a Name position", "a!(1)"),
-    ("var under a receive pattern (`PForUser`/`ForRow`/`InputBind`)", "for(@a <- @\"c\"){ Nil }"),
+    (
+        "var under a receive pattern (`PForUser`/`ForRow`/`InputBind`)",
+        "for(@a <- @\"c\"){ Nil }",
+    ),
     ("var under an unquoted receive pattern", "for(a <- @\"c\"){ Nil }"),
     ("receive pattern inside a `PPar`", "for(@a <- @\"c\"){ Nil } | 1"),
     ("var inside a list literal", "[a]"),
     ("var inside a map literal VALUE", "{1: a}"),
     ("var inside a set literal", "Set(a)"),
     ("var inside a pathmap literal VALUE", "{|1 : a|}"),
-    ("free var inside a `new` SCOPE body — bound sibling in the same term", "new x in { a!(1) }"),
+    (
+        "free var inside a `new` SCOPE body — bound sibling in the same term",
+        "new x in { a!(1) }",
+    ),
     ("two DISTINCT free vars in one term", "a!(1) | b!(2)"),
     ("the SAME free var twice in one term", "a!(1) | a!(2)"),
 ];
@@ -262,7 +268,11 @@ fn distinct_source_identifiers_stay_distinguished() {
             "for(@b <- @\"c\"){ Nil }",
         ),
         ("one free var vs two", "a!(1) | a!(2)", "a!(1) | b!(2)"),
-        ("free occurrence vs BOUND occurrence of the same name", "new a in { b!(1) }", "new a in { a!(1) }"),
+        (
+            "free occurrence vs BOUND occurrence of the same name",
+            "new a in { b!(1) }",
+            "new a in { a!(1) }",
+        ),
     ];
     let mut merged: Vec<&str> = Vec::new();
     for (what, left_source, right_source) in pairs {

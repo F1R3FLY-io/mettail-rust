@@ -125,9 +125,7 @@ impl ChannelFamily {
                     ChannelFamily::MatchingTau
                 }
             },
-            _ if name.starts_with("cap:") || name.starts_with("col:") => {
-                ChannelFamily::MatchingTau
-            },
+            _ if name.starts_with("cap:") || name.starts_with("col:") => ChannelFamily::MatchingTau,
             _ if name.starts_with("eq:") || name.starts_with("obs:") => ChannelFamily::PlanScoped,
             _ if name.starts_with('^') => ChannelFamily::ReservedLedger,
             _ => ChannelFamily::Other,
@@ -239,7 +237,10 @@ fn collect_expr_channels(expr: &Expr, out: &mut BTreeSet<ObservedChannel>) {
         },
         ExprInstance::EMethodBody(method) => {
             walk(&method.target);
-            method.arguments.iter().for_each(|p| collect_channels(p, out));
+            method
+                .arguments
+                .iter()
+                .for_each(|p| collect_channels(p, out));
         },
         ExprInstance::EMatchesBody(m) => {
             walk(&m.target);
@@ -391,7 +392,10 @@ const SWEPT_LANGUAGES: [(&str, &str); 2] = [
 /// many location channels the spread emits; their SCOPE — the property under test — comes
 /// from the fingerprint, so a derived subject tests the invariant exactly as well as a
 /// curated one, and keeps testing it after a rule edit.
-fn locating_subject(view: &dovetail::set_automaton::SetAutomatonView<'_, String>, entry: usize) -> GroundTerm {
+fn locating_subject(
+    view: &dovetail::set_automaton::SetAutomatonView<'_, String>,
+    entry: usize,
+) -> GroundTerm {
     use dovetail::set_automaton::{AutomatonNode, StateId};
 
     fn walk(
@@ -441,8 +445,9 @@ fn sweep(source: &str) -> (String, BTreeSet<ObservedChannel>) {
     // are ALL AC-shaped (Ambient — its `AcApp` bags have no positional image, so it has few
     // or no positional entries) still spreads something. The spread's channel SCOPE does not
     // depend on the subject, so a fallback subject tests the invariant no less rigorously.
-    let mut subjects: Vec<GroundTerm> =
-        (0..view.entry_count()).map(|e| locating_subject(&view, e)).collect();
+    let mut subjects: Vec<GroundTerm> = (0..view.entry_count())
+        .map(|e| locating_subject(&view, e))
+        .collect();
     if let Some(term) = def.terms.first() {
         subjects.push(GroundTerm::nullary(term.label.to_string()));
     }
@@ -618,7 +623,11 @@ fn the_only_unscoped_names_are_the_configured_out_channel() {
              foreign-owned. Each is a candidate unscoped channel family — classify it and \
              scope it, or add it to the foreign-owned set with a rationale:\n{}",
             unexplained.len(),
-            unexplained.iter().map(|c| format!("  {}", c.name)).collect::<Vec<_>>().join("\n"),
+            unexplained
+                .iter()
+                .map(|c| format!("  {}", c.name))
+                .collect::<Vec<_>>()
+                .join("\n"),
         );
     }
 }
@@ -651,7 +660,11 @@ fn two_co_installed_languages_share_no_channel_name() {
         "Lambda and Ambient share {} channel name(s). Co-installed, they could consume each \
          other's operands on these:\n{}",
         shared.len(),
-        shared.iter().map(|n| format!("  {n}")).collect::<Vec<_>>().join("\n"),
+        shared
+            .iter()
+            .map(|n| format!("  {n}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
     );
 }
 

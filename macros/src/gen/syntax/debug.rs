@@ -272,8 +272,7 @@ fn generate_debug_variant_arm(
         // subject at 10,542 B/level in debug and 463 in release.
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
             let label_str = label.to_string();
-            let body =
-                debug_collection_stmts(element_cat, coll_type, &quote! { val }, language);
+            let body = debug_collection_stmts(element_cat, coll_type, &quote! { val }, language);
             quote! {
                 #category::#label(val) => {
                     f.write_str(#label_str)?;

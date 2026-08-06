@@ -125,7 +125,11 @@ fn render(rows: &[Row]) -> String {
             r.parsed,
             r.normal,
             r.expected,
-            if r.normal == r.expected { "GREEN" } else { "★ RED" }
+            if r.normal == r.expected {
+                "GREEN"
+            } else {
+                "★ RED"
+            }
         ));
     }
     out
@@ -292,10 +296,7 @@ fn the_per_kind_disposition_verdict_is_derived() {
     // declinations are pinned by count so the set cannot quietly grow.
     let auto_injected_declined = dispositions
         .iter()
-        .filter(|d| {
-            d.construct_kind == LoweredConstructKind::Rewrite
-                && d.is_generator_bug()
-        })
+        .filter(|d| d.construct_kind == LoweredConstructKind::Rewrite && d.is_generator_bug())
         .count();
     assert_eq!(
         rewrites_delivered + auto_injected_declined,

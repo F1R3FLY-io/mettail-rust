@@ -258,11 +258,18 @@ fn extract_marked_listing(doc: &str) -> String {
         .find("<!-- doc28-golden-listing:end -->")
         .expect("doc 28 must carry the doc28-golden-listing:end marker");
     let region = &doc[begin..end];
-    let fence_open = region.find("```").expect("a fenced block must follow the begin marker");
+    let fence_open = region
+        .find("```")
+        .expect("a fenced block must follow the begin marker");
     let after_open = &region[fence_open..];
-    let body_start = after_open.find('\n').expect("the opening fence line must end") + 1;
+    let body_start = after_open
+        .find('\n')
+        .expect("the opening fence line must end")
+        + 1;
     let body = &after_open[body_start..];
-    let fence_close = body.find("```").expect("the fenced block must close before the end marker");
+    let fence_close = body
+        .find("```")
+        .expect("the fenced block must close before the end marker");
     body[..fence_close].to_string()
 }
 
@@ -287,7 +294,10 @@ fn render_par_block(par: &Par, indent: usize) -> String {
     assert!(par.bundles.is_empty(), "no bundles occur in an installed rho-net program");
     assert!(par.connectives.is_empty(), "no connectives occur outside receive patterns here");
     let mut components: Vec<String> = Vec::with_capacity(
-        par.unforgeables.len() + par.exprs.len() + par.sends.len() + par.receives.len()
+        par.unforgeables.len()
+            + par.exprs.len()
+            + par.sends.len()
+            + par.receives.len()
             + par.news.len()
             + par.matches.len(),
     );
@@ -352,7 +362,11 @@ fn render_par_inline(par: &Par) -> String {
 }
 
 fn render_unforgeable(unf: &models::rhoapi::GUnforgeable) -> String {
-    match unf.unf_instance.as_ref().expect("an unforgeable must carry its instance") {
+    match unf
+        .unf_instance
+        .as_ref()
+        .expect("an unforgeable must carry its instance")
+    {
         UnfInstance::GPrivateBody(private) => format!("priv({})", decode_gprivate(&private.id)),
         other => panic!("unsupported unforgeable in the installed program: {other:?}"),
     }
@@ -371,7 +385,11 @@ fn decode_gprivate(id: &[u8]) -> String {
 }
 
 fn render_expr(expr: &Expr) -> String {
-    match expr.expr_instance.as_ref().expect("an expr must carry its instance") {
+    match expr
+        .expr_instance
+        .as_ref()
+        .expect("an expr must carry its instance")
+    {
         ExprInstance::EListBody(list) => {
             // E-2-D: the `^subst`/`^shift` hereditary-ground ENTRY guard matches
             // `[ _, ^gnd, ...rest ]` — an EList pattern WITH a wildcard remainder. Render it.
@@ -391,7 +409,11 @@ fn render_expr(expr: &Expr) -> String {
 }
 
 fn render_var(var: &Var) -> String {
-    match var.var_instance.as_ref().expect("a var must carry its instance") {
+    match var
+        .var_instance
+        .as_ref()
+        .expect("a var must carry its instance")
+    {
         VarInstance::BoundVar(index) => format!("bv({index})"),
         VarInstance::FreeVar(index) => format!("fv({index})"),
         VarInstance::Wildcard(_) => "_".to_string(),
@@ -424,17 +446,24 @@ fn render_receive(receive: &Receive, indent: usize) -> String {
         None => String::new(),
     };
     let body = render_par_block(
-        receive.body.as_ref().expect("a receive must carry its body"),
+        receive
+            .body
+            .as_ref()
+            .expect("a receive must carry its body"),
         indent + 1,
     );
-    format!("{}for ({}){condition} {{\n{body}{}}}", pad(indent), binds.join(" ; "), pad(indent))
+    format!(
+        "{}for ({}){condition} {{\n{body}{}}}",
+        pad(indent),
+        binds.join(" ; "),
+        pad(indent)
+    )
 }
 
 fn render_new(new: &New, indent: usize) -> String {
     assert!(new.uri.is_empty(), "no uri-bound news occur here");
     assert!(new.injections.is_empty(), "no injections occur here");
-    let body =
-        render_par_block(new.p.as_ref().expect("a new must carry its body"), indent + 1);
+    let body = render_par_block(new.p.as_ref().expect("a new must carry its body"), indent + 1);
     format!("{}new {} {{\n{body}{}}}", pad(indent), new.bind_count, pad(indent))
 }
 
@@ -444,12 +473,13 @@ fn render_match(m: &Match, indent: usize) -> String {
     let last = m.cases.len().saturating_sub(1);
     for (index, case) in m.cases.iter().enumerate() {
         assert!(case.guard.is_none(), "no case guards occur here");
-        let pattern =
-            render_par_inline(case.pattern.as_ref().expect("a case must carry its pattern"));
-        let body = render_par_block(
-            case.source.as_ref().expect("a case must carry its body"),
-            indent + 2,
+        let pattern = render_par_inline(
+            case.pattern
+                .as_ref()
+                .expect("a case must carry its pattern"),
         );
+        let body =
+            render_par_block(case.source.as_ref().expect("a case must carry its body"), indent + 2);
         out.push_str(&format!("{}{pattern} => {{\n{body}{}}}", pad(indent + 1), pad(indent + 1)));
         if index != last {
             out.push_str(" |");

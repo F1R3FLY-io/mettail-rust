@@ -269,9 +269,7 @@ fn turing_head_moves_because_shift_right_folds() {
     );
     let shift_right: Vec<_> = inventory
         .iter()
-        .filter(|d| {
-            d.construct_kind == LoweredConstructKind::Fold && d.construct == "shift_right"
-        })
+        .filter(|d| d.construct_kind == LoweredConstructKind::Fold && d.construct == "shift_right")
         .collect();
     assert_eq!(
         shift_right.len(),
@@ -285,7 +283,8 @@ fn turing_head_moves_because_shift_right_folds() {
         shift_right[0].summary(),
     );
     assert_eq!(
-        shift_right[0].detail, "Turing::fold::Tape_shift_right",
+        shift_right[0].detail,
+        "Turing::fold::Tape_shift_right",
         "a Delivered disposition carries the label of the rule it emitted, and that label is \
          what the firing evidence below is matched against: {}",
         shift_right[0].summary(),
@@ -368,9 +367,7 @@ fn turing_terms_now_reconstruct_because_vec_fields_are_invertible() {
         .unwrap_or_else(|e| panic!("parse failed: {e}"));
     let normal = TuringLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
         .unwrap_or_else(|e| {
-            panic!(
-                "reconstruction must now succeed for a `Vec`-field constructor; got Err({e})"
-            )
+            panic!("reconstruction must now succeed for a `Vec`-field constructor; got Err({e})")
         });
     let shown = format!("{normal}");
     assert!(

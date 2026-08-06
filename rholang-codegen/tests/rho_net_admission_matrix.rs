@@ -282,7 +282,10 @@ fn audit_matrix() -> Vec<MatrixRow> {
         expected: Err(AutomatonUnsupported::ContextualHoleMismatch),
         actual: contextual_match_call_par(
             &ctx,
-            &GroundTerm::new("Wrap", vec![GroundTerm::new("Pair", vec![nullary("A"), nullary("B")])]),
+            &GroundTerm::new(
+                "Wrap",
+                vec![GroundTerm::new("Pair", vec![nullary("A"), nullary("B")])],
+            ),
             "site0",
             "OUT",
         )

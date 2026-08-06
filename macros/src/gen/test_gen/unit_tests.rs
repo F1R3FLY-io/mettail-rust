@@ -396,10 +396,7 @@ fn default_value_for_native_type(language: &LanguageDef, native_type: &str) -> S
 }
 
 /// Try to construct a leaf value for a field (Box<Cat> or collection).
-pub(crate) fn construct_leaf_value(
-    field: &FieldInfo,
-    language: &LanguageDef,
-) -> Option<String> {
+pub(crate) fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<String> {
     // Phase 3A: guard slots use BehavioralPred::Top as the neutral predicate.
     // Top is always satisfied regardless of the fact snapshot, enabling
     // structural coverage of guarded constructors without guard evaluation.

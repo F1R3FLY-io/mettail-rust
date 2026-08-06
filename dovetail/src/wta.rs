@@ -104,9 +104,7 @@ where
 
     /// [`inside_weights_closed`](Self::inside_weights_closed), reporting a
     /// non-closable weight domain as [`InsideClosureError`] instead of panicking.
-    pub fn try_inside_weights_closed(
-        &self,
-    ) -> Result<HashMap<EClassId, W>, InsideClosureError> {
+    pub fn try_inside_weights_closed(&self) -> Result<HashMap<EClassId, W>, InsideClosureError> {
         try_compute_inside_closed(self.egraph, &self.weigh)
     }
 }

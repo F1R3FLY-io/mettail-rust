@@ -147,10 +147,10 @@
 
 use std::collections::BTreeSet;
 
+use mettail_ast::auto_inject::reconstruct_language_def;
 use mettail_ast::grammar::{GrammarItem, PatternOp, SyntaxExpr};
 use mettail_ast::language::LanguageDef;
 use mettail_languages::rholang::Proc;
-use mettail_ast::auto_inject::reconstruct_language_def;
 use mettail_runtime::Language;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -499,8 +499,7 @@ const OVER_RESERVED_RESIDUE: &[OverReservation] = &[
 /// different and much more interesting message.
 ///
 /// Measured 2026-07-30: **7 words**, where #128 named one (`bundle`).
-const UNDER_RESERVED: &[&str] =
-    &["bundle", "contract", "else", "if", "let", "match", "select"];
+const UNDER_RESERVED: &[&str] = &["bundle", "contract", "else", "if", "let", "match", "select"];
 
 // ══════════════════════════════════════════════════════════════════════════════
 // The probe
@@ -651,8 +650,12 @@ fn the_reserved_set_diverges_from_the_oracle_exactly_as_recorded() {
         over_residue,
         recorded_residue.len(),
         recorded_residue,
-        over_residue.difference(&recorded_residue).collect::<Vec<_>>(),
-        recorded_residue.difference(&over_residue).collect::<Vec<_>>(),
+        over_residue
+            .difference(&recorded_residue)
+            .collect::<Vec<_>>(),
+        recorded_residue
+            .difference(&over_residue)
+            .collect::<Vec<_>>(),
     );
 
     // Each residue row must name a rule that actually declares it — the owner column is a
@@ -677,8 +680,7 @@ fn the_reserved_set_diverges_from_the_oracle_exactly_as_recorded() {
     }
 
     // ── The UNDER direction.
-    let recorded_under: BTreeSet<String> =
-        UNDER_RESERVED.iter().map(|w| w.to_string()).collect();
+    let recorded_under: BTreeSet<String> = UNDER_RESERVED.iter().map(|w| w.to_string()).collect();
     assert_eq!(
         under,
         recorded_under,

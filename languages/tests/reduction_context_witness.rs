@@ -250,7 +250,9 @@ fn render_c(rows: &[(&str, &str)]) -> String {
             name,
             parse(src),
             "",
-            comm(src).map(|c| format!("`{c}`")).unwrap_or_else(|| "<none>".into()),
+            comm(src)
+                .map(|c| format!("`{c}`"))
+                .unwrap_or_else(|| "<none>".into()),
             if c_fires(src) { "FIRES" } else { "INERT" }
         ));
     }
@@ -329,8 +331,11 @@ fn the_two_relations_have_different_carriers() {
             kernels.push(rw.lhs);
         }
     }
-    let receive_shaped: Vec<_> =
-        kernels.iter().chain(congruences.iter()).filter(|lhs| lhs.contains("for")).collect();
+    let receive_shaped: Vec<_> = kernels
+        .iter()
+        .chain(congruences.iter())
+        .filter(|lhs| lhs.contains("for"))
+        .collect();
 
     let report = format!(
         "\n  declared rewrites (axis B, what `lower_rewrite` walks): {} = {} kernel + {} congruence\
@@ -377,7 +382,10 @@ fn the_egraph_lane_carries_no_reduction_rule() {
     ]);
 
     // ── ≡_S is alive, and reaches BOTH positions the calculus says `⇝` may not ──
-    assert!(e_reduces(S_ZERO), "the `Exec` kernel must fire on its own, or nothing here reads.{table}");
+    assert!(
+        e_reduces(S_ZERO),
+        "the `Exec` kernel must fire on its own, or nothing here reads.{table}"
+    );
     assert!(
         e_reduces(S_SEND),
         "`≡_S` must reach a SEND PAYLOAD, or the P1 null becomes a statement about the POSITION \
@@ -597,8 +605,10 @@ fn quotedrop_lowers_to_exactly_one_rule_and_the_expanding_reverse_is_suppressed(
     // ★ DERIVED, not transcribed: NO reverse orientation of ANY equation may be Delivered.
     // Stated over the computed domain so a newly-added equation is covered without anyone
     // remembering to extend a list.
-    let delivered_reverses: Vec<_> =
-        delivered.iter().filter(|d| d.detail.contains("::reverse")).collect();
+    let delivered_reverses: Vec<_> = delivered
+        .iter()
+        .filter(|d| d.detail.contains("::reverse"))
+        .collect();
     assert!(
         delivered_reverses.is_empty(),
         "an EXPANDING reverse orientation is now emitted into the e-graph: {delivered_reverses:#?}\
@@ -609,8 +619,11 @@ fn quotedrop_lowers_to_exactly_one_rule_and_the_expanding_reverse_is_suppressed(
     let term = RholangTerm(RholangTermInner::Proc(parse(S_SEND)));
     let run = RholangLanguage::dovetail_report_for(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
         .expect("`@(0)!(*@(1))` must produce a Dovetail report");
-    let labels: Vec<String> =
-        run.rule_firings.iter().filter_map(|f| f.label.clone()).collect();
+    let labels: Vec<String> = run
+        .rule_firings
+        .iter()
+        .filter_map(|f| f.label.clone())
+        .collect();
     assert!(
         !labels.iter().any(|l| l.contains("::reverse")),
         "a `::reverse` orientation FIRED during saturation of `{S_SEND}`: {labels:#?}{report}"

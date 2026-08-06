@@ -163,7 +163,10 @@ impl std::fmt::Display for IncrementalUnsupported {
                 write!(f, "the base ruleset has native match entries (PatternIds shift on append)")
             },
             Self::BaseHasAcDispatch => {
-                write!(f, "the base ruleset has AC dispatch entries (fingerprint-embedded RHS Pars)")
+                write!(
+                    f,
+                    "the base ruleset has AC dispatch entries (fingerprint-embedded RHS Pars)"
+                )
             },
             Self::BaseHasStructuralAcDispatch => {
                 write!(f, "the base ruleset has structural-AC dispatch entries")
@@ -284,7 +287,12 @@ fn admit_and_extend(
         return Err(IncrementalUnsupported::TypeContextedRewrite);
     }
     let new_name = new_rewrite.name.to_string();
-    if base.def.rewrites.iter().any(|rewrite| rewrite.name == new_rewrite.name) {
+    if base
+        .def
+        .rewrites
+        .iter()
+        .any(|rewrite| rewrite.name == new_rewrite.name)
+    {
         return Err(IncrementalUnsupported::DuplicateRuleName { name: new_name });
     }
 
@@ -323,9 +331,16 @@ fn admit_and_extend(
     // stay valid only if the auto-injected rewrites are a SUFFIX (every
     // reconstruct-produced def satisfies this — `emit_auto_injection_rules` output
     // is appended after the user rewrites — but it is CHECKED, never assumed).
-    let user_rewrite_count =
-        base.def.rewrites.iter().take_while(|rewrite| !rewrite.is_auto_injected).count();
-    if base.def.rewrites[user_rewrite_count..].iter().any(|rewrite| !rewrite.is_auto_injected) {
+    let user_rewrite_count = base
+        .def
+        .rewrites
+        .iter()
+        .take_while(|rewrite| !rewrite.is_auto_injected)
+        .count();
+    if base.def.rewrites[user_rewrite_count..]
+        .iter()
+        .any(|rewrite| !rewrite.is_auto_injected)
+    {
         return Err(IncrementalUnsupported::AutoInjectedNotASuffix);
     }
 
@@ -420,8 +435,7 @@ fn admit_and_extend(
     let rescope = |name: &String| {
         let rescoped = rescope_channel_fingerprint(name, base_fingerprint, &language_fingerprint);
         debug_assert!(
-            base_fingerprint == language_fingerprint
-                || !rescoped.contains(base_fingerprint),
+            base_fingerprint == language_fingerprint || !rescoped.contains(base_fingerprint),
             "INV-S6 T-INCR re-scope: `{name}` still carries the BASE fingerprint \
              {base_fingerprint:?} after re-scoping to {language_fingerprint:?}"
         );
@@ -500,7 +514,10 @@ fn cross_check_against_batch(incremental: &Arc<CompiledInRhoArtifacts>, extended
         ours.language_fingerprint, batch.language_fingerprint,
         "T-INCR cross-check: ruleset fingerprint"
     );
-    assert_eq!(ours.automaton, batch.automaton, "T-INCR cross-check: automaton (entries+states)");
+    assert_eq!(
+        ours.automaton, batch.automaton,
+        "T-INCR cross-check: automaton (entries+states)"
+    );
     assert_eq!(
         ours.accept_channels, batch.accept_channels,
         "T-INCR cross-check: accept channels"
@@ -578,13 +595,19 @@ mod tests {
             let artifacts = match outcome {
                 IncrementalExtendOutcome::Incremental(artifacts) => artifacts,
                 IncrementalExtendOutcome::FellBack { reason, .. } => {
-                    panic!("a base-shape append must take the incremental path, fell back: {reason}")
+                    panic!(
+                        "a base-shape append must take the incremental path, fell back: {reason}"
+                    )
                 },
             };
             // The extended def gained exactly the appended user rewrite, at the
             // batch position (after the existing user rewrites).
-            let names: Vec<String> =
-                artifacts.def.rewrites.iter().map(|r| r.name.to_string()).collect();
+            let names: Vec<String> = artifacts
+                .def
+                .rewrites
+                .iter()
+                .map(|r| r.name.to_string())
+                .collect();
             assert_eq!(names, ["M0", "M1", "MX0"]);
             // The ruleset cell is SEEDED (the bypass) — no ruleset compile ran.
             assert!(artifacts.ruleset_forced(), "the incremental ruleset cell is seeded");
@@ -614,8 +637,8 @@ mod tests {
         // cross-check: derive batch on one thread, incremental on another, compare
         // the Send-safe observables (fingerprint + installed-par debug bytes).
         let batch = std::thread::spawn(|| {
-            let extended = splice_rewrite_into_source(BASE_SOURCE, APPEND_FRAGMENT)
-                .expect("the base splices");
+            let extended =
+                splice_rewrite_into_source(BASE_SOURCE, APPEND_FRAGMENT).expect("the base splices");
             let artifacts = cached_in_rho_artifacts(&extended).expect("the batch arm derives");
             (
                 artifacts.ruleset().language_fingerprint.clone(),
@@ -649,9 +672,13 @@ mod tests {
         // [user…, new, auto…] (the debug cross-check enforces fingerprint + full
         // ruleset equality on top of these observable pins).
         std::thread::spawn(|| {
-            let base =
-                cached_in_rho_artifacts(AUTO_INJECT_BASE_SOURCE).expect("the base derives");
-            let base_autos = base.def.rewrites.iter().filter(|r| r.is_auto_injected).count();
+            let base = cached_in_rho_artifacts(AUTO_INJECT_BASE_SOURCE).expect("the base derives");
+            let base_autos = base
+                .def
+                .rewrites
+                .iter()
+                .filter(|r| r.is_auto_injected)
+                .count();
             assert!(base_autos >= 1, "EM-2 anti-vacuity: the auto-injected set is NON-EMPTY");
 
             let outcome =
@@ -659,7 +686,9 @@ mod tests {
             let artifacts = match outcome {
                 IncrementalExtendOutcome::Incremental(artifacts) => artifacts,
                 IncrementalExtendOutcome::FellBack { reason, .. } => {
-                    panic!("the auto-inject base is inside the admitted family, fell back: {reason}")
+                    panic!(
+                        "the auto-inject base is inside the admitted family, fell back: {reason}"
+                    )
                 },
             };
             let names: Vec<(String, bool)> = artifacts
@@ -710,16 +739,18 @@ mod tests {
         // fallback derives batch-identical artifacts.
         std::thread::spawn(|| {
             let base = cached_in_rho_artifacts(BASE_SOURCE).expect("the base derives");
-            let outcome = extend_in_rho_artifacts(
-                &base,
-                "WrapCong . | S ~> T |- (Wrap S) ~> (Wrap T) ;",
-            )
-            .expect("the fallback derives");
+            let outcome =
+                extend_in_rho_artifacts(&base, "WrapCong . | S ~> T |- (Wrap S) ~> (Wrap T) ;")
+                    .expect("the fallback derives");
             match &outcome {
                 IncrementalExtendOutcome::FellBack { reason, artifacts } => {
                     assert_eq!(*reason, IncrementalUnsupported::PremisedRewrite);
-                    let names: Vec<String> =
-                        artifacts.def.rewrites.iter().map(|r| r.name.to_string()).collect();
+                    let names: Vec<String> = artifacts
+                        .def
+                        .rewrites
+                        .iter()
+                        .map(|r| r.name.to_string())
+                        .collect();
                     assert_eq!(names, ["M0", "M1", "WrapCong"]);
                     // The congruence is NOT an automaton entry — it defers or joins
                     // contextually, exactly as batch decides (these ARE the batch
@@ -767,8 +798,7 @@ mod tests {
         let batch = std::thread::spawn(move || {
             let mut source = BASE_SOURCE.to_string();
             for fragment in fragments {
-                source =
-                    splice_rewrite_into_source(&source, fragment).expect("each splice lands");
+                source = splice_rewrite_into_source(&source, fragment).expect("each splice lands");
             }
             let artifacts = cached_in_rho_artifacts(&source).expect("the batch arm derives");
             (

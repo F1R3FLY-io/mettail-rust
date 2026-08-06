@@ -331,9 +331,7 @@ pub fn derive_guard_qualities(def: &LanguageDef) -> Vec<RhoGuardDispositionQuali
 pub fn substrate_guard_coverage(def: &LanguageDef) -> Vec<crate::backend::RhoGuardDisposition> {
     derive_guard_qualities(def)
         .into_iter()
-        .map(|quality| {
-            crate::backend::RhoGuardDisposition::new(quality.obligation, quality.kind)
-        })
+        .map(|quality| crate::backend::RhoGuardDisposition::new(quality.obligation, quality.kind))
         .collect()
 }
 

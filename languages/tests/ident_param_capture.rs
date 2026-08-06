@@ -178,11 +178,7 @@ fn distinct_names_are_distinct_terms_under_eq_hash_ord() {
         s.finish()
     };
     assert_ne!(h(&foo), h(&bar), "distinct names must hash apart");
-    assert_ne!(
-        foo.cmp(&bar),
-        std::cmp::Ordering::Equal,
-        "distinct names must order apart"
-    );
+    assert_ne!(foo.cmp(&bar), std::cmp::Ordering::Equal, "distinct names must order apart");
 }
 
 /// ★ The shape Rholang's collapse depends on: `Ident` param IMMEDIATELY followed by a

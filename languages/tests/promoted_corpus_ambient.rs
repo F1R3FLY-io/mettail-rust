@@ -44,8 +44,8 @@
 
 #![allow(clippy::needless_borrow)]
 
-use mettail_testkit::ctor::canonicalize_debug;
 use mettail_languages::ambient::*;
+use mettail_testkit::ctor::canonicalize_debug;
 
 /// Corpus entry 0 — seed `cc 9bfae72a801d1c8f01b47ab5aa3cf9a621f2e5ccead50b27dcbf448e23e16e81`.
 ///
@@ -58,7 +58,10 @@ use mettail_languages::ambient::*;
 fn corpus_0_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a6")), std::sync::Arc::new(Proc::PZero)));
+    let term: Proc = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(
+        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a6")),
+        std::sync::Arc::new(Proc::PZero),
+    ));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -76,9 +79,9 @@ fn corpus_0_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 1 — seed `cc 38b3d53c001bc4816eb5b8a2ba37fd589c849885d2495dc3a1da9dc6adcd5f03`.
@@ -92,7 +95,17 @@ fn corpus_0_proc() {
 fn corpus_1_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]));
+    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+        Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        ))),
+        Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        ))),
+        Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        ))),
+    ]));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -110,9 +123,9 @@ fn corpus_1_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 2 — seed `cc e650096cad602d9d0e020c15ea4b0b231596fbd08770e0bd4393c604e7a3832b`.
@@ -129,7 +142,27 @@ fn corpus_1_proc() {
 fn corpus_2_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PIn(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PAmb(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PZero)), Proc::PIn(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))]))));
+    let term: Proc = Proc::PIn(
+        std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+            Proc::PAmb(
+                std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(
+                    mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                ))),
+                std::sync::Arc::new(Proc::PZero),
+            ),
+            Proc::PIn(
+                std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(
+                    mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                ))),
+                std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                    mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                ))),
+            ),
+        ]))),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -147,9 +180,9 @@ fn corpus_2_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 3 — seed `cc c4628a0ef770882e9eb63675c8e7d8542e2d71c9bcc24b4c537b4e163f313bc7`.
@@ -164,7 +197,113 @@ fn corpus_2_proc() {
 fn corpus_3_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]))]))]));
+    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+        Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+        ])),
+        Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+        ])),
+        Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ])),
+        ])),
+    ]));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -182,7 +321,7 @@ fn corpus_3_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

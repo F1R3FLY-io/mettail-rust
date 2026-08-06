@@ -2818,7 +2818,9 @@ impl Repl {
                     println!();
                     println!(
                         "{}",
-                        "Declined — a declared operation refused its input:".yellow().bold()
+                        "Declined — a declared operation refused its input:"
+                            .yellow()
+                            .bold()
                     );
                     for record in &dovetail_report.declined_folds {
                         println!("  - {}", format!("{record}").yellow());

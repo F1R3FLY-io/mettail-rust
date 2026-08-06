@@ -1,7 +1,7 @@
 use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use syn::{
-    Ident, Result as SynResult, Token,
     parse::{Parse, ParseStream},
+    Ident, Result as SynResult, Token,
 };
 
 /// Collection type specifier

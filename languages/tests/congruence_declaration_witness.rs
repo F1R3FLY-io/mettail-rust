@@ -93,7 +93,11 @@ fn declared_split() -> (Vec<&'static str>, Vec<&'static str>) {
     let mut congruences = Vec::new();
     let mut kernels = Vec::new();
     for rw in RholangLanguage.metadata().rewrites() {
-        let target = if rw.is_congruence() { &mut congruences } else { &mut kernels };
+        let target = if rw.is_congruence() {
+            &mut congruences
+        } else {
+            &mut kernels
+        };
         target.push(rw.lhs);
     }
     (kernels, congruences)
@@ -138,7 +142,13 @@ struct Row {
 }
 
 fn row(probe: &'static str, declared: &'static str, src: &'static str) -> Row {
-    Row { probe, declared, src, before: format!("{}", parse(src)), after: probe_src(src) }
+    Row {
+        probe,
+        declared,
+        src,
+        before: format!("{}", parse(src)),
+        after: probe_src(src),
+    }
 }
 
 fn probe_src(src: &str) -> String {
@@ -258,7 +268,10 @@ fn the_witness_table() {
          congruence now reaches a send payload — so the probe is no longer a control and the \
          table must be re-derived around a different undeclared position.\n  \
          congruence LHSs containing `!(`: {:#?}",
-        congruences.iter().filter(|lhs| lhs.contains("!(")).collect::<Vec<_>>()
+        congruences
+            .iter()
+            .filter(|lhs| lhs.contains("!("))
+            .collect::<Vec<_>>()
     );
 
     let rows = vec![
@@ -277,7 +290,10 @@ fn the_witness_table() {
         100.0 * congruences.len() as f64 / (kernels.len() + congruences.len()) as f64,
     );
     let reduced = |name: &str| -> bool {
-        let r = rows.iter().find(|r| r.probe == name).expect("probe present");
+        let r = rows
+            .iter()
+            .find(|r| r.probe == name)
+            .expect("probe present");
         r.before != r.after
     };
 

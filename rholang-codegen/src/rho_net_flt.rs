@@ -39,10 +39,10 @@ use models::rust::utils::{
 };
 
 use crate::rho_net_lower::{
-    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
-    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, assemble_positional_ground_node,
-    is_ground_marker_par, is_marked_object_label, par_carries_ground_marker,
-    reflect_ground_term_par, reflect_tag,
+    assemble_positional_ground_node, is_ground_marker_par, is_marked_object_label,
+    par_carries_ground_marker, reflect_ground_term_par, reflect_tag, GroundTerm,
+    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 
 // ── Public types ────────────────────────────────────────────────────────────────────────────
@@ -975,8 +975,8 @@ fn validate_hole_declarations(holes: &[FltHole]) -> Result<(), FltReflectError> 
 mod tests {
     use super::*;
     use crate::rho_net_lower::{
-        BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-        PEANO_ZERO_REFLECT_LABEL, ground_marker_tag_par, reflected_tag_string,
+        ground_marker_tag_par, reflected_tag_string, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+        PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
     };
     use models::rust::utils::{new_freevar_par, new_wildcard_par};
 

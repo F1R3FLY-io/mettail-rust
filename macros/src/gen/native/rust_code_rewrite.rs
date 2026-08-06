@@ -242,10 +242,7 @@ fn rewrite_method_call(mc: &ExprMethodCall) -> Option<Expr> {
             .next()
             .expect("an `.expect(_)` call with args.len() == 1 has a first argument");
         return Some(match arg {
-            Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(_),
-                ..
-            }) => syn::parse_quote! {
+            Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(_), .. }) => syn::parse_quote! {
                 ::mettail_runtime::Declarable::declared((#recv), #arg)?
             },
             other => {
@@ -530,11 +527,9 @@ mod tests {
              whole repair: {out}",
         );
         // The three real Calculator sites, by name.
-        for message in [
-            "ElemList: invalid index",
-            "DeleteList: invalid index",
-            "get: key not found",
-        ] {
+        for message in
+            ["ElemList: invalid index", "DeleteList: invalid index", "get: key not found"]
+        {
             let src = format!(r#"x.expect("{message}")"#);
             let emitted = safeify_str(&src);
             assert!(

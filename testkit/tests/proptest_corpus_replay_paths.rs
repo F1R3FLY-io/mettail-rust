@@ -224,9 +224,9 @@ fn corpora() -> Vec<Corpus> {
 
             // Layout A: `<crate>/proptest-regressions/<rest>.txt`.
             let layout_a = path.extension().and_then(|e| e.to_str()) == Some("txt")
-            && path
-                .ancestors()
-                .any(|a| a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions"));
+                && path.ancestors().any(|a| {
+                    a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions")
+                });
             // Layout B: `<dir>/<name>.proptest-regressions`.
             let layout_b = name.ends_with(".proptest-regressions");
             if !layout_a && !layout_b {
@@ -236,7 +236,9 @@ fn corpora() -> Vec<Corpus> {
             let declaring_source = layout_a.then(|| {
                 let corpus_dir = path
                     .ancestors()
-                    .find(|a| a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions"))
+                    .find(|a| {
+                        a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions")
+                    })
                     .expect("`layout_a` is true only when such an ancestor exists");
                 let crate_root = corpus_dir
                     .parent()
@@ -254,7 +256,7 @@ fn corpora() -> Vec<Corpus> {
                 match seed_on(line) {
                     Some((true, hash)) => active_seeds.push(hash),
                     Some((false, hash)) => retired_seeds.push(hash),
-                    None => {}
+                    None => {},
                 }
             }
 
@@ -399,7 +401,10 @@ fn no_superseded_corpus_loses_a_seed() {
 
     // Where a seed is actively replayed from, by hash.
     let mut replayed_by: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for c in all.iter().filter(|c| !c.superseded && c.on_live_replay_path()) {
+    for c in all
+        .iter()
+        .filter(|c| !c.superseded && c.on_live_replay_path())
+    {
         for seed in &c.active_seeds {
             replayed_by.entry(seed.as_str()).or_default().push(&c.rel);
         }
@@ -470,7 +475,10 @@ fn the_recorded_counterexample_population_does_not_shrink() {
     // The three historical strand sites, pinned by name so a regression that re-strands one is
     // reported as itself rather than as a number that drifted.
     for (rel, why) in [
-        ("languages/tests/gen_rholang_prop.proptest-regressions", "the RhoCalc merge target"),
+        (
+            "languages/tests/gen_rholang_prop.proptest-regressions",
+            "the RhoCalc merge target",
+        ),
         ("rigail/proptest-regressions/lex_weight.txt", "the lex_weight relocation target"),
         (
             "prattail/proptest-regressions/decision_tree/tests.txt",

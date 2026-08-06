@@ -111,8 +111,10 @@ struct Scan {
 
 /// The emitters whose output this gate audits. A generated file older than the newest of these
 /// predates the current emitter and is therefore unauditable.
-const EMITTERS: [&str; 2] =
-    ["macros/src/gen/test_gen/rewrite_tests.rs", "macros/src/gen/test_gen/equation_tests.rs"];
+const EMITTERS: [&str; 2] = [
+    "macros/src/gen/test_gen/rewrite_tests.rs",
+    "macros/src/gen/test_gen/equation_tests.rs",
+];
 
 /// Modification time of the newest auditing emitter, as seconds since the epoch.
 fn emitter_mtime(root: &Path) -> std::time::SystemTime {
@@ -224,7 +226,9 @@ fn scan() -> Scan {
             .collect();
         files.sort();
         for path in files {
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             let fresh = std::fs::metadata(&path)
                 .and_then(|m| m.modified())
                 .is_ok_and(|written| written >= newest_emitter);
@@ -236,13 +240,23 @@ fn scan() -> Scan {
             for (offset, _) in text.match_indices("#[test]") {
                 out.attributes_seen += 1;
                 // The nearest `fn NAME(` at or after the attribute, then its body.
-                let Some(rest) = text.get(offset..) else { continue };
-                let Some(fn_at) = rest.find("fn ") else { continue };
+                let Some(rest) = text.get(offset..) else {
+                    continue;
+                };
+                let Some(fn_at) = rest.find("fn ") else {
+                    continue;
+                };
                 let after = &rest[fn_at + 3..];
-                let Some(paren) = after.find('(') else { continue };
+                let Some(paren) = after.find('(') else {
+                    continue;
+                };
                 let name = after[..paren].trim().to_owned();
-                let Some(brace_rel) = after[paren..].find('{') else { continue };
-                let Some(body) = bracket_body(rest, fn_at + 3 + paren + brace_rel) else { continue };
+                let Some(brace_rel) = after[paren..].find('{') else {
+                    continue;
+                };
+                let Some(body) = bracket_body(rest, fn_at + 3 + paren + brace_rel) else {
+                    continue;
+                };
                 out.bodies_bracketed += 1;
                 if !body_can_fail(body) {
                     let row = Vacuous { file: relative.clone(), name };

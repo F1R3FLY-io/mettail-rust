@@ -91,7 +91,11 @@ fn rewrite_families(def: &LanguageDef) -> Vec<(String, String)> {
         .filter_map(|rule| {
             let id = rule.rule_id().to_string();
             // Rewrite rule ids are `rule:rewrite:<index>:<name>`.
-            let name = id.strip_prefix("rule:rewrite:")?.split_once(':')?.1.to_string();
+            let name = id
+                .strip_prefix("rule:rewrite:")?
+                .split_once(':')?
+                .1
+                .to_string();
             let family = match rule {
                 RhoNetLoweredRule::CommRewrite { .. } => "CommRewrite",
                 RhoNetLoweredRule::StructuralAcRewrite { .. } => "StructuralAcRewrite",
@@ -132,7 +136,9 @@ fn omnibus_pi_asynchronous_comm_still_lowers_to_a_comm_rewrite() {
     let comm_async = families
         .iter()
         .find(|(name, _)| name == "CommAsync")
-        .unwrap_or_else(|| panic!("the omnibus Pi spec must declare `CommAsync`; got {families:?}"));
+        .unwrap_or_else(|| {
+            panic!("the omnibus Pi spec must declare `CommAsync`; got {families:?}")
+        });
     assert_eq!(comm_async.1, "CommRewrite", "got {families:?}");
 }
 
@@ -163,10 +169,10 @@ fn omnibus_pi_surfaces_a_comm_injection_site_for_the_verbatim_rule() {
     assert_eq!(comm.reduct_slots, vec![None, Some("q".to_string())]);
 
     let comm_async = &sites[1];
-    assert_eq!(comm_async.element_constructors, vec![
-        "PIn".to_string(),
-        "POutAsync".to_string()
-    ]);
+    assert_eq!(
+        comm_async.element_constructors,
+        vec!["PIn".to_string(), "POutAsync".to_string()]
+    );
     assert_eq!(
         comm_async.reduct_slots,
         vec![None],

@@ -1,5 +1,5 @@
 use mettail_ast::types::CollectionType;
-use mettail_rholang_codegen::{GroundTerm, reflect_ground_term_par};
+use mettail_rholang_codegen::{reflect_ground_term_par, GroundTerm};
 use models::rhoapi::expr::ExprInstance;
 
 #[test]

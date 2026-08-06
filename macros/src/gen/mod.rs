@@ -126,9 +126,9 @@ pub fn generate_all(
     // warning, not an error: a missing schema costs a tool its input, never a build its
     // correctness.
     {
-        let source = crate::logic::writer::format_rust_source(&syntax::rust_ctor::generate_rust_ctor(
-            language,
-        ));
+        let source = crate::logic::writer::format_rust_source(
+            &syntax::rust_ctor::generate_rust_ctor(language),
+        );
         if let Err(e) = crate::logic::writer::write_lang_module(&lang_name, "rust_ctor", &source) {
             eprintln!(
                 "  ({}) WARNING: could not write rust_ctor.rs ({}) — the constructor schema \
@@ -303,23 +303,22 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
     // (#141 RED-0), so this invariant was checked in exactly one configuration and
     // announced in none. It is now a `compile_error!` in the emitted facade, which
     // holds in every profile.
-    let wpda_category_census_refusal: TokenStream = match wpda_categories.len()
-        == language.types.len()
-    {
-        true => TokenStream::new(),
-        false => {
-            let message = format!(
-                "mettail internal error: language `{}` declares {} categories but the WPDS \
+    let wpda_category_census_refusal: TokenStream =
+        match wpda_categories.len() == language.types.len() {
+            true => TokenStream::new(),
+            false => {
+                let message = format!(
+                    "mettail internal error: language `{}` declares {} categories but the WPDS \
                  facade collected {} — `wpda_categories` must mirror `language.types`. \
                  Check `wpda_codegen::collect_category_names_with_literals`. This is a \
                  macro bug, not a grammar bug — please report it.",
-                language.name,
-                language.types.len(),
-                wpda_categories.len(),
-            );
-            quote::quote_spanned!(language.name.span() => compile_error!(#message);)
-        },
-    };
+                    language.name,
+                    language.types.len(),
+                    wpda_categories.len(),
+                );
+                quote::quote_spanned!(language.name.span() => compile_error!(#message);)
+            },
+        };
 
     // P2 ISOLATION+COMBINE (Plan a7986200): src_idx-ordered category names
     // (`language.types` order, matching the WPDS facade's `categories`), for
@@ -2482,10 +2481,7 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
 /// existing precedent for "two components' accepted domains have drifted apart":
 /// name the rule, name what was expected, and say it is a macro bug so the
 /// reader does not go looking for a mistake in their grammar.
-pub(crate) fn shape_refusal(
-    rule_label: &syn::Ident,
-    expected: &str,
-) -> proc_macro2::TokenStream {
+pub(crate) fn shape_refusal(rule_label: &syn::Ident, expected: &str) -> proc_macro2::TokenStream {
     let message = format!(
         "mettail internal error: rule `{rule_label}` reached codegen with an AST shape \
          that {expected}. The parser builds this structure and the validator accepts it, \

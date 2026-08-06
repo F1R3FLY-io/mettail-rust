@@ -81,7 +81,57 @@ use crate::class2hashmapsmoke::*;
 fn corpus_0_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::ChooseMap(std::sync::Arc::new(Proc::PZero), mettail_runtime::HashMapLit::from_iter(vec![(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::ChooseMap(std::sync::Arc::new(Proc::ChooseMap(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), mettail_runtime::HashMapLit::from_iter(vec![(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PZero), (Proc::PZero, Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))]))), mettail_runtime::HashMapLit::from_iter(vec![(Proc::PZero, Proc::ChooseMap(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), mettail_runtime::HashMapLit::from_iter(vec![(Proc::PZero, Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), (Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PZero)])))])))]));
+    let term: Proc = Proc::ChooseMap(
+        std::sync::Arc::new(Proc::PZero),
+        mettail_runtime::HashMapLit::from_iter(vec![(
+            Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))),
+            Proc::ChooseMap(
+                std::sync::Arc::new(Proc::ChooseMap(
+                    std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                    ))),
+                    mettail_runtime::HashMapLit::from_iter(vec![
+                        (
+                            Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                            Proc::PZero,
+                        ),
+                        (
+                            Proc::PZero,
+                            Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                        ),
+                    ]),
+                )),
+                mettail_runtime::HashMapLit::from_iter(vec![(
+                    Proc::PZero,
+                    Proc::ChooseMap(
+                        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                            mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                        ))),
+                        mettail_runtime::HashMapLit::from_iter(vec![
+                            (
+                                Proc::PZero,
+                                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                    mettail_runtime::get_or_create_var("a"),
+                                ))),
+                            ),
+                            (
+                                Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                    mettail_runtime::get_or_create_var("a"),
+                                ))),
+                                Proc::PZero,
+                            ),
+                        ]),
+                    ),
+                )]),
+            ),
+        )]),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -99,7 +149,7 @@ fn corpus_0_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

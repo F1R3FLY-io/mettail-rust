@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use mettail_prattail::alternating::BranchingMode;
 use mettail_prattail::automata::semiring::{BooleanWeight, Semiring};
-use mettail_prattail::parity_tree::{ParityAlternatingTreeAutomaton, Term, evaluate_term};
+use mettail_prattail::parity_tree::{evaluate_term, ParityAlternatingTreeAutomaton, Term};
 
 fn recursive_oracle(
     automaton: &ParityAlternatingTreeAutomaton<BooleanWeight>,

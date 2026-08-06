@@ -66,7 +66,9 @@ fn par_fingerprint(par: &models::rhoapi::Par) -> (usize, u64) {
 fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
     let plan = plan_for(include_str!("../../languages/src/lambda.rs"));
     let lowered = plan.rho_net_lowered();
-    let drive = lowered.drive().expect("production Lambda is drive-admitted");
+    let drive = lowered
+        .drive()
+        .expect("production Lambda is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
         // ★ #36 S6 RE-CAPTURE — INV-S6 fingerprint-scopes every driver-network channel
@@ -146,4 +148,3 @@ fn ambient_legacy_ac_receivers_are_byte_identical_to_the_pre_a_s5_5_goldens() {
         );
     }
 }
-

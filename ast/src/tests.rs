@@ -3,7 +3,7 @@ use crate::grammar::{PatternOp, SyntaxExpr};
 use crate::language::LanguageDef;
 use crate::types::{CollectionType, TypeExpr};
 use quote::quote;
-use syn::{Ident, parse2};
+use syn::{parse2, Ident};
 
 #[test]
 fn parse_hashbag_simple() {

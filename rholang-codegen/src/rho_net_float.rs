@@ -127,13 +127,13 @@ use crate::rho_net_drive::{
 use crate::rho_net_lower::{
     equations_boundary_canonicalizable, float_satellite_table, language_has_float_handler,
     FloatSatelliteTable, BOUND_VAR_REFLECT_LABEL, FLOAT_HOIST_RESERVED_LABEL,
-    FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL,
-    LAMBDA_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, SHIFT_RESERVED_LABEL,
+    FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_ZERO_REFLECT_LABEL, SHIFT_RESERVED_LABEL,
 };
 use crate::rho_net_subst_trs::{
     cmp_receiver_par, for1, ground, join, match_, new_scope, nullary_term,
-    object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard,
-    persistent_contract, send, shift_receiver_par, tag_par, tagged, Case, Env, Node,
+    object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard, persistent_contract,
+    send, shift_receiver_par, tag_par, tagged, Case, Env, Node,
 };
 
 use models::rust::utils::new_gstring_par;
@@ -275,8 +275,7 @@ fn float_dispatcher_par(def: &LanguageDef, fp: &str, table: &FloatSatelliteTable
                             data.push(env.var("ret"));
                             send(ground(tag_par(fp, &float_hoist_label(&label))), data)
                         } else {
-                            let assembled: Vec<Node> =
-                                s_names.iter().map(|s| env.var(s)).collect();
+                            let assembled: Vec<Node> = s_names.iter().map(|s| env.var(s)).collect();
                             send(env.var("ret"), vec![tagged(fp, &label, assembled)])
                         }
                     });
@@ -318,7 +317,11 @@ fn float_dispatcher_par(def: &LanguageDef, fp: &str, table: &FloatSatelliteTable
                 par2(par2(float_element, float_remainder), join_node)
             })
         };
-        cases.push(Case { pattern: soup_peel_pattern(fp, op), free_count: 2, body });
+        cases.push(Case {
+            pattern: soup_peel_pattern(fp, op),
+            free_count: 2,
+            body,
+        });
     }
 
     // (6) The Nil (empty-bag) leaf — its own float NF (AM-3; also the peel recursion's
@@ -338,10 +341,7 @@ fn float_dispatcher_par(def: &LanguageDef, fp: &str, table: &FloatSatelliteTable
         free_count: 1,
         body: {
             let env = env.push(&["x"]);
-            send(
-                env.var("ret"),
-                vec![tagged(fp, FREE_VAR_REFLECT_LABEL, vec![env.var("x")])],
-            )
+            send(env.var("ret"), vec![tagged(fp, FREE_VAR_REFLECT_LABEL, vec![env.var("x")])])
         },
     });
     cases.push(Case {
@@ -349,10 +349,7 @@ fn float_dispatcher_par(def: &LanguageDef, fp: &str, table: &FloatSatelliteTable
         free_count: 1,
         body: {
             let env = env.push(&["n"]);
-            send(
-                env.var("ret"),
-                vec![tagged(fp, BOUND_VAR_REFLECT_LABEL, vec![env.var("n")])],
-            )
+            send(env.var("ret"), vec![tagged(fp, BOUND_VAR_REFLECT_LABEL, vec![env.var("n")])])
         },
     });
 
@@ -428,12 +425,10 @@ fn float_hoist_receiver_par(fp: &str, constructor: &str, float_index: usize, ari
                     });
                 }
                 // Join the shifted fields, recurse on the scope body, rewrap ONE binder.
-                let join_sources: Vec<Node> =
-                    shift_ret_names.iter().map(|s| env.var(s)).collect();
+                let join_sources: Vec<Node> = shift_ret_names.iter().map(|s| env.var(s)).collect();
                 let others_for_join = others.clone();
                 let join_node = join(join_sources, {
-                    let shifted_names: Vec<String> =
-                        (0..k).map(|i| format!("__t{i}")).collect();
+                    let shifted_names: Vec<String> = (0..k).map(|i| format!("__t{i}")).collect();
                     let shifted_refs: Vec<&str> =
                         shifted_names.iter().map(String::as_str).collect();
                     let env = env.push(&shifted_refs);
@@ -482,7 +477,11 @@ fn float_hoist_receiver_par(fp: &str, constructor: &str, float_index: usize, ari
                 free_count: 1,
                 body: binder_case_body,
             },
-            Case { pattern: pat_wildcard(), free_count: 0, body: rebuild_body },
+            Case {
+                pattern: pat_wildcard(),
+                free_count: 0,
+                body: rebuild_body,
+            },
         ],
     );
     persistent_contract(tag_par(fp, &float_hoist_label(constructor)), arity + 1, body).par
@@ -573,7 +572,11 @@ fn float_merge_receiver_par(fp: &str, op: &str) -> Par {
                             free_count: 1,
                             body: strip_case(false),
                         },
-                        Case { pattern: pat_wildcard(), free_count: 0, body: base_case },
+                        Case {
+                            pattern: pat_wildcard(),
+                            free_count: 0,
+                            body: base_case,
+                        },
                     ],
                 ),
             },
@@ -760,7 +763,10 @@ mod tests {
         assert_eq!(table.hoist.len(), 1, "one hoist satellite (PAmb)");
         assert!(table.merge_ops.is_empty(), "no collection equation ⟹ no merge satellite");
         let dispatcher = float_dispatcher_par(&def, "fp-hoistonly", &table);
-        let body = dispatcher.receives[0].body.as_ref().expect("dispatcher body");
+        let body = dispatcher.receives[0]
+            .body
+            .as_ref()
+            .expect("dispatcher body");
         // 1 (^lambda) + 2 (PZero, PAmb) + 0 peel + 1 (Nil — the def declares a bag op)
         // + 2 (passthroughs) + 1 (wildcard) = 7.
         assert_eq!(

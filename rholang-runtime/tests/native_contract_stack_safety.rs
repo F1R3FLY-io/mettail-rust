@@ -1,4 +1,4 @@
-use mettail_rholang_codegen::{GroundTerm, reflect_ground_term_par};
+use mettail_rholang_codegen::{reflect_ground_term_par, GroundTerm};
 use mettail_rholang_runtime::native_contract::par_to_ground_term;
 
 #[test]

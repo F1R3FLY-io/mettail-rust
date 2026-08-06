@@ -74,7 +74,14 @@ use crate::guardedrho::*;
 fn corpus_0_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]));
+    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+        Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        ))),
+        Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        ))),
+    ]));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -92,9 +99,9 @@ fn corpus_0_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 1 — seed `cc e0fadd71f9ee4b4df177076c69d995576e88f246776830995717437431e84109`.
@@ -108,7 +115,9 @@ fn corpus_0_proc() {
 fn corpus_1_name() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -118,7 +127,8 @@ fn corpus_1_name() {
     //     `UniqueId` comes from a global counter (and `FreeVar` equality is by
     //     unique_id alone, with the name fixing the identity through the var
     //     cache), and a `HashBag` is a multiset whose `PartialEq` ignores order.
-    let recorded = "NQuote(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(_), pretty_name: Some(\"a\") }))))";
+    let recorded =
+        "NQuote(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(_), pretty_name: Some(\"a\") }))))";
     assert_eq!(
         canonicalize_debug(&format!("{:?}", term)),
         recorded,
@@ -126,9 +136,9 @@ fn corpus_1_name() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 2 — seed `cc 54597bb61dd57800c1bbee58aecce18d6415534082d11bebcb603c3a3330cc59`.
@@ -144,7 +154,19 @@ fn corpus_1_name() {
 fn corpus_2_name() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))))));
+    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::POutput(
+        std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Proc::POutput(
+            std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))),
+            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))),
+        )),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -162,9 +184,9 @@ fn corpus_2_name() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 3 — seed `cc c5575211fd5a309bd511454a1dd6f7a205159827662dc6834f5b9147e212752b`.
@@ -179,7 +201,13 @@ fn corpus_2_name() {
 fn corpus_3_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]))]))]));
+    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(
+        mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(
+            vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))],
+        ))]),
+    )]));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -197,9 +225,9 @@ fn corpus_3_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 4 — seed `cc 487b65229ebb05629118f5fc365067eec3a7ca2cf6a4713942614dbf398eb828`.
@@ -215,7 +243,25 @@ fn corpus_3_proc() {
 fn corpus_4_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))))), std::sync::Arc::new(Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PNil))), std::sync::Arc::new(Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PNil))))));
+    let term: Proc = Proc::POutput(
+        std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::POutput(
+            std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))),
+            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            )))),
+        )))),
+        std::sync::Arc::new(Proc::POutput(
+            std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PNil))),
+            std::sync::Arc::new(Proc::POutput(
+                std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(
+                    mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                ))),
+                std::sync::Arc::new(Proc::PNil),
+            )),
+        )),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -233,9 +279,9 @@ fn corpus_4_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 5 — seed `cc f7157b253f6c18941cf6b5815d295497f28ff57330933a4cd58c2185cd97ccc7`.
@@ -251,7 +297,20 @@ fn corpus_4_proc() {
 fn corpus_5_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PNil])), Proc::PPar(mettail_runtime::HashBag::from_iter(vec![]))])), Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))), std::sync::Arc::new(Proc::PNil))]));
+    let term: Proc = Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+        Proc::PPar(mettail_runtime::HashBag::from_iter(vec![
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![Proc::PNil])),
+            Proc::PPar(mettail_runtime::HashBag::from_iter(vec![])),
+        ])),
+        Proc::POutput(
+            std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PVar(
+                mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                )),
+            )))),
+            std::sync::Arc::new(Proc::PNil),
+        ),
+    ]));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -269,7 +328,7 @@ fn corpus_5_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

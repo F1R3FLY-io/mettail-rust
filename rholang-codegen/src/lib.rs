@@ -103,7 +103,6 @@ pub mod lower;
 /// (held-fold + native, the single enumeration point), the [`NativeHandlerSpec`] the
 /// generated report-free match body records, and its thread-local pending registry.
 pub mod native_handler;
-pub mod system_process_band;
 pub mod need;
 /// E-3 Stage-0: SELF-time span instrumentation of the six-phase in-Rho compilation
 /// pipeline (thread-local span stack; collection off by default). The phases re-enter
@@ -122,13 +121,11 @@ pub mod rho_net_drive;
 /// `^float-hoist:{C}` / `^float-merge:{op}` satellites, the shared `^shift`/`^cmp`
 /// install, and the [`language_is_float_bearing`] gate).
 pub mod rho_net_float;
-/// E-3 T-INCR: incremental single-rewrite append over the memoized in-Rho
-/// artifacts — the EM-3 fragment-parse/splice seam consumer, the EM-2
-/// auto-inject ordering repair, and the EM-4b per-rule ruleset bypass, with
-/// fail-closed [`IncrementalUnsupported`] → full re-derive fallback for every
-/// non-admitted family. BENCH-ONLY extension surface (user decision D3): the
-/// E-3 harness + the equivalence gate are its only consumers.
-pub mod rho_net_incremental;
+/// FLT (Foreign Language Term) Phase 2: the PUBLIC reflector API — the syntax-independent hinge
+/// that GENERATES the hand-built marked-`Par` FLT shapes (pattern + construction + runtime-Peano
+/// binder reflectors) from a guest [`rho_net_lower::GroundTerm`] template with `^free(name)` holes,
+/// reusing the landed reflected-term ABI (no new reduction machinery).
+pub mod rho_net_flt;
 /// E-3 T-E6B (BENCHMARK-ONLY, quarantined): the pathmap-0.2.2-backed
 /// construction-side fragment store (pgmcp experiment 146 H4v2; EM-8 BINDING:
 /// a newtype over `Arc<Fragment>` with a content-hash-equality `Lattice`;
@@ -140,11 +137,13 @@ pub mod rho_net_incremental;
 /// `pathmap` dependency.
 #[cfg(feature = "bench-fragment-store")]
 pub mod rho_net_fragment_store;
-/// FLT (Foreign Language Term) Phase 2: the PUBLIC reflector API — the syntax-independent hinge
-/// that GENERATES the hand-built marked-`Par` FLT shapes (pattern + construction + runtime-Peano
-/// binder reflectors) from a guest [`rho_net_lower::GroundTerm`] template with `^free(name)` holes,
-/// reusing the landed reflected-term ABI (no new reduction machinery).
-pub mod rho_net_flt;
+/// E-3 T-INCR: incremental single-rewrite append over the memoized in-Rho
+/// artifacts — the EM-3 fragment-parse/splice seam consumer, the EM-2
+/// auto-inject ordering repair, and the EM-4b per-rule ruleset bypass, with
+/// fail-closed [`IncrementalUnsupported`] → full re-derive fallback for every
+/// non-admitted family. BENCH-ONLY extension surface (user decision D3): the
+/// E-3 harness + the equivalence gate are its only consumers.
+pub mod rho_net_incremental;
 pub mod rho_net_lower;
 /// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
 /// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
@@ -154,6 +153,7 @@ pub mod rho_net_lower;
 pub mod rho_net_naive_kt;
 pub mod rho_net_ruleset;
 pub mod rho_net_subst_trs;
+pub mod system_process_band;
 pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
@@ -184,16 +184,15 @@ pub use lower::{
     lower_language_def, RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoLowering,
     RhoProgram, RhoScalarContractAbi, RhoScalarContractShape, RhoScalarType,
 };
+/// E-3 T-INCR (EM-3): the fragment-parse + source-splice seam, re-exported from
+/// `mettail_ast` so the bench harness reaches the extension surface through this
+/// crate alone (no direct ast dependency in the `bench-e3-construction` feature).
+pub use mettail_ast::language::{parse_rewrite_fragment, splice_rewrite_into_source};
 pub use mettail_ast::types::CollectionType;
 pub use native_handler::{
     clear_pending_native_handler_specs, native_contract_body_ref, native_contract_channel,
     native_handler_urn, record_pending_native_handler_specs, take_pending_native_handler_specs,
     NativeHandlerEvaluator, NativeHandlerSpec,
-};
-pub use system_process_band::{
-    check_body_refs_pairwise_distinct, fingerprint_digest, BandAllocationError,
-    SystemProcessBand, HELD_FOLD_BAND, LOOKAHEAD_BAND, MTL_FOLD_CHANNEL_TAG,
-    MTL_LOOKAHEAD_CHANNEL_TAG, MTL_NATIVE_CHANNEL_TAG, NATIVE_HANDLER_BAND,
 };
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
@@ -212,57 +211,7 @@ pub use rho_net_automaton::{
     automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
     AutomatonUnsupported,
 };
-#[cfg(feature = "bench-naive-baseline")]
-pub use rho_net_naive_kt::{
-    naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
-    naive_kt_selfdriving_call_par, respread_reserved_labels, respread_root_receiver_par,
-    respread_walker_receiver_par, NaiveGuardEncoding, NaiveKtContextualUnsupported,
-    NaiveKtUnsupported, RESPREAD_ERR_RESERVED_LABEL, RESPREAD_RESERVED_LABEL,
-    RESPREAD_ROOT_RESERVED_LABEL,
-};
-pub use rho_net_lower::{
-    ac_bag_pattern, ac_carrier_channel, ac_collection_pattern, ac_contract_call,
-    ac_soup_channel,
-    ac_element_slot_count, ac_map_pattern, ac_match_call_par, ac_rule_receiver,
-    ac_set_correlation_condition, ac_set_element_pattern, ac_set_paired_receiver_par, ac_set_pattern,
-    ac_sigma_receiver_par, ac_sigma_receiver_par_with_condition, collapse_capture_location,
-    collapse_chain_location, comm_contract_call,
-    comm_rule_receiver, congruence_only_premises, contextual_contract_call,
-    contextual_hole_bridge_par, equations_boundary_canonicalizable, float_satellite_table,
-    language_has_float_handler, FloatSatelliteTable,
-    contextual_join_receiver_par, contextual_premise_hole_channel,
-    instantiate_ac_reconstruct_template, is_nested_structural_ac_rewrite, native_locate_bridge_par,
-    native_locate_contract_bridge_par,
-    nested_structural_ac_match_call_par, nested_structural_ac_rule_receiver, reconstruct_contractum,
-    ground_marker_tag_par, is_ground_marker_par, is_marked_object_label, par_carries_ground_marker,
-    reflect_ground_term_par,
-    rho_net_ac_injection_sites, rho_net_ac_match_entries, rho_net_comm_injection_sites,
-    rho_net_contextual_injection_sites, rho_net_contextual_match_entries, rho_net_injection_sites,
-    rho_net_native_fold_injection_sites, rho_net_native_injection_sites,
-    rho_net_native_match_entries, rho_net_nested_structural_ac_injection_sites,
-    rho_net_nested_structural_ac_match_entries, rho_net_structural_ac_injection_sites,
-    rho_net_structural_ac_match_entries, rho_net_subst_injection_sites, spread_child_location,
-    spread_root_location, spread_term_par, structural_ac_contract_call, structural_ac_match_call_par,
-    structural_ac_rule_receiver, term_contract_call, AcReconstructTemplate,
-    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, GROUND_MARK_REFLECT_LABEL, GroundTerm,
-    IDENT_TEXT_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
-    MULTILAMBDA_REFLECT_LABEL, NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
-    RhoNetAcInjectionSite, RhoNetAcMatchEntry, RhoNetCommInjectionSite,
-    RhoNetContextualInjectionSite, RhoNetContextualMatchEntry, RhoNetInjectionInvocation,
-    RhoNetInjectionSite, RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError,
-    RhoNetNativeInjectionSite, RhoNetNativeMatchEntry, RhoNetNestedStructuralAcInjectionSite,
-    RhoNetNestedStructuralAcMatchEntry, RhoNetStructuralAcInjectionSite,
-    RhoNetStructuralAcMatchEntry, RhoNetSubstInjectionSite, UnsupportedFamily, CMP_RESERVED_LABEL,
-    PRED_RESERVED_LABEL,
-    SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
-    SUBST_RESERVED_LABEL,
-};
-pub use rho_net_flt::{
-    bound_var_par, flt_normalize_hole_names, flt_receive_par, peano_par, reflect_flt_construction,
-    reflect_flt_pattern, shift_fill_for_depth, EmptyFltResolver, FltHole, FltPatternReflection,
-    FltReflect, FltReflectError, FltRegistry, FltResolve,
-};
+pub use rho_net_cache::{cached_in_rho_artifacts, CompiledInRhoArtifacts};
 pub use rho_net_drive::{
     drive_admissible, drive_err_channel, drive_fired_channel, drive_fuel_channel,
     rho_net_drive_call_par, rho_net_drive_call_par_with_fuel, rho_net_drive_float_call_par,
@@ -271,30 +220,77 @@ pub use rho_net_drive::{
     FiringEmission, RhoNetDriveInvocation, ScionPolicy, DRIVE_DEFAULT_FUEL, DRIVE_OPT_IN,
 };
 pub use rho_net_float::language_is_float_bearing;
+pub use rho_net_flt::{
+    bound_var_par, flt_normalize_hole_names, flt_receive_par, peano_par, reflect_flt_construction,
+    reflect_flt_pattern, shift_fill_for_depth, EmptyFltResolver, FltHole, FltPatternReflection,
+    FltReflect, FltReflectError, FltRegistry, FltResolve,
+};
+pub use rho_net_incremental::{
+    extend_in_rho_artifacts, IncrementalExtendOutcome, IncrementalUnsupported,
+};
+pub use rho_net_lower::{
+    ac_bag_pattern, ac_carrier_channel, ac_collection_pattern, ac_contract_call,
+    ac_element_slot_count, ac_map_pattern, ac_match_call_par, ac_rule_receiver,
+    ac_set_correlation_condition, ac_set_element_pattern, ac_set_paired_receiver_par,
+    ac_set_pattern, ac_sigma_receiver_par, ac_sigma_receiver_par_with_condition, ac_soup_channel,
+    collapse_capture_location, collapse_chain_location, comm_contract_call, comm_rule_receiver,
+    congruence_only_premises, contextual_contract_call, contextual_hole_bridge_par,
+    contextual_join_receiver_par, contextual_premise_hole_channel,
+    equations_boundary_canonicalizable, float_satellite_table, ground_marker_tag_par,
+    instantiate_ac_reconstruct_template, is_ground_marker_par, is_marked_object_label,
+    is_nested_structural_ac_rewrite, language_has_float_handler, native_locate_bridge_par,
+    native_locate_contract_bridge_par, nested_structural_ac_match_call_par,
+    nested_structural_ac_rule_receiver, par_carries_ground_marker, reconstruct_contractum,
+    reflect_ground_term_par, rho_net_ac_injection_sites, rho_net_ac_match_entries,
+    rho_net_comm_injection_sites, rho_net_contextual_injection_sites,
+    rho_net_contextual_match_entries, rho_net_injection_sites, rho_net_native_fold_injection_sites,
+    rho_net_native_injection_sites, rho_net_native_match_entries,
+    rho_net_nested_structural_ac_injection_sites, rho_net_nested_structural_ac_match_entries,
+    rho_net_structural_ac_injection_sites, rho_net_structural_ac_match_entries,
+    rho_net_subst_injection_sites, spread_child_location, spread_root_location, spread_term_par,
+    structural_ac_contract_call, structural_ac_match_call_par, structural_ac_rule_receiver,
+    term_contract_call, AcReconstructTemplate, FloatSatelliteTable, GroundTerm,
+    RhoNetAcInjectionSite, RhoNetAcMatchEntry, RhoNetCommInjectionSite,
+    RhoNetContextualInjectionSite, RhoNetContextualMatchEntry, RhoNetInjectionInvocation,
+    RhoNetInjectionSite, RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError,
+    RhoNetNativeInjectionSite, RhoNetNativeMatchEntry, RhoNetNestedStructuralAcInjectionSite,
+    RhoNetNestedStructuralAcMatchEntry, RhoNetStructuralAcInjectionSite,
+    RhoNetStructuralAcMatchEntry, RhoNetSubstInjectionSite, UnsupportedFamily,
+    BOUND_VAR_REFLECT_LABEL, CMP_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GROUND_MARK_REFLECT_LABEL,
+    IDENT_TEXT_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
+    NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    PRED_RESERVED_LABEL, SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL,
+    SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
+};
 pub use rho_net_lower::{
     all_reserved_reflect_labels, parse_reflected_tag, reflected_tag_string,
     reserved_labels_outside_the_namespace, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
     DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL,
     FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL,
 };
-pub use rho_net_subst_trs::{
-    reserved_subst_trs_labels, subst_seed_receiver_par, subst_seed_send_par, subst_trs_program_par,
-};
-pub use rho_net_cache::{cached_in_rho_artifacts, CompiledInRhoArtifacts};
-/// E-3 T-INCR (EM-3): the fragment-parse + source-splice seam, re-exported from
-/// `mettail_ast` so the bench harness reaches the extension surface through this
-/// crate alone (no direct ast dependency in the `bench-e3-construction` feature).
-pub use mettail_ast::language::{parse_rewrite_fragment, splice_rewrite_into_source};
-pub use rho_net_incremental::{
-    extend_in_rho_artifacts, IncrementalExtendOutcome, IncrementalUnsupported,
+#[cfg(feature = "bench-naive-baseline")]
+pub use rho_net_naive_kt::{
+    naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
+    naive_kt_selfdriving_call_par, respread_reserved_labels, respread_root_receiver_par,
+    respread_walker_receiver_par, NaiveGuardEncoding, NaiveKtContextualUnsupported,
+    NaiveKtUnsupported, RESPREAD_ERR_RESERVED_LABEL, RESPREAD_RESERVED_LABEL,
+    RESPREAD_ROOT_RESERVED_LABEL,
 };
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, convert_lhs_pattern,
     in_rho_match_all_sites_call_par, in_rho_match_call_par, in_rho_match_gate_reject,
     in_rho_static_gate, located_native_site_count, located_native_site_count_for,
-    reconstruct_redex_subject,
-    rule_lhs_root_constructor, rule_lhs_root_constructors, ruleset_all_entries_flat, DeferReason,
-    DeferredRewrite, InRhoMatchingRuleset, NativeDispatch, PatternConvertReject,
+    reconstruct_redex_subject, rule_lhs_root_constructor, rule_lhs_root_constructors,
+    ruleset_all_entries_flat, DeferReason, DeferredRewrite, InRhoMatchingRuleset, NativeDispatch,
+    PatternConvertReject,
+};
+pub use rho_net_subst_trs::{
+    reserved_subst_trs_labels, subst_seed_receiver_par, subst_seed_send_par, subst_trs_program_par,
+};
+pub use system_process_band::{
+    check_body_refs_pairwise_distinct, fingerprint_digest, BandAllocationError, SystemProcessBand,
+    HELD_FOLD_BAND, LOOKAHEAD_BAND, MTL_FOLD_CHANNEL_TAG, MTL_LOOKAHEAD_CHANNEL_TAG,
+    MTL_NATIVE_CHANNEL_TAG, NATIVE_HANDLER_BAND,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

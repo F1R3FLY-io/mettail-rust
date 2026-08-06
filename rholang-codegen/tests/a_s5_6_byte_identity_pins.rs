@@ -73,9 +73,12 @@ fn capture_a_s5_6_driver_fingerprints() {
     ] {
         let plan = plan_for(source);
         let lowered = plan.rho_net_lowered();
-        let drive = lowered.drive().expect("the production language is drive-admitted");
-        let installed =
-            plan.installed_rho_net_program_par().expect("the production language installs");
+        let drive = lowered
+            .drive()
+            .expect("the production language is drive-admitted");
+        let installed = plan
+            .installed_rho_net_program_par()
+            .expect("the production language installs");
         println!(
             "{name}: drive = {:?}; installed = {:?} ({} receives)",
             par_fingerprint(drive),

@@ -36,8 +36,7 @@
 #![allow(non_local_definitions)]
 
 use mettail_runtime::{
-    Language, LanguageMetadata, LoweredConstructKind, LoweringDispositionDef,
-    LoweringOutcomeKind,
+    Language, LanguageMetadata, LoweredConstructKind, LoweringDispositionDef, LoweringOutcomeKind,
 };
 
 #[path = "definitions/seq_carrier_demo.rs"]
@@ -192,7 +191,11 @@ fn single_vec_whole_constructor_fold_fires() {
         vec!["SeqCarrierDemo::fold::Term_Firstly".to_string()],
         "the single-`Vec` fold must fire exactly once; firings={:?} terms={:?}",
         report.rule_firings,
-        report.terms.iter().map(|t| t.op_display.clone()).collect::<Vec<_>>(),
+        report
+            .terms
+            .iter()
+            .map(|t| t.op_display.clone())
+            .collect::<Vec<_>>(),
     );
 
     // ★ POSITIVE CONTROL ON THE SATURATION. A term with no redex fires nothing, so the
@@ -266,7 +269,8 @@ fn map_fold_parameter_stays_declined_naming_its_type() {
         render(inventory),
     );
     assert_eq!(
-        vec_fold.detail, "MapParamRefusalDemo::fold::Proc_VecFold",
+        vec_fold.detail,
+        "MapParamRefusalDemo::fold::Proc_VecFold",
         "a Delivered disposition carries the label of the rule it emitted.{}",
         render(inventory),
     );
@@ -295,7 +299,9 @@ fn the_ordered_control_fold_actually_reduces() {
         .filter_map(|f| f.label.clone())
         .collect();
     assert!(
-        labels.iter().any(|l| l == "MapParamRefusalDemo::fold::Proc_VecFold"),
+        labels
+            .iter()
+            .any(|l| l == "MapParamRefusalDemo::fold::Proc_VecFold"),
         "the ordered control must FIRE, not merely be recorded; firings={:?}",
         report.rule_firings,
     );
@@ -333,7 +339,11 @@ fn loop_firings(src: &str) -> (Vec<(String, usize)>, String) {
         report.is_complete(),
         report.roots.len(),
         report.rule_firings,
-        report.terms.iter().map(|t| t.op_display.clone()).collect::<Vec<_>>(),
+        report
+            .terms
+            .iter()
+            .map(|t| t.op_display.clone())
+            .collect::<Vec<_>>(),
     );
     (counted, rendered)
 }
@@ -384,10 +394,7 @@ fn turing_loop_takes_three_head_moves() {
             .filter(|(l, _)| l == entry)
             .map(|(_, n)| *n)
             .sum::<usize>();
-        assert_eq!(
-            fired, 1,
-            "{entry} must fire exactly once on the path; report: {rendered}",
-        );
+        assert_eq!(fired, 1, "{entry} must fire exactly once on the path; report: {rendered}",);
     }
 
     // ★ THE CONTROL. A halted configuration matches nothing on the same language, so the
@@ -418,12 +425,9 @@ fn turing_loop_final_tape_reconstructs() {
     let term = lang
         .parse_term("(halt , shift_right([1,1],1,[]))")
         .unwrap_or_else(|e| panic!("parse failed: {e}"));
-    let normal = turing_loop::TuringLoopLanguage::dovetail_normal_term(
-        term.as_ref(),
-        MAX_ITERS,
-        MAX_NODES,
-    )
-    .unwrap_or_else(|e| panic!("the final tape must reconstruct; got Err({e})"));
+    let normal =
+        turing_loop::TuringLoopLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
+            .unwrap_or_else(|e| panic!("the final tape must reconstruct; got Err({e})"));
     assert_eq!(
         format!("{normal}"),
         "(halt , <[1 , 1 , 1]|_|[]>)",

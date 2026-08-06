@@ -180,7 +180,8 @@ impl CompiledInRhoArtifacts {
     /// `rho_net_injection_sites` and never consults this cache, so forcing it does NOT
     /// force [`lowered()`](Self::lowered)).
     pub fn ruleset(&self) -> &InRhoMatchingRuleset {
-        self.ruleset.get_or_init(|| compile_in_rho_matching_ruleset(&self.def))
+        self.ruleset
+            .get_or_init(|| compile_in_rho_matching_ruleset(&self.def))
     }
 
     /// The installable σ-receiver program of [`def`](Self::def) (or its fail-closed install
@@ -348,7 +349,8 @@ mod tests {
         let other = cached_in_rho_artifacts(OTHER_SOURCE).expect("other artifacts derive");
         assert!(!Arc::ptr_eq(&swap, &other), "distinct sources must not alias a slot");
         assert_ne!(
-            swap.ruleset().language_fingerprint, other.ruleset().language_fingerprint,
+            swap.ruleset().language_fingerprint,
+            other.ruleset().language_fingerprint,
             "distinct definitions have distinct fingerprints"
         );
     }
@@ -489,7 +491,9 @@ mod tests {
             .find('{')
             .map(|offset| macro_at + offset)
             .expect("the language! invocation must open a brace");
-        let close = source.rfind('}').expect("the language! invocation must close its brace");
+        let close = source
+            .rfind('}')
+            .expect("the language! invocation must close its brace");
         &source[open + 1..close]
     }
 

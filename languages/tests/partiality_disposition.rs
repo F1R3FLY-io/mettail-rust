@@ -475,11 +475,7 @@ fn control_4_repeated_dispatch_aggregates_into_one_counted_record() {
 fn control_5_two_reasons_under_one_label_stay_two_records() {
     let both = run("(6 / 0) + (12 / 0)");
     let div_records = both.declined(DIV_INT);
-    assert!(
-        !div_records.is_empty(),
-        "both divisions decline. Run: {}",
-        both.rendered,
-    );
+    assert!(!div_records.is_empty(), "both divisions decline. Run: {}", both.rendered,);
     // Both are `DivisionByZero` on `i64`, so they aggregate — the same partiality is one record.
     assert_eq!(
         div_records.len(),

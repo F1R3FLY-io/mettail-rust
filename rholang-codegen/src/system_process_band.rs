@@ -276,7 +276,8 @@ where
 {
     let iter = allocations.into_iter();
     let (lower, _) = iter.size_hint();
-    let mut seen: std::collections::HashMap<i64, &'a str> = std::collections::HashMap::with_capacity(lower);
+    let mut seen: std::collections::HashMap<i64, &'a str> =
+        std::collections::HashMap::with_capacity(lower);
     for (identity, body_ref) in iter {
         if let Some(first) = seen.insert(body_ref, identity) {
             return Err(BandAllocationError::BodyRefCollision {
@@ -379,8 +380,9 @@ mod tests {
     /// this is structural, not probabilistic.
     #[test]
     fn distinct_indices_in_one_language_never_collide() {
-        let refs: std::collections::BTreeSet<i64> =
-            (0..=u8::MAX).map(|i| NATIVE_HANDLER_BAND.body_ref(i, FP_A)).collect();
+        let refs: std::collections::BTreeSet<i64> = (0..=u8::MAX)
+            .map(|i| NATIVE_HANDLER_BAND.body_ref(i, FP_A))
+            .collect();
         assert_eq!(refs.len(), 256, "all 256 indices must be pairwise distinct");
     }
 

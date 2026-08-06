@@ -246,7 +246,11 @@ pub(crate) fn field_layout<'a>(
             },
             _ => unreachable!("scope_param matched only the two abstraction variants"),
         };
-        slots.push(FieldSlot { name, source: FieldSlotSource::Param(param), optional: false });
+        slots.push(FieldSlot {
+            name,
+            source: FieldSlotSource::Param(param),
+            optional: false,
+        });
     }
 
     FieldLayout { slots }
@@ -325,7 +329,11 @@ pub(crate) fn capture_layout<'a>(
             // never reaches a slot.
             FieldSlotSource::Param(TermParam::Optional { .. }) => continue,
         };
-        non_scope.push(CaptureField { name: slot.name, kind, optional: slot.optional });
+        non_scope.push(CaptureField {
+            name: slot.name,
+            kind,
+            optional: slot.optional,
+        });
     }
 
     Some(CaptureLayout { non_scope, scope })
@@ -432,12 +440,7 @@ fn walk_pattern<'a>(
             SyntaxExpr::Op(PatternOp::Sep { source: Some(source), .. }) => {
                 if let PatternOp::Map { source: zip, .. } = source.as_ref() {
                     if let PatternOp::Zip { left, .. } = zip.as_ref() {
-                        push_named_param(
-                            left.to_string(),
-                            term_context,
-                            abstraction_names,
-                            out,
-                        );
+                        push_named_param(left.to_string(), term_context, abstraction_names, out);
                     }
                 }
             },

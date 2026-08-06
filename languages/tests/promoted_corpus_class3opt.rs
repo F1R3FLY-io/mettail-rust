@@ -80,7 +80,39 @@ use crate::class3opt::*;
 fn corpus_0_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PInputsOptTagged(vec![], Some(vec![Proc::PZero]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1"))], std::sync::Arc::new(Proc::PInputsOptTagged(vec![], Some(vec![Proc::PZero]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1"))], std::sync::Arc::new(Proc::PInputsOptTagged(vec![], Some(vec![Proc::PZero]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))))))))));
+    let term: Proc = Proc::PInputsOptTagged(
+        vec![],
+        Some(vec![Proc::PZero]),
+        mettail_runtime::Scope::from_parts_unsafe(
+            vec![
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+            ],
+            std::sync::Arc::new(Proc::PInputsOptTagged(
+                vec![],
+                Some(vec![Proc::PZero]),
+                mettail_runtime::Scope::from_parts_unsafe(
+                    vec![
+                        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+                    ],
+                    std::sync::Arc::new(Proc::PInputsOptTagged(
+                        vec![],
+                        Some(vec![Proc::PZero]),
+                        mettail_runtime::Scope::from_parts_unsafe(
+                            vec![
+                                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+                            ],
+                            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                            ))),
+                        ),
+                    )),
+                ),
+            )),
+        ),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -98,9 +130,9 @@ fn corpus_0_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 1 — seed `cc 1fb2c8da61eae4b455ff931f4a437a61d650976043035c78f87d99c7bf845118`.
@@ -122,7 +154,46 @@ fn corpus_0_proc() {
 fn corpus_1_name() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::PInputsOptTagged(vec![], Some(vec![Proc::PInputsOptTagged(vec![], Some(vec![Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))), Proc::PZero, Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2"))], std::sync::Arc::new(Proc::PZero)))));
+    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::PInputsOptTagged(
+        vec![],
+        Some(vec![
+            Proc::PInputsOptTagged(
+                vec![],
+                Some(vec![
+                    Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                    Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                    Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                ]),
+                mettail_runtime::Scope::from_parts_unsafe(
+                    vec![
+                        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+                    ],
+                    std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                    ))),
+                ),
+            ),
+            Proc::PZero,
+            Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))),
+        ]),
+        mettail_runtime::Scope::from_parts_unsafe(
+            vec![
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2")),
+            ],
+            std::sync::Arc::new(Proc::PZero),
+        ),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -140,9 +211,9 @@ fn corpus_1_name() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 2 — seed `cc c0c65c4ac8c6560576402d983817aeb68725db3ae5de4e29bb6858b8692060ba`.
@@ -171,7 +242,65 @@ fn corpus_1_name() {
 fn corpus_2_name() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::PInputsOptTagged(vec![Name::NQuote(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))), Name::NQuote(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))], Some(vec![Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], Some(vec![Proc::PZero]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))))]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2"))], std::sync::Arc::new(Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], None, mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")), mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))))))));
+    let term: Name = Name::NQuote(std::sync::Arc::new(Proc::PInputsOptTagged(
+        vec![
+            Name::NQuote(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+            )))),
+            Name::NQuote(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+            )))),
+        ],
+        Some(vec![Proc::PInputsOptTagged(
+            vec![
+                Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+                Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))),
+            ],
+            Some(vec![Proc::PZero]),
+            mettail_runtime::Scope::from_parts_unsafe(
+                vec![
+                    mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                    mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+                    mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2")),
+                ],
+                std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                    mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                ))),
+            ),
+        )]),
+        mettail_runtime::Scope::from_parts_unsafe(
+            vec![
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2")),
+            ],
+            std::sync::Arc::new(Proc::PInputsOptTagged(
+                vec![
+                    Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                    Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                ],
+                None,
+                mettail_runtime::Scope::from_parts_unsafe(
+                    vec![
+                        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0")),
+                        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a1")),
+                        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a2")),
+                    ],
+                    std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                    ))),
+                ),
+            )),
+        ),
+    )));
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -189,9 +318,9 @@ fn corpus_2_name() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }
 
 /// Corpus entry 3 — seed `cc 24f23f2d0a2e5253cd144b04b97d3e7147f1c78f9e4b30af383094b400892211`.
@@ -230,7 +359,122 @@ fn corpus_2_name() {
 fn corpus_3_proc() {
     mettail_runtime::clear_var_cache();
     // 1 — the term CONSTRUCTS.
-    let term: Proc = Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], Some(vec![Proc::PZero, Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], Some(vec![Proc::PZero, Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], None, mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))))]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))], std::sync::Arc::new(Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], None, mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))))))))]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))], std::sync::Arc::new(Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], Some(vec![Proc::PZero, Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], None, mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))))]), mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))], std::sync::Arc::new(Proc::PInputsOptTagged(vec![Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))), Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))], None, mettail_runtime::Scope::from_parts_unsafe(vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))], std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))))))))));
+    let term: Proc = Proc::PInputsOptTagged(
+        vec![
+            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))),
+            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))),
+        ],
+        Some(vec![
+            Proc::PZero,
+            Proc::PInputsOptTagged(
+                vec![
+                    Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                    Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                ],
+                Some(vec![
+                    Proc::PZero,
+                    Proc::PInputsOptTagged(
+                        vec![
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                        ],
+                        None,
+                        mettail_runtime::Scope::from_parts_unsafe(
+                            vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))],
+                            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                            ))),
+                        ),
+                    ),
+                ]),
+                mettail_runtime::Scope::from_parts_unsafe(
+                    vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))],
+                    std::sync::Arc::new(Proc::PInputsOptTagged(
+                        vec![
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                        ],
+                        None,
+                        mettail_runtime::Scope::from_parts_unsafe(
+                            vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))],
+                            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                            ))),
+                        ),
+                    )),
+                ),
+            ),
+        ]),
+        mettail_runtime::Scope::from_parts_unsafe(
+            vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))],
+            std::sync::Arc::new(Proc::PInputsOptTagged(
+                vec![
+                    Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                    Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var("a"),
+                    ))),
+                ],
+                Some(vec![
+                    Proc::PZero,
+                    Proc::PInputsOptTagged(
+                        vec![
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                        ],
+                        None,
+                        mettail_runtime::Scope::from_parts_unsafe(
+                            vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))],
+                            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                            ))),
+                        ),
+                    ),
+                ]),
+                mettail_runtime::Scope::from_parts_unsafe(
+                    vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))],
+                    std::sync::Arc::new(Proc::PInputsOptTagged(
+                        vec![
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                            Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var("a"),
+                            ))),
+                        ],
+                        None,
+                        mettail_runtime::Scope::from_parts_unsafe(
+                            vec![mettail_runtime::Binder(mettail_runtime::get_or_create_var("a0"))],
+                            std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+                                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+                            ))),
+                        ),
+                    )),
+                ),
+            )),
+        ),
+    );
 
     // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the
     //     text the corpus recorded, character for character. This is what makes
@@ -248,7 +492,7 @@ fn corpus_3_proc() {
     );
 
     // 3 — the properties the corpus's generated suite checks for this category.
-    let _ = format!("{:?}", term);            // <cat>_debug_does_not_panic
-    let _ = format!("{}", term);              // <cat>_display_does_not_panic
-    assert_eq!(term.clone(), term);           // <cat>_clone_eq
+    let _ = format!("{:?}", term); // <cat>_debug_does_not_panic
+    let _ = format!("{}", term); // <cat>_display_does_not_panic
+    assert_eq!(term.clone(), term); // <cat>_clone_eq
 }

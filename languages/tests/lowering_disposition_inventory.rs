@@ -97,7 +97,9 @@ fn production_languages() -> Vec<(&'static str, &'static dyn LanguageMetadata)> 
 }
 
 /// `(kind noun, construct name, origin)` for each declination, in inventory order.
-fn declination_triples(metadata: &dyn LanguageMetadata) -> Vec<(&'static str, String, &'static str)> {
+fn declination_triples(
+    metadata: &dyn LanguageMetadata,
+) -> Vec<(&'static str, String, &'static str)> {
     metadata
         .lowering_dispositions()
         .iter()
@@ -305,9 +307,7 @@ fn turing_declines_nothing_because_its_head_move_is_lowered() {
     let shift_right: Vec<&LoweringDispositionDef> = metadata
         .lowering_dispositions()
         .iter()
-        .filter(|d| {
-            d.construct_kind == LoweredConstructKind::Fold && d.construct == "shift_right"
-        })
+        .filter(|d| d.construct_kind == LoweredConstructKind::Fold && d.construct == "shift_right")
         .collect();
     assert_eq!(
         shift_right.len(),
@@ -322,7 +322,8 @@ fn turing_declines_nothing_because_its_head_move_is_lowered() {
         shift_right[0].summary(),
     );
     assert_eq!(
-        shift_right[0].detail, "Turing::fold::Tape_shift_right",
+        shift_right[0].detail,
+        "Turing::fold::Tape_shift_right",
         "a Delivered disposition carries the label of the rule it emitted: {}",
         shift_right[0].summary(),
     );
@@ -542,8 +543,7 @@ fn no_fold_in_the_corpus_is_refused_for_a_collection_parameter() {
             }
             let qualified = format!("{name}::{}", disposition.construct);
             if COLLECTION_PARAMETER_FOLDS.contains(&qualified.as_str()) {
-                delivered_collection_folds
-                    .push((qualified, disposition.detail.to_string()));
+                delivered_collection_folds.push((qualified, disposition.detail.to_string()));
             }
         }
     }
@@ -557,7 +557,10 @@ fn no_fold_in_the_corpus_is_refused_for_a_collection_parameter() {
         ("Rholang::PPersistOutputNil2Plus", "Rholang::fold::Proc_PPersistOutputNil2Plus"),
         ("Rholang::POutputQuoted2Plus", "Rholang::fold::Proc_POutputQuoted2Plus"),
         ("Rholang::POutputShort2Plus", "Rholang::fold::Proc_POutputShort2Plus"),
-        ("Rholang::PPersistOutputShort2Plus", "Rholang::fold::Proc_PPersistOutputShort2Plus"),
+        (
+            "Rholang::PPersistOutputShort2Plus",
+            "Rholang::fold::Proc_PPersistOutputShort2Plus",
+        ),
         ("Rholang::InputBindQuery", "Rholang::fold::InputBind_InputBindQuery"),
         ("Rholang::InputBindEmptyQuery", "Rholang::fold::InputBind_InputBindEmptyQuery"),
         ("Rholang::InputBindQuotedQuery", "Rholang::fold::InputBind_InputBindQuotedQuery"),

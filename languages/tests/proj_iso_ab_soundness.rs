@@ -780,7 +780,10 @@ fn gate_f_all_one_walker_leg_per_distinct_span() {
 
         let spans = Proc::__g3_walker_spans();
         let legs = spans.len();
-        let distinct = spans.iter().collect::<std::collections::BTreeSet<_>>().len();
+        let distinct = spans
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
         total_legs += legs;
         total_distinct += distinct;
         rows.push(format!("  {legs:>4} legs {distinct:>4} distinct   {src:?}\n"));

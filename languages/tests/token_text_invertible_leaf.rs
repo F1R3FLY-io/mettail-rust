@@ -78,7 +78,10 @@ fn op_displays(report: &RuntimeDovetailRunReport) -> Vec<String> {
 }
 
 fn dispositions() -> Vec<LoweringDispositionDef> {
-    TokenTextLeafDemoLanguage.metadata().lowering_dispositions().to_vec()
+    TokenTextLeafDemoLanguage
+        .metadata()
+        .lowering_dispositions()
+        .to_vec()
 }
 
 /// A one-line rendering of the whole inventory, so a failure is diagnosable from the log
@@ -459,8 +462,7 @@ fn a5_a_binder_in_scope_does_not_capture_an_ident_field() {
     for name in ["x", "foo", "nth"] {
         let body = Proc::Named(name.to_string());
         let binder = mettail_runtime::Binder(mettail_runtime::FreeVar::fresh_named(name));
-        let scope =
-            mettail_runtime::Scope::new(binder, std::sync::Arc::new(body.clone()));
+        let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body.clone()));
         let bound = Proc::Bind(scope);
         let normalized = bound.normalize();
         let rendered = format!("{normalized:?}");

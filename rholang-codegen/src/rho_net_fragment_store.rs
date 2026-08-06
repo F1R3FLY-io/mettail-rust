@@ -229,7 +229,10 @@ fn encode_rule_fragment(
             + rule_label.len()
             + root_op.len()
             + accept_channel.len()
-            + group_members.iter().map(|member| member.len() + 2).sum::<usize>(),
+            + group_members
+                .iter()
+                .map(|member| member.len() + 2)
+                .sum::<usize>(),
     );
     out.push(TAG_RULE);
     push_segment(&mut out, family);
@@ -256,7 +259,10 @@ fn encode_manifest_fragment(
     let mut out = Vec::with_capacity(
         32 + family.len()
             + language_fingerprint.len()
-            + deferred_labels.iter().map(|label| label.len() + 2).sum::<usize>(),
+            + deferred_labels
+                .iter()
+                .map(|label| label.len() + 2)
+                .sum::<usize>(),
     );
     out.push(TAG_MANIFEST);
     push_segment(&mut out, family);
@@ -300,7 +306,13 @@ pub struct FragmentHandle(Arc<Fragment>);
 impl FragmentHandle {
     fn new(family: String, root_op: String, rule_label: String, bytes: Vec<u8>) -> Self {
         let content_hash = fnv1a64(&bytes);
-        Self(Arc::new(Fragment { family, root_op, rule_label, bytes, content_hash }))
+        Self(Arc::new(Fragment {
+            family,
+            root_op,
+            rule_label,
+            bytes,
+            content_hash,
+        }))
     }
 
     /// The serialized payload (metric (i)'s retained bytes).
@@ -451,8 +463,11 @@ impl FragmentStoreBackend for PathMapFragmentStore {
     }
 
     fn entries(&self) -> Vec<(Vec<u8>, FragmentHandle)> {
-        let mut entries: Vec<(Vec<u8>, FragmentHandle)> =
-            self.map.iter().map(|(key, value)| (key, value.clone())).collect();
+        let mut entries: Vec<(Vec<u8>, FragmentHandle)> = self
+            .map
+            .iter()
+            .map(|(key, value)| (key, value.clone()))
+            .collect();
         entries.sort_by(|left, right| left.0.cmp(&right.0));
         entries
     }
@@ -504,8 +519,11 @@ impl FragmentStoreBackend for HashMapFragmentStore {
     }
 
     fn entries(&self) -> Vec<(Vec<u8>, FragmentHandle)> {
-        let mut entries: Vec<(Vec<u8>, FragmentHandle)> =
-            self.map.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+        let mut entries: Vec<(Vec<u8>, FragmentHandle)> = self
+            .map
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         entries.sort_by(|left, right| left.0.cmp(&right.0));
         entries
     }
@@ -558,7 +576,11 @@ fn entry_facts(artifacts: &CompiledInRhoArtifacts) -> Result<Vec<EntryFact>, Str
                 ));
             },
         };
-        facts.push(EntryFact { label: rewrite.name.to_string(), root_op, rewrite_index: id.0 });
+        facts.push(EntryFact {
+            label: rewrite.name.to_string(),
+            root_op,
+            rewrite_index: id.0,
+        });
     }
     Ok(facts)
 }
@@ -583,8 +605,11 @@ fn accept_channel_for(
 fn manifest_bytes(artifacts: &CompiledInRhoArtifacts, family: &str) -> Vec<u8> {
     let ruleset = artifacts.ruleset();
     let view = ruleset.automaton.view();
-    let mut deferred_labels: Vec<String> =
-        ruleset.deferred.iter().map(|deferred| deferred.rule_label.clone()).collect();
+    let mut deferred_labels: Vec<String> = ruleset
+        .deferred
+        .iter()
+        .map(|deferred| deferred.rule_label.clone())
+        .collect();
     deferred_labels.sort();
     encode_manifest_fragment(
         family,
@@ -696,7 +721,11 @@ impl<B: FragmentStoreBackend> Default for ConstructionFragmentStore<B> {
 impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
     /// An empty store.
     pub fn new() -> Self {
-        Self { backend: B::empty(), intern: HashMap::new(), content_dedup_hits: 0 }
+        Self {
+            backend: B::empty(),
+            intern: HashMap::new(),
+            content_dedup_hits: 0,
+        }
     }
 
     /// The container (read access for tests/accounting).
@@ -726,8 +755,9 @@ impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
     ) -> FragmentHandle {
         let content_hash = fnv1a64(&bytes);
         if let Some(candidates) = self.intern.get(&content_hash) {
-            if let Some(existing) =
-                candidates.iter().find(|candidate| candidate.bytes() == bytes.as_slice())
+            if let Some(existing) = candidates
+                .iter()
+                .find(|candidate| candidate.bytes() == bytes.as_slice())
             {
                 // The payload embeds the key parts, so content equality implies
                 // key equality — reuse can never alias two keys.
@@ -742,7 +772,10 @@ impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
             rule_label.to_string(),
             bytes,
         );
-        self.intern.entry(content_hash).or_default().push(handle.clone());
+        self.intern
+            .entry(content_hash)
+            .or_default()
+            .push(handle.clone());
         handle
     }
 
@@ -755,8 +788,9 @@ impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
         group_members: &[String],
     ) -> Result<Option<FragmentHandle>, String> {
         let rewrite = &artifacts.def.rewrites[fact.rewrite_index];
-        let pattern = convert_lhs_pattern(&rewrite.left)
-            .map_err(|reject| format!("rule `{}` has no automaton image: {reject:?}", fact.label))?;
+        let pattern = convert_lhs_pattern(&rewrite.left).map_err(|reject| {
+            format!("rule `{}` has no automaton image: {reject:?}", fact.label)
+        })?;
         let accept_channel = accept_channel_for(artifacts, fact.rewrite_index)?;
         let bytes = encode_rule_fragment(
             family,
@@ -787,7 +821,10 @@ impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
                 .filter(|other| other.root_op == fact.root_op)
                 .map(|other| other.label.clone())
                 .collect();
-            if self.store_rule_fragment(artifacts, &family, fact, &group_members)?.is_none() {
+            if self
+                .store_rule_fragment(artifacts, &family, fact, &group_members)?
+                .is_none()
+            {
                 inserted += 1;
             }
         }
@@ -796,7 +833,10 @@ impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
         if self.backend.set(&manifest_key(&family), handle).is_none() {
             inserted += 1;
         }
-        Ok(SeedReport { inserted, store_entries: self.backend.len() })
+        Ok(SeedReport {
+            inserted,
+            store_entries: self.backend.len(),
+        })
     }
 
     /// Reconcile the store with `artifacts` after ONE appended rewrite whose
@@ -816,8 +856,10 @@ impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
         let previous = self.backend.group_entries(&prefix);
         let group_before = previous.len();
 
-        let members: Vec<&EntryFact> =
-            facts.iter().filter(|fact| fact.root_op == dirty_root_op).collect();
+        let members: Vec<&EntryFact> = facts
+            .iter()
+            .filter(|fact| fact.root_op == dirty_root_op)
+            .collect();
         let group_after = members.len();
         let member_labels: Vec<String> =
             members.iter().map(|member| member.label.clone()).collect();
@@ -1116,7 +1158,9 @@ mod tests {
         right.set_val_at(b"only-right", test_handle(b"R"));
         let joined = left.join(&right);
         assert_eq!(joined.val_count(), 3);
-        let at_k = joined.get_val_at(b"k").expect("the shared path survives the join");
+        let at_k = joined
+            .get_val_at(b"k")
+            .expect("the shared path survives the join");
         assert_eq!(at_k, &shared_left, "the joined value is the shared content");
     }
 
@@ -1167,7 +1211,9 @@ mod tests {
         };
         let dirty = appended_rule_root_op(&artifacts).expect("the appended entry has a root op");
         assert_eq!(dirty, "R0");
-        let report = store.reconcile_append(&artifacts, &dirty).expect("the append reconciles");
+        let report = store
+            .reconcile_append(&artifacts, &dirty)
+            .expect("the append reconciles");
         snapshots.push(store.snapshot());
         let entries: Vec<(Vec<u8>, Vec<u8>)> = store
             .backend()
@@ -1245,7 +1291,9 @@ mod tests {
                 ConstructionFragmentStore::new();
             store.seed_from_artifacts(&base).expect("the base seeds");
             let before = store.backend().entries();
-            let report = store.reconcile_append(&base, "R0").expect("the no-op reconciles");
+            let report = store
+                .reconcile_append(&base, "R0")
+                .expect("the no-op reconciles");
             assert_eq!(report.group_before, 1);
             assert_eq!(report.group_after, 1);
             assert_eq!(report.actual_invalidated(), 0, "nothing actually invalidated");
@@ -1274,9 +1322,7 @@ mod tests {
         // sees exactly its own group; group removal leaves every other key.
         let mut store: ConstructionFragmentStore<PathMapFragmentStore> =
             ConstructionFragmentStore::new();
-        for (root, label, payload) in
-            [("R0", "M0", "a"), ("R0", "MX0", "b"), ("R1", "M1", "c")]
-        {
+        for (root, label, payload) in [("R0", "M0", "a"), ("R0", "MX0", "b"), ("R1", "M1", "c")] {
             let handle = store.intern_fragment("Fam", root, label, payload.as_bytes().to_vec());
             store.backend.set(&rule_key("Fam", root, label), handle);
         }
@@ -1286,7 +1332,9 @@ mod tests {
 
         let r0 = store.backend().group_entries(&group_prefix("Fam", "R0"));
         assert_eq!(r0.len(), 2);
-        assert!(r0.iter().all(|(key, _)| key.starts_with(&group_prefix("Fam", "R0"))));
+        assert!(r0
+            .iter()
+            .all(|(key, _)| key.starts_with(&group_prefix("Fam", "R0"))));
         let r1 = store.backend().group_entries(&group_prefix("Fam", "R1"));
         assert_eq!(r1.len(), 1);
 
@@ -1294,7 +1342,13 @@ mod tests {
         let removed = store.backend.remove(&rule_key("Fam", "R0", "M0"));
         assert!(removed.is_some());
         assert_eq!(store.backend().len(), 3);
-        assert_eq!(store.backend().group_entries(&group_prefix("Fam", "R0")).len(), 1);
+        assert_eq!(
+            store
+                .backend()
+                .group_entries(&group_prefix("Fam", "R0"))
+                .len(),
+            1
+        );
         assert!(store.backend().get(&rule_key("Fam", "R1", "M1")).is_some());
         assert!(store.backend().get(&manifest_key("Fam")).is_some());
     }

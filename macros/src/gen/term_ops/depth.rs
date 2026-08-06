@@ -481,8 +481,9 @@ fn generate_binder_depth_arm(
     body_cat: &Ident,
     language: &LanguageDef,
 ) -> TokenStream {
-    let field_names: Vec<Ident> =
-        (0..pre_scope_fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let field_names: Vec<Ident> = (0..pre_scope_fields.len())
+        .map(|i| format_ident!("f{}", i))
+        .collect();
     let own = record_own_contribution(1);
     let child_dist = quote! { __child_dist };
     let pushes: Vec<TokenStream> = pre_scope_fields

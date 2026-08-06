@@ -500,7 +500,8 @@ fn the_corpus_really_does_contain_collection_literals_and_binders() {
         }
     }
     assert_eq!(
-        levels, 8,
+        levels,
+        8,
         "`{}` must nest 8 `CastList`/`ListLit` levels; walked {levels}. The alternating \
          ladder the stack gate measures is exactly this shape.",
         nested_list_source(8, 1)

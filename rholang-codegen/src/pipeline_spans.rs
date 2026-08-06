@@ -194,7 +194,9 @@ impl PhaseSpanReport {
 
     /// Every phase's statistics, in pipeline order.
     pub fn phases(&self) -> impl Iterator<Item = (PipelinePhase, PhaseSpanStats)> + '_ {
-        PipelinePhase::ALL.iter().map(|phase| (*phase, self.stats[phase.index()]))
+        PipelinePhase::ALL
+            .iter()
+            .map(|phase| (*phase, self.stats[phase.index()]))
     }
 
     /// The partition sum: `self_ns` across all phases — the instrumented wall time of the
@@ -255,13 +257,15 @@ pub fn begin_phase_span_collection() {
 /// is active. Spans still open at this point (i.e. `take` was called from inside the
 /// pipeline) are counted into [`PhaseSpanReport::mismatched_spans`].
 pub fn take_phase_span_report() -> Option<PhaseSpanReport> {
-    SPAN_COLLECTOR.with(|collector| collector.borrow_mut().take()).map(|window| {
-        let open = window.stack.len() as u64;
-        PhaseSpanReport {
-            stats: window.stats,
-            mismatched_spans: window.mismatched + open,
-        }
-    })
+    SPAN_COLLECTOR
+        .with(|collector| collector.borrow_mut().take())
+        .map(|window| {
+            let open = window.stack.len() as u64;
+            PhaseSpanReport {
+                stats: window.stats,
+                mismatched_spans: window.mismatched + open,
+            }
+        })
 }
 
 /// The drop-guard one phase activation holds: opened at phase entry, closed (and

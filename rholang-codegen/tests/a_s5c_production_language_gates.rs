@@ -113,15 +113,14 @@ use mettail_ast::language::{LanguageDef, Premise};
 use mettail_ast::pattern::{Pattern, PatternTerm};
 use mettail_rholang_codegen::{
     collect_guard_obligations, compile_in_rho_matching_ruleset, in_rho_match_all_sites_call_par,
-    in_rho_match_call_par, in_rho_static_gate, is_nested_structural_ac_rewrite,
-    lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-    rho_net_nested_structural_ac_match_entries, rho_net_structural_ac_match_entries,
-    rho_net_subst_injection_sites, rule_lhs_root_constructors, ruleset_all_entries_flat,
-    suggest_rejected_rule_dispositions, AutomatonUnsupported, DeferReason, GroundTerm,
-    InRhoMatchingRuleset, RhoCoverageEvidence, RhoDefaultBackendPlan,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
-    RhoNetLoweredRule, RhoRejectedRuleDisposition,
-    RhoRejectedRuleDispositionKind, UnsupportedFamily, LAMBDA_REFLECT_LABEL,
+    in_rho_match_call_par, in_rho_static_gate, is_nested_structural_ac_rewrite, lower_language_def,
+    plan_rho_default_backend, reconstruct_language_def, rho_net_nested_structural_ac_match_entries,
+    rho_net_structural_ac_match_entries, rho_net_subst_injection_sites, rule_lhs_root_constructors,
+    ruleset_all_entries_flat, suggest_rejected_rule_dispositions, AutomatonUnsupported,
+    DeferReason, GroundTerm, InRhoMatchingRuleset, RhoCoverageEvidence, RhoDefaultBackendPlan,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoNetLoweredRule,
+    RhoRejectedRuleDisposition, RhoRejectedRuleDispositionKind, UnsupportedFamily,
+    LAMBDA_REFLECT_LABEL,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,7 +139,9 @@ fn extract_language_body(source: &str) -> &str {
         .find('{')
         .map(|offset| macro_at + offset)
         .expect("the language! invocation must open a brace");
-    let close = source.rfind('}').expect("the language! invocation must close its brace");
+    let close = source
+        .rfind('}')
+        .expect("the language! invocation must close its brace");
     &source[open + 1..close]
 }
 
@@ -172,20 +173,24 @@ fn ambdemo_def() -> LanguageDef {
     // `languages/tests/definitions/`, not in the `languages` library. `include_str!` needs a
     // LITERAL path, so this reference is hand-maintained; a definition that moves without it
     // fails this build immediately and by name.
-    let body = extract_language_body(include_str!(
-        "../../languages/tests/definitions/ambdemo.rs"
-    ));
+    let body = extract_language_body(include_str!("../../languages/tests/definitions/ambdemo.rs"));
     let def = reconstruct_language_def(body).expect("the AmbDemo body must reconstruct");
     mettail_ast::validation::validate_language(&def).expect("the AmbDemo definition must validate");
     def
 }
 
 fn rewrite_names(def: &LanguageDef) -> Vec<String> {
-    def.rewrites.iter().map(|rewrite| rewrite.name.to_string()).collect()
+    def.rewrites
+        .iter()
+        .map(|rewrite| rewrite.name.to_string())
+        .collect()
 }
 
 fn term_labels(def: &LanguageDef) -> Vec<String> {
-    def.terms.iter().map(|term| term.label.to_string()).collect()
+    def.terms
+        .iter()
+        .map(|term| term.label.to_string())
+        .collect()
 }
 
 /// The rewrites carrying a `Premise::Congruence` — the exact set
@@ -244,7 +249,11 @@ fn admission_table(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> Vec<(St
                 .any(|(pid, _)| *pid == PatternId(index))
             {
                 Verdict::AutomatonEntry
-            } else if ruleset.ac_dispatch.iter().any(|e| e.fired_rule_label == label) {
+            } else if ruleset
+                .ac_dispatch
+                .iter()
+                .any(|e| e.fired_rule_label == label)
+            {
                 Verdict::AcDispatch
             } else if ruleset
                 .contextual_dispatch
@@ -280,7 +289,11 @@ fn admission_table(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> Vec<(St
 
 /// Assert one language's full admission table, printing the whole actual table
 /// on any deviation (never a silent partial diff).
-fn assert_admission_table(language: &str, actual: &[(String, Verdict)], expected: &[(&str, Verdict)]) {
+fn assert_admission_table(
+    language: &str,
+    actual: &[(String, Verdict)],
+    expected: &[(&str, Verdict)],
+) {
     let expected_owned: Vec<(String, Verdict)> = expected
         .iter()
         .map(|(label, verdict)| ((*label).to_string(), verdict.clone()))
@@ -972,7 +985,10 @@ fn ambient_suggested_dispositions_cover_all_seven_rejections_as_rho_ast_contract
         ["PZero", "PIn", "POut", "POpen", "PAmb", "PNew", "PPar"]
             .into_iter()
             .map(|label| {
-                RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::RhoAstContract)
+                RhoRejectedRuleDisposition::new(
+                    label,
+                    RhoRejectedRuleDispositionKind::RhoAstContract,
+                )
             })
             .collect();
     assert_eq!(
@@ -1088,14 +1104,8 @@ fn lambda_installs_with_the_three_congruence_exemptions_recorded() {
     assert_eq!(
         exempt,
         vec![
-            (
-                "rule:rewrite:1:AppCongL".to_string(),
-                UnsupportedFamily::DanglingRhsVariable,
-            ),
-            (
-                "rule:rewrite:2:AppCongR".to_string(),
-                UnsupportedFamily::DanglingRhsVariable,
-            ),
+            ("rule:rewrite:1:AppCongL".to_string(), UnsupportedFamily::DanglingRhsVariable,),
+            ("rule:rewrite:2:AppCongR".to_string(), UnsupportedFamily::DanglingRhsVariable,),
             ("rule:rewrite:3:LamCong".to_string(), UnsupportedFamily::LambdaBinder),
         ],
         "exactly the three congruence exemptions, recorded — never silent"
@@ -1152,10 +1162,7 @@ fn ambient_installs_with_the_exempt_trio_recorded_and_in_out_open_materialized()
         vec![
             ("rule:rewrite:3:ParCong".to_string(), UnsupportedFamily::CollectionAc),
             ("rule:rewrite:4:NewCong".to_string(), UnsupportedFamily::LambdaBinder),
-            (
-                "rule:rewrite:5:AmbCong".to_string(),
-                UnsupportedFamily::DanglingRhsVariable,
-            ),
+            ("rule:rewrite:5:AmbCong".to_string(), UnsupportedFamily::DanglingRhsVariable,),
         ],
         "exactly the three congruence exemptions, recorded — never silent"
     );

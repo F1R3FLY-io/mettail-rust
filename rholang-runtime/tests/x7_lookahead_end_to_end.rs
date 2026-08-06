@@ -38,6 +38,7 @@ use std::sync::Arc;
 
 use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rholang::Proc;
+use mettail_rholang_codegen::drive_fuel_channel;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, FltRegistry, FltResolve, RhoCoverageEvidence,
@@ -47,7 +48,6 @@ use mettail_rholang_runtime::lookahead::{
     SPEC_ALL_CHANNEL, SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL,
     SPEC_N_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
 };
-use mettail_rholang_codegen::drive_fuel_channel;
 use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
@@ -612,4 +612,3 @@ async fn omega_reports_the_guest_evaluator_giving_up() {
         );
     }
 }
-

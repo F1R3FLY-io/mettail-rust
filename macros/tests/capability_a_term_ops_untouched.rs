@@ -105,10 +105,7 @@ fn capability_a_commit(root: &Path) -> Result<String, String> {
 
 /// Total lines added + removed by `commit` under `path`.
 fn changed_lines(root: &Path, commit: &str, path: &str) -> Result<u64, String> {
-    let numstat = git(
-        root,
-        &["diff", "--numstat", &format!("{commit}^"), commit, "--", path],
-    )?;
+    let numstat = git(root, &["diff", "--numstat", &format!("{commit}^"), commit, "--", path])?;
     let mut total = 0u64;
     for line in numstat.lines() {
         let mut fields = line.split('\t');
@@ -121,8 +118,12 @@ fn changed_lines(root: &Path, commit: &str, path: &str) -> Result<u64, String> {
                 "unexpected binary diff entry under {path:?} in {commit}: {line:?}",
             ));
         }
-        total += added.parse::<u64>().map_err(|e| format!("bad numstat {line:?}: {e}"))?;
-        total += removed.parse::<u64>().map_err(|e| format!("bad numstat {line:?}: {e}"))?;
+        total += added
+            .parse::<u64>()
+            .map_err(|e| format!("bad numstat {line:?}: {e}"))?;
+        total += removed
+            .parse::<u64>()
+            .map_err(|e| format!("bad numstat {line:?}: {e}"))?;
     }
     Ok(total)
 }
@@ -136,8 +137,8 @@ fn capability_a_changed_no_line_under_term_ops() {
     // The same measurement, over the tree capability A did change. If this is 0, the
     // measurement is broken (wrong path, wrong commit, swallowed `--`) and the fenced-tree
     // zero below would be a false zero rather than evidence.
-    let changed = changed_lines(&root, &commit, CHANGED_PATH)
-        .expect("the control measurement must run");
+    let changed =
+        changed_lines(&root, &commit, CHANGED_PATH).expect("the control measurement must run");
     assert!(
         changed > 0,
         "ANTI-VACUITY: commit {commit} must show a NON-ZERO diff under {CHANGED_PATH}, \

@@ -62,11 +62,7 @@ pub struct NonSquareMatrix {
 
 impl std::fmt::Display for NonSquareMatrix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "row {} has {} entries, not {}",
-            self.row, self.row_len, self.order
-        )
+        write!(f, "row {} has {} entries, not {}", self.row, self.row_len, self.order)
     }
 }
 
@@ -85,11 +81,7 @@ pub fn try_matrix_star_ref<W: StarSemiringRef>(
 ) -> Result<Vec<Vec<W>>, NonSquareMatrix> {
     let n = adj.len();
     if let Some((row, cells)) = adj.iter().enumerate().find(|(_, row)| row.len() != n) {
-        return Err(NonSquareMatrix {
-            order: n,
-            row,
-            row_len: cells.len(),
-        });
+        return Err(NonSquareMatrix { order: n, row, row_len: cells.len() });
     }
     // Initialize: dist[i][j] = (I ⊕ A)[i][j].
     // The diagonal carries `one_ref() ⊕ adj[i][i]` (the zero-length-path
