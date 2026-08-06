@@ -102,6 +102,26 @@ fn flatten_parallel_into_recursive(bag: &mut HashBag<Proc>, proc: &Proc) {
     }
 }
 
+fn merge_pp_parallel_recursive(left: Proc, right: Proc) -> Proc {
+    fn flatten(bag: &mut HashBag<Proc>, proc: Proc) {
+        match &proc {
+            Proc::PPar(elements) => {
+                for (element, count) in elements.iter() {
+                    for _ in 0..count {
+                        flatten(bag, element.clone());
+                    }
+                }
+            },
+            _ => bag.insert(proc),
+        }
+    }
+
+    let mut bag = HashBag::new();
+    flatten(&mut bag, left);
+    flatten(&mut bag, right);
+    Proc::PPar(bag)
+}
+
 fn collect_pattern_bindings_recursive(
     pattern: &Proc,
     value: &Proc,
@@ -385,7 +405,7 @@ fn receive_direct_drivers_match_the_bounded_recursive_oracles() {
     }
 
     let mut nested_bag = HashBag::new();
-    nested_bag.insert(Proc::PParInfix(Arc::new(int(1)), Arc::new(int(2))));
+    nested_bag.insert_n(Proc::PParInfix(Arc::new(int(1)), Arc::new(int(2))), 3);
     nested_bag.insert(int(3));
     let parallel = Proc::PParInfix(
         Arc::new(Proc::PPar(nested_bag)),
@@ -393,9 +413,21 @@ fn receive_direct_drivers_match_the_bounded_recursive_oracles() {
     );
     let mut driven = HashBag::new();
     let mut recursive = HashBag::new();
-    flatten_parallel_into(&mut driven, &parallel);
+    crate::rholang::runtime::flatten_proc_parallel_into(&mut driven, &parallel);
     flatten_parallel_into_recursive(&mut recursive, &parallel);
     assert_eq!(driven, recursive);
+
+    let mut left_elements = HashBag::new();
+    left_elements.insert(Proc::PParInfix(Arc::new(int(6)), Arc::new(int(7))));
+    left_elements.insert(int(8));
+    let left = Proc::PPar(left_elements);
+    let mut right_elements = HashBag::new();
+    right_elements.insert(int(9));
+    let right = Proc::PPar(right_elements);
+    assert_eq!(
+        crate::rholang::runtime::merge_pp_parallel(left.clone(), right.clone()),
+        merge_pp_parallel_recursive(left, right),
+    );
 }
 
 #[test]
@@ -430,8 +462,19 @@ fn receive_direct_drivers_are_stack_safe_at_depth_20k() {
                 parallel = Proc::PParInfix(Arc::new(parallel), Arc::new(int(value as i64)));
             }
             let mut flat = HashBag::new();
-            flatten_parallel_into(&mut flat, &parallel);
+            crate::rholang::runtime::flatten_proc_parallel_into(&mut flat, &parallel);
             assert_eq!(flat.len(), DEPTH + 1);
+
+            // This is the production left-fold shape. Each merge must retain the accumulated
+            // bag and its hash summary; rebuilding all prior members would make this quadratic.
+            let mut merged = int(0);
+            for value in 1..=DEPTH {
+                merged = crate::rholang::runtime::merge_pp_parallel(merged, int(value as i64));
+            }
+            let Proc::PPar(elements) = &merged else {
+                panic!("parallel merge must return PPar")
+            };
+            assert_eq!(elements.len(), DEPTH + 1);
         })
         .expect("spawn receive direct depth gate")
         .join()

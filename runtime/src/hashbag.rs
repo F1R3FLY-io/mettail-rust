@@ -35,15 +35,69 @@ use moniker::{OnBoundFn, OnFreeFn, ScopeState};
 /// # Type Parameters
 ///
 /// * `T` - Element type, must be `Clone + Hash + Eq`
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HashBag<T: Clone + Hash + Eq> {
     /// Map from elements to their counts
     counts: HashMap<T, usize, BuildHasherDefault<FxHasher>>,
     /// Total number of elements (sum of all counts)
     total_count: usize,
+    /// Order-independent element/count lanes maintained incrementally by every mutation.
+    ///
+    /// Keeping these lanes with the bag makes hashing the bag O(1). In particular, hashing a
+    /// `Proc::PPar` no longer re-hashes every descendant of an already-built nested parallel
+    /// term. The four lanes are exactly those historically computed by [`Hash::hash`], so this
+    /// changes cost, not the emitted hash stream.
+    hash_summary: HashBagHashSummary,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct HashBagHashSummary {
+    sum_a: u64,
+    sum_b: u64,
+    xor_a: u64,
+    xor_b: u64,
+}
+
+impl HashBagHashSummary {
+    fn add(&mut self, lanes: (u64, u64)) {
+        let (a, b) = lanes;
+        self.sum_a = self.sum_a.wrapping_add(a);
+        self.sum_b = self.sum_b.wrapping_add(b);
+        self.xor_a ^= a.rotate_left((b & 63) as u32);
+        self.xor_b ^= b.rotate_left((a & 63) as u32);
+    }
+
+    fn remove(&mut self, lanes: (u64, u64)) {
+        let (a, b) = lanes;
+        self.sum_a = self.sum_a.wrapping_sub(a);
+        self.sum_b = self.sum_b.wrapping_sub(b);
+        self.xor_a ^= a.rotate_left((b & 63) as u32);
+        self.xor_b ^= b.rotate_left((a & 63) as u32);
+    }
+}
+
+fn hashbag_entry_lanes<T: Hash>(elem: &T, count: usize) -> (u64, u64) {
+    let mut ha = FxHasher::with_seed(0);
+    elem.hash(&mut ha);
+    count.hash(&mut ha);
+    let a = mix_hashbag_lane(ha.finish());
+
+    let mut hb = FxHasher::with_seed(0x9e37_79b9_7f4a_7c15usize);
+    count.hash(&mut hb);
+    elem.hash(&mut hb);
+    let b = mix_hashbag_lane(hb.finish());
+    (a, b)
 }
 
 impl<T: Clone + Hash + Eq> HashBag<T> {
+    fn rebuild_hash_summary(&mut self) {
+        let mut summary = HashBagHashSummary::default();
+        for (element, count) in &self.counts {
+            summary.add(hashbag_entry_lanes(element, *count));
+        }
+        self.hash_summary = summary;
+    }
+
     /// Creates an empty `HashBag`.
     ///
     /// # Examples
@@ -58,6 +112,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         Self {
             counts: HashMap::default(),
             total_count: 0,
+            hash_summary: HashBagHashSummary::default(),
         }
     }
 
@@ -94,7 +149,24 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// assert_eq!(HashBag::count(&bag, &"a"), 2);
     /// ```
     pub fn insert(&mut self, item: T) {
-        *self.counts.entry(item).or_insert(0) += 1;
+        let (old_lanes, new_lanes) = match self.counts.entry(item) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let old_count = *entry.get();
+                let old_lanes = hashbag_entry_lanes(entry.key(), old_count);
+                *entry.get_mut() = old_count + 1;
+                let new_lanes = hashbag_entry_lanes(entry.key(), old_count + 1);
+                (Some(old_lanes), new_lanes)
+            },
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let new_lanes = hashbag_entry_lanes(entry.key(), 1);
+                entry.insert(1);
+                (None, new_lanes)
+            },
+        };
+        if let Some(old_lanes) = old_lanes {
+            self.hash_summary.remove(old_lanes);
+        }
+        self.hash_summary.add(new_lanes);
         self.total_count += 1;
     }
 
@@ -121,9 +193,16 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// ```
     pub fn remove(&mut self, item: &T) -> bool {
         if let Some(count) = self.counts.get_mut(item) {
+            let old_count = *count;
+            let old_lanes = hashbag_entry_lanes(item, old_count);
+            let new_lanes = (old_count > 1).then(|| hashbag_entry_lanes(item, old_count - 1));
             *count -= 1;
+            self.hash_summary.remove(old_lanes);
+            if let Some(new_lanes) = new_lanes {
+                self.hash_summary.add(new_lanes);
+            }
             self.total_count -= 1;
-            if *count == 0 {
+            if old_count == 1 {
                 self.counts.remove(item);
             }
             true
@@ -221,7 +300,25 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// ```
     pub fn insert_n(&mut self, item: T, count: usize) {
         if count > 0 {
-            *self.counts.entry(item).or_insert(0) += count;
+            let (old_lanes, new_lanes) = match self.counts.entry(item) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    let old_count = *entry.get();
+                    let old_lanes = hashbag_entry_lanes(entry.key(), old_count);
+                    let new_count = old_count + count;
+                    *entry.get_mut() = new_count;
+                    let new_lanes = hashbag_entry_lanes(entry.key(), new_count);
+                    (Some(old_lanes), new_lanes)
+                },
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let new_lanes = hashbag_entry_lanes(entry.key(), count);
+                    entry.insert(count);
+                    (None, new_lanes)
+                },
+            };
+            if let Some(old_lanes) = old_lanes {
+                self.hash_summary.remove(old_lanes);
+            }
+            self.hash_summary.add(new_lanes);
             self.total_count += count;
         }
     }
@@ -276,9 +373,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     pub fn union(&self, other: &Self) -> Self {
         let mut bag = self.clone();
         for (elem, count) in other.counts.iter() {
-            for _ in 0..*count {
-                bag.insert(elem.clone());
-            }
+            bag.insert_n(elem.clone(), *count);
         }
         bag
     }
@@ -311,6 +406,16 @@ impl<T: Clone + Hash + Eq> PartialEq for HashBag<T> {
 
 impl<T: Clone + Hash + Eq> Eq for HashBag<T> {}
 
+impl<T: Clone + Hash + Eq + fmt::Debug> fmt::Debug for HashBag<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HashBag")
+            .field("counts", &self.counts)
+            .field("total_count", &self.total_count)
+            .finish()
+    }
+}
+
 // Hash: order-independent over all (element, count) pairs.
 //
 // We cannot assume `T: Ord`, and sorting by a hash key is not enough: if two
@@ -323,33 +428,10 @@ impl<T: Clone + Hash + Eq> Hash for HashBag<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.total_count.hash(state);
         self.counts.len().hash(state);
-
-        let mut sum_a = 0u64;
-        let mut sum_b = 0u64;
-        let mut xor_a = 0u64;
-        let mut xor_b = 0u64;
-
-        for (elem, count) in self.counts.iter() {
-            let mut ha = FxHasher::with_seed(0);
-            elem.hash(&mut ha);
-            count.hash(&mut ha);
-            let a = mix_hashbag_lane(ha.finish());
-
-            let mut hb = FxHasher::with_seed(0x9e37_79b9_7f4a_7c15usize);
-            count.hash(&mut hb);
-            elem.hash(&mut hb);
-            let b = mix_hashbag_lane(hb.finish());
-
-            sum_a = sum_a.wrapping_add(a);
-            sum_b = sum_b.wrapping_add(b);
-            xor_a ^= a.rotate_left((b & 63) as u32);
-            xor_b ^= b.rotate_left((a & 63) as u32);
-        }
-
-        sum_a.hash(state);
-        sum_b.hash(state);
-        xor_a.hash(state);
-        xor_b.hash(state);
+        self.hash_summary.sum_a.hash(state);
+        self.hash_summary.sum_b.hash(state);
+        self.hash_summary.xor_a.hash(state);
+        self.hash_summary.xor_b.hash(state);
     }
 }
 
@@ -497,6 +579,7 @@ where
             elem.close_term(state, on_free);
             self.counts.insert(elem, count);
         }
+        self.rebuild_hash_summary();
     }
 
     fn open_term(&mut self, state: ScopeState, on_bound: &impl OnBoundFn<N>) {
@@ -508,6 +591,7 @@ where
             elem.open_term(state, on_bound);
             self.counts.insert(elem, count);
         }
+        self.rebuild_hash_summary();
     }
 
     fn visit_vars(&self, on_var: &mut impl FnMut(&Var<N>)) {
@@ -525,6 +609,7 @@ where
             elem.visit_mut_vars(on_var);
             self.counts.insert(elem, count);
         }
+        self.rebuild_hash_summary();
     }
 }
 
@@ -559,11 +644,48 @@ impl<T: Clone + Hash + Eq + Ord + fmt::Display> fmt::Display for HashBag<T> {
 mod tests {
     use super::*;
     use std::collections::hash_map::DefaultHasher;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     fn hash_of<T: Hash>(value: &T) -> u64 {
         let mut h = DefaultHasher::new();
         value.hash(&mut h);
         h.finish()
+    }
+
+    fn legacy_hash_of<T: Clone + Hash + Eq>(bag: &HashBag<T>) -> u64 {
+        let mut state = DefaultHasher::new();
+        bag.total_count.hash(&mut state);
+        bag.counts.len().hash(&mut state);
+
+        let mut sum_a = 0u64;
+        let mut sum_b = 0u64;
+        let mut xor_a = 0u64;
+        let mut xor_b = 0u64;
+        for (element, count) in &bag.counts {
+            let mut ha = FxHasher::with_seed(0);
+            element.hash(&mut ha);
+            count.hash(&mut ha);
+            let a = mix_hashbag_lane(ha.finish());
+
+            let mut hb = FxHasher::with_seed(0x9e37_79b9_7f4a_7c15usize);
+            count.hash(&mut hb);
+            element.hash(&mut hb);
+            let b = mix_hashbag_lane(hb.finish());
+
+            sum_a = sum_a.wrapping_add(a);
+            sum_b = sum_b.wrapping_add(b);
+            xor_a ^= a.rotate_left((b & 63) as u32);
+            xor_b ^= b.rotate_left((a & 63) as u32);
+        }
+        sum_a.hash(&mut state);
+        sum_b.hash(&mut state);
+        xor_a.hash(&mut state);
+        xor_b.hash(&mut state);
+        state.finish()
+    }
+
+    fn assert_cached_hash_matches_legacy<T: Clone + Hash + Eq>(bag: &HashBag<T>) {
+        assert_eq!(hash_of(bag), legacy_hash_of(bag));
     }
 
     #[test]
@@ -608,5 +730,49 @@ mod tests {
 
         assert_eq!(left, right);
         assert_eq!(hash_of(&left), hash_of(&right));
+    }
+
+    #[test]
+    fn cached_hash_is_byte_identical_to_legacy_recomputation_after_mutations() {
+        let mut bag = HashBag::new();
+        assert_cached_hash_matches_legacy(&bag);
+
+        bag.insert_n(CollidingKey(1), 3);
+        assert_cached_hash_matches_legacy(&bag);
+        bag.insert(CollidingKey(2));
+        assert_cached_hash_matches_legacy(&bag);
+        bag.insert(CollidingKey(1));
+        assert_cached_hash_matches_legacy(&bag);
+        assert!(bag.remove(&CollidingKey(1)));
+        assert_cached_hash_matches_legacy(&bag);
+        assert!(bag.remove(&CollidingKey(2)));
+        assert_cached_hash_matches_legacy(&bag);
+
+        let cloned = bag.clone();
+        assert_eq!(hash_of(&cloned), legacy_hash_of(&cloned));
+    }
+
+    static ELEMENT_HASH_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CountingKey(u8);
+
+    impl Hash for CountingKey {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            ELEMENT_HASH_CALLS.fetch_add(1, AtomicOrdering::Relaxed);
+            self.0.hash(state);
+        }
+    }
+
+    #[test]
+    fn hashing_a_built_bag_does_not_rehash_its_elements() {
+        let mut bag = HashBag::new();
+        bag.insert_n(CountingKey(7), 4);
+        ELEMENT_HASH_CALLS.store(0, AtomicOrdering::Relaxed);
+
+        let first = hash_of(&bag);
+        let second = hash_of(&bag);
+        assert_eq!(first, second);
+        assert_eq!(ELEMENT_HASH_CALLS.load(AtomicOrdering::Relaxed), 0);
     }
 }

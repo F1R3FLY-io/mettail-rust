@@ -1492,32 +1492,6 @@ pub(crate) fn pfor_continuation_after_first_row(rows: &[ForRow], body: &Proc) ->
     }
 }
 
-fn schedule_parallel_bag<'a>(work: &mut Vec<&'a Proc>, bag: &'a HashBag<Proc>) {
-    let start = work.len();
-    for (element, count) in bag.iter() {
-        for _ in 0..count {
-            work.push(element);
-        }
-    }
-    // The source iterator's order is arbitrary but stable for this bag. Reverse only the newly
-    // appended slice so the last-in/first-out driver consumes it in that same observed order.
-    work[start..].reverse();
-}
-
-fn flatten_parallel_into(bag: &mut HashBag<Proc>, proc: &Proc) {
-    let mut work = vec![proc];
-    while let Some(proc) = work.pop() {
-        match proc {
-            Proc::PPar(elements) => schedule_parallel_bag(&mut work, elements),
-            Proc::PParInfix(left, right) => {
-                work.push(right);
-                work.push(left);
-            },
-            other => bag.insert(other.clone()),
-        }
-    }
-}
-
 /// One-step `PForUser` communication reduction on a `PPar`, mirroring the former
 /// `CommPattern` / `CommPatternWhere` / `Comm` rewrite rules.
 pub fn try_comm_rw_proc(s: &Proc) -> Option<Proc> {
@@ -1526,9 +1500,7 @@ pub fn try_comm_rw_proc(s: &Proc) -> Option<Proc> {
     };
     let mut flat_bag = HashBag::new();
     for (elem, count) in bag.iter() {
-        for _ in 0..count {
-            flatten_parallel_into(&mut flat_bag, elem);
-        }
+        crate::rholang::runtime::flatten_proc_parallel_n_into(&mut flat_bag, elem, count);
     }
     for (cand, _) in flat_bag.iter() {
         if let Proc::PForUser(rows, body) = cand {

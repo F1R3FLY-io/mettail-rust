@@ -185,52 +185,84 @@ pub(crate) fn mk_output(name: &super::Name, mut items: Vec<Proc>, persistent: bo
     }
 }
 
-pub(crate) fn merge_pp_parallel(lhs: Proc, rhs: Proc) -> Proc {
-    let mut bag = mettail_runtime::HashBag::new();
-    fn flatten(bag: &mut mettail_runtime::HashBag<Proc>, p: Proc) {
-        // `Proc` implements `Drop`; match by reference so we don't move `ps` out of
-        // it. The catch-all still owns `p` (the borrow ends before the arm body).
-        match &p {
-            Proc::PPar(ps) => {
-                for (elem, count) in ps.iter() {
-                    for _ in 0..count {
-                        flatten(bag, elem.clone());
-                    }
-                }
-            },
-            _ => bag.insert(p),
-        }
-    }
-    flatten(&mut bag, lhs);
-    flatten(&mut bag, rhs);
+pub(crate) fn merge_pp_parallel(mut lhs: Proc, mut rhs: Proc) -> Proc {
+    // `PPar` is the canonical, already-flat representation emitted by the generated
+    // `insert_into_ppar` constructor. Both operands are owned here, so retain their hash table
+    // and its cached element hashes instead of cloning every accumulated member into a fresh
+    // bag on every binary fold. Choosing the larger bag bounds a balanced merge to moving the
+    // smaller side; a left fold adds only its new right-hand term.
+    let lhs_bag = match &mut lhs {
+        Proc::PPar(elements) => Some(std::mem::take(elements)),
+        _ => None,
+    };
+    let rhs_bag = match &mut rhs {
+        Proc::PPar(elements) => Some(std::mem::take(elements)),
+        _ => None,
+    };
+
+    let bag = match (lhs_bag, rhs_bag) {
+        (Some(mut left), Some(mut right)) => {
+            if left.len() < right.len() {
+                std::mem::swap(&mut left, &mut right);
+            }
+            for (element, count) in right {
+                left.insert_n(element, count);
+            }
+            left
+        },
+        (Some(mut left), None) => {
+            left.insert(rhs);
+            left
+        },
+        (None, Some(mut right)) => {
+            right.insert(lhs);
+            right
+        },
+        (None, None) => {
+            let mut elements = mettail_runtime::HashBag::new();
+            elements.insert(lhs);
+            elements.insert(rhs);
+            elements
+        },
+    };
     Proc::PPar(bag)
 }
 
-pub(crate) fn normalize_bag_elements(bag: &HashBag<Proc>) -> HashBag<Proc> {
-    fn flatten_proc_into_bag(out: &mut HashBag<Proc>, p: &Proc) {
-        match p {
-            Proc::PPar(ps) => {
-                for (elem, count) in ps.iter() {
-                    for _ in 0..count {
-                        flatten_proc_into_bag(out, elem);
-                    }
+pub(crate) fn flatten_proc_parallel_into(out: &mut HashBag<Proc>, root: &Proc) {
+    flatten_proc_parallel_n_into(out, root, 1);
+}
+
+pub(crate) fn flatten_proc_parallel_n_into(
+    out: &mut HashBag<Proc>,
+    root: &Proc,
+    root_count: usize,
+) {
+    let mut work = vec![(root, root_count)];
+    while let Some((proc, multiplicity)) = work.pop() {
+        match proc {
+            Proc::PPar(elements) => {
+                let start = work.len();
+                for (element, count) in elements.iter() {
+                    let combined = multiplicity
+                        .checked_mul(count)
+                        .expect("parallel multiplicity exceeds usize");
+                    work.push((element, combined));
                 }
+                work[start..].reverse();
             },
-            Proc::PParInfix(a, b) => {
-                flatten_proc_into_bag(out, a);
-                flatten_proc_into_bag(out, b);
+            Proc::PParInfix(left, right) => {
+                work.push((right, multiplicity));
+                work.push((left, multiplicity));
             },
-            other => {
-                out.insert(other.clone());
-            },
+            other => out.insert_n(other.clone(), multiplicity),
         }
     }
+}
 
+pub(crate) fn normalize_bag_elements(bag: &HashBag<Proc>) -> HashBag<Proc> {
     let mut out = HashBag::new();
     for (elem, count) in bag.iter() {
-        for _ in 0..count {
-            flatten_proc_into_bag(&mut out, elem);
-        }
+        flatten_proc_parallel_n_into(&mut out, elem, count);
     }
     out
 }
