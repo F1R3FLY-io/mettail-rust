@@ -301,52 +301,71 @@ pub(crate) fn canon_for_term_equality(p: &Proc) -> Proc {
     normalize_send_sugar_canon(p)
 }
 
-// ── canonical channel Name for a send: lower @Nil/@P name sugar, recurse the quoted proc ──
-fn canon_channel_name(n: &Name) -> Name {
-    // `Name` implements `Drop`; match by reference so we don't move a field out.
-    let lowered = crate::rholang::receive::normalize_quote_name(n);
-    match &lowered {
-        Name::NQuote(p) => {
-            Name::NQuote(std::sync::Arc::new(normalize_send_sugar_canon(p.as_ref())))
-        },
-        _ => lowered,
-    }
-}
-
 fn nquote(p: Proc) -> Name {
     Name::NQuote(std::sync::Arc::new(p))
 }
 
-/// Scalar-send canonical payload: recurse into the payload, then arity-normalize
-/// (scalar `q` → one-element list `[q]`, `CastList` kept, `PZero` → `[]`).
-fn canon_scalar_payload(q: &Proc) -> Proc {
-    crate::rholang::receive::canonicalize_arity_payload(&normalize_send_sugar_canon(q))
+enum SendCanonJob<'a> {
+    VisitProc(&'a Proc),
+    FinishProc(&'a Proc),
+    VisitName(&'a Name),
+    FinishNameQuote,
+    FinishNew(Vec<mettail_runtime::Binder<String>>),
+    FinishQueryFor(&'a [ForRow]),
+    FinishParallel(Vec<usize>),
 }
 
-/// Polyadic-send canonical payload: `mk_proc_list([canon(a), ..canon(bs)])`.
-fn canon_multi_payload(a: &Proc, bs: &[Proc]) -> Proc {
-    let mut items = Vec::with_capacity(1 + bs.len());
-    items.push(normalize_send_sugar_canon(a));
-    items.extend(bs.iter().map(normalize_send_sugar_canon));
-    mk_proc_list(items)
+fn take_canon_results(results: &mut Vec<Proc>, count: usize) -> Vec<Proc> {
+    let start = results
+        .len()
+        .checked_sub(count)
+        .expect("send canonicalizer result-stack underflow");
+    results.split_off(start)
 }
 
-/// Canonicalize a `for`-row: the `where`-guard is a `Proc` that carries the
-/// `@Nil!(n)` number-encoded operands (`for(p<-r where p + @Nil!(1) > @Nil!(0))`),
-/// so it must be canonicalized like any other Proc subterm. The bind channels
-/// are left as-is (the guard is where the projection surface materializes).
-fn canon_forrow(row: &ForRow) -> ForRow {
-    match row {
-        ForRow::ForRowSingleWhere(b, guard) => ForRow::ForRowSingleWhere(
-            b.clone(),
-            std::sync::Arc::new(normalize_send_sugar_canon(guard.as_ref())),
-        ),
-        ForRow::ForRowWhere(b, bs, guard) => ForRow::ForRowWhere(
-            b.clone(),
-            bs.clone(),
-            std::sync::Arc::new(normalize_send_sugar_canon(guard.as_ref())),
-        ),
-        other => other.clone(),
+/// Collect one whole canonical parallel region before normalizing its leaves. A count is carried
+/// beside each leaf instead of materializing one job per occurrence.
+fn collect_parallel_canon_leaves<'a>(root: &'a Proc, leaves: &mut Vec<(&'a Proc, usize)>) {
+    let mut work = vec![(root, 1usize)];
+    while let Some((proc, multiplicity)) = work.pop() {
+        match proc {
+            Proc::PPar(elements) => {
+                let start = work.len();
+                for (element, count) in elements.iter() {
+                    let combined = multiplicity
+                        .checked_mul(count)
+                        .expect("parallel multiplicity exceeds usize");
+                    work.push((element, combined));
+                }
+                work[start..].reverse();
+            },
+            Proc::PParInfix(left, right) => {
+                work.push((right, multiplicity));
+                work.push((left, multiplicity));
+            },
+            leaf => leaves.push((leaf, multiplicity)),
+        }
+    }
+}
+
+/// Insert an already-normalized process into a canonical `PPar`, consuming the representative and
+/// preserving compressed multiplicity. Only `PPar` is transparent here: `PParInfix` has already
+/// been normalized by the canonicalizer and is not silently reinterpreted by this helper.
+fn insert_owned_ppar_n(out: &mut HashBag<Proc>, root: Proc, root_count: usize) {
+    let mut work = vec![(root, root_count)];
+    while let Some((mut proc, multiplicity)) = work.pop() {
+        if let Proc::PPar(elements) = &mut proc {
+            let start = work.len();
+            for (element, count) in std::mem::take(elements) {
+                let combined = multiplicity
+                    .checked_mul(count)
+                    .expect("parallel multiplicity exceeds usize");
+                work.push((element, combined));
+            }
+            work[start..].reverse();
+        } else {
+            out.insert_n(proc, multiplicity);
+        }
     }
 }
 
@@ -360,223 +379,597 @@ fn canon_forrow(row: &ForRow) -> ForRow {
 /// → POutput(NQuote(name_pattern_to_proc(n)), q)`). Idempotent.
 fn normalize_send_sugar_canon(p: &Proc) -> Proc {
     use std::sync::Arc;
-    let rc = |a: &Arc<Proc>| Arc::new(normalize_send_sugar_canon(a.as_ref()));
-    let rcv = |v: &[Proc]| -> Vec<Proc> { v.iter().map(normalize_send_sugar_canon).collect() };
+    let proc_arena = typed_arena::Arena::<Proc>::new();
+    let name_arena = typed_arena::Arena::<Name>::new();
+    let mut jobs = vec![SendCanonJob::VisitProc(p)];
+    let mut proc_results = Vec::new();
+    let mut name_results = Vec::new();
 
-    match p {
-        // ═══ @-send sugar → canonical POutput/PPersistOutput(NQuote(chan), payload) ═══
-        // channel-first (n:Name): lower the channel name, recurse/arity the payload.
-        Proc::POutput(n, q) => {
-            Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(canon_scalar_payload(q)))
-        },
-        Proc::PPersistOutput(n, q) => {
-            Proc::PPersistOutput(Arc::new(canon_channel_name(n)), Arc::new(canon_scalar_payload(q)))
-        },
-        Proc::POutputEmpty(n) => {
-            Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(mk_proc_list(vec![])))
-        },
-        Proc::PPersistOutputEmpty(n) => {
-            Proc::PPersistOutput(Arc::new(canon_channel_name(n)), Arc::new(mk_proc_list(vec![])))
-        },
-        Proc::POutput2Plus(n, a, bs) => {
-            Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(canon_multi_payload(a, bs)))
-        },
-        Proc::PPersistOutput2Plus(n, a, bs) => Proc::PPersistOutput(
-            Arc::new(canon_channel_name(n)),
-            Arc::new(canon_multi_payload(a, bs)),
-        ),
-        // @Nil (fixed PZero channel)
-        Proc::POutputNil(q) => {
-            Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_scalar_payload(q)))
-        },
-        Proc::PPersistOutputNil(q) => {
-            Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_scalar_payload(q)))
-        },
-        Proc::POutputNilEmpty => {
-            Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(mk_proc_list(vec![])))
-        },
-        Proc::PPersistOutputNilEmpty => {
-            Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), Arc::new(mk_proc_list(vec![])))
-        },
-        Proc::POutputNil2Plus(a, bs) => {
-            Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_multi_payload(a, bs)))
-        },
-        Proc::PPersistOutputNil2Plus(a, bs) => Proc::PPersistOutput(
-            Arc::new(nquote(Proc::PZero)),
-            Arc::new(canon_multi_payload(a, bs)),
-        ),
-        // @P short (p:Proc channel → NQuote(p))
-        Proc::POutputShort(pc, q) => Proc::POutput(
-            Arc::new(nquote(normalize_send_sugar_canon(pc))),
-            Arc::new(canon_scalar_payload(q)),
-        ),
-        Proc::PPersistOutputShort(pc, q) => Proc::PPersistOutput(
-            Arc::new(nquote(normalize_send_sugar_canon(pc))),
-            Arc::new(canon_scalar_payload(q)),
-        ),
-        Proc::POutputShortEmpty(pc) => Proc::POutput(
-            Arc::new(nquote(normalize_send_sugar_canon(pc))),
-            Arc::new(mk_proc_list(vec![])),
-        ),
-        Proc::PPersistOutputShortEmpty(pc) => Proc::PPersistOutput(
-            Arc::new(nquote(normalize_send_sugar_canon(pc))),
-            Arc::new(mk_proc_list(vec![])),
-        ),
-        Proc::POutputShort2Plus(pc, a, bs) => Proc::POutput(
-            Arc::new(nquote(normalize_send_sugar_canon(pc))),
-            Arc::new(canon_multi_payload(a, bs)),
-        ),
-        Proc::PPersistOutputShort2Plus(pc, a, bs) => Proc::PPersistOutput(
-            Arc::new(nquote(normalize_send_sugar_canon(pc))),
-            Arc::new(canon_multi_payload(a, bs)),
-        ),
-        // @n quoted (n:Name → NQuote(name_pattern_to_proc(n)))
-        Proc::POutputQuoted(n, q) => Proc::POutput(
-            Arc::new(nquote(crate::rholang::receive::name_pattern_to_proc(n))),
-            Arc::new(canon_scalar_payload(q)),
-        ),
-        Proc::POutputQuotedEmpty(n) => Proc::POutput(
-            Arc::new(nquote(crate::rholang::receive::name_pattern_to_proc(n))),
-            Arc::new(mk_proc_list(vec![])),
-        ),
-        Proc::POutputQuoted2Plus(n, a, bs) => Proc::POutput(
-            Arc::new(nquote(crate::rholang::receive::name_pattern_to_proc(n))),
-            Arc::new(canon_multi_payload(a, bs)),
-        ),
-
-        // ═══ containers / binders (recurse; keep the PForUser query-send desugar) ═══
-        Proc::PParInfix(a, b) => {
-            merge_pp_parallel(normalize_send_sugar_canon(a), normalize_send_sugar_canon(b))
-        },
-        Proc::PPar(ps) => {
-            let mut out = mettail_runtime::HashBag::new();
-            for (elem, count) in ps.iter() {
-                let norm_elem = normalize_send_sugar_canon(elem);
-                for _ in 0..count {
-                    Proc::insert_into_ppar(&mut out, norm_elem.clone());
-                }
-            }
-            Proc::PPar(out)
-        },
-        Proc::PNew(scope) => {
-            let (binders, body) = scope.clone().unbind();
-            let norm_body = normalize_send_sugar_canon(&body);
-            Proc::PNew(mettail_runtime::Scope::new(binders, Arc::new(norm_body)))
-        },
-        Proc::PForUser(rows, body) => {
-            let body_norm = normalize_send_sugar_canon(body.as_ref());
-            if crate::rholang::receive::pfor_user_still_has_query_rows(rows) {
-                normalize_send_sugar_canon(&crate::rholang::receive::desugar_for_rows(
-                    rows.clone(),
-                    &body_norm,
-                ))
-            } else {
-                // The `where`-guard (which carries `@Nil!(n)` number-encoded operands) lives in
-                // the ForRow, not the body — canon each row's guard.
-                let rows_norm: Vec<ForRow> = rows.iter().map(canon_forrow).collect();
-                Proc::PForUser(rows_norm, Arc::new(body_norm))
-            }
-        },
-        Proc::GuardThen(a, b) => Proc::GuardThen(rc(a), rc(b)),
-        Proc::CommWhere(a, n, b, c, d) => {
-            Proc::CommWhere(rc(a), Arc::new(canon_channel_name(n)), rc(b), rc(c), rc(d))
-        },
-
-        // ═══ Proc operators (the projection-surface operand positions) — recurse ═══
-        Proc::Or(a, b) => Proc::Or(rc(a), rc(b)),
-        Proc::And(a, b) => Proc::And(rc(a), rc(b)),
-        // M-0: `implies` recurses like its propositional siblings so send-sugar inside either
-        // operand canonicalizes (otherwise the identity arm would freeze the sugar in place).
-        Proc::Implies(a, b) => Proc::Implies(rc(a), rc(b)),
-        // M-1b: the spatial surface. `matches` canonicalizes BOTH operands — the
-        // target because it is an ordinary term, and the FORMULA because a formula
-        // is a `Proc` sub-tree read as a pattern, so a send-sugar spelling inside it
-        // must reach the same canonical form the term it is meant to match does.
-        // Canonicalizing only one side would make `@Nil!(1) matches @Nil!(1)` depend
-        // on which sugar each side happened to be written in.
-        Proc::Matches(a, b) => Proc::Matches(rc(a), rc(b)),
-        Proc::SpatialPPar(a, b) => Proc::SpatialPPar(rc(a), rc(b)),
-        Proc::BitOr(a, b) => Proc::BitOr(rc(a), rc(b)),
-        Proc::BitAnd(a, b) => Proc::BitAnd(rc(a), rc(b)),
-        Proc::BitNot(a) => Proc::BitNot(rc(a)),
-        Proc::Eq(a, b) => Proc::Eq(rc(a), rc(b)),
-        Proc::Ne(a, b) => Proc::Ne(rc(a), rc(b)),
-        Proc::Gt(a, b) => Proc::Gt(rc(a), rc(b)),
-        Proc::Lt(a, b) => Proc::Lt(rc(a), rc(b)),
-        Proc::GtEq(a, b) => Proc::GtEq(rc(a), rc(b)),
-        Proc::LtEq(a, b) => Proc::LtEq(rc(a), rc(b)),
-        Proc::Add(a, b) => Proc::Add(rc(a), rc(b)),
-        Proc::Sub(a, b) => Proc::Sub(rc(a), rc(b)),
-        Proc::Mul(a, b) => Proc::Mul(rc(a), rc(b)),
-        Proc::Div(a, b) => Proc::Div(rc(a), rc(b)),
-        Proc::Mod(a, b) => Proc::Mod(rc(a), rc(b)),
-        Proc::NegProc(a) => Proc::NegProc(rc(a)),
-        Proc::Not(a) => Proc::Not(rc(a)),
-        Proc::ToBool(a) => Proc::ToBool(rc(a)),
-        Proc::ToStr(a) => Proc::ToStr(rc(a)),
-        Proc::FractionProc(a, b) => Proc::FractionProc(rc(a), rc(b)),
-        Proc::IntBinProc(a, w) => Proc::IntBinProc(rc(a), w.clone()),
-        Proc::UIntBinProc(a, w) => Proc::UIntBinProc(rc(a), w.clone()),
-        Proc::FloatBinProc(a, w) => Proc::FloatBinProc(rc(a), w.clone()),
-        Proc::FixedBinProc(a, w) => Proc::FixedBinProc(rc(a), w.clone()),
-        Proc::BigintCastProc(a) => Proc::BigintCastProc(rc(a)),
-        Proc::BigratCastProc(a) => Proc::BigratCastProc(rc(a)),
-        // Method syntax is one data-bearing constructor. Preserve its exact name and
-        // positional argument vector while canonicalizing send sugar structurally;
-        // method membership and semantics remain reducer-owned.
-        Proc::MethodCall(receiver, method_name, arguments) => {
-            Proc::MethodCall(rc(receiver), method_name.clone(), rcv(arguments))
-        },
-        // application (λ-bodies carry no operand projection surface → left to the identity arm)
-        Proc::ApplyProc(a, b) => Proc::ApplyProc(rc(a), rc(b)),
-        Proc::MApplyProc(a, bs) => Proc::MApplyProc(rc(a), rcv(bs)),
-        // `*n` deref: recurse into the (possibly quoted) channel's process
-        Proc::PDrop(n) => Proc::PDrop(Arc::new(canon_channel_name(n))),
-
-        // ═══ collection literals — recurse into elements ═══
-        Proc::CastList(l) => match l.as_ref() {
-            List::ListLit(v) => Proc::CastList(Arc::new(List::ListLit(rcv(v)))),
-            other => Proc::CastList(Arc::new(other.clone())),
-        },
-        Proc::CastSet(s) => match s.as_ref() {
-            Set::SetLit(items) => {
-                let mut set = mettail_runtime::HashSetLit::new();
-                for e in items.iter() {
-                    set.insert(normalize_send_sugar_canon(e));
-                }
-                Proc::CastSet(Arc::new(Set::SetLit(set)))
-            },
-            other => Proc::CastSet(Arc::new(other.clone())),
-        },
-        Proc::CastBag(bag) => match bag.as_ref() {
-            Bag::BagLit(h) => {
-                let mut out = mettail_runtime::HashBag::new();
-                for (e, c) in h.iter() {
-                    let e2 = normalize_send_sugar_canon(e);
-                    for _ in 0..c {
-                        out.insert(e2.clone());
-                    }
-                }
-                Proc::CastBag(Arc::new(Bag::BagLit(out)))
-            },
-            other => Proc::CastBag(Arc::new(other.clone())),
-        },
-        Proc::CastMap(m) => match m.as_ref() {
-            Map::MapLit(entries) => {
-                let mut out = mettail_runtime::HashMapLit::new();
-                for (k, v) in entries.iter() {
-                    out.insert(normalize_send_sugar_canon(k), normalize_send_sugar_canon(v));
-                }
-                Proc::CastMap(Arc::new(Map::MapLit(out)))
-            },
-            other => Proc::CastMap(Arc::new(other.clone())),
-        },
-
-        // leaves + opaque (PZero, PVar, Err, Map/PathmapEmpty, leaf numeric/str casts,
-        // zipper/pathmap casts, λ-abstractions): identity.
-        _ => p.clone(),
+    macro_rules! build_binary {
+        ($constructor:path) => {{
+            let right = proc_results
+                .pop()
+                .expect("send canonicalizer binary right result");
+            let left = proc_results
+                .pop()
+                .expect("send canonicalizer binary left result");
+            $constructor(Arc::new(left), Arc::new(right))
+        }};
     }
+    macro_rules! build_unary {
+        ($constructor:path) => {{
+            let child = proc_results.pop().expect("send canonicalizer unary result");
+            $constructor(Arc::new(child))
+        }};
+    }
+
+    while let Some(job) = jobs.pop() {
+        match job {
+            SendCanonJob::VisitProc(proc) => match proc {
+                Proc::POutput(name, payload) | Proc::PPersistOutput(name, payload) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitName(name));
+                    jobs.push(SendCanonJob::VisitProc(payload));
+                    jobs[start..].reverse();
+                },
+                Proc::POutputEmpty(name) | Proc::PPersistOutputEmpty(name) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitName(name));
+                },
+                Proc::POutput2Plus(name, first, rest)
+                | Proc::PPersistOutput2Plus(name, first, rest) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitName(name));
+                    jobs.push(SendCanonJob::VisitProc(first));
+                    for item in rest {
+                        jobs.push(SendCanonJob::VisitProc(item));
+                    }
+                    jobs[start..].reverse();
+                },
+                Proc::POutputNil(payload) | Proc::PPersistOutputNil(payload) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitProc(payload));
+                },
+                Proc::POutputNilEmpty | Proc::PPersistOutputNilEmpty => {
+                    let payload = Arc::new(mk_proc_list(vec![]));
+                    proc_results.push(if matches!(proc, Proc::POutputNilEmpty) {
+                        Proc::POutput(Arc::new(nquote(Proc::PZero)), payload)
+                    } else {
+                        Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), payload)
+                    });
+                },
+                Proc::POutputNil2Plus(first, rest) | Proc::PPersistOutputNil2Plus(first, rest) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitProc(first));
+                    for item in rest {
+                        jobs.push(SendCanonJob::VisitProc(item));
+                    }
+                    jobs[start..].reverse();
+                },
+                Proc::POutputShort(channel, payload)
+                | Proc::PPersistOutputShort(channel, payload) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitProc(channel));
+                    jobs.push(SendCanonJob::VisitProc(payload));
+                    jobs[start..].reverse();
+                },
+                Proc::POutputShortEmpty(channel) | Proc::PPersistOutputShortEmpty(channel) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitProc(channel));
+                },
+                Proc::POutputShort2Plus(channel, first, rest)
+                | Proc::PPersistOutputShort2Plus(channel, first, rest) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitProc(channel));
+                    jobs.push(SendCanonJob::VisitProc(first));
+                    for item in rest {
+                        jobs.push(SendCanonJob::VisitProc(item));
+                    }
+                    jobs[start..].reverse();
+                },
+                Proc::POutputQuoted(_, payload) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitProc(payload));
+                },
+                Proc::POutputQuotedEmpty(name) => proc_results.push(Proc::POutput(
+                    Arc::new(nquote(crate::rholang::receive::name_pattern_to_proc(name))),
+                    Arc::new(mk_proc_list(vec![])),
+                )),
+                Proc::POutputQuoted2Plus(_, first, rest) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitProc(first));
+                    for item in rest {
+                        jobs.push(SendCanonJob::VisitProc(item));
+                    }
+                    jobs[start..].reverse();
+                },
+                Proc::PPar(_) | Proc::PParInfix(_, _) => {
+                    let mut leaves = Vec::new();
+                    collect_parallel_canon_leaves(proc, &mut leaves);
+                    let counts = leaves.iter().map(|(_, count)| *count).collect();
+                    jobs.push(SendCanonJob::FinishParallel(counts));
+                    let start = jobs.len();
+                    for (leaf, _) in leaves {
+                        jobs.push(SendCanonJob::VisitProc(leaf));
+                    }
+                    jobs[start..].reverse();
+                },
+                Proc::PNew(scope) => {
+                    // This transform neither substitutes variables nor changes binder depth, so
+                    // the closed body remains valid and can retain its existing bound-variable
+                    // identities. Avoiding unbind/rebind also avoids a freshening traversal.
+                    jobs.push(SendCanonJob::FinishNew(scope.unsafe_pattern().clone()));
+                    jobs.push(SendCanonJob::VisitProc(scope.unsafe_body()));
+                },
+                Proc::PForUser(rows, body) => {
+                    if crate::rholang::receive::pfor_user_still_has_query_rows(rows) {
+                        jobs.push(SendCanonJob::FinishQueryFor(rows));
+                        jobs.push(SendCanonJob::VisitProc(body));
+                    } else {
+                        jobs.push(SendCanonJob::FinishProc(proc));
+                        let start = jobs.len();
+                        jobs.push(SendCanonJob::VisitProc(body));
+                        for row in rows {
+                            match row {
+                                ForRow::ForRowSingleWhere(_, guard)
+                                | ForRow::ForRowWhere(_, _, guard) => {
+                                    jobs.push(SendCanonJob::VisitProc(guard));
+                                },
+                                _ => {},
+                            }
+                        }
+                        jobs[start..].reverse();
+                    }
+                },
+                Proc::CommWhere(first, name, second, third, fourth) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitProc(first));
+                    jobs.push(SendCanonJob::VisitName(name));
+                    jobs.push(SendCanonJob::VisitProc(second));
+                    jobs.push(SendCanonJob::VisitProc(third));
+                    jobs.push(SendCanonJob::VisitProc(fourth));
+                    jobs[start..].reverse();
+                },
+                Proc::GuardThen(left, right)
+                | Proc::Or(left, right)
+                | Proc::And(left, right)
+                | Proc::Implies(left, right)
+                | Proc::Matches(left, right)
+                | Proc::SpatialPPar(left, right)
+                | Proc::BitOr(left, right)
+                | Proc::BitAnd(left, right)
+                | Proc::Eq(left, right)
+                | Proc::Ne(left, right)
+                | Proc::Gt(left, right)
+                | Proc::Lt(left, right)
+                | Proc::GtEq(left, right)
+                | Proc::LtEq(left, right)
+                | Proc::Add(left, right)
+                | Proc::Sub(left, right)
+                | Proc::Mul(left, right)
+                | Proc::Div(left, right)
+                | Proc::Mod(left, right)
+                | Proc::FractionProc(left, right)
+                | Proc::ApplyProc(left, right) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitProc(right));
+                    jobs.push(SendCanonJob::VisitProc(left));
+                },
+                Proc::BitNot(child)
+                | Proc::NegProc(child)
+                | Proc::Not(child)
+                | Proc::ToBool(child)
+                | Proc::ToStr(child)
+                | Proc::BigintCastProc(child)
+                | Proc::BigratCastProc(child) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitProc(child));
+                },
+                Proc::IntBinProc(child, _)
+                | Proc::UIntBinProc(child, _)
+                | Proc::FloatBinProc(child, _)
+                | Proc::FixedBinProc(child, _) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitProc(child));
+                },
+                Proc::MethodCall(receiver, _, arguments)
+                | Proc::MApplyProc(receiver, arguments) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    let start = jobs.len();
+                    jobs.push(SendCanonJob::VisitProc(receiver));
+                    for argument in arguments {
+                        jobs.push(SendCanonJob::VisitProc(argument));
+                    }
+                    jobs[start..].reverse();
+                },
+                Proc::PDrop(name) => {
+                    jobs.push(SendCanonJob::FinishProc(proc));
+                    jobs.push(SendCanonJob::VisitName(name));
+                },
+                Proc::CastList(list) => match list.as_ref() {
+                    List::ListLit(items) => {
+                        jobs.push(SendCanonJob::FinishProc(proc));
+                        for item in items.iter().rev() {
+                            jobs.push(SendCanonJob::VisitProc(item));
+                        }
+                    },
+                    _ => proc_results.push(proc.clone()),
+                },
+                Proc::CastSet(set) => match set.as_ref() {
+                    Set::SetLit(items) => {
+                        jobs.push(SendCanonJob::FinishProc(proc));
+                        let start = jobs.len();
+                        for item in items.iter() {
+                            jobs.push(SendCanonJob::VisitProc(item));
+                        }
+                        jobs[start..].reverse();
+                    },
+                    _ => proc_results.push(proc.clone()),
+                },
+                Proc::CastBag(bag) => match bag.as_ref() {
+                    Bag::BagLit(elements) => {
+                        jobs.push(SendCanonJob::FinishProc(proc));
+                        let start = jobs.len();
+                        for (element, _) in elements.iter() {
+                            jobs.push(SendCanonJob::VisitProc(element));
+                        }
+                        jobs[start..].reverse();
+                    },
+                    _ => proc_results.push(proc.clone()),
+                },
+                Proc::CastMap(map) => match map.as_ref() {
+                    Map::MapLit(entries) => {
+                        jobs.push(SendCanonJob::FinishProc(proc));
+                        let start = jobs.len();
+                        for (key, value) in entries.iter() {
+                            jobs.push(SendCanonJob::VisitProc(key));
+                            jobs.push(SendCanonJob::VisitProc(value));
+                        }
+                        jobs[start..].reverse();
+                    },
+                    _ => proc_results.push(proc.clone()),
+                },
+                // Leaves and deliberately opaque constructors retain their exact representation.
+                _ => proc_results.push(proc.clone()),
+            },
+            SendCanonJob::VisitName(name) => {
+                let lowered = crate::rholang::receive::normalize_quote_name(name);
+                if matches!(lowered, Name::NQuote(_)) {
+                    let lowered = name_arena.alloc(lowered);
+                    let Name::NQuote(proc) = lowered else {
+                        unreachable!("checked quote name")
+                    };
+                    jobs.push(SendCanonJob::FinishNameQuote);
+                    jobs.push(SendCanonJob::VisitProc(proc));
+                } else {
+                    name_results.push(lowered);
+                }
+            },
+            SendCanonJob::FinishNameQuote => {
+                let proc = proc_results
+                    .pop()
+                    .expect("send canonicalizer quoted-name result");
+                name_results.push(nquote(proc));
+            },
+            SendCanonJob::FinishNew(binders) => {
+                let body = proc_results
+                    .pop()
+                    .expect("send canonicalizer new-body result");
+                proc_results.push(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(
+                    binders,
+                    Arc::new(body),
+                )));
+            },
+            SendCanonJob::FinishQueryFor(rows) => {
+                let body = proc_results
+                    .pop()
+                    .expect("send canonicalizer query-body result");
+                let desugared = proc_arena
+                    .alloc(crate::rholang::receive::desugar_for_rows(rows.to_vec(), &body));
+                jobs.push(SendCanonJob::VisitProc(desugared));
+            },
+            SendCanonJob::FinishParallel(counts) => {
+                let normalized = take_canon_results(&mut proc_results, counts.len());
+                let mut bag = HashBag::new();
+                for (proc, count) in normalized.into_iter().zip(counts) {
+                    insert_owned_ppar_n(&mut bag, proc, count);
+                }
+                proc_results.push(Proc::PPar(bag));
+            },
+            SendCanonJob::FinishProc(template) => {
+                let rebuilt = match template {
+                    Proc::POutput(_, _) | Proc::PPersistOutput(_, _) => {
+                        let payload = proc_results
+                            .pop()
+                            .expect("send canonicalizer scalar payload");
+                        let payload =
+                            Arc::new(crate::rholang::receive::canonicalize_arity_payload(&payload));
+                        let name =
+                            Arc::new(name_results.pop().expect("send canonicalizer channel name"));
+                        if matches!(template, Proc::POutput(_, _)) {
+                            Proc::POutput(name, payload)
+                        } else {
+                            Proc::PPersistOutput(name, payload)
+                        }
+                    },
+                    Proc::POutputEmpty(_) | Proc::PPersistOutputEmpty(_) => {
+                        let name = Arc::new(
+                            name_results
+                                .pop()
+                                .expect("send canonicalizer empty-send name"),
+                        );
+                        let payload = Arc::new(mk_proc_list(vec![]));
+                        if matches!(template, Proc::POutputEmpty(_)) {
+                            Proc::POutput(name, payload)
+                        } else {
+                            Proc::PPersistOutput(name, payload)
+                        }
+                    },
+                    Proc::POutput2Plus(_, _, rest) | Proc::PPersistOutput2Plus(_, _, rest) => {
+                        let payload = Arc::new(mk_proc_list(take_canon_results(
+                            &mut proc_results,
+                            1 + rest.len(),
+                        )));
+                        let name = Arc::new(
+                            name_results
+                                .pop()
+                                .expect("send canonicalizer multi-send name"),
+                        );
+                        if matches!(template, Proc::POutput2Plus(_, _, _)) {
+                            Proc::POutput(name, payload)
+                        } else {
+                            Proc::PPersistOutput(name, payload)
+                        }
+                    },
+                    Proc::POutputNil(_) | Proc::PPersistOutputNil(_) => {
+                        let payload = proc_results
+                            .pop()
+                            .expect("send canonicalizer nil-send payload");
+                        let payload =
+                            Arc::new(crate::rholang::receive::canonicalize_arity_payload(&payload));
+                        if matches!(template, Proc::POutputNil(_)) {
+                            Proc::POutput(Arc::new(nquote(Proc::PZero)), payload)
+                        } else {
+                            Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), payload)
+                        }
+                    },
+                    Proc::POutputNil2Plus(_, rest) | Proc::PPersistOutputNil2Plus(_, rest) => {
+                        let payload = Arc::new(mk_proc_list(take_canon_results(
+                            &mut proc_results,
+                            1 + rest.len(),
+                        )));
+                        if matches!(template, Proc::POutputNil2Plus(_, _)) {
+                            Proc::POutput(Arc::new(nquote(Proc::PZero)), payload)
+                        } else {
+                            Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), payload)
+                        }
+                    },
+                    Proc::POutputShort(_, _) | Proc::PPersistOutputShort(_, _) => {
+                        let payload = proc_results
+                            .pop()
+                            .expect("send canonicalizer short-send payload");
+                        let channel = proc_results
+                            .pop()
+                            .expect("send canonicalizer short-send channel");
+                        let payload =
+                            Arc::new(crate::rholang::receive::canonicalize_arity_payload(&payload));
+                        if matches!(template, Proc::POutputShort(_, _)) {
+                            Proc::POutput(Arc::new(nquote(channel)), payload)
+                        } else {
+                            Proc::PPersistOutput(Arc::new(nquote(channel)), payload)
+                        }
+                    },
+                    Proc::POutputShortEmpty(_) | Proc::PPersistOutputShortEmpty(_) => {
+                        let channel = proc_results
+                            .pop()
+                            .expect("send canonicalizer empty short-send channel");
+                        let payload = Arc::new(mk_proc_list(vec![]));
+                        if matches!(template, Proc::POutputShortEmpty(_)) {
+                            Proc::POutput(Arc::new(nquote(channel)), payload)
+                        } else {
+                            Proc::PPersistOutput(Arc::new(nquote(channel)), payload)
+                        }
+                    },
+                    Proc::POutputShort2Plus(_, _, rest)
+                    | Proc::PPersistOutputShort2Plus(_, _, rest) => {
+                        let values = take_canon_results(&mut proc_results, 2 + rest.len());
+                        let mut values = values.into_iter();
+                        let channel = values.next().expect("short-send channel result");
+                        let payload = Arc::new(mk_proc_list(values.collect()));
+                        if matches!(template, Proc::POutputShort2Plus(_, _, _)) {
+                            Proc::POutput(Arc::new(nquote(channel)), payload)
+                        } else {
+                            Proc::PPersistOutput(Arc::new(nquote(channel)), payload)
+                        }
+                    },
+                    Proc::POutputQuoted(name, _) => {
+                        let payload = proc_results
+                            .pop()
+                            .expect("send canonicalizer quoted-send payload");
+                        Proc::POutput(
+                            Arc::new(nquote(crate::rholang::receive::name_pattern_to_proc(name))),
+                            Arc::new(crate::rholang::receive::canonicalize_arity_payload(&payload)),
+                        )
+                    },
+                    Proc::POutputQuoted2Plus(name, _, rest) => Proc::POutput(
+                        Arc::new(nquote(crate::rholang::receive::name_pattern_to_proc(name))),
+                        Arc::new(mk_proc_list(take_canon_results(
+                            &mut proc_results,
+                            1 + rest.len(),
+                        ))),
+                    ),
+                    Proc::PForUser(rows, _) => {
+                        let guard_count = rows
+                            .iter()
+                            .filter(|row| {
+                                matches!(
+                                    row,
+                                    ForRow::ForRowSingleWhere(_, _) | ForRow::ForRowWhere(_, _, _)
+                                )
+                            })
+                            .count();
+                        let values = take_canon_results(&mut proc_results, 1 + guard_count);
+                        let mut values = values.into_iter();
+                        let body = values.next().expect("send canonicalizer for-body result");
+                        let rows = rows
+                            .iter()
+                            .map(|row| match row {
+                                ForRow::ForRowSingleWhere(bind, _) => ForRow::ForRowSingleWhere(
+                                    bind.clone(),
+                                    Arc::new(values.next().expect("single where-guard result")),
+                                ),
+                                ForRow::ForRowWhere(bind, binds, _) => ForRow::ForRowWhere(
+                                    bind.clone(),
+                                    binds.clone(),
+                                    Arc::new(values.next().expect("multi where-guard result")),
+                                ),
+                                other => other.clone(),
+                            })
+                            .collect();
+                        debug_assert!(values.next().is_none());
+                        Proc::PForUser(rows, Arc::new(body))
+                    },
+                    Proc::CommWhere(_, _, _, _, _) => {
+                        let fourth = proc_results.pop().expect("comm fourth result");
+                        let third = proc_results.pop().expect("comm third result");
+                        let second = proc_results.pop().expect("comm second result");
+                        let first = proc_results.pop().expect("comm first result");
+                        let name = name_results.pop().expect("comm channel result");
+                        Proc::CommWhere(
+                            Arc::new(first),
+                            Arc::new(name),
+                            Arc::new(second),
+                            Arc::new(third),
+                            Arc::new(fourth),
+                        )
+                    },
+                    Proc::GuardThen(_, _) => build_binary!(Proc::GuardThen),
+                    Proc::Or(_, _) => build_binary!(Proc::Or),
+                    Proc::And(_, _) => build_binary!(Proc::And),
+                    Proc::Implies(_, _) => build_binary!(Proc::Implies),
+                    Proc::Matches(_, _) => build_binary!(Proc::Matches),
+                    Proc::SpatialPPar(_, _) => build_binary!(Proc::SpatialPPar),
+                    Proc::BitOr(_, _) => build_binary!(Proc::BitOr),
+                    Proc::BitAnd(_, _) => build_binary!(Proc::BitAnd),
+                    Proc::Eq(_, _) => build_binary!(Proc::Eq),
+                    Proc::Ne(_, _) => build_binary!(Proc::Ne),
+                    Proc::Gt(_, _) => build_binary!(Proc::Gt),
+                    Proc::Lt(_, _) => build_binary!(Proc::Lt),
+                    Proc::GtEq(_, _) => build_binary!(Proc::GtEq),
+                    Proc::LtEq(_, _) => build_binary!(Proc::LtEq),
+                    Proc::Add(_, _) => build_binary!(Proc::Add),
+                    Proc::Sub(_, _) => build_binary!(Proc::Sub),
+                    Proc::Mul(_, _) => build_binary!(Proc::Mul),
+                    Proc::Div(_, _) => build_binary!(Proc::Div),
+                    Proc::Mod(_, _) => build_binary!(Proc::Mod),
+                    Proc::FractionProc(_, _) => build_binary!(Proc::FractionProc),
+                    Proc::ApplyProc(_, _) => build_binary!(Proc::ApplyProc),
+                    Proc::BitNot(_) => build_unary!(Proc::BitNot),
+                    Proc::NegProc(_) => build_unary!(Proc::NegProc),
+                    Proc::Not(_) => build_unary!(Proc::Not),
+                    Proc::ToBool(_) => build_unary!(Proc::ToBool),
+                    Proc::ToStr(_) => build_unary!(Proc::ToStr),
+                    Proc::BigintCastProc(_) => build_unary!(Proc::BigintCastProc),
+                    Proc::BigratCastProc(_) => build_unary!(Proc::BigratCastProc),
+                    Proc::IntBinProc(_, width) => {
+                        Proc::IntBinProc(Arc::new(proc_results.pop().unwrap()), width.clone())
+                    },
+                    Proc::UIntBinProc(_, width) => {
+                        Proc::UIntBinProc(Arc::new(proc_results.pop().unwrap()), width.clone())
+                    },
+                    Proc::FloatBinProc(_, width) => {
+                        Proc::FloatBinProc(Arc::new(proc_results.pop().unwrap()), width.clone())
+                    },
+                    Proc::FixedBinProc(_, width) => {
+                        Proc::FixedBinProc(Arc::new(proc_results.pop().unwrap()), width.clone())
+                    },
+                    Proc::MethodCall(_, method, arguments) => {
+                        let values = take_canon_results(&mut proc_results, 1 + arguments.len());
+                        let mut values = values.into_iter();
+                        Proc::MethodCall(
+                            Arc::new(values.next().expect("method receiver result")),
+                            method.clone(),
+                            values.collect(),
+                        )
+                    },
+                    Proc::MApplyProc(_, arguments) => {
+                        let values = take_canon_results(&mut proc_results, 1 + arguments.len());
+                        let mut values = values.into_iter();
+                        Proc::MApplyProc(
+                            Arc::new(values.next().expect("multi-apply receiver result")),
+                            values.collect(),
+                        )
+                    },
+                    Proc::PDrop(_) => {
+                        Proc::PDrop(Arc::new(name_results.pop().expect("drop-name result")))
+                    },
+                    Proc::CastList(list) => {
+                        let List::ListLit(items) = list.as_ref() else {
+                            unreachable!("only list literals schedule a finish")
+                        };
+                        Proc::CastList(Arc::new(List::ListLit(take_canon_results(
+                            &mut proc_results,
+                            items.len(),
+                        ))))
+                    },
+                    Proc::CastSet(set) => {
+                        let Set::SetLit(items) = set.as_ref() else {
+                            unreachable!("only set literals schedule a finish")
+                        };
+                        let values = take_canon_results(&mut proc_results, items.len());
+                        let mut out = mettail_runtime::HashSetLit::new();
+                        for value in values {
+                            out.insert(value);
+                        }
+                        Proc::CastSet(Arc::new(Set::SetLit(out)))
+                    },
+                    Proc::CastBag(bag) => {
+                        let Bag::BagLit(elements) = bag.as_ref() else {
+                            unreachable!("only bag literals schedule a finish")
+                        };
+                        let values = take_canon_results(&mut proc_results, elements.iter().count());
+                        let mut out = HashBag::new();
+                        for (value, (_, count)) in values.into_iter().zip(elements.iter()) {
+                            out.insert_n(value, count);
+                        }
+                        Proc::CastBag(Arc::new(Bag::BagLit(out)))
+                    },
+                    Proc::CastMap(map) => {
+                        let Map::MapLit(entries) = map.as_ref() else {
+                            unreachable!("only map literals schedule a finish")
+                        };
+                        let values = take_canon_results(&mut proc_results, entries.len() * 2);
+                        let mut values = values.into_iter();
+                        let mut out = mettail_runtime::HashMapLit::new();
+                        for _ in 0..entries.len() {
+                            let key = values.next().expect("map key result");
+                            let value = values.next().expect("map value result");
+                            out.insert(key, value);
+                        }
+                        Proc::CastMap(Arc::new(Map::MapLit(out)))
+                    },
+                    _ => unreachable!("only recursive constructors schedule a finish"),
+                };
+                proc_results.push(rebuilt);
+            },
+        }
+    }
+
+    assert!(name_results.is_empty(), "unconsumed canonical name results");
+    assert_eq!(proc_results.len(), 1, "canonicalizer result imbalance");
+    proc_results.pop().expect("canonicalizer root result")
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/rholang_runtime_recursive_oracle.rs"]
+mod recursive_oracle;
 
 impl Proc {
     pub fn term_eq(&self, other: &Self) -> bool {

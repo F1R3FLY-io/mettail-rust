@@ -178,6 +178,10 @@ clap = { version = "4.5", features = ["derive"] }
 
 # PathMap trie (M-RHO) — backs the Rholang pathmap/zipper submodules; pin matches f1r3node `models` 0.2.2.
 pathmap = { workspace = true }
+# The stack-safe Rholang canonicalizer materializes query-desugared nodes while its PDA still
+# holds borrowed jobs. A typed arena gives those temporary nodes the driver's full lifetime without
+# unsafe code or repeated subtree cloning. Version 2.0 is already present in the workspace lockfile.
+typed-arena = "2.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
