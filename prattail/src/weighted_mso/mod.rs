@@ -93,7 +93,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::automata::semiring::{BooleanWeight, Semiring};
+use crate::automata::semiring::BooleanWeight;
+#[cfg(test)]
+use crate::automata::semiring::Semiring;
 use crate::symbolic::DecidabilityTier;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -116,7 +118,6 @@ use crate::symbolic::DecidabilityTier;
 /// The `Constant` variant stores semiring values as string representations
 /// to support `Eq` and `Hash` without requiring the semiring type `K` to
 /// implement those traits (many semiring types contain `f64`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WeightedMsoFormula {
     /// Semiring constant `k ∈ K` (stored as string representation for `Eq`/`Hash`).
     ///
@@ -235,6 +236,11 @@ pub enum WeightedMsoFormula {
     },
 }
 
+#[path = "evaluation.rs"]
+mod evaluation;
+#[path = "lifecycle.rs"]
+mod lifecycle;
+
 // === Rocq Proof Alignment (MsoAutomataEquivalence.v) ===
 //
 // The Rocq proof establishes the constructive direction of the weighted
@@ -352,145 +358,161 @@ impl std::fmt::Display for MsoFormulaClass {
 /// 4. If the formula has no set quantifiers at all → `FirstOrder`.
 /// 5. Otherwise → `Restricted`.
 pub fn classify_formula(formula: &WeightedMsoFormula) -> MsoFormulaClass {
-    let mut has_forall_second = false;
-    let mut has_unrestricted_forall_first = false;
-    let mut has_exists_second = false;
-    let mut has_forall_first_with_step = false;
+    classify_summary(summarize_formula(formula))
+}
 
-    classify_recursive(
-        formula,
-        &mut has_forall_second,
-        &mut has_unrestricted_forall_first,
-        &mut has_exists_second,
-        &mut has_forall_first_with_step,
-    );
-
-    if has_forall_second || has_unrestricted_forall_first {
+fn classify_summary(summary: FormulaSummary) -> MsoFormulaClass {
+    if summary.has_forall_second || summary.has_unrestricted_forall_first {
         MsoFormulaClass::Full
-    } else if has_exists_second {
-        if has_forall_first_with_step {
-            // Has ∃X and restricted ∀x — still RestrictedExistential
-            // (the ∃X wraps a restricted body).
-            MsoFormulaClass::RestrictedExistential
-        } else {
-            MsoFormulaClass::RestrictedExistential
-        }
-    } else if has_forall_first_with_step {
-        // Has restricted ∀x but no set quantifiers beyond that.
+    } else if summary.has_exists_second {
+        MsoFormulaClass::RestrictedExistential
+    } else if summary.has_forall_first_with_step || summary.has_any_set_quantifiers {
         MsoFormulaClass::Restricted
     } else {
-        // Check if there are any set quantifiers at all.
-        if has_any_set_quantifiers(formula) {
-            MsoFormulaClass::Restricted
-        } else {
-            MsoFormulaClass::FirstOrder
+        MsoFormulaClass::FirstOrder
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct FormulaSummary {
+    has_any_set_quantifiers: bool,
+    has_forall_second: bool,
+    has_unrestricted_forall_first: bool,
+    has_exists_second: bool,
+    has_forall_first_with_step: bool,
+    is_step: bool,
+    is_boolean: bool,
+}
+
+impl FormulaSummary {
+    fn merge(left: Self, right: Self) -> Self {
+        Self {
+            has_any_set_quantifiers: left.has_any_set_quantifiers || right.has_any_set_quantifiers,
+            has_forall_second: left.has_forall_second || right.has_forall_second,
+            has_unrestricted_forall_first: left.has_unrestricted_forall_first
+                || right.has_unrestricted_forall_first,
+            has_exists_second: left.has_exists_second || right.has_exists_second,
+            has_forall_first_with_step: left.has_forall_first_with_step
+                || right.has_forall_first_with_step,
+            is_step: false,
+            is_boolean: false,
         }
     }
 }
 
-/// Recursively scan a formula to detect quantifier usage patterns.
-fn classify_recursive(
-    formula: &WeightedMsoFormula,
-    has_forall_second: &mut bool,
-    has_unrestricted_forall_first: &mut bool,
-    has_exists_second: &mut bool,
-    has_forall_first_with_step: &mut bool,
-) {
-    match formula {
-        WeightedMsoFormula::Constant(_)
-        | WeightedMsoFormula::AtomicPos { .. }
-        | WeightedMsoFormula::NegAtomicPos { .. }
-        | WeightedMsoFormula::Order { .. }
-        | WeightedMsoFormula::NegOrder { .. }
-        | WeightedMsoFormula::InSet { .. }
-        | WeightedMsoFormula::NotInSet { .. } => {},
-
-        WeightedMsoFormula::Or(a, b) | WeightedMsoFormula::And(a, b) => {
-            classify_recursive(
-                a,
-                has_forall_second,
-                has_unrestricted_forall_first,
-                has_exists_second,
-                has_forall_first_with_step,
-            );
-            classify_recursive(
-                b,
-                has_forall_second,
-                has_unrestricted_forall_first,
-                has_exists_second,
-                has_forall_first_with_step,
-            );
-        },
-
-        WeightedMsoFormula::ExistsFirst { body, .. } => {
-            classify_recursive(
-                body,
-                has_forall_second,
-                has_unrestricted_forall_first,
-                has_exists_second,
-                has_forall_first_with_step,
-            );
-        },
-
-        WeightedMsoFormula::ExistsSecond { body, .. } => {
-            *has_exists_second = true;
-            classify_recursive(
-                body,
-                has_forall_second,
-                has_unrestricted_forall_first,
-                has_exists_second,
-                has_forall_first_with_step,
-            );
-        },
-
-        WeightedMsoFormula::ForallFirst { body, .. } => {
-            if is_step_function(body) {
-                *has_forall_first_with_step = true;
-            } else {
-                *has_unrestricted_forall_first = true;
-            }
-            classify_recursive(
-                body,
-                has_forall_second,
-                has_unrestricted_forall_first,
-                has_exists_second,
-                has_forall_first_with_step,
-            );
-        },
-
-        WeightedMsoFormula::ForallSecond { body, .. } => {
-            *has_forall_second = true;
-            classify_recursive(
-                body,
-                has_forall_second,
-                has_unrestricted_forall_first,
-                has_exists_second,
-                has_forall_first_with_step,
-            );
-        },
+/// Compute all fragment predicates in one post-order pass.  In particular, nested `∀x` nodes no
+/// longer rescan their complete bodies to decide whether each body is a recognizable step function.
+fn summarize_formula(formula: &WeightedMsoFormula) -> FormulaSummary {
+    enum Task<'formula> {
+        Visit(&'formula WeightedMsoFormula),
+        Reduce(&'formula WeightedMsoFormula),
     }
-}
 
-/// Check whether a formula contains any second-order quantifiers (∃X or ∀X).
-fn has_any_set_quantifiers(formula: &WeightedMsoFormula) -> bool {
-    match formula {
-        WeightedMsoFormula::Constant(_)
-        | WeightedMsoFormula::AtomicPos { .. }
-        | WeightedMsoFormula::NegAtomicPos { .. }
-        | WeightedMsoFormula::Order { .. }
-        | WeightedMsoFormula::NegOrder { .. }
-        | WeightedMsoFormula::InSet { .. }
-        | WeightedMsoFormula::NotInSet { .. } => false,
-
-        WeightedMsoFormula::Or(a, b) | WeightedMsoFormula::And(a, b) => {
-            has_any_set_quantifiers(a) || has_any_set_quantifiers(b)
-        },
-
-        WeightedMsoFormula::ExistsFirst { body, .. }
-        | WeightedMsoFormula::ForallFirst { body, .. } => has_any_set_quantifiers(body),
-
-        WeightedMsoFormula::ExistsSecond { .. } | WeightedMsoFormula::ForallSecond { .. } => true,
+    let mut tasks = vec![Task::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(node) => {
+                tasks.push(Task::Reduce(node));
+                match node {
+                    WeightedMsoFormula::Or(left, right) | WeightedMsoFormula::And(left, right) => {
+                        tasks.push(Task::Visit(right));
+                        tasks.push(Task::Visit(left));
+                    },
+                    WeightedMsoFormula::ExistsFirst { body, .. }
+                    | WeightedMsoFormula::ExistsSecond { body, .. }
+                    | WeightedMsoFormula::ForallFirst { body, .. }
+                    | WeightedMsoFormula::ForallSecond { body, .. } => {
+                        tasks.push(Task::Visit(body));
+                    },
+                    WeightedMsoFormula::Constant(_)
+                    | WeightedMsoFormula::AtomicPos { .. }
+                    | WeightedMsoFormula::NegAtomicPos { .. }
+                    | WeightedMsoFormula::Order { .. }
+                    | WeightedMsoFormula::NegOrder { .. }
+                    | WeightedMsoFormula::InSet { .. }
+                    | WeightedMsoFormula::NotInSet { .. } => {},
+                }
+            },
+            Task::Reduce(WeightedMsoFormula::Constant(value)) => {
+                values.push(FormulaSummary {
+                    is_step: true,
+                    is_boolean: value == "true" || value == "false",
+                    ..FormulaSummary::default()
+                });
+            },
+            Task::Reduce(
+                WeightedMsoFormula::AtomicPos { .. }
+                | WeightedMsoFormula::NegAtomicPos { .. }
+                | WeightedMsoFormula::Order { .. }
+                | WeightedMsoFormula::NegOrder { .. }
+                | WeightedMsoFormula::InSet { .. }
+                | WeightedMsoFormula::NotInSet { .. },
+            ) => values.push(FormulaSummary {
+                is_step: true,
+                is_boolean: true,
+                ..FormulaSummary::default()
+            }),
+            Task::Reduce(node @ (WeightedMsoFormula::Or(_, _) | WeightedMsoFormula::And(_, _))) => {
+                let right = values.pop().expect("weighted-MSO summary lost binary RHS");
+                let left = values.pop().expect("weighted-MSO summary lost binary LHS");
+                let mut summary = FormulaSummary::merge(left, right);
+                summary.is_boolean = left.is_boolean && right.is_boolean;
+                summary.is_step = match node {
+                    WeightedMsoFormula::Or(_, _) => left.is_step && right.is_step,
+                    WeightedMsoFormula::And(left_formula, right_formula) => {
+                        let left_constant =
+                            matches!(left_formula.as_ref(), WeightedMsoFormula::Constant(_));
+                        let right_constant =
+                            matches!(right_formula.as_ref(), WeightedMsoFormula::Constant(_));
+                        match (left_constant, right_constant) {
+                            (true, true) => true,
+                            (true, false) => right.is_boolean,
+                            (false, true) => left.is_boolean,
+                            (false, false) => left.is_boolean && right.is_boolean,
+                        }
+                    },
+                    _ => unreachable!(),
+                };
+                values.push(summary);
+            },
+            Task::Reduce(WeightedMsoFormula::ExistsFirst { .. }) => {
+                values
+                    .last_mut()
+                    .expect("weighted-MSO summary lost existential body");
+            },
+            Task::Reduce(WeightedMsoFormula::ExistsSecond { .. }) => {
+                let summary = values
+                    .last_mut()
+                    .expect("weighted-MSO summary lost second-order existential body");
+                summary.has_any_set_quantifiers = true;
+                summary.has_exists_second = true;
+            },
+            Task::Reduce(WeightedMsoFormula::ForallFirst { .. }) => {
+                let summary = values
+                    .last_mut()
+                    .expect("weighted-MSO summary lost universal body");
+                if summary.is_step {
+                    summary.has_forall_first_with_step = true;
+                } else {
+                    summary.has_unrestricted_forall_first = true;
+                }
+                summary.is_step = false;
+            },
+            Task::Reduce(WeightedMsoFormula::ForallSecond { .. }) => {
+                let summary = values
+                    .last_mut()
+                    .expect("weighted-MSO summary lost second-order universal body");
+                summary.has_any_set_quantifiers = true;
+                summary.has_forall_second = true;
+                summary.is_step = false;
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("weighted-MSO summary produced no value")
 }
 
 /// Check whether a formula is a recognizable step function.
@@ -506,78 +528,9 @@ fn has_any_set_quantifiers(formula: &WeightedMsoFormula) -> bool {
 /// 2. A `And(Constant(_), ψ)` or `And(ψ, Constant(_))` where `ψ` is Boolean.
 /// 3. A `Or(s₁, s₂)` where both `s₁` and `s₂` are step functions.
 /// 4. A Boolean formula (no weighted constants other than "true"/"false").
+#[cfg(test)]
 fn is_step_function(formula: &WeightedMsoFormula) -> bool {
-    match formula {
-        // A constant is trivially a step function.
-        WeightedMsoFormula::Constant(_) => true,
-
-        // Atomic predicates and their negations are Boolean (hence step functions).
-        WeightedMsoFormula::AtomicPos { .. }
-        | WeightedMsoFormula::NegAtomicPos { .. }
-        | WeightedMsoFormula::Order { .. }
-        | WeightedMsoFormula::NegOrder { .. }
-        | WeightedMsoFormula::InSet { .. }
-        | WeightedMsoFormula::NotInSet { .. } => true,
-
-        // Disjunction of step functions is a step function.
-        WeightedMsoFormula::Or(a, b) => is_step_function(a) && is_step_function(b),
-
-        // Conjunction: either k ∧ ψ or ψ ∧ k (one constant, one Boolean),
-        // or both Boolean (which is also a step function).
-        WeightedMsoFormula::And(a, b) => {
-            let a_const = matches!(a.as_ref(), WeightedMsoFormula::Constant(_));
-            let b_const = matches!(b.as_ref(), WeightedMsoFormula::Constant(_));
-            if a_const && b_const {
-                // k1 ∧ k2 — product of constants, trivially a step function.
-                true
-            } else if a_const {
-                // k ∧ ψ — ψ must be Boolean (no non-trivial constants).
-                is_boolean_formula(b)
-            } else if b_const {
-                // ψ ∧ k — ψ must be Boolean.
-                is_boolean_formula(a)
-            } else {
-                // Both non-constant: must both be Boolean formulas.
-                is_boolean_formula(a) && is_boolean_formula(b)
-            }
-        },
-
-        // Existential quantifiers over step function bodies remain step functions.
-        WeightedMsoFormula::ExistsFirst { body, .. }
-        | WeightedMsoFormula::ExistsSecond { body, .. } => is_step_function(body),
-
-        // Universal quantifiers nested inside a step function body are not
-        // step functions (they introduce products, violating the finite-sum form).
-        WeightedMsoFormula::ForallFirst { .. } | WeightedMsoFormula::ForallSecond { .. } => false,
-    }
-}
-
-/// Check whether a formula is purely Boolean (unweighted).
-///
-/// A Boolean formula contains no semiring constants other than the canonical
-/// Boolean values `"true"` and `"false"`. This ensures the formula evaluates
-/// to either `0_K` or `1_K` for any assignment.
-fn is_boolean_formula(formula: &WeightedMsoFormula) -> bool {
-    match formula {
-        WeightedMsoFormula::Constant(s) => s == "true" || s == "false",
-
-        WeightedMsoFormula::AtomicPos { .. }
-        | WeightedMsoFormula::NegAtomicPos { .. }
-        | WeightedMsoFormula::Order { .. }
-        | WeightedMsoFormula::NegOrder { .. }
-        | WeightedMsoFormula::InSet { .. }
-        | WeightedMsoFormula::NotInSet { .. } => true,
-
-        WeightedMsoFormula::Or(a, b) | WeightedMsoFormula::And(a, b) => {
-            is_boolean_formula(a) && is_boolean_formula(b)
-        },
-
-        WeightedMsoFormula::ExistsFirst { body, .. }
-        | WeightedMsoFormula::ExistsSecond { body, .. } => is_boolean_formula(body),
-
-        WeightedMsoFormula::ForallFirst { body, .. }
-        | WeightedMsoFormula::ForallSecond { body, .. } => is_boolean_formula(body),
-    }
+    summarize_formula(formula).is_step
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -590,64 +543,7 @@ fn is_boolean_formula(formula: &WeightedMsoFormula) -> bool {
 /// (`AtomicPos`, `NegAtomicPos`, `Order`, `NegOrder`, `InSet`, `NotInSet`)
 /// but is not bound by an enclosing `∃x` or `∀x` quantifier.
 pub fn free_variables(formula: &WeightedMsoFormula) -> HashSet<String> {
-    let mut free = HashSet::new();
-    let mut bound = HashSet::new();
-    collect_free_first_order(formula, &mut free, &mut bound);
-    free
-}
-
-/// Recursively collect free first-order variables.
-fn collect_free_first_order(
-    formula: &WeightedMsoFormula,
-    free: &mut HashSet<String>,
-    bound: &mut HashSet<String>,
-) {
-    match formula {
-        WeightedMsoFormula::Constant(_) => {},
-
-        WeightedMsoFormula::AtomicPos { var, .. }
-        | WeightedMsoFormula::NegAtomicPos { var, .. } => {
-            if !bound.contains(var) {
-                free.insert(var.clone());
-            }
-        },
-
-        WeightedMsoFormula::Order { x, y } | WeightedMsoFormula::NegOrder { x, y } => {
-            if !bound.contains(x) {
-                free.insert(x.clone());
-            }
-            if !bound.contains(y) {
-                free.insert(y.clone());
-            }
-        },
-
-        WeightedMsoFormula::InSet { var, .. } | WeightedMsoFormula::NotInSet { var, .. } => {
-            if !bound.contains(var) {
-                free.insert(var.clone());
-            }
-        },
-
-        WeightedMsoFormula::Or(a, b) | WeightedMsoFormula::And(a, b) => {
-            collect_free_first_order(a, free, bound);
-            collect_free_first_order(b, free, bound);
-        },
-
-        WeightedMsoFormula::ExistsFirst { var, body }
-        | WeightedMsoFormula::ForallFirst { var, body } => {
-            let was_bound = bound.contains(var);
-            bound.insert(var.clone());
-            collect_free_first_order(body, free, bound);
-            if !was_bound {
-                bound.remove(var);
-            }
-        },
-
-        WeightedMsoFormula::ExistsSecond { body, .. }
-        | WeightedMsoFormula::ForallSecond { body, .. } => {
-            // Second-order quantifiers bind set variables, not first-order ones.
-            collect_free_first_order(body, free, bound);
-        },
-    }
+    free_variable_sets(formula).0
 }
 
 /// Compute the set of free second-order (set) variables in a formula.
@@ -655,53 +551,88 @@ fn collect_free_first_order(
 /// A second-order variable is **free** if it appears in an `InSet` or `NotInSet`
 /// predicate but is not bound by an enclosing `∃X` or `∀X` quantifier.
 pub fn free_set_variables(formula: &WeightedMsoFormula) -> HashSet<String> {
-    let mut free = HashSet::new();
-    let mut bound = HashSet::new();
-    collect_free_second_order(formula, &mut free, &mut bound);
-    free
+    free_variable_sets(formula).1
 }
 
-/// Recursively collect free second-order variables.
-fn collect_free_second_order(
-    formula: &WeightedMsoFormula,
-    free: &mut HashSet<String>,
-    bound: &mut HashSet<String>,
-) {
-    match formula {
-        WeightedMsoFormula::Constant(_)
-        | WeightedMsoFormula::AtomicPos { .. }
-        | WeightedMsoFormula::NegAtomicPos { .. }
-        | WeightedMsoFormula::Order { .. }
-        | WeightedMsoFormula::NegOrder { .. } => {},
-
-        WeightedMsoFormula::InSet { set_var, .. }
-        | WeightedMsoFormula::NotInSet { set_var, .. } => {
-            if !bound.contains(set_var) {
-                free.insert(set_var.clone());
-            }
-        },
-
-        WeightedMsoFormula::Or(a, b) | WeightedMsoFormula::And(a, b) => {
-            collect_free_second_order(a, free, bound);
-            collect_free_second_order(b, free, bound);
-        },
-
-        WeightedMsoFormula::ExistsFirst { body, .. }
-        | WeightedMsoFormula::ForallFirst { body, .. } => {
-            // First-order quantifiers do not bind set variables.
-            collect_free_second_order(body, free, bound);
-        },
-
-        WeightedMsoFormula::ExistsSecond { var, body }
-        | WeightedMsoFormula::ForallSecond { var, body } => {
-            let was_bound = bound.contains(var);
-            bound.insert(var.clone());
-            collect_free_second_order(body, free, bound);
-            if !was_bound {
-                bound.remove(var);
-            }
-        },
+fn free_variable_sets(formula: &WeightedMsoFormula) -> (HashSet<String>, HashSet<String>) {
+    enum Task<'formula> {
+        Visit(&'formula WeightedMsoFormula),
+        UnbindFirst(&'formula str, bool),
+        UnbindSecond(&'formula str, bool),
     }
+
+    let mut free_first = HashSet::new();
+    let mut free_second = HashSet::new();
+    let mut bound_first = HashSet::new();
+    let mut bound_second = HashSet::new();
+    let mut tasks = vec![Task::Visit(formula)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(WeightedMsoFormula::Constant(_)) => {},
+            Task::Visit(
+                WeightedMsoFormula::AtomicPos { var, .. }
+                | WeightedMsoFormula::NegAtomicPos { var, .. },
+            ) => {
+                if !bound_first.contains(var) {
+                    free_first.insert(var.clone());
+                }
+            },
+            Task::Visit(
+                WeightedMsoFormula::Order { x, y } | WeightedMsoFormula::NegOrder { x, y },
+            ) => {
+                if !bound_first.contains(x) {
+                    free_first.insert(x.clone());
+                }
+                if !bound_first.contains(y) {
+                    free_first.insert(y.clone());
+                }
+            },
+            Task::Visit(
+                WeightedMsoFormula::InSet { var, set_var }
+                | WeightedMsoFormula::NotInSet { var, set_var },
+            ) => {
+                if !bound_first.contains(var) {
+                    free_first.insert(var.clone());
+                }
+                if !bound_second.contains(set_var) {
+                    free_second.insert(set_var.clone());
+                }
+            },
+            Task::Visit(
+                WeightedMsoFormula::Or(left, right) | WeightedMsoFormula::And(left, right),
+            ) => {
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(
+                WeightedMsoFormula::ExistsFirst { var, body }
+                | WeightedMsoFormula::ForallFirst { var, body },
+            ) => {
+                let was_bound = !bound_first.insert(var.clone());
+                tasks.push(Task::UnbindFirst(var, was_bound));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(
+                WeightedMsoFormula::ExistsSecond { var, body }
+                | WeightedMsoFormula::ForallSecond { var, body },
+            ) => {
+                let was_bound = !bound_second.insert(var.clone());
+                tasks.push(Task::UnbindSecond(var, was_bound));
+                tasks.push(Task::Visit(body));
+            },
+            Task::UnbindFirst(var, was_bound) => {
+                if !was_bound {
+                    bound_first.remove(var);
+                }
+            },
+            Task::UnbindSecond(var, was_bound) => {
+                if !was_bound {
+                    bound_second.remove(var);
+                }
+            },
+        }
+    }
+    (free_first, free_second)
 }
 
 /// Check whether a formula is a **sentence** (no free variables of either order).
@@ -709,7 +640,8 @@ fn collect_free_second_order(
 /// A sentence defines a formal power series `S: Σ* → K` mapping words to semiring
 /// values without dependence on external variable assignments.
 pub fn is_sentence(formula: &WeightedMsoFormula) -> bool {
-    free_variables(formula).is_empty() && free_set_variables(formula).is_empty()
+    let (first, second) = free_variable_sets(formula);
+    first.is_empty() && second.is_empty()
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -770,7 +702,11 @@ pub fn close_universally(formula: WeightedMsoFormula) -> WeightedMsoFormula {
 /// - **Full MSO**: With bounded quantifiers → semi-decidable (T3).
 ///   With unrestricted ∀X → undecidable (T4).
 pub fn check_decidability(formula: &WeightedMsoFormula) -> DecidabilityTier {
-    let class = classify_formula(formula);
+    decidability_summary(summarize_formula(formula))
+}
+
+fn decidability_summary(summary: FormulaSummary) -> DecidabilityTier {
+    let class = classify_summary(summary);
     match class {
         MsoFormulaClass::FirstOrder | MsoFormulaClass::Restricted => {
             DecidabilityTier::CompileTimeDecidable
@@ -779,7 +715,7 @@ pub fn check_decidability(formula: &WeightedMsoFormula) -> DecidabilityTier {
         MsoFormulaClass::Full => {
             // Distinguish T3 (bounded) from T4 (unbounded).
             // A Full formula with only bounded quantifiers (no ∀X) is semi-decidable.
-            if has_forall_second(formula) {
+            if summary.has_forall_second {
                 DecidabilityTier::Undecidable
             } else {
                 // Full due to unrestricted ∀x (non-step-function body).
@@ -788,29 +724,6 @@ pub fn check_decidability(formula: &WeightedMsoFormula) -> DecidabilityTier {
                 DecidabilityTier::SemiDecidable
             }
         },
-    }
-}
-
-/// Check whether a formula contains any `∀X` quantifier.
-fn has_forall_second(formula: &WeightedMsoFormula) -> bool {
-    match formula {
-        WeightedMsoFormula::Constant(_)
-        | WeightedMsoFormula::AtomicPos { .. }
-        | WeightedMsoFormula::NegAtomicPos { .. }
-        | WeightedMsoFormula::Order { .. }
-        | WeightedMsoFormula::NegOrder { .. }
-        | WeightedMsoFormula::InSet { .. }
-        | WeightedMsoFormula::NotInSet { .. } => false,
-
-        WeightedMsoFormula::Or(a, b) | WeightedMsoFormula::And(a, b) => {
-            has_forall_second(a) || has_forall_second(b)
-        },
-
-        WeightedMsoFormula::ExistsFirst { body, .. }
-        | WeightedMsoFormula::ForallFirst { body, .. }
-        | WeightedMsoFormula::ExistsSecond { body, .. } => has_forall_second(body),
-
-        WeightedMsoFormula::ForallSecond { .. } => true,
     }
 }
 
@@ -865,8 +778,7 @@ impl Default for Assignment {
 /// `is_sentence()` to check beforehand, or use `evaluate_formula_bool()`
 /// directly with an explicit assignment.
 pub fn evaluate_sentence_bool(formula: &WeightedMsoFormula, word: &[String]) -> BooleanWeight {
-    let free_fo = free_variables(formula);
-    let free_so = free_set_variables(formula);
+    let (free_fo, free_so) = free_variable_sets(formula);
     assert!(
         free_fo.is_empty() && free_so.is_empty(),
         "evaluate_sentence_bool requires a sentence (no free variables), \
@@ -907,199 +819,7 @@ pub fn evaluate_formula_bool(
     word: &[String],
     assignment: &Assignment,
 ) -> BooleanWeight {
-    match formula {
-        WeightedMsoFormula::Constant(s) => {
-            match s.as_str() {
-                "true" | "1" => BooleanWeight::one(),
-                "false" | "0" => BooleanWeight::zero(),
-                // For BooleanWeight, any non-zero/non-false constant → one().
-                _ => BooleanWeight::one(),
-            }
-        },
-
-        WeightedMsoFormula::AtomicPos { label, var } => {
-            let pos = assignment
-                .first_order
-                .get(var)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", var));
-            if *pos < word.len() && word[*pos] == *label {
-                BooleanWeight::one()
-            } else {
-                BooleanWeight::zero()
-            }
-        },
-
-        WeightedMsoFormula::NegAtomicPos { label, var } => {
-            let pos = assignment
-                .first_order
-                .get(var)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", var));
-            if *pos < word.len() && word[*pos] == *label {
-                BooleanWeight::zero()
-            } else {
-                BooleanWeight::one()
-            }
-        },
-
-        WeightedMsoFormula::Order { x, y } => {
-            let px = assignment
-                .first_order
-                .get(x)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", x));
-            let py = assignment
-                .first_order
-                .get(y)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", y));
-            if px <= py {
-                BooleanWeight::one()
-            } else {
-                BooleanWeight::zero()
-            }
-        },
-
-        WeightedMsoFormula::NegOrder { x, y } => {
-            let px = assignment
-                .first_order
-                .get(x)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", x));
-            let py = assignment
-                .first_order
-                .get(y)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", y));
-            if px <= py {
-                BooleanWeight::zero()
-            } else {
-                BooleanWeight::one()
-            }
-        },
-
-        WeightedMsoFormula::InSet { var, set_var } => {
-            let pos = assignment
-                .first_order
-                .get(var)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", var));
-            let set = assignment
-                .second_order
-                .get(set_var)
-                .unwrap_or_else(|| panic!("unbound second-order variable: {}", set_var));
-            if set.contains(pos) {
-                BooleanWeight::one()
-            } else {
-                BooleanWeight::zero()
-            }
-        },
-
-        WeightedMsoFormula::NotInSet { var, set_var } => {
-            let pos = assignment
-                .first_order
-                .get(var)
-                .unwrap_or_else(|| panic!("unbound first-order variable: {}", var));
-            let set = assignment
-                .second_order
-                .get(set_var)
-                .unwrap_or_else(|| panic!("unbound second-order variable: {}", set_var));
-            if set.contains(pos) {
-                BooleanWeight::zero()
-            } else {
-                BooleanWeight::one()
-            }
-        },
-
-        WeightedMsoFormula::Or(a, b) => {
-            let va = evaluate_formula_bool(a, word, assignment);
-            let vb = evaluate_formula_bool(b, word, assignment);
-            va.plus(&vb)
-        },
-
-        WeightedMsoFormula::And(a, b) => {
-            let va = evaluate_formula_bool(a, word, assignment);
-            let vb = evaluate_formula_bool(b, word, assignment);
-            va.times(&vb)
-        },
-
-        WeightedMsoFormula::ExistsFirst { var, body } => {
-            // Σ_{i ∈ pos(w)} ⟦body⟧[var→i]
-            // For Boolean: ∃ = OR over all positions.
-            let mut result = BooleanWeight::zero();
-            let mut extended = assignment.clone();
-            for i in 0..word.len() {
-                extended.first_order.insert(var.clone(), i);
-                let val = evaluate_formula_bool(body, word, &extended);
-                result = result.plus(&val);
-                // Short-circuit: once true, stay true (Boolean OR).
-                if result.is_one() {
-                    break;
-                }
-            }
-            result
-        },
-
-        WeightedMsoFormula::ExistsSecond { var, body } => {
-            // Σ_{I ⊆ pos(w)} ⟦body⟧[var→I]
-            // For Boolean: ∃X = OR over all subsets.
-            let n = word.len();
-            let mut result = BooleanWeight::zero();
-            let mut extended = assignment.clone();
-            // Enumerate all 2^n subsets via bitmask.
-            let total_subsets: u64 = 1u64.checked_shl(n as u32).unwrap_or(u64::MAX);
-            for mask in 0..total_subsets {
-                let mut subset = HashSet::with_capacity(n);
-                for bit in 0..n {
-                    if mask & (1u64 << bit) != 0 {
-                        subset.insert(bit);
-                    }
-                }
-                extended.second_order.insert(var.clone(), subset);
-                let val = evaluate_formula_bool(body, word, &extended);
-                result = result.plus(&val);
-                if result.is_one() {
-                    break;
-                }
-            }
-            result
-        },
-
-        WeightedMsoFormula::ForallFirst { var, body } => {
-            // Π_{i ∈ pos(w)} ⟦body⟧[var→i]
-            // For Boolean: ∀ = AND over all positions.
-            let mut result = BooleanWeight::one();
-            let mut extended = assignment.clone();
-            for i in 0..word.len() {
-                extended.first_order.insert(var.clone(), i);
-                let val = evaluate_formula_bool(body, word, &extended);
-                result = result.times(&val);
-                // Short-circuit: once false, stay false (Boolean AND).
-                if result.is_zero() {
-                    break;
-                }
-            }
-            result
-        },
-
-        WeightedMsoFormula::ForallSecond { var, body } => {
-            // Π_{I ⊆ pos(w)} ⟦body⟧[var→I]
-            // For Boolean: ∀X = AND over all subsets.
-            let n = word.len();
-            let mut result = BooleanWeight::one();
-            let mut extended = assignment.clone();
-            let total_subsets: u64 = 1u64.checked_shl(n as u32).unwrap_or(u64::MAX);
-            for mask in 0..total_subsets {
-                let mut subset = HashSet::with_capacity(n);
-                for bit in 0..n {
-                    if mask & (1u64 << bit) != 0 {
-                        subset.insert(bit);
-                    }
-                }
-                extended.second_order.insert(var.clone(), subset);
-                let val = evaluate_formula_bool(body, word, &extended);
-                result = result.times(&val);
-                if result.is_zero() {
-                    break;
-                }
-            }
-            result
-        },
-    }
+    evaluation::evaluate(formula, word, assignment)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1130,10 +850,10 @@ pub struct MsoAnalysis {
 /// Computes classification, decidability, free variables, and sentence status
 /// in a single pass (with internal caching of free variable sets).
 pub fn analyze_formula(formula: &WeightedMsoFormula) -> MsoAnalysis {
-    let formula_class = classify_formula(formula);
-    let decidability = check_decidability(formula);
-    let free_vars = free_variables(formula);
-    let free_set_vars = free_set_variables(formula);
+    let summary = summarize_formula(formula);
+    let formula_class = classify_summary(summary);
+    let decidability = decidability_summary(summary);
+    let (free_vars, free_set_vars) = free_variable_sets(formula);
     let is_sentence = free_vars.is_empty() && free_set_vars.is_empty();
 
     MsoAnalysis {

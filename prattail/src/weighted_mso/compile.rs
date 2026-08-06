@@ -155,8 +155,7 @@ pub fn build_algebra(formula: &WeightedMsoFormula, label_alphabet: &[String]) ->
     }
     let mut fo_vars: HashSet<String> = HashSet::new();
     let mut so_vars: HashSet<String> = HashSet::new();
-    collect_all_first_order_vars(formula, &mut fo_vars);
-    collect_all_second_order_vars(formula, &mut so_vars);
+    collect_all_variables(formula, &mut fo_vars, &mut so_vars);
     for v in &fo_vars {
         atoms.insert(atom::is_var(v));
     }
@@ -166,52 +165,40 @@ pub fn build_algebra(formula: &WeightedMsoFormula, label_alphabet: &[String]) ->
     KatBooleanAlgebra::new(atoms.into_iter().collect())
 }
 
-fn collect_all_first_order_vars(formula: &WeightedMsoFormula, acc: &mut HashSet<String>) {
+fn collect_all_variables(
+    formula: &WeightedMsoFormula,
+    first_order: &mut HashSet<String>,
+    second_order: &mut HashSet<String>,
+) {
     use WeightedMsoFormula::*;
-    match formula {
-        Constant(_) => {},
-        AtomicPos { var, .. } | NegAtomicPos { var, .. } => {
-            acc.insert(var.clone());
-        },
-        Order { x, y } | NegOrder { x, y } => {
-            acc.insert(x.clone());
-            acc.insert(y.clone());
-        },
-        InSet { var, .. } | NotInSet { var, .. } => {
-            acc.insert(var.clone());
-        },
-        Or(a, b) | And(a, b) => {
-            collect_all_first_order_vars(a, acc);
-            collect_all_first_order_vars(b, acc);
-        },
-        ExistsFirst { var, body } | ForallFirst { var, body } => {
-            acc.insert(var.clone());
-            collect_all_first_order_vars(body, acc);
-        },
-        ExistsSecond { body, .. } | ForallSecond { body, .. } => {
-            collect_all_first_order_vars(body, acc);
-        },
-    }
-}
-
-fn collect_all_second_order_vars(formula: &WeightedMsoFormula, acc: &mut HashSet<String>) {
-    use WeightedMsoFormula::*;
-    match formula {
-        Constant(_) | AtomicPos { .. } | NegAtomicPos { .. } | Order { .. } | NegOrder { .. } => {},
-        InSet { set_var, .. } | NotInSet { set_var, .. } => {
-            acc.insert(set_var.clone());
-        },
-        Or(a, b) | And(a, b) => {
-            collect_all_second_order_vars(a, acc);
-            collect_all_second_order_vars(b, acc);
-        },
-        ExistsFirst { body, .. } | ForallFirst { body, .. } => {
-            collect_all_second_order_vars(body, acc);
-        },
-        ExistsSecond { var, body } | ForallSecond { var, body } => {
-            acc.insert(var.clone());
-            collect_all_second_order_vars(body, acc);
-        },
+    let mut work = vec![formula];
+    while let Some(formula) = work.pop() {
+        match formula {
+            Constant(_) => {},
+            AtomicPos { var, .. } | NegAtomicPos { var, .. } => {
+                first_order.insert(var.clone());
+            },
+            Order { x, y } | NegOrder { x, y } => {
+                first_order.insert(x.clone());
+                first_order.insert(y.clone());
+            },
+            InSet { var, set_var } | NotInSet { var, set_var } => {
+                first_order.insert(var.clone());
+                second_order.insert(set_var.clone());
+            },
+            Or(left, right) | And(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            ExistsFirst { var, body } | ForallFirst { var, body } => {
+                first_order.insert(var.clone());
+                work.push(body);
+            },
+            ExistsSecond { var, body } | ForallSecond { var, body } => {
+                second_order.insert(var.clone());
+                work.push(body);
+            },
+        }
     }
 }
 
@@ -520,11 +507,20 @@ fn existential_closure(pred: &BooleanTest, atom_name: &str) -> BooleanTest {
 /// Substitute a fixed truth value for the named atom inside a
 /// `BooleanTest`. Pure propositional substitution.
 fn substitute_atom(pred: &BooleanTest, atom_name: &str, value: bool) -> BooleanTest {
-    match pred {
-        BooleanTest::True => BooleanTest::True,
-        BooleanTest::False => BooleanTest::False,
-        BooleanTest::Atom(name) => {
-            if name == atom_name {
+    enum Task<'test> {
+        Visit(&'test BooleanTest),
+        Not,
+        And,
+        Or,
+    }
+
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(BooleanTest::True) => values.push(BooleanTest::True),
+            Task::Visit(BooleanTest::False) => values.push(BooleanTest::False),
+            Task::Visit(BooleanTest::Atom(name)) => values.push(if name == atom_name {
                 if value {
                     BooleanTest::True
                 } else {
@@ -532,20 +528,40 @@ fn substitute_atom(pred: &BooleanTest, atom_name: &str, value: bool) -> BooleanT
                 }
             } else {
                 BooleanTest::Atom(name.clone())
-            }
-        },
-        BooleanTest::Not(inner) => {
-            BooleanTest::Not(Box::new(substitute_atom(inner, atom_name, value)))
-        },
-        BooleanTest::And(a, b) => BooleanTest::And(
-            Box::new(substitute_atom(a, atom_name, value)),
-            Box::new(substitute_atom(b, atom_name, value)),
-        ),
-        BooleanTest::Or(a, b) => BooleanTest::Or(
-            Box::new(substitute_atom(a, atom_name, value)),
-            Box::new(substitute_atom(b, atom_name, value)),
-        ),
+            }),
+            Task::Visit(BooleanTest::Not(body)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(BooleanTest::And(left, right)) => {
+                tasks.push(Task::And);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(BooleanTest::Or(left, right)) => {
+                tasks.push(Task::Or);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Not => {
+                let body = values.pop().expect("Boolean substitution lost negand");
+                values.push(BooleanTest::Not(Box::new(body)));
+            },
+            Task::And | Task::Or => {
+                let right = values.pop().expect("Boolean substitution lost binary RHS");
+                let left = values.pop().expect("Boolean substitution lost binary LHS");
+                values.push(match task {
+                    Task::And => BooleanTest::And(Box::new(left), Box::new(right)),
+                    Task::Or => BooleanTest::Or(Box::new(left), Box::new(right)),
+                    _ => unreachable!(),
+                });
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("Boolean substitution produced no value")
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -562,6 +578,15 @@ pub fn compile_with_algebra(
 ) -> Result<SymbolicAutomaton<KatBooleanAlgebra>, MsoCompileError> {
     use WeightedMsoFormula::*;
 
+    enum Task<'formula> {
+        Visit(&'formula WeightedMsoFormula),
+        And,
+        Or,
+        ExistsFirst(&'formula str),
+        ExistsSecond(&'formula str),
+        ForallFirst(&'formula str),
+    }
+
     // Reject Full MSO upfront.
     let class = classify_formula(formula);
     if class == MsoFormulaClass::Full {
@@ -570,54 +595,88 @@ pub fn compile_with_algebra(
         });
     }
 
-    match formula {
-        Constant(s) => match s.as_str() {
-            "true" | "1" => Ok(make_universal(algebra)),
-            "false" | "0" => Ok(make_empty(algebra)),
-            other => Err(MsoCompileError::NonBooleanConstant { value: other.to_string() }),
-        },
-        AtomicPos { label, var } => Ok(compile_atomic_pos(label, var, algebra)),
-        NegAtomicPos { label, var } => Ok(compile_neg_atomic_pos(label, var, algebra)),
-        InSet { var, set_var } => Ok(compile_in_set(var, set_var, algebra)),
-        NotInSet { var, set_var } => Ok(compile_not_in_set(var, set_var, algebra)),
-        Order { x, y } => Ok(compile_order(x, y, algebra)),
-        NegOrder { x, y } => Ok(compile_neg_order(x, y, algebra)),
-        And(a, b) => {
-            let sfa_a = compile_with_algebra(a, algebra)?;
-            let sfa_b = compile_with_algebra(b, algebra)?;
-            Ok(sfa_a.intersect(&sfa_b))
-        },
-        Or(a, b) => {
-            let sfa_a = compile_with_algebra(a, algebra)?;
-            let sfa_b = compile_with_algebra(b, algebra)?;
-            Ok(sfa_a.union(&sfa_b))
-        },
-        ExistsFirst { var, body } => {
-            let body_sfa = compile_with_algebra(body, algebra)?;
-            // Constrain `var` to a unique witness, then existentially
-            // project it out of the alphabet.
-            let unique = build_unique_var_automaton(var, algebra);
-            let constrained = body_sfa.intersect(&unique);
-            Ok(project_first_order(&constrained, var))
-        },
-        ExistsSecond { var, body } => {
-            let body_sfa = compile_with_algebra(body, algebra)?;
-            // Sets need not be unique — no uniqueness constraint.
-            Ok(project_second_order(&body_sfa, var))
-        },
-        ForallFirst { var, body } => {
-            // ∀x. φ ≡ ¬∃x. ¬φ
-            let body_sfa = compile_with_algebra(body, algebra)?;
-            let neg_body_sfa = body_sfa.complement();
-            let unique = build_unique_var_automaton(var, algebra);
-            let constrained = neg_body_sfa.intersect(&unique);
-            let projected = project_first_order(&constrained, var);
-            Ok(projected.complement())
-        },
-        ForallSecond { .. } => Err(MsoCompileError::FullMsoUnsupported {
-            reason: "∀X is in the Full MSO fragment".to_string(),
-        }),
+    let mut tasks = vec![Task::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Constant(value)) => values.push(match value.as_str() {
+                "true" | "1" => make_universal(algebra),
+                "false" | "0" => make_empty(algebra),
+                other => {
+                    return Err(MsoCompileError::NonBooleanConstant { value: other.to_string() });
+                },
+            }),
+            Task::Visit(AtomicPos { label, var }) => {
+                values.push(compile_atomic_pos(label, var, algebra));
+            },
+            Task::Visit(NegAtomicPos { label, var }) => {
+                values.push(compile_neg_atomic_pos(label, var, algebra));
+            },
+            Task::Visit(InSet { var, set_var }) => {
+                values.push(compile_in_set(var, set_var, algebra));
+            },
+            Task::Visit(NotInSet { var, set_var }) => {
+                values.push(compile_not_in_set(var, set_var, algebra));
+            },
+            Task::Visit(Order { x, y }) => values.push(compile_order(x, y, algebra)),
+            Task::Visit(NegOrder { x, y }) => values.push(compile_neg_order(x, y, algebra)),
+            Task::Visit(And(left, right)) => {
+                tasks.push(Task::And);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(Or(left, right)) => {
+                tasks.push(Task::Or);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(ExistsFirst { var, body }) => {
+                tasks.push(Task::ExistsFirst(var));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(ExistsSecond { var, body }) => {
+                tasks.push(Task::ExistsSecond(var));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(ForallFirst { var, body }) => {
+                tasks.push(Task::ForallFirst(var));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(ForallSecond { .. }) => {
+                return Err(MsoCompileError::FullMsoUnsupported {
+                    reason: "∀X is in the Full MSO fragment".to_string(),
+                });
+            },
+            Task::And | Task::Or => {
+                let right = values.pop().expect("weighted-MSO compiler lost binary RHS");
+                let left = values.pop().expect("weighted-MSO compiler lost binary LHS");
+                values.push(match task {
+                    Task::And => left.intersect(&right),
+                    Task::Or => left.union(&right),
+                    _ => unreachable!(),
+                });
+            },
+            Task::ExistsFirst(var) => {
+                let body = values.pop().expect("weighted-MSO compiler lost ∃x body");
+                let unique = build_unique_var_automaton(var, algebra);
+                values.push(project_first_order(&body.intersect(&unique), var));
+            },
+            Task::ExistsSecond(var) => {
+                let body = values.pop().expect("weighted-MSO compiler lost ∃X body");
+                values.push(project_second_order(&body, var));
+            },
+            Task::ForallFirst(var) => {
+                let body = values.pop().expect("weighted-MSO compiler lost ∀x body");
+                let unique = build_unique_var_automaton(var, algebra);
+                let constrained = body.complement().intersect(&unique);
+                values.push(project_first_order(&constrained, var).complement());
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    Ok(values
+        .pop()
+        .expect("weighted-MSO compiler produced no automaton"))
 }
 
 /// Convenience wrapper: build the algebra from the formula's free
