@@ -26,6 +26,10 @@ pub(crate) mod typed_lowering;
 pub(crate) mod typed_report;
 pub(crate) mod withholding;
 
+#[cfg(test)]
+#[path = "../../../tests/support/dovetail_report_recursive_oracle.rs"]
+mod dovetail_report_recursive_oracle;
+
 /// Whether a language gets the typed-`L` Dovetail path (Increment 2/3 + E1). A language needs
 /// the typed path when it has either:
 ///
@@ -314,53 +318,51 @@ fn find_binder_scope(
     pattern: &AstPattern,
     scope_var: &Ident,
 ) -> Option<BinderScope> {
-    let AstPattern::Term(term) = pattern else {
-        return None;
-    };
-    let PatternTerm::Apply { constructor, args } = term else {
-        return None;
-    };
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        let AstPattern::Term(PatternTerm::Apply { constructor, args }) = pattern else {
+            continue;
+        };
 
-    // Is THIS apply the binder binding `scope_var`? It must be a binder constructor whose sole
-    // argument is exactly `Var(scope_var)`.
-    if let [AstPattern::Term(PatternTerm::Var(v))] = args.as_slice() {
-        if v == scope_var {
-            if let Some(cat) = language.category_of_constructor(constructor) {
-                for variant in collect_category_variants(cat, language) {
-                    match variant {
-                        VariantKind::Binder { label, binder_cat, body_cat, .. }
-                            if &label == constructor =>
-                        {
-                            return Some(BinderScope {
-                                binder_label: label,
-                                binder_cat: cat.clone(),
-                                binder_var_cat: binder_cat,
-                                body_cat,
-                                multi: false,
-                            });
-                        },
-                        VariantKind::MultiBinder { label, binder_cat, body_cat, .. }
-                            if &label == constructor =>
-                        {
-                            return Some(BinderScope {
-                                binder_label: label,
-                                binder_cat: cat.clone(),
-                                binder_var_cat: binder_cat,
-                                body_cat,
-                                multi: true,
-                            });
-                        },
-                        _ => {},
+        // Is THIS apply the binder binding `scope_var`? It must be a binder constructor whose sole
+        // argument is exactly `Var(scope_var)`.
+        if let [AstPattern::Term(PatternTerm::Var(v))] = args.as_slice() {
+            if v == scope_var {
+                if let Some(cat) = language.category_of_constructor(constructor) {
+                    for variant in collect_category_variants(cat, language) {
+                        match variant {
+                            VariantKind::Binder { label, binder_cat, body_cat, .. }
+                                if &label == constructor =>
+                            {
+                                return Some(BinderScope {
+                                    binder_label: label,
+                                    binder_cat: cat.clone(),
+                                    binder_var_cat: binder_cat,
+                                    body_cat,
+                                    multi: false,
+                                });
+                            },
+                            VariantKind::MultiBinder { label, binder_cat, body_cat, .. }
+                                if &label == constructor =>
+                            {
+                                return Some(BinderScope {
+                                    binder_label: label,
+                                    binder_cat: cat.clone(),
+                                    binder_var_cat: binder_cat,
+                                    body_cat,
+                                    multi: true,
+                                });
+                            },
+                            _ => {},
+                        }
                     }
                 }
             }
         }
-    }
 
-    // Otherwise recurse into the argument patterns.
-    for arg in args {
-        if let Some(found) = find_binder_scope(language, arg, scope_var) {
-            return Some(found);
+        // The native call walked arguments left-to-right. Reverse-push preserves that order.
+        for argument in args.iter().rev() {
+            work.push(argument);
         }
     }
     None
@@ -369,28 +371,33 @@ fn find_binder_scope(
 /// Whether a pattern contains a `Pattern::Collection`/`Map`/`Zip` metapattern anywhere (used to
 /// reject an AC-collection-nested substitution-rewrite LHS — MF4).
 fn pattern_contains_collection(pattern: &AstPattern) -> bool {
-    match pattern {
-        AstPattern::Collection { .. }
-        | AstPattern::Map { .. }
-        | AstPattern::Zip { .. }
-        // An indexed element IS a collection touch: the rule reaches into a `Vec`
-        // payload, so it needs the same collection-comprehension lowering path.
-        | AstPattern::IndexedVec { .. } => true,
-        AstPattern::Term(term) => match term {
-            PatternTerm::Apply { args, .. } => args.iter().any(pattern_contains_collection),
-            PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
-                pattern_contains_collection(body)
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        match pattern {
+            AstPattern::Collection { .. }
+            | AstPattern::Map { .. }
+            | AstPattern::Zip { .. }
+            // An indexed element IS a collection touch: the rule reaches into a `Vec`
+            // payload, so it needs the same collection-comprehension lowering path.
+            | AstPattern::IndexedVec { .. } => return true,
+            AstPattern::Term(PatternTerm::Apply { args, .. }) => {
+                work.extend(args.iter().rev());
             },
-            PatternTerm::Subst { term, replacement, .. } => {
-                pattern_contains_collection(term) || pattern_contains_collection(replacement)
+            AstPattern::Term(
+                PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. },
+            ) => work.push(body),
+            AstPattern::Term(PatternTerm::Subst { term, replacement, .. }) => {
+                work.push(replacement);
+                work.push(term);
             },
-            PatternTerm::MultiSubst { scope, replacements } => {
-                pattern_contains_collection(scope)
-                    || replacements.iter().any(pattern_contains_collection)
+            AstPattern::Term(PatternTerm::MultiSubst { scope, replacements }) => {
+                work.extend(replacements.iter().rev());
+                work.push(scope);
             },
-            PatternTerm::Var(_) => false,
-        },
+            AstPattern::Term(PatternTerm::Var(_)) => {},
+        }
     }
+    false
 }
 
 /// (A-3) One structured element of a Comm rule's AC bag LHS — a constructor applied to bare
@@ -892,19 +899,16 @@ pub(crate) struct NestedStructuralAcRewrite {
 /// and `Collection` elements). Used to compute the CONSUMED redex heads (LHS constructors MINUS RHS
 /// constructors) for the nested structural-AC extraction preference.
 fn collect_apply_constructors(pattern: &AstPattern, out: &mut HashSet<String>) {
-    match pattern {
-        AstPattern::Term(PatternTerm::Apply { constructor, args }) => {
-            out.insert(constructor.to_string());
-            for arg in args {
-                collect_apply_constructors(arg, out);
-            }
-        },
-        AstPattern::Collection { elements, .. } => {
-            for element in elements {
-                collect_apply_constructors(element, out);
-            }
-        },
-        _ => {},
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        match pattern {
+            AstPattern::Term(PatternTerm::Apply { constructor, args }) => {
+                out.insert(constructor.to_string());
+                work.extend(args.iter().rev());
+            },
+            AstPattern::Collection { elements, .. } => work.extend(elements.iter().rev()),
+            _ => {},
+        }
     }
 }
 
@@ -959,30 +963,32 @@ pub(crate) fn is_nested_structural_ac_rewrite(
 /// surface). Being more permissive here is safe: it can only enable `dovetail_normal_term`,
 /// which is itself fail-closed (`Err` on a stuck reconstruction).
 fn pattern_contains_substitution(pattern: &AstPattern) -> bool {
-    match pattern {
-        AstPattern::Term(term) => pattern_term_contains_substitution(term),
-        AstPattern::Collection { elements, .. } => {
-            elements.iter().any(pattern_contains_substitution)
-        },
-        AstPattern::Map { collection, body, .. } => {
-            pattern_contains_substitution(collection) || pattern_contains_substitution(body)
-        },
-        AstPattern::Zip { first, second } => {
-            pattern_contains_substitution(first) || pattern_contains_substitution(second)
-        },
-        AstPattern::IndexedVec { element, .. } => pattern_contains_substitution(element),
+    let mut work = vec![pattern];
+    while let Some(pattern) = work.pop() {
+        match pattern {
+            AstPattern::Term(PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. }) => {
+                return true;
+            },
+            AstPattern::Term(PatternTerm::Apply { args, .. }) => {
+                work.extend(args.iter().rev());
+            },
+            AstPattern::Term(
+                PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. },
+            ) => work.push(body),
+            AstPattern::Term(PatternTerm::Var(_)) => {},
+            AstPattern::Collection { elements, .. } => work.extend(elements.iter().rev()),
+            AstPattern::Map { collection, body, .. } => {
+                work.push(body);
+                work.push(collection);
+            },
+            AstPattern::Zip { first, second } => {
+                work.push(second);
+                work.push(first);
+            },
+            AstPattern::IndexedVec { element, .. } => work.push(element),
+        }
     }
-}
-
-fn pattern_term_contains_substitution(term: &PatternTerm) -> bool {
-    match term {
-        PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => true,
-        PatternTerm::Apply { args, .. } => args.iter().any(pattern_contains_substitution),
-        PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
-            pattern_contains_substitution(body)
-        },
-        PatternTerm::Var(_) => false,
-    }
+    false
 }
 
 /// Whether a generated language should also expose `dovetail_normal_term` (E2.2) — the method
@@ -1414,76 +1420,113 @@ fn pattern_to_dovetail(
     pattern: &AstPattern,
     enum_id: Option<&Ident>,
 ) -> Result<TokenStream, String> {
-    match pattern {
-        AstPattern::Term(term) => pattern_term_to_dovetail(language, term, enum_id),
-        // A collection directly under a constructor is lowered to an AC bag in
-        // the `PatternTerm::Apply` arm (which supplies the operator label). A
-        // bare/nested collection with no enclosing constructor has no operator and
-        // is not produced by the current grammar — fail closed.
-        AstPattern::Collection { .. } => {
-            Err("a collection metapattern must be the argument of a constructor (AC bag); a bare collection has no operator".into())
+    enum Job<'pattern> {
+        Visit(&'pattern AstPattern),
+        FinishApp {
+            op: TokenStream,
+            child_count: usize,
         },
-        AstPattern::Map { .. } => {
-            Err("map metapatterns require collection-comprehension lowering".into())
-        },
-        AstPattern::Zip { .. } => {
-            Err("zip metapatterns require collection-comprehension lowering".into())
-        },
-        AstPattern::IndexedVec { .. } => {
-            Err("indexed-vec metapatterns require collection-comprehension lowering".into())
+        FinishAc {
+            op: TokenStream,
+            child_count: usize,
+            rest: TokenStream,
         },
     }
-}
 
-fn pattern_term_to_dovetail(
-    language: &LanguageDef,
-    term: &PatternTerm,
-    enum_id: Option<&Ident>,
-) -> Result<TokenStream, String> {
-    match term {
-        PatternTerm::Var(var) => {
-            if let Some(rule) = language.get_constructor(var) {
-                let op = constructor_op_expr(language, &rule.label, enum_id)?;
-                Ok(quote! { ::dovetail::rules::Pattern::leaf(#op) })
-            } else {
-                let name = lit(&var.to_string());
-                Ok(quote! { ::dovetail::rules::Pattern::var(#name) })
-            }
-        },
-        PatternTerm::Apply { constructor, args } => {
-            // A constructor whose SOLE argument is a collection metapattern
-            // `{ ... }` (e.g. Ambient `(PPar { P, Q, ...rest })`) lowers to an AC
-            // bag pattern, with the constructor as the AC operator. The collection
-            // has no constructor of its own (see `Pattern::Collection`). The AC
-            // lowering is representation-uniform (A-1): on the `EGraph<String>` path
-            // (`enum_id = None`) the operator is the label string; on the typed fold
-            // path (`enum_id = Some(L)`) it is the typed op variant `L::<Cat>_<Ctor>`,
-            // so an `AcApp` LHS matches the typed lowering's n-ary bag node (Rholang's
-            // / CommDemo's `PPar`). `ac::lower_ac_collection` threads `enum_id` to both
-            // the operator and the `fixed` sub-patterns.
-            if let [AstPattern::Collection { .. }] = args.as_slice() {
-                return ac::lower_ac_collection(language, constructor, &args[0], enum_id);
-            }
-            let op = constructor_op_expr(language, constructor, enum_id)?;
-            let args = args
-                .iter()
-                .map(|arg| pattern_to_dovetail(language, arg, enum_id))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(quote! {
-                ::dovetail::rules::Pattern::app(#op, vec![#(#args),*])
-            })
-        },
-        PatternTerm::Lambda { .. } => Err("lambda patterns require binder lowering".into()),
-        PatternTerm::MultiLambda { .. } => {
-            Err("multi-lambda patterns require binder lowering".into())
-        },
-        PatternTerm::Subst { .. } => {
-            Err("substitution patterns require generated substitution lowering".into())
-        },
-        PatternTerm::MultiSubst { .. } => {
-            Err("multi-substitution patterns require generated substitution lowering".into())
-        },
+    fn take_children(values: &mut Vec<TokenStream>, child_count: usize) -> Vec<TokenStream> {
+        let first_child = values
+            .len()
+            .checked_sub(child_count)
+            .expect("Dovetail pattern PDA child underflow");
+        values.split_off(first_child)
     }
+
+    let mut jobs = vec![Job::Visit(pattern)];
+    let mut values = Vec::new();
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Visit(AstPattern::Term(PatternTerm::Var(var))) => {
+                if let Some(rule) = language.get_constructor(var) {
+                    let op = constructor_op_expr(language, &rule.label, enum_id)?;
+                    values.push(quote! { ::dovetail::rules::Pattern::leaf(#op) });
+                } else {
+                    let name = lit(&var.to_string());
+                    values.push(quote! { ::dovetail::rules::Pattern::var(#name) });
+                }
+            },
+            Job::Visit(AstPattern::Term(PatternTerm::Apply { constructor, args })) => {
+                // Preparation validates the collection and resolves the AC operator before any
+                // fixed element, matching the former recursive call's observable error order.
+                if let [collection @ AstPattern::Collection { .. }] = args.as_slice() {
+                    let prepared =
+                        ac::prepare_ac_collection(language, constructor, collection, enum_id)?;
+                    jobs.push(Job::FinishAc {
+                        op: prepared.op,
+                        child_count: prepared.elements.len(),
+                        rest: prepared.rest,
+                    });
+                    for element in prepared.elements.iter().rev() {
+                        jobs.push(Job::Visit(element));
+                    }
+                } else {
+                    let op = constructor_op_expr(language, constructor, enum_id)?;
+                    jobs.push(Job::FinishApp { op, child_count: args.len() });
+                    for argument in args.iter().rev() {
+                        jobs.push(Job::Visit(argument));
+                    }
+                }
+            },
+            Job::Visit(AstPattern::Term(PatternTerm::Lambda { .. })) => {
+                return Err("lambda patterns require binder lowering".into());
+            },
+            Job::Visit(AstPattern::Term(PatternTerm::MultiLambda { .. })) => {
+                return Err("multi-lambda patterns require binder lowering".into());
+            },
+            Job::Visit(AstPattern::Term(PatternTerm::Subst { .. })) => {
+                return Err("substitution patterns require generated substitution lowering".into());
+            },
+            Job::Visit(AstPattern::Term(PatternTerm::MultiSubst { .. })) => {
+                return Err(
+                    "multi-substitution patterns require generated substitution lowering".into()
+                );
+            },
+            // A bare collection has no enclosing operator and therefore fails closed without
+            // traversing its children, exactly as before.
+            Job::Visit(AstPattern::Collection { .. }) => {
+                return Err("a collection metapattern must be the argument of a constructor (AC bag); a bare collection has no operator".into());
+            },
+            Job::Visit(AstPattern::Map { .. }) => {
+                return Err("map metapatterns require collection-comprehension lowering".into());
+            },
+            Job::Visit(AstPattern::Zip { .. }) => {
+                return Err("zip metapatterns require collection-comprehension lowering".into());
+            },
+            Job::Visit(AstPattern::IndexedVec { .. }) => {
+                return Err(
+                    "indexed-vec metapatterns require collection-comprehension lowering".into()
+                );
+            },
+            Job::FinishApp { op, child_count } => {
+                let args = take_children(&mut values, child_count);
+                values.push(quote! {
+                    ::dovetail::rules::Pattern::app(#op, vec![#(#args),*])
+                });
+            },
+            Job::FinishAc { op, child_count, rest } => {
+                let fixed = take_children(&mut values, child_count);
+                values.push(quote! {
+                    ::dovetail::rules::Pattern::ac(
+                        #op,
+                        vec![#(#fixed),*],
+                        #rest,
+                    )
+                });
+            },
+        }
+    }
+
+    assert_eq!(values.len(), 1, "Dovetail pattern PDA must produce exactly one value");
+    Ok(values.pop().expect("Dovetail pattern PDA lost its root"))
 }
 
 /// (E1.4) The native-rule LHS pattern for a substitution rewrite, lowered over the typed op-enum.
@@ -1512,29 +1555,57 @@ fn collapse_binder_scope(
     binder_label: &Ident,
     scope_var: &Ident,
 ) -> AstPattern {
-    match pattern {
-        AstPattern::Term(PatternTerm::Apply { constructor, args }) => {
-            // The binder node binding `scope_var` collapses to the scope variable itself.
-            if constructor == binder_label {
-                if let [AstPattern::Term(PatternTerm::Var(v))] = args.as_slice() {
-                    if v == scope_var {
-                        return AstPattern::Term(PatternTerm::Var(scope_var.clone()));
-                    }
-                }
-            }
-            let new_args = args
-                .iter()
-                .map(|a| collapse_binder_scope(a, binder_label, scope_var))
-                .collect();
-            AstPattern::Term(PatternTerm::Apply {
-                constructor: constructor.clone(),
-                args: new_args,
-            })
+    enum Job<'pattern> {
+        Visit(&'pattern AstPattern),
+        FinishApply {
+            constructor: &'pattern Ident,
+            child_count: usize,
         },
-        // Substitution rewrites have no collection/map/zip/lambda LHS (rejected by the detector),
-        // so every other node is returned unchanged.
-        other => other.clone(),
     }
+
+    let mut jobs = vec![Job::Visit(pattern)];
+    let mut values = Vec::new();
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Visit(AstPattern::Term(PatternTerm::Apply { constructor, args })) => {
+                // The binder node binding `scope_var` collapses to the scope variable itself.
+                if constructor == binder_label
+                    && matches!(
+                        args.as_slice(),
+                        [AstPattern::Term(PatternTerm::Var(var))] if var == scope_var
+                    )
+                {
+                    values.push(AstPattern::Term(PatternTerm::Var(scope_var.clone())));
+                    continue;
+                }
+
+                jobs.push(Job::FinishApply { constructor, child_count: args.len() });
+                for argument in args.iter().rev() {
+                    jobs.push(Job::Visit(argument));
+                }
+            },
+            Job::Visit(other) => {
+                // The substitution-rewrite detector excludes collections, maps, zips, and lambdas
+                // from this LHS. Preserve the historical behavior of treating any such residual as
+                // an opaque clone instead of traversing into a shape this transformation does not own.
+                values.push(other.clone());
+            },
+            Job::FinishApply { constructor, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("collapse PDA child underflow");
+                let args = values.split_off(first_child);
+                values.push(AstPattern::Term(PatternTerm::Apply {
+                    constructor: constructor.clone(),
+                    args,
+                }));
+            },
+        }
+    }
+
+    assert_eq!(values.len(), 1, "collapse PDA must produce exactly one pattern");
+    values.pop().expect("collapse PDA lost its root")
 }
 
 /// ★★ (#195) Whether a DECLARED congruence names a position the e-graph closure **cannot

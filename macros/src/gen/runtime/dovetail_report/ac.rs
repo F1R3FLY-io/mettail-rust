@@ -8,8 +8,8 @@
 //! collection to a `Pattern::ac(op, fixed, rest)`:
 //!
 //! - `op` = the enclosing constructor's label (`<Lang>::<Cat>::<Label>`),
-//! - `fixed` = each element pattern lowered via the parent's
-//!   `pattern_to_dovetail`,
+//! - `fixed` = each element pattern scheduled by the parent's iterative
+//!   lowering machine,
 //! - `rest` = the `...rest` remainder variable name, if present.
 //!
 //! The matcher then matches a sub-multiset of an `op`-bag's children against
@@ -26,8 +26,15 @@ use syn::Ident;
 
 use super::lit;
 
-/// Lower a collection metapattern into a `Pattern::ac(op, fixed, rest)` token
-/// stream. `constructor` is the enclosing constructor (the AC operator); `enum_id`
+pub(crate) struct PreparedAcCollection<'pattern> {
+    pub(crate) op: TokenStream,
+    pub(crate) elements: &'pattern [AstPattern],
+    pub(crate) rest: TokenStream,
+}
+
+/// Validate and prepare a collection metapattern for the parent's iterative
+/// `Pattern::ac(op, fixed, rest)` lowering. `constructor` is the enclosing
+/// constructor (the AC operator); `enum_id`
 /// selects the operator representation exactly as [`super::constructor_op_expr`]:
 ///
 ///   * `None` → the `EGraph<String>` path — the operator is the `"Lang::Cat::Ctor"`
@@ -40,13 +47,15 @@ use super::lit;
 ///
 /// Returns `Err` for a non-`HashBag` collection type (Vec/HashSet/HashMap are not
 /// AC multisets) — fail closed, matching the engine's `HashBag`-only AC support.
-pub(crate) fn lower_ac_collection(
+pub(crate) fn prepare_ac_collection<'pattern>(
     language: &LanguageDef,
     constructor: &Ident,
-    coll: &AstPattern,
+    coll: &'pattern AstPattern,
     enum_id: Option<&Ident>,
-) -> Result<TokenStream, String> {
+) -> Result<PreparedAcCollection<'pattern>, String> {
     let AstPattern::Collection { coll_type, elements, rest } = coll else {
+        // Preserve the historical diagnostic byte-for-byte even though preparation and
+        // child traversal are now split across the parent PDA.
         return Err("lower_ac_collection requires a Collection pattern".into());
     };
 
@@ -63,15 +72,7 @@ pub(crate) fn lower_ac_collection(
     // The AC operator, in the caller's representation (String label or typed op variant).
     let op = super::constructor_op_expr(language, constructor, enum_id)?;
 
-    let fixed = elements
-        .iter()
-        // The `fixed` element sub-patterns lower over the SAME representation as the
-        // enclosing operator, so an `AcApp { op, fixed }` matches the corresponding
-        // (String-path or typed-path) n-ary bag node uniformly.
-        .map(|elem| super::pattern_to_dovetail(language, elem, enum_id))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let rest_tokens = match rest {
+    let rest = match rest {
         Some(name) => {
             let name_lit = lit(&name.to_string());
             quote! { Some(#name_lit.to_string()) }
@@ -79,11 +80,5 @@ pub(crate) fn lower_ac_collection(
         None => quote! { None },
     };
 
-    Ok(quote! {
-        ::dovetail::rules::Pattern::ac(
-            #op,
-            vec![#(#fixed),*],
-            #rest_tokens,
-        )
-    })
+    Ok(PreparedAcCollection { op, elements, rest })
 }
