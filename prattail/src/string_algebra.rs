@@ -22,7 +22,6 @@ use crate::symbolic::{BooleanAlgebra, CharClassAlgebra, CharClassPred};
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A string predicate: a symbolic regular language over character classes.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrPred {
     /// The empty language `∅`.
     Empty,
@@ -46,6 +45,9 @@ pub enum StrPred {
     Compl(Box<StrPred>),
 }
 
+#[path = "string_algebra/lifecycle.rs"]
+mod lifecycle;
+
 impl StrPred {
     /// `Σ*` — every string.
     pub fn any() -> StrPred {
@@ -59,31 +61,83 @@ impl StrPred {
 
     /// Desugar to the generic regex over character-class predicates.
     fn to_regex(&self) -> RegexPred<CharClassPred> {
-        match self {
-            StrPred::Empty => RegexPred::Empty,
-            StrPred::Epsilon => RegexPred::Epsilon,
-            StrPred::Class(c) => RegexPred::Elem(c.clone()),
-            StrPred::Literal(s) => {
-                let mut acc = RegexPred::Epsilon;
-                for ch in s.chars() {
-                    acc = RegexPred::Concat(
-                        Box::new(acc),
-                        Box::new(RegexPred::Elem(CharClassPred::Range(ch, ch))),
-                    );
-                }
-                acc
-            },
-            StrPred::Length(lo, hi) => RegexPred::Length(*lo, *hi),
-            StrPred::Concat(a, b) => {
-                RegexPred::Concat(Box::new(a.to_regex()), Box::new(b.to_regex()))
-            },
-            StrPred::Alt(a, b) => RegexPred::Alt(Box::new(a.to_regex()), Box::new(b.to_regex())),
-            StrPred::Star(a) => RegexPred::Star(Box::new(a.to_regex())),
-            StrPred::Inter(a, b) => {
-                RegexPred::Inter(Box::new(a.to_regex()), Box::new(b.to_regex()))
-            },
-            StrPred::Compl(a) => RegexPred::Compl(Box::new(a.to_regex())),
+        #[derive(Clone, Copy)]
+        enum Task<'pred> {
+            Visit(&'pred StrPred),
+            Concat,
+            Alt,
+            Star,
+            Inter,
+            Compl,
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(StrPred::Empty) => values.push(RegexPred::Empty),
+                Task::Visit(StrPred::Epsilon) => values.push(RegexPred::Epsilon),
+                Task::Visit(StrPred::Class(class)) => {
+                    values.push(RegexPred::Elem(class.clone()));
+                },
+                Task::Visit(StrPred::Literal(literal)) => {
+                    let mut regex = RegexPred::Epsilon;
+                    for character in literal.chars() {
+                        regex = RegexPred::Concat(
+                            Box::new(regex),
+                            Box::new(RegexPred::Elem(CharClassPred::Range(character, character))),
+                        );
+                    }
+                    values.push(regex);
+                },
+                Task::Visit(StrPred::Length(lower, upper)) => {
+                    values.push(RegexPred::Length(*lower, *upper));
+                },
+                Task::Visit(StrPred::Concat(left, right)) => {
+                    tasks.push(Task::Concat);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(StrPred::Alt(left, right)) => {
+                    tasks.push(Task::Alt);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(StrPred::Inter(left, right)) => {
+                    tasks.push(Task::Inter);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(StrPred::Star(body)) => {
+                    tasks.push(Task::Star);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(StrPred::Compl(body)) => {
+                    tasks.push(Task::Compl);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Concat | Task::Alt | Task::Inter => {
+                    let right = values.pop().expect("string desugaring lost right body");
+                    let left = values.pop().expect("string desugaring lost left body");
+                    values.push(match task {
+                        Task::Concat => RegexPred::Concat(Box::new(left), Box::new(right)),
+                        Task::Alt => RegexPred::Alt(Box::new(left), Box::new(right)),
+                        Task::Inter => RegexPred::Inter(Box::new(left), Box::new(right)),
+                        Task::Visit(_) | Task::Star | Task::Compl => unreachable!(),
+                    });
+                },
+                Task::Star | Task::Compl => {
+                    let body = values.pop().expect("string desugaring lost unary body");
+                    values.push(match task {
+                        Task::Star => RegexPred::Star(Box::new(body)),
+                        Task::Compl => RegexPred::Compl(Box::new(body)),
+                        Task::Visit(_) | Task::Concat | Task::Alt | Task::Inter => unreachable!(),
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("string desugaring produced no regex")
     }
 }
 
