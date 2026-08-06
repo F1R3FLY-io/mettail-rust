@@ -491,7 +491,7 @@ fn collect_actions(expr: &KatExpr, acc: &mut HashSet<String>) {
 ///
 /// Returns `true` if the test passes under the valuation, `false` otherwise.
 /// Atoms not present in the valuation are treated as `false`.
-fn eval_test(test: &BooleanTest, valuation: &HashMap<String, bool>) -> bool {
+pub(crate) fn eval_test(test: &BooleanTest, valuation: &HashMap<String, bool>) -> bool {
     enum Task<'test> {
         Visit(&'test BooleanTest),
         Not,

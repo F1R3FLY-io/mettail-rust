@@ -180,7 +180,6 @@ pub trait BooleanAlgebra: Clone + std::fmt::Debug + Send + Sync + 'static {
 /// Represents sets of integers via half-open ranges `[lo, hi)`, their unions,
 /// and their complements. The algebra domain is `i64` values within a
 /// configured `[min_val, max_val)` universe.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IntervalPred {
     /// The universal predicate: satisfied by all integers in `[min_val, max_val)`.
     True,
@@ -196,7 +195,12 @@ pub enum IntervalPred {
 
 impl fmt::Display for IntervalPred {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+        let mut cursor = self;
+        while let IntervalPred::Not(inner) = cursor {
+            f.write_str("~")?;
+            cursor = inner;
+        }
+        match cursor {
             IntervalPred::True => write!(f, "TRUE"),
             IntervalPred::False => write!(f, "FALSE"),
             IntervalPred::Range(lo, hi) => write!(f, "[{}, {})", lo, hi),
@@ -210,7 +214,7 @@ impl fmt::Display for IntervalPred {
                 }
                 write!(f, ")")
             },
-            IntervalPred::Not(inner) => write!(f, "~{}", inner),
+            IntervalPred::Not(_) => unreachable!("leading negations were drained"),
         }
     }
 }
@@ -245,7 +249,13 @@ impl IntervalAlgebra {
     /// representing exactly the set of integers satisfying the predicate
     /// within the universe `[min_val, max_val)`.
     fn normalize(&self, pred: &IntervalPred) -> Vec<(i64, i64)> {
-        match pred {
+        let mut cursor = pred;
+        let mut negated = false;
+        while let IntervalPred::Not(inner) = cursor {
+            negated = !negated;
+            cursor = inner;
+        }
+        let ranges = match cursor {
             IntervalPred::True => vec![(self.min_val, self.max_val)],
             IntervalPred::False => vec![],
             IntervalPred::Range(lo, hi) => {
@@ -274,10 +284,12 @@ impl IntervalAlgebra {
                 clipped.sort_unstable();
                 merge_ranges(&clipped)
             },
-            IntervalPred::Not(inner) => {
-                let inner_ranges = self.normalize(inner);
-                complement_ranges(&inner_ranges, self.min_val, self.max_val)
-            },
+            IntervalPred::Not(_) => unreachable!("leading negations were drained"),
+        };
+        if negated {
+            complement_ranges(&ranges, self.min_val, self.max_val)
+        } else {
+            ranges
         }
     }
 
@@ -418,7 +430,6 @@ impl BooleanAlgebra for IntervalAlgebra {
 /// Represents sets of characters via inclusive ranges `[lo, hi]`, their unions,
 /// and their complements. The domain is the full Unicode scalar value range
 /// `['\0', char::MAX]`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CharClassPred {
     /// The universal predicate: satisfied by all characters.
     True,
@@ -432,9 +443,17 @@ pub enum CharClassPred {
     Not(Box<CharClassPred>),
 }
 
+#[path = "symbolic/lifecycle.rs"]
+mod lifecycle;
+
 impl fmt::Display for CharClassPred {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+        let mut cursor = self;
+        while let CharClassPred::Not(inner) = cursor {
+            f.write_str("~")?;
+            cursor = inner;
+        }
+        match cursor {
             CharClassPred::True => write!(f, "TRUE"),
             CharClassPred::False => write!(f, "FALSE"),
             CharClassPred::Range(lo, hi) => {
@@ -458,7 +477,7 @@ impl fmt::Display for CharClassPred {
                 }
                 write!(f, "]")
             },
-            CharClassPred::Not(inner) => write!(f, "~{}", inner),
+            CharClassPred::Not(_) => unreachable!("leading negations were drained"),
         }
     }
 }
@@ -481,7 +500,13 @@ impl CharClassAlgebra {
     /// Normalize a predicate to a sorted, non-overlapping list of
     /// half-open `u32` ranges `[lo, hi)`.
     fn normalize_u32(pred: &CharClassPred) -> Vec<(u32, u32)> {
-        match pred {
+        let mut cursor = pred;
+        let mut negated = false;
+        while let CharClassPred::Not(inner) = cursor {
+            negated = !negated;
+            cursor = inner;
+        }
+        let ranges = match cursor {
             CharClassPred::True => vec![(0, (char::MAX as u32) + 1)],
             CharClassPred::False => vec![],
             CharClassPred::Range(lo, hi) => {
@@ -505,10 +530,12 @@ impl CharClassAlgebra {
                 u32_ranges.sort_unstable();
                 merge_u32_ranges(&u32_ranges)
             },
-            CharClassPred::Not(inner) => {
-                let inner_ranges = Self::normalize_u32(inner);
-                complement_u32_ranges(&inner_ranges, 0, (char::MAX as u32) + 1)
-            },
+            CharClassPred::Not(_) => unreachable!("leading negations were drained"),
+        };
+        if negated {
+            complement_u32_ranges(&ranges, 0, (char::MAX as u32) + 1)
+        } else {
+            ranges
         }
     }
 
@@ -710,14 +737,7 @@ impl KatBooleanAlgebra {
 /// Public helper for use by the symbolic automata module and tests.
 /// Atoms not present in the valuation are treated as `false`.
 pub fn eval_test_public(test: &BooleanTest, valuation: &HashMap<String, bool>) -> bool {
-    match test {
-        BooleanTest::True => true,
-        BooleanTest::False => false,
-        BooleanTest::Atom(name) => *valuation.get(name).unwrap_or(&false),
-        BooleanTest::Not(inner) => !eval_test_public(inner, valuation),
-        BooleanTest::And(a, b) => eval_test_public(a, valuation) && eval_test_public(b, valuation),
-        BooleanTest::Or(a, b) => eval_test_public(a, valuation) || eval_test_public(b, valuation),
-    }
+    crate::kat::eval_test(test, valuation)
 }
 
 impl BooleanAlgebra for KatBooleanAlgebra {
@@ -1541,7 +1561,6 @@ impl fmt::Display for DecidabilityTier {
 /// This is a richer predicate language than `BooleanTest`, supporting
 /// quantification (both finite and infinite-domain), relational atoms
 /// (database lookups), and bounded checking.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PredicateExpr {
     /// Boolean true.
     True,
@@ -1611,32 +1630,66 @@ pub enum PredicateExpr {
 
 impl fmt::Display for PredicateExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PredicateExpr::True => write!(f, "true"),
-            PredicateExpr::False => write!(f, "false"),
-            PredicateExpr::Atom(name) => write!(f, "{}", name),
-            PredicateExpr::Not(inner) => write!(f, "~({})", inner),
-            PredicateExpr::And(a, b) => write!(f, "({} /\\ {})", a, b),
-            PredicateExpr::Or(a, b) => write!(f, "({} \\/ {})", a, b),
-            PredicateExpr::ForallFinite { var, domain, body } => {
-                write!(f, "forall {} in {:?}. {}", var, domain, body)
-            },
-            PredicateExpr::ExistsFinite { var, domain, body } => {
-                write!(f, "exists {} in {:?}. {}", var, domain, body)
-            },
-            PredicateExpr::ForallInfinite { var, body } => {
-                write!(f, "forall {}. {}", var, body)
-            },
-            PredicateExpr::ExistsInfinite { var, body } => {
-                write!(f, "exists {}. {}", var, body)
-            },
-            PredicateExpr::Relation { name, args } => {
-                write!(f, "{}({})", name, args.join(", "))
-            },
-            PredicateExpr::Bounded { body, bound } => {
-                write!(f, "bounded({}, {})", body, bound)
-            },
+        enum Task<'expr> {
+            Visit(&'expr PredicateExpr),
+            Text(&'static str),
+            Bound(u64),
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => f.write_str(text)?,
+                Task::Bound(bound) => write!(f, ", {bound})")?,
+                Task::Visit(PredicateExpr::True) => f.write_str("true")?,
+                Task::Visit(PredicateExpr::False) => f.write_str("false")?,
+                Task::Visit(PredicateExpr::Atom(name)) => f.write_str(name)?,
+                Task::Visit(PredicateExpr::Relation { name, args }) => {
+                    write!(f, "{}({})", name, args.join(", "))?;
+                },
+                Task::Visit(PredicateExpr::Not(body)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(body));
+                    tasks.push(Task::Text("~("));
+                },
+                Task::Visit(PredicateExpr::And(left, right)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Text(" /\\ "));
+                    tasks.push(Task::Visit(left));
+                    tasks.push(Task::Text("("));
+                },
+                Task::Visit(PredicateExpr::Or(left, right)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Text(" \\/ "));
+                    tasks.push(Task::Visit(left));
+                    tasks.push(Task::Text("("));
+                },
+                Task::Visit(PredicateExpr::ForallFinite { var, domain, body }) => {
+                    write!(f, "forall {var} in {domain:?}. ")?;
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(PredicateExpr::ExistsFinite { var, domain, body }) => {
+                    write!(f, "exists {var} in {domain:?}. ")?;
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(PredicateExpr::ForallInfinite { var, body }) => {
+                    write!(f, "forall {var}. ")?;
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(PredicateExpr::ExistsInfinite { var, body }) => {
+                    write!(f, "exists {var}. ")?;
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(PredicateExpr::Bounded { body, bound }) => {
+                    f.write_str("bounded(")?;
+                    tasks.push(Task::Bound(*bound));
+                    tasks.push(Task::Visit(body));
+                },
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1662,51 +1715,33 @@ impl fmt::Display for PredicateExpr {
 /// The function returns the highest (least decidable) tier found anywhere
 /// in the expression tree. A sub-expression of higher tier dominates.
 pub fn classify_decidability(expr: &PredicateExpr) -> DecidabilityTier {
-    classify_decidability_inner(expr, false)
-}
-
-/// Internal recursive classifier.
-///
-/// `in_bounded` tracks whether we are inside a `Bounded` wrapper,
-/// which downgrades infinite quantifiers from T4 to T3.
-fn classify_decidability_inner(expr: &PredicateExpr, in_bounded: bool) -> DecidabilityTier {
-    match expr {
-        PredicateExpr::True | PredicateExpr::False | PredicateExpr::Atom(_) => {
-            DecidabilityTier::CompileTimeDecidable
-        },
-
-        PredicateExpr::Not(inner) => classify_decidability_inner(inner, in_bounded),
-
-        PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
-            let ta = classify_decidability_inner(a, in_bounded);
-            let tb = classify_decidability_inner(b, in_bounded);
-            ta.max(tb)
-        },
-
-        PredicateExpr::ForallFinite { body, .. } | PredicateExpr::ExistsFinite { body, .. } => {
-            // Finite-domain quantification is at most T1 from the quantifier itself.
-            // But the body may push it higher.
-            classify_decidability_inner(body, in_bounded)
-        },
-
-        PredicateExpr::ForallInfinite { body, .. } | PredicateExpr::ExistsInfinite { body, .. } => {
-            if in_bounded {
-                // Inside a Bounded wrapper → T3 from the quantifier.
-                let body_tier = classify_decidability_inner(body, in_bounded);
-                body_tier.max(DecidabilityTier::SemiDecidable)
-            } else {
-                // Unbounded infinite quantification → T4.
-                DecidabilityTier::Undecidable
-            }
-        },
-
-        PredicateExpr::Relation { .. } => DecidabilityTier::RuntimeDecidable,
-
-        PredicateExpr::Bounded { body, .. } => {
-            // The Bounded wrapper enables semi-decidability for infinite quantifiers.
-            classify_decidability_inner(body, true)
-        },
+    let mut highest = DecidabilityTier::CompileTimeDecidable;
+    let mut work = vec![(expr, false)];
+    while let Some((current, in_bounded)) = work.pop() {
+        match current {
+            PredicateExpr::True | PredicateExpr::False | PredicateExpr::Atom(_) => {},
+            PredicateExpr::Relation { .. } => {
+                highest = highest.max(DecidabilityTier::RuntimeDecidable);
+            },
+            PredicateExpr::Not(body)
+            | PredicateExpr::ForallFinite { body, .. }
+            | PredicateExpr::ExistsFinite { body, .. } => work.push((body, in_bounded)),
+            PredicateExpr::And(left, right) | PredicateExpr::Or(left, right) => {
+                work.push((right, in_bounded));
+                work.push((left, in_bounded));
+            },
+            PredicateExpr::ForallInfinite { body, .. }
+            | PredicateExpr::ExistsInfinite { body, .. } => {
+                if !in_bounded {
+                    return DecidabilityTier::Undecidable;
+                }
+                highest = highest.max(DecidabilityTier::SemiDecidable);
+                work.push((body, true));
+            },
+            PredicateExpr::Bounded { body, .. } => work.push((body, true)),
+        }
     }
+    highest
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2080,28 +2115,72 @@ pub fn classify_decidability_sorted(
 /// of a leading-terminal guard.
 fn project_anypred_to_predicate_expr(p: &crate::any_algebra::AnyPred) -> PredicateExpr {
     use crate::any_algebra::AnyPred;
-    match p {
-        AnyPred::True => PredicateExpr::True,
-        AnyPred::False => PredicateExpr::False,
-        AnyPred::And(a, b) => PredicateExpr::And(
-            Box::new(project_anypred_to_predicate_expr(a)),
-            Box::new(project_anypred_to_predicate_expr(b)),
-        ),
-        AnyPred::Or(a, b) => PredicateExpr::Or(
-            Box::new(project_anypred_to_predicate_expr(a)),
-            Box::new(project_anypred_to_predicate_expr(b)),
-        ),
-        AnyPred::Not(x) => PredicateExpr::Not(Box::new(project_anypred_to_predicate_expr(x))),
-        // Every typed leaf is ground-decidable: abstract it to a named atom
-        // keyed by its sort (the name is irrelevant to the tier; only the
-        // shape matters to `classify_decidability`).
-        leaf => {
-            let sort = leaf
-                .leaf_sort()
-                .expect("non-boolean-combination AnyPred is a typed leaf");
-            PredicateExpr::Atom(format!("{:?}", sort))
-        },
+    enum Task<'pred> {
+        Visit(&'pred AnyPred),
+        Not,
+        And,
+        Or,
     }
+
+    let mut tasks = vec![Task::Visit(p)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(AnyPred::True) => values.push(PredicateExpr::True),
+            Task::Visit(AnyPred::False) => values.push(PredicateExpr::False),
+            Task::Visit(AnyPred::Not(body)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(AnyPred::And(left, right)) => {
+                tasks.push(Task::And);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(AnyPred::Or(left, right)) => {
+                tasks.push(Task::Or);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(leaf) => {
+                // Every typed leaf is ground-decidable: abstract it to a named
+                // atom keyed by its sort. The name is irrelevant to the tier;
+                // only the Boolean shape matters.
+                let sort = leaf
+                    .leaf_sort()
+                    .expect("non-boolean-combination AnyPred is a typed leaf");
+                values.push(PredicateExpr::Atom(format!("{sort:?}")));
+            },
+            Task::Not => {
+                let body = values
+                    .pop()
+                    .expect("AnyPred projection lost negated predicate");
+                values.push(PredicateExpr::Not(Box::new(body)));
+            },
+            Task::And => {
+                let right = values
+                    .pop()
+                    .expect("AnyPred projection lost right predicate");
+                let left = values
+                    .pop()
+                    .expect("AnyPred projection lost left predicate");
+                values.push(PredicateExpr::And(Box::new(left), Box::new(right)));
+            },
+            Task::Or => {
+                let right = values
+                    .pop()
+                    .expect("AnyPred projection lost right predicate");
+                let left = values
+                    .pop()
+                    .expect("AnyPred projection lost left predicate");
+                values.push(PredicateExpr::Or(Box::new(left), Box::new(right)));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("AnyPred projection produced no predicate")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
