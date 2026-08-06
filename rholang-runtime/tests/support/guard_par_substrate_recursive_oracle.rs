@@ -196,6 +196,132 @@ fn int_form_recursive(encoder: &mut ParEncoder, par: Option<&Par>) -> Option<Lin
     }
 }
 
+fn substitute_bound_pars_recursive(par: &Par, bindings: &[Par]) -> Par {
+    match bound_var_reference(par).and_then(|index| binding_for(index, bindings)) {
+        Some(value) => value.clone(),
+        None => match par.exprs.is_empty() {
+            true => par.clone(),
+            false => {
+                let mut exprs = Vec::with_capacity(par.exprs.len());
+                for expr in &par.exprs {
+                    exprs.push(substitute_expr_recursive(expr, bindings));
+                }
+                Par {
+                    exprs,
+                    sends: par.sends.clone(),
+                    receives: par.receives.clone(),
+                    news: par.news.clone(),
+                    matches: par.matches.clone(),
+                    unforgeables: par.unforgeables.clone(),
+                    bundles: par.bundles.clone(),
+                    connectives: par.connectives.clone(),
+                    conditionals: par.conditionals.clone(),
+                    locally_free: par.locally_free.clone(),
+                    connective_used: par.connective_used,
+                }
+            },
+        },
+    }
+}
+
+fn substitute_opt_par_recursive(par: &Option<Par>, bindings: &[Par]) -> Option<Par> {
+    par.as_ref()
+        .map(|par| substitute_bound_pars_recursive(par, bindings))
+}
+
+fn substitute_expr_recursive(expr: &Expr, bindings: &[Par]) -> Expr {
+    let Some(instance) = expr.expr_instance.as_ref() else {
+        return expr.clone();
+    };
+    let substituted = match instance {
+        ExprInstance::EAndBody(EAnd { p1, p2 }) => ExprInstance::EAndBody(EAnd {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EOrBody(EOr { p1, p2 }) => ExprInstance::EOrBody(EOr {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::ENotBody(ENot { p }) => ExprInstance::ENotBody(ENot {
+            p: substitute_opt_par_recursive(p, bindings),
+        }),
+        ExprInstance::EEqBody(EEq { p1, p2 }) => ExprInstance::EEqBody(EEq {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::ENeqBody(ENeq { p1, p2 }) => ExprInstance::ENeqBody(ENeq {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::ELtBody(ELt { p1, p2 }) => ExprInstance::ELtBody(ELt {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::ELteBody(ELte { p1, p2 }) => ExprInstance::ELteBody(ELte {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EGtBody(EGt { p1, p2 }) => ExprInstance::EGtBody(EGt {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EGteBody(EGte { p1, p2 }) => ExprInstance::EGteBody(EGte {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EPlusBody(EPlus { p1, p2 }) => ExprInstance::EPlusBody(EPlus {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EMinusBody(EMinus { p1, p2 }) => ExprInstance::EMinusBody(EMinus {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EMultBody(EMult { p1, p2 }) => ExprInstance::EMultBody(EMult {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EDivBody(EDiv { p1, p2 }) => ExprInstance::EDivBody(EDiv {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::EModBody(EMod { p1, p2 }) => ExprInstance::EModBody(EMod {
+            p1: substitute_opt_par_recursive(p1, bindings),
+            p2: substitute_opt_par_recursive(p2, bindings),
+        }),
+        ExprInstance::ENegBody(ENeg { p }) => ExprInstance::ENegBody(ENeg {
+            p: substitute_opt_par_recursive(p, bindings),
+        }),
+        ExprInstance::EMatchesBody(EMatches { target, pattern }) => {
+            ExprInstance::EMatchesBody(EMatches {
+                target: substitute_opt_par_recursive(target, bindings),
+                pattern: pattern.clone(),
+            })
+        },
+        ExprInstance::EVarBody(_)
+        | ExprInstance::EListBody(_)
+        | ExprInstance::ESetBody(_)
+        | ExprInstance::EMapBody(_)
+        | ExprInstance::ETupleBody(_)
+        | ExprInstance::GBool(_)
+        | ExprInstance::GInt(_)
+        | ExprInstance::GString(_)
+        | ExprInstance::GUri(_)
+        | ExprInstance::GByteArray(_)
+        | ExprInstance::GDouble(_)
+        | ExprInstance::GBigInt(_)
+        | ExprInstance::GBigRat(_)
+        | ExprInstance::GFixedPoint(_)
+        | ExprInstance::EPercentPercentBody(_)
+        | ExprInstance::EPlusPlusBody(_)
+        | ExprInstance::EMinusMinusBody(_)
+        | ExprInstance::EMethodBody(_)
+        | ExprInstance::EPathmapBody(_)
+        | ExprInstance::EZipperBody(_) => return expr.clone(),
+    };
+    Expr { expr_instance: Some(substituted) }
+}
+
 fn expr(instance: ExprInstance) -> Par {
     let mut par = Par::default();
     par.exprs.push(Expr { expr_instance: Some(instance) });
@@ -383,6 +509,64 @@ fn operand_driver_matches_the_bounded_recursive_oracle() {
 }
 
 #[test]
+fn bound_substitution_driver_matches_the_bounded_recursive_oracle() {
+    let bindings = vec![int_par(41), int_par(7)];
+    let binary = |build: fn(Option<Par>, Option<Par>) -> ExprInstance| {
+        expr(build(Some(bound_par(1)), Some(bound_par(0))))
+    };
+    let mut multi_expr = Par::default();
+    multi_expr.exprs = vec![
+        Expr {
+            expr_instance: Some(ExprInstance::EVarBody(EVar {
+                v: Some(Var {
+                    var_instance: Some(VarInstance::BoundVar(0)),
+                }),
+            })),
+        },
+        plus_par(Some(bound_par(1)), Some(bound_par(0)))
+            .exprs
+            .pop()
+            .expect("plus expression"),
+    ];
+    let corpus = vec![
+        Par::default(),
+        bound_par(0),
+        bound_par(1),
+        bound_par(3),
+        free_par(0),
+        and_par(Some(bound_par(1)), Some(bound_par(0))),
+        or_par(Some(bound_par(1)), None),
+        not_par(Some(bound_par(0))),
+        binary(|p1, p2| ExprInstance::EEqBody(EEq { p1, p2 })),
+        binary(|p1, p2| ExprInstance::ENeqBody(ENeq { p1, p2 })),
+        binary(|p1, p2| ExprInstance::ELtBody(ELt { p1, p2 })),
+        binary(|p1, p2| ExprInstance::ELteBody(ELte { p1, p2 })),
+        binary(|p1, p2| ExprInstance::EGtBody(EGt { p1, p2 })),
+        binary(|p1, p2| ExprInstance::EGteBody(EGte { p1, p2 })),
+        plus_par(Some(bound_par(1)), Some(bound_par(0))),
+        minus_par(Some(bound_par(1)), Some(bound_par(0))),
+        mult_par(Some(bound_par(1)), Some(bound_par(0))),
+        div_par(Some(bound_par(1)), Some(bound_par(0))),
+        mod_par(Some(bound_par(1)), Some(bound_par(0))),
+        neg_par(Some(bound_par(0))),
+        expr(ExprInstance::EMatchesBody(EMatches {
+            target: Some(bound_par(0)),
+            pattern: Some(bound_par(1)),
+        })),
+        expr(ExprInstance::EListBody(Default::default())),
+        multi_expr,
+    ];
+
+    for (index, par) in corpus.iter().enumerate() {
+        assert_eq!(
+            substitute_bound_pars(par, &bindings),
+            substitute_bound_pars_recursive(par, &bindings),
+            "bound substitution differs at corpus index {index}"
+        );
+    }
+}
+
+#[test]
 fn formula_drivers_are_stack_safe_at_depth_20k() {
     const DEPTH: usize = 20_000;
     std::thread::Builder::new()
@@ -428,4 +612,32 @@ fn operand_driver_is_stack_safe_at_depth_20k() {
         .expect("spawn guard operand depth gate")
         .join()
         .expect("guard operand depth gate must not overflow or panic");
+}
+
+#[test]
+fn bound_substitution_driver_is_stack_safe_at_depth_20k() {
+    const DEPTH: usize = 20_000;
+    std::thread::Builder::new()
+        .name("guard-bound-substitution-256k".to_string())
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut par = bound_par(0);
+            for _ in 0..DEPTH {
+                par = plus_par(Some(par), Some(int_par(1)));
+            }
+            let substituted = substitute_bound_pars(&par, &[int_par(9)]);
+            let mut cursor = &substituted;
+            for _ in 0..DEPTH {
+                let Some(ExprInstance::EPlusBody(EPlus { p1, .. })) =
+                    sole_expr_of(cursor).and_then(|expr| expr.expr_instance.as_ref())
+                else {
+                    panic!("substitution changed the deep arithmetic spine")
+                };
+                cursor = p1.as_ref().expect("deep plus left operand");
+            }
+            assert_eq!(cursor, &int_par(9));
+        })
+        .expect("spawn guard bound-substitution depth gate")
+        .join()
+        .expect("guard bound-substitution depth gate must not overflow or panic");
 }

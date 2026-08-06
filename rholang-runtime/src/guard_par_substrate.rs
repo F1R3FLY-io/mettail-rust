@@ -1719,22 +1719,167 @@ fn unevaluable_operands(p1: &Option<Par>, p2: &Option<Par>) -> Option<Unevaluabl
 /// call it. The result is an internal artifact — its `locally_free` bitsets are the pre-
 /// substitution ones — and is never emitted into an artifact or a tuple space.
 pub fn substitute_bound_pars(par: &Par, bindings: &[Par]) -> Par {
-    match bound_var_reference(par).and_then(|index| binding_for(index, bindings)) {
-        Some(value) => value.clone(),
-        None => match par.exprs.is_empty() {
-            true => par.clone(),
-            false => {
-                let mut exprs = Vec::with_capacity(par.exprs.len());
-                for expr in &par.exprs {
-                    exprs.push(substitute_expr(expr, bindings));
+    #[derive(Clone, Copy)]
+    enum BinaryKind {
+        And,
+        Or,
+        Eq,
+        Neq,
+        Lt,
+        Lte,
+        Gt,
+        Gte,
+        Plus,
+        Minus,
+        Multiply,
+        Divide,
+        Modulo,
+    }
+
+    #[derive(Clone, Copy)]
+    enum UnaryKind {
+        Not,
+        Negate,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Job<'a> {
+        VisitPar(&'a Par),
+        VisitOptionalPar(&'a Option<Par>),
+        VisitExpr(&'a Expr),
+        BuildPar(&'a Par, usize),
+        BuildBinary(BinaryKind),
+        BuildUnary(UnaryKind),
+        BuildMatches(&'a Option<Par>),
+    }
+
+    let mut jobs = vec![Job::VisitPar(par)];
+    // Every `VisitPar` and `VisitOptionalPar` leaves exactly one value. `Some` is also the
+    // ordinary result of visiting a required `Par`; using one stack lets optional operands retain
+    // absence without a wrapper allocation or a second tagged value type.
+    let mut par_values: Vec<Option<Par>> = Vec::new();
+    let mut expr_values: Vec<Expr> = Vec::new();
+
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::VisitPar(par) => {
+                if let Some(value) =
+                    bound_var_reference(par).and_then(|index| binding_for(index, bindings))
+                {
+                    // A payload is a closed value from the tuple space. Clone it once and stop:
+                    // descending into it would capture variables owned by a nested binder.
+                    par_values.push(Some(value.clone()));
+                } else if par.exprs.is_empty() {
+                    par_values.push(Some(par.clone()));
+                } else {
+                    jobs.push(Job::BuildPar(par, par.exprs.len()));
+                    // Reverse scheduling makes evaluation and allocation left-to-right.
+                    for expr in par.exprs.iter().rev() {
+                        jobs.push(Job::VisitExpr(expr));
+                    }
                 }
-                // Field by field rather than `..par.clone()`: the struct-update form would deep
-                // clone `par.exprs` — the whole expression subtree — only to drop it for the
-                // rebuilt `exprs`, once per recursion level, which is quadratic in the guard's
-                // size on a path the tuple space walks per candidate commit. The process-level
-                // slots are cloned because `rho_pure_eval` preserves them verbatim; on a guard
-                // they are empty.
-                Par {
+            },
+            Job::VisitOptionalPar(par) => match par.as_ref() {
+                Some(par) => jobs.push(Job::VisitPar(par)),
+                None => par_values.push(None),
+            },
+            Job::VisitExpr(expr) => {
+                let Some(instance) = expr.expr_instance.as_ref() else {
+                    expr_values.push(expr.clone());
+                    continue;
+                };
+                let binary = match instance {
+                    ExprInstance::EAndBody(EAnd { p1, p2 }) => Some((BinaryKind::And, p1, p2)),
+                    ExprInstance::EOrBody(EOr { p1, p2 }) => Some((BinaryKind::Or, p1, p2)),
+                    ExprInstance::EEqBody(EEq { p1, p2 }) => Some((BinaryKind::Eq, p1, p2)),
+                    ExprInstance::ENeqBody(ENeq { p1, p2 }) => Some((BinaryKind::Neq, p1, p2)),
+                    ExprInstance::ELtBody(ELt { p1, p2 }) => Some((BinaryKind::Lt, p1, p2)),
+                    ExprInstance::ELteBody(ELte { p1, p2 }) => Some((BinaryKind::Lte, p1, p2)),
+                    ExprInstance::EGtBody(EGt { p1, p2 }) => Some((BinaryKind::Gt, p1, p2)),
+                    ExprInstance::EGteBody(EGte { p1, p2 }) => Some((BinaryKind::Gte, p1, p2)),
+                    ExprInstance::EPlusBody(EPlus { p1, p2 }) => Some((BinaryKind::Plus, p1, p2)),
+                    ExprInstance::EMinusBody(EMinus { p1, p2 }) => {
+                        Some((BinaryKind::Minus, p1, p2))
+                    },
+                    ExprInstance::EMultBody(EMult { p1, p2 }) => {
+                        Some((BinaryKind::Multiply, p1, p2))
+                    },
+                    ExprInstance::EDivBody(EDiv { p1, p2 }) => Some((BinaryKind::Divide, p1, p2)),
+                    ExprInstance::EModBody(EMod { p1, p2 }) => Some((BinaryKind::Modulo, p1, p2)),
+                    _ => None,
+                };
+                if let Some((kind, left, right)) = binary {
+                    jobs.push(Job::BuildBinary(kind));
+                    jobs.push(Job::VisitOptionalPar(right));
+                    jobs.push(Job::VisitOptionalPar(left));
+                    continue;
+                }
+
+                match instance {
+                    ExprInstance::ENotBody(ENot { p }) => {
+                        jobs.push(Job::BuildUnary(UnaryKind::Not));
+                        jobs.push(Job::VisitOptionalPar(p));
+                    },
+                    ExprInstance::ENegBody(ENeg { p }) => {
+                        jobs.push(Job::BuildUnary(UnaryKind::Negate));
+                        jobs.push(Job::VisitOptionalPar(p));
+                    },
+
+                    // ★ `matches`: evaluate the target, retain the binder-bearing pattern.
+                    ExprInstance::EMatchesBody(EMatches { target, pattern }) => {
+                        jobs.push(Job::BuildMatches(pattern));
+                        jobs.push(Job::VisitOptionalPar(target));
+                    },
+
+                    // A bare variable in a multi-expression `Par`, collections, literals, and
+                    // unsupported expressions occupy positions `rho_pure_eval` does not descend
+                    // into. Clone each whole expression verbatim.
+                    ExprInstance::EVarBody(_)
+                    | ExprInstance::EListBody(_)
+                    | ExprInstance::ESetBody(_)
+                    | ExprInstance::EMapBody(_)
+                    | ExprInstance::ETupleBody(_)
+                    | ExprInstance::GBool(_)
+                    | ExprInstance::GInt(_)
+                    | ExprInstance::GString(_)
+                    | ExprInstance::GUri(_)
+                    | ExprInstance::GByteArray(_)
+                    | ExprInstance::GDouble(_)
+                    | ExprInstance::GBigInt(_)
+                    | ExprInstance::GBigRat(_)
+                    | ExprInstance::GFixedPoint(_)
+                    | ExprInstance::EPercentPercentBody(_)
+                    | ExprInstance::EPlusPlusBody(_)
+                    | ExprInstance::EMinusMinusBody(_)
+                    | ExprInstance::EMethodBody(_)
+                    | ExprInstance::EPathmapBody(_)
+                    | ExprInstance::EZipperBody(_) => expr_values.push(expr.clone()),
+
+                    // Handled by the binary/unary/matches drivers above.
+                    ExprInstance::EAndBody(_)
+                    | ExprInstance::EOrBody(_)
+                    | ExprInstance::EEqBody(_)
+                    | ExprInstance::ENeqBody(_)
+                    | ExprInstance::ELtBody(_)
+                    | ExprInstance::ELteBody(_)
+                    | ExprInstance::EGtBody(_)
+                    | ExprInstance::EGteBody(_)
+                    | ExprInstance::EPlusBody(_)
+                    | ExprInstance::EMinusBody(_)
+                    | ExprInstance::EMultBody(_)
+                    | ExprInstance::EDivBody(_)
+                    | ExprInstance::EModBody(_) => unreachable!("substitution driver arm"),
+                }
+            },
+            Job::BuildPar(par, expr_count) => {
+                let split = expr_values
+                    .len()
+                    .checked_sub(expr_count)
+                    .expect("substituted expression values");
+                let exprs = expr_values.split_off(split);
+                // Field by field rather than `..par.clone()`: struct update would clone the
+                // original expression subtree only to discard it, making a deep path quadratic.
+                par_values.push(Some(Par {
                     exprs,
                     sends: par.sends.clone(),
                     receives: par.receives.clone(),
@@ -1746,139 +1891,54 @@ pub fn substitute_bound_pars(par: &Par, bindings: &[Par]) -> Par {
                     conditionals: par.conditionals.clone(),
                     locally_free: par.locally_free.clone(),
                     connective_used: par.connective_used,
-                }
+                }));
             },
-        },
+            Job::BuildBinary(kind) => {
+                let right = par_values.pop().expect("substituted right operand");
+                let left = par_values.pop().expect("substituted left operand");
+                let instance = match kind {
+                    BinaryKind::And => ExprInstance::EAndBody(EAnd { p1: left, p2: right }),
+                    BinaryKind::Or => ExprInstance::EOrBody(EOr { p1: left, p2: right }),
+                    BinaryKind::Eq => ExprInstance::EEqBody(EEq { p1: left, p2: right }),
+                    BinaryKind::Neq => ExprInstance::ENeqBody(ENeq { p1: left, p2: right }),
+                    BinaryKind::Lt => ExprInstance::ELtBody(ELt { p1: left, p2: right }),
+                    BinaryKind::Lte => ExprInstance::ELteBody(ELte { p1: left, p2: right }),
+                    BinaryKind::Gt => ExprInstance::EGtBody(EGt { p1: left, p2: right }),
+                    BinaryKind::Gte => ExprInstance::EGteBody(EGte { p1: left, p2: right }),
+                    BinaryKind::Plus => ExprInstance::EPlusBody(EPlus { p1: left, p2: right }),
+                    BinaryKind::Minus => ExprInstance::EMinusBody(EMinus { p1: left, p2: right }),
+                    BinaryKind::Multiply => ExprInstance::EMultBody(EMult { p1: left, p2: right }),
+                    BinaryKind::Divide => ExprInstance::EDivBody(EDiv { p1: left, p2: right }),
+                    BinaryKind::Modulo => ExprInstance::EModBody(EMod { p1: left, p2: right }),
+                };
+                expr_values.push(Expr { expr_instance: Some(instance) });
+            },
+            Job::BuildUnary(kind) => {
+                let operand = par_values.pop().expect("substituted unary operand");
+                let instance = match kind {
+                    UnaryKind::Not => ExprInstance::ENotBody(ENot { p: operand }),
+                    UnaryKind::Negate => ExprInstance::ENegBody(ENeg { p: operand }),
+                };
+                expr_values.push(Expr { expr_instance: Some(instance) });
+            },
+            Job::BuildMatches(pattern) => {
+                let target = par_values.pop().expect("substituted matches target");
+                expr_values.push(Expr {
+                    expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
+                        target,
+                        pattern: pattern.clone(),
+                    })),
+                });
+            },
+        }
     }
-}
 
-/// [`substitute_bound_pars`] through an optional operand, preserving its absence.
-fn substitute_opt_par(par: &Option<Par>, bindings: &[Par]) -> Option<Par> {
-    par.as_ref().map(|p| substitute_bound_pars(p, bindings))
-}
-
-/// [`substitute_bound_pars`] one expression deep.
-///
-/// There is no `_` arm: a new `rhoapi` constructor is a compile error here rather than a silently
-/// unsubstituted operand, exactly as in [`ParEncoder::expr_formula`].
-fn substitute_expr(expr: &Expr, bindings: &[Par]) -> Expr {
-    let Some(instance) = expr.expr_instance.as_ref() else {
-        return expr.clone();
-    };
-    let substituted = match instance {
-        // ── Positions `rho_pure_eval` evaluates: the connectives … ───────────────────────────
-        ExprInstance::EAndBody(EAnd { p1, p2 }) => ExprInstance::EAndBody(EAnd {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::EOrBody(EOr { p1, p2 }) => ExprInstance::EOrBody(EOr {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::ENotBody(ENot { p }) => {
-            ExprInstance::ENotBody(ENot { p: substitute_opt_par(p, bindings) })
-        },
-
-        // ── … the comparisons … ──────────────────────────────────────────────────────────────
-        ExprInstance::EEqBody(EEq { p1, p2 }) => ExprInstance::EEqBody(EEq {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::ENeqBody(ENeq { p1, p2 }) => ExprInstance::ENeqBody(ENeq {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::ELtBody(ELt { p1, p2 }) => ExprInstance::ELtBody(ELt {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::ELteBody(ELte { p1, p2 }) => ExprInstance::ELteBody(ELte {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::EGtBody(EGt { p1, p2 }) => ExprInstance::EGtBody(EGt {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::EGteBody(EGte { p1, p2 }) => ExprInstance::EGteBody(EGte {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-
-        // ── … and the arithmetic. ────────────────────────────────────────────────────────────
-        ExprInstance::EPlusBody(EPlus { p1, p2 }) => ExprInstance::EPlusBody(EPlus {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::EMinusBody(EMinus { p1, p2 }) => ExprInstance::EMinusBody(EMinus {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::EMultBody(EMult { p1, p2 }) => ExprInstance::EMultBody(EMult {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::EDivBody(EDiv { p1, p2 }) => ExprInstance::EDivBody(EDiv {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::EModBody(EMod { p1, p2 }) => ExprInstance::EModBody(EMod {
-            p1: substitute_opt_par(p1, bindings),
-            p2: substitute_opt_par(p2, bindings),
-        }),
-        ExprInstance::ENegBody(ENeg { p }) => {
-            ExprInstance::ENegBody(ENeg { p: substitute_opt_par(p, bindings) })
-        },
-
-        // ── ★ `matches`: the TARGET is evaluated, the PATTERN is not. ────────────────────────
-        //
-        // A pattern's free variables are BINDERS. `rho_pure_eval` hands the pattern to the
-        // spatial oracle verbatim precisely because evaluating them would raise
-        // `UnboundVariable` instead of matching, and `eval_receive` has already given the
-        // pattern the depth-1 substitution the reducer's `combine_matches` would have.
-        ExprInstance::EMatchesBody(EMatches { target, pattern }) => {
-            ExprInstance::EMatchesBody(EMatches {
-                target: substitute_opt_par(target, bindings),
-                pattern: pattern.clone(),
-            })
-        },
-
-        // ── A bare variable that is not a whole `Par` by itself. ─────────────────────────────
-        //
-        // `bound_var_reference` handles the ordinary case at `Par` level, where the reference IS
-        // the operand. Reaching here means the `Par` holds other exprs beside this one, which
-        // `rho_pure_eval` concatenates rather than reduces to a value — `extract_bool` then
-        // refuses it. Left verbatim: the encoder makes the whole `Par` an opaque atom and the
-        // delegation reproduces that refusal.
-        ExprInstance::EVarBody(_) => return expr.clone(),
-
-        // ── Positions `rho_pure_eval` does NOT evaluate. ─────────────────────────────────────
-        //
-        // Collections pass through unchanged ("their elements were already values when the `Par`
-        // was constructed"), so a `BoundVar` inside one is compared as a variable, never as its
-        // value. Ground literals have nothing to substitute. The remaining constructors are
-        // `UnsupportedExpression` stubs that error before touching an operand.
-        ExprInstance::EListBody(_)
-        | ExprInstance::ESetBody(_)
-        | ExprInstance::EMapBody(_)
-        | ExprInstance::ETupleBody(_)
-        | ExprInstance::GBool(_)
-        | ExprInstance::GInt(_)
-        | ExprInstance::GString(_)
-        | ExprInstance::GUri(_)
-        | ExprInstance::GByteArray(_)
-        | ExprInstance::GDouble(_)
-        | ExprInstance::GBigInt(_)
-        | ExprInstance::GBigRat(_)
-        | ExprInstance::GFixedPoint(_)
-        | ExprInstance::EPercentPercentBody(_)
-        | ExprInstance::EPlusPlusBody(_)
-        | ExprInstance::EMinusMinusBody(_)
-        | ExprInstance::EMethodBody(_)
-        | ExprInstance::EPathmapBody(_)
-        | ExprInstance::EZipperBody(_) => return expr.clone(),
-    };
-    Expr { expr_instance: Some(substituted) }
+    assert!(expr_values.is_empty());
+    assert_eq!(par_values.len(), 1);
+    par_values
+        .pop()
+        .flatten()
+        .expect("required substituted Par result")
 }
 
 /// The de Bruijn index of `par`, when `par` **is** a bound-variable reference and nothing else.
