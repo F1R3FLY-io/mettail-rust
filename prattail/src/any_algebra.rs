@@ -39,6 +39,8 @@ use crate::symbolic::{
     KatBooleanAlgebra,
 };
 
+#[path = "any_algebra/decision.rs"]
+mod decision;
 #[path = "any_algebra/lifecycle.rs"]
 mod lifecycle;
 
@@ -621,52 +623,7 @@ impl BooleanAlgebra for AnyAlgebra {
     }
 
     fn evaluate(&self, pred: &AnyPred, elem: &AnyDomain) -> bool {
-        match (self, elem) {
-            (AnyAlgebra::Int(g), AnyDomain::Int(v)) => {
-                g.evaluate(&fold_pred(g, pred, &int_leaf), v)
-            },
-            (AnyAlgebra::Char(g), AnyDomain::Char(v)) => {
-                g.evaluate(&fold_pred(g, pred, &char_leaf), v)
-            },
-            (AnyAlgebra::Bool(g), AnyDomain::Bool(v)) => {
-                g.evaluate(&fold_pred(g, pred, &bool_leaf), v)
-            },
-            (AnyAlgebra::BigInt(g), AnyDomain::BigInt(v)) => {
-                g.evaluate(&fold_pred(g, pred, &bigint_leaf), v)
-            },
-            (AnyAlgebra::BigRat(g), AnyDomain::BigRat(v)) => {
-                g.evaluate(&fold_pred(g, pred, &bigrat_leaf), v)
-            },
-            (AnyAlgebra::Fixed(g), AnyDomain::Fixed(v)) => {
-                g.evaluate(&fold_pred(g, pred, &fixed_leaf), v)
-            },
-            (AnyAlgebra::Float(g), AnyDomain::Float(v)) => {
-                g.evaluate(&fold_pred(g, pred, &float_leaf), v)
-            },
-            (AnyAlgebra::Str(g), AnyDomain::Str(v)) => {
-                g.evaluate(&fold_pred(g, pred, &str_leaf), v)
-            },
-            (AnyAlgebra::Product(g), AnyDomain::Product(v)) => {
-                g.evaluate(&fold_pred(g.as_ref(), pred, &product_leaf), v)
-            },
-            (AnyAlgebra::Sum(g), AnyDomain::Sum(v)) => {
-                g.evaluate(&fold_pred(g.as_ref(), pred, &sum_leaf), v)
-            },
-            (AnyAlgebra::List(g), AnyDomain::List(v)) => {
-                g.evaluate(&fold_pred(g.as_ref(), pred, &list_leaf), v)
-            },
-            (AnyAlgebra::Bag(g), AnyDomain::Bag(v)) => {
-                g.evaluate(&fold_pred(g.as_ref(), pred, &bag_leaf), v)
-            },
-            (AnyAlgebra::Tree(g), AnyDomain::Tree(v)) => {
-                g.evaluate(&fold_pred(g.as_ref(), pred, &tree_leaf), v)
-            },
-            (AnyAlgebra::Map(g), AnyDomain::Map(v)) => {
-                g.evaluate(&fold_pred(g.as_ref(), pred, &map_leaf), v)
-            },
-            // Element not of this algebra's sort.
-            _ => false,
-        }
+        decision::evaluate(self, pred, elem)
     }
 }
 

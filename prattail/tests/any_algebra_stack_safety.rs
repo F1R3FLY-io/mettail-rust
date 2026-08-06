@@ -95,6 +95,68 @@ fn deep_predicate() -> AnyPred {
     predicate
 }
 
+fn deep_evaluation_case() -> (AnyAlgebra, AnyPred, AnyDomain) {
+    let mut algebra = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
+    let mut predicate = AnyPred::Int(IntervalPred::Range(7, 8));
+    let mut domain = AnyDomain::Int(7);
+    for depth in 0..DEPTH {
+        match depth % 6 {
+            0 => {
+                algebra = AnyAlgebra::Product(Box::new(NaryProductAlgebra::new(vec![algebra])));
+                predicate = AnyPred::Product(Box::new(NaryProductPred::Field(0, predicate)));
+                domain = AnyDomain::Product(vec![domain]);
+            },
+            1 => {
+                algebra = AnyAlgebra::Sum(Box::new(SumAlgebra::new(vec![algebra])));
+                predicate = AnyPred::Sum(Box::new(SumPred::InVariant(0, predicate)));
+                domain = AnyDomain::Sum(Box::new(SumValue { tag: 0, payload: domain }));
+            },
+            2 => {
+                algebra = AnyAlgebra::List(Box::new(RegexAlgebra::new(algebra)));
+                predicate = AnyPred::List(Box::new(RegexPred::Elem(predicate)));
+                domain = AnyDomain::List(vec![domain]);
+            },
+            3 => {
+                algebra = AnyAlgebra::Bag(Box::new(BagAlgebra::new(algebra)));
+                predicate =
+                    AnyPred::Bag(Box::new(BagPred::Count { class: predicate, lo: 1, hi: Some(1) }));
+                domain = AnyDomain::Bag(vec![domain]);
+            },
+            4 => {
+                algebra = AnyAlgebra::Tree(Box::new(TreeAlgebra::new(
+                    algebra,
+                    HashMap::new(),
+                    HashSet::new(),
+                )));
+                predicate = AnyPred::Tree(Box::new(TreePred::Node {
+                    constructor: "node".to_string(),
+                    payload_guard: Some(predicate),
+                    children: Vec::new(),
+                }));
+                domain = AnyDomain::Tree(Box::new(SymTerm {
+                    constructor: "node".to_string(),
+                    payload: Some(domain),
+                    children: Vec::new(),
+                }));
+            },
+            _ => {
+                algebra = AnyAlgebra::Map(Box::new(MapAlgebra::new(
+                    AnyAlgebra::Int(IntervalAlgebra::new(0, 100)),
+                    algebra,
+                )));
+                predicate = AnyPred::Map(Box::new(MapPred::CountEntries {
+                    key_class: AnyPred::Int(IntervalPred::Range(1, 2)),
+                    val_class: predicate,
+                    lo: 1,
+                    hi: Some(1),
+                }));
+                domain = AnyDomain::Map(vec![(AnyDomain::Int(1), domain)]);
+            },
+        }
+    }
+    (algebra, predicate, domain)
+}
+
 #[test]
 fn any_domain_lifecycle_is_stack_safe_across_alternating_wrappers() {
     on_small_stack(|| {
@@ -151,6 +213,17 @@ fn boolean_projection_is_stack_safe_at_depth_20k() {
         }
         assert!(algebra.evaluate(&predicate, &AnyDomain::Int(7)));
         drop(predicate);
+        drop(algebra);
+    });
+}
+
+#[test]
+fn nested_combinator_evaluation_is_stack_safe_at_depth_20k() {
+    on_small_stack(|| {
+        let (algebra, predicate, domain) = deep_evaluation_case();
+        assert!(algebra.evaluate(&predicate, &domain));
+        drop(predicate);
+        drop(domain);
         drop(algebra);
     });
 }
