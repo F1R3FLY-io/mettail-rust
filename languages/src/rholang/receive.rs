@@ -588,168 +588,467 @@ fn collect_pattern_bindings(
     value: &Proc,
     env: &mut HashMap<FreeVar<String>, Proc>,
 ) -> bool {
-    match (pattern, value) {
-        (Proc::PVar(OrdVar(Var::Free(fv))), v) => {
-            if let Some(bound) = env.get(fv) {
-                bound.term_eq(v)
-            } else {
-                env.insert(fv.clone(), v.clone());
-                true
-            }
+    use mettail_runtime::{HashMapLit, PathMapEntryRef, PathMapIter};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    type PatternEnv = HashMap<FreeVar<String>, Proc>;
+    type ProcRefs<'a> = Rc<[&'a Proc]>;
+
+    enum Job<'a> {
+        Match(&'a Proc, &'a Proc),
+        ListNext {
+            patterns: &'a [Proc],
+            values: &'a [Proc],
+            index: usize,
         },
-        (Proc::CastList(p), Proc::CastList(v)) => match (p.as_ref(), v.as_ref()) {
-            (List::ListLit(ps), List::ListLit(vs)) => {
-                ps.len() == vs.len()
-                    && ps
-                        .iter()
-                        .zip(vs.iter())
-                        .all(|(pp, vv)| collect_pattern_bindings(pp, vv, env))
-            },
-            _ => pattern.term_eq(value),
+        ListAfter {
+            patterns: &'a [Proc],
+            values: &'a [Proc],
+            next: usize,
         },
-        (Proc::CastBag(p), Proc::CastBag(v)) => match (p.as_ref(), v.as_ref()) {
-            (Bag::BagLit(pb), Bag::BagLit(vb)) => match_bag_pattern(pb, vb, env),
-            _ => pattern.term_eq(value),
+        MapNext {
+            entries: indexmap::map::Iter<'a, Proc, Proc>,
+            value: &'a HashMapLit<Proc, Proc>,
         },
-        (Proc::CastMap(p), Proc::CastMap(v)) => match (p.as_ref(), v.as_ref()) {
-            (Map::MapLit(pm), Map::MapLit(vm)) => {
-                pm.len() == vm.len()
-                    && pm.iter().all(|(k, pv)| {
-                        vm.get(k)
-                            .map(|vv| collect_pattern_bindings(pv, vv, env))
-                            .unwrap_or(false)
-                    })
-            },
-            _ => pattern.term_eq(value),
+        MapAfter {
+            entries: indexmap::map::Iter<'a, Proc, Proc>,
+            value: &'a HashMapLit<Proc, Proc>,
         },
-        (Proc::CastPathmap(p), Proc::CastPathmap(v)) => match (p.as_ref(), v.as_ref()) {
-            (Pathmap::PathmapLit(pm), Pathmap::PathmapLit(vm)) => {
-                collect_pathmap_pattern_bindings(pm, vm, env)
-            },
-            _ => pattern.term_eq(value),
+        PathMapNext {
+            entries: PathMapIter<'a, Proc, Proc>,
+            value: &'a crate::rholang::pathmap::ProcPathMap,
         },
-        (Proc::CastReadZipper(p), Proc::CastReadZipper(v)) => match (p.as_ref(), v.as_ref()) {
-            (ReadZipper::Lit(pz), ReadZipper::Lit(vz)) => {
-                let pl = pz.as_ref();
-                let vl = vz.as_ref();
-                pl.1 == vl.1 && collect_pathmap_pattern_bindings(&pl.0, &vl.0, env)
-            },
-            _ => pattern.term_eq(value),
+        PathMapAfter {
+            entries: PathMapIter<'a, Proc, Proc>,
+            value: &'a crate::rholang::pathmap::ProcPathMap,
         },
-        (Proc::CastWriteZipper(p), Proc::CastWriteZipper(v)) => match (p.as_ref(), v.as_ref()) {
-            (WriteZipper::Lit(pz), WriteZipper::Lit(vz)) => {
-                let pl = pz.as_ref();
-                let vl = vz.as_ref();
-                pl.1 == vl.1 && collect_pathmap_pattern_bindings(&pl.0, &vl.0, env)
-            },
-            _ => pattern.term_eq(value),
+        SetTry {
+            patterns: ProcRefs<'a>,
+            values: ProcRefs<'a>,
+            pattern_index: usize,
+            remaining: Vec<usize>,
+            candidate: usize,
+            baseline: PatternEnv,
         },
-        (Proc::CastSet(p), Proc::CastSet(v)) => match (p.as_ref(), v.as_ref()) {
-            (Set::SetLit(ps), Set::SetLit(vs)) => match_set_pattern(ps, vs, env),
-            _ => pattern.term_eq(value),
+        SetAfterCandidate {
+            patterns: ProcRefs<'a>,
+            values: ProcRefs<'a>,
+            pattern_index: usize,
+            remaining: Vec<usize>,
+            candidate: usize,
+            baseline: PatternEnv,
         },
-        _ => pattern.term_eq(value),
+        BagTry {
+            patterns: ProcRefs<'a>,
+            values: ProcRefs<'a>,
+            used: Rc<[Cell<bool>]>,
+            pattern_index: usize,
+            candidate: usize,
+            baseline: PatternEnv,
+        },
+        BagAfterCandidate {
+            patterns: ProcRefs<'a>,
+            values: ProcRefs<'a>,
+            used: Rc<[Cell<bool>]>,
+            pattern_index: usize,
+            candidate: usize,
+            baseline: PatternEnv,
+        },
+        BagAfterTail {
+            patterns: ProcRefs<'a>,
+            values: ProcRefs<'a>,
+            used: Rc<[Cell<bool>]>,
+            pattern_index: usize,
+            next_candidate: usize,
+            chosen: usize,
+            baseline: PatternEnv,
+        },
     }
-}
 
-/// Match homogeneous path-map payloads without inventing a per-entry
-/// set/map discriminator. Container mode is part of the value and must agree.
-fn collect_pathmap_pattern_bindings(
-    pattern: &crate::rholang::pathmap::ProcPathMap,
-    value: &crate::rholang::pathmap::ProcPathMap,
-    env: &mut HashMap<FreeVar<String>, Proc>,
-) -> bool {
-    use mettail_runtime::PathMapEntryRef;
+    fn schedule_pathmap<'a>(
+        jobs: &mut Vec<Job<'a>>,
+        results: &mut Vec<bool>,
+        pattern: &'a crate::rholang::pathmap::ProcPathMap,
+        value: &'a crate::rholang::pathmap::ProcPathMap,
+    ) {
+        if pattern.mode() != value.mode() || pattern.len() != value.len() {
+            results.push(false);
+        } else {
+            jobs.push(Job::PathMapNext { entries: pattern.iter(), value });
+        }
+    }
 
-    pattern.mode() == value.mode()
-        && pattern.len() == value.len()
-        && pattern.iter().all(|pattern_entry| {
-            let Some(value_entry) = value.entry(pattern_entry.key()) else {
-                return false;
-            };
-            match (pattern_entry, value_entry) {
-                (PathMapEntryRef::Set(_), PathMapEntryRef::Set(_)) => true,
-                (PathMapEntryRef::Map(_, pattern_value), PathMapEntryRef::Map(_, value)) => {
-                    collect_pattern_bindings(pattern_value, value, env)
+    let mut jobs = vec![Job::Match(pattern, value)];
+    let mut results = Vec::new();
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Match(pattern, value) => match (pattern, value) {
+                (Proc::PVar(OrdVar(Var::Free(free))), value) => {
+                    if let Some(bound) = env.get(free) {
+                        results.push(bound.term_eq(value));
+                    } else {
+                        env.insert(free.clone(), value.clone());
+                        results.push(true);
+                    }
                 },
-                _ => false,
-            }
-        })
-}
-
-fn match_set_pattern(
-    pat: &mettail_runtime::HashSetLit<Proc>,
-    val: &mettail_runtime::HashSetLit<Proc>,
-    env: &mut HashMap<FreeVar<String>, Proc>,
-) -> bool {
-    if pat.len() != val.len() {
-        return false;
-    }
-    let mut remaining: Vec<Proc> = val.iter().cloned().collect();
-    for p_elem in pat.iter() {
-        let mut matched = false;
-        for (idx, v_elem) in remaining.iter().enumerate() {
-            let mut trial = env.clone();
-            if collect_pattern_bindings(p_elem, v_elem, &mut trial) {
-                *env = trial;
-                remaining.remove(idx);
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
-            return false;
-        }
-    }
-    true
-}
-
-fn match_bag_pattern(
-    pat: &HashBag<Proc>,
-    val: &HashBag<Proc>,
-    env: &mut HashMap<FreeVar<String>, Proc>,
-) -> bool {
-    let pats: Vec<Proc> = pat
-        .iter()
-        .flat_map(|(p, c)| std::iter::repeat_n(p.clone(), c))
-        .collect();
-    let vals: Vec<Proc> = val
-        .iter()
-        .flat_map(|(v, c)| std::iter::repeat_n(v.clone(), c))
-        .collect();
-    if pats.len() != vals.len() {
-        return false;
-    }
-
-    fn bt(
-        idx: usize,
-        pats: &[Proc],
-        vals: &[Proc],
-        used: &mut [bool],
-        env: &mut HashMap<FreeVar<String>, Proc>,
-    ) -> bool {
-        if idx == pats.len() {
-            return true;
-        }
-        for j in 0..vals.len() {
-            if used[j] {
-                continue;
-            }
-            let mut env_try = env.clone();
-            if collect_pattern_bindings(&pats[idx], &vals[j], &mut env_try) {
-                used[j] = true;
-                if bt(idx + 1, pats, vals, used, &mut env_try) {
-                    *env = env_try;
-                    return true;
+                (Proc::CastList(pattern_list), Proc::CastList(value_list)) => {
+                    match (pattern_list.as_ref(), value_list.as_ref()) {
+                        (List::ListLit(patterns), List::ListLit(values))
+                            if patterns.len() == values.len() =>
+                        {
+                            jobs.push(Job::ListNext { patterns, values, index: 0 });
+                        },
+                        (List::ListLit(_), List::ListLit(_)) => results.push(false),
+                        _ => results.push(pattern.term_eq(value)),
+                    }
+                },
+                (Proc::CastMap(pattern_map), Proc::CastMap(value_map)) => {
+                    match (pattern_map.as_ref(), value_map.as_ref()) {
+                        (Map::MapLit(pattern_entries), Map::MapLit(value_entries))
+                            if pattern_entries.len() == value_entries.len() =>
+                        {
+                            jobs.push(Job::MapNext {
+                                entries: pattern_entries.iter(),
+                                value: value_entries,
+                            });
+                        },
+                        (Map::MapLit(_), Map::MapLit(_)) => results.push(false),
+                        _ => results.push(pattern.term_eq(value)),
+                    }
+                },
+                (Proc::CastPathmap(pattern_map), Proc::CastPathmap(value_map)) => {
+                    match (pattern_map.as_ref(), value_map.as_ref()) {
+                        (
+                            Pathmap::PathmapLit(pattern_entries),
+                            Pathmap::PathmapLit(value_entries),
+                        ) => {
+                            schedule_pathmap(
+                                &mut jobs,
+                                &mut results,
+                                pattern_entries,
+                                value_entries,
+                            );
+                        },
+                        _ => results.push(pattern.term_eq(value)),
+                    }
+                },
+                (Proc::CastReadZipper(pattern_zipper), Proc::CastReadZipper(value_zipper)) => {
+                    match (pattern_zipper.as_ref(), value_zipper.as_ref()) {
+                        (ReadZipper::Lit(pattern_lit), ReadZipper::Lit(value_lit)) => {
+                            let pattern_lit = pattern_lit.as_ref();
+                            let value_lit = value_lit.as_ref();
+                            if pattern_lit.1 == value_lit.1 {
+                                schedule_pathmap(
+                                    &mut jobs,
+                                    &mut results,
+                                    &pattern_lit.0,
+                                    &value_lit.0,
+                                );
+                            } else {
+                                results.push(false);
+                            }
+                        },
+                        _ => results.push(pattern.term_eq(value)),
+                    }
+                },
+                (Proc::CastWriteZipper(pattern_zipper), Proc::CastWriteZipper(value_zipper)) => {
+                    match (pattern_zipper.as_ref(), value_zipper.as_ref()) {
+                        (WriteZipper::Lit(pattern_lit), WriteZipper::Lit(value_lit)) => {
+                            let pattern_lit = pattern_lit.as_ref();
+                            let value_lit = value_lit.as_ref();
+                            if pattern_lit.1 == value_lit.1 {
+                                schedule_pathmap(
+                                    &mut jobs,
+                                    &mut results,
+                                    &pattern_lit.0,
+                                    &value_lit.0,
+                                );
+                            } else {
+                                results.push(false);
+                            }
+                        },
+                        _ => results.push(pattern.term_eq(value)),
+                    }
+                },
+                (Proc::CastSet(pattern_set), Proc::CastSet(value_set)) => {
+                    match (pattern_set.as_ref(), value_set.as_ref()) {
+                        (Set::SetLit(pattern_items), Set::SetLit(value_items))
+                            if pattern_items.len() == value_items.len() =>
+                        {
+                            let patterns: ProcRefs<'_> = Rc::from(
+                                pattern_items.iter().collect::<Vec<_>>().into_boxed_slice(),
+                            );
+                            let values: ProcRefs<'_> =
+                                Rc::from(value_items.iter().collect::<Vec<_>>().into_boxed_slice());
+                            jobs.push(Job::SetTry {
+                                pattern_index: 0,
+                                remaining: (0..values.len()).collect(),
+                                candidate: 0,
+                                baseline: env.clone(),
+                                patterns,
+                                values,
+                            });
+                        },
+                        (Set::SetLit(_), Set::SetLit(_)) => results.push(false),
+                        _ => results.push(pattern.term_eq(value)),
+                    }
+                },
+                (Proc::CastBag(pattern_bag), Proc::CastBag(value_bag)) => {
+                    match (pattern_bag.as_ref(), value_bag.as_ref()) {
+                        (Bag::BagLit(pattern_items), Bag::BagLit(value_items)) => {
+                            let patterns: ProcRefs<'_> = Rc::from(
+                                pattern_items
+                                    .iter_elements()
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice(),
+                            );
+                            let values: ProcRefs<'_> = Rc::from(
+                                value_items
+                                    .iter_elements()
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice(),
+                            );
+                            if patterns.len() != values.len() {
+                                results.push(false);
+                            } else {
+                                let used: Rc<[Cell<bool>]> = Rc::from(
+                                    (0..values.len())
+                                        .map(|_| Cell::new(false))
+                                        .collect::<Vec<_>>()
+                                        .into_boxed_slice(),
+                                );
+                                jobs.push(Job::BagTry {
+                                    pattern_index: 0,
+                                    candidate: 0,
+                                    baseline: env.clone(),
+                                    patterns,
+                                    values,
+                                    used,
+                                });
+                            }
+                        },
+                        _ => results.push(pattern.term_eq(value)),
+                    }
+                },
+                _ => results.push(pattern.term_eq(value)),
+            },
+            Job::ListNext { patterns, values, index } => {
+                if index == patterns.len() {
+                    results.push(true);
+                } else {
+                    jobs.push(Job::ListAfter { patterns, values, next: index + 1 });
+                    jobs.push(Job::Match(&patterns[index], &values[index]));
                 }
-                used[j] = false;
-            }
+            },
+            Job::ListAfter { patterns, values, next } => {
+                if results.pop().expect("list pattern child result") {
+                    jobs.push(Job::ListNext { patterns, values, index: next });
+                } else {
+                    results.push(false);
+                }
+            },
+            Job::MapNext { mut entries, value } => {
+                if let Some((key, pattern_value)) = entries.next() {
+                    if let Some(value_value) = value.get(key) {
+                        jobs.push(Job::MapAfter { entries, value });
+                        jobs.push(Job::Match(pattern_value, value_value));
+                    } else {
+                        results.push(false);
+                    }
+                } else {
+                    results.push(true);
+                }
+            },
+            Job::MapAfter { entries, value } => {
+                if results.pop().expect("map pattern child result") {
+                    jobs.push(Job::MapNext { entries, value });
+                } else {
+                    results.push(false);
+                }
+            },
+            Job::PathMapNext { mut entries, value } => {
+                if let Some(pattern_entry) = entries.next() {
+                    let Some(value_entry) = value.entry(pattern_entry.key()) else {
+                        results.push(false);
+                        continue;
+                    };
+                    match (pattern_entry, value_entry) {
+                        (PathMapEntryRef::Set(_), PathMapEntryRef::Set(_)) => {
+                            jobs.push(Job::PathMapNext { entries, value });
+                        },
+                        (
+                            PathMapEntryRef::Map(_, pattern_value),
+                            PathMapEntryRef::Map(_, value_value),
+                        ) => {
+                            jobs.push(Job::PathMapAfter { entries, value });
+                            jobs.push(Job::Match(pattern_value, value_value));
+                        },
+                        _ => results.push(false),
+                    }
+                } else {
+                    results.push(true);
+                }
+            },
+            Job::PathMapAfter { entries, value } => {
+                if results.pop().expect("path-map pattern child result") {
+                    jobs.push(Job::PathMapNext { entries, value });
+                } else {
+                    results.push(false);
+                }
+            },
+            Job::SetTry {
+                patterns,
+                values,
+                pattern_index,
+                remaining,
+                candidate,
+                baseline,
+            } => {
+                if pattern_index == patterns.len() {
+                    results.push(true);
+                } else if candidate == remaining.len() {
+                    results.push(false);
+                } else {
+                    let value_index = remaining[candidate];
+                    jobs.push(Job::SetAfterCandidate {
+                        patterns: Rc::clone(&patterns),
+                        values: Rc::clone(&values),
+                        pattern_index,
+                        remaining,
+                        candidate,
+                        baseline,
+                    });
+                    jobs.push(Job::Match(patterns[pattern_index], values[value_index]));
+                }
+            },
+            Job::SetAfterCandidate {
+                patterns,
+                values,
+                pattern_index,
+                mut remaining,
+                candidate,
+                baseline,
+            } => {
+                if results.pop().expect("set pattern candidate result") {
+                    remaining.remove(candidate);
+                    jobs.push(Job::SetTry {
+                        patterns,
+                        values,
+                        pattern_index: pattern_index + 1,
+                        remaining,
+                        candidate: 0,
+                        baseline: env.clone(),
+                    });
+                } else {
+                    *env = baseline.clone();
+                    jobs.push(Job::SetTry {
+                        patterns,
+                        values,
+                        pattern_index,
+                        remaining,
+                        candidate: candidate + 1,
+                        baseline,
+                    });
+                }
+            },
+            Job::BagTry {
+                patterns,
+                values,
+                used,
+                pattern_index,
+                mut candidate,
+                baseline,
+            } => {
+                if pattern_index == patterns.len() {
+                    results.push(true);
+                    continue;
+                }
+                while candidate < values.len() && used[candidate].get() {
+                    candidate += 1;
+                }
+                if candidate == values.len() {
+                    results.push(false);
+                } else {
+                    jobs.push(Job::BagAfterCandidate {
+                        patterns: Rc::clone(&patterns),
+                        values: Rc::clone(&values),
+                        used: Rc::clone(&used),
+                        pattern_index,
+                        candidate,
+                        baseline,
+                    });
+                    jobs.push(Job::Match(patterns[pattern_index], values[candidate]));
+                }
+            },
+            Job::BagAfterCandidate {
+                patterns,
+                values,
+                used,
+                pattern_index,
+                candidate,
+                baseline,
+            } => {
+                if results.pop().expect("bag pattern candidate result") {
+                    used[candidate].set(true);
+                    let child_baseline = env.clone();
+                    jobs.push(Job::BagAfterTail {
+                        patterns: Rc::clone(&patterns),
+                        values: Rc::clone(&values),
+                        used: Rc::clone(&used),
+                        pattern_index,
+                        next_candidate: candidate + 1,
+                        chosen: candidate,
+                        baseline,
+                    });
+                    jobs.push(Job::BagTry {
+                        patterns,
+                        values,
+                        used,
+                        pattern_index: pattern_index + 1,
+                        candidate: 0,
+                        baseline: child_baseline,
+                    });
+                } else {
+                    *env = baseline.clone();
+                    jobs.push(Job::BagTry {
+                        patterns,
+                        values,
+                        used,
+                        pattern_index,
+                        candidate: candidate + 1,
+                        baseline,
+                    });
+                }
+            },
+            Job::BagAfterTail {
+                patterns,
+                values,
+                used,
+                pattern_index,
+                next_candidate,
+                chosen,
+                baseline,
+            } => {
+                if results.pop().expect("bag pattern tail result") {
+                    results.push(true);
+                } else {
+                    used[chosen].set(false);
+                    *env = baseline.clone();
+                    jobs.push(Job::BagTry {
+                        patterns,
+                        values,
+                        used,
+                        pattern_index,
+                        candidate: next_candidate,
+                        baseline,
+                    });
+                }
+            },
         }
-        false
     }
-
-    let mut used = vec![false; vals.len()];
-    bt(0, &pats, &vals, &mut used, env)
+    assert_eq!(results.len(), 1);
+    results.pop().expect("pattern match result")
 }
 
 pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option<Proc> {
