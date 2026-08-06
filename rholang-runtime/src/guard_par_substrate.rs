@@ -195,29 +195,66 @@ fn substitute_atoms(
     atoms: &[GuardAtom],
     resolved: &[Option<bool>],
 ) -> Option<GuardFormula> {
-    Some(match formula {
-        GuardFormula::Atom(atom) => {
-            let index = atoms.iter().position(|candidate| candidate == atom)?;
-            match resolved.get(index).copied().flatten()? {
-                true => GuardFormula::True,
-                false => GuardFormula::False,
-            }
-        },
-        GuardFormula::And(a, b) => GuardFormula::and(
-            substitute_atoms(a, atoms, resolved)?,
-            substitute_atoms(b, atoms, resolved)?,
-        ),
-        GuardFormula::Or(a, b) => GuardFormula::or(
-            substitute_atoms(a, atoms, resolved)?,
-            substitute_atoms(b, atoms, resolved)?,
-        ),
-        GuardFormula::Not(inner) => GuardFormula::not(substitute_atoms(inner, atoms, resolved)?),
-        GuardFormula::Implies(a, b) => GuardFormula::implies(
-            substitute_atoms(a, atoms, resolved)?,
-            substitute_atoms(b, atoms, resolved)?,
-        ),
-        other => other.clone(),
-    })
+    #[derive(Clone, Copy)]
+    enum Job<'a> {
+        Visit(&'a GuardFormula),
+        BuildAnd,
+        BuildOr,
+        BuildNot,
+        BuildImplies,
+    }
+
+    let mut jobs = vec![Job::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Visit(formula) => match formula {
+                GuardFormula::Atom(atom) => {
+                    let index = atoms.iter().position(|candidate| candidate == atom)?;
+                    values.push(match resolved.get(index).copied().flatten()? {
+                        true => GuardFormula::True,
+                        false => GuardFormula::False,
+                    });
+                },
+                GuardFormula::And(left, right) => {
+                    jobs.push(Job::BuildAnd);
+                    jobs.push(Job::Visit(right));
+                    jobs.push(Job::Visit(left));
+                },
+                GuardFormula::Or(left, right) => {
+                    jobs.push(Job::BuildOr);
+                    jobs.push(Job::Visit(right));
+                    jobs.push(Job::Visit(left));
+                },
+                GuardFormula::Not(inner) => {
+                    jobs.push(Job::BuildNot);
+                    jobs.push(Job::Visit(inner));
+                },
+                GuardFormula::Implies(left, right) => {
+                    jobs.push(Job::BuildImplies);
+                    jobs.push(Job::Visit(right));
+                    jobs.push(Job::Visit(left));
+                },
+                other => values.push(other.clone()),
+            },
+            Job::BuildAnd | Job::BuildOr | Job::BuildImplies => {
+                let right = values.pop().expect("guard formula right operand");
+                let left = values.pop().expect("guard formula left operand");
+                values.push(match job {
+                    Job::BuildAnd => GuardFormula::and(left, right),
+                    Job::BuildOr => GuardFormula::or(left, right),
+                    Job::BuildImplies => GuardFormula::implies(left, right),
+                    _ => unreachable!(),
+                });
+            },
+            Job::BuildNot => {
+                let inner = values.pop().expect("guard formula negation operand");
+                values.push(GuardFormula::not(inner));
+            },
+        }
+    }
+    assert_eq!(values.len(), 1);
+    values.pop()
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -258,17 +295,67 @@ impl ParEncoder {
     // ── Formula position ──────────────────────────────────────────────────────────────────
 
     fn par_formula(&mut self, par: &Par) -> GuardFormula {
-        match self.sole_expr(par).cloned() {
-            Some(expr) => self.expr_formula(&expr, par),
-            None => self.atom_for(par, GuardAtomKind::ProcessShaped),
+        #[derive(Clone, Copy)]
+        enum Job<'a> {
+            Visit(Option<&'a Par>),
+            BuildAnd,
+            BuildOr,
+            BuildNot,
         }
-    }
 
-    fn opt_par_formula(&mut self, par: Option<&Par>) -> GuardFormula {
-        match par {
-            Some(p) => self.par_formula(p),
-            None => self.atom_for(&Par::default(), GuardAtomKind::Uncovered),
+        let mut jobs = vec![Job::Visit(Some(par))];
+        let mut values = Vec::new();
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Visit(None) => {
+                    values.push(self.atom_for(&Par::default(), GuardAtomKind::Uncovered));
+                },
+                Job::Visit(Some(par)) => {
+                    let Some(expr) = sole_expr_of(par) else {
+                        values.push(self.atom_for(par, GuardAtomKind::ProcessShaped));
+                        continue;
+                    };
+                    let Some(instance) = expr.expr_instance.as_ref() else {
+                        values.push(self.atom_for(par, GuardAtomKind::Uncovered));
+                        continue;
+                    };
+                    match instance {
+                        ExprInstance::GBool(true) => values.push(GuardFormula::True),
+                        ExprInstance::GBool(false) => values.push(GuardFormula::False),
+                        ExprInstance::EAndBody(EAnd { p1, p2 }) => {
+                            jobs.push(Job::BuildAnd);
+                            jobs.push(Job::Visit(p2.as_ref()));
+                            jobs.push(Job::Visit(p1.as_ref()));
+                        },
+                        ExprInstance::EOrBody(EOr { p1, p2 }) => {
+                            jobs.push(Job::BuildOr);
+                            jobs.push(Job::Visit(p2.as_ref()));
+                            jobs.push(Job::Visit(p1.as_ref()));
+                        },
+                        ExprInstance::ENotBody(ENot { p }) => {
+                            jobs.push(Job::BuildNot);
+                            jobs.push(Job::Visit(p.as_ref()));
+                        },
+                        _ => values.push(self.expr_formula(expr, par)),
+                    }
+                },
+                Job::BuildAnd | Job::BuildOr => {
+                    let right = values.pop().expect("encoded guard right operand");
+                    let left = values.pop().expect("encoded guard left operand");
+                    values.push(match job {
+                        Job::BuildAnd => GuardFormula::and(left, right),
+                        Job::BuildOr => GuardFormula::or(left, right),
+                        _ => unreachable!(),
+                    });
+                },
+                Job::BuildNot => {
+                    let inner = values.pop().expect("encoded guard negation operand");
+                    values.push(GuardFormula::not(inner));
+                },
+            }
         }
+        assert_eq!(values.len(), 1);
+        values.pop().expect("encoded guard formula")
     }
 
     /// The single `Expr` of a guard `Par`, or `None` if the `Par` carries anything else — a
@@ -283,25 +370,12 @@ impl ParEncoder {
             return self.atom_for(whole, GuardAtomKind::Uncovered);
         };
         match instance {
-            // ── The logical constants. ────────────────────────────────────────────────────
-            ExprInstance::GBool(true) => GuardFormula::True,
-            ExprInstance::GBool(false) => GuardFormula::False,
-
-            // ── The connectives. ─────────────────────────────────────────────────────────
-            ExprInstance::EAndBody(EAnd { p1, p2 }) => {
-                let left = self.opt_par_formula(p1.as_ref());
-                let right = self.opt_par_formula(p2.as_ref());
-                GuardFormula::and(left, right)
-            },
-            ExprInstance::EOrBody(EOr { p1, p2 }) => {
-                let left = self.opt_par_formula(p1.as_ref());
-                let right = self.opt_par_formula(p2.as_ref());
-                GuardFormula::or(left, right)
-            },
-            ExprInstance::ENotBody(ENot { p }) => {
-                let inner = self.opt_par_formula(p.as_ref());
-                GuardFormula::not(inner)
-            },
+            // The driver handles constants and connectives so they cannot re-enter this leaf
+            // compiler on the native stack.
+            ExprInstance::GBool(_)
+            | ExprInstance::EAndBody(_)
+            | ExprInstance::EOrBody(_)
+            | ExprInstance::ENotBody(_) => unreachable!("formula driver handles connectives"),
 
             // ── The comparisons. ─────────────────────────────────────────────────────────
             //
@@ -1794,6 +1868,10 @@ fn binding_for(index: i32, bindings: &[Par]) -> Option<&Par> {
     let depth = usize::try_from(index).ok()?;
     bindings.get(bindings.len().checked_sub(1)?.checked_sub(depth)?)
 }
+
+#[cfg(test)]
+#[path = "../tests/support/guard_par_substrate_recursive_oracle.rs"]
+mod recursive_oracle;
 
 #[cfg(test)]
 mod tests {
