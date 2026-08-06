@@ -221,59 +221,102 @@ impl Encoder {
     // ── Formula position ────────────────────────────────────────────────────
 
     fn formula(&mut self, cond: &Proc) -> GuardFormula {
-        match cond {
-            // ── The logical constants ────────────────────────────────────────
-            Proc::CastBool(literal) => match literal.as_ref() {
-                Bool::BoolLit(true) => GuardFormula::True,
-                Bool::BoolLit(false) => GuardFormula::False,
-                #[allow(unreachable_patterns)]
-                _ => self.opaque_atom(cond, GuardAtomKind::Uncovered, OpaquePosition::Predicate),
-            },
-
-            // ── The connectives ──────────────────────────────────────────────
-            Proc::And(a, b) => GuardFormula::and(self.formula(a), self.formula(b)),
-            Proc::Or(a, b) => GuardFormula::or(self.formula(a), self.formula(b)),
-            Proc::Not(a) => GuardFormula::not(self.formula(a)),
-            Proc::Implies(a, b) => GuardFormula::implies(self.formula(a), self.formula(b)),
-
-            // ── The comparisons ──────────────────────────────────────────────
-            Proc::Eq(a, b) => self.comparison(CmpOp::Eq, a, b, cond),
-            Proc::Ne(a, b) => self.comparison(CmpOp::Ne, a, b, cond),
-            Proc::Lt(a, b) => self.comparison(CmpOp::Lt, a, b, cond),
-            Proc::LtEq(a, b) => self.comparison(CmpOp::Le, a, b, cond),
-            Proc::Gt(a, b) => self.comparison(CmpOp::Gt, a, b, cond),
-            Proc::GtEq(a, b) => self.comparison(CmpOp::Ge, a, b, cond),
-
-            // ── The spatial atom — DELEGATED, never decided here ─────────────
-            Proc::Matches(_, _) => {
-                self.opaque_atom(cond, GuardAtomKind::Spatial, OpaquePosition::Predicate)
-            },
-
-            // ── A bare binder used as a boolean ──────────────────────────────
-            //
-            // A guard that IS a variable reads it as a proposition. If the payload turns out to
-            // be some other sort, the sort-checked ground leg answers `DontKnow` and the policy
-            // point blocks — so the reading is safe even when it is wrong.
-            //
-            // ★ The propositional letter is the binder's NAME, never its index. `Prop`'s own
-            // documentation fixes that keyspace: the ground leg resolves each atom through
-            // `GuardVarMap::index_of`, a map keyed by the name `intern` was called with. The
-            // `intern` call is still made — it is what REGISTERS the name so the lookup can
-            // succeed, and what keeps two binders sharing a pretty name distinct — but its
-            // return value is an index and an index is not a key here.
-            Proc::PVar(var) => match var_key(var) {
-                Some(key) => {
-                    self.vars.intern(&key);
-                    GuardFormula::Prop(prop_var(&key))
-                },
-                None => self.opaque_atom(cond, GuardAtomKind::Uncovered, OpaquePosition::Predicate),
-            },
-
-            // ── Everything else ──────────────────────────────────────────────
-            other => {
-                self.opaque_atom(cond, classify_uncovered(other), OpaquePosition::NotAPredicate)
-            },
+        #[derive(Clone, Copy)]
+        enum Job<'a> {
+            Visit(&'a Proc),
+            BuildAnd,
+            BuildOr,
+            BuildNot,
+            BuildImplies,
         }
+
+        let mut jobs = vec![Job::Visit(cond)];
+        let mut values = Vec::new();
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Visit(cond) => match cond {
+                    Proc::CastBool(literal) => values.push(match literal.as_ref() {
+                        Bool::BoolLit(true) => GuardFormula::True,
+                        Bool::BoolLit(false) => GuardFormula::False,
+                        #[allow(unreachable_patterns)]
+                        _ => self.opaque_atom(
+                            cond,
+                            GuardAtomKind::Uncovered,
+                            OpaquePosition::Predicate,
+                        ),
+                    }),
+
+                    // Push right before left so identifiers and variables retain their original
+                    // left-to-right allocation order when the work stack pops.
+                    Proc::And(left, right) => {
+                        jobs.push(Job::BuildAnd);
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+                    Proc::Or(left, right) => {
+                        jobs.push(Job::BuildOr);
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+                    Proc::Not(inner) => {
+                        jobs.push(Job::BuildNot);
+                        jobs.push(Job::Visit(inner));
+                    },
+                    Proc::Implies(left, right) => {
+                        jobs.push(Job::BuildImplies);
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+
+                    Proc::Eq(a, b) => values.push(self.comparison(CmpOp::Eq, a, b, cond)),
+                    Proc::Ne(a, b) => values.push(self.comparison(CmpOp::Ne, a, b, cond)),
+                    Proc::Lt(a, b) => values.push(self.comparison(CmpOp::Lt, a, b, cond)),
+                    Proc::LtEq(a, b) => values.push(self.comparison(CmpOp::Le, a, b, cond)),
+                    Proc::Gt(a, b) => values.push(self.comparison(CmpOp::Gt, a, b, cond)),
+                    Proc::GtEq(a, b) => values.push(self.comparison(CmpOp::Ge, a, b, cond)),
+
+                    Proc::Matches(_, _) => values.push(self.opaque_atom(
+                        cond,
+                        GuardAtomKind::Spatial,
+                        OpaquePosition::Predicate,
+                    )),
+
+                    Proc::PVar(var) => values.push(match var_key(var) {
+                        Some(key) => {
+                            self.vars.intern(&key);
+                            GuardFormula::Prop(prop_var(&key))
+                        },
+                        None => self.opaque_atom(
+                            cond,
+                            GuardAtomKind::Uncovered,
+                            OpaquePosition::Predicate,
+                        ),
+                    }),
+
+                    other => values.push(self.opaque_atom(
+                        cond,
+                        classify_uncovered(other),
+                        OpaquePosition::NotAPredicate,
+                    )),
+                },
+                Job::BuildAnd | Job::BuildOr | Job::BuildImplies => {
+                    let right = values.pop().expect("surface guard right formula");
+                    let left = values.pop().expect("surface guard left formula");
+                    values.push(match job {
+                        Job::BuildAnd => GuardFormula::and(left, right),
+                        Job::BuildOr => GuardFormula::or(left, right),
+                        Job::BuildImplies => GuardFormula::implies(left, right),
+                        _ => unreachable!(),
+                    });
+                },
+                Job::BuildNot => {
+                    let inner = values.pop().expect("surface guard negated formula");
+                    values.push(GuardFormula::not(inner));
+                },
+            }
+        }
+        assert_eq!(values.len(), 1);
+        values.pop().expect("surface guard formula")
     }
 
     // ── Comparison position ─────────────────────────────────────────────────
@@ -403,142 +446,141 @@ impl Encoder {
     // ── Operand position ────────────────────────────────────────────────────
 
     fn operand(&mut self, term: &Proc) -> Operand {
-        match term {
-            // ── Integral literals fold into the linear form's constant. ──────
-            Proc::CastInt(v) => match v.as_ref() {
-                Int::NumLit(n) => Operand::Int(LinearForm::constant(*n)),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-            Proc::CastUInt32(v) => match v.as_ref() {
-                UInt32::NumLit(n) => Operand::Int(LinearForm::constant(i64::from(*n))),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-            Proc::CastBigInt(v) => match v.as_ref() {
-                BigInt::NumLit(n) => Operand::Lit(GuardValue::BigInt(n.get().clone())),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-
-            // ── Non-integral scalar literals. ────────────────────────────────
-            Proc::CastBool(v) => match v.as_ref() {
-                Bool::BoolLit(b) => Operand::Lit(GuardValue::Bool(*b)),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-            Proc::CastStr(v) => match v.as_ref() {
-                Str::StringLit(s) => Operand::Lit(GuardValue::Str(s.clone())),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-            Proc::CastBigRat(v) => match v.as_ref() {
-                BigRat::RatLit(r) => Operand::Lit(GuardValue::BigRat(r.get().clone())),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-            Proc::CastFixed(v) => match v.as_ref() {
-                Fixed::FixedLit(f) => Operand::Lit(GuardValue::Fixed(fixed_to_rational(f))),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-            Proc::CastFloat(v) => match v.as_ref() {
-                Float::FloatLit(f) => Operand::Lit(GuardValue::Float(
-                    mettail_prattail::ordered_field::OrderedF64(f.get()),
-                )),
-                #[allow(unreachable_patterns)]
-                _ => Operand::Uncovered,
-            },
-
-            // ── A binder. ────────────────────────────────────────────────────
-            Proc::PVar(var) => match var_key(var) {
-                Some(key) => Operand::Var(self.vars.intern(&key)),
-                None => Operand::Uncovered,
-            },
-
-            // ── Linear arithmetic. ───────────────────────────────────────────
-            Proc::Add(a, b) => self.arithmetic(a, b, LinearForm::add),
-            Proc::Sub(a, b) => self.arithmetic(a, b, LinearForm::sub),
-
-            // ── `*` is linear only when one side is a CONSTANT. ──────────────
-            //
-            // Presburger arithmetic is linear by definition, so `x * y` with two variables is
-            // outside the theory rather than merely hard. It is not routed to an SMT solver:
-            // a solver's answer can depend on its search budget, and a budget-dependent verdict
-            // that decided whether a COMM fires would be consensus-affecting — the same hazard
-            // `dont_know_policy` exists for.
-            Proc::Mul(a, b) => {
-                let (lhs, rhs) = (self.int_form(a), self.int_form(b));
-                match (lhs, rhs) {
-                    (Some(x), Some(y)) if x.is_constant() => scaled(&y, x.constant),
-                    (Some(x), Some(y)) if y.is_constant() => scaled(&x, y.constant),
-                    (Some(_), Some(_)) => Operand::NonLinear,
-                    _ => Operand::Uncovered,
-                }
-            },
-
-            // ── `/` and `%` are outside Presburger; CONSTANT operands still fold. ──
-            Proc::Div(a, b) => self.integer_division(a, b, |x, y| x.checked_div(y)),
-            Proc::Mod(a, b) => self.integer_division(a, b, |x, y| x.checked_rem(y)),
-
-            // ── Structured payloads are a STRUCTURAL question. ───────────────
-            Proc::CastList(_) | Proc::CastBag(_) | Proc::CastMap(_) | Proc::CastSet(_) => {
-                Operand::Structural
-            },
-
-            _ => Operand::Uncovered,
+        #[derive(Clone, Copy)]
+        enum Job<'a> {
+            Visit(&'a Proc),
+            BuildArithmetic(fn(&LinearForm, &LinearForm) -> Option<LinearForm>),
+            BuildMultiply,
+            BuildIntegerDivision(fn(i64, i64) -> Option<i64>),
         }
-    }
 
-    fn arithmetic(
-        &mut self,
-        left: &Proc,
-        right: &Proc,
-        combine: fn(&LinearForm, &LinearForm) -> Option<LinearForm>,
-    ) -> Operand {
-        match (self.int_form(left), self.int_form(right)) {
-            (Some(a), Some(b)) => match combine(&a, &b) {
-                Some(form) => Operand::Int(form),
-                // Coefficient overflow: refuse rather than wrap (a wrapped coefficient is a
-                // different constraint).
-                None => Operand::NonLinear,
-            },
-            _ => Operand::Uncovered,
-        }
-    }
+        let mut jobs = vec![Job::Visit(term)];
+        let mut values = Vec::new();
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Visit(term) => match term {
+                    Proc::CastInt(v) => values.push(match v.as_ref() {
+                        Int::NumLit(n) => Operand::Int(LinearForm::constant(*n)),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
+                    Proc::CastUInt32(v) => values.push(match v.as_ref() {
+                        UInt32::NumLit(n) => Operand::Int(LinearForm::constant(i64::from(*n))),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
+                    Proc::CastBigInt(v) => values.push(match v.as_ref() {
+                        BigInt::NumLit(n) => Operand::Lit(GuardValue::BigInt(n.get().clone())),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
+                    Proc::CastBool(v) => values.push(match v.as_ref() {
+                        Bool::BoolLit(b) => Operand::Lit(GuardValue::Bool(*b)),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
+                    Proc::CastStr(v) => values.push(match v.as_ref() {
+                        Str::StringLit(s) => Operand::Lit(GuardValue::Str(s.clone())),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
+                    Proc::CastBigRat(v) => values.push(match v.as_ref() {
+                        BigRat::RatLit(r) => Operand::Lit(GuardValue::BigRat(r.get().clone())),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
+                    Proc::CastFixed(v) => values.push(match v.as_ref() {
+                        Fixed::FixedLit(f) => Operand::Lit(GuardValue::Fixed(fixed_to_rational(f))),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
+                    Proc::CastFloat(v) => values.push(match v.as_ref() {
+                        Float::FloatLit(f) => Operand::Lit(GuardValue::Float(
+                            mettail_prattail::ordered_field::OrderedF64(f.get()),
+                        )),
+                        #[allow(unreachable_patterns)]
+                        _ => Operand::Uncovered,
+                    }),
 
-    fn integer_division(
-        &mut self,
-        left: &Proc,
-        right: &Proc,
-        combine: fn(i64, i64) -> Option<i64>,
-    ) -> Operand {
-        match (self.int_form(left), self.int_form(right)) {
-            (Some(a), Some(b)) if a.is_constant() && b.is_constant() => {
-                // Both operands are ground, so the result is a constant — exact, and strictly
-                // more than "outside Presburger" would give. `checked_*` covers division by zero
-                // and `i64::MIN / -1`.
-                match combine(a.constant, b.constant) {
-                    Some(value) => Operand::Int(LinearForm::constant(value)),
-                    None => Operand::NonLinear,
-                }
-            },
-            (Some(_), Some(_)) => Operand::NonLinear,
-            _ => Operand::Uncovered,
-        }
-    }
+                    Proc::PVar(var) => values.push(match var_key(var) {
+                        Some(key) => Operand::Var(self.vars.intern(&key)),
+                        None => Operand::Uncovered,
+                    }),
 
-    /// An operand read as an integer-sorted linear form.
-    ///
-    /// ⚠ This is where the integer-sort assumption is applied: a bare binder inside an
-    /// arithmetic node is taken to be integer-sorted. See the module docs for how the
-    /// assumption is contained on each leg.
-    fn int_form(&mut self, term: &Proc) -> Option<LinearForm> {
-        match self.operand(term) {
-            Operand::Int(form) => Some(form),
-            Operand::Var(idx) => Some(LinearForm::var(idx)),
-            _ => None,
+                    Proc::Add(left, right) => {
+                        jobs.push(Job::BuildArithmetic(LinearForm::add));
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+                    Proc::Sub(left, right) => {
+                        jobs.push(Job::BuildArithmetic(LinearForm::sub));
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+                    Proc::Mul(left, right) => {
+                        jobs.push(Job::BuildMultiply);
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+                    Proc::Div(left, right) => {
+                        jobs.push(Job::BuildIntegerDivision(i64::checked_div));
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+                    Proc::Mod(left, right) => {
+                        jobs.push(Job::BuildIntegerDivision(i64::checked_rem));
+                        jobs.push(Job::Visit(right));
+                        jobs.push(Job::Visit(left));
+                    },
+
+                    Proc::CastList(_) | Proc::CastBag(_) | Proc::CastMap(_) | Proc::CastSet(_) => {
+                        values.push(Operand::Structural)
+                    },
+                    _ => values.push(Operand::Uncovered),
+                },
+                Job::BuildArithmetic(combine) => {
+                    let right = int_form_of(values.pop().expect("surface arithmetic right"));
+                    let left = int_form_of(values.pop().expect("surface arithmetic left"));
+                    values.push(match (left, right) {
+                        (Some(left), Some(right)) => match combine(&left, &right) {
+                            Some(form) => Operand::Int(form),
+                            None => Operand::NonLinear,
+                        },
+                        _ => Operand::Uncovered,
+                    });
+                },
+                Job::BuildMultiply => {
+                    let right = int_form_of(values.pop().expect("surface multiplication right"));
+                    let left = int_form_of(values.pop().expect("surface multiplication left"));
+                    values.push(match (left, right) {
+                        (Some(left), Some(right)) if left.is_constant() => {
+                            scaled(&right, left.constant)
+                        },
+                        (Some(left), Some(right)) if right.is_constant() => {
+                            scaled(&left, right.constant)
+                        },
+                        (Some(_), Some(_)) => Operand::NonLinear,
+                        _ => Operand::Uncovered,
+                    });
+                },
+                Job::BuildIntegerDivision(combine) => {
+                    let right = int_form_of(values.pop().expect("surface division right"));
+                    let left = int_form_of(values.pop().expect("surface division left"));
+                    values.push(match (left, right) {
+                        (Some(left), Some(right)) if left.is_constant() && right.is_constant() => {
+                            match combine(left.constant, right.constant) {
+                                Some(value) => Operand::Int(LinearForm::constant(value)),
+                                None => Operand::NonLinear,
+                            }
+                        },
+                        (Some(_), Some(_)) => Operand::NonLinear,
+                        _ => Operand::Uncovered,
+                    });
+                },
+            }
         }
+        assert_eq!(values.len(), 1);
+        values.pop().expect("surface guard operand")
     }
 
     // ── Opaque atoms ────────────────────────────────────────────────────────
@@ -564,6 +606,14 @@ impl Encoder {
             position,
         });
         GuardFormula::Atom(GuardAtom { id, kind })
+    }
+}
+
+fn int_form_of(operand: Operand) -> Option<LinearForm> {
+    match operand {
+        Operand::Int(form) => Some(form),
+        Operand::Var(idx) => Some(LinearForm::var(idx)),
+        _ => None,
     }
 }
 
@@ -1130,6 +1180,10 @@ fn ground_assignment(encoding: &GuardEncoding) -> GuardAssignment {
 pub fn linear_constraint_formula(constraint: LinearConstraint) -> GuardFormula {
     linear_atom(constraint)
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/rholang_guard_substrate_recursive_oracle.rs"]
+mod recursive_oracle;
 
 #[cfg(test)]
 mod tests {
