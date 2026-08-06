@@ -2216,7 +2216,6 @@ impl crate::predicate_dispatch::PredicateCompiler for SymbolicCompiler {
 /// Represents Boolean combinations of predicates from algebras `A` and `B`.
 /// The domain is the pair `(A::Domain, B::Domain)`, and satisfiability requires
 /// both components to be satisfiable (independent domains).
-#[derive(Clone, Debug)]
 pub enum ProductPred<A: BooleanAlgebra, B: BooleanAlgebra> {
     /// Always true.
     True,
@@ -2236,56 +2235,49 @@ pub enum ProductPred<A: BooleanAlgebra, B: BooleanAlgebra> {
     Not(Box<ProductPred<A, B>>),
 }
 
-impl<A: BooleanAlgebra, B: BooleanAlgebra> PartialEq for ProductPred<A, B> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (ProductPred::True, ProductPred::True) => true,
-            (ProductPred::False, ProductPred::False) => true,
-            (ProductPred::Both(a1, b1), ProductPred::Both(a2, b2)) => a1 == a2 && b1 == b2,
-            (ProductPred::LeftOnly(a1), ProductPred::LeftOnly(a2)) => a1 == a2,
-            (ProductPred::RightOnly(b1), ProductPred::RightOnly(b2)) => b1 == b2,
-            (ProductPred::And(l1, r1), ProductPred::And(l2, r2)) => l1 == l2 && r1 == r2,
-            (ProductPred::Or(l1, r1), ProductPred::Or(l2, r2)) => l1 == l2 && r1 == r2,
-            (ProductPred::Not(a), ProductPred::Not(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-
-impl<A: BooleanAlgebra, B: BooleanAlgebra> Eq for ProductPred<A, B> {}
-
-impl<A: BooleanAlgebra, B: BooleanAlgebra> std::hash::Hash for ProductPred<A, B> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-        match self {
-            ProductPred::True | ProductPred::False => {},
-            ProductPred::Both(a, b) => {
-                a.hash(state);
-                b.hash(state);
-            },
-            ProductPred::LeftOnly(a) => a.hash(state),
-            ProductPred::RightOnly(b) => b.hash(state),
-            ProductPred::And(l, r) | ProductPred::Or(l, r) => {
-                l.hash(state);
-                r.hash(state);
-            },
-            ProductPred::Not(inner) => inner.hash(state),
-        }
-    }
-}
-
 impl<A: BooleanAlgebra, B: BooleanAlgebra> fmt::Display for ProductPred<A, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProductPred::True => write!(f, "TRUE"),
-            ProductPred::False => write!(f, "FALSE"),
-            ProductPred::Both(a, b) => write!(f, "({:?} × {:?})", a, b),
-            ProductPred::LeftOnly(a) => write!(f, "({:?} × TRUE)", a),
-            ProductPred::RightOnly(b) => write!(f, "(TRUE × {:?})", b),
-            ProductPred::And(l, r) => write!(f, "({} ∧ {})", l, r),
-            ProductPred::Or(l, r) => write!(f, "({} ∨ {})", l, r),
-            ProductPred::Not(inner) => write!(f, "¬{}", inner),
+        enum Task<'pred, A: BooleanAlgebra, B: BooleanAlgebra> {
+            Visit(&'pred ProductPred<A, B>),
+            Text(&'static str),
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => f.write_str(text)?,
+                Task::Visit(ProductPred::True) => f.write_str("TRUE")?,
+                Task::Visit(ProductPred::False) => f.write_str("FALSE")?,
+                Task::Visit(ProductPred::Both(left, right)) => {
+                    write!(f, "({left:?} × {right:?})")?;
+                },
+                Task::Visit(ProductPred::LeftOnly(left)) => {
+                    write!(f, "({left:?} × TRUE)")?;
+                },
+                Task::Visit(ProductPred::RightOnly(right)) => {
+                    write!(f, "(TRUE × {right:?})")?;
+                },
+                Task::Visit(ProductPred::And(left, right)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Text(" ∧ "));
+                    tasks.push(Task::Visit(left));
+                    tasks.push(Task::Text("("));
+                },
+                Task::Visit(ProductPred::Or(left, right)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Text(" ∨ "));
+                    tasks.push(Task::Visit(left));
+                    tasks.push(Task::Text("("));
+                },
+                Task::Visit(ProductPred::Not(body)) => {
+                    tasks.push(Task::Visit(body));
+                    tasks.push(Task::Text("¬"));
+                },
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2325,71 +2317,115 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> ProductAlgebra<A, B> {
     /// The overall predicate is satisfiable iff at least one disjunct has
     /// both components satisfiable (independent domains factor per-disjunct).
     fn to_dnf(&self, pred: &ProductPred<A, B>) -> Vec<(A::Predicate, B::Predicate)> {
-        match pred {
-            ProductPred::True => {
-                vec![(self.left.true_pred(), self.right.true_pred())]
+        enum Task<'pred, A: BooleanAlgebra, B: BooleanAlgebra> {
+            Visit {
+                pred: &'pred ProductPred<A, B>,
+                negated: bool,
             },
-            ProductPred::False => vec![],
-            ProductPred::Both(a, b) => vec![(a.clone(), b.clone())],
-            ProductPred::LeftOnly(a) => vec![(a.clone(), self.right.true_pred())],
-            ProductPred::RightOnly(b) => vec![(self.left.true_pred(), b.clone())],
-            ProductPred::And(l, r) => {
-                let l_dnf = self.to_dnf(l);
-                let r_dnf = self.to_dnf(r);
-                let mut result = Vec::with_capacity(l_dnf.len() * r_dnf.len());
-                for (ll, lr) in &l_dnf {
-                    for (rl, rr) in &r_dnf {
-                        let left_conj = self.left.and(ll, rl);
-                        let right_conj = self.right.and(lr, rr);
-                        result.push((left_conj, right_conj));
-                    }
-                }
-                result
-            },
-            ProductPred::Or(l, r) => {
-                let mut l_dnf = self.to_dnf(l);
-                let r_dnf = self.to_dnf(r);
-                l_dnf.extend(r_dnf);
-                l_dnf
-            },
-            ProductPred::Not(inner) => {
-                // ¬P: push negation down to atoms using De Morgan's laws.
-                // ¬(A ∧ B) = ¬A ∨ ¬B
-                // ¬(A ∨ B) = ¬A ∧ ¬B
-                // ¬True = False, ¬False = True
-                // ¬Both(a,b) = LeftOnly(¬a) ∨ RightOnly(¬b) (De Morgan over independent domains)
-                // ¬LeftOnly(a) = LeftOnly(¬a) (right was True, remains True)
-                // ¬RightOnly(b) = RightOnly(¬b) (left was True, remains True)
-                let negated = self.negate_pred(inner);
-                self.to_dnf(&negated)
-            },
+            And,
+            Or,
         }
-    }
 
-    /// Push negation down to atomic predicates (NNF conversion).
-    fn negate_pred(&self, pred: &ProductPred<A, B>) -> ProductPred<A, B> {
-        match pred {
-            ProductPred::True => ProductPred::False,
-            ProductPred::False => ProductPred::True,
-            ProductPred::Both(a, b) => {
-                // ¬(a ∧ b) = ¬a ∨ ¬b (De Morgan, independent domains)
-                ProductPred::Or(
-                    Box::new(ProductPred::LeftOnly(self.left.not(a))),
-                    Box::new(ProductPred::RightOnly(self.right.not(b))),
-                )
-            },
-            ProductPred::LeftOnly(a) => ProductPred::LeftOnly(self.left.not(a)),
-            ProductPred::RightOnly(b) => ProductPred::RightOnly(self.right.not(b)),
-            ProductPred::And(l, r) => {
-                // ¬(L ∧ R) = ¬L ∨ ¬R
-                ProductPred::Or(Box::new(self.negate_pred(l)), Box::new(self.negate_pred(r)))
-            },
-            ProductPred::Or(l, r) => {
-                // ¬(L ∨ R) = ¬L ∧ ¬R
-                ProductPred::And(Box::new(self.negate_pred(l)), Box::new(self.negate_pred(r)))
-            },
-            ProductPred::Not(inner) => (**inner).clone(), // Double negation
+        let mut tasks = vec![Task::Visit { pred, negated: false }];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit { pred: ProductPred::True, negated: false }
+                | Task::Visit { pred: ProductPred::False, negated: true } => {
+                    values.push(vec![(self.left.true_pred(), self.right.true_pred())]);
+                },
+                Task::Visit { pred: ProductPred::False, negated: false }
+                | Task::Visit { pred: ProductPred::True, negated: true } => {
+                    values.push(Vec::new());
+                },
+                Task::Visit {
+                    pred: ProductPred::Both(left, right),
+                    negated: false,
+                } => {
+                    values.push(vec![(left.clone(), right.clone())]);
+                },
+                Task::Visit {
+                    pred: ProductPred::Both(left, right),
+                    negated: true,
+                } => {
+                    values.push(vec![
+                        (self.left.not(left), self.right.true_pred()),
+                        (self.left.true_pred(), self.right.not(right)),
+                    ]);
+                },
+                Task::Visit {
+                    pred: ProductPred::LeftOnly(left),
+                    negated,
+                } => {
+                    let left = if negated {
+                        self.left.not(left)
+                    } else {
+                        left.clone()
+                    };
+                    values.push(vec![(left, self.right.true_pred())]);
+                },
+                Task::Visit {
+                    pred: ProductPred::RightOnly(right),
+                    negated,
+                } => {
+                    let right = if negated {
+                        self.right.not(right)
+                    } else {
+                        right.clone()
+                    };
+                    values.push(vec![(self.left.true_pred(), right)]);
+                },
+                Task::Visit { pred: ProductPred::Not(body), negated } => {
+                    tasks.push(Task::Visit { pred: body, negated: !negated });
+                },
+                Task::Visit {
+                    pred: ProductPred::And(left, right),
+                    negated,
+                } => {
+                    tasks.push(if negated { Task::Or } else { Task::And });
+                    tasks.push(Task::Visit { pred: right, negated });
+                    tasks.push(Task::Visit { pred: left, negated });
+                },
+                Task::Visit {
+                    pred: ProductPred::Or(left, right),
+                    negated,
+                } => {
+                    tasks.push(if negated { Task::And } else { Task::Or });
+                    tasks.push(Task::Visit { pred: right, negated });
+                    tasks.push(Task::Visit { pred: left, negated });
+                },
+                Task::And => {
+                    let right = values.pop().expect("product DNF lost right conjunction");
+                    let left = values.pop().expect("product DNF lost left conjunction");
+                    if left.is_empty() || right.is_empty() {
+                        values.push(Vec::new());
+                        continue;
+                    }
+                    let capacity = left
+                        .len()
+                        .checked_mul(right.len())
+                        .expect("product DNF cardinality exceeds addressable memory");
+                    let mut result = Vec::with_capacity(capacity);
+                    for (left_a, left_b) in &left {
+                        for (right_a, right_b) in &right {
+                            result.push((
+                                self.left.and(left_a, right_a),
+                                self.right.and(left_b, right_b),
+                            ));
+                        }
+                    }
+                    values.push(result);
+                },
+                Task::Or => {
+                    let mut right = values.pop().expect("product DNF lost right disjunction");
+                    let mut left = values.pop().expect("product DNF lost left disjunction");
+                    left.append(&mut right);
+                    values.push(left);
+                },
+            }
         }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("product DNF produced no value")
     }
 
     // 2026-05-12: `extract_left` and `extract_right` methods DELETED —
@@ -2460,18 +2496,67 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> BooleanAlgebra for ProductAlgebra<A, 
     }
 
     fn evaluate(&self, pred: &ProductPred<A, B>, elem: &ProductDomain<A, B>) -> bool {
-        match pred {
-            ProductPred::True => true,
-            ProductPred::False => false,
-            ProductPred::Both(a, b) => {
-                self.left.evaluate(a, &elem.0) && self.right.evaluate(b, &elem.1)
-            },
-            ProductPred::LeftOnly(a) => self.left.evaluate(a, &elem.0),
-            ProductPred::RightOnly(b) => self.right.evaluate(b, &elem.1),
-            ProductPred::And(l, r) => self.evaluate(l, elem) && self.evaluate(r, elem),
-            ProductPred::Or(l, r) => self.evaluate(l, elem) || self.evaluate(r, elem),
-            ProductPred::Not(inner) => !self.evaluate(inner, elem),
+        enum Task<'pred, A: BooleanAlgebra, B: BooleanAlgebra> {
+            Visit(&'pred ProductPred<A, B>),
+            Not,
+            AndRight(&'pred ProductPred<A, B>),
+            OrRight(&'pred ProductPred<A, B>),
         }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(ProductPred::True) => values.push(true),
+                Task::Visit(ProductPred::False) => values.push(false),
+                Task::Visit(ProductPred::Both(left, right)) => values
+                    .push(self.left.evaluate(left, &elem.0) && self.right.evaluate(right, &elem.1)),
+                Task::Visit(ProductPred::LeftOnly(left)) => {
+                    values.push(self.left.evaluate(left, &elem.0));
+                },
+                Task::Visit(ProductPred::RightOnly(right)) => {
+                    values.push(self.right.evaluate(right, &elem.1));
+                },
+                Task::Visit(ProductPred::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Visit(ProductPred::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(ProductPred::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values.pop().expect("product evaluation lost negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("product evaluation lost left conjunction");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("product evaluation lost left disjunction");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("product evaluation produced no value")
     }
 }
 

@@ -1,6 +1,6 @@
 //! Heap-backed lifecycle machines for symbolic predicate models.
 
-use super::{CharClassPred, IntervalPred, PredicateExpr};
+use super::{BooleanAlgebra, CharClassPred, IntervalPred, PredicateExpr, ProductPred};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -542,4 +542,212 @@ fn push_predicate_debug_binary<'expr>(
     tasks.push(PredicateDebugTask::Text(", "));
     tasks.push(PredicateDebugTask::Visit(left));
     tasks.push(PredicateDebugTask::Text(prefix));
+}
+
+#[derive(Clone, Copy)]
+enum ProductBinaryKind {
+    And,
+    Or,
+}
+
+enum ProductCloneTask<'pred, A: BooleanAlgebra, B: BooleanAlgebra> {
+    Visit(&'pred ProductPred<A, B>),
+    Binary(ProductBinaryKind),
+    Not,
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> Clone for ProductPred<A, B> {
+    fn clone(&self) -> Self {
+        let mut tasks = vec![ProductCloneTask::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                ProductCloneTask::Visit(ProductPred::True) => values.push(ProductPred::True),
+                ProductCloneTask::Visit(ProductPred::False) => values.push(ProductPred::False),
+                ProductCloneTask::Visit(ProductPred::Both(left, right)) => {
+                    values.push(ProductPred::Both(left.clone(), right.clone()));
+                },
+                ProductCloneTask::Visit(ProductPred::LeftOnly(left)) => {
+                    values.push(ProductPred::LeftOnly(left.clone()));
+                },
+                ProductCloneTask::Visit(ProductPred::RightOnly(right)) => {
+                    values.push(ProductPred::RightOnly(right.clone()));
+                },
+                ProductCloneTask::Visit(ProductPred::Not(body)) => {
+                    tasks.push(ProductCloneTask::Not);
+                    tasks.push(ProductCloneTask::Visit(body));
+                },
+                ProductCloneTask::Visit(ProductPred::And(left, right)) => {
+                    push_product_clone_binary(&mut tasks, ProductBinaryKind::And, left, right);
+                },
+                ProductCloneTask::Visit(ProductPred::Or(left, right)) => {
+                    push_product_clone_binary(&mut tasks, ProductBinaryKind::Or, left, right);
+                },
+                ProductCloneTask::Not => {
+                    let body = values.pop().expect("ProductPred clone lost negated body");
+                    values.push(ProductPred::Not(Box::new(body)));
+                },
+                ProductCloneTask::Binary(kind) => {
+                    let right = values.pop().expect("ProductPred clone lost right body");
+                    let left = values.pop().expect("ProductPred clone lost left body");
+                    values.push(match kind {
+                        ProductBinaryKind::And => ProductPred::And(Box::new(left), Box::new(right)),
+                        ProductBinaryKind::Or => ProductPred::Or(Box::new(left), Box::new(right)),
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("ProductPred clone produced no value")
+    }
+}
+
+fn push_product_clone_binary<'pred, A: BooleanAlgebra, B: BooleanAlgebra>(
+    tasks: &mut Vec<ProductCloneTask<'pred, A, B>>,
+    kind: ProductBinaryKind,
+    left: &'pred ProductPred<A, B>,
+    right: &'pred ProductPred<A, B>,
+) {
+    tasks.push(ProductCloneTask::Binary(kind));
+    tasks.push(ProductCloneTask::Visit(right));
+    tasks.push(ProductCloneTask::Visit(left));
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> PartialEq for ProductPred<A, B> {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some((left, right)) = work.pop() {
+            match (left, right) {
+                (ProductPred::True, ProductPred::True)
+                | (ProductPred::False, ProductPred::False) => {},
+                (ProductPred::Both(al, ar), ProductPred::Both(bl, br)) if al == bl && ar == br => {
+                },
+                (ProductPred::LeftOnly(a), ProductPred::LeftOnly(b)) if a == b => {},
+                (ProductPred::RightOnly(a), ProductPred::RightOnly(b)) if a == b => {},
+                (ProductPred::Not(a), ProductPred::Not(b)) => work.push((a, b)),
+                (ProductPred::And(al, ar), ProductPred::And(bl, br))
+                | (ProductPred::Or(al, ar), ProductPred::Or(bl, br)) => {
+                    work.push((ar, br));
+                    work.push((al, bl));
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> Eq for ProductPred<A, B> {}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> Hash for ProductPred<A, B> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut work = vec![self];
+        while let Some(predicate) = work.pop() {
+            std::mem::discriminant(predicate).hash(state);
+            match predicate {
+                ProductPred::True | ProductPred::False => {},
+                ProductPred::Both(left, right) => {
+                    left.hash(state);
+                    right.hash(state);
+                },
+                ProductPred::LeftOnly(left) => left.hash(state),
+                ProductPred::RightOnly(right) => right.hash(state),
+                ProductPred::Not(body) => work.push(body),
+                ProductPred::And(left, right) | ProductPred::Or(left, right) => {
+                    work.push(right);
+                    work.push(left);
+                },
+            }
+        }
+    }
+}
+
+fn take_product_children<A: BooleanAlgebra, B: BooleanAlgebra>(
+    predicate: &mut ProductPred<A, B>,
+    work: &mut Vec<ProductPred<A, B>>,
+) {
+    let take =
+        |child: &mut Box<ProductPred<A, B>>| *std::mem::replace(child, Box::new(ProductPred::True));
+    match predicate {
+        ProductPred::Not(body) => work.push(take(body)),
+        ProductPred::And(left, right) | ProductPred::Or(left, right) => {
+            work.push(take(left));
+            work.push(take(right));
+        },
+        ProductPred::True
+        | ProductPred::False
+        | ProductPred::Both(_, _)
+        | ProductPred::LeftOnly(_)
+        | ProductPred::RightOnly(_) => {},
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> Drop for ProductPred<A, B> {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        take_product_children(self, &mut work);
+        while let Some(mut predicate) = work.pop() {
+            take_product_children(&mut predicate, &mut work);
+        }
+    }
+}
+
+enum ProductDebugTask<'pred, A: BooleanAlgebra, B: BooleanAlgebra> {
+    Visit(&'pred ProductPred<A, B>),
+    Text(&'static str),
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> fmt::Debug for ProductPred<A, B> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut tasks = vec![ProductDebugTask::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                ProductDebugTask::Text(text) => formatter.write_str(text)?,
+                ProductDebugTask::Visit(ProductPred::True) => formatter.write_str("True")?,
+                ProductDebugTask::Visit(ProductPred::False) => formatter.write_str("False")?,
+                ProductDebugTask::Visit(ProductPred::Both(left, right)) => {
+                    write!(formatter, "Both({left:?}, {right:?})")?;
+                },
+                ProductDebugTask::Visit(ProductPred::LeftOnly(left)) => {
+                    write!(formatter, "LeftOnly({left:?})")?;
+                },
+                ProductDebugTask::Visit(ProductPred::RightOnly(right)) => {
+                    write!(formatter, "RightOnly({right:?})")?;
+                },
+                ProductDebugTask::Visit(ProductPred::Not(body)) => {
+                    push_product_debug_unary(&mut tasks, "Not(", body);
+                },
+                ProductDebugTask::Visit(ProductPred::And(left, right)) => {
+                    push_product_debug_binary(&mut tasks, "And(", left, right);
+                },
+                ProductDebugTask::Visit(ProductPred::Or(left, right)) => {
+                    push_product_debug_binary(&mut tasks, "Or(", left, right);
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+fn push_product_debug_unary<'pred, A: BooleanAlgebra, B: BooleanAlgebra>(
+    tasks: &mut Vec<ProductDebugTask<'pred, A, B>>,
+    prefix: &'static str,
+    body: &'pred ProductPred<A, B>,
+) {
+    tasks.push(ProductDebugTask::Text(")"));
+    tasks.push(ProductDebugTask::Visit(body));
+    tasks.push(ProductDebugTask::Text(prefix));
+}
+
+fn push_product_debug_binary<'pred, A: BooleanAlgebra, B: BooleanAlgebra>(
+    tasks: &mut Vec<ProductDebugTask<'pred, A, B>>,
+    prefix: &'static str,
+    left: &'pred ProductPred<A, B>,
+    right: &'pred ProductPred<A, B>,
+) {
+    tasks.push(ProductDebugTask::Text(")"));
+    tasks.push(ProductDebugTask::Visit(right));
+    tasks.push(ProductDebugTask::Text(", "));
+    tasks.push(ProductDebugTask::Visit(left));
+    tasks.push(ProductDebugTask::Text(prefix));
 }
