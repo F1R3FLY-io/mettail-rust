@@ -17,7 +17,6 @@ use super::*;
 /// References:
 /// - Frisch, Castagna, & Benzaken (2008). "Semantic subtyping." JACM 55(4).
 /// - Comon et al. (2007). "Tree Automata Techniques and Applications."
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SetType {
     /// Named base type (atom, corresponds to a tree automaton state).
     Atom(String),
@@ -35,19 +34,8 @@ pub enum SetType {
     Bottom,
 }
 
-impl fmt::Display for SetType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SetType::Atom(name) => write!(f, "{name}"),
-            SetType::Union(a, b) => write!(f, "({a} | {b})"),
-            SetType::Intersection(a, b) => write!(f, "({a} & {b})"),
-            SetType::Negation(inner) => write!(f, "~{inner}"),
-            SetType::Arrow(dom, cod) => write!(f, "({dom} -> {cod})"),
-            SetType::Top => write!(f, "Top"),
-            SetType::Bottom => write!(f, "Bottom"),
-        }
-    }
-}
+#[path = "settheoretic/set_type_lifecycle.rs"]
+mod set_type_lifecycle;
 
 /// Type environment for the set-theoretic type system.
 #[derive(Clone, Debug)]
@@ -108,60 +96,82 @@ impl SetTheoreticTypeSystem {
         use crate::automata::semiring::BooleanWeight;
         use crate::tree_automaton::{TreeAutomaton, TreeTransition};
 
-        match ty {
-            SetType::Atom(name) => {
-                if let Some(aut) = self.type_defs.get(name) {
-                    aut.clone()
-                } else {
-                    // Unknown atom: empty automaton (no values)
-                    TreeAutomaton::new()
-                }
-            },
-            SetType::Union(a, b) => {
-                let aut_a = self.type_to_automaton(a);
-                let aut_b = self.type_to_automaton(b);
-                self.union_automata(&aut_a, &aut_b)
-            },
-            SetType::Intersection(a, b) => {
-                let aut_a = self.type_to_automaton(a);
-                let aut_b = self.type_to_automaton(b);
-                self.intersect_automata(&aut_a, &aut_b)
-            },
-            SetType::Negation(inner) => {
-                let aut = self.type_to_automaton(inner);
-                self.complement_automaton(&aut)
-            },
-            SetType::Arrow(_, _) => {
-                // Arrow types are modeled structurally: the "arrow" constructor
-                // has arity 2, with domain and codomain as children.
-                // For now, treat as an atom named "__arrow" if not defined.
-                if let Some(aut) = self.type_defs.get("__arrow") {
-                    aut.clone()
-                } else {
-                    TreeAutomaton::new()
-                }
-            },
-            SetType::Top => {
-                // Universal automaton: one accepting state, all constructors
-                // transition to it with Boolean true.
-                let mut aut = TreeAutomaton::new();
-                let q = aut.add_state(true); // single accepting state
-                for (sym, &arity) in &self.constructors {
-                    let children = vec![q; arity];
-                    aut.add_transition(TreeTransition {
-                        symbol: sym.clone(),
-                        child_states: children,
-                        target_state: q,
-                        weight: BooleanWeight(true),
-                    });
-                }
-                aut
-            },
-            SetType::Bottom => {
-                // Empty automaton: no final states, no transitions.
-                TreeAutomaton::new()
-            },
+        enum Task<'ty> {
+            Visit(&'ty SetType),
+            Union,
+            Intersection,
+            Negation,
         }
+
+        let mut tasks = vec![Task::Visit(ty)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(SetType::Atom(name)) => values.push(
+                    self.type_defs
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(TreeAutomaton::new),
+                ),
+                Task::Visit(SetType::Union(left, right)) => {
+                    tasks.push(Task::Union);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SetType::Intersection(left, right)) => {
+                    tasks.push(Task::Intersection);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(SetType::Negation(inner)) => {
+                    tasks.push(Task::Negation);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(SetType::Arrow(_, _)) => values.push(
+                    self.type_defs
+                        .get("__arrow")
+                        .cloned()
+                        .unwrap_or_else(TreeAutomaton::new),
+                ),
+                Task::Visit(SetType::Top) => {
+                    let mut aut = TreeAutomaton::new();
+                    let q = aut.add_state(true);
+                    for (symbol, &arity) in &self.constructors {
+                        aut.add_transition(TreeTransition {
+                            symbol: symbol.clone(),
+                            child_states: vec![q; arity],
+                            target_state: q,
+                            weight: BooleanWeight(true),
+                        });
+                    }
+                    values.push(aut);
+                },
+                Task::Visit(SetType::Bottom) => values.push(TreeAutomaton::new()),
+                Task::Union | Task::Intersection => {
+                    let right = values
+                        .pop()
+                        .expect("set-type automaton PDA lost its right operand");
+                    let left = values
+                        .pop()
+                        .expect("set-type automaton PDA lost its left operand");
+                    values.push(match task {
+                        Task::Union => self.union_automata(&left, &right),
+                        Task::Intersection => self.intersect_automata(&left, &right),
+                        Task::Visit(_) | Task::Negation => unreachable!(),
+                    });
+                },
+                Task::Negation => {
+                    let inner = values
+                        .pop()
+                        .expect("set-type automaton PDA lost its negated operand");
+                    values.push(self.complement_automaton(&inner));
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("set-type automaton PDA produced no value")
     }
 
     /// Product construction for tree automata intersection.
