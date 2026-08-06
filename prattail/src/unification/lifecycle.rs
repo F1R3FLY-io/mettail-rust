@@ -156,9 +156,9 @@ impl Drop for TermExpr {
             unsafe {
                 match &mut *node {
                     TermExpr::Var(_) => {},
-                    TermExpr::Const(name) => drop(ptr::read(name)),
+                    TermExpr::Const(name) => std::mem::drop(ptr::read(name)),
                     TermExpr::App { head, args } => {
-                        drop(ptr::read(head));
+                        std::mem::drop(ptr::read(head));
                         let args = ptr::read(args);
                         work.extend(args);
                     },

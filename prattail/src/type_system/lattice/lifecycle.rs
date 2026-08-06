@@ -136,10 +136,10 @@ impl Drop for LatticeTerm {
             let mut node = ManuallyDrop::new(node);
             unsafe {
                 match &mut *node {
-                    LatticeTerm::Var(name) => drop(ptr::read(name)),
-                    LatticeTerm::Const { name, .. } => drop(ptr::read(name)),
+                    LatticeTerm::Var(name) => std::mem::drop(ptr::read(name)),
+                    LatticeTerm::Const { name, .. } => std::mem::drop(ptr::read(name)),
                     LatticeTerm::App { head, args } => {
-                        drop(ptr::read(head));
+                        std::mem::drop(ptr::read(head));
                         let args = ptr::read(args);
                         work.extend(args);
                     },

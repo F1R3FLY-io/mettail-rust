@@ -401,22 +401,22 @@ impl Drop for SyntaxItemSpec {
             let mut node = ManuallyDrop::new(node);
             unsafe {
                 match &mut *node {
-                    SyntaxItemSpec::Terminal(text) => drop(ptr::read(text)),
+                    SyntaxItemSpec::Terminal(text) => std::mem::drop(ptr::read(text)),
                     SyntaxItemSpec::NonTerminal { category, param_name } => {
-                        drop(ptr::read(category));
-                        drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(category));
+                        std::mem::drop(ptr::read(param_name));
                     },
                     SyntaxItemSpec::IdentCapture { param_name }
                     | SyntaxItemSpec::GuardExpression { param_name } => {
-                        drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(param_name));
                     },
                     SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(kind_name));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(kind_name));
                     },
                     SyntaxItemSpec::Binder { param_name, category, .. } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(category));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(category));
                     },
                     SyntaxItemSpec::Collection {
                         param_name,
@@ -425,14 +425,14 @@ impl Drop for SyntaxItemSpec {
                         key_val_separator,
                         ..
                     } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(element_category));
-                        drop(ptr::read(separator));
-                        drop(ptr::read(key_val_separator));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(element_category));
+                        std::mem::drop(ptr::read(separator));
+                        std::mem::drop(ptr::read(key_val_separator));
                     },
                     SyntaxItemSpec::Sep { body, separator, .. } => {
                         work.push(*ptr::read(body));
-                        drop(ptr::read(separator));
+                        std::mem::drop(ptr::read(separator));
                     },
                     SyntaxItemSpec::Map { body_items } => work.extend(ptr::read(body_items)),
                     SyntaxItemSpec::Zip {
@@ -442,15 +442,15 @@ impl Drop for SyntaxItemSpec {
                         right_category,
                         body,
                     } => {
-                        drop(ptr::read(left_name));
-                        drop(ptr::read(right_name));
-                        drop(ptr::read(left_category));
-                        drop(ptr::read(right_category));
+                        std::mem::drop(ptr::read(left_name));
+                        std::mem::drop(ptr::read(right_name));
+                        std::mem::drop(ptr::read(left_category));
+                        std::mem::drop(ptr::read(right_category));
                         work.push(*ptr::read(body));
                     },
                     SyntaxItemSpec::BinderCollection { param_name, separator } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(separator));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(separator));
                     },
                     SyntaxItemSpec::Optional { inner } => work.extend(ptr::read(inner)),
                 }

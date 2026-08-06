@@ -146,21 +146,21 @@ impl Drop for ActionArg {
             unsafe {
                 match &mut *node {
                     ActionArg::Token { kind, text, .. } => {
-                        drop(ptr::read(kind));
-                        drop(ptr::read(text));
+                        std::mem::drop(ptr::read(kind));
+                        std::mem::drop(ptr::read(text));
                     },
-                    ActionArg::Ident { name, .. } => drop(ptr::read(name)),
+                    ActionArg::Ident { name, .. } => std::mem::drop(ptr::read(name)),
                     ActionArg::Term { value, .. }
                     | ActionArg::Collection { value, .. }
-                    | ActionArg::Predicate(value) => drop(ptr::read(value)),
-                    ActionArg::BinderScope(handle) => drop(ptr::read(handle)),
+                    | ActionArg::Predicate(value) => std::mem::drop(ptr::read(value)),
+                    ActionArg::BinderScope(handle) => std::mem::drop(ptr::read(handle)),
                     ActionArg::CollectionId(_) | ActionArg::UnsetCollectionValue => {},
                     ActionArg::Optional(value) => {
                         if let Some(args) = ptr::read(value) {
                             work.extend(args);
                         }
                     },
-                    ActionArg::GuestBody(body) => drop(ptr::read(body)),
+                    ActionArg::GuestBody(body) => std::mem::drop(ptr::read(body)),
                 }
             }
         }

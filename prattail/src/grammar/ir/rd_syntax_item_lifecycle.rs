@@ -289,22 +289,22 @@ impl Drop for RDSyntaxItem {
             let mut node = ManuallyDrop::new(node);
             unsafe {
                 match &mut *node {
-                    RDSyntaxItem::Terminal(text) => drop(ptr::read(text)),
+                    RDSyntaxItem::Terminal(text) => std::mem::drop(ptr::read(text)),
                     RDSyntaxItem::NonTerminal { category, param_name } => {
-                        drop(ptr::read(category));
-                        drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(category));
+                        std::mem::drop(ptr::read(param_name));
                     },
                     RDSyntaxItem::IdentCapture { param_name }
                     | RDSyntaxItem::GuardExpression { param_name } => {
-                        drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(param_name));
                     },
                     RDSyntaxItem::TokenKindCapture { param_name, kind_name } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(kind_name));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(kind_name));
                     },
                     RDSyntaxItem::Binder { param_name, binder_category } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(binder_category));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(binder_category));
                     },
                     RDSyntaxItem::Collection {
                         param_name,
@@ -313,10 +313,10 @@ impl Drop for RDSyntaxItem {
                         key_val_separator,
                         ..
                     } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(element_category));
-                        drop(ptr::read(separator));
-                        drop(ptr::read(key_val_separator));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(element_category));
+                        std::mem::drop(ptr::read(separator));
+                        std::mem::drop(ptr::read(key_val_separator));
                     },
                     RDSyntaxItem::SepList {
                         collection_name,
@@ -324,13 +324,13 @@ impl Drop for RDSyntaxItem {
                         separator,
                         ..
                     } => {
-                        drop(ptr::read(collection_name));
-                        drop(ptr::read(element_category));
-                        drop(ptr::read(separator));
+                        std::mem::drop(ptr::read(collection_name));
+                        std::mem::drop(ptr::read(element_category));
+                        std::mem::drop(ptr::read(separator));
                     },
                     RDSyntaxItem::Sep { body, separator, .. } => {
                         work.push(*ptr::read(body));
-                        drop(ptr::read(separator));
+                        std::mem::drop(ptr::read(separator));
                     },
                     RDSyntaxItem::Map { body_items } => work.extend(ptr::read(body_items)),
                     RDSyntaxItem::Zip {
@@ -340,15 +340,15 @@ impl Drop for RDSyntaxItem {
                         right_category,
                         body,
                     } => {
-                        drop(ptr::read(left_name));
-                        drop(ptr::read(right_name));
-                        drop(ptr::read(left_category));
-                        drop(ptr::read(right_category));
+                        std::mem::drop(ptr::read(left_name));
+                        std::mem::drop(ptr::read(right_name));
+                        std::mem::drop(ptr::read(left_category));
+                        std::mem::drop(ptr::read(right_category));
                         work.push(*ptr::read(body));
                     },
                     RDSyntaxItem::BinderCollection { param_name, separator } => {
-                        drop(ptr::read(param_name));
-                        drop(ptr::read(separator));
+                        std::mem::drop(ptr::read(param_name));
+                        std::mem::drop(ptr::read(separator));
                     },
                     RDSyntaxItem::Optional { inner } => work.extend(ptr::read(inner)),
                 }

@@ -310,8 +310,8 @@ impl Drop for QuantifiedFormula {
             unsafe {
                 match &mut *formula {
                     QuantifiedFormula::Atom { relation, args } => {
-                        drop(ptr::read(relation));
-                        drop(ptr::read(args));
+                        std::mem::drop(ptr::read(relation));
+                        std::mem::drop(ptr::read(args));
                     },
                     QuantifiedFormula::And(left, right)
                     | QuantifiedFormula::Or(left, right)
@@ -322,8 +322,8 @@ impl Drop for QuantifiedFormula {
                     QuantifiedFormula::Not(inner) => work.push(*ptr::read(inner)),
                     QuantifiedFormula::ForAll { var, domain, body }
                     | QuantifiedFormula::Exists { var, domain, body } => {
-                        drop(ptr::read(var));
-                        drop(ptr::read(domain));
+                        std::mem::drop(ptr::read(var));
+                        std::mem::drop(ptr::read(domain));
                         work.push(*ptr::read(body));
                     },
                 }
@@ -484,7 +484,7 @@ impl<T: ConstraintTheory> Drop for TheoryPred<T> {
             unsafe {
                 match &mut *predicate {
                     TheoryPred::True | TheoryPred::False => {},
-                    TheoryPred::Atom(constraint) => drop(ptr::read(constraint)),
+                    TheoryPred::Atom(constraint) => std::mem::drop(ptr::read(constraint)),
                     TheoryPred::And(left, right) | TheoryPred::Or(left, right) => {
                         work.push(*ptr::read(left));
                         work.push(*ptr::read(right));

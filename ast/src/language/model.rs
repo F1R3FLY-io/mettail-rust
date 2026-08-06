@@ -219,27 +219,27 @@ fn drain_owned_premise(premise: Premise, work: &mut Vec<Premise>) {
     match &mut *premise {
         Premise::Freshness(condition) => {
             // SAFETY: the field is moved exactly once from this ManuallyDrop node.
-            drop(unsafe { std::ptr::read(condition) });
+            std::mem::drop(unsafe { std::ptr::read(condition) });
         },
         Premise::Congruence { source, target } | Premise::CongruenceWithheld { source, target } => {
             // SAFETY: both fields are moved exactly once from this ManuallyDrop node.
-            drop(unsafe { std::ptr::read(source) });
-            drop(unsafe { std::ptr::read(target) });
+            std::mem::drop(unsafe { std::ptr::read(source) });
+            std::mem::drop(unsafe { std::ptr::read(target) });
         },
         Premise::RelationQuery { relation, args } => {
             // SAFETY: both fields are moved exactly once from this ManuallyDrop node.
-            drop(unsafe { std::ptr::read(relation) });
-            drop(unsafe { std::ptr::read(args) });
+            std::mem::drop(unsafe { std::ptr::read(relation) });
+            std::mem::drop(unsafe { std::ptr::read(args) });
         },
         Premise::ForAll { collection, param, body } => {
             // SAFETY: every field is moved exactly once; the child joins the shared worklist.
-            drop(unsafe { std::ptr::read(collection) });
-            drop(unsafe { std::ptr::read(param) });
+            std::mem::drop(unsafe { std::ptr::read(collection) });
+            std::mem::drop(unsafe { std::ptr::read(param) });
             work.push(*unsafe { std::ptr::read(body) });
         },
         Premise::BehavioralGuard(predicate) => {
             // SAFETY: the field is moved exactly once from this ManuallyDrop node.
-            drop(unsafe { std::ptr::read(predicate) });
+            std::mem::drop(unsafe { std::ptr::read(predicate) });
         },
         Premise::SyntheticInjGuard {
             inner_var,
@@ -247,9 +247,9 @@ fn drain_owned_premise(premise: Premise, work: &mut Vec<Premise>) {
             excluded_variants,
         } => {
             // SAFETY: every field is moved exactly once from this ManuallyDrop node.
-            drop(unsafe { std::ptr::read(inner_var) });
-            drop(unsafe { std::ptr::read(source_category) });
-            drop(unsafe { std::ptr::read(excluded_variants) });
+            std::mem::drop(unsafe { std::ptr::read(inner_var) });
+            std::mem::drop(unsafe { std::ptr::read(source_category) });
+            std::mem::drop(unsafe { std::ptr::read(excluded_variants) });
         },
     }
 }

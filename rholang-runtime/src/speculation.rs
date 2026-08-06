@@ -728,7 +728,7 @@ impl Drop for ReductionTrace {
             match Arc::try_unwrap(link) {
                 Ok(mut owned) => cursor = owned.parent.take(),
                 Err(shared) => {
-                    drop(shared);
+                    std::mem::drop(shared);
                     break;
                 },
             }
@@ -1806,11 +1806,11 @@ mod reduction_trace_tests {
             trace.tail.as_ref().expect("non-empty tail"),
             shared.tail.as_ref().expect("non-empty tail"),
         ));
-        drop(trace);
+        std::mem::drop(trace);
         assert_eq!(shared.len(), DEPTH);
         // The final owner releases 20,000 links here. A derived Arc-list Drop
         // would recurse through them; ReductionTrace::drop unwraps in a loop.
-        drop(shared);
+        std::mem::drop(shared);
     }
 }
 

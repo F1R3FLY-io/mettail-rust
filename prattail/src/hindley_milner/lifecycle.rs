@@ -169,13 +169,13 @@ impl Drop for HmType {
             let mut node = ManuallyDrop::new(node);
             unsafe {
                 match &mut *node {
-                    HmType::Var(name) | HmType::Mono(name) => drop(ptr::read(name)),
+                    HmType::Var(name) | HmType::Mono(name) => std::mem::drop(ptr::read(name)),
                     HmType::Arrow(domain, codomain) => {
                         work.push(*ptr::read(domain));
                         work.push(*ptr::read(codomain));
                     },
                     HmType::Forall(vars, body) => {
-                        drop(ptr::read(vars));
+                        std::mem::drop(ptr::read(vars));
                         work.push(*ptr::read(body));
                     },
                 }
@@ -341,9 +341,9 @@ impl Drop for HmTerm {
             let mut node = ManuallyDrop::new(node);
             unsafe {
                 match &mut *node {
-                    HmTerm::Var(name) | HmTerm::LitStr(name) => drop(ptr::read(name)),
+                    HmTerm::Var(name) | HmTerm::LitStr(name) => std::mem::drop(ptr::read(name)),
                     HmTerm::Abs { param, body } => {
-                        drop(ptr::read(param));
+                        std::mem::drop(ptr::read(param));
                         work.push(*ptr::read(body));
                     },
                     HmTerm::App { f: function, arg } => {
@@ -351,7 +351,7 @@ impl Drop for HmTerm {
                         work.push(*ptr::read(arg));
                     },
                     HmTerm::Let { name, value, body } => {
-                        drop(ptr::read(name));
+                        std::mem::drop(ptr::read(name));
                         work.push(*ptr::read(value));
                         work.push(*ptr::read(body));
                     },

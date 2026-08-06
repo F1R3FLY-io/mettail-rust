@@ -213,7 +213,7 @@ impl Drop for SetType {
             let mut node = ManuallyDrop::new(node);
             unsafe {
                 match &mut *node {
-                    SetType::Atom(name) => drop(ptr::read(name)),
+                    SetType::Atom(name) => std::mem::drop(ptr::read(name)),
                     SetType::Union(left, right)
                     | SetType::Intersection(left, right)
                     | SetType::Arrow(left, right) => {

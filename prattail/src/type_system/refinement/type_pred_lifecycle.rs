@@ -167,10 +167,10 @@ impl<S: TypeSystem> Drop for TypePred<S> {
             unsafe {
                 match &mut *node {
                     TypePred::True | TypePred::False => {},
-                    TypePred::HasType(ty) => drop(ptr::read(ty)),
+                    TypePred::HasType(ty) => std::mem::drop(ptr::read(ty)),
                     TypePred::Subtype { sub, sup } => {
-                        drop(ptr::read(sub));
-                        drop(ptr::read(sup));
+                        std::mem::drop(ptr::read(sub));
+                        std::mem::drop(ptr::read(sup));
                     },
                     TypePred::And(left, right) | TypePred::Or(left, right) => {
                         work.push(*ptr::read(left));

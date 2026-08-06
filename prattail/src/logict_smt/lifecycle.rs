@@ -173,8 +173,8 @@ impl Drop for SmtTerm {
             unsafe {
                 match &mut *term {
                     SmtTerm::IntLit(_) | SmtTerm::BvLit(_, _) => {},
-                    SmtTerm::IntVar(name) => drop(ptr::read(name)),
-                    SmtTerm::BvVar(name, _) => drop(ptr::read(name)),
+                    SmtTerm::IntVar(name) => std::mem::drop(ptr::read(name)),
+                    SmtTerm::BvVar(name, _) => std::mem::drop(ptr::read(name)),
                     SmtTerm::Add(left, right) | SmtTerm::Sub(left, right) => {
                         work.push(*ptr::read(left));
                         work.push(*ptr::read(right));
@@ -384,14 +384,14 @@ impl Drop for SmtConstraint {
             unsafe {
                 match &mut *constraint {
                     SmtConstraint::True | SmtConstraint::False => {},
-                    SmtConstraint::BoolVar(name) => drop(ptr::read(name)),
+                    SmtConstraint::BoolVar(name) => std::mem::drop(ptr::read(name)),
                     SmtConstraint::Eq(left, right)
                     | SmtConstraint::Le(left, right)
                     | SmtConstraint::Lt(left, right)
                     | SmtConstraint::Ge(left, right)
                     | SmtConstraint::Gt(left, right) => {
-                        drop(ptr::read(left));
-                        drop(ptr::read(right));
+                        std::mem::drop(ptr::read(left));
+                        std::mem::drop(ptr::read(right));
                     },
                     SmtConstraint::Not(inner) => work.push(*ptr::read(inner)),
                     SmtConstraint::And(left, right) | SmtConstraint::Or(left, right) => {
