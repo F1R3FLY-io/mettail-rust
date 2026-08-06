@@ -53,7 +53,6 @@ use std::sync::Arc;
 ///
 /// Tests form a Boolean subalgebra of the Kleene algebra. They are used
 /// as guards (preconditions/postconditions) in Hoare triples.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BooleanTest {
     /// Boolean true (the test that always passes).
     True,
@@ -98,30 +97,63 @@ impl BooleanTest {
     }
 
     fn collect_atoms(&self, acc: &mut HashSet<String>) {
-        match self {
-            BooleanTest::True | BooleanTest::False => {},
-            BooleanTest::Atom(name) => {
-                acc.insert(name.clone());
-            },
-            BooleanTest::Not(inner) => inner.collect_atoms(acc),
-            BooleanTest::And(a, b) | BooleanTest::Or(a, b) => {
-                a.collect_atoms(acc);
-                b.collect_atoms(acc);
-            },
+        let mut work = vec![self];
+        while let Some(test) = work.pop() {
+            match test {
+                BooleanTest::True | BooleanTest::False => {},
+                BooleanTest::Atom(name) => {
+                    acc.insert(name.clone());
+                },
+                BooleanTest::Not(inner) => work.push(inner),
+                BooleanTest::And(left, right) | BooleanTest::Or(left, right) => {
+                    work.push(right);
+                    work.push(left);
+                },
+            }
         }
     }
 }
 
 impl fmt::Display for BooleanTest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BooleanTest::True => write!(f, "1"),
-            BooleanTest::False => write!(f, "0"),
-            BooleanTest::Atom(name) => write!(f, "{}", name),
-            BooleanTest::Not(inner) => write!(f, "~{}", inner),
-            BooleanTest::And(a, b) => write!(f, "({} & {})", a, b),
-            BooleanTest::Or(a, b) => write!(f, "({} | {})", a, b),
+        enum Task<'test> {
+            Visit(&'test BooleanTest),
+            Text(&'static str),
         }
+
+        fn push_binary<'test>(
+            tasks: &mut Vec<Task<'test>>,
+            left: &'test BooleanTest,
+            right: &'test BooleanTest,
+            operator: &'static str,
+        ) {
+            tasks.push(Task::Text(")"));
+            tasks.push(Task::Visit(right));
+            tasks.push(Task::Text(operator));
+            tasks.push(Task::Visit(left));
+            tasks.push(Task::Text("("));
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => f.write_str(text)?,
+                Task::Visit(BooleanTest::True) => f.write_str("1")?,
+                Task::Visit(BooleanTest::False) => f.write_str("0")?,
+                Task::Visit(BooleanTest::Atom(name)) => f.write_str(name)?,
+                Task::Visit(BooleanTest::Not(inner)) => {
+                    tasks.push(Task::Visit(inner));
+                    tasks.push(Task::Text("~"));
+                },
+                Task::Visit(BooleanTest::And(left, right)) => {
+                    push_binary(&mut tasks, left, right, " & ");
+                },
+                Task::Visit(BooleanTest::Or(left, right)) => {
+                    push_binary(&mut tasks, left, right, " | ");
+                },
+            }
+        }
+        Ok(())
     }
 }
 
@@ -129,7 +161,7 @@ impl fmt::Display for BooleanTest {
 ///
 /// KAT expressions combine Kleene algebra operators (sequential composition,
 /// alternation, Kleene star) with Boolean tests.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub enum KatExpr {
     /// Zero (failure / empty language).
     Zero,
@@ -146,6 +178,9 @@ pub enum KatExpr {
     /// Kleene star: `p*` (do `p` zero or more times).
     Star(Arc<KatExpr>),
 }
+
+#[path = "kat/lifecycle.rs"]
+mod lifecycle;
 
 impl KatExpr {
     /// Create an atomic action.
@@ -187,15 +222,51 @@ impl KatExpr {
 
 impl fmt::Display for KatExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            KatExpr::Zero => write!(f, "0"),
-            KatExpr::One => write!(f, "1"),
-            KatExpr::Test(t) => write!(f, "[{}]", t),
-            KatExpr::Action(name) => write!(f, "{}", name),
-            KatExpr::Seq(a, b) => write!(f, "({} ; {})", a, b),
-            KatExpr::Alt(a, b) => write!(f, "({} + {})", a, b),
-            KatExpr::Star(a) => write!(f, "{}*", a),
+        enum Task<'expr> {
+            Visit(&'expr KatExpr),
+            Bool(&'expr BooleanTest),
+            Text(&'static str),
         }
+
+        fn push_binary<'expr>(
+            tasks: &mut Vec<Task<'expr>>,
+            left: &'expr KatExpr,
+            right: &'expr KatExpr,
+            operator: &'static str,
+        ) {
+            tasks.push(Task::Text(")"));
+            tasks.push(Task::Visit(right));
+            tasks.push(Task::Text(operator));
+            tasks.push(Task::Visit(left));
+            tasks.push(Task::Text("("));
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => f.write_str(text)?,
+                Task::Bool(test) => write!(f, "{test}")?,
+                Task::Visit(KatExpr::Zero) => f.write_str("0")?,
+                Task::Visit(KatExpr::One) => f.write_str("1")?,
+                Task::Visit(KatExpr::Test(test)) => {
+                    tasks.push(Task::Text("]"));
+                    tasks.push(Task::Bool(test));
+                    tasks.push(Task::Text("["));
+                },
+                Task::Visit(KatExpr::Action(name)) => f.write_str(name)?,
+                Task::Visit(KatExpr::Seq(left, right)) => {
+                    push_binary(&mut tasks, left, right, " ; ");
+                },
+                Task::Visit(KatExpr::Alt(left, right)) => {
+                    push_binary(&mut tasks, left, right, " + ");
+                },
+                Task::Visit(KatExpr::Star(inner)) => {
+                    tasks.push(Task::Text("*"));
+                    tasks.push(Task::Visit(inner));
+                },
+            }
+        }
+        Ok(())
     }
 }
 
@@ -384,29 +455,35 @@ pub fn check_equivalence_bounded(a: &KatExpr, b: &KatExpr, depth_limit: usize) -
 
 /// Collect all atomic test names from a KAT expression.
 fn collect_atoms_expr(expr: &KatExpr, acc: &mut HashSet<String>) {
-    match expr {
-        KatExpr::Zero | KatExpr::One | KatExpr::Action(_) => {},
-        KatExpr::Test(t) => t.collect_atoms(acc),
-        KatExpr::Seq(a, b) | KatExpr::Alt(a, b) => {
-            collect_atoms_expr(a, acc);
-            collect_atoms_expr(b, acc);
-        },
-        KatExpr::Star(inner) => collect_atoms_expr(inner, acc),
+    let mut work = vec![expr];
+    while let Some(expr) = work.pop() {
+        match expr {
+            KatExpr::Zero | KatExpr::One | KatExpr::Action(_) => {},
+            KatExpr::Test(test) => test.collect_atoms(acc),
+            KatExpr::Seq(left, right) | KatExpr::Alt(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            KatExpr::Star(inner) => work.push(inner),
+        }
     }
 }
 
 /// Collect all action names from a KAT expression.
 fn collect_actions(expr: &KatExpr, acc: &mut HashSet<String>) {
-    match expr {
-        KatExpr::Zero | KatExpr::One | KatExpr::Test(_) => {},
-        KatExpr::Action(name) => {
-            acc.insert(name.clone());
-        },
-        KatExpr::Seq(a, b) | KatExpr::Alt(a, b) => {
-            collect_actions(a, acc);
-            collect_actions(b, acc);
-        },
-        KatExpr::Star(inner) => collect_actions(inner, acc),
+    let mut work = vec![expr];
+    while let Some(expr) = work.pop() {
+        match expr {
+            KatExpr::Zero | KatExpr::One | KatExpr::Test(_) => {},
+            KatExpr::Action(name) => {
+                acc.insert(name.clone());
+            },
+            KatExpr::Seq(left, right) | KatExpr::Alt(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            KatExpr::Star(inner) => work.push(inner),
+        }
     }
 }
 
@@ -415,14 +492,64 @@ fn collect_actions(expr: &KatExpr, acc: &mut HashSet<String>) {
 /// Returns `true` if the test passes under the valuation, `false` otherwise.
 /// Atoms not present in the valuation are treated as `false`.
 fn eval_test(test: &BooleanTest, valuation: &HashMap<String, bool>) -> bool {
-    match test {
-        BooleanTest::True => true,
-        BooleanTest::False => false,
-        BooleanTest::Atom(name) => *valuation.get(name).unwrap_or(&false),
-        BooleanTest::Not(inner) => !eval_test(inner, valuation),
-        BooleanTest::And(a, b) => eval_test(a, valuation) && eval_test(b, valuation),
-        BooleanTest::Or(a, b) => eval_test(a, valuation) || eval_test(b, valuation),
+    enum Task<'test> {
+        Visit(&'test BooleanTest),
+        Not,
+        AndAfterLeft(&'test BooleanTest),
+        OrAfterLeft(&'test BooleanTest),
     }
+
+    let mut tasks = vec![Task::Visit(test)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(BooleanTest::True) => values.push(true),
+            Task::Visit(BooleanTest::False) => values.push(false),
+            Task::Visit(BooleanTest::Atom(name)) => {
+                values.push(*valuation.get(name).unwrap_or(&false));
+            },
+            Task::Visit(BooleanTest::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(BooleanTest::And(left, right)) => {
+                tasks.push(Task::AndAfterLeft(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(BooleanTest::Or(left, right)) => {
+                tasks.push(Task::OrAfterLeft(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Not => {
+                let value = values
+                    .last_mut()
+                    .expect("BooleanTest evaluation lost value");
+                *value = !*value;
+            },
+            Task::AndAfterLeft(right) => {
+                if *values
+                    .last()
+                    .expect("BooleanTest evaluation lost left value")
+                {
+                    values.pop();
+                    tasks.push(Task::Visit(right));
+                }
+            },
+            Task::OrAfterLeft(right) => {
+                if !*values
+                    .last()
+                    .expect("BooleanTest evaluation lost left value")
+                {
+                    values.pop();
+                    tasks.push(Task::Visit(right));
+                }
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("BooleanTest evaluation produced no value")
 }
 
 /// Check if a KAT expression is nullable (accepts the empty string) under a
@@ -437,15 +564,43 @@ fn eval_test(test: &BooleanTest, valuation: &HashMap<String, bool>) -> bool {
 /// - `Alt(a, b)` is nullable iff either `a` or `b` is nullable.
 /// - `Star(_)` is always nullable (accepts zero repetitions).
 fn nullable(expr: &KatExpr, valuation: &HashMap<String, bool>) -> bool {
-    match expr {
-        KatExpr::Zero => false,
-        KatExpr::One => true,
-        KatExpr::Test(t) => eval_test(t, valuation),
-        KatExpr::Action(_) => false,
-        KatExpr::Seq(a, b) => nullable(a, valuation) && nullable(b, valuation),
-        KatExpr::Alt(a, b) => nullable(a, valuation) || nullable(b, valuation),
-        KatExpr::Star(_) => true,
+    enum Task<'expr> {
+        Visit(&'expr KatExpr),
+        SeqAfterLeft(&'expr KatExpr),
+        AltAfterLeft(&'expr KatExpr),
     }
+
+    let mut tasks = vec![Task::Visit(expr)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(KatExpr::Zero) | Task::Visit(KatExpr::Action(_)) => values.push(false),
+            Task::Visit(KatExpr::One) | Task::Visit(KatExpr::Star(_)) => values.push(true),
+            Task::Visit(KatExpr::Test(test)) => values.push(eval_test(test, valuation)),
+            Task::Visit(KatExpr::Seq(left, right)) => {
+                tasks.push(Task::SeqAfterLeft(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(KatExpr::Alt(left, right)) => {
+                tasks.push(Task::AltAfterLeft(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::SeqAfterLeft(right) => {
+                if *values.last().expect("KAT nullability lost left value") {
+                    values.pop();
+                    tasks.push(Task::Visit(right));
+                }
+            },
+            Task::AltAfterLeft(right) => {
+                if !*values.last().expect("KAT nullability lost left value") {
+                    values.pop();
+                    tasks.push(Task::Visit(right));
+                }
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("KAT nullability produced no value")
 }
 
 /// Compute the Brzozowski derivative of a KAT expression w.r.t. an action
@@ -464,39 +619,70 @@ fn nullable(expr: &KatExpr, valuation: &HashMap<String, bool>) -> bool {
 /// - `D_a(Alt(p, q)) = Alt(D_a(p), D_a(q))`
 /// - `D_a(Star(p)) = Seq(D_a(p), Star(p))`
 fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -> KatExpr {
-    match expr {
-        KatExpr::Zero => KatExpr::Zero,
-        KatExpr::One => KatExpr::Zero,
-        KatExpr::Test(_) => KatExpr::Zero,
-        KatExpr::Action(name) => {
-            if name == action {
+    enum Task<'expr> {
+        Visit(&'expr KatExpr),
+        FinishSeq {
+            right: &'expr Arc<KatExpr>,
+            right_derivative: bool,
+        },
+        FinishAlt,
+        FinishStar(&'expr Arc<KatExpr>),
+    }
+
+    let mut tasks = vec![Task::Visit(expr)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(KatExpr::Zero | KatExpr::One | KatExpr::Test(_)) => {
+                values.push(KatExpr::Zero);
+            },
+            Task::Visit(KatExpr::Action(name)) => values.push(if name == action {
                 KatExpr::One
             } else {
                 KatExpr::Zero
-            }
-        },
-        KatExpr::Seq(p, q) => {
-            // D_a(p;q) = D_a(p);q + (if nullable(p) then D_a(q) else 0)
-            let dp = derivative(p, action, valuation);
-            let left = KatExpr::Seq(Arc::new(dp), q.clone());
-            if nullable(p, valuation) {
-                let dq = derivative(q, action, valuation);
-                KatExpr::Alt(Arc::new(left), Arc::new(dq))
-            } else {
-                left
-            }
-        },
-        KatExpr::Alt(p, q) => {
-            let dp = derivative(p, action, valuation);
-            let dq = derivative(q, action, valuation);
-            KatExpr::Alt(Arc::new(dp), Arc::new(dq))
-        },
-        KatExpr::Star(p) => {
-            // D_a(p*) = D_a(p) ; p*
-            let dp = derivative(p, action, valuation);
-            KatExpr::Seq(Arc::new(dp), Arc::new(KatExpr::Star(p.clone())))
-        },
+            }),
+            Task::Visit(KatExpr::Seq(left, right)) => {
+                let right_derivative = nullable(left, valuation);
+                tasks.push(Task::FinishSeq { right, right_derivative });
+                if right_derivative {
+                    tasks.push(Task::Visit(right));
+                }
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(KatExpr::Alt(left, right)) => {
+                tasks.push(Task::FinishAlt);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(KatExpr::Star(inner)) => {
+                tasks.push(Task::FinishStar(inner));
+                tasks.push(Task::Visit(inner));
+            },
+            Task::FinishSeq { right, right_derivative } => {
+                let derivative_right = right_derivative
+                    .then(|| values.pop().expect("KAT derivative lost right result"));
+                let derivative_left = values.pop().expect("KAT derivative lost left result");
+                let left = KatExpr::Seq(Arc::new(derivative_left), Arc::clone(right));
+                values.push(match derivative_right {
+                    Some(derivative_right) => {
+                        KatExpr::Alt(Arc::new(left), Arc::new(derivative_right))
+                    },
+                    None => left,
+                });
+            },
+            Task::FinishAlt => {
+                let right = Arc::new(values.pop().expect("KAT derivative lost right result"));
+                let left = Arc::new(values.pop().expect("KAT derivative lost left result"));
+                values.push(KatExpr::Alt(left, right));
+            },
+            Task::FinishStar(inner) => {
+                let derivative = Arc::new(values.pop().expect("KAT derivative lost star result"));
+                values.push(KatExpr::Seq(derivative, Arc::new(KatExpr::Star(Arc::clone(inner)))));
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("KAT derivative produced no result")
 }
 
 /// Simplify a KAT expression by applying algebraic identities.
@@ -510,42 +696,75 @@ fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -
 /// - `Star(Star(x)) = Star(x)`
 /// - `Test(True) = One`, `Test(False) = Zero`
 fn simplify(expr: &KatExpr) -> KatExpr {
-    match expr {
-        KatExpr::Zero => KatExpr::Zero,
-        KatExpr::One => KatExpr::One,
-        KatExpr::Test(BooleanTest::True) => KatExpr::One,
-        KatExpr::Test(BooleanTest::False) => KatExpr::Zero,
-        KatExpr::Test(t) => KatExpr::Test(t.clone()),
-        KatExpr::Action(name) => KatExpr::Action(name.clone()),
-        KatExpr::Seq(a, b) => {
-            let sa = simplify(a);
-            let sb = simplify(b);
-            match (&sa, &sb) {
-                (KatExpr::Zero, _) | (_, KatExpr::Zero) => KatExpr::Zero,
-                (KatExpr::One, _) => sb,
-                (_, KatExpr::One) => sa,
-                _ => KatExpr::Seq(Arc::new(sa), Arc::new(sb)),
-            }
-        },
-        KatExpr::Alt(a, b) => {
-            let sa = simplify(a);
-            let sb = simplify(b);
-            match (&sa, &sb) {
-                (KatExpr::Zero, _) => sb,
-                (_, KatExpr::Zero) => sa,
-                _ if sa == sb => sa,
-                _ => KatExpr::Alt(Arc::new(sa), Arc::new(sb)),
-            }
-        },
-        KatExpr::Star(inner) => {
-            let si = simplify(inner);
-            match &si {
-                KatExpr::Zero | KatExpr::One => KatExpr::One,
-                KatExpr::Star(_) => si,
-                _ => KatExpr::Star(Arc::new(si)),
-            }
-        },
+    enum Task<'expr> {
+        Visit(&'expr KatExpr),
+        FinishSeq,
+        FinishAlt,
+        FinishStar,
     }
+
+    let mut tasks = vec![Task::Visit(expr)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(KatExpr::Zero) => values.push(KatExpr::Zero),
+            Task::Visit(KatExpr::One) => values.push(KatExpr::One),
+            Task::Visit(KatExpr::Test(BooleanTest::True)) => values.push(KatExpr::One),
+            Task::Visit(KatExpr::Test(BooleanTest::False)) => values.push(KatExpr::Zero),
+            Task::Visit(KatExpr::Test(test)) => values.push(KatExpr::Test(test.clone())),
+            Task::Visit(KatExpr::Action(name)) => values.push(KatExpr::Action(name.clone())),
+            Task::Visit(KatExpr::Seq(left, right)) => {
+                tasks.push(Task::FinishSeq);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(KatExpr::Alt(left, right)) => {
+                tasks.push(Task::FinishAlt);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(KatExpr::Star(inner)) => {
+                tasks.push(Task::FinishStar);
+                tasks.push(Task::Visit(inner));
+            },
+            Task::FinishSeq => {
+                let right = values.pop().expect("KAT simplifier lost right operand");
+                let left = values.pop().expect("KAT simplifier lost left operand");
+                values.push(if matches!(&left, KatExpr::Zero) || matches!(&right, KatExpr::Zero) {
+                    KatExpr::Zero
+                } else if matches!(&left, KatExpr::One) {
+                    right
+                } else if matches!(&right, KatExpr::One) {
+                    left
+                } else {
+                    KatExpr::Seq(Arc::new(left), Arc::new(right))
+                });
+            },
+            Task::FinishAlt => {
+                let right = values.pop().expect("KAT simplifier lost right operand");
+                let left = values.pop().expect("KAT simplifier lost left operand");
+                values.push(if matches!(&left, KatExpr::Zero) {
+                    right
+                } else if matches!(&right, KatExpr::Zero) || left == right {
+                    left
+                } else {
+                    KatExpr::Alt(Arc::new(left), Arc::new(right))
+                });
+            },
+            Task::FinishStar => {
+                let inner = values.pop().expect("KAT simplifier lost star operand");
+                values.push(if matches!(&inner, KatExpr::Zero | KatExpr::One) {
+                    KatExpr::One
+                } else if matches!(&inner, KatExpr::Star(_)) {
+                    inner
+                } else {
+                    KatExpr::Star(Arc::new(inner))
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("KAT simplifier produced no result")
 }
 
 /// Verify a Hoare triple `{b} p {c}` using KAT.
