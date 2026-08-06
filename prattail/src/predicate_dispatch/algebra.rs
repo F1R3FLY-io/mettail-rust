@@ -7,7 +7,6 @@ use super::*;
 /// Predicates over `PredicateSignature` values (bit-membership tests).
 ///
 /// Used as the `Predicate` type in `DispatchAlgebra : BooleanAlgebra`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SignaturePred {
     /// Satisfied by all signatures.
     True,
@@ -23,17 +22,70 @@ pub enum SignaturePred {
     Not(Box<SignaturePred>),
 }
 
+#[path = "algebra/lifecycle.rs"]
+mod lifecycle;
+
 impl SignaturePred {
     /// Evaluate this predicate against a concrete signature.
     pub fn eval(&self, sig: PredicateSignature) -> bool {
-        match self {
-            Self::True => true,
-            Self::False => false,
-            Self::HasBit(bit) => sig.contains(*bit),
-            Self::And(a, b) => a.eval(sig) && b.eval(sig),
-            Self::Or(a, b) => a.eval(sig) || b.eval(sig),
-            Self::Not(a) => !a.eval(sig),
+        enum Task<'pred> {
+            Visit(&'pred SignaturePred),
+            Not,
+            AndRight(&'pred SignaturePred),
+            OrRight(&'pred SignaturePred),
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Self::True) => values.push(true),
+                Task::Visit(Self::False) => values.push(false),
+                Task::Visit(Self::HasBit(bit)) => values.push(sig.contains(*bit)),
+                Task::Visit(Self::And(left, right)) => {
+                    tasks.push(Task::AndRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(Self::Or(left, right)) => {
+                    tasks.push(Task::OrRight(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(Self::Not(body)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Not => {
+                    let value = values
+                        .pop()
+                        .expect("signature predicate PDA lost a negated value");
+                    values.push(!value);
+                },
+                Task::AndRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("signature predicate PDA lost a left conjunction");
+                    if left {
+                        tasks.push(Task::Visit(right));
+                    } else {
+                        values.push(false);
+                    }
+                },
+                Task::OrRight(right) => {
+                    let left = values
+                        .pop()
+                        .expect("signature predicate PDA lost a left disjunction");
+                    if left {
+                        values.push(true);
+                    } else {
+                        tasks.push(Task::Visit(right));
+                    }
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("signature predicate PDA produced no value")
     }
 }
 
