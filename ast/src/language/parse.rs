@@ -1220,25 +1220,44 @@ pub fn parse_types_public(
 /// that are significant in regex patterns (e.g., `[0 - 9]` vs `[0-9]`), so we
 /// concatenate without separators.
 fn token_tree_to_string(tt: &proc_macro2::TokenTree) -> String {
-    match tt {
-        proc_macro2::TokenTree::Group(g) => {
-            let (open, close) = match g.delimiter() {
-                proc_macro2::Delimiter::Parenthesis => ("(", ")"),
-                proc_macro2::Delimiter::Brace => ("{", "}"),
-                proc_macro2::Delimiter::Bracket => ("[", "]"),
-                proc_macro2::Delimiter::None => ("", ""),
-            };
-            let inner: String = g
-                .stream()
-                .into_iter()
-                .map(|t| token_tree_to_string(&t))
-                .collect();
-            format!("{}{}{}", open, inner, close)
-        },
-        proc_macro2::TokenTree::Ident(i) => i.to_string(),
-        proc_macro2::TokenTree::Punct(p) => p.as_char().to_string(),
-        proc_macro2::TokenTree::Literal(l) => l.to_string(),
+    enum RenderTokenJob {
+        Visit(proc_macro2::TokenTree),
+        Close(char),
     }
+
+    let mut rendered = String::new();
+    let mut jobs = vec![RenderTokenJob::Visit(tt.clone())];
+    while let Some(job) = jobs.pop() {
+        match job {
+            RenderTokenJob::Visit(proc_macro2::TokenTree::Group(group)) => {
+                let (open, close) = match group.delimiter() {
+                    proc_macro2::Delimiter::Parenthesis => (Some('('), Some(')')),
+                    proc_macro2::Delimiter::Brace => (Some('{'), Some('}')),
+                    proc_macro2::Delimiter::Bracket => (Some('['), Some(']')),
+                    proc_macro2::Delimiter::None => (None, None),
+                };
+                if let Some(open) = open {
+                    rendered.push(open);
+                }
+                if let Some(close) = close {
+                    jobs.push(RenderTokenJob::Close(close));
+                }
+                let children: Vec<_> = group.stream().into_iter().collect();
+                jobs.extend(children.into_iter().rev().map(RenderTokenJob::Visit));
+            },
+            RenderTokenJob::Visit(proc_macro2::TokenTree::Ident(ident)) => {
+                rendered.push_str(&ident.to_string());
+            },
+            RenderTokenJob::Visit(proc_macro2::TokenTree::Punct(punct)) => {
+                rendered.push(punct.as_char());
+            },
+            RenderTokenJob::Visit(proc_macro2::TokenTree::Literal(literal)) => {
+                rendered.push_str(&literal.to_string());
+            },
+            RenderTokenJob::Close(close) => rendered.push(close),
+        }
+    }
+    rendered
 }
 
 /// Parse a regex pattern between `/` delimiters.
@@ -4746,3 +4765,7 @@ mod behavioral_parser_recursive_oracle;
 #[cfg(test)]
 #[path = "../../tests/support/tree_constraint_parser_recursive_oracle.rs"]
 mod tree_constraint_parser_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../../tests/support/token_render_recursive_oracle.rs"]
+mod token_render_recursive_oracle;

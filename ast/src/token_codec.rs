@@ -27,7 +27,8 @@
 //! base language's bridge session are not preserved — they would be invalid
 //! in the extension language's session and misleading in error messages.
 
-use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Group, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
+use std::fmt;
 
 // Tag bytes
 const TAG_IDENT: u8 = 0x01;
@@ -42,58 +43,108 @@ const TAG_GROUP_NONE: u8 = 0x07;
 const SPACING_ALONE: u8 = 0;
 const SPACING_JOINT: u8 = 1;
 
-/// Encode a `TokenStream` into a compact binary buffer.
-pub fn encode(stream: &TokenStream) -> Vec<u8> {
-    let mut buf = Vec::new();
-    for tree in stream.clone() {
-        encode_tree(&tree, &mut buf);
-    }
-    buf
+/// A compact token-codec failure, anchored at the input or output byte offset where it occurred.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenCodecError {
+    pub offset: usize,
+    pub message: String,
 }
 
-fn encode_tree(tree: &TokenTree, buf: &mut Vec<u8>) {
-    match tree {
-        TokenTree::Ident(ident) => {
-            let name = ident.to_string();
-            let name_bytes = name.as_bytes();
-            buf.push(TAG_IDENT);
-            buf.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
-            buf.extend_from_slice(name_bytes);
-        },
-        TokenTree::Punct(punct) => {
-            buf.push(TAG_PUNCT);
-            buf.push(punct.as_char() as u8);
-            buf.push(match punct.spacing() {
-                Spacing::Alone => SPACING_ALONE,
-                Spacing::Joint => SPACING_JOINT,
-            });
-        },
-        TokenTree::Literal(lit) => {
-            let repr = lit.to_string();
-            let repr_bytes = repr.as_bytes();
-            buf.push(TAG_LITERAL);
-            buf.extend_from_slice(&(repr_bytes.len() as u16).to_le_bytes());
-            buf.extend_from_slice(repr_bytes);
-        },
-        TokenTree::Group(group) => {
-            let tag = match group.delimiter() {
-                Delimiter::Parenthesis => TAG_GROUP_PAREN,
-                Delimiter::Brace => TAG_GROUP_BRACE,
-                Delimiter::Bracket => TAG_GROUP_BRACKET,
-                Delimiter::None => TAG_GROUP_NONE,
-            };
-            buf.push(tag);
+impl TokenCodecError {
+    fn new(offset: usize, message: impl Into<String>) -> Self {
+        Self { offset, message: message.into() }
+    }
+}
 
-            // Encode children into a scratch buffer to get byte length.
-            let mut children_buf = Vec::new();
-            for child in group.stream() {
-                encode_tree(&child, &mut children_buf);
-            }
+impl fmt::Display for TokenCodecError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "byte {}: {}", self.offset, self.message)
+    }
+}
 
-            buf.extend_from_slice(&(children_buf.len() as u32).to_le_bytes());
-            buf.extend_from_slice(&children_buf);
+impl std::error::Error for TokenCodecError {}
+
+/// Encode a `TokenStream` into a compact binary buffer.
+pub fn encode(stream: &TokenStream) -> Vec<u8> {
+    try_encode(stream).unwrap_or_else(|error| panic!("token_codec: {error}"))
+}
+
+/// Fallibly encode a compact token stream, reporting the format's explicit length bounds.
+pub fn try_encode(stream: &TokenStream) -> Result<Vec<u8>, TokenCodecError> {
+    let mut buf = Vec::new();
+    enum EncodeJob {
+        Visit(TokenTree),
+        FinishGroup {
+            length_offset: usize,
+            children_offset: usize,
         },
     }
+
+    let roots: Vec<_> = stream.clone().into_iter().collect();
+    let mut jobs: Vec<_> = roots.into_iter().rev().map(EncodeJob::Visit).collect();
+    while let Some(job) = jobs.pop() {
+        match job {
+            EncodeJob::Visit(TokenTree::Ident(ident)) => {
+                let name = ident.to_string();
+                let name_bytes = name.as_bytes();
+                let length = u16::try_from(name_bytes.len()).map_err(|_| {
+                    TokenCodecError::new(
+                        buf.len(),
+                        "identifier representation exceeds the wire-format u16 length",
+                    )
+                })?;
+                buf.push(TAG_IDENT);
+                buf.extend_from_slice(&length.to_le_bytes());
+                buf.extend_from_slice(name_bytes);
+            },
+            EncodeJob::Visit(TokenTree::Punct(punct)) => {
+                buf.push(TAG_PUNCT);
+                buf.push(punct.as_char() as u8);
+                buf.push(match punct.spacing() {
+                    Spacing::Alone => SPACING_ALONE,
+                    Spacing::Joint => SPACING_JOINT,
+                });
+            },
+            EncodeJob::Visit(TokenTree::Literal(literal)) => {
+                let repr = literal.to_string();
+                let repr_bytes = repr.as_bytes();
+                let length = u16::try_from(repr_bytes.len()).map_err(|_| {
+                    TokenCodecError::new(
+                        buf.len(),
+                        "literal representation exceeds the wire-format u16 length",
+                    )
+                })?;
+                buf.push(TAG_LITERAL);
+                buf.extend_from_slice(&length.to_le_bytes());
+                buf.extend_from_slice(repr_bytes);
+            },
+            EncodeJob::Visit(TokenTree::Group(group)) => {
+                let tag = match group.delimiter() {
+                    Delimiter::Parenthesis => TAG_GROUP_PAREN,
+                    Delimiter::Brace => TAG_GROUP_BRACE,
+                    Delimiter::Bracket => TAG_GROUP_BRACKET,
+                    Delimiter::None => TAG_GROUP_NONE,
+                };
+                buf.push(tag);
+                let length_offset = buf.len();
+                buf.extend_from_slice(&0_u32.to_le_bytes());
+                let children_offset = buf.len();
+                jobs.push(EncodeJob::FinishGroup { length_offset, children_offset });
+                let children: Vec<_> = group.stream().into_iter().collect();
+                jobs.extend(children.into_iter().rev().map(EncodeJob::Visit));
+            },
+            EncodeJob::FinishGroup { length_offset, children_offset } => {
+                let length = u32::try_from(buf.len() - children_offset).map_err(|_| {
+                    TokenCodecError::new(
+                        length_offset,
+                        "encoded group exceeds the wire-format u32 length",
+                    )
+                })?;
+                buf[length_offset..length_offset + 4].copy_from_slice(&length.to_le_bytes());
+            },
+        }
+    }
+    Ok(buf)
 }
 
 /// Decode a binary buffer back into a fresh `TokenStream`.
@@ -102,65 +153,182 @@ fn encode_tree(tree: &TokenTree, buf: &mut Vec<u8>) {
 /// in the current proc-macro bridge session regardless of when the
 /// bytes were originally produced.
 pub fn decode(bytes: &[u8]) -> TokenStream {
-    let mut cursor = Cursor { data: bytes, pos: 0 };
-    let mut trees = Vec::new();
-    while cursor.pos < cursor.data.len() {
-        trees.push(decode_tree(&mut cursor));
-    }
-    TokenStream::from_iter(trees)
+    try_decode(bytes).unwrap_or_else(|error| panic!("token_codec: {error}"))
 }
 
-fn decode_tree(cursor: &mut Cursor<'_>) -> TokenTree {
-    let tag = cursor.read_u8();
-    match tag {
-        TAG_IDENT => {
-            let len = cursor.read_u16_le() as usize;
-            let name_bytes = cursor.read_bytes(len);
-            let name =
-                std::str::from_utf8(name_bytes).expect("token_codec: invalid UTF-8 in ident name");
-            TokenTree::Ident(Ident::new(name, Span::call_site()))
-        },
-        TAG_PUNCT => {
-            let ch = cursor.read_u8() as char;
-            let spacing = match cursor.read_u8() {
-                SPACING_ALONE => Spacing::Alone,
-                SPACING_JOINT => Spacing::Joint,
-                other => panic!("token_codec: invalid spacing byte: {}", other),
-            };
-            TokenTree::Punct(Punct::new(ch, spacing))
-        },
-        TAG_LITERAL => {
-            let len = cursor.read_u16_le() as usize;
-            let repr_bytes = cursor.read_bytes(len);
-            let repr = std::str::from_utf8(repr_bytes)
-                .expect("token_codec: invalid UTF-8 in literal repr");
-            let lit: Literal = repr.parse().unwrap_or_else(|e| {
-                panic!("token_codec: failed to parse literal '{}': {}", repr, e)
-            });
-            TokenTree::Literal(lit)
-        },
-        TAG_GROUP_PAREN | TAG_GROUP_BRACE | TAG_GROUP_BRACKET | TAG_GROUP_NONE => {
-            let delimiter = match tag {
-                TAG_GROUP_PAREN => Delimiter::Parenthesis,
-                TAG_GROUP_BRACE => Delimiter::Brace,
-                TAG_GROUP_BRACKET => Delimiter::Bracket,
-                TAG_GROUP_NONE => Delimiter::None,
-                _ => unreachable!(),
-            };
-            let byte_len = cursor.read_u32_le() as usize;
-            let children_bytes = cursor.read_bytes(byte_len);
+/// Fallibly decode a compact token stream without native-stack recursion.
+pub fn try_decode(bytes: &[u8]) -> Result<TokenStream, TokenCodecError> {
+    let mut cursor = Cursor { data: bytes, pos: 0 };
+    struct DecodeFrame {
+        end: usize,
+        delimiter: Option<Delimiter>,
+        trees: Vec<TokenTree>,
+    }
 
-            // Recursively decode children
-            let mut child_cursor = Cursor { data: children_bytes, pos: 0 };
-            let mut children = Vec::new();
-            while child_cursor.pos < child_cursor.data.len() {
-                children.push(decode_tree(&mut child_cursor));
+    let mut frames = vec![DecodeFrame {
+        end: bytes.len(),
+        delimiter: None,
+        trees: Vec::new(),
+    }];
+    loop {
+        let frame_end = frames
+            .last()
+            .ok_or_else(|| TokenCodecError::new(cursor.pos, "missing root frame"))?
+            .end;
+        if cursor.pos == frame_end {
+            let completed = frames
+                .pop()
+                .ok_or_else(|| TokenCodecError::new(cursor.pos, "missing completed frame"))?;
+            let stream = TokenStream::from_iter(completed.trees);
+            if let Some(delimiter) = completed.delimiter {
+                frames
+                    .last_mut()
+                    .ok_or_else(|| {
+                        TokenCodecError::new(cursor.pos, "group frame has no parent frame")
+                    })?
+                    .trees
+                    .push(TokenTree::Group(Group::new(delimiter, stream)));
+                continue;
             }
+            debug_assert!(frames.is_empty());
+            return Ok(stream);
+        }
+        if cursor.pos > frame_end {
+            return Err(TokenCodecError::new(
+                cursor.pos,
+                "child stream crossed its declared group boundary",
+            ));
+        }
 
-            let inner = TokenStream::from_iter(children);
-            TokenTree::Group(Group::new(delimiter, inner))
-        },
-        other => panic!("token_codec: unknown tag byte: 0x{:02x}", other),
+        let tag = cursor.read_u8(frame_end)?;
+        let tree = match tag {
+            TAG_IDENT => {
+                let len = cursor.read_u16_le(frame_end)? as usize;
+                let name_offset = cursor.pos;
+                let name_bytes = cursor.read_bytes(len, frame_end)?;
+                let name = std::str::from_utf8(name_bytes).map_err(|error| {
+                    TokenCodecError::new(name_offset, format!("invalid identifier UTF-8: {error}"))
+                })?;
+                let tokens: TokenStream = name.parse().map_err(|error| {
+                    TokenCodecError::new(
+                        name_offset,
+                        format!("invalid identifier representation {name:?}: {error}"),
+                    )
+                })?;
+                let mut tokens = tokens.into_iter();
+                let Some(TokenTree::Ident(mut ident)) = tokens.next() else {
+                    return Err(TokenCodecError::new(
+                        name_offset,
+                        format!("identifier representation {name:?} is not one identifier"),
+                    ));
+                };
+                if tokens.next().is_some() {
+                    return Err(TokenCodecError::new(
+                        name_offset,
+                        format!("identifier representation {name:?} contains multiple tokens"),
+                    ));
+                }
+                ident.set_span(Span::call_site());
+                Some(TokenTree::Ident(ident))
+            },
+            TAG_PUNCT => {
+                let punct_offset = cursor.pos;
+                let ch = cursor.read_u8(frame_end)? as char;
+                if !matches!(
+                    ch,
+                    '=' | '<'
+                        | '>'
+                        | '-'
+                        | '!'
+                        | '~'
+                        | '+'
+                        | '*'
+                        | '/'
+                        | '%'
+                        | '^'
+                        | '&'
+                        | '|'
+                        | '@'
+                        | '.'
+                        | ','
+                        | ';'
+                        | ':'
+                        | '#'
+                        | '$'
+                        | '?'
+                        | '\''
+                ) {
+                    return Err(TokenCodecError::new(
+                        punct_offset,
+                        format!("invalid punctuation character {ch:?}"),
+                    ));
+                }
+                let spacing = match cursor.read_u8(frame_end)? {
+                    SPACING_ALONE => Spacing::Alone,
+                    SPACING_JOINT => Spacing::Joint,
+                    other => {
+                        return Err(TokenCodecError::new(
+                            cursor.pos - 1,
+                            format!("invalid spacing byte {other}"),
+                        ));
+                    },
+                };
+                Some(TokenTree::Punct(Punct::new(ch, spacing)))
+            },
+            TAG_LITERAL => {
+                let len = cursor.read_u16_le(frame_end)? as usize;
+                let repr_offset = cursor.pos;
+                let repr_bytes = cursor.read_bytes(len, frame_end)?;
+                let repr = std::str::from_utf8(repr_bytes).map_err(|error| {
+                    TokenCodecError::new(repr_offset, format!("invalid literal UTF-8: {error}"))
+                })?;
+                let literal: Literal = repr.parse().map_err(|error| {
+                    TokenCodecError::new(
+                        repr_offset,
+                        format!("failed to parse literal {repr:?}: {error}"),
+                    )
+                })?;
+                Some(TokenTree::Literal(literal))
+            },
+            TAG_GROUP_PAREN | TAG_GROUP_BRACE | TAG_GROUP_BRACKET | TAG_GROUP_NONE => {
+                let delimiter = match tag {
+                    TAG_GROUP_PAREN => Delimiter::Parenthesis,
+                    TAG_GROUP_BRACE => Delimiter::Brace,
+                    TAG_GROUP_BRACKET => Delimiter::Bracket,
+                    TAG_GROUP_NONE => Delimiter::None,
+                    _ => unreachable!(),
+                };
+                let byte_len = cursor.read_u32_le(frame_end)? as usize;
+                let end = cursor.pos.checked_add(byte_len).ok_or_else(|| {
+                    TokenCodecError::new(cursor.pos, "group length overflows usize")
+                })?;
+                if end > frame_end {
+                    return Err(TokenCodecError::new(
+                        cursor.pos - 4,
+                        "group length crosses its parent boundary",
+                    ));
+                }
+                frames.push(DecodeFrame {
+                    end,
+                    delimiter: Some(delimiter),
+                    trees: Vec::new(),
+                });
+                None
+            },
+            other => {
+                return Err(TokenCodecError::new(
+                    cursor.pos - 1,
+                    format!("unknown tag byte {other:#04x}"),
+                ));
+            },
+        };
+        if let Some(tree) = tree {
+            frames
+                .last_mut()
+                .ok_or_else(|| TokenCodecError::new(cursor.pos, "leaf has no parent frame"))?
+                .trees
+                .push(tree);
+        }
     }
 }
 
@@ -171,19 +339,33 @@ struct Cursor<'a> {
 }
 
 impl Cursor<'_> {
-    fn read_u8(&mut self) -> u8 {
+    fn require(&self, len: usize, limit: usize) -> Result<(), TokenCodecError> {
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or_else(|| TokenCodecError::new(self.pos, "cursor length overflows usize"))?;
+        if end > limit {
+            return Err(TokenCodecError::new(self.pos, "truncated token within group boundary"));
+        }
+        Ok(())
+    }
+
+    fn read_u8(&mut self, limit: usize) -> Result<u8, TokenCodecError> {
+        self.require(1, limit)?;
         let val = self.data[self.pos];
         self.pos += 1;
-        val
+        Ok(val)
     }
 
-    fn read_u16_le(&mut self) -> u16 {
+    fn read_u16_le(&mut self, limit: usize) -> Result<u16, TokenCodecError> {
+        self.require(2, limit)?;
         let val = u16::from_le_bytes([self.data[self.pos], self.data[self.pos + 1]]);
         self.pos += 2;
-        val
+        Ok(val)
     }
 
-    fn read_u32_le(&mut self) -> u32 {
+    fn read_u32_le(&mut self, limit: usize) -> Result<u32, TokenCodecError> {
+        self.require(4, limit)?;
         let val = u32::from_le_bytes([
             self.data[self.pos],
             self.data[self.pos + 1],
@@ -191,13 +373,14 @@ impl Cursor<'_> {
             self.data[self.pos + 3],
         ]);
         self.pos += 4;
-        val
+        Ok(val)
     }
 
-    fn read_bytes(&mut self, len: usize) -> &[u8] {
+    fn read_bytes(&mut self, len: usize, limit: usize) -> Result<&[u8], TokenCodecError> {
+        self.require(len, limit)?;
         let slice = &self.data[self.pos..self.pos + len];
         self.pos += len;
-        slice
+        Ok(slice)
     }
 }
 
@@ -346,3 +529,7 @@ mod tests {
         assert_eq!(frag.terms.len(), 2);
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/token_codec_recursive_oracle.rs"]
+mod recursive_oracle;

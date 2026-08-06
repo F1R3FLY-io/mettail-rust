@@ -511,20 +511,23 @@ fn renaming_inverse_of(root_call: &syn::ExprCall, param_order: &[String]) -> Opt
 /// `None` if the spine passes through a constructor call, a nullary variant, or anything
 /// else.
 fn bare_param_wrap_name(expr: &syn::Expr) -> Option<String> {
-    match expr {
-        syn::Expr::Call(call) if is_smart_ptr_new(&call.func) && call.args.len() == 1 => {
-            bare_param_wrap_name(&call.args[0])
-        },
-        syn::Expr::MethodCall(mc) if mc.method == "clone" && mc.args.is_empty() => {
-            bare_param_wrap_name(&mc.receiver)
-        },
-        syn::Expr::Reference(r) => bare_param_wrap_name(&r.expr),
-        syn::Expr::Paren(p) => bare_param_wrap_name(&p.expr),
-        syn::Expr::Group(g) => bare_param_wrap_name(&g.expr),
-        syn::Expr::Path(p) if p.path.segments.len() == 1 && p.qself.is_none() => {
-            Some(p.path.segments[0].ident.to_string())
-        },
-        _ => None,
+    let mut cursor = expr;
+    loop {
+        cursor = match cursor {
+            syn::Expr::Call(call) if is_smart_ptr_new(&call.func) && call.args.len() == 1 => {
+                &call.args[0]
+            },
+            syn::Expr::MethodCall(call) if call.method == "clone" && call.args.is_empty() => {
+                &call.receiver
+            },
+            syn::Expr::Reference(reference) => &reference.expr,
+            syn::Expr::Paren(paren) => &paren.expr,
+            syn::Expr::Group(group) => &group.expr,
+            syn::Expr::Path(path) if path.path.segments.len() == 1 && path.qself.is_none() => {
+                return Some(path.path.segments[0].ident.to_string());
+            },
+            _ => return None,
+        };
     }
 }
 
@@ -533,15 +536,20 @@ fn bare_param_wrap_name(expr: &syn::Expr) -> Option<String> {
 /// statement (e.g. a `let`) or is not exactly one tail expression — such bodies
 /// are never pure re-wraps.
 fn unwrap_single_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
-    match expr {
-        syn::Expr::Block(b) if b.block.stmts.len() == 1 => match &b.block.stmts[0] {
-            // syn 2.x: a trailing tail expression is `Stmt::Expr(_, None)`.
-            syn::Stmt::Expr(inner, None) => unwrap_single_expr(inner),
-            _ => None,
-        },
-        syn::Expr::Paren(p) => unwrap_single_expr(&p.expr),
-        syn::Expr::Group(g) => unwrap_single_expr(&g.expr),
-        other => Some(other),
+    let mut cursor = expr;
+    loop {
+        cursor = match cursor {
+            syn::Expr::Block(block) if block.block.stmts.len() == 1 => {
+                match &block.block.stmts[0] {
+                    // syn 2.x: a trailing tail expression is `Stmt::Expr(_, None)`.
+                    syn::Stmt::Expr(inner, None) => inner,
+                    _ => return None,
+                }
+            },
+            syn::Expr::Paren(paren) => &paren.expr,
+            syn::Expr::Group(group) => &group.expr,
+            other => return Some(other),
+        };
     }
 }
 
@@ -569,35 +577,51 @@ fn is_fold_alias_root(
     }
 }
 
-/// A pure re-wrap node (recursive): a category-variant constructor call, a
+/// A pure re-wrap node: a category-variant constructor call, a
 /// smart-pointer `new`, a `param.clone()` leaf, a nullary-variant path, or a
 /// bare param reference. Anything else (free-function calls, `let`/closures/
 /// control flow, other method calls, references) makes the body impure.
 fn is_fold_alias_node(expr: &syn::Expr, params: &HashSet<String>) -> bool {
-    match expr {
-        syn::Expr::Call(call) => {
-            // `Arc::new(x)` / `Box::new(x)` / `Rc::new(x)` — recurse the wrapped expr.
-            if is_smart_ptr_new(&call.func) {
-                return call.args.len() == 1 && is_fold_alias_node(&call.args[0], params);
-            }
-            // `Type::Variant(args…)` — a constructor of any category. Recurse args.
-            if constructor_path(&call.func).is_some() {
-                return call.args.iter().all(|a| is_fold_alias_node(a, params));
-            }
-            false
-        },
-        // `param.clone()` — the only permitted method call.
-        syn::Expr::MethodCall(mc) => {
-            mc.method == "clone" && mc.args.is_empty() && is_param_ref(&mc.receiver, params)
-        },
-        // A nullary-variant path (`Proc::PZero`) or a bare param reference.
-        syn::Expr::Path(p) => {
-            is_nullary_variant_path(&p.path) || is_single_ident_in(&p.path, params)
-        },
-        syn::Expr::Paren(p) => is_fold_alias_node(&p.expr, params),
-        syn::Expr::Group(g) => is_fold_alias_node(&g.expr, params),
-        _ => false,
+    let mut work = vec![expr];
+    while let Some(node) = work.pop() {
+        match node {
+            syn::Expr::Call(call) => {
+                if is_smart_ptr_new(&call.func) {
+                    if call.args.len() != 1 {
+                        return false;
+                    }
+                    work.push(&call.args[0]);
+                } else if constructor_path(&call.func).is_some() {
+                    // Reverse only the new slice so last-in/first-out visitation remains
+                    // argument-left-to-right, matching `Iterator::all`'s short circuit.
+                    let start = work.len();
+                    work.extend(call.args.iter());
+                    work[start..].reverse();
+                } else {
+                    return false;
+                }
+            },
+            // `param.clone()` — the only permitted method call.
+            syn::Expr::MethodCall(call) => {
+                if call.method != "clone"
+                    || !call.args.is_empty()
+                    || !is_param_ref(&call.receiver, params)
+                {
+                    return false;
+                }
+            },
+            // A nullary-variant path (`Proc::PZero`) or a bare param reference.
+            syn::Expr::Path(path) => {
+                if !is_nullary_variant_path(&path.path) && !is_single_ident_in(&path.path, params) {
+                    return false;
+                }
+            },
+            syn::Expr::Paren(paren) => work.push(&paren.expr),
+            syn::Expr::Group(group) => work.push(&group.expr),
+            _ => return false,
+        }
     }
+    true
 }
 
 /// If `func` is a `≥2`-segment path whose LAST segment is a PascalCase
@@ -658,11 +682,14 @@ fn is_nullary_variant_path(path: &syn::Path) -> bool {
 /// Whether `expr` is a bare single-ident path naming one of `params` (the
 /// receiver position of an admissible `param.clone()`).
 fn is_param_ref(expr: &syn::Expr, params: &HashSet<String>) -> bool {
-    match expr {
-        syn::Expr::Path(p) => is_single_ident_in(&p.path, params),
-        syn::Expr::Paren(p) => is_param_ref(&p.expr, params),
-        syn::Expr::Group(g) => is_param_ref(&g.expr, params),
-        _ => false,
+    let mut cursor = expr;
+    loop {
+        cursor = match cursor {
+            syn::Expr::Path(path) => return is_single_ident_in(&path.path, params),
+            syn::Expr::Paren(paren) => &paren.expr,
+            syn::Expr::Group(group) => &group.expr,
+            _ => return false,
+        };
     }
 }
 
@@ -855,15 +882,18 @@ pub fn classify_fold_alias_send_shape(rule: &GrammarRule) -> Option<FoldAliasSen
 /// paren/group wrappers. Returns `None` if the block's last statement is not a
 /// tail expression (e.g. it carries a trailing `;`).
 fn block_tail_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
-    match expr {
-        syn::Expr::Block(b) => match b.block.stmts.last()? {
-            // syn 2.x: a trailing tail expression is `Stmt::Expr(_, None)`.
-            syn::Stmt::Expr(inner, None) => block_tail_expr(inner),
-            _ => None,
-        },
-        syn::Expr::Paren(p) => block_tail_expr(&p.expr),
-        syn::Expr::Group(g) => block_tail_expr(&g.expr),
-        other => Some(other),
+    let mut cursor = expr;
+    loop {
+        cursor = match cursor {
+            syn::Expr::Block(block) => match block.block.stmts.last()? {
+                // syn 2.x: a trailing tail expression is `Stmt::Expr(_, None)`.
+                syn::Stmt::Expr(inner, None) => inner,
+                _ => return None,
+            },
+            syn::Expr::Paren(paren) => &paren.expr,
+            syn::Expr::Group(group) => &group.expr,
+            other => return Some(other),
+        };
     }
 }
 
@@ -878,38 +908,42 @@ fn block_tail_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
 /// a LITERAL-channel quote (`NQuote(PZero)`, NOT foldable — no param twin, its
 /// reading is the standalone `*Nil*` structural variant).
 fn channel_wrap_leaf_param(expr: &syn::Expr, params: &HashSet<String>) -> Option<String> {
-    match expr {
-        syn::Expr::Call(call) => {
-            // `Arc::new(x)` / a single-arg constructor `NQuote(x)` — recurse the
-            // one wrapped expr. A multi-arg node is not a channel-quote spine.
-            if is_smart_ptr_new(&call.func) || constructor_path(&call.func).is_some() {
-                if call.args.len() == 1 {
-                    return channel_wrap_leaf_param(&call.args[0], params);
+    let mut cursor = expr;
+    loop {
+        cursor = match cursor {
+            syn::Expr::Call(call)
+                if is_smart_ptr_new(&call.func) || constructor_path(&call.func).is_some() =>
+            {
+                if call.args.len() != 1 {
+                    return None;
                 }
-                return None;
-            }
-            None
-        },
-        // `param.clone()` — the param-bottomed leaf.
-        syn::Expr::MethodCall(mc) => {
-            if mc.method == "clone" && mc.args.is_empty() && is_param_ref(&mc.receiver, params) {
-                if let syn::Expr::Path(p) = &*mc.receiver {
-                    return p.path.get_ident().map(|id| id.to_string());
-                }
-            }
-            None
-        },
-        // A bare single-ident param reference (e.g. `n`). A `≥2`-segment path
-        // (`Proc::PZero`, a nullary variant) has no `get_ident()` ⇒ `None` ⇒ NOT
-        // param-bottomed (the A1b exclusion of the `*Nil*` channels).
-        syn::Expr::Path(p) => p
-            .path
-            .get_ident()
-            .map(|id| id.to_string())
-            .filter(|s| params.contains(s)),
-        syn::Expr::Paren(p) => channel_wrap_leaf_param(&p.expr, params),
-        syn::Expr::Group(g) => channel_wrap_leaf_param(&g.expr, params),
-        _ => None,
+                &call.args[0]
+            },
+            // `param.clone()` — the param-bottomed leaf.
+            syn::Expr::MethodCall(call) if call.method == "clone" && call.args.is_empty() => {
+                let syn::Expr::Path(path) = &*call.receiver else {
+                    return None;
+                };
+                return path
+                    .path
+                    .get_ident()
+                    .map(|id| id.to_string())
+                    .filter(|name| params.contains(name));
+            },
+            // A bare single-ident param reference (e.g. `n`). A `≥2`-segment path
+            // (`Proc::PZero`, a nullary variant) has no `get_ident()` ⇒ `None` ⇒ NOT
+            // param-bottomed (the A1b exclusion of the `*Nil*` channels).
+            syn::Expr::Path(path) => {
+                return path
+                    .path
+                    .get_ident()
+                    .map(|id| id.to_string())
+                    .filter(|name| params.contains(name));
+            },
+            syn::Expr::Paren(paren) => &paren.expr,
+            syn::Expr::Group(group) => &group.expr,
+            _ => return None,
+        };
     }
 }
 
@@ -920,16 +954,23 @@ fn channel_wrap_leaf_param(expr: &syn::Expr, params: &HashSet<String>) -> Option
 /// `NQuote` constructor ⇒ `true`. Used to set `channel_is_bare_param`, which the
 /// macros-side pairing uses to tell canonicals from sugars.
 fn channel_wrap_has_constructor(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Call(call) => {
-            if is_smart_ptr_new(&call.func) {
-                return call.args.len() == 1 && channel_wrap_has_constructor(&call.args[0]);
-            }
-            constructor_path(&call.func).is_some()
-        },
-        syn::Expr::Paren(p) => channel_wrap_has_constructor(&p.expr),
-        syn::Expr::Group(g) => channel_wrap_has_constructor(&g.expr),
-        _ => false,
+    let mut cursor = expr;
+    loop {
+        cursor = match cursor {
+            syn::Expr::Call(call) => {
+                if is_smart_ptr_new(&call.func) {
+                    if call.args.len() != 1 {
+                        return false;
+                    }
+                    &call.args[0]
+                } else {
+                    return constructor_path(&call.func).is_some();
+                }
+            },
+            syn::Expr::Paren(paren) => &paren.expr,
+            syn::Expr::Group(group) => &group.expr,
+            _ => return false,
+        };
     }
 }
 
@@ -1419,3 +1460,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/grammar_shapes_recursive_oracle.rs"]
+mod recursive_oracle;
