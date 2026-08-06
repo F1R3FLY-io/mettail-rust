@@ -36,7 +36,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 ///
 /// Supports type variables (introduced by lambda binding), monomorphic
 /// base types, function types, and let-polymorphic universal types.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HmType {
     /// Type variable: `α`, `β`, `γ`. Represented as a unique string
     /// identifier (typically `t0`, `t1`, ... from `fresh_type_var`).
@@ -50,6 +49,9 @@ pub enum HmType {
     /// Created by let-generalization, instantiated at use sites.
     Forall(Vec<String>, Box<HmType>),
 }
+
+#[path = "hindley_milner/lifecycle.rs"]
+mod lifecycle;
 
 impl HmType {
     /// Construct a monomorphic type by name.
@@ -79,35 +81,36 @@ impl HmType {
     /// Collect every type variable that appears free in this type.
     pub fn free_type_vars(&self) -> Vec<String> {
         let mut acc = Vec::new();
+        enum Task<'ty> {
+            Visit(&'ty HmType),
+            RestoreBound(usize),
+        }
+        let mut tasks = vec![Task::Visit(self)];
         let mut bound = Vec::new();
-        self.collect_free_tvs(&mut acc, &mut bound);
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(HmType::Var(name)) => {
+                    if !bound.contains(&name.as_str()) {
+                        acc.push(name.clone());
+                    }
+                },
+                Task::Visit(HmType::Mono(_)) => {},
+                Task::Visit(HmType::Arrow(domain, codomain)) => {
+                    tasks.push(Task::Visit(codomain));
+                    tasks.push(Task::Visit(domain));
+                },
+                Task::Visit(HmType::Forall(vars, body)) => {
+                    let old_len = bound.len();
+                    bound.extend(vars.iter().map(String::as_str));
+                    tasks.push(Task::RestoreBound(old_len));
+                    tasks.push(Task::Visit(body));
+                },
+                Task::RestoreBound(old_len) => bound.truncate(old_len),
+            }
+        }
         acc.sort();
         acc.dedup();
         acc
-    }
-
-    fn collect_free_tvs(&self, acc: &mut Vec<String>, bound: &mut Vec<String>) {
-        match self {
-            HmType::Var(v) => {
-                if !bound.contains(v) {
-                    acc.push(v.clone());
-                }
-            },
-            HmType::Mono(_) => {},
-            HmType::Arrow(a, b) => {
-                a.collect_free_tvs(acc, bound);
-                b.collect_free_tvs(acc, bound);
-            },
-            HmType::Forall(vars, body) => {
-                for v in vars {
-                    bound.push(v.clone());
-                }
-                body.collect_free_tvs(acc, bound);
-                for _ in vars {
-                    bound.pop();
-                }
-            },
-        }
     }
 }
 
@@ -128,23 +131,66 @@ impl Substitution {
         Self::default()
     }
 
+    fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+
     /// Apply this substitution to a type.
     pub fn apply(&self, ty: &HmType) -> HmType {
-        match ty {
-            HmType::Var(v) => self.bindings.get(v).cloned().unwrap_or_else(|| ty.clone()),
-            HmType::Mono(_) => ty.clone(),
-            HmType::Arrow(a, b) => HmType::Arrow(Box::new(self.apply(a)), Box::new(self.apply(b))),
-            HmType::Forall(vars, body) => {
-                // Drop any binding for a quantified variable before
-                // descending — the universal binder shadows the
-                // substitution.
-                let mut shadowed = self.clone();
-                for v in vars {
-                    shadowed.bindings.remove(v);
-                }
-                HmType::Forall(vars.clone(), Box::new(shadowed.apply(body)))
+        enum Task<'ty> {
+            Visit(&'ty HmType),
+            Arrow,
+            Forall {
+                vars: Vec<String>,
+                removed: Vec<(String, Option<HmType>)>,
             },
         }
+
+        let mut bindings = self.bindings.clone();
+        let mut tasks = vec![Task::Visit(ty)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(HmType::Var(name)) => values.push(
+                    bindings
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| HmType::Var(name.clone())),
+                ),
+                Task::Visit(HmType::Mono(name)) => values.push(HmType::Mono(name.clone())),
+                Task::Visit(HmType::Arrow(domain, codomain)) => {
+                    tasks.push(Task::Arrow);
+                    tasks.push(Task::Visit(codomain));
+                    tasks.push(Task::Visit(domain));
+                },
+                Task::Visit(HmType::Forall(vars, body)) => {
+                    let removed = vars
+                        .iter()
+                        .map(|name| (name.clone(), bindings.remove(name)))
+                        .collect();
+                    tasks.push(Task::Forall { vars: vars.clone(), removed });
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Arrow => {
+                    let codomain = values
+                        .pop()
+                        .expect("HM substitution PDA lost arrow codomain");
+                    let domain = values.pop().expect("HM substitution PDA lost arrow domain");
+                    values.push(HmType::Arrow(Box::new(domain), Box::new(codomain)));
+                },
+                Task::Forall { vars, removed } => {
+                    for (name, value) in removed {
+                        if let Some(value) = value {
+                            bindings.insert(name, value);
+                        }
+                    }
+                    let body = values.pop().expect("HM substitution PDA lost forall body");
+                    values.push(HmType::Forall(vars, Box::new(body)));
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("HM substitution PDA produced no value")
     }
 
     /// Insert a single binding `var ↦ ty`.
@@ -202,31 +248,149 @@ impl std::error::Error for HmError {}
 /// `left` and `right` syntactically equal, or fail with a structured
 /// error.
 pub fn unify(left: &HmType, right: &HmType) -> Result<Substitution, HmError> {
-    match (left, right) {
-        (HmType::Var(a), HmType::Var(b)) if a == b => Ok(Substitution::empty()),
-        (HmType::Var(v), other) | (other, HmType::Var(v)) => {
-            if other.free_type_vars().contains(v) {
-                Err(HmError::OccursCheck { var: v.clone(), ty: other.clone() })
-            } else {
-                let mut s = Substitution::empty();
-                s.insert(v.clone(), other.clone());
-                Ok(s)
-            }
-        },
-        (HmType::Mono(a), HmType::Mono(b)) if a == b => Ok(Substitution::empty()),
-        (HmType::Arrow(a1, b1), HmType::Arrow(a2, b2)) => {
-            let s1 = unify(a1, a2)?;
-            let b1_sub = s1.apply(b1);
-            let b2_sub = s1.apply(b2);
-            let s2 = unify(&b1_sub, &b2_sub)?;
-            Ok(s2.compose(&s1))
-        },
-        _ => Err(HmError::UnificationFailure { left: left.clone(), right: right.clone() }),
+    enum Input<'ty> {
+        Borrowed(&'ty HmType),
+        Owned(HmType),
     }
+
+    impl Input<'_> {
+        fn as_ref(&self) -> &HmType {
+            match self {
+                Input::Borrowed(value) => value,
+                Input::Owned(value) => value,
+            }
+        }
+
+        fn into_owned(self) -> HmType {
+            match self {
+                Input::Borrowed(value) => value.clone(),
+                Input::Owned(value) => value,
+            }
+        }
+    }
+
+    enum Task<'ty> {
+        Compare(Input<'ty>, Input<'ty>),
+        Codomain(Input<'ty>, Input<'ty>),
+        FinishArrow(Substitution),
+    }
+
+    fn take_arrow(mut ty: HmType) -> (HmType, HmType) {
+        let HmType::Arrow(domain, codomain) = &mut ty else {
+            unreachable!("HM unification PDA classified an owned type as Arrow")
+        };
+        let domain = std::mem::replace(domain, Box::new(HmType::Mono(String::new())));
+        let codomain = std::mem::replace(codomain, Box::new(HmType::Mono(String::new())));
+        (*domain, *codomain)
+    }
+
+    let mut tasks = vec![Task::Compare(Input::Borrowed(left), Input::Borrowed(right))];
+    let mut results = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Compare(left, right) => {
+                if let (HmType::Var(a), HmType::Var(b)) = (left.as_ref(), right.as_ref()) {
+                    if a == b {
+                        results.push(Substitution::empty());
+                        continue;
+                    }
+                }
+
+                let variable_side = match (left.as_ref(), right.as_ref()) {
+                    (HmType::Var(name), other) => Some((name.clone(), other.free_type_vars())),
+                    (other, HmType::Var(name)) => Some((name.clone(), other.free_type_vars())),
+                    _ => None,
+                };
+                if let Some((variable, free_vars)) = variable_side {
+                    let other = if matches!(left.as_ref(), HmType::Var(_)) {
+                        right.into_owned()
+                    } else {
+                        left.into_owned()
+                    };
+                    if free_vars.contains(&variable) {
+                        return Err(HmError::OccursCheck { var: variable, ty: other });
+                    }
+                    let mut substitution = Substitution::empty();
+                    substitution.insert(variable, other);
+                    results.push(substitution);
+                    continue;
+                }
+
+                if let (HmType::Mono(a), HmType::Mono(b)) = (left.as_ref(), right.as_ref()) {
+                    if a == b {
+                        results.push(Substitution::empty());
+                        continue;
+                    }
+                }
+
+                if matches!(left.as_ref(), HmType::Arrow(..))
+                    && matches!(right.as_ref(), HmType::Arrow(..))
+                {
+                    match (left, right) {
+                        (
+                            Input::Borrowed(HmType::Arrow(domain1, codomain1)),
+                            Input::Borrowed(HmType::Arrow(domain2, codomain2)),
+                        ) => {
+                            tasks.push(Task::Codomain(
+                                Input::Borrowed(codomain1),
+                                Input::Borrowed(codomain2),
+                            ));
+                            tasks.push(Task::Compare(
+                                Input::Borrowed(domain1),
+                                Input::Borrowed(domain2),
+                            ));
+                        },
+                        (left, right) => {
+                            let (domain1, codomain1) = take_arrow(left.into_owned());
+                            let (domain2, codomain2) = take_arrow(right.into_owned());
+                            tasks.push(Task::Codomain(
+                                Input::Owned(codomain1),
+                                Input::Owned(codomain2),
+                            ));
+                            tasks.push(Task::Compare(Input::Owned(domain1), Input::Owned(domain2)));
+                        },
+                    }
+                    continue;
+                }
+
+                return Err(HmError::UnificationFailure {
+                    left: left.into_owned(),
+                    right: right.into_owned(),
+                });
+            },
+            Task::Codomain(left, right) => {
+                let domain_substitution = results
+                    .pop()
+                    .expect("HM unification PDA lost domain substitution");
+                let is_empty = domain_substitution.is_empty();
+                tasks.push(Task::FinishArrow(domain_substitution));
+                if is_empty {
+                    tasks.push(Task::Compare(left, right));
+                } else {
+                    let substitution = match tasks.last() {
+                        Some(Task::FinishArrow(substitution)) => substitution,
+                        _ => unreachable!("HM unification PDA lost arrow continuation"),
+                    };
+                    let left = substitution.apply(left.as_ref());
+                    let right = substitution.apply(right.as_ref());
+                    tasks.push(Task::Compare(Input::Owned(left), Input::Owned(right)));
+                }
+            },
+            Task::FinishArrow(domain_substitution) => {
+                let codomain_substitution = results
+                    .pop()
+                    .expect("HM unification PDA lost codomain substitution");
+                results.push(codomain_substitution.compose(&domain_substitution));
+            },
+        }
+    }
+    debug_assert_eq!(results.len(), 1);
+    Ok(results
+        .pop()
+        .expect("HM unification PDA produced no result"))
 }
 
 /// HM term representation for inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HmTerm {
     /// Variable reference.
     Var(String),
@@ -293,40 +457,134 @@ pub fn fresh_type_var() -> HmType {
 /// applied to any external state that references the input env's
 /// types.
 pub fn infer(env: &HmEnv, term: &HmTerm) -> Result<(Substitution, HmType), HmError> {
-    match term {
-        HmTerm::LitInt(_) => Ok((Substitution::empty(), HmType::mono("Int"))),
-        HmTerm::LitBool(_) => Ok((Substitution::empty(), HmType::mono("Bool"))),
-        HmTerm::LitStr(_) => Ok((Substitution::empty(), HmType::mono("String"))),
-
-        HmTerm::Var(name) => env
-            .lookup(name)
-            .cloned()
-            .map(|ty| (Substitution::empty(), ty))
-            .ok_or_else(|| HmError::UnboundVariable { name: name.clone() }),
-
-        HmTerm::Abs { param, body } => {
-            let param_ty = fresh_type_var();
-            let inner_env = env.extend(param, param_ty.clone());
-            let (s, body_ty) = infer(&inner_env, body)?;
-            let param_ty_sub = s.apply(&param_ty);
-            Ok((s, HmType::arrow(param_ty_sub, body_ty)))
+    enum Task<'term> {
+        Infer(&'term HmTerm),
+        Abs {
+            param: &'term str,
+            previous: Option<HmType>,
+            param_ty: HmType,
         },
-
-        HmTerm::App { f, arg } => {
-            let (s1, f_ty) = infer(env, f)?;
-            let env_after = env.apply_subst(&s1);
-            let (s2, arg_ty) = infer(&env_after, arg)?;
-            let result_ty = fresh_type_var();
-            let f_ty_sub = s2.apply(&f_ty);
-            let expected = HmType::arrow(arg_ty, result_ty.clone());
-            let s3 = unify(&f_ty_sub, &expected)?;
-            let final_subst = s3.compose(&s2.compose(&s1));
-            let final_result_ty = s3.apply(&result_ty);
-            Ok((final_subst, final_result_ty))
+        AppFunction(&'term HmTerm),
+        AppArgument {
+            function_substitution: Substitution,
+            function_type: HmType,
+            previous_bindings: HashMap<String, HmType>,
         },
-
-        HmTerm::Let { name, value, body } => infer_simple_let(env, name, value, body),
+        LetValue {
+            name: &'term str,
+            body: &'term HmTerm,
+        },
+        LetBody {
+            value_substitution: Substitution,
+            previous_bindings: HashMap<String, HmType>,
+        },
     }
+
+    let mut bindings = env.bindings.clone();
+    let mut tasks = vec![Task::Infer(term)];
+    let mut results = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Infer(HmTerm::LitInt(_)) => {
+                results.push((Substitution::empty(), HmType::mono("Int")));
+            },
+            Task::Infer(HmTerm::LitBool(_)) => {
+                results.push((Substitution::empty(), HmType::mono("Bool")));
+            },
+            Task::Infer(HmTerm::LitStr(_)) => {
+                results.push((Substitution::empty(), HmType::mono("String")));
+            },
+            Task::Infer(HmTerm::Var(name)) => {
+                let ty = bindings
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| HmError::UnboundVariable { name: name.clone() })?;
+                results.push((Substitution::empty(), ty));
+            },
+            Task::Infer(HmTerm::Abs { param, body }) => {
+                let param_ty = fresh_type_var();
+                let previous = bindings.insert(param.clone(), param_ty.clone());
+                tasks.push(Task::Abs { param, previous, param_ty });
+                tasks.push(Task::Infer(body));
+            },
+            Task::Infer(HmTerm::App { f, arg }) => {
+                tasks.push(Task::AppFunction(arg));
+                tasks.push(Task::Infer(f));
+            },
+            Task::Infer(HmTerm::Let { name, value, body }) => {
+                tasks.push(Task::LetValue { name, body });
+                tasks.push(Task::Infer(value));
+            },
+            Task::Abs { param, previous, param_ty } => {
+                let (substitution, body_ty) = results
+                    .pop()
+                    .expect("HM inference PDA lost abstraction result");
+                if let Some(previous) = previous {
+                    bindings.insert(param.to_string(), previous);
+                } else {
+                    bindings.remove(param);
+                }
+                let param_ty = substitution.apply(&param_ty);
+                results.push((substitution, HmType::arrow(param_ty, body_ty)));
+            },
+            Task::AppFunction(argument) => {
+                let (function_substitution, function_type) = results
+                    .pop()
+                    .expect("HM inference PDA lost function result");
+                let next_bindings = bindings
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), function_substitution.apply(ty)))
+                    .collect();
+                let previous_bindings = std::mem::replace(&mut bindings, next_bindings);
+                tasks.push(Task::AppArgument {
+                    function_substitution,
+                    function_type,
+                    previous_bindings,
+                });
+                tasks.push(Task::Infer(argument));
+            },
+            Task::AppArgument {
+                function_substitution,
+                function_type,
+                previous_bindings,
+            } => {
+                let (argument_substitution, argument_type) = results
+                    .pop()
+                    .expect("HM inference PDA lost argument result");
+                let result_type = fresh_type_var();
+                let function_type = argument_substitution.apply(&function_type);
+                let expected = HmType::arrow(argument_type, result_type.clone());
+                let result_substitution = unify(&function_type, &expected)?;
+                let final_substitution = result_substitution
+                    .compose(&argument_substitution.compose(&function_substitution));
+                let final_result_type = result_substitution.apply(&result_type);
+                bindings = previous_bindings;
+                results.push((final_substitution, final_result_type));
+            },
+            Task::LetValue { name, body } => {
+                let (value_substitution, value_type) = results
+                    .pop()
+                    .expect("HM inference PDA lost let value result");
+                let mut next_bindings: HashMap<_, _> = bindings
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), value_substitution.apply(ty)))
+                    .collect();
+                next_bindings.insert(name.to_string(), value_type);
+                let previous_bindings = std::mem::replace(&mut bindings, next_bindings);
+                tasks.push(Task::LetBody { value_substitution, previous_bindings });
+                tasks.push(Task::Infer(body));
+            },
+            Task::LetBody { value_substitution, previous_bindings } => {
+                let (body_substitution, body_type) = results
+                    .pop()
+                    .expect("HM inference PDA lost let body result");
+                bindings = previous_bindings;
+                results.push((body_substitution.compose(&value_substitution), body_type));
+            },
+        }
+    }
+    debug_assert_eq!(results.len(), 1);
+    Ok(results.pop().expect("HM inference PDA produced no result"))
 }
 
 /// Phase 12B: simplest let-binding inference.
@@ -459,22 +717,7 @@ pub struct HmInferenceAnalysis {
 /// only to populate the human-readable `inferred_constructor_types` /
 /// `sort_mismatches` strings — never parsed back.
 fn render_hm_type(ty: &HmType) -> String {
-    match ty {
-        HmType::Var(v) => v.clone(),
-        HmType::Mono(m) => m.clone(),
-        HmType::Arrow(a, b) => {
-            // Parenthesize an arrow in domain position so the right-associated
-            // reading is unambiguous; atoms and codomains stay bare.
-            let left = match a.as_ref() {
-                HmType::Arrow(..) => format!("({})", render_hm_type(a)),
-                other => render_hm_type(other),
-            };
-            format!("{left} → {}", render_hm_type(b))
-        },
-        HmType::Forall(vars, body) => {
-            format!("∀{}. {}", vars.join(" "), render_hm_type(body))
-        },
-    }
+    ty.to_string()
 }
 
 /// Collect the **field sorts** of a rule body, left-to-right, descending into
@@ -686,8 +929,8 @@ mod tests {
             body: Box::new(HmTerm::Var("x".to_string())),
         };
         let (_, ty) = infer(&env, &term).unwrap();
-        match ty {
-            HmType::Arrow(a, b) => assert_eq!(*a, *b),
+        match &ty {
+            HmType::Arrow(a, b) => assert_eq!(a, b),
             other => panic!("expected Arrow, got {:?}", other),
         }
     }
