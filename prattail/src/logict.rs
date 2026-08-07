@@ -1650,7 +1650,7 @@ pub struct MultisetPartition<T: Clone + Eq + Hash> {
 /// Lazily enumerate all ways to select exactly `k` elements (with multiplicity)
 /// from a multiset represented as `(element, count)` pairs.
 ///
-/// The algorithm proceeds recursively over distinct elements, choosing how many
+/// The algorithm proceeds over distinct elements, choosing how many
 /// copies of each element to include in the selection (0..=min(count, remaining_k)).
 /// Duplicate-free enumeration is guaranteed because elements at index `i` are never
 /// reconsidered after advancing to index `i+1`.
@@ -1675,94 +1675,115 @@ pub fn multiset_partitions<T>(items: &[(T, usize)], k: usize) -> LogicStream<Mul
 where
     T: Clone + Eq + Hash + Send + 'static,
 {
-    // Owned copy for the recursive helper
-    let items_owned: Vec<(T, usize)> = items.to_vec();
-    multiset_partitions_rec(&items_owned, 0, k)
-}
-
-/// Recursive helper: enumerate partitions starting from `items[start..]` with
-/// `remaining` elements left to select.
-fn multiset_partitions_rec<T>(
-    items: &[(T, usize)],
-    start: usize,
-    remaining: usize,
-) -> LogicStream<MultisetPartition<T>>
-where
-    T: Clone + Eq + Hash + Send + 'static,
-{
-    // Base case: nothing left to select → yield one partition with empty selection
-    if remaining == 0 {
-        let remainder: Vec<(T, usize)> = items[start..]
-            .iter()
-            .filter(|(_, c)| *c > 0)
-            .cloned()
-            .collect();
-        return LogicStream::unit(MultisetPartition {
-            selected: Vec::new(),
-            remainder,
-            selected_count: 0,
-        });
+    enum Frame<T: Clone + Eq + Hash + Send + 'static> {
+        Call {
+            start: usize,
+            remaining: usize,
+        },
+        Resume {
+            start: usize,
+            remaining: usize,
+            q: usize,
+            max_take: usize,
+            accumulated: LogicStream<MultisetPartition<T>>,
+        },
     }
 
-    // Base case: no more elements to draw from → impossible to select `remaining`
-    if start >= items.len() {
-        return LogicStream::empty();
+    // The recursive implementation recomputed this suffix sum at every call.
+    // Precomputing it makes the feasibility checks linear in the number of
+    // distinct elements rather than quadratic along a deep successful branch.
+    let mut suffix_available = vec![0usize; items.len() + 1];
+    for index in (0..items.len()).rev() {
+        suffix_available[index] = suffix_available[index + 1] + items[index].1;
     }
 
-    // Check if total available count from items[start..] is sufficient
-    let available: usize = items[start..].iter().map(|(_, c)| c).sum();
-    if available < remaining {
-        return LogicStream::empty();
-    }
+    let mut frames = vec![Frame::Call { start: 0, remaining: k }];
+    let mut values: Vec<LogicStream<MultisetPartition<T>>> = Vec::new();
 
-    let (elem, count) = items[start].clone();
-    let max_take = count.min(remaining);
-
-    // Branch: try taking q copies of items[start], for q in 0..=max_take
-    // We build all sub-streams eagerly and interleave them for fairness.
-    let mut accumulated = LogicStream::<MultisetPartition<T>>::empty();
-
-    for q in 0..=max_take {
-        // Build a modified items slice where items[start] has count reduced by q
-        let items_clone = items.to_vec();
-        let elem_clone = elem.clone();
-
-        let sub = multiset_partitions_rec(&items_clone, start + 1, remaining - q);
-
-        // Merge this element's contribution into each sub-partition
-        let merged = if q == 0 {
-            // Taking 0 of this element: just pass remainder through,
-            // but include the full count of this element in remainders
-            let elem_for_closure = elem_clone.clone();
-            let count_for_closure = count;
-            sub.map(move |mut p| {
-                if count_for_closure > 0 {
-                    p.remainder
-                        .push((elem_for_closure.clone(), count_for_closure));
-                    // Sort remainder for stable ordering
-                    p.remainder.sort_by(|a, b| a.1.cmp(&b.1));
+    while let Some(frame) = frames.pop() {
+        match frame {
+            Frame::Call { start, remaining } => {
+                if remaining == 0 {
+                    let remainder = items[start..]
+                        .iter()
+                        .filter(|(_, count)| *count > 0)
+                        .cloned()
+                        .collect();
+                    values.push(LogicStream::unit(MultisetPartition {
+                        selected: Vec::new(),
+                        remainder,
+                        selected_count: 0,
+                    }));
+                } else if start >= items.len() || suffix_available[start] < remaining {
+                    values.push(LogicStream::empty());
+                } else {
+                    let max_take = items[start].1.min(remaining);
+                    frames.push(Frame::Resume {
+                        start,
+                        remaining,
+                        q: 0,
+                        max_take,
+                        accumulated: LogicStream::empty(),
+                    });
+                    frames.push(Frame::Call { start: start + 1, remaining });
                 }
-                p
-            })
-        } else {
-            // Taking q of this element: add to selected, put leftover in remainder
-            let leftover = count - q;
-            let elem_for_closure = elem_clone.clone();
-            sub.map(move |mut p| {
-                p.selected.push((elem_for_closure.clone(), q));
-                p.selected_count += q;
-                if leftover > 0 {
-                    p.remainder.push((elem_for_closure.clone(), leftover));
-                    p.remainder.sort_by(|a, b| a.1.cmp(&b.1));
-                }
-                p
-            })
-        };
+            },
+            Frame::Resume {
+                start,
+                remaining,
+                q,
+                max_take,
+                accumulated,
+            } => {
+                let sub = values
+                    .pop()
+                    .expect("multiset partition PDA continuation without a child value");
+                let (elem, count) = items[start].clone();
+                let merged = if q == 0 {
+                    sub.map(move |mut partition| {
+                        if count > 0 {
+                            partition.remainder.push((elem.clone(), count));
+                            partition.remainder.sort_by(|a, b| a.1.cmp(&b.1));
+                        }
+                        partition
+                    })
+                } else {
+                    let leftover = count - q;
+                    sub.map(move |mut partition| {
+                        partition.selected.push((elem.clone(), q));
+                        partition.selected_count += q;
+                        if leftover > 0 {
+                            partition.remainder.push((elem.clone(), leftover));
+                            partition.remainder.sort_by(|a, b| a.1.cmp(&b.1));
+                        }
+                        partition
+                    })
+                };
+                let accumulated = accumulated.interleave(merged);
 
-        accumulated = accumulated.interleave(merged);
+                if q < max_take {
+                    frames.push(Frame::Resume {
+                        start,
+                        remaining,
+                        q: q + 1,
+                        max_take,
+                        accumulated,
+                    });
+                    frames.push(Frame::Call {
+                        start: start + 1,
+                        remaining: remaining - (q + 1),
+                    });
+                } else {
+                    values.push(accumulated);
+                }
+            },
+        }
     }
 
-    accumulated
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("multiset partition PDA produced no stream")
 }
 
 /// Convenience function: eagerly collect up to `bound` multiset partitions.

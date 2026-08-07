@@ -160,33 +160,68 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> SymbolicTreeTransducer<A, B> {
 
     /// Bottom-up: state → output terms producible at this node in that state.
     fn run_outputs(&self, node: &SymTerm<A::Domain>) -> HashMap<usize, Vec<SymTerm<B::Domain>>> {
-        let child_maps: Vec<HashMap<usize, Vec<SymTerm<B::Domain>>>> =
-            node.children.iter().map(|c| self.run_outputs(c)).collect();
-        let mut result: HashMap<usize, Vec<SymTerm<B::Domain>>> = HashMap::new();
+        enum Task<'a, D> {
+            Visit(&'a SymTerm<D>),
+            Reduce(&'a SymTerm<D>),
+        }
+
+        let mut rules_by_constructor: HashMap<&str, Vec<&TransducerRule<A, B>>> = HashMap::new();
         for rule in &self.rules {
-            if rule.constructor != node.constructor
-                || rule.child_states.len() != node.children.len()
-            {
-                continue;
-            }
-            if !self.payload_matches(&rule.payload_guard, &node.payload) {
-                continue;
-            }
-            // Each child must be in its required state with some output(s).
-            let per_child: Option<Vec<&Vec<SymTerm<B::Domain>>>> = rule
-                .child_states
-                .iter()
-                .enumerate()
-                .map(|(i, &q)| child_maps[i].get(&q))
-                .collect();
-            let Some(per_child) = per_child else { continue };
-            for combo in cartesian_terms(&per_child) {
-                if let Some(out) = self.build_output(&rule.output, &node.payload, &combo) {
-                    result.entry(rule.target).or_default().push(out);
-                }
+            rules_by_constructor
+                .entry(rule.constructor.as_str())
+                .or_default()
+                .push(rule);
+        }
+
+        let mut tasks = vec![Task::Visit(node)];
+        let mut values: Vec<HashMap<usize, Vec<SymTerm<B::Domain>>>> = Vec::new();
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(current) => {
+                    tasks.push(Task::Reduce(current));
+                    tasks.extend(current.children.iter().rev().map(Task::Visit));
+                },
+                Task::Reduce(current) => {
+                    let child_count = current.children.len();
+                    let child_maps = values.split_off(values.len() - child_count);
+                    let mut result: HashMap<usize, Vec<SymTerm<B::Domain>>> = HashMap::new();
+
+                    for rule in rules_by_constructor
+                        .get(current.constructor.as_str())
+                        .into_iter()
+                        .flatten()
+                    {
+                        if rule.child_states.len() != child_count
+                            || !self.payload_matches(&rule.payload_guard, &current.payload)
+                        {
+                            continue;
+                        }
+                        // Each child must be in its required state with some output(s).
+                        let per_child: Option<Vec<&Vec<SymTerm<B::Domain>>>> = rule
+                            .child_states
+                            .iter()
+                            .enumerate()
+                            .map(|(index, &state)| child_maps[index].get(&state))
+                            .collect();
+                        let Some(per_child) = per_child else { continue };
+                        for combination in cartesian_terms(&per_child) {
+                            if let Some(output) =
+                                self.build_output(&rule.output, &current.payload, &combination)
+                            {
+                                result.entry(rule.target).or_default().push(output);
+                            }
+                        }
+                    }
+                    values.push(result);
+                },
             }
         }
-        result
+
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("symbolic tree transducer PDA produced no root value")
     }
 
     /// The set of output terms produced for `input`.

@@ -1031,9 +1031,30 @@ where
         // For functional SFTs with the same domain: check if the product
         // self × other can produce different outputs on any reachable pair.
         // Structural check: for each pair of states, check transition compatibility.
+        let mut self_outgoing: HashMap<usize, Vec<&SftTransition<A, B>>> = HashMap::new();
+        for transition in &self.transitions {
+            self_outgoing
+                .entry(transition.from)
+                .or_default()
+                .push(transition);
+        }
+        let mut other_outgoing: HashMap<usize, Vec<&SftTransition<A, B>>> = HashMap::new();
+        for transition in &other.transitions {
+            other_outgoing
+                .entry(transition.from)
+                .or_default()
+                .push(transition);
+        }
+        let mut visited = HashSet::new();
         for &i1 in &self.initial_states {
             for &i2 in &other.initial_states {
-                if !self.check_output_equivalence_from(other, i1, i2, &mut HashSet::new()) {
+                if !self.check_output_equivalence_from(
+                    i1,
+                    i2,
+                    &self_outgoing,
+                    &other_outgoing,
+                    &mut visited,
+                ) {
                     return Ok(false);
                 }
             }
@@ -1042,32 +1063,39 @@ where
         Ok(true)
     }
 
-    /// DFS check: from (q1, q2), do self and other produce the same outputs?
+    /// Worklist check: from `(q1, q2)`, do both SFTs produce the same outputs?
     fn check_output_equivalence_from(
         &self,
-        other: &Self,
         q1: usize,
         q2: usize,
+        self_outgoing: &HashMap<usize, Vec<&SftTransition<A, B>>>,
+        other_outgoing: &HashMap<usize, Vec<&SftTransition<A, B>>>,
         visited: &mut HashSet<(usize, usize)>,
     ) -> bool {
-        if !visited.insert((q1, q2)) {
-            return true; // Already checked this pair.
-        }
+        let mut worklist = vec![(q1, q2)];
 
-        let t1s: Vec<&SftTransition<A, B>> =
-            self.transitions.iter().filter(|t| t.from == q1).collect();
-        let t2s: Vec<&SftTransition<A, B>> =
-            other.transitions.iter().filter(|t| t.from == q2).collect();
+        while let Some((left_state, right_state)) = worklist.pop() {
+            if !visited.insert((left_state, right_state)) {
+                continue;
+            }
 
-        for t1 in &t1s {
-            for t2 in &t2s {
-                let overlap = self.input_algebra.and(&t1.guard, &t2.guard);
-                if self.input_algebra.is_satisfiable(&overlap) {
-                    if !output_structurally_equal(&t1.output, &t2.output) {
-                        return false;
-                    }
-                    if !self.check_output_equivalence_from(other, t1.to, t2.to, visited) {
-                        return false;
+            let left_transitions = self_outgoing
+                .get(&left_state)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let right_transitions = other_outgoing
+                .get(&right_state)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+
+            for left in left_transitions {
+                for right in right_transitions {
+                    let overlap = self.input_algebra.and(&left.guard, &right.guard);
+                    if self.input_algebra.is_satisfiable(&overlap) {
+                        if !output_structurally_equal(&left.output, &right.output) {
+                            return false;
+                        }
+                        worklist.push((left.to, right.to));
                     }
                 }
             }

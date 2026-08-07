@@ -866,30 +866,21 @@ pub fn evaluate_word<W: Semiring>(automaton: &WeightedAlternatingAutomaton<W>, w
         return W::zero();
     }
 
-    // Recursive evaluation with memoization.
-    // eval(state, position) = weight of the sub-run from `state` reading word[position..].
-    let word_len = word.len();
-
-    // Memo table: state x position -> Option<W>
-    let mut memo: Vec<Vec<Option<W>>> = vec![vec![None; word_len + 1]; n];
-
-    fn eval_rec<W: Semiring>(
-        automaton: &WeightedAlternatingAutomaton<W>,
-        state: usize,
-        pos: usize,
-        word: &[&str],
-        memo: &mut Vec<Vec<Option<W>>>,
-    ) -> W {
-        let n = automaton.num_states();
-        let word_len = word.len();
-
-        if let Some(cached) = &memo[state][pos] {
-            return *cached;
+    // The recurrence only reads position `pos + 1`, so evaluate the layered
+    // dependency graph bottom-up.  Two rolling state vectors are sufficient;
+    // retaining the old state-by-position memo table used O(|Q| |word|) space
+    // and its call stack used O(|word|) native frames.
+    let mut transitions_by_source: Vec<Vec<&WeightedAlternatingTransition<W>>> =
+        vec![Vec::new(); n];
+    for transition in &automaton.transitions {
+        if transition.from < n {
+            transitions_by_source[transition.from].push(transition);
         }
+    }
 
-        // At end of word: return terminal weight.
-        if pos == word_len {
-            let result = automaton
+    let mut suffix_weights: Vec<W> = (0..n)
+        .map(|state| {
+            automaton
                 .terminal_weights
                 .get(&state)
                 .copied()
@@ -900,72 +891,45 @@ pub fn evaluate_word<W: Semiring>(automaton: &WeightedAlternatingAutomaton<W>, w
                     } else {
                         W::zero()
                     }
-                });
-            memo[state][pos] = Some(result);
-            return result;
-        }
+                })
+        })
+        .collect();
+    let mut current_weights = vec![W::zero(); n];
 
-        let current_symbol = word[pos];
+    for &symbol in word.iter().rev() {
+        for state in 0..n {
+            let initial_acc = match automaton.states[state].branching {
+                BranchingMode::Existential => W::zero(),
+                BranchingMode::Universal => W::one(),
+            };
+            let mut acc = initial_acc;
+            let mut matched = false;
 
-        // Collect matching transitions.
-        let matching: Vec<&WeightedAlternatingTransition<W>> = automaton
-            .transitions
-            .iter()
-            .filter(|t| t.from == state && t.label.as_deref() == Some(current_symbol))
-            .collect();
-
-        if matching.is_empty() {
-            // No matching transition: check if this state can accept without consuming input.
-            // (No epsilon transitions in this simplified model.)
-            let result = W::zero();
-            memo[state][pos] = Some(result);
-            return result;
-        }
-
-        let result = match automaton.states[state].branching {
-            BranchingMode::Existential => {
-                // ⊕ over matching transitions.
-                let mut acc = W::zero();
-                for t in &matching {
-                    let mut prod = t.weight;
-                    for &succ in &t.successors {
-                        if succ < n {
-                            let succ_w = eval_rec(automaton, succ, pos + 1, word, memo);
-                            prod = prod.times(&succ_w);
-                        } else {
-                            prod = W::zero();
-                            break;
-                        }
-                    }
-                    acc = acc.plus(&prod);
+            for transition in &transitions_by_source[state] {
+                if transition.label.as_deref() != Some(symbol) {
+                    continue;
                 }
-                acc
-            },
-            BranchingMode::Universal => {
-                // ⊗ over matching transitions.
-                let mut acc = W::one();
-                for t in &matching {
-                    let mut prod = t.weight;
-                    for &succ in &t.successors {
-                        if succ < n {
-                            let succ_w = eval_rec(automaton, succ, pos + 1, word, memo);
-                            prod = prod.times(&succ_w);
-                        } else {
-                            prod = W::zero();
-                            break;
-                        }
+                matched = true;
+                let mut product = transition.weight;
+                for &successor in &transition.successors {
+                    if successor >= n {
+                        product = W::zero();
+                        break;
                     }
-                    acc = acc.times(&prod);
+                    product = product.times(&suffix_weights[successor]);
                 }
-                acc
-            },
-        };
+                acc = match automaton.states[state].branching {
+                    BranchingMode::Existential => acc.plus(&product),
+                    BranchingMode::Universal => acc.times(&product),
+                };
+            }
 
-        memo[state][pos] = Some(result);
-        result
+            current_weights[state] = if matched { acc } else { W::zero() };
+        }
+        std::mem::swap(&mut current_weights, &mut suffix_weights);
     }
 
-    eval_rec(automaton, initial, 0, word, &mut memo)
+    suffix_weights[initial]
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
