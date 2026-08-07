@@ -83,6 +83,8 @@ use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::types::TypeExpr;
 use std::collections::HashSet;
 
+use crate::gen::term_param_walk::TermParamLeaves;
+
 /// One non-scope variant field contributed by a capture-bearing rule, in
 /// syntax-pattern encounter order.
 #[derive(Clone)]
@@ -264,12 +266,9 @@ fn push_declaration_order<'a>(
     optional: bool,
     out: &mut Vec<FieldSlot<'a>>,
 ) {
-    let mut work: Vec<(&TermParam, bool)> = term_context
-        .iter()
-        .rev()
-        .map(|param| (param, optional))
-        .collect();
-    while let Some((param, optional)) = work.pop() {
+    for leaf in TermParamLeaves::new(term_context, optional) {
+        let param = leaf.param;
+        let optional = leaf.is_optional;
         match param {
             TermParam::Simple { name, .. } => out.push(FieldSlot {
                 name: name.to_string(),
@@ -287,9 +286,7 @@ fn push_declaration_order<'a>(
                     source: FieldSlotSource::Param(param),
                     optional,
                 }),
-            TermParam::Optional { params } => {
-                work.extend(params.iter().rev().map(|param| (param, true)));
-            },
+            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
         }
     }
 }
@@ -350,21 +347,14 @@ pub(crate) fn capture_layout<'a>(
 /// the machine stack.
 /// Returns the parameter and whether it was declared INSIDE an `#opt(…)` group.
 fn find_param<'a>(term_context: &'a [TermParam], name: &str) -> Option<(&'a TermParam, bool)> {
-    let mut work: Vec<(&TermParam, bool)> = term_context
-        .iter()
-        .rev()
-        .map(|param| (param, false))
-        .collect();
-    while let Some((param, optional)) = work.pop() {
+    for leaf in TermParamLeaves::new(term_context, false) {
+        let param = leaf.param;
         match param {
             TermParam::Simple { name: candidate, .. }
             | TermParam::GuardBody { name: candidate }
                 if candidate == name =>
             {
-                return Some((param, optional));
-            },
-            TermParam::Optional { params } => {
-                work.extend(params.iter().rev().map(|param| (param, true)));
+                return Some((param, leaf.is_optional));
             },
             _ => {},
         }

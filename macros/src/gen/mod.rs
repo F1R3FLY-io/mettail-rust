@@ -30,6 +30,7 @@ pub mod runtime;
 pub mod syntax;
 pub mod term_gen;
 pub mod term_ops;
+pub(crate) mod term_param_walk;
 pub mod test_gen;
 pub mod types;
 

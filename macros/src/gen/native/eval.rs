@@ -5,6 +5,7 @@ use crate::gen::capture::{capture_layout, CaptureFieldKind};
 use crate::gen::native::lossless_coercion::build_lossless_coercion;
 use crate::gen::native::{native_type_to_string, NativeType};
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
+use crate::gen::term_param_walk::TermParamLeaves;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
@@ -138,15 +139,12 @@ fn collect_native_dependencies(
     native_index: &HashMap<String, usize>,
     out: &mut Vec<usize>,
 ) {
-    for param in params {
-        match param {
+    for leaf in TermParamLeaves::new(params, false) {
+        match leaf.param {
             TermParam::Simple { ty: TypeExpr::Base(target), .. } => {
                 if let Some(&index) = native_index.get(&target.to_string()) {
                     out.push(index);
                 }
-            },
-            TermParam::Optional { params } => {
-                collect_native_dependencies(params, native_index, out);
             },
             _ => {},
         }
@@ -230,8 +228,8 @@ fn classify_hol_rule_for_pda(rule: &GrammarRule) -> Option<Vec<PdaParam<'_>>> {
     classify_term_params_for_pda(ctx)
 }
 
-/// The recursive body of [`classify_hol_rule_for_pda`], hoisted so unit
-/// tests can exercise the classification over a bare `&[TermParam]`.
+/// The leaf-classification body of [`classify_hol_rule_for_pda`], hoisted so
+/// unit tests can exercise the classification over a bare `&[TermParam]`.
 ///
 /// Opt-Group: a `TermParam::Optional` with inner Simple/Base params is
 /// PDA-compatible — each inner becomes a [`PdaParam::Term`] with
@@ -239,37 +237,26 @@ fn classify_hol_rule_for_pda(rule: &GrammarRule) -> Option<Vec<PdaParam<'_>>> {
 /// Optional-nested) becomes [`PdaParam::Guard`]. Inner non-Simple/non-Base
 /// params abort classification.
 fn classify_term_params_for_pda(params: &[TermParam]) -> Option<Vec<PdaParam<'_>>> {
-    fn collect<'a>(
-        params: &'a [TermParam],
-        in_opt: bool,
-        out: &mut Vec<PdaParam<'a>>,
-    ) -> Option<()> {
-        for p in params {
-            match p {
-                TermParam::Simple { name, ty } => {
-                    let base = match ty {
-                        TypeExpr::Base(id) => id,
-                        _ => return None,
-                    };
-                    out.push(PdaParam::Term {
-                        name: name.clone(),
-                        ty: base,
-                        is_optional: in_opt,
-                    });
-                },
-                TermParam::GuardBody { name } => {
-                    out.push(PdaParam::Guard { name: name.clone() });
-                },
-                TermParam::Optional { params: inner } => {
-                    collect(inner, true, out)?;
-                },
-                _ => return None,
-            }
-        }
-        Some(())
-    }
     let mut out = Vec::with_capacity(params.len());
-    collect(params, false, &mut out)?;
+    for leaf in TermParamLeaves::new(params, false) {
+        match leaf.param {
+            TermParam::Simple { name, ty } => {
+                let TypeExpr::Base(base) = ty else {
+                    return None;
+                };
+                out.push(PdaParam::Term {
+                    name: name.clone(),
+                    ty: base,
+                    is_optional: leaf.is_optional,
+                });
+            },
+            TermParam::GuardBody { name } => {
+                out.push(PdaParam::Guard { name: name.clone() });
+            },
+            TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => return None,
+            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
+        }
+    }
     Some(out)
 }
 
@@ -1437,6 +1424,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 }
 
 #[cfg(test)]
+#[path = "../../../tests/support/native_eval_recursive_oracle.rs"]
+mod recursive_oracle;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use quote::format_ident;
@@ -1446,6 +1437,89 @@ mod tests {
             name: format_ident!("{}", name),
             ty: TypeExpr::Base(format_ident!("{}", cat)),
         }
+    }
+
+    fn pda_param_shapes(params: &[PdaParam<'_>]) -> Vec<(String, String, bool)> {
+        params
+            .iter()
+            .map(|param| match param {
+                PdaParam::Term { name, ty, is_optional } => {
+                    (format!("term:{name}"), ty.to_string(), *is_optional)
+                },
+                PdaParam::Guard { name } => (format!("guard:{name}"), String::new(), false),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn iterative_term_param_consumers_match_recursive_oracles() {
+        let params = vec![
+            simple("head", "Int"),
+            TermParam::Optional {
+                params: vec![
+                    TermParam::GuardBody { name: format_ident!("guard") },
+                    TermParam::Optional { params: vec![simple("nested", "Bool")] },
+                ],
+            },
+            simple("external", "Proc"),
+        ];
+        let native_index = HashMap::from([("Int".to_string(), 4), ("Bool".to_string(), 7)]);
+
+        let mut actual_dependencies = Vec::new();
+        collect_native_dependencies(&params, &native_index, &mut actual_dependencies);
+        let mut expected_dependencies = Vec::new();
+        recursive_oracle::collect_native_dependencies(
+            &params,
+            &native_index,
+            &mut expected_dependencies,
+        );
+        assert_eq!(actual_dependencies, expected_dependencies);
+        assert_eq!(actual_dependencies, vec![4, 7]);
+
+        let actual = classify_term_params_for_pda(&params).expect("fixture is PDA-compatible");
+        let expected = recursive_oracle::classify_term_params_for_pda(&params)
+            .expect("recursive fixture is PDA-compatible");
+        assert_eq!(pda_param_shapes(&actual), pda_param_shapes(&expected));
+
+        let unsupported = vec![TermParam::MultiAbstraction {
+            binder: format_ident!("xs"),
+            body: format_ident!("body"),
+            ty: TypeExpr::Base(format_ident!("Proc")),
+        }];
+        assert_eq!(
+            classify_term_params_for_pda(&unsupported).is_some(),
+            recursive_oracle::classify_term_params_for_pda(&unsupported).is_some(),
+        );
+    }
+
+    #[test]
+    fn native_term_param_consumers_handle_20k_nesting_on_a_256k_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut nested = simple("leaf", "Int");
+                for _ in 0..20_000 {
+                    nested = TermParam::Optional { params: vec![nested] };
+                }
+                let params = vec![nested];
+                let native_index = HashMap::from([("Int".to_string(), 11)]);
+
+                let mut dependencies = Vec::new();
+                collect_native_dependencies(&params, &native_index, &mut dependencies);
+                assert_eq!(dependencies, vec![11]);
+
+                let classified =
+                    classify_term_params_for_pda(&params).expect("deep leaf remains compatible");
+                assert_eq!(classified.len(), 1);
+                assert!(matches!(
+                    &classified[0],
+                    PdaParam::Term { name, ty, is_optional: true }
+                        if name == "leaf" && *ty == "Int"
+                ));
+            })
+            .expect("spawn low-stack native term-param gate")
+            .join()
+            .expect("native term-param consumers must not use nesting-proportional call stack");
     }
 
     #[test]
