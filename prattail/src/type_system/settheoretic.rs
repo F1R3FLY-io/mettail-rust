@@ -37,6 +37,10 @@ pub enum SetType {
 #[path = "settheoretic/set_type_lifecycle.rs"]
 mod set_type_lifecycle;
 
+#[cfg(test)]
+#[path = "../../tests/support/settheoretic_complement_recursive_oracle.rs"]
+mod complement_recursive_oracle;
+
 /// Type environment for the set-theoretic type system.
 #[derive(Clone, Debug)]
 pub struct SetTypeEnv {
@@ -93,8 +97,7 @@ impl SetTheoreticTypeSystem {
         &self,
         ty: &SetType,
     ) -> crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight> {
-        use crate::automata::semiring::BooleanWeight;
-        use crate::tree_automaton::{TreeAutomaton, TreeTransition};
+        use crate::tree_automaton::TreeAutomaton;
 
         enum Task<'ty> {
             Visit(&'ty SetType),
@@ -133,19 +136,7 @@ impl SetTheoreticTypeSystem {
                         .cloned()
                         .unwrap_or_else(TreeAutomaton::new),
                 ),
-                Task::Visit(SetType::Top) => {
-                    let mut aut = TreeAutomaton::new();
-                    let q = aut.add_state(true);
-                    for (symbol, &arity) in &self.constructors {
-                        aut.add_transition(TreeTransition {
-                            symbol: symbol.clone(),
-                            child_states: vec![q; arity],
-                            target_state: q,
-                            weight: BooleanWeight(true),
-                        });
-                    }
-                    values.push(aut);
-                },
+                Task::Visit(SetType::Top) => values.push(self.universal_automaton()),
                 Task::Visit(SetType::Bottom) => values.push(TreeAutomaton::new()),
                 Task::Union | Task::Intersection => {
                     let right = values
@@ -172,6 +163,25 @@ impl SetTheoreticTypeSystem {
         values
             .pop()
             .expect("set-type automaton PDA produced no value")
+    }
+
+    fn universal_automaton(
+        &self,
+    ) -> crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight> {
+        use crate::automata::semiring::BooleanWeight;
+        use crate::tree_automaton::{TreeAutomaton, TreeTransition};
+
+        let mut automaton = TreeAutomaton::new();
+        let state = automaton.add_state(true);
+        for (symbol, &arity) in &self.constructors {
+            automaton.add_transition(TreeTransition {
+                symbol: symbol.clone(),
+                child_states: vec![state; arity],
+                target_state: state,
+                weight: BooleanWeight(true),
+            });
+        }
+        automaton
     }
 
     /// Product construction for tree automata intersection.
@@ -315,7 +325,7 @@ impl SetTheoreticTypeSystem {
 
         // Special case: empty automaton → universal automaton
         if a.num_states() == 0 {
-            return self.type_to_automaton(&SetType::Top);
+            return self.universal_automaton();
         }
 
         let mut result = TreeAutomaton::new();
