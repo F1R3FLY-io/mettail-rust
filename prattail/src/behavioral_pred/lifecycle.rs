@@ -305,10 +305,6 @@ impl Ord for BehavioralPred {
     fn cmp(&self, other: &Self) -> Ordering {
         let mut work = vec![(self, other)];
         while let Some((left, right)) = work.pop() {
-            let rank = variant_rank(left).cmp(&variant_rank(right));
-            if rank != Ordering::Equal {
-                return rank;
-            }
             let leaf_order = match (left, right) {
                 (
                     BehavioralPred::RelationQuery {
@@ -378,7 +374,7 @@ impl Ord for BehavioralPred {
                     Ordering::Equal
                 },
                 (BehavioralPred::Top, BehavioralPred::Top) => Ordering::Equal,
-                _ => unreachable!("equal behavioral variant ranks must have equal variants"),
+                _ => return variant_rank(left).cmp(&variant_rank(right)),
             };
             if leaf_order != Ordering::Equal {
                 return leaf_order;
@@ -761,23 +757,6 @@ enum LowerTask<'pred> {
 }
 
 pub(super) fn to_behavioral_formula(root: &BehavioralPred) -> Option<BehavioralFormula> {
-    let mut scan = vec![root];
-    while let Some(pred) = scan.pop() {
-        match pred {
-            BehavioralPred::AcMatch { .. } => return None,
-            BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
-                scan.push(body);
-            },
-            BehavioralPred::And(left, right)
-            | BehavioralPred::Or(left, right)
-            | BehavioralPred::Implies(left, right) => {
-                scan.push(right);
-                scan.push(left);
-            },
-            BehavioralPred::RelationQuery { .. } | BehavioralPred::Top => {},
-        }
-    }
-
     let mut tasks = vec![LowerTask::Visit(root)];
     let mut values = Vec::new();
     while let Some(task) = tasks.pop() {
@@ -818,9 +797,7 @@ pub(super) fn to_behavioral_formula(root: &BehavioralPred) -> Option<BehavioralF
             LowerTask::Visit(BehavioralPred::Implies(left, right)) => {
                 push_lower_binary(&mut tasks, &values, LowerTask::Implies, left, right);
             },
-            LowerTask::Visit(BehavioralPred::AcMatch { .. }) => {
-                unreachable!("AcMatch was rejected by the lowering pre-scan")
-            },
+            LowerTask::Visit(BehavioralPred::AcMatch { .. }) => return None,
             LowerTask::Quantified { quantifier, var, domain, value_base } => {
                 let body = values
                     .pop()

@@ -9,9 +9,13 @@ impl Clone for SignaturePred {
     fn clone(&self) -> Self {
         enum Task<'pred> {
             Visit(&'pred SignaturePred),
+            Binary(Binary),
+            Not,
+        }
+
+        enum Binary {
             And,
             Or,
-            Not,
         }
 
         let mut tasks = vec![Task::Visit(self)];
@@ -24,12 +28,12 @@ impl Clone for SignaturePred {
                     values.push(SignaturePred::HasBit(*bit));
                 },
                 Task::Visit(SignaturePred::And(left, right)) => {
-                    tasks.push(Task::And);
+                    tasks.push(Task::Binary(Binary::And));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SignaturePred::Or(left, right)) => {
-                    tasks.push(Task::Or);
+                    tasks.push(Task::Binary(Binary::Or));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -37,17 +41,16 @@ impl Clone for SignaturePred {
                     tasks.push(Task::Not);
                     tasks.push(Task::Visit(body));
                 },
-                Task::And | Task::Or => {
+                Task::Binary(binary) => {
                     let right = values
                         .pop()
                         .expect("signature predicate clone lost its right child");
                     let left = values
                         .pop()
                         .expect("signature predicate clone lost its left child");
-                    values.push(match task {
-                        Task::And => SignaturePred::And(Box::new(left), Box::new(right)),
-                        Task::Or => SignaturePred::Or(Box::new(left), Box::new(right)),
-                        Task::Visit(_) | Task::Not => unreachable!(),
+                    values.push(match binary {
+                        Binary::And => SignaturePred::And(Box::new(left), Box::new(right)),
+                        Binary::Or => SignaturePred::Or(Box::new(left), Box::new(right)),
                     });
                 },
                 Task::Not => {

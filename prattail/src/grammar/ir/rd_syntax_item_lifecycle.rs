@@ -12,7 +12,8 @@ impl Clone for RDSyntaxItem {
                 separator: String,
                 kind: super::CollectionKind,
             },
-            Map {
+            Sequence {
+                kind: SequenceKind,
                 child_count: usize,
             },
             Zip {
@@ -21,9 +22,11 @@ impl Clone for RDSyntaxItem {
                 left_category: String,
                 right_category: String,
             },
-            Optional {
-                child_count: usize,
-            },
+        }
+
+        enum SequenceKind {
+            Map,
+            Optional,
         }
 
         let mut tasks = vec![Task::Visit(self)];
@@ -86,7 +89,10 @@ impl Clone for RDSyntaxItem {
                     tasks.push(Task::Visit(body));
                 },
                 Task::Visit(RDSyntaxItem::Map { body_items }) => {
-                    tasks.push(Task::Map { child_count: body_items.len() });
+                    tasks.push(Task::Sequence {
+                        kind: SequenceKind::Map,
+                        child_count: body_items.len(),
+                    });
                     for child in body_items.iter().rev() {
                         tasks.push(Task::Visit(child));
                     }
@@ -113,7 +119,10 @@ impl Clone for RDSyntaxItem {
                     });
                 },
                 Task::Visit(RDSyntaxItem::Optional { inner }) => {
-                    tasks.push(Task::Optional { child_count: inner.len() });
+                    tasks.push(Task::Sequence {
+                        kind: SequenceKind::Optional,
+                        child_count: inner.len(),
+                    });
                     for child in inner.iter().rev() {
                         tasks.push(Task::Visit(child));
                     }
@@ -127,16 +136,15 @@ impl Clone for RDSyntaxItem {
                         .expect("RD syntax-item clone PDA lost its separated body");
                     values.push(RDSyntaxItem::Sep { body: Box::new(body), separator, kind });
                 },
-                Task::Map { child_count } | Task::Optional { child_count } => {
+                Task::Sequence { kind, child_count } => {
                     let first = values
                         .len()
                         .checked_sub(child_count)
                         .expect("RD syntax-item clone PDA lost sequence children");
                     let children = values.split_off(first);
-                    values.push(match task {
-                        Task::Map { .. } => RDSyntaxItem::Map { body_items: children },
-                        Task::Optional { .. } => RDSyntaxItem::Optional { inner: children },
-                        _ => unreachable!(),
+                    values.push(match kind {
+                        SequenceKind::Map => RDSyntaxItem::Map { body_items: children },
+                        SequenceKind::Optional => RDSyntaxItem::Optional { inner: children },
                     });
                 },
                 Task::Zip {

@@ -9,9 +9,13 @@ impl Clone for SetType {
     fn clone(&self) -> Self {
         enum Task<'ty> {
             Visit(&'ty SetType),
+            Binary(Binary),
+            Negation,
+        }
+
+        enum Binary {
             Union,
             Intersection,
-            Negation,
             Arrow,
         }
 
@@ -21,12 +25,12 @@ impl Clone for SetType {
             match task {
                 Task::Visit(SetType::Atom(name)) => values.push(SetType::Atom(name.clone())),
                 Task::Visit(SetType::Union(left, right)) => {
-                    tasks.push(Task::Union);
+                    tasks.push(Task::Binary(Binary::Union));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SetType::Intersection(left, right)) => {
-                    tasks.push(Task::Intersection);
+                    tasks.push(Task::Binary(Binary::Intersection));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -35,26 +39,25 @@ impl Clone for SetType {
                     tasks.push(Task::Visit(inner));
                 },
                 Task::Visit(SetType::Arrow(domain, codomain)) => {
-                    tasks.push(Task::Arrow);
+                    tasks.push(Task::Binary(Binary::Arrow));
                     tasks.push(Task::Visit(codomain));
                     tasks.push(Task::Visit(domain));
                 },
                 Task::Visit(SetType::Top) => values.push(SetType::Top),
                 Task::Visit(SetType::Bottom) => values.push(SetType::Bottom),
-                Task::Union | Task::Intersection | Task::Arrow => {
+                Task::Binary(binary) => {
                     let right = values
                         .pop()
                         .expect("set-type clone PDA lost its right child");
                     let left = values
                         .pop()
                         .expect("set-type clone PDA lost its left child");
-                    values.push(match task {
-                        Task::Union => SetType::Union(Box::new(left), Box::new(right)),
-                        Task::Intersection => {
+                    values.push(match binary {
+                        Binary::Union => SetType::Union(Box::new(left), Box::new(right)),
+                        Binary::Intersection => {
                             SetType::Intersection(Box::new(left), Box::new(right))
                         },
-                        Task::Arrow => SetType::Arrow(Box::new(left), Box::new(right)),
-                        Task::Visit(_) | Task::Negation => unreachable!(),
+                        Binary::Arrow => SetType::Arrow(Box::new(left), Box::new(right)),
                     });
                 },
                 Task::Negation => {

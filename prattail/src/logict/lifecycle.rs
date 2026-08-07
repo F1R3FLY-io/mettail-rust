@@ -135,42 +135,41 @@ impl fmt::Debug for QuantifiedFormula {
                 Task::Visit(QuantifiedFormula::Atom { relation, args }) => {
                     write!(f, "Atom {{ relation: {relation:?}, args: {args:?} }}")?;
                 },
-                Task::Visit(
-                    formula @ (QuantifiedFormula::And(left, right)
-                    | QuantifiedFormula::Or(left, right)
-                    | QuantifiedFormula::Implies(left, right)),
-                ) => {
+                Task::Visit(QuantifiedFormula::And(left, right)) => {
                     tasks.push(Task::Text(")"));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Text(", "));
                     tasks.push(Task::Visit(left));
-                    f.write_str(match formula {
-                        QuantifiedFormula::And(..) => "And(",
-                        QuantifiedFormula::Or(..) => "Or(",
-                        QuantifiedFormula::Implies(..) => "Implies(",
-                        _ => unreachable!("binary pattern contains only binary formulae"),
-                    })?;
+                    f.write_str("And(")?;
+                },
+                Task::Visit(QuantifiedFormula::Or(left, right)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::Visit(left));
+                    f.write_str("Or(")?;
+                },
+                Task::Visit(QuantifiedFormula::Implies(left, right)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::Visit(left));
+                    f.write_str("Implies(")?;
                 },
                 Task::Visit(QuantifiedFormula::Not(inner)) => {
                     tasks.push(Task::Text(")"));
                     tasks.push(Task::Visit(inner));
                     f.write_str("Not(")?;
                 },
-                Task::Visit(
-                    formula @ (QuantifiedFormula::ForAll { var, domain, body }
-                    | QuantifiedFormula::Exists { var, domain, body }),
-                ) => {
+                Task::Visit(QuantifiedFormula::ForAll { var, domain, body }) => {
                     tasks.push(Task::Text(" }"));
                     tasks.push(Task::Visit(body));
-                    write!(
-                        f,
-                        "{} {{ var: {var:?}, domain: {domain:?}, body: ",
-                        match formula {
-                            QuantifiedFormula::ForAll { .. } => "ForAll",
-                            QuantifiedFormula::Exists { .. } => "Exists",
-                            _ => unreachable!("quantifier pattern contains only quantifiers"),
-                        }
-                    )?;
+                    write!(f, "ForAll {{ var: {var:?}, domain: {domain:?}, body: ")?;
+                },
+                Task::Visit(QuantifiedFormula::Exists { var, domain, body }) => {
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Visit(body));
+                    write!(f, "Exists {{ var: {var:?}, domain: {domain:?}, body: ")?;
                 },
             }
         }
@@ -336,9 +335,13 @@ impl<T: ConstraintTheory> Clone for TheoryPred<T> {
     fn clone(&self) -> Self {
         enum Task<'predicate, T: ConstraintTheory> {
             Visit(&'predicate TheoryPred<T>),
+            Binary(Binary),
+            Not,
+        }
+
+        enum Binary {
             And,
             Or,
-            Not,
         }
 
         let mut tasks = vec![Task::Visit(self)];
@@ -351,12 +354,12 @@ impl<T: ConstraintTheory> Clone for TheoryPred<T> {
                     values.push(TheoryPred::Atom(constraint.clone()));
                 },
                 Task::Visit(TheoryPred::And(left, right)) => {
-                    tasks.push(Task::And);
+                    tasks.push(Task::Binary(Binary::And));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(TheoryPred::Or(left, right)) => {
-                    tasks.push(Task::Or);
+                    tasks.push(Task::Binary(Binary::Or));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -364,17 +367,16 @@ impl<T: ConstraintTheory> Clone for TheoryPred<T> {
                     tasks.push(Task::Not);
                     tasks.push(Task::Visit(inner));
                 },
-                Task::And | Task::Or => {
+                Task::Binary(binary) => {
                     let right = values
                         .pop()
                         .expect("theory predicate clone PDA lost binary RHS");
                     let left = values
                         .pop()
                         .expect("theory predicate clone PDA lost binary LHS");
-                    values.push(match task {
-                        Task::And => TheoryPred::And(Box::new(left), Box::new(right)),
-                        Task::Or => TheoryPred::Or(Box::new(left), Box::new(right)),
-                        _ => unreachable!("binary reducer receives only And or Or"),
+                    values.push(match binary {
+                        Binary::And => TheoryPred::And(Box::new(left), Box::new(right)),
+                        Binary::Or => TheoryPred::Or(Box::new(left), Box::new(right)),
                     });
                 },
                 Task::Not => {

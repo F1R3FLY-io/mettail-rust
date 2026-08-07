@@ -9,9 +9,13 @@ impl<S: TypeSystem> Clone for TypePred<S> {
     fn clone(&self) -> Self {
         enum Task<'pred, S: TypeSystem> {
             Visit(&'pred TypePred<S>),
+            Binary(Binary),
+            Not,
+        }
+
+        enum Binary {
             And,
             Or,
-            Not,
         }
 
         let mut tasks = vec![Task::Visit(self)];
@@ -27,12 +31,12 @@ impl<S: TypeSystem> Clone for TypePred<S> {
                     values.push(TypePred::Subtype { sub: sub.clone(), sup: sup.clone() });
                 },
                 Task::Visit(TypePred::And(left, right)) => {
-                    tasks.push(Task::And);
+                    tasks.push(Task::Binary(Binary::And));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(TypePred::Or(left, right)) => {
-                    tasks.push(Task::Or);
+                    tasks.push(Task::Binary(Binary::Or));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -40,17 +44,16 @@ impl<S: TypeSystem> Clone for TypePred<S> {
                     tasks.push(Task::Not);
                     tasks.push(Task::Visit(inner));
                 },
-                Task::And | Task::Or => {
+                Task::Binary(binary) => {
                     let right = values
                         .pop()
                         .expect("type-predicate clone PDA lost its right child");
                     let left = values
                         .pop()
                         .expect("type-predicate clone PDA lost its left child");
-                    values.push(match task {
-                        Task::And => TypePred::And(Box::new(left), Box::new(right)),
-                        Task::Or => TypePred::Or(Box::new(left), Box::new(right)),
-                        Task::Visit(_) | Task::Not => unreachable!(),
+                    values.push(match binary {
+                        Binary::And => TypePred::And(Box::new(left), Box::new(right)),
+                        Binary::Or => TypePred::Or(Box::new(left), Box::new(right)),
                     });
                 },
                 Task::Not => {

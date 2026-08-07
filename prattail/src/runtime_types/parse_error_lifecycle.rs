@@ -159,68 +159,74 @@ impl fmt::Display for ParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut recoveries = Vec::new();
         let mut leaf = self;
-        while let ParseError::RecoveryApplied { original_error, repair_description, .. } = leaf {
-            recoveries.push(repair_description.as_str());
-            leaf = original_error;
+        loop {
+            match leaf {
+                ParseError::RecoveryApplied { original_error, repair_description, .. } => {
+                    recoveries.push(repair_description.as_str());
+                    leaf = original_error;
+                },
+                ParseError::UnexpectedToken { expected, found, range, hint } => {
+                    write!(
+                        formatter,
+                        "{}:{}: expected {}, found {}",
+                        range.start.line + 1,
+                        range.start.column + 1,
+                        expected,
+                        found
+                    )?;
+                    display_hint(hint, formatter)?;
+                    break;
+                },
+                ParseError::UnexpectedEof { expected, range, hint } => {
+                    write!(
+                        formatter,
+                        "{}:{}: unexpected end of input, expected {}",
+                        range.start.line + 1,
+                        range.start.column + 1,
+                        expected
+                    )?;
+                    display_hint(hint, formatter)?;
+                    break;
+                },
+                ParseError::LexError { message, position } => {
+                    write!(
+                        formatter,
+                        "{}:{}: {}",
+                        position.line + 1,
+                        position.column + 1,
+                        message
+                    )?;
+                    break;
+                },
+                ParseError::TrailingTokens { found, range, hint } => {
+                    write!(
+                        formatter,
+                        "{}:{}: unexpected {} after parsing",
+                        range.start.line + 1,
+                        range.start.column + 1,
+                        found
+                    )?;
+                    display_hint(hint, formatter)?;
+                    break;
+                },
+                ParseError::AmbiguityBudget { budget, actual, range, hint } => {
+                    write!(
+                        formatter,
+                        "{}:{}: ambiguity budget {} exceeded (actual {})",
+                        range.start.line + 1,
+                        range.start.column + 1,
+                        budget,
+                        actual
+                    )?;
+                    display_hint(hint, formatter)?;
+                    break;
+                },
+            }
         }
-        display_leaf(leaf, formatter)?;
         for description in recoveries.into_iter().rev() {
             write!(formatter, " (recovered: {description})")?;
         }
         Ok(())
-    }
-}
-
-fn display_leaf(error: &ParseError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match error {
-        ParseError::UnexpectedToken { expected, found, range, hint } => {
-            write!(
-                formatter,
-                "{}:{}: expected {}, found {}",
-                range.start.line + 1,
-                range.start.column + 1,
-                expected,
-                found
-            )?;
-            display_hint(hint, formatter)
-        },
-        ParseError::UnexpectedEof { expected, range, hint } => {
-            write!(
-                formatter,
-                "{}:{}: unexpected end of input, expected {}",
-                range.start.line + 1,
-                range.start.column + 1,
-                expected
-            )?;
-            display_hint(hint, formatter)
-        },
-        ParseError::LexError { message, position } => {
-            write!(formatter, "{}:{}: {}", position.line + 1, position.column + 1, message)
-        },
-        ParseError::TrailingTokens { found, range, hint } => {
-            write!(
-                formatter,
-                "{}:{}: unexpected {} after parsing",
-                range.start.line + 1,
-                range.start.column + 1,
-                found
-            )?;
-            display_hint(hint, formatter)
-        },
-        ParseError::AmbiguityBudget { budget, actual, range, hint } => {
-            write!(
-                formatter,
-                "{}:{}: ambiguity budget {} exceeded (actual {})",
-                range.start.line + 1,
-                range.start.column + 1,
-                budget,
-                actual
-            )?;
-            display_hint(hint, formatter)
-        },
-        ParseError::RecoveryApplied { .. } => {
-            unreachable!("display_leaf received a recovery wrapper")
-        },
     }
 }
 

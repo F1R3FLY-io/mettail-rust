@@ -130,30 +130,25 @@ impl fmt::Display for RepairAction {
                         }
                     }
                 },
-                Task::Visit(action) => display_leaf(action, formatter)?,
+                Task::Visit(RepairAction::SkipToSync { skip_count, sync_token }) => {
+                    write!(formatter, "skip {skip_count} tokens to sync token {sync_token}")?;
+                },
+                Task::Visit(RepairAction::InsertToken { token }) => {
+                    write!(formatter, "insert token {token}")?;
+                },
+                Task::Visit(RepairAction::DeleteToken) => formatter.write_str("delete token")?,
+                Task::Visit(RepairAction::SubstituteToken { replacement }) => {
+                    write!(formatter, "substitute with token {replacement}")?;
+                },
+                Task::Visit(RepairAction::SwapTokens { pos_a, pos_b }) => {
+                    write!(formatter, "swap tokens at positions {pos_a} and {pos_b}")?;
+                },
+                Task::Visit(RepairAction::CategorySwitch { from_category, to_category }) => {
+                    write!(formatter, "switch {from_category} → {to_category}")?;
+                },
             }
         }
         Ok(())
-    }
-}
-
-fn display_leaf(action: &RepairAction, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match action {
-        RepairAction::SkipToSync { skip_count, sync_token } => {
-            write!(formatter, "skip {skip_count} tokens to sync token {sync_token}")
-        },
-        RepairAction::InsertToken { token } => write!(formatter, "insert token {token}"),
-        RepairAction::DeleteToken => formatter.write_str("delete token"),
-        RepairAction::SubstituteToken { replacement } => {
-            write!(formatter, "substitute with token {replacement}")
-        },
-        RepairAction::SwapTokens { pos_a, pos_b } => {
-            write!(formatter, "swap tokens at positions {pos_a} and {pos_b}")
-        },
-        RepairAction::CategorySwitch { from_category, to_category } => {
-            write!(formatter, "switch {from_category} → {to_category}")
-        },
-        RepairAction::Composite { .. } => unreachable!("display_leaf received a composite"),
     }
 }
 

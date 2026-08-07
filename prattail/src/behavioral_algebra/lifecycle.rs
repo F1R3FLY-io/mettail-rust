@@ -9,17 +9,18 @@ impl Clone for QDomain {
     fn clone(&self) -> Self {
         let mut limits = Vec::new();
         let mut cursor = self;
-        while let QDomain::Bounded(inner, limit) = cursor {
-            limits.push(*limit);
-            cursor = inner;
-        }
-        let mut cloned = match cursor {
-            QDomain::Values(values) => QDomain::Values(values.clone()),
-            QDomain::RelationColumn(relation, column) => {
-                QDomain::RelationColumn(relation.clone(), *column)
-            },
-            QDomain::Active => QDomain::Active,
-            QDomain::Bounded(..) => unreachable!("QDomain spine scan stopped on a wrapper"),
+        let mut cloned = loop {
+            match cursor {
+                QDomain::Bounded(inner, limit) => {
+                    limits.push(*limit);
+                    cursor = inner;
+                },
+                QDomain::Values(values) => break QDomain::Values(values.clone()),
+                QDomain::RelationColumn(relation, column) => {
+                    break QDomain::RelationColumn(relation.clone(), *column);
+                },
+                QDomain::Active => break QDomain::Active,
+            }
         };
         for limit in limits.into_iter().rev() {
             cloned = QDomain::Bounded(Box::new(cloned), limit);

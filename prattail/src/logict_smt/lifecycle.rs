@@ -9,9 +9,13 @@ impl Clone for SmtTerm {
     fn clone(&self) -> Self {
         enum Task<'term> {
             Visit(&'term SmtTerm),
+            Binary(Binary),
+            Scale(i64),
+        }
+
+        enum Binary {
             Add,
             Sub,
-            Scale(i64),
         }
 
         let mut tasks = vec![Task::Visit(self)];
@@ -27,12 +31,12 @@ impl Clone for SmtTerm {
                     values.push(SmtTerm::BvVar(name.clone(), *width));
                 },
                 Task::Visit(SmtTerm::Add(left, right)) => {
-                    tasks.push(Task::Add);
+                    tasks.push(Task::Binary(Binary::Add));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SmtTerm::Sub(left, right)) => {
-                    tasks.push(Task::Sub);
+                    tasks.push(Task::Binary(Binary::Sub));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -40,13 +44,12 @@ impl Clone for SmtTerm {
                     tasks.push(Task::Scale(*coefficient));
                     tasks.push(Task::Visit(term));
                 },
-                Task::Add | Task::Sub => {
+                Task::Binary(binary) => {
                     let right = values.pop().expect("SMT term clone PDA lost binary RHS");
                     let left = values.pop().expect("SMT term clone PDA lost binary LHS");
-                    values.push(match task {
-                        Task::Add => SmtTerm::Add(Box::new(left), Box::new(right)),
-                        Task::Sub => SmtTerm::Sub(Box::new(left), Box::new(right)),
-                        _ => unreachable!("binary reducer receives only Add or Sub"),
+                    values.push(match binary {
+                        Binary::Add => SmtTerm::Add(Box::new(left), Box::new(right)),
+                        Binary::Sub => SmtTerm::Sub(Box::new(left), Box::new(right)),
                     });
                 },
                 Task::Scale(coefficient) => {
@@ -191,6 +194,10 @@ impl Clone for SmtConstraint {
         enum Task<'constraint> {
             Visit(&'constraint SmtConstraint),
             Not,
+            Binary(Binary),
+        }
+
+        enum Binary {
             And,
             Or,
         }
@@ -224,12 +231,12 @@ impl Clone for SmtConstraint {
                     tasks.push(Task::Visit(inner));
                 },
                 Task::Visit(SmtConstraint::And(left, right)) => {
-                    tasks.push(Task::And);
+                    tasks.push(Task::Binary(Binary::And));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SmtConstraint::Or(left, right)) => {
-                    tasks.push(Task::Or);
+                    tasks.push(Task::Binary(Binary::Or));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -237,17 +244,16 @@ impl Clone for SmtConstraint {
                     let inner = values.pop().expect("SMT constraint clone PDA lost negand");
                     values.push(SmtConstraint::Not(Box::new(inner)));
                 },
-                Task::And | Task::Or => {
+                Task::Binary(binary) => {
                     let right = values
                         .pop()
                         .expect("SMT constraint clone PDA lost binary RHS");
                     let left = values
                         .pop()
                         .expect("SMT constraint clone PDA lost binary LHS");
-                    values.push(match task {
-                        Task::And => SmtConstraint::And(Box::new(left), Box::new(right)),
-                        Task::Or => SmtConstraint::Or(Box::new(left), Box::new(right)),
-                        _ => unreachable!("binary reducer receives only And or Or"),
+                    values.push(match binary {
+                        Binary::And => SmtConstraint::And(Box::new(left), Box::new(right)),
+                        Binary::Or => SmtConstraint::Or(Box::new(left), Box::new(right)),
                     });
                 },
             }
@@ -267,6 +273,20 @@ impl fmt::Debug for SmtConstraint {
             Text(&'static str),
         }
 
+        fn begin_comparison<'constraint>(
+            tasks: &mut Vec<Task<'constraint>>,
+            f: &mut fmt::Formatter<'_>,
+            name: &'static str,
+            left: &'constraint SmtTerm,
+            right: &'constraint SmtTerm,
+        ) -> fmt::Result {
+            tasks.push(Task::Text(")"));
+            tasks.push(Task::Term(right));
+            tasks.push(Task::Text(", "));
+            tasks.push(Task::Term(left));
+            f.write_str(name)
+        }
+
         let mut tasks = vec![Task::Visit(self)];
         while let Some(task) = tasks.pop() {
             match task {
@@ -275,25 +295,20 @@ impl fmt::Debug for SmtConstraint {
                 Task::Visit(SmtConstraint::True) => f.write_str("True")?,
                 Task::Visit(SmtConstraint::False) => f.write_str("False")?,
                 Task::Visit(SmtConstraint::BoolVar(name)) => write!(f, "BoolVar({name:?})")?,
-                Task::Visit(
-                    constraint @ (SmtConstraint::Eq(left, right)
-                    | SmtConstraint::Le(left, right)
-                    | SmtConstraint::Lt(left, right)
-                    | SmtConstraint::Ge(left, right)
-                    | SmtConstraint::Gt(left, right)),
-                ) => {
-                    tasks.push(Task::Text(")"));
-                    tasks.push(Task::Term(right));
-                    tasks.push(Task::Text(", "));
-                    tasks.push(Task::Term(left));
-                    f.write_str(match constraint {
-                        SmtConstraint::Eq(..) => "Eq(",
-                        SmtConstraint::Le(..) => "Le(",
-                        SmtConstraint::Lt(..) => "Lt(",
-                        SmtConstraint::Ge(..) => "Ge(",
-                        SmtConstraint::Gt(..) => "Gt(",
-                        _ => unreachable!("comparison pattern contains only comparisons"),
-                    })?;
+                Task::Visit(SmtConstraint::Eq(left, right)) => {
+                    begin_comparison(&mut tasks, f, "Eq(", left, right)?;
+                },
+                Task::Visit(SmtConstraint::Le(left, right)) => {
+                    begin_comparison(&mut tasks, f, "Le(", left, right)?;
+                },
+                Task::Visit(SmtConstraint::Lt(left, right)) => {
+                    begin_comparison(&mut tasks, f, "Lt(", left, right)?;
+                },
+                Task::Visit(SmtConstraint::Ge(left, right)) => {
+                    begin_comparison(&mut tasks, f, "Ge(", left, right)?;
+                },
+                Task::Visit(SmtConstraint::Gt(left, right)) => {
+                    begin_comparison(&mut tasks, f, "Gt(", left, right)?;
                 },
                 Task::Visit(SmtConstraint::Not(inner)) => {
                     tasks.push(Task::Text(")"));
