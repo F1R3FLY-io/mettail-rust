@@ -47,56 +47,98 @@ fn lit(value: &str) -> LitStr {
 /// Emit a codegen-owned `AcReconstructTemplate` VALUE (a constructor-call expression) for a nested
 /// structural-AC operand / reduct template, so the generated σ-injection F-function can materialize it
 /// at runtime and walk it with the firing's σ (`instantiate_ac_reconstruct_template`) to rebuild the
-/// ground operand / reduct. Recurses through the template's `Node` children / `Bag` elements.
+/// ground operand / reduct. Traverses the template's `Node` children / `Bag` elements iteratively.
 fn ac_template_tokens(template: &mettail_rholang_codegen::AcReconstructTemplate) -> TokenStream {
     use mettail_rholang_codegen::AcReconstructTemplate as T;
-    match template {
-        T::Var(name) => {
-            let name = lit(name);
-            quote! { ::mettail_rholang_codegen::AcReconstructTemplate::Var(#name.to_string()) }
+    enum Task<'template> {
+        Visit(&'template T),
+        FinishNode {
+            constructor: &'template str,
+            value_base: usize,
         },
-        T::Node { constructor, children } => {
-            let constructor = lit(constructor);
-            let children: Vec<TokenStream> = children.iter().map(ac_template_tokens).collect();
-            quote! {
-                ::mettail_rholang_codegen::AcReconstructTemplate::Node {
-                    constructor: #constructor.to_string(),
-                    children: ::std::vec![#(#children),*],
-                }
-            }
+        FinishBag {
+            op: &'template str,
+            rest: Option<&'template str>,
+            value_base: usize,
         },
-        T::Bag { op, elements, rest } => {
-            let op = lit(op);
-            let elements: Vec<TokenStream> = elements.iter().map(ac_template_tokens).collect();
-            let rest = match rest {
-                Some(rest) => {
-                    let rest = lit(rest);
-                    quote! { ::core::option::Option::Some(#rest.to_string()) }
-                },
-                None => quote! { ::core::option::Option::None },
-            };
-            quote! {
-                ::mettail_rholang_codegen::AcReconstructTemplate::Bag {
-                    op: #op.to_string(),
-                    elements: ::std::vec![#(#elements),*],
-                    rest: #rest,
-                }
-            }
-        },
-        // A-S5.8 (F8-AM-1b): the RHS-introduced binder scope. Totality arm only — a
-        // binder-templated rule takes the NO-MATCH-ENTRY lowering disposition and surfaces
-        // in NO injection site, so these tokens are never emitted for a bundled language;
-        // the arm keeps this tokenizer total over the extended template enum.
-        T::Binder { body } => {
-            let body = ac_template_tokens(body);
-            quote! {
-                ::mettail_rholang_codegen::AcReconstructTemplate::Binder {
-                    body: ::std::boxed::Box::new(#body),
-                }
-            }
-        },
+        FinishBinder,
     }
+
+    let mut tasks = vec![Task::Visit(template)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(T::Var(name)) => {
+                let name = lit(name);
+                values.push(quote! {
+                    ::mettail_rholang_codegen::AcReconstructTemplate::Var(#name.to_string())
+                });
+            },
+            Task::Visit(T::Node { constructor, children }) => {
+                tasks.push(Task::FinishNode { constructor, value_base: values.len() });
+                tasks.extend(children.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(T::Bag { op, elements, rest }) => {
+                tasks.push(Task::FinishBag {
+                    op,
+                    rest: rest.as_deref(),
+                    value_base: values.len(),
+                });
+                tasks.extend(elements.iter().rev().map(Task::Visit));
+            },
+            // A-S5.8 (F8-AM-1b): the RHS-introduced binder scope. Totality arm only — a
+            // binder-templated rule takes the NO-MATCH-ENTRY lowering disposition and surfaces
+            // in NO injection site, so these tokens are never emitted for a bundled language;
+            // the arm keeps this tokenizer total over the extended template enum.
+            Task::Visit(T::Binder { body }) => {
+                tasks.push(Task::FinishBinder);
+                tasks.push(Task::Visit(body));
+            },
+            Task::FinishNode { constructor, value_base } => {
+                let constructor = lit(constructor);
+                let children: Vec<_> = values.drain(value_base..).collect();
+                values.push(quote! {
+                    ::mettail_rholang_codegen::AcReconstructTemplate::Node {
+                        constructor: #constructor.to_string(),
+                        children: ::std::vec![#(#children),*],
+                    }
+                });
+            },
+            Task::FinishBag { op, rest, value_base } => {
+                let op = lit(op);
+                let elements: Vec<_> = values.drain(value_base..).collect();
+                let rest = match rest {
+                    Some(rest) => {
+                        let rest = lit(rest);
+                        quote! { ::core::option::Option::Some(#rest.to_string()) }
+                    },
+                    None => quote! { ::core::option::Option::None },
+                };
+                values.push(quote! {
+                    ::mettail_rholang_codegen::AcReconstructTemplate::Bag {
+                        op: #op.to_string(),
+                        elements: ::std::vec![#(#elements),*],
+                        rest: #rest,
+                    }
+                });
+            },
+            Task::FinishBinder => {
+                let body = values.pop().expect("AC-template PDA lost its binder body");
+                values.push(quote! {
+                    ::mettail_rholang_codegen::AcReconstructTemplate::Binder {
+                        body: ::std::boxed::Box::new(#body),
+                    }
+                });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1, "AC-template PDA produced multiple roots");
+    values.pop().expect("AC-template PDA produced no root")
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/ac_template_recursive_oracle.rs"]
+mod recursive_oracle;
 
 fn scalar_type_expr(scalar_type: RhoScalarType) -> TokenStream {
     match scalar_type {

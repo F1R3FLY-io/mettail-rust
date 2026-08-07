@@ -507,15 +507,11 @@ fn crosscat_lhs_edge(rule: &GrammarRule) -> Option<(String, String)> {
 /// into macro token streams.
 fn count_ident_in_tokens(ts: TokenStream, name: &str) -> usize {
     let mut n = 0;
-    for tt in ts {
-        match tt {
-            TokenTree::Ident(i) => {
-                if i == name {
-                    n += 1;
-                }
-            },
-            TokenTree::Group(g) => n += count_ident_in_tokens(g.stream(), name),
-            _ => {},
+    for tt in crate::gen::token_tree_walk::TokenTreeLeaves::new(ts) {
+        if let TokenTree::Ident(i) = tt {
+            if i == name {
+                n += 1;
+            }
         }
     }
     n
@@ -628,20 +624,16 @@ fn lattice_infix_arm_ints_per_group(fns: &[syn::ItemFn]) -> BTreeMap<(u16, Strin
     out
 }
 
-/// Recursively collect every integer-literal value (suffix-stripped) in a
+/// Collect every integer-literal value (suffix-stripped) in a
 /// TokenStream (descending into groups, mirroring [`count_ident_in_tokens`]).
 fn collect_int_literals(ts: TokenStream, out: &mut BTreeSet<u64>) {
-    for tt in ts {
-        match tt {
-            TokenTree::Literal(l) => {
-                if let Ok(li) = syn::parse_str::<syn::LitInt>(&l.to_string()) {
-                    if let Ok(v) = li.base10_parse::<u64>() {
-                        out.insert(v);
-                    }
+    for tt in crate::gen::token_tree_walk::TokenTreeLeaves::new(ts) {
+        if let TokenTree::Literal(l) = tt {
+            if let Ok(li) = syn::parse_str::<syn::LitInt>(&l.to_string()) {
+                if let Ok(v) = li.base10_parse::<u64>() {
+                    out.insert(v);
                 }
-            },
-            TokenTree::Group(g) => collect_int_literals(g.stream(), out),
-            _ => {},
+            }
         }
     }
 }
@@ -672,20 +664,16 @@ fn arm_guard_string(arm: &syn::Arm) -> Option<String> {
     None
 }
 
-/// Recursively collect every (unescaped) string-literal value in a TokenStream.
+/// Collect every (unescaped) string-literal value in a TokenStream.
 fn collect_str_literals(ts: TokenStream, out: &mut BTreeSet<String>) {
-    for tt in ts {
-        match tt {
-            TokenTree::Literal(l) => {
-                let rendered = l.to_string();
-                if rendered.starts_with('"') {
-                    if let Ok(syn::Lit::Str(s)) = syn::parse_str::<syn::Lit>(&rendered) {
-                        out.insert(s.value());
-                    }
+    for tt in crate::gen::token_tree_walk::TokenTreeLeaves::new(ts) {
+        if let TokenTree::Literal(l) = tt {
+            let rendered = l.to_string();
+            if rendered.starts_with('"') {
+                if let Ok(syn::Lit::Str(s)) = syn::parse_str::<syn::Lit>(&rendered) {
+                    out.insert(s.value());
                 }
-            },
-            TokenTree::Group(g) => collect_str_literals(g.stream(), out),
-            _ => {},
+            }
         }
     }
 }

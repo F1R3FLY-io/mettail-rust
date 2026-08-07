@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use crate::gen::native::native_type_to_full_string;
 use crate::gen::runtime::wpda_codegen::collection::kv_sep_for;
 use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::token_tree_walk::TokenTreeLeaves;
 use crate::gen::type_expr_walk::terminal_base;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
@@ -1331,7 +1332,7 @@ pub fn collect_semantic_dependency_groups(language: &LanguageDef) -> Vec<HashSet
     groups
 }
 
-/// Recursively scan a `TokenStream` for `Ident` tokens that match known constructor labels.
+/// Scan a `TokenStream` for `Ident` tokens that match known constructor labels.
 ///
 /// Handles nested `Group` token trees (delimited by `(...)`, `{...}`, `[...]`).
 /// Constructor labels are typically CamelCase (`PIn`, `PNew`) while Ascent variables
@@ -1341,22 +1342,12 @@ fn collect_constructor_idents_from_token_stream(
     known_labels: &HashSet<String>,
     labels: &mut HashSet<String>,
 ) {
-    let mut streams = vec![tokens.clone().into_iter()];
-    while let Some(stream) = streams.last_mut() {
-        match stream.next() {
-            None => {
-                streams.pop();
-            },
-            Some(proc_macro2::TokenTree::Ident(ident)) => {
-                let s = ident.to_string();
-                if known_labels.contains(&s) {
-                    labels.insert(s);
-                }
-            },
-            Some(proc_macro2::TokenTree::Group(group)) => {
-                streams.push(group.stream().into_iter());
-            },
-            Some(_) => {}, // Punct, Literal — skip
+    for token in TokenTreeLeaves::new(tokens.clone()) {
+        if let proc_macro2::TokenTree::Ident(ident) = token {
+            let s = ident.to_string();
+            if known_labels.contains(&s) {
+                labels.insert(s);
+            }
         }
     }
 }

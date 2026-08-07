@@ -1535,38 +1535,39 @@ fn result_has_home_var_reading(cat_name: &str, language: &LanguageDef) -> bool {
 /// with a leading `Ident`-admitting non-terminal (e.g. a Name-led `lhs:Name`)
 /// makes the source NOT var-only.
 pub fn source_ident_first_is_var_only(source_cat: &str, language: &LanguageDef) -> bool {
-    let mut visited = std::collections::HashSet::new();
-    source_ident_first_is_var_only_rec(source_cat, language, &mut visited)
-}
-
-/// Recursive core of `source_ident_first_is_var_only` with a `visited` set to
-/// cut projection cycles (e.g. Int↔BigInt via `IntToBigInt`).
-///
-/// KEY (transitivity through var-projections): a rule whose leading non-terminal
-/// is a DIFFERENT category `C` makes the source Ident-led ONLY IF `C` is itself
-/// NOT var-only-Ident. If `C` IS var-only-Ident (its only Ident-first is a var,
-/// transitively), then this rule merely PROJECTS `C`'s var — a bare Ident
-/// through it is still just a variable, so the source remains var-only. This is
-/// what correctly classifies `BigInt` as var-only despite `IntToBigInt . i:Int
-/// |- i : BigInt` (Int is var-only ⇒ the projection carries only a var), while
-/// still classifying `ForRow` as NOT var-only (its `ForRowSingleNoWhere .
-/// b:InputBind` leads with InputBind, which is Ident-LED via `lhs:Name "<-" n`,
-/// so NOT var-only).
-fn source_ident_first_is_var_only_rec(
-    source_cat: &str,
-    language: &LanguageDef,
-    visited: &mut std::collections::HashSet<String>,
-) -> bool {
-    if !visited.insert(source_cat.to_string()) {
-        // Cycle: treat a self/mutual projection cycle as var-only (it carries no
-        // NEW literal Ident source — only the vars already accounted for). Safe:
-        // a cycle of pure var-projections realizes only vars.
-        return true;
+    struct Frame {
+        category: String,
+        next_rule: usize,
     }
+
+    let ident_first = ident_first_categories(language);
+    let mut rules_by_category: std::collections::HashMap<
+        String,
+        Vec<&mettail_ast::grammar::GrammarRule>,
+    > = std::collections::HashMap::new();
     for rule in &language.terms {
-        if rule.category.to_string() != source_cat {
+        rules_by_category
+            .entry(rule.category.to_string())
+            .or_default()
+            .push(rule);
+    }
+
+    let mut visited = std::collections::HashSet::from([source_cat.to_string()]);
+    let mut frames = vec![Frame {
+        category: source_cat.to_string(),
+        next_rule: 0,
+    }];
+    while let Some(frame) = frames.last_mut() {
+        let rules = rules_by_category
+            .get(&frame.category)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let Some(rule) = rules.get(frame.next_rule).copied() else {
+            frames.pop();
             continue;
-        }
+        };
+        frame.next_rule += 1;
+
         // The source's own Var rule is the allowed Ident source — skip it.
         let is_var_rule = rule
             .items
@@ -1594,7 +1595,7 @@ fn source_ident_first_is_var_only_rec(
                 kind: mettail_ast::grammar::NonTerminalKind::Category,
             }) => {
                 let nt_cat = nt_ident.to_string();
-                if nt_cat == source_cat {
+                if nt_cat == frame.category {
                     // Same-cat leading NT (left-recursive infix/method): no new
                     // Ident source beyond the var being folded.
                     continue;
@@ -1636,19 +1637,17 @@ fn source_ident_first_is_var_only_rec(
                         // the sole element — token-transparent).
                         !matches!(it, mettail_ast::grammar::GrammarItem::Terminal(_))
                     });
-                let sub_first = first_set_of_category(&nt_cat, language);
-                let sub_has_ident = sub_first
-                    .iter()
-                    .any(|ft| ft.pattern.to_string().contains("Ident") && ft.extra_guard.is_none());
-                if sub_has_ident {
+                if ident_first.contains(&nt_cat) {
                     // The leading NT can begin with an Ident. Whether that makes
                     // the source non-var-only depends on purity:
                     //   - pure projection AND `nt_cat` is var-only ⇒ still var.
                     //   - otherwise (structural rule, or `nt_cat` genuinely
                     //     Ident-led) ⇒ source is Ident-led, NOT var-only.
-                    if is_pure_projection
-                        && source_ident_first_is_var_only_rec(&nt_cat, language, visited)
-                    {
+                    if is_pure_projection && !visited.insert(nt_cat.clone()) {
+                        continue;
+                    }
+                    if is_pure_projection {
+                        frames.push(Frame { category: nt_cat, next_rule: 0 });
                         continue;
                     }
                     return false;
@@ -1677,11 +1676,96 @@ fn source_ident_first_is_var_only_rec(
             },
         }
     }
-    // No non-Var rule of `source_cat` admits a NEW (non-var) Ident first token ⇒
-    // the ONLY Ident reading of `source_cat` is its Var (possibly via
-    // var-projections) ⇒ var-only.
+    // Every frame completed without finding a non-Var Ident source. A repeated
+    // category was treated as true at the edge, matching the former recursive
+    // cycle cut: a pure projection cycle contributes no new literal Ident.
     true
 }
+
+/// Categories whose transitive FIRST set contains an unguarded `Ident` token.
+///
+/// This is the boolean projection of [`first_set_of_category`]: direct synthetic
+/// or explicit Var contributions are seeds; cross-category projections and
+/// Param-led non-atomic rules are graph edges. Computing the closure once avoids
+/// rebuilding an entire FIRST set at every edge of the var-only traversal.
+fn ident_first_categories(language: &LanguageDef) -> std::collections::HashSet<String> {
+    let mut reached: std::collections::HashSet<String> = language
+        .types
+        .iter()
+        .map(|ty| ty.name.to_string())
+        .collect();
+    let mut reverse: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for rule in &language.terms {
+        let category = rule.category.to_string();
+        match classify_atomic(rule, language) {
+            AtomicShape::VarRule { .. } => {
+                reached.insert(category);
+            },
+            AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
+                let native_kind = NativeKind::from_syn_type(&native_type);
+                let has_ident = literal_patterned_pattern_and_guard_for_kind(
+                    &cat_name,
+                    family,
+                    Some(&native_kind),
+                    EmissionContext::FirstSet,
+                )
+                .into_iter()
+                .any(|(pattern, guard)| guard.is_none() && pattern.to_string().contains("Ident"));
+                if has_ident {
+                    reached.insert(category);
+                }
+            },
+            AtomicShape::CrossCatProjection { source_cat_name, .. } => {
+                reverse.entry(source_cat_name).or_default().push(category);
+            },
+            AtomicShape::NonAtomic => {
+                if matches!(
+                    rule.syntax_pattern
+                        .as_ref()
+                        .and_then(|pattern| pattern.first()),
+                    Some(mettail_ast::grammar::SyntaxExpr::Param(_))
+                ) {
+                    if let Some(mettail_ast::grammar::GrammarItem::NonTerminal {
+                        ident,
+                        kind: mettail_ast::grammar::NonTerminalKind::Category,
+                    }) = rule.items.first()
+                    {
+                        let source = ident.to_string();
+                        if source != category {
+                            reverse.entry(source).or_default().push(category);
+                        }
+                    }
+                }
+            },
+            AtomicShape::TerminalKeyword { .. }
+            | AtomicShape::LiteralInteger
+            | AtomicShape::LiteralBoolean
+            | AtomicShape::LiteralString
+            | AtomicShape::LiteralFloat
+            | AtomicShape::CrossCatPrefixUnary { .. }
+            | AtomicShape::PrefixOperator { .. }
+            | AtomicShape::NullaryLiteralRun { .. } => {},
+        }
+    }
+
+    let mut pending: std::collections::VecDeque<_> = reached.iter().cloned().collect();
+    while let Some(source) = pending.pop_front() {
+        if let Some(targets) = reverse.get(&source) {
+            for target in targets {
+                if reached.insert(target.clone()) {
+                    pending.push_back(target.clone());
+                }
+            }
+        }
+    }
+    reached
+}
+
+#[cfg(test)]
+#[path = "../../../../tests/support/prefix_ident_recursive_oracle.rs"]
+mod ident_recursive_oracle;
 
 pub fn emit_prefix_arms_for_category(
     language: &LanguageDef,
