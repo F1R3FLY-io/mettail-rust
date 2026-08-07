@@ -124,7 +124,7 @@ pub(crate) fn emit_semantic_key_hasher() -> TokenStream {
 // ════════════════════════════════════════════════════════════════════════
 // P2 ISOLATION+COMBINE CODEGEN (Plan a7986200, 2026-07-05) — ships the ROOT-P
 // `.*sep` divide-and-conquer linearization into the generated facade.
-// Gate: the grammar-derived `eligible_family(IsoFamily::Sep, …)` predicate.
+// Gate: the grammar-derived `sep_isolation_shape` selector.
 // ════════════════════════════════════════════════════════════════════════
 
 /// One labeled AST variant a `.*sep` category builds, with the suffix
@@ -463,7 +463,7 @@ pub(crate) fn sep_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident {
 // P0 — GRAMMAR-DERIVED isolation-category selection (ROOT-P generalization).
 //
 // The three isolation families (sep / proj / infix) select their result
-// categories via a GRAMMAR-DERIVED eligibility predicate ([`eligible_family`]) —
+// categories via specialized GRAMMAR-DERIVED shape selectors —
 // a prefix-cohort / list-element / infix-operand REACHABILITY analysis over the
 // grammar IR, with NO hardcoded category names. It is a behavior-preserving
 // REFINEMENT of the former rholang-name-coupled hardcoded include-lists: it
@@ -572,9 +572,17 @@ fn eligible_proj(
     cat_name: &str,
     categories: &[String],
 ) -> bool {
-    if derive_projection_iso_shape(language, cat_name, categories).is_none() {
-        return false;
-    }
+    derive_projection_iso_shape(language, reach, cat_name, categories).is_some()
+        && projection_cohort_isolation_eligible(language, reach, cat_name)
+}
+
+/// Test the prefix-cohort half of projection eligibility after a caller has
+/// derived (and, when needed, retained) the projection shape.
+fn projection_cohort_isolation_eligible(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+) -> bool {
     let is_ident_shaped = |s: &str| s.chars().all(|c| c.is_alphanumeric() || c == '_');
     // Per non-ident sigil σ: (cohort size, count with an operand reaching `cat`).
     let mut cohort: std::collections::BTreeMap<String, (usize, usize)> =
@@ -617,24 +625,34 @@ fn eligible_sep(
     cat_name: &str,
     categories: &[String],
 ) -> bool {
-    match derive_sep_combine_shape(language, cat_name, categories) {
-        Some(shape) => reach.reaches(&shape.element_category, cat_name),
-        None => false,
-    }
+    derive_eligible_sep_shape(language, reach, cat_name, categories).is_some()
 }
 
-/// P0 INFIX eligibility: a derivable homogeneous binary-infix shape AND `cat`
-/// reaches some category `D` that is itself PROJ- or SEP-eligible (the infix
-/// operands recursively descend into an isolation-eligible sub-language).
-fn eligible_infix(
+/// Derive and validate one SEP shape without routing a statically known SEP
+/// request through a generic family dispatcher. The derived shape is returned
+/// directly so callers do not repeat the grammar scan merely to recover it.
+fn derive_eligible_sep_shape(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<SepCombineShape> {
+    let shape = derive_sep_combine_shape(language, cat_name, categories)?;
+    reach
+        .reaches(&shape.element_category, cat_name)
+        .then_some(shape)
+}
+
+/// P0 INFIX operand eligibility: `cat` reaches some category `D` that is
+/// itself PROJ- or SEP-eligible (the infix operands recursively descend into an
+/// isolation-eligible sub-language). Shape derivation is owned by the caller so
+/// it can return that shape without repeating the grammar scan.
+fn infix_operands_are_isolation_eligible(
     language: &LanguageDef,
     reach: &OperandReach,
     cat_name: &str,
     categories: &[String],
 ) -> bool {
-    if derive_infix_iso_shape(language, cat_name, categories).is_none() {
-        return false;
-    }
     categories.iter().any(|d| {
         reach.reaches(cat_name, d)
             && (eligible_proj(language, reach, d, categories)
@@ -642,32 +660,9 @@ fn eligible_infix(
     })
 }
 
-/// The three isolation families selected by the P0 predicate.
-enum IsoFamily {
-    Sep,
-    Proj,
-    Infix,
-}
-
-/// The GRAMMAR-DERIVED eligibility for one family + category — consumed by the
-/// three `*_iso_shape` gates when [`grammar_derived_isolation_enabled`] is true.
-fn eligible_family(
-    language: &LanguageDef,
-    family: IsoFamily,
-    cat_name: &str,
-    categories: &[String],
-) -> bool {
-    let reach = build_operand_reach(language);
-    match family {
-        IsoFamily::Sep => eligible_sep(language, &reach, cat_name, categories),
-        IsoFamily::Proj => eligible_proj(language, &reach, cat_name, categories),
-        IsoFamily::Infix => eligible_infix(language, &reach, cat_name, categories),
-    }
-}
-
 /// The gated `.*sep` isolation shape for `cat_name`: `Some` iff the category is
-/// selected by the GRAMMAR-DERIVED isolation-eligibility predicate
-/// ([`eligible_family`]) AND a shape is derivable. The SINGLE source of truth
+/// selected by the GRAMMAR-DERIVED SEP reachability predicate and a shape is
+/// derivable. The SINGLE source of truth
 /// shared by the helper emitter (facade) and the string-entry prologue emitter
 /// (mod.rs).
 pub(crate) fn sep_isolation_shape(
@@ -675,11 +670,8 @@ pub(crate) fn sep_isolation_shape(
     cat_name: &str,
     categories: &[String],
 ) -> Option<SepCombineShape> {
-    if eligible_family(language, IsoFamily::Sep, cat_name, categories) {
-        derive_sep_combine_shape(language, cat_name, categories)
-    } else {
-        None
-    }
+    let reach = build_operand_reach(language);
+    derive_eligible_sep_shape(language, &reach, cat_name, categories)
 }
 
 /// Which string parse entry a prologue is emitted into.
@@ -1251,7 +1243,7 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
 // ════════════════════════════════════════════════════════════════════════
 // P1 `@`-PROJECTION ISOLATION+COMBINE CODEGEN (Plan a8b32275, 2026-07-05) —
 // the SIBLING of the P2 `.*sep` isolation above (ROOT AXIS-@ exponential-killer).
-// Gate: the grammar-derived `eligible_family(IsoFamily::Proj, …)` predicate.
+// Gate: the grammar-derived `projection_iso_shape` selector.
 //
 // Difference from `.*sep`: rather than splitting a list at a separator and
 // cartesian-combining SEGMENTS, projection isolation matches each `σ`-led
@@ -1643,6 +1635,7 @@ fn is_receiver_led_postfix_frame(sp: &[SyntaxExpr]) -> bool {
 /// projection shapes (they fall through to the monolithic body / the sep helper).
 fn derive_projection_iso_shape(
     language: &LanguageDef,
+    reach: &OperandReach,
     cat_name: &str,
     categories: &[String],
 ) -> Option<ProjIsoShape> {
@@ -1653,6 +1646,7 @@ fn derive_projection_iso_shape(
     let is_ident_shaped = |s: &str| s.chars().all(|c| c.is_alphanumeric() || c == '_');
 
     let mut variants: Vec<ProjVariant> = Vec::new();
+    let mut sep_owned = None;
 
     for rule in &language.terms {
         if rule.category.to_string() != cat_name {
@@ -1702,7 +1696,9 @@ fn derive_projection_iso_shape(
         // only its sigil-led shapes there (ForRow has none ⇒ no proj helper for
         // ForRow, unchanged). This keeps the two helpers disjoint (proj runs first,
         // declines, sep handles it) and avoids double-handling the `&`-list.
-        let sep_owned = sep_isolation_shape(language, cat_name, categories).is_some();
+        let sep_owned = *sep_owned.get_or_insert_with(|| {
+            derive_eligible_sep_shape(language, reach, cat_name, categories).is_some()
+        });
         //   (c) ROOT-D: a RECEIVER-LED POSTFIX
         //       (method-call) frame — slot 0 an OPERAND, the LAST slot a closing
         //       bracket (`m "." "get" "(" k ")"`, `m "." "keys" "(" ")"`). Its
@@ -2239,11 +2235,9 @@ pub(crate) fn projection_iso_shape(
     cat_name: &str,
     categories: &[String],
 ) -> Option<ProjIsoShape> {
-    if eligible_family(language, IsoFamily::Proj, cat_name, categories) {
-        derive_projection_iso_shape(language, cat_name, categories)
-    } else {
-        None
-    }
+    let reach = build_operand_reach(language);
+    let shape = derive_projection_iso_shape(language, &reach, cat_name, categories)?;
+    projection_cohort_isolation_eligible(language, &reach, cat_name).then_some(shape)
 }
 
 /// Emit the string-entry prologue that calls the projection-isolation helper with
@@ -3905,8 +3899,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
 // (ROOT-2 `or`/PParInfix locus, 2026-07-06) — the THIRD sibling of the P2
 // `.*sep` (list) and P1 `@`-projection (frame) isolators. Where those linearize
 // LIST / FRAME operands, this linearizes the two operands of a TOP-LEVEL BINARY
-// INFIX operator. Gate: the grammar-derived `eligible_family(IsoFamily::Infix, …)`
-// predicate.
+// INFIX operator. Gate: the grammar-derived `infix_iso_shape` selector.
 //
 // The root defect: `@Nil!!(true, @Nil!() / @Nil!()) or X` (a polyadic persistent
 // send with a division-arg as the LEFT operand of `or`) dies monolithically ("no
@@ -4030,11 +4023,9 @@ pub(crate) fn infix_iso_shape(
     cat_name: &str,
     categories: &[String],
 ) -> Option<InfixIsoShape> {
-    if eligible_family(language, IsoFamily::Infix, cat_name, categories) {
-        derive_infix_iso_shape(language, cat_name, categories)
-    } else {
-        None
-    }
+    let reach = build_operand_reach(language);
+    let shape = derive_infix_iso_shape(language, cat_name, categories)?;
+    infix_operands_are_isolation_eligible(language, &reach, cat_name, categories).then_some(shape)
 }
 
 /// Emit the string-entry prologue that calls the binary-infix isolation helper
