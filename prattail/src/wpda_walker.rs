@@ -1149,28 +1149,6 @@ pub trait WpdaEngine<W: SemiringRef> {
         false
     }
 
-    /// B8 / Issue C followup (2026-05-09); refined under Issue 2
-    /// (2026-05-10): predicate distinguishing OptionalGroupAt symbols
-    /// used as Class 3 BinderListLoop inner-walk markers from genuine
-    /// OptionalGroup `*opt(...)` markers. When `true`,
-    /// `emit_push_side_effects` skips the `start_optional_scope` side
-    /// effect on OptionalGroupAt(1) pushes (the optional scope would
-    /// never close, leaving the builder's optional_stack non-empty at
-    /// parse end).
-    ///
-    /// `sub_pos` discriminator: distinguishes the rule-level alias case
-    /// (a rule that has BOTH a Class 3 BinderListLoop AND a real
-    /// `*opt(...)` OptionalGroup) from a pure-Class-3 rule. For
-    /// pure-Class-3 rules, all OptionalGroupAt sub_pos values within
-    /// the Class 3 inner walk return `true`; OptionalGroupAt(1) for
-    /// a real optional group in the same rule returns `false` so the
-    /// genuine optional scope opens correctly.
-    /// Default returns `false`.
-    fn is_class3_inner_marker(&self, src_idx: u16, rule_idx: u16, sub_pos: u8) -> bool {
-        let _ = (src_idx, rule_idx, sub_pos);
-        false
-    }
-
     /// Stage 2 consolidation (2026-06-27): the single per-(result_src_idx,
     /// rule_idx, slot_idx) collection-slot spec. Per-language codegen overrides
     /// this with the one table that supersedes the former close / `(close,
@@ -2880,10 +2858,9 @@ pub enum ForkActionKind {
     /// pushes `branch.symbol` on top — mirroring engine-level
     /// `WpdaStepAction::ReplaceAndPush` semantics inside a Fork branch.
     /// No token consumed. Used by Class 3 BinderListLoop's non-empty
-    /// bootstrap to (a) replace the outer RuleAt(rule, marker_pos)
-    /// with RuleAt(rule, next_pos) so the post-loop unwind lands at
-    /// the next outer position, AND (b) push CollectionMarker for
-    /// the Names accumulator. emit_push_side_effects fires for the
+    /// bootstrap to (a) replace the caller's current marker with its typed
+    /// continuation and (b) push CollectionMarker for the Names accumulator.
+    /// `emit_push_side_effects` fires for the
     /// pushed CollectionMarker (allocates accumulator, pushes
     /// CollectionId arg, opens BinderScope per is_class3_collection).
     ReplaceAndPush { replace_symbol: StackSymbolV2 },
@@ -11285,27 +11262,17 @@ where
                 outer_bp,
             } => (
                 9,
-                pack4(
-                    *result_src_idx,
-                    *rule_idx,
-                    ((*group_idx as u16) << 8) | (*sub_pos as u16),
-                    *outer_bp as u16,
-                ),
+                Self::cgll_pure_hash_of(&(result_src_idx, rule_idx, group_idx, sub_pos, outer_bp)),
             ),
             WpdaState::BinderListLoop {
                 result_src_idx,
                 rule_idx,
-                body_src_idx,
+                frame_idx,
                 outer_bp,
-                marker_pos,
-                next_pos,
                 sub_pos,
             } => (
                 10,
-                pack4(*result_src_idx, *rule_idx, *body_src_idx, *outer_bp as u16)
-                    ^ (((*marker_pos as u64) << 24)
-                        | ((*next_pos as u64) << 16)
-                        | ((*sub_pos as u64) << 8)),
+                Self::cgll_pure_hash_of(&(result_src_idx, rule_idx, frame_idx, outer_bp, sub_pos)),
             ),
             WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } => {
                 (11, pack4(*source_src_idx, *inner_cur_bp as u16, 0, 0))
@@ -11368,8 +11335,8 @@ where
             SymbolKind::CollectionMarker => CGLL_KC_COLLECTION_MARKER,
             SymbolKind::GroupingMarker => CGLL_KC_GROUPING_MARKER,
             SymbolKind::MixfixMarker => CGLL_KC_MIXFIX_MARKER,
-            SymbolKind::OptionalGroupAt(_) => CGLL_KC_OPT_GROUP,
-            SymbolKind::BinderListLoopAt(_) => CGLL_KC_BINDER_LIST,
+            SymbolKind::OptionalGroupAt => CGLL_KC_OPT_GROUP,
+            SymbolKind::BinderListLoopAt => CGLL_KC_BINDER_LIST,
         };
         base | if matches!(class, CgllFrameClass::D2) {
             CGLL_KC_D2_BIT
@@ -15019,18 +14986,17 @@ where
         }
         // (2) Upward walk to the nearest enclosing marker frame.
         let mut u = d.u;
-        for _ in 0..64 {
-            match v_parent.get(&u) {
-                Some((sym, parent_u, _, _)) => {
-                    if matches!(sym.kind, SymbolKind::CollectionMarker) {
-                        if let Some(ctx) = project(sym) {
-                            return ctx;
-                        }
-                    }
-                    u = *parent_u;
-                },
-                None => break,
+        while let Some((sym, parent_u, _, _)) = v_parent.get(&u) {
+            if matches!(sym.kind, SymbolKind::CollectionMarker) {
+                if let Some(ctx) = project(sym) {
+                    return ctx;
+                }
             }
+            debug_assert_ne!(*parent_u, u, "GSS parent relation must be acyclic");
+            if *parent_u == u {
+                break;
+            }
+            u = *parent_u;
         }
         FrameCtx::EMPTY
     }
@@ -15039,16 +15005,11 @@ where
     /// [`crate::sppf::SppfNode::BinderScope`] leaf (the binder-list child the
     /// binder rule's fire consumes; GT receipt `gtdump_new.log`: PNew flat =
     /// `[trigger, BinderScope, body]`) and fold it into the frame's `w`.
-    /// Names are recovered PURELY from `(L, i, tokens)`: the
-    /// `BinderListLoop.marker_pos` in the state brackets the list region, and
-    /// the binder idents are exactly the `Ident`-kind tokens in
-    /// `[marker_pos, close_pos)` (separators are `Fixed`). Depth = this
-    /// frame's inherited open-scope count (`v_parent`, classic
-    /// `binder_scope_marks.len()` at the scope's Start). The empty-list
-    /// atomic case (`StartBinderScope{names} + EndBinderScope` on one `)`
-    /// consume) passes the Start effect's names (normally empty) and the
-    /// state is still `BinderRule` — `marker_pos` is absent, names come from
-    /// the effect.
+    /// Names are recovered from binder-name markers folded into the frame's
+    /// SPPF spine. Depth is this frame's inherited open-scope count
+    /// (`v_parent`, classic `binder_scope_marks.len()` at scope start). The
+    /// empty-list atomic case passes the Start effect's names (normally
+    /// empty).
     #[allow(clippy::too_many_arguments)]
     fn cgll_pure_end_binder_scope(
         &mut self,
@@ -15062,9 +15023,9 @@ where
         // Names come from the BINDER-NAME MARKERS folded into the frame's
         // spine at each `GuardedConsumeBinderIdent*` consume (reserved owner
         // `(u16::MAX, u16::MAX - 1)`; realize-invisible TriggerTerminals).
-        // A token-SPAN walk is NOT usable here: positions are lattice DAG
-        // nodes with per-byte alternative tokenizations, so "the Ident
-        // tokens in [marker_pos, close)" reads the wrong layer (receipt:
+        // A token-span walk is NOT usable here: positions are lattice DAG
+        // nodes with per-byte alternative tokenizations, so scanning a
+        // source interval reads the wrong layer (receipt:
         // `new(x)` briefly displayed `new(w)` — byte 2 of `new`). The spine
         // records exactly the lineage's own consumed idents, in order.
         let names: Vec<String> = match start_names {

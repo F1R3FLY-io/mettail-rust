@@ -214,27 +214,21 @@ pub enum SymbolKind {
     /// marker is ConsumeAndPop'd, firing the rule's action with arity =
     /// 1 + parts.len (LHS already on builder + parts.len inner operands).
     MixfixMarker,
-    /// Opt-Group (2026-04-29): marker for the inner-position walk of a
-    /// taken `OptionalGroup`. The `u8` payload is the `sub_pos` (1..=inner.len()+1)
-    /// indicating which inner position to walk next. Pushed when entering
-    /// a taken optional group at sub_pos=1; replaced via Replace as
-    /// inner positions advance; popped at sub_pos = inner.len()+1 by
-    /// `OptGroupFinalize`. `category_src_idx` and `rule_index_in_category`
-    /// identify the parent rule. `bp` carries the OUTER rule's outer_bp
-    /// (so the parent BinderRule's outer_bp is recoverable on group exit).
-    /// On Unwinding when this is on top, the engine transitions to
-    /// `WpdaState::OptionalGroup { sub_pos: payload }`.
-    OptionalGroupAt(u8),
-    /// Class-3 binder-list inner-walk marker. The `u8` payload is the
-    /// `sub_pos` used by `WpdaState::BinderListLoop`, but unlike
-    /// `OptionalGroupAt`, this marker never opens or finalizes an
+    /// Marker for a taken `OptionalGroup` inner-position walk. Its dense
+    /// marker ID is packed into `StackSymbolV2`'s existing category/rule
+    /// fields; generated metadata recovers the exact rule, group, and next
+    /// sub-position. `bp` carries the outer Pratt binding power.
+    OptionalGroupAt,
+    /// Class-3 binder-list continuation marker. It uses the same dense-ID
+    /// packing as `OptionalGroupAt`, but its distinct kind prevents optional
+    /// and binder continuations from aliasing. It never opens or finalizes an
     /// optional-argument scope.
-    BinderListLoopAt(u8),
+    BinderListLoopAt,
 }
 
 /// A WPDS stack symbol indexed by integer category and rule position.
 ///
-/// Designed for runtime hot-path use: 10 bytes total (vs. ~96 bytes for
+/// Designed for runtime hot-path use: at most 14 bytes (vs. ~96 bytes for
 /// [`crate::wpds::StackSymbol`] which uses two `String`s). Indices reference
 /// the language's source-order arrays:
 ///
@@ -243,6 +237,12 @@ pub enum SymbolKind {
 ///
 /// Both indices are stable across compilation; tiebreak ordering uses them
 /// directly (lower index wins).
+///
+/// `OptionalGroupAt` and `BinderListLoopAt` are the deliberate exception:
+/// those kinds reuse the two u16 fields as the high/low halves of a dense
+/// generated traversal-marker ID. Their generated unwind table restores the
+/// source category, rule, frame, and sub-position without adding a hot-symbol
+/// payload.
 ///
 /// ## Tiebreak compatibility
 ///
@@ -411,17 +411,12 @@ impl StackSymbolV2 {
     /// inner-position walk of a taken optional group. `outer_bp` is the
     /// outer rule's outer_bp, preserved across the group so on group exit
     /// the parent `BinderRule` resumes at the correct precedence level.
-    pub fn optional_group_at(
-        result_src_idx: u16,
-        rule_idx: u16,
-        sub_pos: u8,
-        outer_bp: u8,
-    ) -> Self {
+    pub fn optional_group_at(marker_id: u32, outer_bp: u8) -> Self {
         StackSymbolV2 {
-            category_src_idx: result_src_idx,
-            rule_index_in_category: rule_idx,
+            category_src_idx: (marker_id >> 16) as u16,
+            rule_index_in_category: marker_id as u16,
             bp: Some(outer_bp),
-            kind: SymbolKind::OptionalGroupAt(sub_pos),
+            kind: SymbolKind::OptionalGroupAt,
             coll_dispatch_bp: None,
             goal_src_idx: None,
         }
@@ -431,20 +426,23 @@ impl StackSymbolV2 {
     /// same payload shape as `optional_group_at`, but its distinct
     /// `SymbolKind` prevents real `*opt(...)` groups and binder-loop inner
     /// walks from aliasing in rules that contain both.
-    pub fn binder_list_loop_at(
-        result_src_idx: u16,
-        rule_idx: u16,
-        sub_pos: u8,
-        outer_bp: u8,
-    ) -> Self {
+    pub fn binder_list_loop_at(marker_id: u32, outer_bp: u8) -> Self {
         StackSymbolV2 {
-            category_src_idx: result_src_idx,
-            rule_index_in_category: rule_idx,
+            category_src_idx: (marker_id >> 16) as u16,
+            rule_index_in_category: marker_id as u16,
             bp: Some(outer_bp),
-            kind: SymbolKind::BinderListLoopAt(sub_pos),
+            kind: SymbolKind::BinderListLoopAt,
             coll_dispatch_bp: None,
             goal_src_idx: None,
         }
+    }
+
+    /// Dense codegen identity carried by traversal markers. These marker
+    /// kinds repurpose the ordinary category/rule fields as the high/low
+    /// halves of one `u32`; generated metadata recovers the rule and frame.
+    pub fn traversal_marker_id(&self) -> Option<u32> {
+        matches!(self.kind, SymbolKind::OptionalGroupAt | SymbolKind::BinderListLoopAt)
+            .then_some(((self.category_src_idx as u32) << 16) | self.rule_index_in_category as u32)
     }
 
     /// Construct a return symbol (pop pending).
@@ -511,15 +509,17 @@ impl fmt::Display for StackSymbolV2 {
                 "⟨cat#{}.rule#{}.mixfix⟩{}",
                 self.category_src_idx, self.rule_index_in_category, bp_suffix
             ),
-            SymbolKind::OptionalGroupAt(sub_pos) => write!(
+            SymbolKind::OptionalGroupAt => write!(
                 f,
-                "⟨cat#{}.rule#{}.opt@{}⟩{}",
-                self.category_src_idx, self.rule_index_in_category, sub_pos, bp_suffix
+                "⟨opt-marker#{}⟩{}",
+                ((self.category_src_idx as u32) << 16) | self.rule_index_in_category as u32,
+                bp_suffix
             ),
-            SymbolKind::BinderListLoopAt(sub_pos) => write!(
+            SymbolKind::BinderListLoopAt => write!(
                 f,
-                "⟨cat#{}.rule#{}.binder-loop@{}⟩{}",
-                self.category_src_idx, self.rule_index_in_category, sub_pos, bp_suffix
+                "⟨binder-marker#{}⟩{}",
+                ((self.category_src_idx as u32) << 16) | self.rule_index_in_category as u32,
+                bp_suffix
             ),
         }
     }
@@ -741,20 +741,19 @@ pub enum WpdaState {
         result_src_idx: u16,
         /// Rule index within the result category (parent rule).
         rule_idx: u16,
-        /// Index of this Optional group within the parent rule's
-        /// positions list. Used to look up the per-group FIRST-set
-        /// and inner-position list.
-        group_idx: u8,
+        /// Dense preorder identity of this Optional group in the rule's
+        /// recursive position forest.
+        group_idx: u32,
         /// Sub-position within the optional group's inner positions.
         /// `0` = peek FIRST-set; `1..=inner.len()` = walk inner
         /// positions (literals, params, guards, nested optionals).
-        sub_pos: u8,
+        sub_pos: u32,
         /// Outer Pratt cur_bp to restore when the group completes.
         outer_bp: u8,
     },
     /// Phase 5b: mid-binder-list-loop (`^[xs]`). Captures `Ident,
     /// separator, Ident, separator, ..., close` into the active binder
-    /// scope, then transitions back to BinderRule at `next_pos`.
+    /// scope, then unwinds to the caller continuation stored in the GSS.
     ///
     /// B8 / Class 3 ZIP-MAP-SEP (2026-05-08): `sub_pos` indexes the
     /// per-iteration inner walk:
@@ -768,15 +767,13 @@ pub enum WpdaState {
     BinderListLoop {
         result_src_idx: u16,
         rule_idx: u16,
-        body_src_idx: u16,
+        /// Preorder identity of this binder-list frame within the rule.
+        frame_idx: u32,
         outer_bp: u8,
-        /// Position of the BinderListLoop slot in the rule's positions list.
-        marker_pos: u8,
-        /// Position to advance to after the close delim is consumed.
-        next_pos: u8,
-        /// B8: sub_pos indexes the per-iteration inner walk; 0 for the
-        /// PNew-style legacy fast path (no inner walk).
-        sub_pos: u8,
+        /// Position in this frame's per-iteration walk. The caller's
+        /// continuation remains in the GSS, so nested loops do not duplicate
+        /// caller-specific position metadata here.
+        sub_pos: u32,
     },
     /// Stage 1.1: cross-category projection delegation. After the WPDS
     /// engine has pushed a Return marker for a cross-cat rule (e.g.
@@ -4026,7 +4023,24 @@ mod tests {
         // precedent); it is `None` for every non-strict symbol so GSS identity
         // is preserved. Assert it does not regress beyond 14 bytes.
         // (Actual size depends on enum layout; assert it stays small.)
-        assert!(std::mem::size_of::<StackSymbolV2>() <= 14);
+        let actual = std::mem::size_of::<StackSymbolV2>();
+        assert!(actual <= 14, "StackSymbolV2 grew to {actual} bytes");
+    }
+
+    #[test]
+    fn traversal_markers_round_trip_dense_ids_without_growing_the_symbol() {
+        let marker_id = 0xA17E_C35Du32;
+        let optional = StackSymbolV2::optional_group_at(marker_id, 37);
+        let binder = StackSymbolV2::binder_list_loop_at(marker_id, 37);
+
+        assert_eq!(optional.traversal_marker_id(), Some(marker_id));
+        assert_eq!(binder.traversal_marker_id(), Some(marker_id));
+        assert_eq!(optional.category_src_idx, 0xA17E);
+        assert_eq!(optional.rule_index_in_category, 0xC35D);
+        assert_eq!(optional.bp, Some(37));
+        assert_eq!(binder.bp, Some(37));
+        assert_ne!(optional, binder, "typed marker kinds must remain disjoint");
+        assert_eq!(std::mem::size_of_val(&optional), std::mem::size_of::<StackSymbolV2>());
     }
 
     #[test]

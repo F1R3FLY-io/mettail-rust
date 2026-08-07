@@ -16,7 +16,7 @@ enum BinderCloneTask<'position> {
         len: usize,
     },
     OptionalGroup {
-        group_idx: u8,
+        group_idx: u32,
         first_token_set: &'position [String],
         base: usize,
         len: usize,
@@ -242,7 +242,7 @@ enum BinderDebugTask<'position> {
         slot_idx: u8,
     },
     OptionalSuffix {
-        group_idx: u8,
+        group_idx: u32,
         first_token_set: &'position [String],
     },
 }

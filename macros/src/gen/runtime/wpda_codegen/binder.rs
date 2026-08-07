@@ -21,7 +21,7 @@
 //!   `?guard:Guard` parameter parsed via `parse_predicate_from_tokens`.
 
 use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
-use mettail_ast::language::LanguageDef;
+use mettail_ast::language::{CollectionDelimiters, LanguageDef};
 use mettail_ast::types::{CollectionType, TypeExpr};
 use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
@@ -227,10 +227,9 @@ pub enum BinderPosition {
     /// inner positions' types).
     OptionalGroup {
         positions: Vec<BinderPosition>,
-        /// Sequence index of THIS group within its parent rule's
-        /// positions list (used to disambiguate FIRST-set tables when
-        /// a rule has multiple groups).
-        group_idx: u8,
+        /// Dense preorder identity of this group in the rule's recursive
+        /// position forest. It remains unique across nested groups.
+        group_idx: u32,
         /// Tokens that, when peeked at group entry, indicate the group
         /// should be taken. Strings are the literal text from the first
         /// inner Literal; if the first inner is a ParamParse the
@@ -322,6 +321,562 @@ mod model_lifecycle;
 #[path = "../../../../tests/support/binder_model_lifecycle.rs"]
 mod model_lifecycle_tests;
 
+#[cfg(test)]
+#[path = "../../../../tests/support/binder_traversal_recursive_oracle.rs"]
+mod traversal_recursive_oracle;
+
+enum ParamKind {
+    Simple {
+        cat: String,
+    },
+    Binder,
+    BinderList,
+    Body {
+        cat: String,
+    },
+    Guard,
+    /// A `Simple` parameter whose value is collected by a `Sep` syntax
+    /// operator inside a larger binder rule.
+    SimpleCollection {
+        elem_cat: String,
+        coll_kind: CollectionType,
+    },
+}
+
+/// Caller continuation for a nested optional or binder-list frame.
+///
+/// The generated PDA stores this continuation in the GSS symbol immediately
+/// below the entered frame. Keeping it out of `WpdaState::BinderListLoop`
+/// makes the state frame-local and permits arbitrary Optional/BinderList
+/// nesting without caller-specific fields or native recursion.
+#[derive(Clone, Copy)]
+enum TraversalResume {
+    Rule { next_pos: u8 },
+    Optional { group_idx: u32, next_sub_pos: u32 },
+    BinderList { frame_idx: u32, next_sub_pos: u32 },
+}
+
+struct BinderListSite<'position> {
+    position: &'position BinderPosition,
+    frame_idx: u32,
+    resume: TraversalResume,
+}
+
+struct OptionalSite<'position> {
+    position: &'position BinderPosition,
+    resume: TraversalResume,
+}
+
+struct TraversalSites<'position> {
+    binder_lists: Vec<BinderListSite<'position>>,
+    optionals: Vec<OptionalSite<'position>>,
+    binder_frame_indices: HashMap<*const BinderPosition, u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum TraversalMarkerCoordinate {
+    Optional { group_idx: u32, sub_pos: u32 },
+    BinderList { frame_idx: u32, sub_pos: u32 },
+}
+
+pub(crate) struct TraversalMarkerTable {
+    ids: HashMap<(u16, u16, TraversalMarkerCoordinate), u32>,
+    optional_metadata: Vec<(u32, u16, u16, u32, u32)>,
+    binder_metadata: Vec<(u32, u16, u16, u32, u32)>,
+}
+
+impl TraversalMarkerTable {
+    pub(crate) fn build(language: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> Self {
+        let mut ids = HashMap::new();
+        let mut optional_metadata = Vec::new();
+        let mut binder_metadata = Vec::new();
+        let mut next_marker_id = 0u32;
+
+        for (cat_i, rules) in per_cat.iter().enumerate() {
+            for (rule_i, rule) in rules.iter().enumerate() {
+                let Some(shape) = classify_binder_in(rule, language) else {
+                    continue;
+                };
+                let result_src_idx = cat_i as u16;
+                let rule_idx = rule_i as u16;
+                let sites = traversal_sites(&shape.positions);
+                for OptionalSite { position, .. } in sites.optionals {
+                    let BinderPosition::OptionalGroup { positions, group_idx, .. } = position
+                    else {
+                        unreachable!("optional marker site must name an optional group");
+                    };
+                    let final_sub_pos = u32::try_from(positions.len() + 1)
+                        .expect("optional marker count exceeds compact addressability");
+                    for sub_pos in 0..=final_sub_pos {
+                        let marker_id = next_marker_id;
+                        next_marker_id = next_marker_id
+                            .checked_add(1)
+                            .expect("traversal marker table exceeds u32 addressability");
+                        let coordinate =
+                            TraversalMarkerCoordinate::Optional { group_idx: *group_idx, sub_pos };
+                        ids.insert((result_src_idx, rule_idx, coordinate), marker_id);
+                        optional_metadata.push((
+                            marker_id,
+                            result_src_idx,
+                            rule_idx,
+                            *group_idx,
+                            sub_pos,
+                        ));
+                    }
+                }
+                for BinderListSite { position, frame_idx, .. } in sites.binder_lists {
+                    let BinderPosition::BinderListLoop { inner_positions, .. } = position else {
+                        unreachable!("binder marker site must name a binder-list frame");
+                    };
+                    let final_sub_pos = u32::try_from(inner_positions.len() + 1)
+                        .expect("binder marker count exceeds compact addressability");
+                    for sub_pos in 0..=final_sub_pos {
+                        let marker_id = next_marker_id;
+                        next_marker_id = next_marker_id
+                            .checked_add(1)
+                            .expect("traversal marker table exceeds u32 addressability");
+                        let coordinate =
+                            TraversalMarkerCoordinate::BinderList { frame_idx, sub_pos };
+                        ids.insert((result_src_idx, rule_idx, coordinate), marker_id);
+                        binder_metadata.push((
+                            marker_id,
+                            result_src_idx,
+                            rule_idx,
+                            frame_idx,
+                            sub_pos,
+                        ));
+                    }
+                }
+            }
+        }
+
+        Self { ids, optional_metadata, binder_metadata }
+    }
+
+    fn id(&self, result_src_idx: u16, rule_idx: u16, coordinate: TraversalMarkerCoordinate) -> u32 {
+        self.ids[&(result_src_idx, rule_idx, coordinate)]
+    }
+}
+
+/// Build the recursive position forest's flat PDA-frame table iteratively.
+/// Sites are emitted in deterministic preorder; depth is represented by the
+/// heap-backed `pending` worklist rather than the native call stack.
+fn traversal_sites(positions: &[BinderPosition]) -> TraversalSites<'_> {
+    struct Pending<'position> {
+        position: &'position BinderPosition,
+        resume: TraversalResume,
+    }
+
+    let mut pending = Vec::with_capacity(positions.len());
+    for (idx, position) in positions.iter().enumerate().rev() {
+        pending.push(Pending {
+            position,
+            resume: TraversalResume::Rule { next_pos: (idx + 2) as u8 },
+        });
+    }
+
+    let mut binder_lists = Vec::new();
+    let mut optionals = Vec::new();
+    let mut binder_frame_indices = HashMap::new();
+    while let Some(Pending { position, resume }) = pending.pop() {
+        match position {
+            BinderPosition::OptionalGroup { positions, group_idx, .. } => {
+                optionals.push(OptionalSite { position, resume });
+                for (idx, child) in positions.iter().enumerate().rev() {
+                    pending.push(Pending {
+                        position: child,
+                        resume: TraversalResume::Optional {
+                            group_idx: *group_idx,
+                            next_sub_pos: (idx + 2) as u32,
+                        },
+                    });
+                }
+            },
+            BinderPosition::BinderListLoop { inner_positions, .. } => {
+                let frame_idx = u32::try_from(binder_lists.len())
+                    .expect("binder-list frame count exceeds compact marker addressability");
+                binder_frame_indices.insert(position as *const BinderPosition, frame_idx);
+                binder_lists.push(BinderListSite { position, frame_idx, resume });
+                let last = inner_positions.len().saturating_sub(1);
+                for (idx, child) in inner_positions.iter().enumerate().rev() {
+                    pending.push(Pending {
+                        position: child,
+                        resume: TraversalResume::BinderList {
+                            frame_idx,
+                            next_sub_pos: if idx == last { 0 } else { (idx + 2) as u32 },
+                        },
+                    });
+                }
+            },
+            _ => {},
+        }
+    }
+
+    TraversalSites {
+        binder_lists,
+        optionals,
+        binder_frame_indices,
+    }
+}
+
+fn binder_list_frame_indices(positions: &[BinderPosition]) -> HashMap<*const BinderPosition, u32> {
+    traversal_sites(positions).binder_frame_indices
+}
+
+fn traversal_resume_symbol(
+    resume: TraversalResume,
+    result_src_idx: u16,
+    rule_idx: u16,
+    markers: &TraversalMarkerTable,
+) -> TokenStream {
+    match resume {
+        TraversalResume::Rule { next_pos } => quote! {
+            StackSymbolV2::rule_at(
+                #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+            )
+        },
+        TraversalResume::Optional { group_idx, next_sub_pos } => {
+            let marker_id = markers.id(
+                result_src_idx,
+                rule_idx,
+                TraversalMarkerCoordinate::Optional { group_idx, sub_pos: next_sub_pos },
+            );
+            quote! { StackSymbolV2::optional_group_at(#marker_id, *outer_bp) }
+        },
+        TraversalResume::BinderList { frame_idx, next_sub_pos } => {
+            let marker_id = markers.id(
+                result_src_idx,
+                rule_idx,
+                TraversalMarkerCoordinate::BinderList { frame_idx, sub_pos: next_sub_pos },
+            );
+            quote! { StackSymbolV2::binder_list_loop_at(#marker_id, *outer_bp) }
+        },
+    }
+}
+
+/// Emit the shared entry transition for a binder-list frame. The caller's
+/// current marker is replaced by `resume_symbol` before control enters the
+/// frame, so completion can always return through `Unwinding` regardless of
+/// whether the caller is a rule, optional group, or another binder-list.
+fn emit_binder_list_entry(
+    position: &BinderPosition,
+    frame_idx: u32,
+    resume_symbol: &TokenStream,
+    result_src_idx: u16,
+    rule_idx: u16,
+) -> TokenStream {
+    let BinderPosition::BinderListLoop {
+        close,
+        collection_param_cat,
+        allow_empty,
+        allow_multi,
+        slot_idx,
+        ..
+    } = position
+    else {
+        return quote! { WpdaStepAction::Idle };
+    };
+
+    if !*allow_empty && !*allow_multi && collection_param_cat.is_none() {
+        return quote! {
+            WpdaStepAction::Fork {
+                branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                    symbol: #resume_symbol,
+                    weight: lex_one(),
+                    new_state: WpdaState::Unwinding,
+                    action_kind:
+                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
+                            start_scope: true,
+                            effect: mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
+                        },
+                }],
+                consume_trigger: false,
+            }
+        };
+    }
+
+    if collection_param_cat.is_some() {
+        let empty_branch = allow_empty.then(|| quote! {
+            mettail_prattail::wpda_walker::ForkBranch {
+                symbol: #resume_symbol,
+                weight: lex_w(0.0, #result_src_idx, #rule_idx),
+                new_state: WpdaState::Unwinding,
+                action_kind:
+                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                        expected_text: #close.to_string(),
+                        effects: vec![
+                            mettail_prattail::wpda_walker::BuilderDelta::StartCollection,
+                            mettail_prattail::wpda_walker::BuilderDelta::PushCollectionId { id: #slot_idx },
+                            mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
+                                names: Vec::new(),
+                            },
+                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
+                        ],
+                    },
+            },
+        });
+        return quote! {
+            WpdaStepAction::Fork {
+                branches: vec![
+                    #empty_branch
+                    mettail_prattail::wpda_walker::ForkBranch {
+                        symbol: StackSymbolV2::collection_marker(
+                            #result_src_idx, #rule_idx, #slot_idx, 0u8,
+                        ),
+                        weight: lex_w(
+                            mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                            #result_src_idx,
+                            #rule_idx,
+                        ),
+                        new_state: WpdaState::BinderListLoop {
+                            result_src_idx: #result_src_idx,
+                            rule_idx: #rule_idx,
+                            frame_idx: #frame_idx,
+                            outer_bp: *outer_bp,
+                            sub_pos: 0u32,
+                        },
+                        action_kind:
+                            mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
+                                replace_symbol: #resume_symbol,
+                            },
+                    },
+                ],
+                consume_trigger: false,
+            }
+        };
+    }
+
+    let empty_branch = allow_empty.then(|| quote! {
+        mettail_prattail::wpda_walker::ForkBranch {
+            symbol: #resume_symbol,
+            weight: lex_w(0.0, #result_src_idx, #rule_idx),
+            new_state: WpdaState::Unwinding,
+            action_kind:
+                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                    expected_text: #close.to_string(),
+                    effects: vec![
+                        mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
+                            names: Vec::new(),
+                        },
+                        mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
+                    ],
+                },
+        },
+    });
+    quote! {
+        WpdaStepAction::Fork {
+            branches: vec![
+                #empty_branch
+                mettail_prattail::wpda_walker::ForkBranch {
+                    symbol: #resume_symbol,
+                    weight: lex_w(
+                        mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                        #result_src_idx,
+                        #rule_idx,
+                    ),
+                    new_state: WpdaState::BinderListLoop {
+                        result_src_idx: #result_src_idx,
+                        rule_idx: #rule_idx,
+                        frame_idx: #frame_idx,
+                        outer_bp: *outer_bp,
+                        sub_pos: 0u32,
+                    },
+                    action_kind:
+                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
+                            start_scope: true,
+                        },
+                },
+            ],
+            consume_trigger: false,
+        }
+    }
+}
+
+fn optional_first_token_set(positions: &[BinderPosition]) -> Vec<String> {
+    let Some(first) = positions.first() else {
+        return Vec::new();
+    };
+    match first {
+        BinderPosition::Literal(text) => vec![text.clone()],
+        BinderPosition::OptionalGroup { first_token_set, .. } => first_token_set.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// Compile a syntax-pattern optional body into recursive binder/action models
+/// without recursing on the native stack.
+///
+/// Each `Frame` is one suspended sequence. Completing a child optional appends
+/// its two model nodes to the parent and resumes the parent's next item. This is
+/// the construction-time PDA paired with the runtime optional-group PDA.
+fn classify_optional_body(
+    root: &[SyntaxExpr],
+    param_map: &HashMap<String, ParamKind>,
+    declared_delims: Option<&CollectionDelimiters>,
+    next_group_idx: &mut u32,
+    collection_slots_so_far: &mut u8,
+) -> Option<(Vec<BinderPosition>, Vec<ActionArgKind>)> {
+    struct Frame<'syntax> {
+        items: &'syntax [SyntaxExpr],
+        next: usize,
+        positions: Vec<BinderPosition>,
+        args: Vec<ActionArgKind>,
+        group_idx: Option<u32>,
+    }
+
+    let mut frames = vec![Frame {
+        items: root,
+        next: 0,
+        positions: Vec::new(),
+        args: Vec::new(),
+        group_idx: None,
+    }];
+
+    loop {
+        let finished = frames
+            .last()
+            .is_some_and(|frame| frame.next == frame.items.len());
+        if finished {
+            let completed = frames.pop()?;
+            if let Some(parent) = frames.last_mut() {
+                let group_idx = completed.group_idx?;
+                if completed.positions.is_empty() {
+                    return None;
+                }
+                let first_token_set = optional_first_token_set(&completed.positions);
+                parent.positions.push(BinderPosition::OptionalGroup {
+                    positions: completed.positions,
+                    group_idx,
+                    first_token_set,
+                });
+                parent.args.push(ActionArgKind::Optional(completed.args));
+                continue;
+            }
+            return Some((completed.positions, completed.args));
+        }
+
+        let frame = frames.last_mut()?;
+        let item_idx = frame.next;
+        frame.next += 1;
+        match &frame.items[item_idx] {
+            SyntaxExpr::Literal(text) => {
+                frame.positions.push(BinderPosition::Literal(text.clone()));
+            },
+            SyntaxExpr::TokenKind { name, bind } => {
+                let kind_name = name.to_string();
+                let param_name = bind
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("__tok_{kind_name}"));
+                frame.positions.push(BinderPosition::TokenKindCapture {
+                    kind_name,
+                    param_name: param_name.clone(),
+                });
+                frame.args.push(ActionArgKind::TokenText { param_name });
+            },
+            SyntaxExpr::GuestBody { open, close, bind } => {
+                let param_name = bind.to_string();
+                frame.positions.push(BinderPosition::GuestBodyCapture {
+                    open_kind: open.to_string(),
+                    close_kind: close.to_string(),
+                    param_name: param_name.clone(),
+                });
+                frame.args.push(ActionArgKind::GuestBody { param_name });
+            },
+            SyntaxExpr::Param(name) => {
+                let param_name = name.to_string();
+                match param_map.get(&param_name)? {
+                    ParamKind::Binder => {
+                        frame.positions.push(BinderPosition::BinderListLoop {
+                            separator: String::new(),
+                            close: String::new(),
+                            inner_positions: vec![BinderPosition::BinderIdent],
+                            collection_param_cat: None,
+                            allow_empty: false,
+                            allow_multi: false,
+                            slot_idx: 0,
+                        });
+                        frame.args.push(ActionArgKind::BinderName);
+                    },
+                    ParamKind::Body { cat } | ParamKind::Simple { cat }
+                        if mettail_ast::grammar::NonTerminalKind::classify(cat)
+                            == mettail_ast::grammar::NonTerminalKind::Ident =>
+                    {
+                        frame.positions.push(BinderPosition::IdentTextCapture {
+                            param_name: param_name.clone(),
+                        });
+                        frame.args.push(ActionArgKind::IdentText { param_name });
+                    },
+                    ParamKind::Body { cat } | ParamKind::Simple { cat } => {
+                        frame.positions.push(BinderPosition::ParamParse {
+                            cat: cat.clone(),
+                            collection: None,
+                        });
+                        frame.args.push(ActionArgKind::Term(cat.clone()));
+                    },
+                    ParamKind::Guard => {
+                        frame.positions.push(BinderPosition::GuardSlot);
+                        frame.args.push(ActionArgKind::Predicate);
+                    },
+                    ParamKind::BinderList | ParamKind::SimpleCollection { .. } => return None,
+                }
+            },
+            SyntaxExpr::Op(PatternOp::Opt { inner }) => {
+                let group_idx = *next_group_idx;
+                *next_group_idx = next_group_idx.checked_add(1)?;
+                frames.push(Frame {
+                    items: inner,
+                    next: 0,
+                    positions: Vec::new(),
+                    args: Vec::new(),
+                    group_idx: Some(group_idx),
+                });
+            },
+            SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
+                let close = match frame.items.get(frame.next) {
+                    Some(SyntaxExpr::Literal(text)) => text.clone(),
+                    _ => return None,
+                };
+                frame.next += 1;
+                match param_map.get(&collection.to_string())? {
+                    ParamKind::BinderList => {
+                        frame.positions.push(BinderPosition::BinderListLoop {
+                            separator: separator.clone(),
+                            close,
+                            inner_positions: vec![BinderPosition::BinderIdent],
+                            collection_param_cat: None,
+                            allow_empty: true,
+                            allow_multi: true,
+                            slot_idx: 0,
+                        });
+                        frame.args.push(ActionArgKind::BinderList);
+                    },
+                    ParamKind::SimpleCollection { elem_cat, coll_kind } => {
+                        let slot_idx = *collection_slots_so_far;
+                        *collection_slots_so_far = collection_slots_so_far.checked_add(1)?;
+                        frame.positions.push(BinderPosition::ParamParse {
+                            cat: elem_cat.clone(),
+                            collection: Some(CollectionSepInfo {
+                                separator: separator.clone(),
+                                close,
+                                elem_cat: elem_cat.clone(),
+                                key_val_separator: kv_sep_for(coll_kind, declared_delims),
+                                slot_idx,
+                            }),
+                        });
+                        frame.args.push(ActionArgKind::CollectionDrain {
+                            elem_cat: elem_cat.clone(),
+                            coll_kind: coll_kind.clone(),
+                        });
+                    },
+                    _ => return None,
+                }
+            },
+            SyntaxExpr::Op(_) => return None,
+        }
+    }
+}
+
 /// Try to classify a `GrammarRule` as a multi-step rule (binder, multi-Param,
 /// or guard-bearing).
 pub(crate) fn classify_binder_in(
@@ -406,27 +961,6 @@ pub(crate) fn classify_binder_in(
     }
 
     // Build a map: param name → (kind, type_info).
-    enum ParamKind {
-        Simple {
-            cat: String,
-        },
-        Binder,
-        BinderList,
-        Body {
-            cat: String,
-        },
-        Guard,
-        /// B9 / Class 2 (2026-05-08): a `Simple` param whose type is
-        /// `Collection { coll_type: Vec/HashBag/HashSet, element: Base(elem) }`.
-        /// Distinct from the collection-rule case (handled by
-        /// `classify_collection`) because Class-2 rules have OTHER
-        /// non-collection params (e.g. a tag param + a collection param);
-        /// `classify_collection` requires `tc.len() == 1`.
-        SimpleCollection {
-            elem_cat: String,
-            coll_kind: CollectionType,
-        },
-    }
     let mut param_map: std::collections::HashMap<String, ParamKind> =
         std::collections::HashMap::new();
     let mut is_multi = false;
@@ -583,6 +1117,9 @@ pub(crate) fn classify_binder_in(
     // so the walker's per-CollectionMarker lookups can disambiguate
     // sibling slots within the same rule.
     let mut collection_slots_so_far: u8 = 0;
+    // Unique preorder identity for every optional group in this rule, including
+    // groups nested inside other optional or binder-list bodies.
+    let mut next_optional_group_idx: u32 = 0;
     for (i, item) in sp.iter().enumerate().skip(1) {
         if skip_next {
             skip_next = false;
@@ -908,126 +1445,19 @@ pub(crate) fn classify_binder_in(
                 skip_next = true;
             },
             SyntaxExpr::Op(PatternOp::Opt { inner }) => {
-                // Opt-Group: recursively classify inner SyntaxExprs.
-                // Reuses param_map (inner Param references resolve against
-                // the same TermContext entries — including any TermParam::Optional
-                // already registered by walk_params). For the pilot, the
-                // inner positions support Literal, ParamParse (Simple/Body),
-                // BinderIdent, GuardSlot. Nested Optional and Sep are out
-                // of pilot scope.
-                let group_idx = positions
-                    .iter()
-                    .filter(|p| matches!(p, BinderPosition::OptionalGroup { .. }))
-                    .count() as u8;
-
-                let mut inner_positions: Vec<BinderPosition> = Vec::new();
-                let mut inner_action_args: Vec<ActionArgKind> = Vec::new();
-                let mut inner_skip_next: bool = false;
-
-                for (inner_idx, inner_item) in inner.iter().enumerate() {
-                    if inner_skip_next {
-                        inner_skip_next = false;
-                        continue;
-                    }
-                    match inner_item {
-                        SyntaxExpr::Literal(text) => {
-                            inner_positions.push(BinderPosition::Literal(text.clone()));
-                        },
-                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => return None,
-                        SyntaxExpr::Param(name) => {
-                            let n = name.to_string();
-                            let kind = param_map.get(&n)?;
-                            match kind {
-                                ParamKind::Binder => {
-                                    inner_positions.push(BinderPosition::BinderIdent);
-                                    inner_action_args.push(ActionArgKind::BinderName);
-                                },
-                                ParamKind::Body { cat } | ParamKind::Simple { cat } => {
-                                    inner_positions.push(BinderPosition::ParamParse {
-                                        cat: cat.clone(),
-                                        collection: None,
-                                    });
-                                    inner_action_args.push(ActionArgKind::Term(cat.clone()));
-                                },
-                                ParamKind::Guard => {
-                                    inner_positions.push(BinderPosition::GuardSlot);
-                                    inner_action_args.push(ActionArgKind::Predicate);
-                                },
-                                ParamKind::BinderList => {
-                                    return None;
-                                },
-                                // Bare Param ref to SimpleCollection is
-                                // syntactically invalid (a collection
-                                // requires Sep syntax with separator +
-                                // close). The Sep-driven form is handled
-                                // below via SyntaxExpr::Op(PatternOp::Sep).
-                                ParamKind::SimpleCollection { .. } => {
-                                    return None;
-                                },
-                            }
-                        },
-                        // Phase 4 #3 (2026-05-12): Class-2 SimpleCollection
-                        // inside `*opt(...)`. Mirrors the top-level Sep arm
-                        // at binder.rs:584-633 but operates over the
-                        // optional inner walk's positions list. The close
-                        // literal is at `inner[inner_idx + 1]`.
-                        SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
-                            let n = collection.to_string();
-                            let kind = param_map.get(&n)?;
-                            match kind {
-                                ParamKind::SimpleCollection { elem_cat, coll_kind } => {
-                                    let close = match inner.get(inner_idx + 1) {
-                                        Some(SyntaxExpr::Literal(text)) => text.clone(),
-                                        _ => return None,
-                                    };
-                                    // Stage 3 (2026-06-27): same `kv_sep_for`
-                                    // resolver as the top-level Sep arm —
-                                    // `*opt(...)`-nested inline binder collection.
-                                    let key_val_separator = kv_sep_for(coll_kind, declared_delims);
-                                    let slot_idx_here = collection_slots_so_far;
-                                    collection_slots_so_far += 1;
-                                    inner_positions.push(BinderPosition::ParamParse {
-                                        cat: elem_cat.clone(),
-                                        collection: Some(CollectionSepInfo {
-                                            separator: separator.clone(),
-                                            close,
-                                            elem_cat: elem_cat.clone(),
-                                            key_val_separator,
-                                            slot_idx: slot_idx_here,
-                                        }),
-                                    });
-                                    inner_action_args.push(ActionArgKind::CollectionDrain {
-                                        elem_cat: elem_cat.clone(),
-                                        coll_kind: coll_kind.clone(),
-                                    });
-                                    // Skip the close Literal — absorbed
-                                    // into CollectionLoop close-branch.
-                                    inner_skip_next = true;
-                                },
-                                _ => return None,
-                            }
-                        },
-                        SyntaxExpr::Op(_) => {
-                            return None;
-                        },
-                    }
-                }
-
+                let group_idx = next_optional_group_idx;
+                next_optional_group_idx = next_optional_group_idx.checked_add(1)?;
+                let (inner_positions, inner_action_args) = classify_optional_body(
+                    inner,
+                    &param_map,
+                    declared_delims,
+                    &mut next_optional_group_idx,
+                    &mut collection_slots_so_far,
+                )?;
                 if inner_positions.is_empty() {
                     return None;
                 }
-
-                // Compute first_token_set: the literal-text predicates that
-                // trigger entry into the group. For BinderPosition::Literal,
-                // first_token_set = vec![text]. ParamParse-leading inner
-                // positions are out of pilot scope (would require threading
-                // language access through classify_binder to compute
-                // first_set_of_category).
-                let first_token_set: Vec<String> = match &inner_positions[0] {
-                    BinderPosition::Literal(text) => vec![text.clone()],
-                    _ => return None,
-                };
-
+                let first_token_set = optional_first_token_set(&inner_positions);
                 positions.push(BinderPosition::OptionalGroup {
                     positions: inner_positions,
                     group_idx,
@@ -1490,6 +1920,7 @@ pub(crate) fn emit_binder_rule_body(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
     prefix_bp_map: &HashMap<(u16, u16), u8>,
+    markers: &TraversalMarkerTable,
     // S1-FACTORING F1 (2026-07-12, plan §2 items 2-4): the spine arms from
     // `factoring::build_spine_emission` — keyed `(cat, SPINE_ID, node_pos)`
     // where `node_pos` is the trie's preorder node id (root arm = 1, the
@@ -1518,6 +1949,7 @@ pub(crate) fn emit_binder_rule_body(
             let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
+            let frame_indices = binder_list_frame_indices(&shape.positions);
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
             let mut group_arms: Vec<TokenStream> = Vec::with_capacity(shape.positions.len() + 1);
@@ -1750,268 +2182,25 @@ pub(crate) fn emit_binder_rule_body(
                         // `_ => WpdaStepAction::Idle` and the parse
                         // will stall, which is loud enough to debug.
                     },
-                    BinderPosition::BinderListLoop {
-                        separator: _,
-                        close,
-                        collection_param_cat,
-                        allow_empty,
-                        allow_multi,
-                        slot_idx,
-                        ..
-                    } => {
-                        // Phase 5b: enter BinderListLoop sub-state. The
-                        // first iteration here checks `close` (empty list)
-                        // or starts collecting Idents; subsequent iterations
-                        // (handled in BinderListLoop's own state) use the
-                        // separator to chain Ident captures.
-                        //
-                        // B8 / Class 3 (2026-05-08): when collection_param_cat
-                        // is Some, this is a Class 3 ZIP-MAP-SEP rule and
-                        // the bootstrap differs: we Push a CollectionMarker
-                        // to allocate the Names accumulator (and push
-                        // ActionArg::CollectionId for the terminal action),
-                        // then transition directly into BinderListLoop
-                        // {sub_pos:0}. The StartBinderScope is opened at
-                        // the first BinderIdent capture inside the inner
-                        // walk via start_scope=true (or, in the empty-list
-                        // path, via the BRANCH 1 effect).
-                        //
-                        // Phase 3.B.3 (2026-05-11): single-binder collapse
-                        // — when allow_empty=false AND allow_multi=false
-                        // AND collection_param_cat=None, emit a 1-branch
-                        // Fork that captures the lone Ident, closes the
-                        // scope atomically via EndBinderScope effect, and
-                        // transitions to BinderRule {next_pos}. No
-                        // BinderListLoop sub-state is entered. The action
-                        // entry sees ActionArg::BinderScope with exactly
-                        // one name in its names list, which the
-                        // single-binder construction unwraps to a scalar
-                        // Binder<String>.
-                        if !*allow_empty && !*allow_multi && collection_param_cat.is_none() {
-                            quote! {
-                                (#result_src_idx, #rule_idx, #pos) => {
-                                    return WpdaStepAction::Fork {
-                                        branches: vec![
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::rule_at(
-                                                    #result_src_idx, #rule_idx,
-                                                    #next_pos, Some(*outer_bp),
-                                                ),
-                                                weight: lex_one(),
-                                                new_state: WpdaState::BinderRule {
-                                                    result_src_idx: #result_src_idx,
-                                                    rule_idx: #rule_idx,
-                                                    body_src_idx: *_body_src_idx,
-                                                    outer_bp: *outer_bp,
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
-                                                        start_scope: true,
-                                                        effect:
-                                                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                                                    },
-                                            },
-                                        ],
-                                        consume_trigger: false,
-                                    };
-                                }
-                            }
-                        } else if collection_param_cat.is_some() {
-                            quote! {
-                                (#result_src_idx, #rule_idx, #pos) => {
-                                    let _ = tokens.peek_text(_pos);
-                                    return WpdaStepAction::Fork {
-                                        branches: vec![
-                                            // BRANCH 1: empty close — Class 3
-                                            // multi-effect: log
-                                            // [StartCollection,
-                                            // PushCollectionId{id:0},
-                                            // StartBinderScope] so the
-                                            // empty-list path matches the
-                                            // terminal action's arity-3
-                                            // expectation [CollectionId,
-                                            // BinderScope, Term<Proc>].
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::rule_at(
-                                                    #result_src_idx, #rule_idx,
-                                                    #next_pos, Some(*outer_bp),
-                                                ),
-                                                weight: lex_w(
-                                                    0.0, #result_src_idx, #rule_idx,
-                                                ),
-                                                new_state: WpdaState::BinderRule {
-                                                    result_src_idx: #result_src_idx,
-                                                    rule_idx: #rule_idx,
-                                                    body_src_idx: *_body_src_idx,
-                                                    outer_bp: *outer_bp,
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
-                                                        expected_text: #close.to_string(),
-                                                        effects: vec![
-                                                            mettail_prattail::wpda_walker::BuilderDelta::StartCollection,
-                                                            // Phase 4 #2 (2026-05-12): carry the
-                                                            // BinderListLoop's static slot_idx
-                                                            // (was hardcoded 0u8). The walker
-                                                            // resolves the live accumulator id
-                                                            // from the current collection depth
-                                                            // when applying this effect.
-                                                            mettail_prattail::wpda_walker::BuilderDelta::PushCollectionId { id: #slot_idx },
-                                                            mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
-                                                                names: Vec::new(),
-                                                            },
-                                                            // B8 / Issue C followup: close the
-                                                            // empty scope so BinderScope arg
-                                                            // is pushed before the body parse.
-                                                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                                                        ],
-                                                    },
-                                            },
-                                            // BRANCH 2: non-empty — ReplaceAndPush.
-                                            // Replace outer RuleAt(rule, marker_pos)
-                                            // with RuleAt(rule, next_pos) so when
-                                            // CollectionMarker pops post-action,
-                                            // the cursor unwinds cleanly past
-                                            // the loop slot. Push CollectionMarker
-                                            // for the Names accumulator;
-                                            // emit_push_side_effects allocates +
-                                            // pushes CollectionId arg + opens
-                                            // BinderScope (is_class3_collection_per_slot).
-                                            //
-                                            // Phase 4 #2 (2026-05-12): use the
-                                            // BinderListLoop's `slot_idx` (not
-                                            // hardcoded 0) so that in multi-slot
-                                            // rules (Class-3 + Class-2 siblings),
-                                            // the per-slot predicate
-                                            // `is_class3_collection_per_slot`
-                                            // distinguishes this Class-3 slot
-                                            // from Class-2 sibling slots.
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::collection_marker(
-                                                    // binder-internal collection: dispatch_bp=0
-                                                    // (no enclosing Pratt InfixLoop; close is
-                                                    // driven by the binder rule machinery).
-                                                    #result_src_idx, #rule_idx, #slot_idx, 0u8,
-                                                ),
-                                                weight: lex_w(
-                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                    #result_src_idx, #rule_idx,
-                                                ),
-                                                new_state: WpdaState::BinderListLoop {
-                                                    result_src_idx: #result_src_idx,
-                                                    rule_idx: #rule_idx,
-                                                    body_src_idx: *_body_src_idx,
-                                                    outer_bp: *outer_bp,
-                                                    marker_pos: #pos,
-                                                    next_pos: #next_pos,
-                                                    sub_pos: 0u8,
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
-                                                        replace_symbol: StackSymbolV2::rule_at(
-                                                            #result_src_idx, #rule_idx,
-                                                            #next_pos, Some(*outer_bp),
-                                                        ),
-                                                    },
-                                            },
-                                        ],
-                                        consume_trigger: false,
-                                    };
-                                }
-                            }
-                        } else {
-                            quote! {
-                                (#result_src_idx, #rule_idx, #pos) => {
-                                    // L12 follow-up B2 (2026-05-07): two-branch
-                                    // GuardedFork over empty (close-delim) and
-                                    // non-empty (first-ident) bootstrap paths.
-                                    // Each branch carries a runtime guard so at
-                                    // most one fires per dispatch.
-                                    //
-                                    //   - BRANCH 1 (empty): GuardedConsumeAndReplaceWithEffect
-                                    //     fires only when peek_text == close.
-                                    //     Logs StartBinderScope { names: vec![] }.
-                                    //   - BRANCH 2 (first ident): GuardedConsumeIdentAndReplace
-                                    //     fires only when peek_kind == Ident.
-                                    //
-                                    // Pre-fix: BRANCH 1 (ConsumeAndReplaceWithEffect)
-                                    // and BRANCH 2 (ConsumeIdentAndReplace) BOTH
-                                    // fired unconditionally on every dispatch,
-                                    // contributing to BinderListLoop's exponential
-                                    // cursor explosion on multi-binder grammars.
-                                    let _ = tokens.peek_text(_pos);
-                                    return WpdaStepAction::Fork {
-                                        branches: vec![
-                                            // BRANCH 1: empty close — GuardedConsumeAndReplaceWithEffect
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::rule_at(
-                                                    #result_src_idx, #rule_idx,
-                                                    #next_pos, Some(*outer_bp),
-                                                ),
-                                                weight: lex_w(
-                                                    0.0, #result_src_idx, #rule_idx,
-                                                ),
-                                                new_state: WpdaState::BinderRule {
-                                                    result_src_idx: #result_src_idx,
-                                                    rule_idx: #rule_idx,
-                                                    body_src_idx: *_body_src_idx,
-                                                    outer_bp: *outer_bp,
-                                                },
-                                                action_kind:
-                                                    // B8 / Issue C followup
-                                                    // (2026-05-09): empty-list
-                                                    // bootstrap MUST also close
-                                                    // the scope so the action's
-                                                    // BinderScope arg is pushed.
-                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
-                                                        expected_text: #close.to_string(),
-                                                        effects: vec![
-                                                            mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
-                                                                names: Vec::new(),
-                                                            },
-                                                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                                                        ],
-                                                    },
-                                            },
-                                            // BRANCH 2: first ident —
-                                            // GuardedConsumeBinderIdentAndReplace.
-                                            // B8 / Issue 3 (2026-05-10): use the
-                                            // binder-aware variant which opens
-                                            // a binder scope with [text] but
-                                            // does NOT push an Ident arg
-                                            // (the multi-binder rule's action
-                                            // expects BinderScope arg, not
-                                            // Ident). Lambda Lam-style single-
-                                            // binder rules continue to use the
-                                            // legacy GuardedConsumeIdentAndReplace
-                                            // at their direct BinderIdent arm.
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::rule_at(
-                                                    #result_src_idx, #rule_idx,
-                                                    #pos, Some(*outer_bp),
-                                                ),
-                                                weight: lex_w(
-                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                    #result_src_idx, #rule_idx,
-                                                ),
-                                                new_state: WpdaState::BinderListLoop {
-                                                    result_src_idx: #result_src_idx,
-                                                    rule_idx: #rule_idx,
-                                                    body_src_idx: *_body_src_idx,
-                                                    outer_bp: *outer_bp,
-                                                    marker_pos: #pos,
-                                                    next_pos: #next_pos,
-                                                    sub_pos: 0u8,
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
-                                                        start_scope: true,
-                                                    },
-                                            },
-                                        ],
-                                        consume_trigger: false,
-                                    };
-                                }
+                    BinderPosition::BinderListLoop { .. } => {
+                        let frame_idx = frame_indices[&(position as *const BinderPosition)];
+                        let resume_symbol = traversal_resume_symbol(
+                            TraversalResume::Rule { next_pos },
+                            result_src_idx,
+                            rule_idx,
+                            markers,
+                        );
+                        let entry = emit_binder_list_entry(
+                            position,
+                            frame_idx,
+                            &resume_symbol,
+                            result_src_idx,
+                            rule_idx,
+                        );
+                        quote! {
+                            (#result_src_idx, #rule_idx, #pos) => {
+                                let _ = tokens.peek_text(_pos);
+                                return #entry;
                             }
                         }
                     },
@@ -2136,14 +2325,14 @@ pub(crate) fn emit_binder_rule_body(
                         // OptGroupFinalize advances the outer marker to
                         // next_pos. On the skip path, OptGroupAbsent
                         // advances directly to next_pos.
-                        let group_idx_byte = *group_idx;
+                        let group_idx_value = *group_idx;
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
                                 return WpdaStepAction::Advance(
                                     WpdaState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
-                                        group_idx: #group_idx_byte,
+                                        group_idx: #group_idx_value,
                                         sub_pos: 0,
                                         outer_bp: *outer_bp,
                                     },
@@ -2268,36 +2457,28 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(
             let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
-            for position in shape.positions.iter() {
-                if let BinderPosition::BinderListLoop {
+            for BinderListSite { position, frame_idx, .. } in
+                traversal_sites(&shape.positions).binder_lists
+            {
+                let BinderPosition::BinderListLoop {
                     inner_positions,
                     collection_param_cat: Some(_),
                     slot_idx,
                     ..
                 } = position
-                {
-                    for (i, inner) in inner_positions.iter().enumerate() {
-                        if let BinderPosition::ParamParse { collection: Some(_), .. } = inner {
-                            // Inner index i (0-based) → splice on landing
-                            // at sub_pos = i + 2. (sub_pos = 1 dispatches
-                            // inner_positions[0]; landing at sub_pos = 2
-                            // means inner_positions[0] just completed.)
-                            let cat = cat_i as u16;
-                            let rule_idx = rule_i as u16;
-                            let target_sub_pos = (i + 2) as u8;
-                            // Phase 4 #2 (2026-05-12): carry the
-                            // BinderListLoop's static names slot_idx.
-                            // apply_effect_to_cursor resolves the runtime
-                            // accumulator id from active collection depth,
-                            // so this remains correct inside outer
-                            // collections. Pre-Phase-4-#2 this hardcoded
-                            // Some(0u8), which could not distinguish
-                            // multi-slot Class-3 rules.
-                            let slot_idx_lit = *slot_idx;
-                            arms.push(quote! {
-                                (#cat, #rule_idx, #target_sub_pos) => Some(#slot_idx_lit),
-                            });
-                        }
+                else {
+                    continue;
+                };
+                for (index, inner) in inner_positions.iter().enumerate() {
+                    if matches!(inner, BinderPosition::ParamParse { collection: Some(_), .. }) {
+                        let cat = cat_i as u16;
+                        let rule_idx = rule_i as u16;
+                        let target_sub_pos = (index + 2) as u32;
+                        let slot_idx = *slot_idx;
+                        arms.push(quote! {
+                            (#cat, #rule_idx, #frame_idx, #target_sub_pos) =>
+                                Some(#slot_idx),
+                        });
                     }
                 }
             }
@@ -2307,7 +2488,7 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(
         quote! { None::<u8> }
     } else {
         quote! {
-            match (result_src_idx, rule_idx, sub_pos) {
+            match (result_src_idx, rule_idx, frame_idx, sub_pos) {
                 #(#arms)*
                 _ => None::<u8>,
             }
@@ -2315,65 +2496,37 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(
     }
 }
 
-/// B8 / Issue 2 (2026-05-10): emit a per-(src, rule, sub_pos)
-/// predicate that returns `true` when an OptionalGroupAt(sub_pos)
-/// push belongs to a Class 3 BinderListLoop inner walk (and thus
-/// should NOT open an optional scope). Returns `false` for genuine
-/// `*opt(...)` OptionalGroup markers, including the case where a
-/// rule has BOTH a Class 3 BinderListLoop AND a real *opt(...) in
-/// the same rule (different sub_pos values disambiguate).
-///
-/// For PInputs (Class 3, inner_positions=[ParamParse{Name}, Literal,
-/// BinderIdent]): returns true for sub_pos ∈ {1, 2, 3} (the inner
-/// walk arms). For pure-OptionalGroup rules: returns false at all
-/// sub_pos. For mixed Class3+OptionalGroup rules (hypothetical
-/// future): returns true ONLY at sub_pos values within the
-/// inner_positions range; false at OptionalGroup-internal sub_pos
-/// values.
-pub(crate) fn emit_is_class3_inner_marker_per_subpos(
-    language: &LanguageDef,
-    per_cat: &[Vec<GrammarRule>],
-) -> TokenStream {
-    let mut arms = Vec::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder_in(rule, language) else {
-                continue;
-            };
-            for position in shape.positions.iter() {
-                if let BinderPosition::BinderListLoop {
-                    inner_positions,
-                    collection_param_cat: Some(_),
-                    ..
-                } = position
-                {
-                    let cat = cat_i as u16;
-                    let rule_idx = rule_i as u16;
-                    // Inner-walk sub_pos values: 1..=inner_positions.len()
-                    // (sub_pos=0 is the close/sep peek; sub_pos=N
-                    // dispatches inner_positions[N-1]).
-                    for i in 1..=inner_positions.len() {
-                        let sub_pos = i as u8;
-                        arms.push(quote! {
-                            (#cat, #rule_idx, #sub_pos) => true,
-                        });
-                    }
-                }
+pub(crate) fn emit_optional_marker_metadata_lookup(table: &TraversalMarkerTable) -> TokenStream {
+    let arms = table.optional_metadata.iter().map(
+        |(marker_id, result_src_idx, rule_idx, group_idx, sub_pos)| {
+            quote! {
+                #marker_id => Some((#result_src_idx, #rule_idx, #group_idx, #sub_pos)),
             }
-        }
-    }
-    if arms.is_empty() {
-        quote! { false }
-    } else {
-        quote! {
-            match (src_idx, rule_idx, sub_pos) {
-                #(#arms)*
-                _ => false,
-            }
+        },
+    );
+    quote! {
+        match marker_id {
+            #(#arms)*
+            _ => None::<(u16, u16, u32, u32)>,
         }
     }
 }
 
+pub(crate) fn emit_binder_marker_metadata_lookup(table: &TraversalMarkerTable) -> TokenStream {
+    let arms = table.binder_metadata.iter().map(
+        |(marker_id, result_src_idx, rule_idx, frame_idx, sub_pos)| {
+            quote! {
+                #marker_id => Some((#result_src_idx, #rule_idx, #frame_idx, #sub_pos)),
+            }
+        },
+    );
+    quote! {
+        match marker_id {
+            #(#arms)*
+            _ => None::<(u16, u16, u32, u32)>,
+        }
+    }
+}
 /// B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): emit a
 /// per-(src, rule, slot_idx) predicate
 /// `is_class3_collection_per_slot(src, rule, slot_idx) -> bool` that
@@ -2402,7 +2555,7 @@ pub(crate) fn emit_is_class3_collection_per_slot(
             let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
-            for position in shape.positions.iter() {
+            for BinderListSite { position, .. } in traversal_sites(&shape.positions).binder_lists {
                 if let BinderPosition::BinderListLoop {
                     collection_param_cat: Some(_),
                     slot_idx,
@@ -2429,59 +2582,9 @@ pub(crate) fn emit_is_class3_collection_per_slot(
     }
 }
 
-/// B8 / Issue A' (2026-05-09): emit a per-rule lookup that returns
-/// `(marker_pos, next_pos, body_src_idx)` for Class 3 BinderListLoop
-/// slots. Used by the Unwinding-OptionalGroupAt arm to reconstruct the
-/// outer BinderRule's slot coordinates when routing back into
-/// BinderListLoop after an inner-walk sub-parse returns. Pre-fix, the
-/// engine arm hardcoded `marker_pos: 0u8, next_pos: 0u8` which broke
-/// sub_pos=N arms that need the real outer-position values.
-///
-/// Returns `(0u8, 0u8, 0u16)` for non-Class-3 rules; the engine arm
-/// only consults this lookup when `is_binderlist_inner` returns true,
-/// so the default branch is unreachable in practice.
-pub(crate) fn emit_binderlist_inner_metadata(
-    language: &LanguageDef,
-    per_cat: &[Vec<GrammarRule>],
-) -> TokenStream {
-    let mut arms = Vec::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder_in(rule, language) else {
-                continue;
-            };
-            for (idx, position) in shape.positions.iter().enumerate() {
-                if let BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. } =
-                    position
-                {
-                    let cat = cat_i as u16;
-                    let rule_idx = rule_i as u16;
-                    let marker_pos = (idx + 1) as u8;
-                    let next_pos = marker_pos + 1;
-                    // body_src_idx is the result category's idx — same
-                    // as cat_i for binder rules emitting their own cat.
-                    let body_src = cat_i as u16;
-                    arms.push(quote! {
-                        (#cat, #rule_idx) => (#marker_pos, #next_pos, #body_src),
-                    });
-                }
-            }
-        }
-    }
-    if arms.is_empty() {
-        quote! { (0u8, 0u8, 0u16) }
-    } else {
-        quote! {
-            match (result_src_idx, rule_idx) {
-                #(#arms)*
-                _ => (0u8, 0u8, 0u16),
-            }
-        }
-    }
-}
-
 /// Phase 5b + B8 (2026-05-08): emit the body of `WpdaState::BinderListLoop`.
-/// The state body dispatches on `(result_src_idx, rule_idx, sub_pos)`.
+/// The state body dispatches on
+/// `(result_src_idx, rule_idx, frame_idx, sub_pos)`.
 ///
 /// PNew-style rules (inner_positions=[BinderIdent], collection_param_cat=
 /// None) emit ONE arm at sub_pos=0: the legacy 3-branch fork over close /
@@ -2498,6 +2601,7 @@ pub(crate) fn emit_binder_list_loop_body(
     language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
+    markers: &TraversalMarkerTable,
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
@@ -2505,129 +2609,69 @@ pub(crate) fn emit_binder_list_loop_body(
             let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
-            for (idx, position) in shape.positions.iter().enumerate() {
-                if let BinderPosition::BinderListLoop {
+            let result_src_idx = cat_i as u16;
+            let rule_idx = rule_i as u16;
+            let TraversalSites { binder_lists, binder_frame_indices, .. } =
+                traversal_sites(&shape.positions);
+            for BinderListSite { position, frame_idx, resume } in binder_lists {
+                let BinderPosition::BinderListLoop {
                     separator,
                     close,
                     inner_positions,
                     collection_param_cat,
-                    allow_empty: _,
-                    allow_multi: _,
-                    slot_idx: _,
+                    ..
                 } = position
-                {
-                    let pos = (idx + 1) as u8;
-                    let next_pos = pos + 1;
-                    let result_src_idx = cat_i as u16;
-                    let rule_idx = rule_i as u16;
-                    let is_class3 = collection_param_cat.is_some();
-                    if !is_class3 {
-                        arms.push(quote! {
-                        (#result_src_idx, #rule_idx, 0u8) => {
-                            // L12 follow-up B2 (2026-05-07): three-branch
-                            // GuardedFork over close / sep / ident. Each
-                            // branch carries a runtime peek_text/peek_kind
-                            // guard so at most one branch's child cursor
-                            // is allocated per dispatch. Pre-fix the
-                            // unguarded `Consume` and `ConsumeIdentAndReplace`
-                            // branches fired on every dispatch regardless
-                            // of token, multiplying cursor count
-                            // exponentially per BinderListLoop iteration
-                            // — caused >4000s hangs on rholang::PNew
-                            // multi-binder grammars.
-                            //
-                            // Branch semantics:
-                            //   - BRANCH 1 (close): GuardedConsumeAndReplace
-                            //     fires only when peek_text == close.
-                            //     Weight 0.0; transitions to BinderRule.
-                            //   - BRANCH 2 (sep): GuardedConsume fires
-                            //     only when peek_text == separator.
-                            //     Weight 0.0; stays in BinderListLoop.
-                            //   - BRANCH 3 (ident): GuardedConsumeIdentAndReplace
-                            //     fires only when peek_kind == Ident.
-                            //     Weight EPSILON_OPT_SKIP; stays in
-                            //     BinderListLoop.
-                            //
-                            // When all three guards fail (e.g. unexpected
-                            // punctuation), `step_fanout`'s empty-children
-                            // pathway raises `Error("all fork branches
-                            // dropped")` cleanly.
+                else {
+                    unreachable!("binder-list site must name a binder-list frame");
+                };
+                let resume_symbol =
+                    traversal_resume_symbol(resume, result_src_idx, rule_idx, markers);
+
+                if collection_param_cat.is_none() {
+                    arms.push(quote! {
+                        (#result_src_idx, #rule_idx, #frame_idx, 0u32) => {
                             let _ = tokens.peek_text(_pos);
                             return WpdaStepAction::Fork {
                                 branches: vec![
-                                    // BRANCH 1: close — GuardedConsumeAndReplace
                                     mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx,
-                                            #next_pos, Some(*outer_bp),
-                                        ),
-                                        weight: lex_w(
-                                            0.0, #result_src_idx, #rule_idx,
-                                        ),
-                                        new_state: WpdaState::BinderRule {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            body_src_idx: *body_src_idx,
-                                            outer_bp: *outer_bp,
-                                        },
+                                        symbol: #resume_symbol,
+                                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
+                                        new_state: WpdaState::Unwinding,
                                         action_kind:
-                                            // B8 / Issue C followup
-                                            // (2026-05-09): close the open
-                                            // BinderScope so action's
-                                            // BinderScope arg is pushed.
                                             mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
                                                 expected_text: #close.to_string(),
                                                 effect:
                                                     mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
                                             },
                                     },
-                                    // BRANCH 2: sep — GuardedConsume
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
-                                        weight: lex_w(
-                                            0.0, #result_src_idx, #rule_idx,
-                                        ),
+                                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
                                         new_state: WpdaState::BinderListLoop {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
-                                            body_src_idx: *body_src_idx,
+                                            frame_idx: #frame_idx,
                                             outer_bp: *outer_bp,
-                                            marker_pos: *marker_pos,
-                                            next_pos: *next_pos,
-                                            sub_pos: 0u8,
+                                            sub_pos: 0u32,
                                         },
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::GuardedConsume {
                                                 expected_text: #separator.to_string(),
                                             },
                                     },
-                                    // BRANCH 3: subsequent ident.
-                                    // B8 / Issue 3 (2026-05-10): use the
-                                    // binder-aware variant. start_scope
-                                    // is false (scope already opened by
-                                    // BRANCH 2 first-ident); EXTEND the
-                                    // existing scope's names list with
-                                    // this ident. Without this fix, the
-                                    // captured ident leaks as ActionArg::
-                                    // Ident on the args stack and the
-                                    // scope's names list stays at length 1.
                                     mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx,
-                                            *marker_pos, Some(*outer_bp),
-                                        ),
+                                        symbol: #resume_symbol,
                                         weight: lex_w(
                                             mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                            #result_src_idx, #rule_idx,
+                                            #result_src_idx,
+                                            #rule_idx,
                                         ),
                                         new_state: WpdaState::BinderListLoop {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
-                                            body_src_idx: *body_src_idx,
+                                            frame_idx: #frame_idx,
                                             outer_bp: *outer_bp,
-                                            marker_pos: *marker_pos,
-                                            next_pos: *next_pos,
-                                            sub_pos: 0u8,
+                                            sub_pos: 0u32,
                                         },
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
@@ -2639,279 +2683,260 @@ pub(crate) fn emit_binder_list_loop_body(
                             };
                         }
                     });
-                    } else {
-                        // B8 Class 3 (2026-05-08): emit per-sub_pos arms.
-                        let inner_count = inner_positions.len() as u8;
-                        // sub_pos=0: 3-branch fork over close / sep / first-
-                        // inner-dispatch. The first-inner branch pushes
-                        // BinderListLoopAt(rule, 1, outer_bp) without
-                        // consuming a token; transitions to BinderListLoop
-                        // {sub_pos:1}, where the inner walk dispatches the
-                        // first inner_position.
-                        arms.push(quote! {
-                            (#result_src_idx, #rule_idx, 0u8) => {
-                                let _ = tokens.peek_text(_pos);
+                    continue;
+                }
+
+                let first_marker_id = markers.id(
+                    result_src_idx,
+                    rule_idx,
+                    TraversalMarkerCoordinate::BinderList { frame_idx, sub_pos: 1 },
+                );
+                arms.push(quote! {
+                    (#result_src_idx, #rule_idx, #frame_idx, 0u32) => {
+                        let _ = tokens.peek_text(_pos);
+                        return WpdaStepAction::Fork {
+                            branches: vec![
+                                mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::category_entry(0),
+                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
+                                    new_state: WpdaState::Unwinding,
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndPopWithEffect {
+                                            expected_text: #close.to_string(),
+                                            effect:
+                                                mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
+                                        },
+                                },
+                                mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::category_entry(0),
+                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
+                                    new_state: WpdaState::BinderListLoop {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        frame_idx: #frame_idx,
+                                        outer_bp: *outer_bp,
+                                        sub_pos: 0u32,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsume {
+                                            expected_text: #separator.to_string(),
+                                        },
+                                },
+                                mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::binder_list_loop_at(
+                                        #first_marker_id, *outer_bp,
+                                    ),
+                                    weight: lex_w(
+                                        mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                        #result_src_idx,
+                                        #rule_idx,
+                                    ),
+                                    new_state: WpdaState::BinderListLoop {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        frame_idx: #frame_idx,
+                                        outer_bp: *outer_bp,
+                                        sub_pos: 1u32,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                },
+                            ],
+                            consume_trigger: false,
+                        };
+                    }
+                });
+
+                for (index, inner_position) in inner_positions.iter().enumerate() {
+                    let sub_pos = (index + 1) as u32;
+                    let next_sub_pos = (index + 2) as u32;
+                    let next_marker_id = markers.id(
+                        result_src_idx,
+                        rule_idx,
+                        TraversalMarkerCoordinate::BinderList { frame_idx, sub_pos: next_sub_pos },
+                    );
+                    let next_symbol = quote! {
+                        StackSymbolV2::binder_list_loop_at(#next_marker_id, *outer_bp)
+                    };
+                    let next_state = quote! {
+                        WpdaState::BinderListLoop {
+                            result_src_idx: #result_src_idx,
+                            rule_idx: #rule_idx,
+                            frame_idx: #frame_idx,
+                            outer_bp: *outer_bp,
+                            sub_pos: #next_sub_pos,
+                        }
+                    };
+                    let arm = match inner_position {
+                        BinderPosition::Literal(text) => quote! {
+                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
                                 return WpdaStepAction::Fork {
-                                    branches: vec![
-                                        // BRANCH 1: close → finish loop.
-                                        // B8 / Issue C followup (2026-05-09):
-                                        // ConsumeAndPop the CollectionMarker
-                                        // (which is now on top after the
-                                        // last BinderIdent's ConsumeIdentAndPop
-                                        // popped its OptionalGroupAt). Log
-                                        // EndBinderScope so action's
-                                        // BinderScope arg is pushed. After
-                                        // this, top is RuleAt(rule, next_pos)
-                                        // (placed by ReplaceAndPush at
-                                        // bootstrap), state=Unwinding.
-                                        // Unwinding-RuleAt routes to BinderRule.
-                                        mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: StackSymbolV2::category_entry(0),
-                                            weight: lex_w(
-                                                0.0, #result_src_idx, #rule_idx,
-                                            ),
-                                            new_state: WpdaState::Unwinding,
-                                            action_kind:
-                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndPopWithEffect {
-                                                    expected_text: #close.to_string(),
-                                                    effect:
-                                                        mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                                                },
-                                        },
-                                        // BRANCH 2: sep → next iteration.
-                                        mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: StackSymbolV2::category_entry(0),
-                                            weight: lex_w(
-                                                0.0, #result_src_idx, #rule_idx,
-                                            ),
-                                            new_state: WpdaState::BinderListLoop {
-                                                result_src_idx: #result_src_idx,
-                                                rule_idx: #rule_idx,
-                                                body_src_idx: *body_src_idx,
-                                                outer_bp: *outer_bp,
-                                                marker_pos: *marker_pos,
-                                                next_pos: *next_pos,
-                                                sub_pos: 0u8,
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: #next_symbol,
+                                        weight: lex_one(),
+                                        new_state: #next_state,
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                expected_text: #text.to_string(),
+                                                required_top_cat: None,
                                             },
-                                            action_kind:
-                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsume {
-                                                    expected_text: #separator.to_string(),
-                                                },
-                                        },
-                                        // BRANCH 3: first-inner — Push
-                                        // BinderListLoopAt(rule, 1, outer_bp)
-                                        // and transition to sub_pos:1 where
-                                        // the inner walk takes over. No
-                                        // token consumed at this branch.
-                                        mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: StackSymbolV2::binder_list_loop_at(
-                                                #result_src_idx, #rule_idx,
-                                                1u8, *outer_bp,
-                                            ),
-                                            weight: lex_w(
-                                                mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                #result_src_idx, #rule_idx,
-                                            ),
-                                            new_state: WpdaState::BinderListLoop {
-                                                result_src_idx: #result_src_idx,
-                                                rule_idx: #rule_idx,
-                                                body_src_idx: *body_src_idx,
-                                                outer_bp: *outer_bp,
-                                                marker_pos: *marker_pos,
-                                                next_pos: *next_pos,
-                                                sub_pos: 1u8,
-                                            },
-                                            action_kind:
-                                                mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                        },
-                                    ],
+                                    }],
                                     consume_trigger: false,
                                 };
                             }
-                        });
-                        // sub_pos=N for N=1..=inner_count: dispatch
-                        // inner_positions[N-1].
-                        for (i, inner_pos) in inner_positions.iter().enumerate() {
-                            let cur_sp = (i + 1) as u8;
-                            let next_sp = if i + 1 == inner_positions.len() {
-                                0u8
-                            } else {
-                                (i + 2) as u8
-                            };
-                            let arm = match inner_pos {
-                                BinderPosition::Literal(text) => {
-                                    let txt = text.clone();
-                                    quote! {
-                                        (#result_src_idx, #rule_idx, #cur_sp) => {
-                                            return WpdaStepAction::Fork {
-                                                branches: vec![
-                                                    mettail_prattail::wpda_walker::ForkBranch {
-                                                        symbol: StackSymbolV2::binder_list_loop_at(
-                                                            #result_src_idx, #rule_idx,
-                                                            #next_sp, *outer_bp,
-                                                        ),
-                                                        weight: lex_w(
-                                                            0.0, #result_src_idx, #rule_idx,
-                                                        ),
-                                                        new_state: WpdaState::BinderListLoop {
-                                                            result_src_idx: #result_src_idx,
-                                                            rule_idx: #rule_idx,
-                                                            body_src_idx: *body_src_idx,
-                                                            outer_bp: *outer_bp,
-                                                            marker_pos: *marker_pos,
-                                                            next_pos: *next_pos,
-                                                            sub_pos: #next_sp,
-                                                        },
-                                                        action_kind:
-                                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
-                                                                expected_text: #txt.to_string(),
-                                                                required_top_cat: None,
-                                                            },
-                                                    },
-                                                ],
-                                                consume_trigger: false,
-                                            };
-                                        }
-                                    }
-                                },
-                                BinderPosition::BinderIdent => {
-                                    // Capture ident as binder name. On the
-                                    // last inner step, transition back to
-                                    // sub_pos=0 AND replace top with the
-                                    // RuleAt marker so the next iteration
-                                    // sees BinderListLoop's marker.
-                                    let is_last = i + 1 == inner_positions.len();
-                                    if is_last {
-                                        // B8 / Issue C followup
-                                        // (2026-05-09): use
-                                        // ConsumeIdentAndPop so the
-                                        // OptionalGroupAt is popped
-                                        // (instead of replaced with
-                                        // RuleAt(rule, marker_pos)) —
-                                        // the next iteration sees the
-                                        // CollectionMarker on top, and
-                                        // sub_pos=0 close branch can
-                                        // ConsumeAndPop the marker
-                                        // cleanly.
-                                        quote! {
-                                            (#result_src_idx, #rule_idx, #cur_sp) => {
-                                                return WpdaStepAction::Fork {
-                                                    branches: vec![
-                                                        mettail_prattail::wpda_walker::ForkBranch {
-                                                            symbol: StackSymbolV2::category_entry(0),
-                                                            weight: lex_w(
-                                                                0.0, #result_src_idx, #rule_idx,
-                                                            ),
-                                                            new_state: WpdaState::BinderListLoop {
-                                                                result_src_idx: #result_src_idx,
-                                                                rule_idx: #rule_idx,
-                                                                body_src_idx: *body_src_idx,
-                                                                outer_bp: *outer_bp,
-                                                                marker_pos: *marker_pos,
-                                                                next_pos: *next_pos,
-                                                                sub_pos: 0u8,
-                                                            },
-                                                            action_kind:
-                                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndPop {
-                                                                    start_scope: false,
-                                                                },
-                                                        },
-                                                    ],
-                                                    consume_trigger: false,
-                                                };
-                                            }
-                                        }
-                                    } else {
-                                        quote! {
-                                            (#result_src_idx, #rule_idx, #cur_sp) => {
-                                                return WpdaStepAction::Fork {
-                                                    branches: vec![
-                                                        mettail_prattail::wpda_walker::ForkBranch {
-                                                            symbol: StackSymbolV2::binder_list_loop_at(
-                                                                #result_src_idx, #rule_idx,
-                                                                #next_sp, *outer_bp,
-                                                            ),
-                                                            weight: lex_w(
-                                                                0.0, #result_src_idx, #rule_idx,
-                                                            ),
-                                                            new_state: WpdaState::BinderListLoop {
-                                                                result_src_idx: #result_src_idx,
-                                                                rule_idx: #rule_idx,
-                                                                body_src_idx: *body_src_idx,
-                                                                outer_bp: *outer_bp,
-                                                                marker_pos: *marker_pos,
-                                                                next_pos: *next_pos,
-                                                                sub_pos: #next_sp,
-                                                            },
-                                                            action_kind:
-                                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
-                                                                    start_scope: false,
-                                                                },
-                                                        },
-                                                    ],
-                                                    consume_trigger: false,
-                                                };
-                                            }
-                                        }
-                                    }
-                                },
-                                BinderPosition::ParamParse { cat, collection: _ } => {
-                                    // Push CategoryEntry, transition to
-                                    // PrefixDispatch. The current top is
-                                    // BinderListLoopAt(rule, cur_sp); we
-                                    // replace it with BinderListLoopAt(rule,
-                                    // next_sp) so on Unwinding we land at
-                                    // sub_pos=next_sp.
-                                    //
-                                    // Note: this arm is in emit_binder_list_loop_body
-                                    // — used for Class-3 ZIP-MAP-SEP inner walks
-                                    // (e.g. the Name parse in `*zip(ns,xs).*map(
-                                    // |n,x| n "?" x).*sep(",")`). The inner Name
-                                    // ParamParse carries `collection: Some(...)`
-                                    // for SPLICING into the names accumulator
-                                    // (handled separately via the post-splice
-                                    // lookup), but the parse itself is a normal
-                                    // CategoryEntry sub-parse, not a
-                                    // CollectionMarker push. The Class-2-in-*opt
-                                    // CollectionMarker push case lives in
-                                    // `emit_optional_group_body`, not here.
-                                    // #141 G1: the ONE resolver, the ONE message.
-                                    let cat_src_idx = cat_idx_tokens(
-                                        cat,
-                                        categories,
-                                        "a ParamParse position inside a binder-list loop",
-                                        &rule.label.to_string(),
-                                        rule.label.span(),
-                                    );
-                                    quote! {
-                                        (#result_src_idx, #rule_idx, #cur_sp) => {
-                                            return WpdaStepAction::ReplaceAndPush {
-                                                replace_symbol: StackSymbolV2::binder_list_loop_at(
-                                                    #result_src_idx, #rule_idx,
-                                                    #next_sp, *outer_bp,
-                                                ),
-                                                push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
-                                                weight: lex_one(),
-                                                new_state: WpdaState::PrefixDispatch {
-                                                    pos: _pos,
-                                                    cur_bp: 0u8,
-                                                },
-                                            };
-                                        }
-                                    }
-                                },
-                                _ => {
-                                    // Other inner positions (GuardSlot,
-                                    // OptionalGroup, BinderListLoop) out of
-                                    // pilot scope.
-                                    quote! {}
-                                },
-                            };
-                            arms.push(arm);
-                        }
-                        let _ = inner_count;
-                    }
+                        },
+                        BinderPosition::TokenKindCapture { kind_name, .. } => quote! {
+                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: #next_symbol,
+                                        weight: lex_one(),
+                                        new_state: #next_state,
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                                kind_name: #kind_name.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        },
+                        BinderPosition::IdentTextCapture { .. } => quote! {
+                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: #next_symbol,
+                                        weight: lex_one(),
+                                        new_state: #next_state,
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndReplace {
+                                                start_scope: false,
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        },
+                        BinderPosition::GuestBodyCapture { open_kind, close_kind, .. } => quote! {
+                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: #next_symbol,
+                                        weight: lex_one(),
+                                        new_state: #next_state,
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
+                                                open_kind: #open_kind.to_string(),
+                                                close_kind: #close_kind.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        },
+                        BinderPosition::BinderIdent => quote! {
+                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: #next_symbol,
+                                        weight: lex_one(),
+                                        new_state: #next_state,
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
+                                                start_scope: false,
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        },
+                        BinderPosition::ParamParse { cat, .. } => {
+                            let cat_src_idx = cat_idx_tokens(
+                                cat,
+                                categories,
+                                "a ParamParse position inside a binder-list loop",
+                                &rule.label.to_string(),
+                                rule.label.span(),
+                            );
+                            quote! {
+                                (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                    return WpdaStepAction::ReplaceAndPush {
+                                        replace_symbol: #next_symbol,
+                                        push_symbol:
+                                            StackSymbolV2::category_entry(#cat_src_idx),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: 0u8,
+                                        },
+                                    };
+                                }
+                            }
+                        },
+                        BinderPosition::GuardSlot => quote! {
+                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                return WpdaStepAction::ParsePredicate {
+                                    replace_symbol: #next_symbol,
+                                    weight: lex_one(),
+                                    new_state: #next_state,
+                                };
+                            }
+                        },
+                        BinderPosition::OptionalGroup { group_idx, .. } => quote! {
+                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                return WpdaStepAction::Advance(
+                                    WpdaState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx,
+                                        sub_pos: 0u32,
+                                        outer_bp: *outer_bp,
+                                    },
+                                );
+                            }
+                        },
+                        BinderPosition::BinderListLoop { .. } => {
+                            let child_frame_idx =
+                                binder_frame_indices[&(inner_position as *const BinderPosition)];
+                            let child_resume = traversal_resume_symbol(
+                                TraversalResume::BinderList { frame_idx, next_sub_pos },
+                                result_src_idx,
+                                rule_idx,
+                                markers,
+                            );
+                            let entry = emit_binder_list_entry(
+                                inner_position,
+                                child_frame_idx,
+                                &child_resume,
+                                result_src_idx,
+                                rule_idx,
+                            );
+                            quote! {
+                                (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                    let _ = tokens.peek_text(_pos);
+                                    return #entry;
+                                }
+                            }
+                        },
+                    };
+                    arms.push(arm);
                 }
+
+                let final_sub_pos = (inner_positions.len() + 1) as u32;
+                arms.push(quote! {
+                    (#result_src_idx, #rule_idx, #frame_idx, #final_sub_pos) => {
+                        return WpdaStepAction::Pop {
+                            weight: lex_one(),
+                            new_state: WpdaState::BinderListLoop {
+                                result_src_idx: #result_src_idx,
+                                rule_idx: #rule_idx,
+                                frame_idx: #frame_idx,
+                                outer_bp: *outer_bp,
+                                sub_pos: 0u32,
+                            },
+                        };
+                    }
+                });
             }
         }
     }
@@ -2920,17 +2945,13 @@ pub(crate) fn emit_binder_list_loop_body(
     }
     quote! {
         {
-            // Bind categories ref so the per-arm code can use
-            // lookup_src_idx — though Class 3 emits cat_src_idx as
-            // hard-coded literals, this is safe.
-            match (*result_src_idx, *rule_idx, *sub_pos) {
+            match (*result_src_idx, *rule_idx, *frame_idx, *sub_pos) {
                 #(#arms)*
                 _ => WpdaStepAction::Idle,
             }
         }
     }
 }
-
 /// Task #10 item 1: the optional-group Fork's branch emission order — TAKE
 /// first, SKIP second, per the `vec![take, skip]` construction inside
 /// `emit_optional_group_body` below (the Stage 3.12 Class A.i fork). These
@@ -2942,6 +2963,214 @@ pub(crate) fn emit_binder_list_loop_body(
 pub(crate) const OPTIONAL_GROUP_TAKE_BRANCH_INDEX: u16 = 0;
 pub(crate) const OPTIONAL_GROUP_SKIP_BRANCH_INDEX: u16 = 1;
 
+/// One collection accumulator consumed by a generated binder action.
+///
+/// Collection accumulators are a runtime stack, so every action first extracts
+/// all of its `CollectionId`s and only then drains them in reverse source order.
+/// `optional` distinguishes an always-present top-level slot from a slot nested
+/// under one or more optional groups: an absent optional has no accumulator to
+/// drain and therefore carries `None` here.
+struct CollectionDrainSite {
+    id_var: Ident,
+    value_var: Ident,
+    elem_id: Ident,
+    coll_kind: CollectionType,
+    optional: bool,
+}
+
+struct OptionalActionEmission {
+    extract: TokenStream,
+    fields: Vec<TokenStream>,
+    collection_drains: Vec<CollectionDrainSite>,
+}
+
+/// Emit extraction for an arbitrarily nested `ActionArgKind::Optional` tree.
+///
+/// This is a code-generation PDA: `pending` is the explicit continuation stack
+/// and every generated optional iterator is a flat local identified by a
+/// monotone ordinal. Consequently neither macro expansion nor the generated
+/// action contains recursive Rust control flow. Leaves are emitted in preorder,
+/// which is the source/field order used by `field_layout`.
+fn emit_nested_optional_action(
+    root_arg_idx: usize,
+    inner_kinds: &[ActionArgKind],
+) -> OptionalActionEmission {
+    struct Pending<'kind> {
+        kind: &'kind ActionArgKind,
+        parent_iter: Ident,
+    }
+
+    let root_iter = format_ident!("opt_{}", root_arg_idx);
+    let mut statements = vec![quote! {
+        let mut #root_iter: Option<
+            std::vec::IntoIter<mettail_prattail::wpda_runtime::ActionArg>
+        > = match iter.next() {
+            Some(arg) => arg.into_optional().flatten().map(|values| values.into_iter()),
+            None => return,
+        };
+    }];
+    let mut fields = Vec::new();
+    let mut collection_drains = Vec::new();
+    let mut pending = Vec::with_capacity(inner_kinds.len());
+    pending.extend(
+        inner_kinds
+            .iter()
+            .rev()
+            .map(|kind| Pending { kind, parent_iter: root_iter.clone() }),
+    );
+    let mut ordinal = 0usize;
+
+    while let Some(Pending { kind, parent_iter }) = pending.pop() {
+        let current = ordinal;
+        ordinal += 1;
+        let value_var = format_ident!("nested_{}_{}", root_arg_idx, current);
+        match kind {
+            ActionArgKind::Optional(inner) => {
+                let nested_iter = format_ident!("nested_opt_{}_{}", root_arg_idx, current);
+                statements.push(quote! {
+                    let mut #nested_iter: Option<
+                        std::vec::IntoIter<mettail_prattail::wpda_runtime::ActionArg>
+                    > = match #parent_iter.as_mut() {
+                        Some(parent) => parent
+                            .next()
+                            .and_then(|arg| arg.into_optional())
+                            .flatten()
+                            .map(|values| values.into_iter()),
+                        None => None,
+                    };
+                });
+                pending.extend(
+                    inner
+                        .iter()
+                        .rev()
+                        .map(|kind| Pending { kind, parent_iter: nested_iter.clone() }),
+                );
+            },
+            ActionArgKind::TokenText { .. } => {
+                statements.push(quote! {
+                    let #value_var: Option<String> = match #parent_iter.as_mut() {
+                        Some(parent) => parent
+                            .next()
+                            .and_then(|arg| arg.as_token_text().map(str::to_string)),
+                        None => None,
+                    };
+                });
+                fields.push(quote! { #value_var });
+            },
+            ActionArgKind::IdentText { .. } => {
+                statements.push(quote! {
+                    let #value_var: Option<String> = match #parent_iter.as_mut() {
+                        Some(parent) => parent.next().and_then(|arg| {
+                            arg.as_ident()
+                                .or_else(|| arg.as_token_text())
+                                .map(str::to_string)
+                        }),
+                        None => None,
+                    };
+                });
+                fields.push(quote! { #value_var });
+            },
+            ActionArgKind::GuestBody { .. } => {
+                statements.push(quote! {
+                    let #value_var: Option<std::sync::Arc<mettail_runtime::FltNode>> =
+                        match #parent_iter.as_mut() {
+                            Some(parent) => parent.next().and_then(|arg| {
+                                arg.as_guest_body().map(|gb| std::sync::Arc::new(
+                                    mettail_runtime::FltNode {
+                                        tag: gb.tag.clone(),
+                                        body_src: gb.body_src.clone(),
+                                        holes: gb.holes.iter().map(|hole| mettail_runtime::FltHole {
+                                            name: hole.name.clone(),
+                                            category: hole.category.clone(),
+                                            offset: hole.offset,
+                                        }).collect(),
+                                        position: gb.position,
+                                    }
+                                ))
+                            }),
+                            None => None,
+                        };
+                });
+                fields.push(quote! { #value_var });
+            },
+            ActionArgKind::Term(cat) => {
+                let cat_id = format_ident!("{}", cat);
+                statements.push(quote! {
+                    let #value_var: Option<std::sync::Arc<#cat_id>> =
+                        match #parent_iter.as_mut() {
+                            Some(parent) => parent
+                                .next()
+                                .and_then(|arg| arg.into_term::<#cat_id>())
+                                .map(std::sync::Arc::new),
+                            None => None,
+                        };
+                });
+                fields.push(quote! { #value_var });
+            },
+            ActionArgKind::BinderName => {
+                statements.push(quote! {
+                    let #value_var: Option<String> = match #parent_iter.as_mut() {
+                        Some(parent) => parent
+                            .next()
+                            .and_then(|arg| arg.into_binder_scope())
+                            .and_then(|handle| handle.names.into_iter().next()),
+                        None => None,
+                    };
+                });
+                fields.push(quote! { #value_var });
+            },
+            ActionArgKind::Predicate => {
+                statements.push(quote! {
+                    let #value_var: Option<mettail_runtime::BehavioralPred> =
+                        match #parent_iter.as_mut() {
+                            Some(parent) => parent.next().and_then(|arg| {
+                                arg.into_predicate::<mettail_runtime::BehavioralPred>()
+                            }),
+                            None => None,
+                        };
+                });
+                fields.push(quote! { #value_var });
+            },
+            ActionArgKind::BinderList => {
+                statements.push(quote! {
+                    let #value_var: Option<Vec<String>> = match #parent_iter.as_mut() {
+                        Some(parent) => parent
+                            .next()
+                            .and_then(|arg| arg.into_binder_scope())
+                            .map(|handle| handle.names),
+                        None => None,
+                    };
+                });
+                fields.push(quote! { #value_var });
+            },
+            ActionArgKind::CollectionDrain { elem_cat, coll_kind } => {
+                let id_var = format_ident!("nested_{}_{}_id", root_arg_idx, current);
+                let elem_id = format_ident!("{}", elem_cat);
+                statements.push(quote! {
+                    let #id_var: Option<u8> = match #parent_iter.as_mut() {
+                        Some(parent) => parent.next().and_then(|arg| arg.as_collection_id()),
+                        None => None,
+                    };
+                });
+                collection_drains.push(CollectionDrainSite {
+                    id_var,
+                    value_var: value_var.clone(),
+                    elem_id,
+                    coll_kind: coll_kind.clone(),
+                    optional: true,
+                });
+                fields.push(quote! { #value_var });
+            },
+        }
+    }
+
+    OptionalActionEmission {
+        extract: quote! { #(#statements)* },
+        fields,
+        collection_drains,
+    }
+}
+
 /// Opt-Group (2026-04-29): emit the body of `WpdaState::OptionalGroup`.
 /// Dispatches on `(*result_src_idx, *rule_idx, *group_idx, *sub_pos)` to:
 ///   - sub_pos == 0: peek FIRST set, emit `Push(OptionalGroupAt(1))` (take)
@@ -2950,12 +3179,13 @@ pub(crate) const OPTIONAL_GROUP_SKIP_BRANCH_INDEX: u16 = 1;
 ///     ParamParse, BinderIdent, GuardSlot) — each step replaces
 ///     OptionalGroupAt(sub_pos) with OptionalGroupAt(sub_pos+1).
 ///   - sub_pos == inner.len() + 1: emit `OptGroupFinalize` to pop the
-///     OptionalGroupAt marker, finalize the inner-arg scope, and advance
-///     the outer RuleAt to next_outer_pos.
+///     OptionalGroupAt marker, finalize the inner-arg scope, and unwind to
+///     the typed caller continuation (rule, optional, or binder-list).
 pub(crate) fn emit_optional_group_body(
     language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
+    markers: &TraversalMarkerTable,
 ) -> TokenStream {
     let mut arms: Vec<TokenStream> = Vec::new();
 
@@ -2967,9 +3197,10 @@ pub(crate) fn emit_optional_group_body(
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
 
-            for (outer_idx, outer_pos) in shape.positions.iter().enumerate() {
-                let outer_pos_byte = (outer_idx + 1) as u8;
-                let outer_next_pos_byte = outer_pos_byte + 1;
+            let TraversalSites { optionals, binder_frame_indices, .. } =
+                traversal_sites(&shape.positions);
+
+            for OptionalSite { position: outer_pos, resume } in optionals {
                 let BinderPosition::OptionalGroup {
                     positions: inner,
                     first_token_set,
@@ -2977,12 +3208,14 @@ pub(crate) fn emit_optional_group_body(
                     ..
                 } = outer_pos
                 else {
-                    continue;
+                    unreachable!("optional site must name an optional group");
                 };
 
-                let group_idx_byte = *group_idx;
-                let inner_len_byte = inner.len() as u8;
-                let final_sub_pos = inner_len_byte + 1;
+                let group_idx_value = *group_idx;
+                let final_sub_pos = (inner.len() + 1) as u32;
+                let resume_symbol =
+                    traversal_resume_symbol(resume, result_src_idx, rule_idx, markers);
+                let resume_state = quote! { WpdaState::Unwinding };
 
                 // Stage 3.12 / Class A.i (2026-05-01): replace the
                 // deterministic FIRST-set if/else with a Fork over
@@ -3010,8 +3243,13 @@ pub(crate) fn emit_optional_group_body(
                 const _: () = assert!(
                     OPTIONAL_GROUP_TAKE_BRANCH_INDEX == 0 && OPTIONAL_GROUP_SKIP_BRANCH_INDEX == 1,
                 );
+                let take_marker_id = markers.id(
+                    result_src_idx,
+                    rule_idx,
+                    TraversalMarkerCoordinate::Optional { group_idx: group_idx_value, sub_pos: 1 },
+                );
                 arms.push(quote! {
-                    (#result_src_idx, #rule_idx, #group_idx_byte, 0u8) => {
+                    (#result_src_idx, #rule_idx, #group_idx_value, 0u32) => {
                         // Stage 3.12 / Class A.i (2026-05-01): Opt-Group Fork.
                         return WpdaStepAction::Fork {
                             branches: vec![
@@ -3020,7 +3258,7 @@ pub(crate) fn emit_optional_group_body(
                                 // emit_push_side_effects).
                                 mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: StackSymbolV2::optional_group_at(
-                                        #result_src_idx, #rule_idx, 1u8, *outer_bp,
+                                        #take_marker_id, *outer_bp,
                                     ),
                                     weight: lex_w(
                                         0.0, #result_src_idx, #rule_idx,
@@ -3028,7 +3266,7 @@ pub(crate) fn emit_optional_group_body(
                                     new_state: WpdaState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
-                                        group_idx: #group_idx_byte,
+                                        group_idx: #group_idx_value,
                                         sub_pos: 1,
                                         outer_bp: *outer_bp,
                                     },
@@ -3048,17 +3286,9 @@ pub(crate) fn emit_optional_group_body(
                                         mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                         #result_src_idx, #rule_idx,
                                     ),
-                                    new_state: WpdaState::BinderRule {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        body_src_idx: #result_src_idx,
-                                        outer_bp: *outer_bp,
-                                    },
+                                    new_state: #resume_state,
                                     action_kind: mettail_prattail::wpda_walker::ForkActionKind::OptGroupAbsent {
-                                        replace_symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx,
-                                            #outer_next_pos_byte, Some(*outer_bp),
-                                        ),
+                                        replace_symbol: #resume_symbol,
                                     },
                                 },
                             ],
@@ -3069,15 +3299,66 @@ pub(crate) fn emit_optional_group_body(
 
                 // sub_pos in 1..=inner_len: walk inner positions.
                 for (i, ipos) in inner.iter().enumerate() {
-                    let sp = (i + 1) as u8;
+                    let sp = (i + 1) as u32;
                     let next_sp = sp + 1;
+                    let next_marker_id = markers.id(
+                        result_src_idx,
+                        rule_idx,
+                        TraversalMarkerCoordinate::Optional {
+                            group_idx: group_idx_value,
+                            sub_pos: next_sp,
+                        },
+                    );
                     let inner_arm = match ipos {
-                        // L9-3: a custom-kind capture INSIDE an optional group is
-                        // not exercised by any current grammar (the toy uses only
-                        // top-level captures). INERT — no such position is
-                        // constructed, so this contributes no dispatch arm.
-                        BinderPosition::TokenKindCapture { .. }
-                        | BinderPosition::GuestBodyCapture { .. } => quote! {},
+                        BinderPosition::TokenKindCapture { kind_name, .. } => quote! {
+                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::optional_group_at(
+                                            #next_marker_id, *outer_bp,
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::OptionalGroup {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            group_idx: #group_idx_value,
+                                            sub_pos: #next_sp,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                                kind_name: #kind_name.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        },
+                        BinderPosition::GuestBodyCapture { open_kind, close_kind, .. } => quote! {
+                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::optional_group_at(
+                                            #next_marker_id, *outer_bp,
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::OptionalGroup {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            group_idx: #group_idx_value,
+                                            sub_pos: #next_sp,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
+                                                open_kind: #open_kind.to_string(),
+                                                close_kind: #close_kind.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        },
                         // An `m:Ident` INSIDE an `#opt(...)` group. Unlike the two capture
                         // kinds above this emits a REAL arm rather than nothing: the
                         // opt-group value extraction has a matching `IdentText` arm
@@ -3087,17 +3368,17 @@ pub(crate) fn emit_optional_group_body(
                         // could not be produced. Structural clone of the `Literal` arm
                         // below, swapping the text guard for the ident consume.
                         BinderPosition::IdentTextCapture { .. } => quote! {
-                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
                                 return WpdaStepAction::Fork {
                                     branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::optional_group_at(
-                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                            #next_marker_id, *outer_bp,
                                         ),
                                         weight: lex_one(),
                                         new_state: WpdaState::OptionalGroup {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
-                                            group_idx: #group_idx_byte,
+                                            group_idx: #group_idx_value,
                                             sub_pos: #next_sp,
                                             outer_bp: *outer_bp,
                                         },
@@ -3111,20 +3392,20 @@ pub(crate) fn emit_optional_group_body(
                             }
                         },
                         BinderPosition::Literal(text) => quote! {
-                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
                                 // Cluster 1 compatibility closure #4 (opt-group
                                 // inner mirror of site #5).
                                 return WpdaStepAction::Fork {
                                     branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::optional_group_at(
-                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                            #next_marker_id, *outer_bp,
                                         ),
                                         weight: lex_one(),
                                         new_state: WpdaState::OptionalGroup {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
-                                            group_idx: #group_idx_byte,
+                                            group_idx: #group_idx_value,
                                             sub_pos: #next_sp,
                                             outer_bp: *outer_bp,
                                         },
@@ -3149,10 +3430,10 @@ pub(crate) fn emit_optional_group_body(
                             );
                             match collection {
                                 None => quote! {
-                                    (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                    (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
                                         return WpdaStepAction::ReplaceAndPush {
                                             replace_symbol: StackSymbolV2::optional_group_at(
-                                                #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                                #next_marker_id, *outer_bp,
                                             ),
                                             push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
                                             weight: lex_one(),
@@ -3182,10 +3463,10 @@ pub(crate) fn emit_optional_group_body(
                                     // drains via the Optional extractor.
                                     let slot_idx = info.slot_idx;
                                     quote! {
-                                        (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                        (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
                                             return WpdaStepAction::ReplaceAndPush {
                                                 replace_symbol: StackSymbolV2::optional_group_at(
-                                                    #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                                    #next_marker_id, *outer_bp,
                                                 ),
                                                 push_symbol: StackSymbolV2::collection_marker(
                                                     // binder-internal collection: dispatch_bp=0.
@@ -3203,20 +3484,20 @@ pub(crate) fn emit_optional_group_body(
                             }
                         },
                         BinderPosition::BinderIdent => quote! {
-                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
                                 // Cluster 1 compatibility closure #6 (opt-group
                                 // inner mirror of site #6).
                                 return WpdaStepAction::Fork {
                                     branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::optional_group_at(
-                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                            #next_marker_id, *outer_bp,
                                         ),
                                         weight: lex_one(),
                                         new_state: WpdaState::OptionalGroup {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
-                                            group_idx: #group_idx_byte,
+                                            group_idx: #group_idx_value,
                                             sub_pos: #next_sp,
                                             outer_bp: *outer_bp,
                                         },
@@ -3230,29 +3511,62 @@ pub(crate) fn emit_optional_group_body(
                             }
                         },
                         BinderPosition::GuardSlot => quote! {
-                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
                                 return WpdaStepAction::ParsePredicate {
                                     replace_symbol: StackSymbolV2::optional_group_at(
-                                        #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                        #next_marker_id, *outer_bp,
                                     ),
                                     weight: lex_one(),
                                     new_state: WpdaState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
-                                        group_idx: #group_idx_byte,
+                                        group_idx: #group_idx_value,
                                         sub_pos: #next_sp,
                                         outer_bp: *outer_bp,
                                     },
                                 };
                             }
                         },
-                        BinderPosition::OptionalGroup { .. }
-                        | BinderPosition::BinderListLoop { .. } => {
-                            // Nested Optional / BinderListLoop inside Optional
-                            // are out of pilot scope. Emit no arm so the
-                            // catch-all `_` returns Idle, which causes the
-                            // walker's saturation loop to surface the bug.
-                            quote! {}
+                        BinderPosition::OptionalGroup { group_idx: child_group_idx, .. } => {
+                            quote! {
+                                (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
+                                    return WpdaStepAction::Advance(
+                                        WpdaState::OptionalGroup {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            group_idx: #child_group_idx,
+                                            sub_pos: 0u32,
+                                            outer_bp: *outer_bp,
+                                        },
+                                    );
+                                }
+                            }
+                        },
+                        BinderPosition::BinderListLoop { .. } => {
+                            let child_frame_idx =
+                                binder_frame_indices[&(ipos as *const BinderPosition)];
+                            let child_resume = traversal_resume_symbol(
+                                TraversalResume::Optional {
+                                    group_idx: group_idx_value,
+                                    next_sub_pos: next_sp,
+                                },
+                                result_src_idx,
+                                rule_idx,
+                                markers,
+                            );
+                            let entry = emit_binder_list_entry(
+                                ipos,
+                                child_frame_idx,
+                                &child_resume,
+                                result_src_idx,
+                                rule_idx,
+                            );
+                            quote! {
+                                (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
+                                    let _ = tokens.peek_text(_pos);
+                                    return #entry;
+                                }
+                            }
                         },
                     };
                     arms.push(inner_arm);
@@ -3260,19 +3574,11 @@ pub(crate) fn emit_optional_group_body(
 
                 // sub_pos == final_sub_pos: finalize.
                 arms.push(quote! {
-                    (#result_src_idx, #rule_idx, #group_idx_byte, #final_sub_pos) => {
+                    (#result_src_idx, #rule_idx, #group_idx_value, #final_sub_pos) => {
                         return WpdaStepAction::OptGroupFinalize {
-                            replace_symbol: StackSymbolV2::rule_at(
-                                #result_src_idx, #rule_idx,
-                                #outer_next_pos_byte, Some(*outer_bp),
-                            ),
+                            replace_symbol: #resume_symbol,
                             weight: lex_one(),
-                            new_state: WpdaState::BinderRule {
-                                result_src_idx: #result_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #result_src_idx,
-                                outer_bp: *outer_bp,
-                            },
+                            new_state: #resume_state,
                         };
                     }
                 });
@@ -3358,11 +3664,6 @@ pub(crate) fn emit_binder_action_entry(
     // (this loop) extracts CollectionId args into `arg_i_id`; Phase 2
     // (post-loop) drains in reverse; Phase 3 (also post-loop)
     // materializes each `arg_i` from its drained Vec<ActionArg>.
-    struct CollectionDrainSite {
-        arg_idx: usize,
-        elem_id: Ident,
-        coll_kind: CollectionType,
-    }
     let mut collection_drain_sites: Vec<CollectionDrainSite> = Vec::new();
 
     for (i, kind) in shape.action_args.iter().enumerate() {
@@ -3536,9 +3837,11 @@ pub(crate) fn emit_binder_action_entry(
                 // Defer the drain + materialize to Phase 2/3. Track the
                 // metadata for the post-loop reverse-drain emission.
                 collection_drain_sites.push(CollectionDrainSite {
-                    arg_idx: i,
+                    id_var,
+                    value_var: var.clone(),
                     elem_id,
                     coll_kind: coll_kind.clone(),
+                    optional: false,
                 });
                 // Bare value — no Box::new wrapping (the AST variant takes
                 // bare Vec<T> / HashBag<T> / HashSet<T> per language! macro
@@ -3546,6 +3849,16 @@ pub(crate) fn emit_binder_action_entry(
                 field_names.push(quote! { #var });
             },
             ActionArgKind::Optional(inner_kinds) => {
+                if inner_kinds
+                    .iter()
+                    .any(|kind| matches!(kind, ActionArgKind::Optional(_)))
+                {
+                    let nested = emit_nested_optional_action(i, inner_kinds);
+                    extracts.push(nested.extract);
+                    field_names.extend(nested.fields);
+                    collection_drain_sites.extend(nested.collection_drains);
+                    continue;
+                }
                 // Opt-Group: extract the Optional arg, exposing each inner
                 // field as `Option<Box<T>>` (or Option<...> per inner kind).
                 // The runtime pushes ActionArg::Optional(Some(inner_args))
@@ -3636,16 +3949,9 @@ pub(crate) fn emit_binder_action_entry(
                                     None => None,
                                 };
                         },
-                        ActionArgKind::Optional(_) => quote! {
-                            // Nested Optional: pilot scope omits this — the
-                            // inner is consumed-and-dropped but doesn't
-                            // contribute a field. classify_binder rejects
-                            // nested Optional today, so this arm is
-                            // unreachable. If the rejection lifts, extract
-                            // the nested ActionArg::Optional and recursively
-                            // unwrap.
-                            let #inner_var: () = ();
-                        },
+                        ActionArgKind::Optional(_) => unreachable!(
+                            "nested optionals are emitted by the iterative optional-action PDA"
+                        ),
                         ActionArgKind::CollectionDrain { elem_cat, coll_kind } => {
                             // Phase 4 #3 (2026-05-12): Class-2 SimpleCollection
                             // inside *opt. When the optional was TAKEN, the
@@ -3779,55 +4085,68 @@ pub(crate) fn emit_binder_action_entry(
     // drained Vec<ActionArg> to the source-order `arg_i` local, which
     // `field_names` references for the AST construction.
     for site in collection_drain_sites.iter().rev() {
-        let arg_idx = site.arg_idx;
         let elem_id = &site.elem_id;
-        let var = format_ident!("arg_{}", arg_idx);
-        let id_var = format_ident!("arg_{}_id", arg_idx);
-        let materialize = match site.coll_kind {
+        let var = &site.value_var;
+        let id_var = &site.id_var;
+        let materialize_expr = match site.coll_kind {
             CollectionType::Vec => quote! {
-                let #var: std::vec::Vec<#elem_id> = drained
+                drained
                     .into_iter()
                     .filter_map(|a| a.into_term::<#elem_id>())
-                    .collect();
+                    .collect::<std::vec::Vec<#elem_id>>()
             },
             CollectionType::HashBag => quote! {
-                let #var = mettail_runtime::HashBag::<#elem_id>::from_iter(
+                mettail_runtime::HashBag::<#elem_id>::from_iter(
                     drained
                         .into_iter()
                         .filter_map(|a| a.into_term::<#elem_id>())
-                );
+                )
             },
             CollectionType::HashSet => quote! {
-                let #var = std::collections::HashSet::<#elem_id>::from_iter(
+                std::collections::HashSet::<#elem_id>::from_iter(
                     drained
                         .into_iter()
                         .filter_map(|a| a.into_term::<#elem_id>())
-                );
+                )
             },
             CollectionType::HashMap | CollectionType::PathMap => quote! {
-                let mut iter_drained = drained.into_iter();
-                let mut container = mettail_runtime::HashMapLit::<
-                    #elem_id, #elem_id,
-                >::default();
-                while let Some(k_arg) = iter_drained.next() {
-                    let v_arg = match iter_drained.next() {
-                        Some(v) => v,
-                        None => break,
-                    };
-                    if let (Some(k), Some(v)) = (
-                        k_arg.into_term::<#elem_id>(),
-                        v_arg.into_term::<#elem_id>(),
-                    ) {
-                        container.insert(k, v);
+                {
+                    let mut iter_drained = drained.into_iter();
+                    let mut container = mettail_runtime::HashMapLit::<
+                        #elem_id, #elem_id,
+                    >::default();
+                    while let Some(k_arg) = iter_drained.next() {
+                        let v_arg = match iter_drained.next() {
+                            Some(v) => v,
+                            None => break,
+                        };
+                        if let (Some(k), Some(v)) = (
+                            k_arg.into_term::<#elem_id>(),
+                            v_arg.into_term::<#elem_id>(),
+                        ) {
+                            container.insert(k, v);
+                        }
                     }
+                    container
                 }
-                let #var = container;
             },
         };
-        extracts.push(quote! {
-            let drained = b.drain_collection(#id_var);
-            #materialize
-        });
+        if site.optional {
+            extracts.push(quote! {
+                let #var = match #id_var {
+                    Some(id) => {
+                        let drained = b.drain_collection(id);
+                        Some(#materialize_expr)
+                    },
+                    None => None,
+                };
+            });
+        } else {
+            extracts.push(quote! {
+                let drained = b.drain_collection(#id_var);
+                let #var = #materialize_expr;
+            });
+        }
     }
 
     // Build the action body's construction expression based on rule shape.
@@ -4293,11 +4612,14 @@ mod tests {
         let categories = vec!["Term".to_string()];
         let per_cat = vec![vec![lambda_lam_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
+        let language = synthetic_lang_for_lambda_test();
+        let markers = TraversalMarkerTable::build(&language, &per_cat);
         let (mut ts, __ts_helpers) = emit_binder_rule_body(
-            &synthetic_lang_for_lambda_test(),
+            &language,
             &categories,
             &per_cat,
             &prefix_bp_map,
+            &markers,
             &proc_macro2::TokenStream::new(),
         );
         // Task #15 peel: arm bodies now live in the per-(cat,rule) helpers;
@@ -4322,11 +4644,14 @@ mod tests {
         let categories = vec!["BigInt".to_string(), "BigRat".to_string()];
         let per_cat = vec![Vec::new(), vec![fraction_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
+        let language = synthetic_lang_for_lambda_test();
+        let markers = TraversalMarkerTable::build(&language, &per_cat);
         let (mut ts, __ts_helpers) = emit_binder_rule_body(
-            &synthetic_lang_for_lambda_test(),
+            &language,
             &categories,
             &per_cat,
             &prefix_bp_map,
+            &markers,
             &proc_macro2::TokenStream::new(),
         );
         // Task #15 peel: arm bodies now live in the per-(cat,rule) helpers;

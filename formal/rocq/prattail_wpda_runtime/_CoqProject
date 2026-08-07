@@ -84,3 +84,6 @@ theories/KBestExtractionSound.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.
 theories/LiteralCarrierContextIndependence.v
+
+# Nested Optional/BinderList PDA frame identity and typed-continuation laws.
+theories/BinderTraversalFrames.v

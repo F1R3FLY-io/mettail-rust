@@ -504,22 +504,12 @@ pub enum EdgeKind {
     /// is a Fork-time variant; runtime semantics are similar but
     /// emission context differs.
     LexAltLiteral { cat_src: u16, rule_idx: u16 },
-    /// Optional-group `OptionalGroupAt(sub_pos)` marker. Payload =
-    /// (cat, rule, sub_pos, outer_bp).
-    OptionalGroupAt {
-        cat_src: u16,
-        rule_idx: u16,
-        sub_pos: u8,
-        outer_bp: u8,
-    },
-    /// Class-3 binder-list inner-walk marker. Payload =
-    /// (cat, rule, sub_pos, outer_bp).
-    BinderListLoopAt {
-        cat_src: u16,
-        rule_idx: u16,
-        sub_pos: u8,
-        outer_bp: u8,
-    },
+    /// Optional-group marker. Generated metadata resolves `marker_id` to its
+    /// rule/group/sub-position coordinates.
+    OptionalGroupAt { marker_id: u32, outer_bp: u8 },
+    /// Binder-list continuation marker, likewise resolved by generated
+    /// metadata.
+    BinderListLoopAt { marker_id: u32, outer_bp: u8 },
 
     // ─── Identity-strict variants (divergent on pop) ────────────────────────
     /// Collection-element marker push. Pop must restore the calling
@@ -580,16 +570,14 @@ impl EdgeKind {
                 rule_idx: sym.rule_index_in_category,
                 operands_completed: sym.bp.unwrap_or(0),
             },
-            SymbolKind::OptionalGroupAt(sub_pos) => EdgeKind::OptionalGroupAt {
-                cat_src: sym.category_src_idx,
-                rule_idx: sym.rule_index_in_category,
-                sub_pos,
+            SymbolKind::OptionalGroupAt => EdgeKind::OptionalGroupAt {
+                marker_id: ((sym.category_src_idx as u32) << 16)
+                    | sym.rule_index_in_category as u32,
                 outer_bp: sym.bp.unwrap_or(0),
             },
-            SymbolKind::BinderListLoopAt(sub_pos) => EdgeKind::BinderListLoopAt {
-                cat_src: sym.category_src_idx,
-                rule_idx: sym.rule_index_in_category,
-                sub_pos,
+            SymbolKind::BinderListLoopAt => EdgeKind::BinderListLoopAt {
+                marker_id: ((sym.category_src_idx as u32) << 16)
+                    | sym.rule_index_in_category as u32,
                 outer_bp: sym.bp.unwrap_or(0),
             },
             SymbolKind::Return => EdgeKind::ReturnFrame {
@@ -1632,6 +1620,24 @@ mod tests {
 
     use crate::automata::lex_weight::LexicographicWeight;
     use crate::automata::semiring::TropicalWeight;
+
+    #[test]
+    fn traversal_marker_edge_kinds_preserve_dense_identity_and_kind() {
+        let marker_id = 0xDEAD_BEEFu32;
+        let optional = StackSymbolV2::optional_group_at(marker_id, 19);
+        let binder = StackSymbolV2::binder_list_loop_at(marker_id, 19);
+
+        assert_eq!(
+            EdgeKind::from_symbol(&optional),
+            EdgeKind::OptionalGroupAt { marker_id, outer_bp: 19 },
+        );
+        assert_eq!(
+            EdgeKind::from_symbol(&binder),
+            EdgeKind::BinderListLoopAt { marker_id, outer_bp: 19 },
+        );
+        assert!(EdgeKind::from_symbol(&optional).is_convergent());
+        assert!(EdgeKind::from_symbol(&binder).is_convergent());
+    }
 
     fn lex(cost: f64, src: u16, rule: u16) -> LexicographicWeight {
         LexicographicWeight::from_cost(cost, src, rule)
