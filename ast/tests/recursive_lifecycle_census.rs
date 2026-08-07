@@ -326,7 +326,7 @@ fn flatten_use_tree(
                 flatten_use_tree(item, prefix, out);
             }
         },
-        UseTree::Glob(_) => {},
+        UseTree::Glob(_) => out.push(("*".to_string(), prefix.clone())),
     }
 }
 
@@ -665,145 +665,180 @@ fn resolve_path(
     aliases: &BTreeMap<String, BTreeSet<String>>,
     imports: &BTreeMap<(String, Vec<String>, String), Vec<Vec<String>>>,
 ) -> Vec<usize> {
+    #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct Query {
+        crate_key: String,
+        module: Vec<String>,
+        path: Vec<String>,
+    }
+
+    fn enqueue_explicit_imports(
+        pending: &mut Vec<Query>,
+        imports: &BTreeMap<(String, Vec<String>, String), Vec<Vec<String>>>,
+        crate_key: &str,
+        module: &[String],
+        path: &[String],
+    ) -> bool {
+        let Some(first) = path.first() else {
+            return false;
+        };
+        if let Some(explicit) =
+            imports.get(&(crate_key.to_string(), module.to_vec(), first.clone()))
+        {
+            for target in explicit {
+                let mut expanded = target.clone();
+                expanded.extend_from_slice(&path[1..]);
+                pending.push(Query {
+                    crate_key: crate_key.to_string(),
+                    module: module.to_vec(),
+                    path: expanded,
+                });
+            }
+            return true;
+        }
+        false
+    }
+
+    fn enqueue_module_exports(
+        pending: &mut Vec<Query>,
+        imports: &BTreeMap<(String, Vec<String>, String), Vec<Vec<String>>>,
+        crate_key: &str,
+        module: &[String],
+        name: &str,
+    ) {
+        let key = (crate_key.to_string(), module.to_vec(), name.to_string());
+        if let Some(explicit) = imports.get(&key) {
+            for target in explicit {
+                pending.push(Query {
+                    crate_key: crate_key.to_string(),
+                    module: module.to_vec(),
+                    path: target.clone(),
+                });
+            }
+            return;
+        }
+        if let Some(globs) = imports.get(&(crate_key.to_string(), module.to_vec(), "*".to_string()))
+        {
+            for target in globs {
+                let mut expanded = target.clone();
+                expanded.push(name.to_string());
+                pending.push(Query {
+                    crate_key: crate_key.to_string(),
+                    module: module.to_vec(),
+                    path: expanded,
+                });
+            }
+        }
+    }
+
     let Some(first) = original_path.first() else {
         return Vec::new();
     };
     if original_path.len() == 1 && context.type_parameters.contains(first) {
         return Vec::new();
     }
-    if original_path.as_ref() == ["Self"] {
+    if original_path.len() == 1 && first == "Self" {
         return context.current.into_iter().collect();
     }
 
-    let mut path = original_path.to_vec();
-    if let Some(imported) =
-        imports.get(&(context.crate_key.to_string(), context.module.to_vec(), first.clone()))
-    {
-        let distinct = imported.iter().collect::<BTreeSet<_>>();
-        if distinct.len() == 1 {
-            let mut expanded = imported[0].clone();
-            expanded.extend_from_slice(&original_path[1..]);
-            path = expanded;
+    let mut pending = vec![Query {
+        crate_key: context.crate_key.to_string(),
+        module: context.module.to_vec(),
+        path: original_path.to_vec(),
+    }];
+    let mut seen = BTreeSet::new();
+    let mut resolved = BTreeSet::new();
+    while let Some(query) = pending.pop() {
+        if !seen.insert(query.clone()) || query.path.is_empty() {
+            continue;
         }
-    }
+        if enqueue_explicit_imports(
+            &mut pending,
+            imports,
+            &query.crate_key,
+            &query.module,
+            &query.path,
+        ) {
+            continue;
+        }
 
-    let Some(name) = path.last() else {
-        return Vec::new();
-    };
-    let Some(candidates) = by_name.get(name) else {
-        return Vec::new();
-    };
-    if path.len() == 1 {
-        let same_module = candidates
-            .iter()
-            .copied()
-            .filter(|candidate| {
-                let definition = &definitions[*candidate];
-                definition.crate_key == context.crate_key && definition.module == context.module
-            })
-            .collect::<Vec<_>>();
-        if !same_module.is_empty() {
-            return same_module;
-        }
-        let same_crate = candidates
-            .iter()
-            .copied()
-            .filter(|candidate| definitions[*candidate].crate_key == context.crate_key)
-            .collect::<Vec<_>>();
-        if same_crate.len() == 1 {
-            return same_crate;
-        }
-        return (candidates.len() == 1)
-            .then(|| candidates.clone())
-            .unwrap_or_default();
-    }
-
-    let qualifiers = &path[..path.len() - 1];
-    let mut exact_crate = None::<String>;
-    let mut exact_module = None::<Vec<String>>;
-    match qualifiers.first().map(String::as_str) {
-        Some("crate") => {
-            exact_crate = Some(context.crate_key.to_string());
-            exact_module = Some(qualifiers[1..].to_vec());
-        },
-        Some("self") => {
-            exact_crate = Some(context.crate_key.to_string());
-            exact_module = Some(
-                context
+        let name = query.path.last().expect("a non-empty path has a name");
+        let Some(candidates) = by_name.get(name) else {
+            continue;
+        };
+        let qualifiers = &query.path[..query.path.len() - 1];
+        let mut exact_locations = Vec::<(String, Vec<String>)>::new();
+        match qualifiers.first().map(String::as_str) {
+            Some("crate") => {
+                exact_locations.push((query.crate_key.clone(), qualifiers[1..].to_vec()))
+            },
+            Some("self") => exact_locations.push((
+                query.crate_key.clone(),
+                query
                     .module
                     .iter()
                     .cloned()
                     .chain(qualifiers[1..].iter().cloned())
                     .collect(),
-            );
-        },
-        Some("super") => {
-            let super_count = qualifiers
-                .iter()
-                .take_while(|part| part.as_str() == "super")
-                .count();
-            if super_count <= context.module.len() {
-                let mut module = context.module[..context.module.len() - super_count].to_vec();
-                module.extend_from_slice(&qualifiers[super_count..]);
-                exact_crate = Some(context.crate_key.to_string());
-                exact_module = Some(module);
-            }
-        },
-        Some(alias) => {
-            if let Some(crate_keys) = aliases.get(alias) {
-                if crate_keys.len() == 1 {
-                    exact_crate = crate_keys.iter().next().cloned();
-                    exact_module = Some(qualifiers[1..].to_vec());
+            )),
+            Some("super") => {
+                let count = qualifiers
+                    .iter()
+                    .take_while(|part| part.as_str() == "super")
+                    .count();
+                if count <= query.module.len() {
+                    let mut module = query.module[..query.module.len() - count].to_vec();
+                    module.extend_from_slice(&qualifiers[count..]);
+                    exact_locations.push((query.crate_key.clone(), module));
                 }
+            },
+            Some(alias) if aliases.contains_key(alias) => {
+                for crate_key in &aliases[alias] {
+                    exact_locations.push((crate_key.clone(), qualifiers[1..].to_vec()));
+                }
+            },
+            Some(_) => {
+                exact_locations.push((
+                    query.crate_key.clone(),
+                    query
+                        .module
+                        .iter()
+                        .cloned()
+                        .chain(qualifiers.iter().cloned())
+                        .collect(),
+                ));
+                exact_locations.push((query.crate_key.clone(), qualifiers.to_vec()));
+            },
+            None => exact_locations.push((query.crate_key.clone(), query.module.clone())),
+        }
+
+        let before = resolved.len();
+        for (crate_key, module) in &exact_locations {
+            resolved.extend(candidates.iter().copied().filter(|candidate| {
+                definitions[*candidate].crate_key == *crate_key
+                    && definitions[*candidate].module == *module
+            }));
+        }
+        if resolved.len() != before {
+            continue;
+        }
+
+        for (crate_key, module) in &exact_locations {
+            enqueue_module_exports(&mut pending, imports, crate_key, module, name);
+        }
+
+        if qualifiers.is_empty() {
+            let same_crate = candidates
+                .iter()
+                .copied()
+                .filter(|candidate| definitions[*candidate].crate_key == query.crate_key)
+                .collect::<Vec<_>>();
+            if same_crate.len() == 1 {
+                resolved.insert(same_crate[0]);
             }
-        },
-        None => {},
+        }
     }
-    if let (Some(crate_key), Some(module)) = (exact_crate, exact_module) {
-        return candidates
-            .iter()
-            .copied()
-            .filter(|candidate| {
-                definitions[*candidate].crate_key == crate_key
-                    && definitions[*candidate].module == module
-            })
-            .collect();
-    }
-
-    let mut local_modules = Vec::new();
-    local_modules.push(
-        context
-            .module
-            .iter()
-            .cloned()
-            .chain(qualifiers.iter().cloned())
-            .collect::<Vec<_>>(),
-    );
-    local_modules.push(qualifiers.to_vec());
-    let local = candidates
-        .iter()
-        .copied()
-        .filter(|candidate| {
-            let definition = &definitions[*candidate];
-            definition.crate_key == context.crate_key && local_modules.contains(&definition.module)
-        })
-        .collect::<Vec<_>>();
-    if !local.is_empty() {
-        return local;
-    }
-
-    let suffix = candidates
-        .iter()
-        .copied()
-        .filter(|candidate| definitions[*candidate].module.ends_with(qualifiers))
-        .collect::<Vec<_>>();
-    if suffix.len() == 1 {
-        return suffix;
-    }
-    if candidates.len() == 1 && Some(candidates[0]) != context.current {
-        return candidates.clone();
-    }
-    Vec::new()
+    resolved.into_iter().collect()
 }
 
 fn operation_graph(
