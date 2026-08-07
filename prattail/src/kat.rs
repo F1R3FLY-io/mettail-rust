@@ -453,7 +453,7 @@ impl ExprInterner {
     fn nullable(&self, state: &[usize], valuation: &HashMap<String, bool>) -> bool {
         state
             .iter()
-            .any(|index| nullable(&self.expressions[*index], valuation))
+            .any(|index| expression_nullable(&self.expressions[*index], valuation))
     }
 
     fn derivative(
@@ -657,7 +657,7 @@ pub(crate) fn eval_test(test: &BooleanTest, valuation: &HashMap<String, bool>) -
 /// - `Seq(a, b)` is nullable iff both `a` and `b` are nullable.
 /// - `Alt(a, b)` is nullable iff either `a` or `b` is nullable.
 /// - `Star(_)` is always nullable (accepts zero repetitions).
-fn nullable(expr: &KatExpr, valuation: &HashMap<String, bool>) -> bool {
+fn expression_nullable(expr: &KatExpr, valuation: &HashMap<String, bool>) -> bool {
     enum Task<'expr> {
         Visit(&'expr KatExpr),
         SeqAfterLeft(&'expr KatExpr),
@@ -738,7 +738,7 @@ fn partial_derivative(
                 Vec::new()
             }),
             Task::Visit(KatExpr::Seq(left, right)) => {
-                let right_derivative = nullable(left, valuation);
+                let right_derivative = expression_nullable(left, valuation);
                 tasks.push(Task::FinishSeq { right, right_derivative });
                 if right_derivative {
                     tasks.push(Task::Visit(right));
@@ -784,12 +784,12 @@ fn partial_derivative(
                 values.push(left);
             },
             Task::FinishStar(inner) => {
-                let derivative = values
+                let inner_residuals = values
                     .pop()
                     .expect("KAT partial derivative lost star result");
                 let star = Arc::new(KatExpr::Star(Arc::clone(inner)));
                 values.push(
-                    derivative
+                    inner_residuals
                         .into_iter()
                         .filter_map(|residual| {
                             let sequence =
