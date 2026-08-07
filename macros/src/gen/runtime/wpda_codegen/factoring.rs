@@ -813,7 +813,7 @@ fn finalize_leaf(
     }
 }
 
-/// Recursive trie build, returning the FOREST for the node reached by
+/// Stack-safe trie build, returning the FOREST for the node reached by
 /// consuming `edge_item` at `depth` (`members` all matched `items[0..depth]`;
 /// `edge_item == items[depth - 1]`). A single remaining member commits
 /// immediately (earliest-uniqueness leaf).
@@ -861,65 +861,98 @@ fn build_tree(
     interior_accepts: &mut Vec<u16>,
     refusals: &mut Vec<String>,
 ) -> Vec<SpineTree> {
-    if members.len() == 1 {
-        let member = members
-            .into_iter()
-            .next()
-            .expect("a len()==1 vector yields its member");
-        return vec![SpineTree::Leaf {
-            item: edge_item,
-            member: finalize_leaf(member, depth, refusals),
-        }];
+    enum Task {
+        Enter {
+            depth: usize,
+            edge_item: SpineItem,
+            members: Vec<CandidateMember>,
+        },
+        Assemble {
+            edge_item: SpineItem,
+            accepts: Vec<SpineTree>,
+            value_base: usize,
+        },
     }
-    // ≥2 members: exhausted members leaf out (or defer, per the stance); the
-    // rest partition by the next item, preserving first-occurrence order
-    // (rule declaration order — deterministic).
-    let mut order: Vec<SpineItem> = Vec::new();
-    let mut parts: Vec<Vec<CandidateMember>> = Vec::new();
-    let mut accepts: Vec<SpineTree> = Vec::new();
-    for member in members {
-        if member.items.len() == depth {
-            if accept_continue {
-                accepts.push(SpineTree::Leaf {
-                    item: edge_item.clone(),
+
+    let mut tasks = vec![Task::Enter { depth, edge_item, members }];
+    let mut values: Vec<Vec<SpineTree>> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Enter { depth, edge_item, members } if members.len() == 1 => {
+                let member = members
+                    .into_iter()
+                    .next()
+                    .expect("a len()==1 vector yields its member");
+                values.push(vec![SpineTree::Leaf {
+                    item: edge_item,
                     member: finalize_leaf(member, depth, refusals),
-                });
-            } else {
-                interior_accepts.push(member.rule_idx);
-            }
-            continue;
-        }
-        let item = member.items[depth].clone();
-        match order.iter().position(|existing| existing == &item) {
-            Some(i) => parts[i].push(member),
-            None => {
-                order.push(item);
-                parts.push(vec![member]);
+                }]);
+            },
+            Task::Enter { depth, edge_item, members } => {
+                // ≥2 members: exhausted members leaf out (or defer, per the
+                // stance); the rest partition by the next item, preserving
+                // first-occurrence order (rule declaration order).
+                let mut order: Vec<SpineItem> = Vec::new();
+                let mut parts: Vec<Vec<CandidateMember>> = Vec::new();
+                let mut accepts: Vec<SpineTree> = Vec::new();
+                for member in members {
+                    if member.items.len() == depth {
+                        if accept_continue {
+                            accepts.push(SpineTree::Leaf {
+                                item: edge_item.clone(),
+                                member: finalize_leaf(member, depth, refusals),
+                            });
+                        } else {
+                            interior_accepts.push(member.rule_idx);
+                        }
+                        continue;
+                    }
+                    let item = member.items[depth].clone();
+                    match order.iter().position(|existing| existing == &item) {
+                        Some(index) => parts[index].push(member),
+                        None => {
+                            order.push(item);
+                            parts.push(vec![member]);
+                        },
+                    }
+                }
+
+                if parts.is_empty() {
+                    // Every member exhausted at this node (all-twins part,
+                    // F-10): accepts-only forest. Empty overall only under
+                    // the F0 stance, where interior_accepts discards it.
+                    values.push(accepts);
+                    continue;
+                }
+
+                let value_base = values.len();
+                tasks.push(Task::Assemble { edge_item, accepts, value_base });
+                for (item, part) in order.into_iter().zip(parts).rev() {
+                    tasks.push(Task::Enter {
+                        depth: depth + 1,
+                        edge_item: item,
+                        members: part,
+                    });
+                }
+            },
+            Task::Assemble { edge_item, accepts, value_base } => {
+                let mut children = Vec::new();
+                children.extend(values.drain(value_base..).flatten());
+                debug_assert!(!children.is_empty());
+                let mut forest = Vec::with_capacity(1 + accepts.len());
+                forest.push(SpineTree::Interior { item: edge_item, children });
+                forest.extend(accepts);
+                values.push(forest);
             },
         }
     }
-    let mut children: Vec<SpineTree> = Vec::with_capacity(parts.len());
-    for (item, part) in order.into_iter().zip(parts) {
-        children.extend(build_tree(
-            depth + 1,
-            item,
-            part,
-            accept_continue,
-            interior_accepts,
-            refusals,
-        ));
-    }
-    if children.is_empty() {
-        // Every member exhausted at this node (all-twins part, F-10):
-        // accepts-only forest. Empty overall only under the F0 stance,
-        // where the caller's `interior_accepts` check discards the forest.
-        return accepts;
-    }
-    let mut forest = Vec::with_capacity(1 + accepts.len());
-    forest.push(SpineTree::Interior { item: edge_item, children });
-    forest.extend(accepts);
-    forest
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("spine-tree PDA produced no forest")
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/support/factoring_tree_recursive_oracle.rs"]
+mod factoring_tree_recursive_oracle;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // The factoring computation.
@@ -1069,7 +1102,7 @@ pub(crate) fn build_prefix_factoring_with(
                     continue;
                 }
                 // Eligible: every leaf carries exactly one rule by
-                // construction (single-member recursion base; under the F0
+                // construction (single-member base; under the F0
                 // stance twins and proper prefixes were routed to
                 // interior_accepts above, under F5-1 they ARE leaves).
                 let leaf_count: usize = roots.iter().map(SpineTree::leaf_count).sum();
