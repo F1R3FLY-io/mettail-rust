@@ -147,6 +147,22 @@ fn factoring_tree_recursive_oracle_preserves_twins_and_refusal_order() {
 }
 
 #[test]
+fn factoring_tree_recursive_oracle_preserves_wide_first_occurrence_order() {
+    const WIDTH: usize = 1_024;
+    let root = literal("root");
+    let members = (0..WIDTH)
+        .map(|index| {
+            member(
+                MemberKind::Binder,
+                index as u16,
+                vec![root.clone(), literal(format!("branch-{index}"))],
+            )
+        })
+        .collect();
+    assert_equivalent(members, true);
+}
+
+#[test]
 fn factoring_tree_recursive_oracle_deep_shared_prefix_fits_small_stack() {
     std::thread::Builder::new()
         .name("factoring-tree-small-stack".to_string())

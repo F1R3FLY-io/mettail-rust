@@ -114,6 +114,7 @@
 
 use std::collections::BTreeSet;
 
+use indexmap::IndexMap;
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr};
 use mettail_ast::language::LanguageDef;
 
@@ -139,7 +140,7 @@ pub(crate) const SPINE_RULE_BASE: u16 = 0xF800;
 /// criterion (the red-team vindicated emitted-action-shape equality as the
 /// only correct one — spec-level `prefix(N)` annotations do not reliably
 /// surface in the emitted `cur_bp`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum SpineItem {
     /// A literal consume. Binder members emit it as the single-branch
     /// `GuardedConsumeAndReplace { expected_text, required_top_cat }` Fork
@@ -892,8 +893,7 @@ fn build_tree(
                 // ≥2 members: exhausted members leaf out (or defer, per the
                 // stance); the rest partition by the next item, preserving
                 // first-occurrence order (rule declaration order).
-                let mut order: Vec<SpineItem> = Vec::new();
-                let mut parts: Vec<Vec<CandidateMember>> = Vec::new();
+                let mut parts: IndexMap<SpineItem, Vec<CandidateMember>> = IndexMap::new();
                 let mut accepts: Vec<SpineTree> = Vec::new();
                 for member in members {
                     if member.items.len() == depth {
@@ -908,13 +908,7 @@ fn build_tree(
                         continue;
                     }
                     let item = member.items[depth].clone();
-                    match order.iter().position(|existing| existing == &item) {
-                        Some(index) => parts[index].push(member),
-                        None => {
-                            order.push(item);
-                            parts.push(vec![member]);
-                        },
-                    }
+                    parts.entry(item).or_default().push(member);
                 }
 
                 if parts.is_empty() {
@@ -927,7 +921,7 @@ fn build_tree(
 
                 let value_base = values.len();
                 tasks.push(Task::Assemble { edge_item, accepts, value_base });
-                for (item, part) in order.into_iter().zip(parts).rev() {
+                for (item, part) in parts.into_iter().rev() {
                     tasks.push(Task::Enter {
                         depth: depth + 1,
                         edge_item: item,
