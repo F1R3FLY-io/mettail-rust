@@ -1504,36 +1504,42 @@ fn parse_bounded_quantifier(
 /// Apply a quantifier to an NFA fragment.
 fn apply_quantifier(nfa: &mut Nfa, frag: NfaFragment, kind: &QuantifyKind) -> NfaFragment {
     match kind {
-        QuantifyKind::Star => {
-            /* a* : new_start -> frag.start, frag.accept -> frag.start, new_start -> new_accept, frag.accept -> new_accept */
-            let new_start = nfa.add_state(NfaState::new());
-            let new_accept = nfa.add_state(NfaState::new());
-            nfa.add_epsilon(new_start, frag.start);
-            nfa.add_epsilon(new_start, new_accept);
-            nfa.add_epsilon(frag.accept, frag.start);
-            nfa.add_epsilon(frag.accept, new_accept);
-            NfaFragment { start: new_start, accept: new_accept }
-        },
-        QuantifyKind::Plus => {
-            /* a+ : new_start -> frag.start, frag.accept -> frag.start, frag.accept -> new_accept */
-            let new_start = nfa.add_state(NfaState::new());
-            let new_accept = nfa.add_state(NfaState::new());
-            nfa.add_epsilon(new_start, frag.start);
-            nfa.add_epsilon(frag.accept, frag.start);
-            nfa.add_epsilon(frag.accept, new_accept);
-            NfaFragment { start: new_start, accept: new_accept }
-        },
-        QuantifyKind::Optional => {
-            /* a? : new_start -> frag.start, new_start -> new_accept, frag.accept -> new_accept */
-            let new_start = nfa.add_state(NfaState::new());
-            let new_accept = nfa.add_state(NfaState::new());
-            nfa.add_epsilon(new_start, frag.start);
-            nfa.add_epsilon(new_start, new_accept);
-            nfa.add_epsilon(frag.accept, new_accept);
-            NfaFragment { start: new_start, accept: new_accept }
-        },
+        QuantifyKind::Star => apply_star(nfa, frag),
+        QuantifyKind::Plus => apply_plus(nfa, frag),
+        QuantifyKind::Optional => apply_optional(nfa, frag),
         QuantifyKind::Repeat { min, max } => apply_bounded_repeat(nfa, frag, *min, *max),
     }
+}
+
+fn apply_star(nfa: &mut Nfa, frag: NfaFragment) -> NfaFragment {
+    /* a* : new_start -> frag.start, frag.accept -> frag.start, new_start -> new_accept, frag.accept -> new_accept */
+    let new_start = nfa.add_state(NfaState::new());
+    let new_accept = nfa.add_state(NfaState::new());
+    nfa.add_epsilon(new_start, frag.start);
+    nfa.add_epsilon(new_start, new_accept);
+    nfa.add_epsilon(frag.accept, frag.start);
+    nfa.add_epsilon(frag.accept, new_accept);
+    NfaFragment { start: new_start, accept: new_accept }
+}
+
+fn apply_plus(nfa: &mut Nfa, frag: NfaFragment) -> NfaFragment {
+    /* a+ : new_start -> frag.start, frag.accept -> frag.start, frag.accept -> new_accept */
+    let new_start = nfa.add_state(NfaState::new());
+    let new_accept = nfa.add_state(NfaState::new());
+    nfa.add_epsilon(new_start, frag.start);
+    nfa.add_epsilon(frag.accept, frag.start);
+    nfa.add_epsilon(frag.accept, new_accept);
+    NfaFragment { start: new_start, accept: new_accept }
+}
+
+fn apply_optional(nfa: &mut Nfa, frag: NfaFragment) -> NfaFragment {
+    /* a? : new_start -> frag.start, new_start -> new_accept, frag.accept -> new_accept */
+    let new_start = nfa.add_state(NfaState::new());
+    let new_accept = nfa.add_state(NfaState::new());
+    nfa.add_epsilon(new_start, frag.start);
+    nfa.add_epsilon(new_start, new_accept);
+    nfa.add_epsilon(frag.accept, new_accept);
+    NfaFragment { start: new_start, accept: new_accept }
 }
 
 /// Apply bounded repetition `{min,max}` by expanding to concatenated copies.
@@ -1563,14 +1569,14 @@ fn apply_bounded_repeat(
         None => {
             /* {min,} — min copies then star */
             let star_copy = clone_fragment(nfa, &frag);
-            let star_frag = apply_quantifier(nfa, star_copy, &QuantifyKind::Star);
+            let star_frag = apply_star(nfa, star_copy);
             copies.push(star_frag);
         },
         Some(max_val) => {
             /* {min, max} — add (max - min) optional copies */
             for _ in 0..(max_val - min) {
                 let opt_copy = clone_fragment(nfa, &frag);
-                let opt_frag = apply_quantifier(nfa, opt_copy, &QuantifyKind::Optional);
+                let opt_frag = apply_optional(nfa, opt_copy);
                 copies.push(opt_frag);
             }
         },
@@ -1686,12 +1692,48 @@ fn skip_ws(input: &[u8], pos: &mut usize) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
+#[path = "../../tests/support/regex_quantifier_recursive_oracle.rs"]
+mod quantifier_recursive_oracle;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::automata::minimize::minimize_dfa;
     use crate::automata::nfa::epsilon_closure;
     use crate::automata::partition::compute_equivalence_classes;
     use crate::automata::subset::subset_construction;
+
+    #[test]
+    fn primitive_quantifier_factoring_preserves_exact_nfa_topology() {
+        let kinds = [
+            QuantifyKind::Star,
+            QuantifyKind::Plus,
+            QuantifyKind::Optional,
+            QuantifyKind::Repeat { min: 0, max: Some(0) },
+            QuantifyKind::Repeat { min: 0, max: Some(3) },
+            QuantifyKind::Repeat { min: 2, max: Some(4) },
+            QuantifyKind::Repeat { min: 2, max: None },
+        ];
+
+        for (case, kind) in kinds.into_iter().enumerate() {
+            let mut actual_nfa = Nfa::new();
+            let start = actual_nfa.add_state(NfaState::new());
+            let accept = actual_nfa.add_state(NfaState::new());
+            actual_nfa.add_transition(start, accept, CharClass::Single(b'a'));
+            let fragment = NfaFragment { start, accept };
+            let mut oracle_nfa = actual_nfa.clone();
+
+            let actual = apply_quantifier(&mut actual_nfa, fragment.clone(), &kind);
+            let expected = quantifier_recursive_oracle::apply(&mut oracle_nfa, fragment, &kind);
+
+            assert_eq!((actual.start, actual.accept), (expected.start, expected.accept));
+            assert_eq!(
+                format!("{:?}", actual_nfa.states),
+                format!("{:?}", oracle_nfa.states),
+                "state allocation and transition order changed in quantifier case {case}"
+            );
+        }
+    }
 
     /// Helper: compile a regex, build the full DFA pipeline, then test if it accepts a string.
     fn regex_accepts(pattern: &str, token_kind: TokenKind, input: &str) -> bool {
