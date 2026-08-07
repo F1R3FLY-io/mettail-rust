@@ -592,17 +592,21 @@ fn has_structural_decrease(scc_pair_indices: &[usize], pairs: &[DependencyPair])
 /// A term `s` is a proper subterm of `t` if `s` appears as a strict subterm
 /// (not equal to `t` itself) within `t`.
 fn is_proper_subterm(needle: &Term, haystack: &Term) -> bool {
-    match haystack {
-        Term::App { args, .. } => {
-            for arg in args {
-                if arg == needle || is_proper_subterm(needle, arg) {
-                    return true;
-                }
-            }
-            false
-        },
-        Term::Var(_) => false,
+    let mut pending = match haystack {
+        Term::App { args, .. } => args.iter().rev().collect::<Vec<_>>(),
+        Term::Var(_) => return false,
+    };
+
+    while let Some(candidate) = pending.pop() {
+        if candidate == needle {
+            return true;
+        }
+        if let Term::App { args, .. } = candidate {
+            pending.extend(args.iter().rev());
+        }
     }
+
+    false
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -878,6 +882,26 @@ mod tests {
         // f(x) is NOT a proper subterm of f(x) (must be *proper*).
         let t = Term::app("f", vec![Term::var("x")]);
         assert!(!is_proper_subterm(&t, &t));
+    }
+
+    #[test]
+    fn proper_subterm_deep_is_stack_safe() {
+        const DEPTH: usize = 16_384;
+        const STACK_SIZE: usize = 256 * 1024;
+
+        let needle = Term::var("needle");
+        let mut haystack = Term::var("needle");
+        for _ in 0..DEPTH {
+            haystack = Term::app("f", vec![haystack]);
+        }
+
+        std::thread::Builder::new()
+            .name("proper-subterm-stack-gate".into())
+            .stack_size(STACK_SIZE)
+            .spawn(move || assert!(is_proper_subterm(&needle, &haystack)))
+            .expect("spawn proper-subterm stack gate")
+            .join()
+            .expect("proper-subterm stack gate overflowed or panicked");
     }
 
     #[test]

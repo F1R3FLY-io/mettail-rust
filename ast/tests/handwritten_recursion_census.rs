@@ -90,10 +90,6 @@ const TERM_FAMILY: &[&str] = &[
 enum Disposition {
     /// A deliberate reference implementation retained for a differential.
     OracleTwin(&'static str),
-    /// Driven by a `rholang-runtime/tests/stack_depth_gate.rs` subject.
-    Measured(&'static str),
-    /// ⚠ A live Θ(depth) exposure with no subject. **This variant is the backlog.**
-    Unmeasured(&'static str),
     /// Recursion over a bounded structure — a fixed-arity walk, a grammar of known shape, a
     /// fixture builder whose depth the caller chooses.
     NotATermDepthCycle(&'static str),
@@ -102,342 +98,28 @@ enum Disposition {
 /// ★★ The FILE SET is derived; only the disposition is declared. A file that grows a
 /// term-family cycle without a row fails this test **by name**.
 const RECURSION_DISPOSITIONS: &[(&str, Disposition)] = &[
-    // ── oracle twins: their recursion IS the point ─────────────────────────────────
     (
         "rholang-runtime/tests/support/rholang_ast_recursive_oracle.rs",
         Disposition::OracleTwin(
-            "★ the 47-member lowering oracle — the pre-conversion `lower_arm_*` family, held \
-             verbatim so the converted lowering can be differentialled against it",
+            "the pre-conversion lowering recursion is retained only for exact differential tests",
         ),
     ),
     (
         "rholang-runtime/tests/support/observation_scan_recursive_oracle.rs",
         Disposition::OracleTwin(
-            "the pre-conversion recursive observation binder/mobility/flatten equations retained \
-             only for exact ordered differentials against the SS-G26 production PDAs",
+            "the pre-conversion observation recursion is retained only for exact ordered differentials",
         ),
-    ),
-    // ── the term-op EMITTERS: Phase 5's targets ────────────────────────────────────
-    (
-        "macros/src/gen/term_ops/depth.rs",
-        Disposition::NotATermDepthCycle(
-            "⚠ READ THE BOUNDARY: this is the EMITTER of `term_depth`, and its own recursion \
-             walks the `LanguageDef`'s finite category graph at macro-expansion time. What it \
-             EMITS is measured as gate subject `ast_term_depth`; the two are different \
-             traversals over different data and only the emitted one is depth-exposed",
-        ),
-    ),
-    (
-        "macros/src/gen/term_ops/ground.rs",
-        Disposition::NotATermDepthCycle("emitter of `is_ground`; same boundary as depth.rs"),
-    ),
-    (
-        "macros/src/gen/term_ops/subst.rs",
-        Disposition::NotATermDepthCycle(
-            "emitter of `subst`/`env_subst`; ⚠ the EMITTED `env_subst` is one of the six \
-             `UNMEASURED_TRAVERSALS` and is Phase 5's first target — that obligation lives in \
-             `GENERATED_FILE_CENSUS`, not here",
-        ),
-    ),
-    (
-        "macros/src/gen/syntax/display.rs",
-        Disposition::NotATermDepthCycle("emitter of `Display`; emitted form is `ast_display`"),
-    ),
-    (
-        "macros/src/gen/runtime/dovetail_report.rs",
-        Disposition::NotATermDepthCycle(
-            "⚠ emitter of the Dovetail report. The EMITTED `__mettail_dovetail_build_*_d` is \
-             `UNMEASURED_TRAVERSALS`' largest member (14,328 self-calls) and is `term_depth`'s \
-             40-site caller — sites that exist only after expansion and that NO source scan, \
-             including this one, can see",
-        ),
-    ),
-    (
-        "macros/src/gen/runtime/dovetail_report/ac.rs",
-        Disposition::NotATermDepthCycle("AC-carrier emitter"),
-    ),
-    (
-        "macros/src/gen/runtime/metadata.rs",
-        Disposition::NotATermDepthCycle("metadata emitter over the declaration set"),
-    ),
-    (
-        "macros/src/gen/runtime/wpda_codegen/facade.rs",
-        Disposition::NotATermDepthCycle("WPDA emitter over the grammar"),
-    ),
-    (
-        "macros/src/gen/runtime/wpda_codegen/collection.rs",
-        Disposition::NotATermDepthCycle("collection-shape emitter"),
-    ),
-    (
-        "macros/src/gen/runtime/wpda_codegen/forks.rs",
-        Disposition::NotATermDepthCycle("fork emitter"),
-    ),
-    (
-        "macros/src/gen/syntax/parser/prattail_bridge.rs",
-        Disposition::NotATermDepthCycle("bridge emitter"),
-    ),
-    (
-        "macros/src/gen/test_gen/strategies.rs",
-        Disposition::NotATermDepthCycle(
-            "proptest strategy emitter; the generated strategies bound their own depth",
-        ),
-    ),
-    // ── the DSL parser and grammar machinery ───────────────────────────────────────
-    (
-        "ast/src/language/parse.rs",
-        Disposition::Unmeasured(
-            "⚠ a 30-member cycle parsing the `language!` DSL. Depth is bounded by the SOURCE a \
-             developer writes rather than by a deploy, so it is not adversary-controlled — but \
-             it runs inside the proc macro, where an overflow aborts the build printing \
-             nothing, and nothing measures it",
-        ),
-    ),
-    (
-        "ast/src/identity.rs",
-        Disposition::Unmeasured("9-member cycle over rule identity; no subject"),
-    ),
-    (
-        "ast/src/types.rs",
-        Disposition::Unmeasured("`TypeExpr` walk — nesting is bounded by the declared type"),
-    ),
-    (
-        "ast/src/validation/validator.rs",
-        Disposition::Unmeasured("validation walk over the declaration set"),
-    ),
-    (
-        "ast/src/validation/typechecker.rs",
-        Disposition::Unmeasured("type walk over `TypeExpr`"),
-    ),
-    // ── prattail: the parser generator ─────────────────────────────────────────────
-    (
-        "prattail/src/automata/codegen.rs",
-        Disposition::NotATermDepthCycle(
-            "lexer codegen over a finite mode map; shares a component with runtime_types.rs",
-        ),
-    ),
-    (
-        "prattail/src/runtime_types.rs",
-        Disposition::NotATermDepthCycle("the other half of the lexer-codegen component"),
-    ),
-    (
-        "prattail/src/ebnf.rs",
-        Disposition::NotATermDepthCycle(
-            "EBNF rendering; the component is inflated by same-file `#[test]` functions, which \
-             is the over-report this census accepts",
-        ),
-    ),
-    (
-        "prattail/src/wpda_walker.rs",
-        Disposition::Unmeasured(
-            "⚠ the k-best realization family. Walks an SPPF whose depth follows the INPUT, so \
-             this one IS input-shaped; measured by mettail's `parse_depth`/`parse_width` \
-             subjects only at the recognizer boundary, not here",
-        ),
-    ),
-    (
-        "prattail/src/parser/predicate_pratt.rs",
-        Disposition::Unmeasured(
-            "the semantic-predicate Pratt parser — a 12-member cycle whose depth follows the \
-             predicate expression a developer writes",
-        ),
-    ),
-    ("prattail/src/egraph.rs", Disposition::Unmeasured("e-graph walk")),
-    // ── rholang-codegen ────────────────────────────────────────────────────────────
-    (
-        "rholang-codegen/src/rho_net_lower.rs",
-        Disposition::Unmeasured(
-            "17-member cycle spanning three files (lower/drive/ruleset) that lowers a rule set \
-             to a Rho-net; cross-file, so a per-file scan cannot see it",
-        ),
-    ),
-    (
-        "rholang-codegen/src/rho_net_drive.rs",
-        Disposition::Unmeasured("second file of the rho-net lowering cycle"),
-    ),
-    (
-        "rholang-codegen/src/rho_net_ruleset.rs",
-        Disposition::Unmeasured("third file of the rho-net lowering cycle"),
-    ),
-    (
-        "rholang-codegen/src/rho_net_float.rs",
-        Disposition::Unmeasured("float lowering"),
-    ),
-    // ── runtime and dovetail ───────────────────────────────────────────────────────
-    (
-        "rholang-runtime/src/rholang_ast.rs",
-        Disposition::Measured("gate subjects `lower_depth`, `lower_par`, `render`"),
-    ),
-    (
-        "runtime/src/binding.rs",
-        Disposition::NotATermDepthCycle(
-            "same-name receiver over-report: `Scope::cmp` compares its generic body and \
-             `OrdVar::cmp` compares moniker scope indices; neither invokes the other or walks a \
-             recursive term",
-        ),
-    ),
-    (
-        "runtime/src/language.rs",
-        Disposition::Measured(
-            "same-name receiver over-report across iterative `RuntimeObservationValue` \
-             cmp/hash/clone and the two loop-driven reachable-normal-form iterators. Their \
-             recursive value lifecycle is covered by `observation_value_stack_safety`; the \
-             reachability iterators advance through explicit queues/heaps rather than calls to \
-             `next`",
-        ),
-    ),
-    (
-        "query/src/ast.rs",
-        Disposition::Measured(
-            "same-name receiver over-report after the recursive `BodyAtom::Negation` walks were \
-             replaced by loops: `Query::variables` and `BodyAtom::variables` call distinct \
-             receiver methods. `query/tests/ast_stack_safety.rs` drives 16,384 nested negations \
-             on a 256 KiB stack",
-        ),
-    ),
-    ("dovetail/src/rules.rs", Disposition::Unmeasured("rule-set walk")),
-    // ── test support ───────────────────────────────────────────────────────────────
-    (
-        "testkit/src/ctor.rs",
-        Disposition::NotATermDepthCycle("fixture constructor; the caller chooses the depth"),
-    ),
-    // ── ★ THE TAIL, and it is the part a hand-written list would have lost ─────────
-    //
-    // Every row below is a component of size 1 or 2 that the census found and a by-eye survey
-    // did not: the survey was ordered by component size and stopped at the visible clusters.
-    // ⚠ **#121 was a 2-cycle.** Size is not severity, and an ordering by size is exactly the
-    // reading that let it hide. These are dispositioned individually rather than waved through
-    // as "small".
-    //
-    // ★ Most are EMITTERS. An emitter's own recursion walks the `LanguageDef` at expansion
-    // time over a finite category graph; what it EMITS is `GENERATED_FILE_CENSUS`' subject.
-    // Where the emitted form is a known live exposure, the row says so.
-    (
-        "macros/src/gen/runtime/rho_invocation.rs",
-        Disposition::Unmeasured(
-            "⚠ a SEVEN-member component, the largest in the tail. This is `flt_reflect`'s \
-             emitter — and `flt_reflect.rs` is one of the six `UNMEASURED_TRAVERSALS`, whose \
-             obligation is BYTE-IDENTITY rather than a depth ladder because it crosses the \
-             in-Rho ABI. Phase 5 converts it LAST for that reason",
-        ),
-    ),
-    (
-        "macros/src/gen/native/eval.rs",
-        Disposition::NotATermDepthCycle(
-            "emitter of `try_eval`; its emitted form became gate subjects `ast_try_eval` and \
-             `ast_try_eval_cast` at `ed44c429`",
-        ),
-    ),
-    (
-        "macros/src/gen/runtime/language.rs",
-        Disposition::Unmeasured(
-            "emitter of `collect_all_*_vars` — `language_struct.rs` is one of the six \
-             `UNMEASURED_TRAVERSALS`",
-        ),
-    ),
-    (
-        "macros/src/gen/syntax/var_inference.rs",
-        Disposition::Unmeasured(
-            "emitter of `infer_var_type` — `var_inference.rs` is one of the six \
-             `UNMEASURED_TRAVERSALS` (2,643 self-calls in the artefact)",
-        ),
-    ),
-    (
-        "macros/src/gen/runtime/dovetail_report/typed_report.rs",
-        Disposition::NotATermDepthCycle(
-            "the other half of the Dovetail emitter; see `dovetail_report.rs`",
-        ),
-    ),
-    (
-        "macros/src/gen/capture.rs",
-        Disposition::NotATermDepthCycle(
-            "⚠ NOT an emitter — it contains zero `quote!` invocations and appears in no \
-             `GENERATED_FILE_CENSUS` row. `walk_pattern` recurses over a syntax pattern at \
-             expansion time; the pattern is what a developer wrote",
-        ),
-    ),
-    (
-        "macros/src/gen/runtime/binder_congruence.rs",
-        Disposition::NotATermDepthCycle("binder-congruence emitter over the declaration set"),
-    ),
-    (
-        "macros/src/gen/runtime/wpda_codegen/binder.rs",
-        Disposition::NotATermDepthCycle("WPDA binder emitter"),
-    ),
-    (
-        "macros/src/gen/runtime/wpda_codegen/prefix.rs",
-        Disposition::NotATermDepthCycle("WPDA prefix emitter"),
-    ),
-    (
-        "macros/src/gen/types/enums.rs",
-        Disposition::NotATermDepthCycle("AST enum emitter over the category set"),
-    ),
-    (
-        "macros/src/gen/test_gen/simulation_tests.rs",
-        Disposition::NotATermDepthCycle("simulation-test emitter"),
-    ),
-    (
-        "macros/src/logic/stratification.rs",
-        Disposition::NotATermDepthCycle(
-            "stratification over the rule dependency graph — finite by construction, and the \
-             analysis exists precisely to establish that",
-        ),
-    ),
-    (
-        "ast/src/grammar.rs",
-        Disposition::Unmeasured("grammar walk over the declaration set"),
-    ),
-    (
-        "ast/src/grammar_shapes.rs",
-        Disposition::Unmeasured("shape classification over `TypeExpr`"),
-    ),
-    (
-        "dovetail/src/set_automaton.rs",
-        Disposition::Unmeasured("set-automaton construction over the rule set"),
-    ),
-    (
-        "prattail/src/confluence.rs",
-        Disposition::NotATermDepthCycle(
-            "confluence analysis over the rule graph; bounded by the rule set",
-        ),
-    ),
-    (
-        "prattail/src/termination.rs",
-        Disposition::NotATermDepthCycle("termination analysis over the rule graph"),
-    ),
-    (
-        "prattail/src/letprop.rs",
-        Disposition::NotATermDepthCycle("let-propagation over a parsed expression"),
-    ),
-    (
-        "prattail/src/tree_automaton.rs",
-        Disposition::Unmeasured("tree-automaton construction"),
     ),
     (
         "testkit/src/analytical/confluence.rs",
-        Disposition::NotATermDepthCycle("the analytical confluence checker's rule-graph walk"),
-    ),
-    (
-        "rholang-codegen/src/backend.rs",
-        Disposition::Unmeasured("backend dispatch over the lowering"),
-    ),
-    (
-        "rholang-codegen/src/rho_net.rs",
-        Disposition::Unmeasured("rho-net construction"),
-    ),
-    (
-        "rholang-codegen/src/rho_net_naive_kt.rs",
-        Disposition::NotATermDepthCycle("the naive reference backend, kept for differentials"),
-    ),
-    (
-        "rholang-runtime/src/run.rs",
-        Disposition::NotATermDepthCycle("the REPL/run driver loop"),
+        Disposition::NotATermDepthCycle(
+            "analytical confluence traverses the finite rule graph rather than term depth",
+        ),
     ),
     (
         "rholang-runtime/tests/support/stack_depth_probe.rs",
         Disposition::NotATermDepthCycle(
-            "★ THE PROBE ITSELF. Its `ast_recursion_control` subject is DELIBERATELY \
-             host-recursive and is never to be converted — it is the classifier's non-vacuity \
-             anchor, and without it `measured_shape` would answer `Flat` for everything",
+            "the deliberately recursive calibration probe is caller-bounded test support",
         ),
     ),
 ];
@@ -1149,10 +831,10 @@ fn every_handwritten_term_recursion_has_a_disposition() {
         "UNDISPOSITIONED HAND-WRITTEN RECURSION over the term family, in {} file(s):\n  {}\n\n\
          Each contains a call-graph cycle whose members mention the DSL's term family, and \
          nothing says what is known about it.\n\n\
-         Add a row to `RECURSION_DISPOSITIONS`: `Measured(subject)`, `OracleTwin(why)`, \
-         `NotATermDepthCycle(why)`, or ⚠ `Unmeasured(why)`.\n\n\
-         ★ `Unmeasured` is a legitimate and honest answer. A DISPOSITION IS A VALUE, NOT AN \
-         ABSENCE — what is refused is saying nothing.\n\n\
+         Add a row to `RECURSION_DISPOSITIONS`: `OracleTwin(why)` or \
+         `NotATermDepthCycle(why)`. A live production term-depth cycle is intentionally \
+         unrepresentable: convert it to a PDA/iterative traversal before updating this exact \
+         current-state table.\n\n\
          ⚠ If this is an EMITTER, say so: an emitter's own recursion walks the language \
          definition at expansion time and is a different traversal from the one it emits. The \
          emitted form's obligation belongs to `GENERATED_FILE_CENSUS`.",
@@ -1160,47 +842,34 @@ fn every_handwritten_term_recursion_has_a_disposition() {
         undispositioned.join("\n  ")
     );
 
-    let unmeasured_dispositions: BTreeMap<&str, &str> = RECURSION_DISPOSITIONS
-        .iter()
-        .filter_map(|(file, disposition)| match disposition {
-            Disposition::Unmeasured(reason) => Some((*file, *reason)),
-            _ => None,
-        })
-        .collect();
-    let active_unmeasured: Vec<String> = c
-        .term_family
-        .iter()
-        .filter(|component| {
-            component
-                .iter()
-                .any(|(file, _, _)| unmeasured_dispositions.contains_key(c.rel[*file].as_str()))
-        })
-        .map(|component| {
-            component
-                .iter()
-                .map(|(file, function, ordinal)| format!("{}::{function}#{ordinal}", c.rel[*file]))
-                .collect::<Vec<_>>()
-                .join(" <-> ")
-        })
-        .collect();
+    assert_eq!(
+        declared.len(),
+        RECURSION_DISPOSITIONS.len(),
+        "DUPLICATE RECURSION DISPOSITION: the declared table has {} row(s) but only {} unique \
+         file name(s). A duplicate makes one disposition shadow another instead of describing \
+         one exact derived file set.",
+        RECURSION_DISPOSITIONS.len(),
+        declared.len(),
+    );
+    let active: BTreeSet<&str> = with_recursion.keys().map(String::as_str).collect();
+    let stale: Vec<&str> = declared.difference(&active).copied().collect();
+    assert!(
+        stale.is_empty(),
+        "STALE HAND-WRITTEN RECURSION DISPOSITIONS remain for {} file(s):\n  {}\n\n\
+         The file set is derived in both directions. Remove rows whose term-family SCC was \
+         converted or disappeared; historical conversion evidence belongs in the living \
+         stack-safety report, not in a current-state disposition table.",
+        stale.len(),
+        stale.join("\n  "),
+    );
+
     println!(
         "  mettail recursion census: {} recursive component(s), {} over the term family ({} \
-         mutual), across {} file(s); {} UNMEASURED",
+         mutual), across {} exactly dispositioned file(s)",
         c.recursive,
         c.term_family.len(),
         mutual,
         with_recursion.len(),
-        active_unmeasured.len()
-    );
-    assert!(
-        active_unmeasured.is_empty(),
-        "ACTIVE UNMEASURED HAND-WRITTEN TERM RECURSION remains in {} component(s):\n  {}\n\n\
-         Convert every input- or declaration-shaped component to an explicit PDA/iterative \
-         traversal, or prove that it is bounded independently of input depth and change its \
-         disposition accordingly. The zero state is executable: no Unmeasured component may \
-         remain behind a non-zero ratchet.",
-        active_unmeasured.len(),
-        active_unmeasured.join("\n  ")
     );
 }
 
