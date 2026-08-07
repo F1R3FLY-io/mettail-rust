@@ -22,8 +22,14 @@ unsafe impl Send for CanonicalBigInt {}
 unsafe impl Sync for CanonicalBigInt {}
 
 impl CanonicalBigInt {
+    fn from_owned(value: BigInt) -> Self {
+        let boxed = Box::new(value);
+        let raw = Box::into_raw(boxed);
+        Self(NonNull::new(raw).expect("BigInt Box pointer should be non-null"))
+    }
+
     pub fn new(value: BigInt) -> Self {
-        Self::from(value)
+        Self::from_owned(value)
     }
 
     pub fn get(&self) -> &BigInt {
@@ -46,22 +52,20 @@ impl CanonicalBigInt {
 
 impl From<BigInt> for CanonicalBigInt {
     fn from(value: BigInt) -> Self {
-        let boxed = Box::new(value);
-        let raw = Box::into_raw(boxed);
-        Self(NonNull::new(raw).expect("BigInt Box pointer should be non-null"))
+        Self::from_owned(value)
     }
 }
 
 impl From<&BigInt> for CanonicalBigInt {
     fn from(value: &BigInt) -> Self {
-        Self::from(value.clone())
+        Self::from_owned(value.clone())
     }
 }
 
 impl Default for CanonicalBigInt {
     fn default() -> Self {
         use num_traits::Zero;
-        Self::from(BigInt::zero())
+        Self::from_owned(BigInt::zero())
     }
 }
 

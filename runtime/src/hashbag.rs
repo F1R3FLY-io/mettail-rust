@@ -90,6 +90,14 @@ fn hashbag_entry_lanes<T: Hash>(elem: &T, count: usize) -> (u64, u64) {
 }
 
 impl<T: Clone + Hash + Eq> HashBag<T> {
+    fn from_elements(iter: impl IntoIterator<Item = T>) -> Self {
+        let mut bag = Self::new();
+        for item in iter {
+            bag.insert(item);
+        }
+        bag
+    }
+
     fn rebuild_hash_summary(&mut self) {
         let mut summary = HashBagHashSummary::default();
         for (element, count) in &self.counts {
@@ -129,11 +137,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// ```
     #[allow(clippy::should_implement_trait)]
     pub fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut bag = Self::new();
-        for item in iter {
-            bag.insert(item);
-        }
-        bag
+        Self::from_elements(iter)
     }
 
     /// Inserts an element into the bag, incrementing its count.
@@ -526,7 +530,7 @@ impl<T: Clone + Hash + Eq> Default for HashBag<T> {
 
 impl<T: Clone + Hash + Eq> FromIterator<T> for HashBag<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Self::from_iter(iter)
+        Self::from_elements(iter)
     }
 }
 

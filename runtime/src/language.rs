@@ -170,8 +170,8 @@ fn observation_variant_rank(value: &RuntimeObservationValue) -> u8 {
 }
 
 fn compare_observation_values(
-    left: &RuntimeObservationValue,
-    right: &RuntimeObservationValue,
+    left_root: &RuntimeObservationValue,
+    right_root: &RuntimeObservationValue,
 ) -> std::cmp::Ordering {
     use std::cmp::Ordering;
 
@@ -191,7 +191,7 @@ fn compare_observation_values(
         Count(usize, usize),
     }
 
-    let mut work = vec![Work::Value(left, right)];
+    let mut work = vec![Work::Value(left_root, right_root)];
     while let Some(step) = work.pop() {
         match step {
             Work::Value(left, right) => {

@@ -26,12 +26,18 @@ unsafe impl Send for CanonicalBigRat {}
 unsafe impl Sync for CanonicalBigRat {}
 
 impl CanonicalBigRat {
+    fn from_owned(value: Ratio<BigInt>) -> Self {
+        let boxed = Box::new(value);
+        let raw = Box::into_raw(boxed);
+        Self(NonNull::new(raw).expect("Ratio Box pointer should be non-null"))
+    }
+
     /// Build `n/d` in reduced form. Returns `None` if `d == 0`.
     pub fn try_from_nd(n: BigInt, d: BigInt) -> Option<Self> {
         if d.is_zero() {
             return None;
         }
-        Some(Self::from(Ratio::new(n, d)))
+        Some(Self::from_owned(Ratio::new(n, d)))
     }
 
     pub fn get(&self) -> &Ratio<BigInt> {
@@ -105,15 +111,13 @@ impl CanonicalBigRat {
 
 impl From<Ratio<BigInt>> for CanonicalBigRat {
     fn from(value: Ratio<BigInt>) -> Self {
-        let boxed = Box::new(value);
-        let raw = Box::into_raw(boxed);
-        Self(NonNull::new(raw).expect("Ratio Box pointer should be non-null"))
+        Self::from_owned(value)
     }
 }
 
 impl From<&Ratio<BigInt>> for CanonicalBigRat {
     fn from(value: &Ratio<BigInt>) -> Self {
-        Self::from(value.clone())
+        Self::from_owned(value.clone())
     }
 }
 
@@ -121,7 +125,7 @@ impl Default for CanonicalBigRat {
     /// Zero rational (`0/1`).
     fn default() -> Self {
         use num_traits::Zero;
-        Self::from(Ratio::<BigInt>::zero())
+        Self::from_owned(Ratio::<BigInt>::zero())
     }
 }
 

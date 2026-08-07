@@ -12,6 +12,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 // Re-export moniker types
+use moniker::Scope as MonikerScope;
 pub use moniker::{Binder, BoundPattern, BoundTerm, BoundVar, FreeVar, Var};
 
 // Thread-local variable cache for consistent variable identity within a parsing session.
@@ -145,7 +146,7 @@ pub fn term_eq_cache_size() -> usize {
 /// This produces a hash consistent with alpha-equivalence: two α-equivalent
 /// scopes hash identically because `close_term` normalizes bound variable
 /// structure into identical `unsafe_*` fields.
-fn structural_scope_hash<P: Hash, T: Hash>(scope: &moniker::Scope<P, T>) -> u64 {
+fn structural_scope_hash<P: Hash, T: Hash>(scope: &MonikerScope<P, T>) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     scope.unsafe_pattern.hash(&mut h);
     scope.unsafe_body.hash(&mut h);
@@ -160,7 +161,7 @@ fn structural_scope_hash<P: Hash, T: Hash>(scope: &moniker::Scope<P, T>) -> u64 
 ///
 /// The cache key is canonicalized: `min(h1, h2), max(h1, h2)` so that
 /// `term_eq(a, b)` and `term_eq(b, a)` share the same entry.
-fn cached_term_eq<P, T>(this: &moniker::Scope<P, T>, other: &moniker::Scope<P, T>) -> bool
+fn cached_term_eq<P, T>(this: &MonikerScope<P, T>, other: &MonikerScope<P, T>) -> bool
 where
     P: Hash + BoundPattern<String> + Clone + PartialEq,
     T: Hash + BoundTerm<String> + Clone + PartialEq,
@@ -204,7 +205,7 @@ where
 /// because Scope's PartialEq already compares these fields alpha-equivalently.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scope<P, T> {
-    inner: moniker::Scope<P, T>,
+    inner: MonikerScope<P, T>,
 }
 
 impl<P: Hash, T: Hash> Hash for Scope<P, T> {
@@ -260,9 +261,7 @@ impl<P, T> Scope<P, T> {
         P: BoundPattern<N>,
         T: BoundTerm<N>,
     {
-        Scope {
-            inner: moniker::Scope::new(pattern, body),
-        }
+        Scope { inner: MonikerScope::new(pattern, body) }
     }
 
     /// Unbind a term, returning the freshened pattern and body
@@ -288,7 +287,7 @@ impl<P, T> Scope<P, T> {
     }
 
     /// Access to the underlying moniker Scope (for advanced use)
-    pub fn inner(&self) -> &moniker::Scope<P, T> {
+    pub fn inner(&self) -> &MonikerScope<P, T> {
         &self.inner
     }
 
@@ -324,7 +323,7 @@ impl<P, T> Scope<P, T> {
     /// Used in generated Ascent code for reconstructing terms.
     pub fn from_parts_unsafe(pattern: P, body: T) -> Scope<P, T> {
         Scope {
-            inner: moniker::Scope {
+            inner: MonikerScope {
                 unsafe_pattern: pattern,
                 unsafe_body: body,
             },
@@ -369,8 +368,8 @@ where
 }
 
 // Allow conversion from moniker::Scope
-impl<P: Clone, T: Clone> From<moniker::Scope<P, T>> for Scope<P, T> {
-    fn from(scope: moniker::Scope<P, T>) -> Self {
+impl<P: Clone, T: Clone> From<MonikerScope<P, T>> for Scope<P, T> {
+    fn from(scope: MonikerScope<P, T>) -> Self {
         Scope { inner: scope }
     }
 }
