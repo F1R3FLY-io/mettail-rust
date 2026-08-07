@@ -103,88 +103,94 @@ pub fn order_by_specificity(
 // §12 Guard Selectivity Estimation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Resolve the selectivity of a predicate, consulting the optional
-/// `GuardConfigSpec` for per-predicate `@[selectivity(...)]` overrides
-/// before falling back to heuristic estimation.
+/// Whether a fold evaluates configured boolean compounds or the pure heuristic.
+#[derive(Clone, Copy)]
+enum PredicateFoldMode {
+    Configured,
+    Heuristic,
+}
+
+/// Post-order predicate fold driven by an explicit continuation stack.
 ///
-/// Override precedence (design doc §2A "Override precedence"):
-/// 1. Explicit annotation (`selectivity_overrides[name]`)
-/// 2. Heuristic default (`estimate_predicate_selectivity`)
-///
-/// Compound predicates (And, Or, Not, etc.) recursively use this resolver
-/// to apply per-leaf overrides while maintaining the standard selectivity
-/// algebra (independence assumption for conjunction, etc.).
-pub fn resolve_selectivity(
+/// Configured resolution deliberately propagates overrides only through
+/// `Not`, `And`, and `Or`, matching the historical public contract. Other
+/// roots switch their entire subtree to heuristic mode.
+fn fold_predicate<T>(
+    root: &PredicateExpr,
+    root_mode: PredicateFoldMode,
+    mut reduce: impl FnMut(&PredicateExpr, PredicateFoldMode, &mut Vec<T>) -> T,
+) -> T {
+    enum Task<'expr> {
+        Visit(&'expr PredicateExpr, PredicateFoldMode),
+        Reduce(&'expr PredicateExpr, PredicateFoldMode),
+    }
+
+    let mut tasks = vec![Task::Visit(root, root_mode)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(expr, PredicateFoldMode::Configured)
+                if !matches!(
+                    expr,
+                    PredicateExpr::Relation { .. }
+                        | PredicateExpr::Not(_)
+                        | PredicateExpr::And(_, _)
+                        | PredicateExpr::Or(_, _)
+                ) =>
+            {
+                tasks.push(Task::Visit(expr, PredicateFoldMode::Heuristic));
+            },
+            Task::Visit(expr, mode) => {
+                tasks.push(Task::Reduce(expr, mode));
+                match expr {
+                    PredicateExpr::Not(body)
+                    | PredicateExpr::ForallFinite { body, .. }
+                    | PredicateExpr::ExistsFinite { body, .. }
+                    | PredicateExpr::ForallInfinite { body, .. }
+                    | PredicateExpr::ExistsInfinite { body, .. }
+                    | PredicateExpr::Bounded { body, .. } => {
+                        tasks.push(Task::Visit(body, mode));
+                    },
+                    PredicateExpr::And(left, right) | PredicateExpr::Or(left, right) => {
+                        tasks.push(Task::Visit(right, mode));
+                        tasks.push(Task::Visit(left, mode));
+                    },
+                    PredicateExpr::True
+                    | PredicateExpr::False
+                    | PredicateExpr::Atom(_)
+                    | PredicateExpr::Relation { .. } => {},
+                }
+            },
+            Task::Reduce(expr, mode) => {
+                let value = reduce(expr, mode, &mut values);
+                values.push(value);
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("predicate fold produced no result")
+}
+
+fn fold_selectivity(
     expr: &PredicateExpr,
     guard_config: Option<&crate::GuardConfigSpec>,
+    mode: PredicateFoldMode,
 ) -> f64 {
-    match expr {
-        PredicateExpr::Relation { name, .. } => {
-            if let Some(gc) = guard_config {
-                if let Some(&override_val) = gc.selectivity_overrides.get(name.as_str()) {
-                    return override_val;
-                }
-            }
-            estimate_predicate_selectivity(expr)
-        },
-        PredicateExpr::Not(inner) => 1.0 - resolve_selectivity(inner, guard_config),
-        PredicateExpr::And(a, b) => {
-            resolve_selectivity(a, guard_config) * resolve_selectivity(b, guard_config)
-        },
-        PredicateExpr::Or(a, b) => {
-            let sa = resolve_selectivity(a, guard_config);
-            let sb = resolve_selectivity(b, guard_config);
-            1.0 - (1.0 - sa) * (1.0 - sb)
-        },
-        // For all other variants, fall back to the unconfigured estimate.
-        _ => estimate_predicate_selectivity(expr),
-    }
-}
-
-/// Resolve the cost of a predicate, consulting the optional `GuardConfigSpec`
-/// for per-predicate `@[cost(...)]` overrides before falling back to
-/// heuristic estimation.
-///
-/// Override precedence:
-/// 1. Explicit annotation (`cost_overrides[name]`)
-/// 2. Heuristic default (`estimate_predicate_cost`)
-pub fn resolve_cost(expr: &PredicateExpr, guard_config: Option<&crate::GuardConfigSpec>) -> u32 {
-    match expr {
-        PredicateExpr::Relation { name, .. } => {
-            if let Some(gc) = guard_config {
-                if let Some(&override_val) = gc.cost_overrides.get(name.as_str()) {
-                    return override_val;
-                }
-            }
-            estimate_predicate_cost(expr)
-        },
-        PredicateExpr::Not(inner) => resolve_cost(inner, guard_config) + 1,
-        PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
-            resolve_cost(a, guard_config) + resolve_cost(b, guard_config)
-        },
-        _ => estimate_predicate_cost(expr),
-    }
-}
-
-/// Selectivity estimation for predicate expressions.
-///
-/// Returns an estimate in [0.0, 1.0] of the fraction of inputs satisfying the
-/// predicate. Used by guard ordering (Phase 7A) to sort guards on the same
-/// channel so the most selective guard is evaluated first.
-///
-/// These are heuristic estimates — they do not require access to runtime data.
-/// The selectivity model uses the independence assumption: conjunction selectivity
-/// is the product, disjunction follows inclusion-exclusion.
-pub fn estimate_predicate_selectivity(expr: &PredicateExpr) -> f64 {
-    match expr {
+    fold_predicate(expr, mode, |expr, mode, values| match expr {
         PredicateExpr::True => 1.0,
         PredicateExpr::False => 0.0,
-        PredicateExpr::Atom(_) => 0.5, // unknown atom: assume 50%
-        PredicateExpr::Relation { name, args, .. } => {
-            // Estimate based on relation name and arity
+        PredicateExpr::Atom(_) => 0.5,
+        PredicateExpr::Relation { name, args } => {
+            if matches!(mode, PredicateFoldMode::Configured) {
+                if let Some(value) =
+                    guard_config.and_then(|config| config.selectivity_overrides.get(name.as_str()))
+                {
+                    return *value;
+                }
+            }
             let arity_factor = 1.0 / (args.len() as f64 + 1.0).sqrt();
             if is_equality_relation(name) {
-                // Equality is very selective
                 0.1 * arity_factor
             } else if is_cardinality_relation(name) {
                 0.3 * arity_factor
@@ -192,68 +198,123 @@ pub fn estimate_predicate_selectivity(expr: &PredicateExpr) -> f64 {
                 0.5 * arity_factor
             }
         },
-        PredicateExpr::Not(inner) => 1.0 - estimate_predicate_selectivity(inner),
-        PredicateExpr::And(a, b) => {
-            estimate_predicate_selectivity(a) * estimate_predicate_selectivity(b)
+        PredicateExpr::Not(_) => 1.0 - values.pop().expect("selectivity fold lost not body"),
+        PredicateExpr::And(_, _) => {
+            let right = values
+                .pop()
+                .expect("selectivity fold lost right conjunction");
+            let left = values
+                .pop()
+                .expect("selectivity fold lost left conjunction");
+            left * right
         },
-        PredicateExpr::Or(a, b) => {
-            let sa = estimate_predicate_selectivity(a);
-            let sb = estimate_predicate_selectivity(b);
-            1.0 - (1.0 - sa) * (1.0 - sb)
+        PredicateExpr::Or(_, _) => {
+            let right = values
+                .pop()
+                .expect("selectivity fold lost right disjunction");
+            let left = values
+                .pop()
+                .expect("selectivity fold lost left disjunction");
+            1.0 - (1.0 - left) * (1.0 - right)
         },
-        PredicateExpr::ForallFinite { body, domain, .. } => {
-            // Universal over finite domain: selectivity = body_sel ^ |domain|
-            let body_sel = estimate_predicate_selectivity(body);
-            let n = domain.len().max(1) as i32;
-            body_sel.powi(n)
+        PredicateExpr::ForallFinite { domain, .. } => {
+            let body = values
+                .pop()
+                .expect("selectivity fold lost finite universal body");
+            body.powi(domain.len().max(1) as i32)
         },
-        PredicateExpr::ExistsFinite { body, domain, .. } => {
-            // Existential over finite domain: selectivity = 1 - (1 - body_sel)^|domain|
-            let body_sel = estimate_predicate_selectivity(body);
-            let n = domain.len().max(1) as i32;
-            1.0 - (1.0 - body_sel).powi(n)
+        PredicateExpr::ExistsFinite { domain, .. } => {
+            let body = values
+                .pop()
+                .expect("selectivity fold lost finite existential body");
+            1.0 - (1.0 - body).powi(domain.len().max(1) as i32)
         },
-        PredicateExpr::ForallInfinite { body, .. } => {
-            // Universal over infinite domain: very selective
-            let body_sel = estimate_predicate_selectivity(body);
-            body_sel * 0.05
+        PredicateExpr::ForallInfinite { .. } => {
+            values
+                .pop()
+                .expect("selectivity fold lost infinite universal body")
+                * 0.05
         },
-        PredicateExpr::ExistsInfinite { body, .. } => {
-            // Existential over infinite domain: moderate
-            let body_sel = estimate_predicate_selectivity(body);
-            1.0 - (1.0 - body_sel).powi(10)
+        PredicateExpr::ExistsInfinite { .. } => {
+            let body = values
+                .pop()
+                .expect("selectivity fold lost infinite existential body");
+            1.0 - (1.0 - body).powi(10)
         },
-        PredicateExpr::Bounded { body, .. } => {
-            // Bounded wrapper: same selectivity as body
-            estimate_predicate_selectivity(body)
-        },
-    }
+        PredicateExpr::Bounded { .. } => values.pop().expect("selectivity fold lost bounded body"),
+    })
 }
 
-/// Estimated evaluation cost of a predicate expression.
-///
-/// Lower cost = cheaper. Used as a tiebreaker when guards have equal selectivity.
-pub fn estimate_predicate_cost(expr: &PredicateExpr) -> u32 {
-    match expr {
+fn fold_cost(
+    expr: &PredicateExpr,
+    guard_config: Option<&crate::GuardConfigSpec>,
+    mode: PredicateFoldMode,
+) -> u32 {
+    fold_predicate(expr, mode, |expr, mode, values| match expr {
         PredicateExpr::True | PredicateExpr::False => 0,
         PredicateExpr::Atom(_) => 1,
-        PredicateExpr::Relation { args, .. } => 2 + args.len() as u32,
-        PredicateExpr::Not(inner) => estimate_predicate_cost(inner) + 1,
-        PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
-            estimate_predicate_cost(a) + estimate_predicate_cost(b)
+        PredicateExpr::Relation { name, args } => {
+            if matches!(mode, PredicateFoldMode::Configured) {
+                if let Some(value) =
+                    guard_config.and_then(|config| config.cost_overrides.get(name.as_str()))
+                {
+                    return *value;
+                }
+            }
+            2 + args.len() as u32
         },
-        PredicateExpr::ForallFinite { body, domain, .. } => {
-            let n = domain.len().max(1) as u32;
-            n * estimate_predicate_cost(body)
+        PredicateExpr::Not(_) => values.pop().expect("cost fold lost not body") + 1,
+        PredicateExpr::And(_, _) | PredicateExpr::Or(_, _) => {
+            let right = values.pop().expect("cost fold lost right boolean operand");
+            let left = values.pop().expect("cost fold lost left boolean operand");
+            left + right
         },
-        PredicateExpr::ExistsFinite { body, domain, .. } => {
-            let n = domain.len().max(1) as u32;
-            (n / 2).max(1) * estimate_predicate_cost(body)
+        PredicateExpr::ForallFinite { domain, .. } => {
+            domain.len().max(1) as u32 * values.pop().expect("cost fold lost finite universal body")
         },
-        PredicateExpr::ForallInfinite { body, .. } => 100 + estimate_predicate_cost(body) * 10,
-        PredicateExpr::ExistsInfinite { body, .. } => 50 + estimate_predicate_cost(body) * 10,
-        PredicateExpr::Bounded { body, bound } => {
-            (*bound as u32).min(100) * estimate_predicate_cost(body)
+        PredicateExpr::ExistsFinite { domain, .. } => {
+            ((domain.len().max(1) as u32 / 2).max(1))
+                * values
+                    .pop()
+                    .expect("cost fold lost finite existential body")
         },
-    }
+        PredicateExpr::ForallInfinite { .. } => {
+            100 + values
+                .pop()
+                .expect("cost fold lost infinite universal body")
+                * 10
+        },
+        PredicateExpr::ExistsInfinite { .. } => {
+            50 + values
+                .pop()
+                .expect("cost fold lost infinite existential body")
+                * 10
+        },
+        PredicateExpr::Bounded { bound, .. } => {
+            (*bound as u32).min(100) * values.pop().expect("cost fold lost bounded body")
+        },
+    })
+}
+
+/// Resolve selectivity with per-relation overrides through boolean compounds.
+pub fn resolve_selectivity(
+    expr: &PredicateExpr,
+    guard_config: Option<&crate::GuardConfigSpec>,
+) -> f64 {
+    fold_selectivity(expr, guard_config, PredicateFoldMode::Configured)
+}
+
+/// Resolve cost with per-relation overrides through boolean compounds.
+pub fn resolve_cost(expr: &PredicateExpr, guard_config: Option<&crate::GuardConfigSpec>) -> u32 {
+    fold_cost(expr, guard_config, PredicateFoldMode::Configured)
+}
+
+/// Estimate the fraction of inputs satisfying a predicate.
+pub fn estimate_predicate_selectivity(expr: &PredicateExpr) -> f64 {
+    fold_selectivity(expr, None, PredicateFoldMode::Heuristic)
+}
+
+/// Estimate predicate evaluation cost; lower values are cheaper.
+pub fn estimate_predicate_cost(expr: &PredicateExpr) -> u32 {
+    fold_cost(expr, None, PredicateFoldMode::Heuristic)
 }

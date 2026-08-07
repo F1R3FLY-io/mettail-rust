@@ -213,13 +213,7 @@ pub fn extract_features_with_config(
     profile
 }
 
-/// Recursive AST walker for `PredicateExpr` feature extraction.
-///
-/// The `guard_config` parameter (optional) gates the heuristic
-/// relation-name dispatchers: when an explicit theory of the matching
-/// kind is registered, the corresponding heuristic is bypassed and the
-/// `classify_grammar_with_config` explicit-theory activation block sets
-/// the affected module bits instead.
+/// Stack-safe AST walk for `PredicateExpr` feature extraction.
 #[allow(clippy::too_many_arguments)]
 fn walk_predicate(
     expr: &PredicateExpr,
@@ -237,252 +231,115 @@ fn walk_predicate(
     has_subtype: &mut bool,
     guard_config: Option<&crate::GuardConfigSpec>,
 ) {
-    match expr {
-        PredicateExpr::True | PredicateExpr::False | PredicateExpr::Atom(_) => {
-            // Base cases: only M1 + M10 (already in base signature)
-        },
+    let initial_depth = *depth;
+    let mut pending = vec![(expr, initial_depth)];
 
-        PredicateExpr::Not(inner) => {
-            walk_predicate(
-                inner,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-        },
+    while let Some((expr, current_depth)) = pending.pop() {
+        match expr {
+            PredicateExpr::True | PredicateExpr::False | PredicateExpr::Atom(_) => {},
 
-        PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
-            walk_predicate(
-                a,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-            walk_predicate(
-                b,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-        },
+            PredicateExpr::Not(inner) | PredicateExpr::Bounded { body: inner, .. } => {
+                pending.push((inner, current_depth));
+            },
 
-        PredicateExpr::ForallFinite { body, .. } => {
-            sig.set(PredicateSignature::M3_AWA); // universal branching
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_predicate(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-            *depth -= 1;
-        },
+            PredicateExpr::And(left, right) | PredicateExpr::Or(left, right) => {
+                pending.push((right, current_depth));
+                pending.push((left, current_depth));
+            },
 
-        PredicateExpr::ExistsFinite { body, .. } => {
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_predicate(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-            *depth -= 1;
-        },
+            PredicateExpr::ForallFinite { body, .. } => {
+                sig.set(PredicateSignature::M3_AWA);
+                let child_depth = current_depth + 1;
+                *max_depth = (*max_depth).max(child_depth);
+                pending.push((body, child_depth));
+            },
 
-        PredicateExpr::ForallInfinite { body, .. } => {
-            sig.set(PredicateSignature::M2_BUCHI); // omega-regular
-            sig.set(PredicateSignature::M3_AWA); // universal branching
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_predicate(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-            *depth -= 1;
-        },
+            PredicateExpr::ExistsFinite { body, .. } => {
+                let child_depth = current_depth + 1;
+                *max_depth = (*max_depth).max(child_depth);
+                pending.push((body, child_depth));
+            },
 
-        PredicateExpr::ExistsInfinite { body, .. } => {
-            sig.set(PredicateSignature::M2_BUCHI); // omega-regular
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_predicate(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-            *depth -= 1;
-        },
+            PredicateExpr::ForallInfinite { body, .. } => {
+                sig.set(PredicateSignature::M2_BUCHI);
+                sig.set(PredicateSignature::M3_AWA);
+                let child_depth = current_depth + 1;
+                *max_depth = (*max_depth).max(child_depth);
+                pending.push((body, child_depth));
+            },
 
-        PredicateExpr::Relation { name, args } => {
-            // ── Layer C cleanup: gate every heuristic relation-name dispatch
-            // ── on the absence of an explicit theory of the matching kind ──
-            //
-            // When the language registers (e.g.) `Presburger`, the
-            // `is_arithmetic_relation` heuristic is bypassed; the explicit
-            // theory activation block in `classify_grammar_with_config`
-            // sets M12 instead.
-            if !theory_registered(guard_config, TheoryKind::Register) && is_equality_relation(name)
-            {
-                sig.set(PredicateSignature::M6_REGISTER);
+            PredicateExpr::ExistsInfinite { body, .. } => {
+                sig.set(PredicateSignature::M2_BUCHI);
+                let child_depth = current_depth + 1;
+                *max_depth = (*max_depth).max(child_depth);
+                pending.push((body, child_depth));
+            },
+
+            PredicateExpr::Relation { name, args } => {
+                if !theory_registered(guard_config, TheoryKind::Register)
+                    && is_equality_relation(name)
+                {
+                    sig.set(PredicateSignature::M6_REGISTER);
+                    for arg in args {
+                        registers.insert(arg.clone());
+                    }
+                }
+                if !theory_registered(guard_config, TheoryKind::Multiset)
+                    && is_cardinality_relation(name)
+                {
+                    sig.set(PredicateSignature::M9_MULTISET);
+                    *has_cardinality = true;
+                }
+                if !theory_registered(guard_config, TheoryKind::Fixpoint)
+                    && is_fixpoint_relation(name)
+                {
+                    sig.set(PredicateSignature::M4_VPA);
+                    sig.set(PredicateSignature::M5_PARITY_TREE);
+                    *has_recursive = true;
+                }
+                if !theory_registered(guard_config, TheoryKind::Presburger)
+                    && is_arithmetic_relation(name)
+                {
+                    sig.set(PredicateSignature::M12_LINEAR_ARITHMETIC);
+                    *has_arithmetic = true;
+                }
+                if !theory_registered(guard_config, TheoryKind::Unification)
+                    && is_unification_relation(name)
+                {
+                    sig.set(PredicateSignature::M13_UNIFICATION);
+                    *has_unification = true;
+                }
+                if !theory_registered(guard_config, TheoryKind::Lattice)
+                    && is_subtype_relation(name)
+                {
+                    sig.set(PredicateSignature::M14_SUBTYPE_LATTICE);
+                    *has_subtype = true;
+                }
                 for arg in args {
-                    registers.insert(arg.clone());
+                    if ctx.is_cross_channel(arg) {
+                        sig.set(PredicateSignature::M8_MULTI_TAPE);
+                        sig.set(PredicateSignature::M11_TWO_WAY);
+                        *has_backward = true;
+                    }
+                    if let Some(channel) = ctx.channel_of(arg) {
+                        channels.insert(channel.to_string());
+                    }
                 }
-            }
-            if !theory_registered(guard_config, TheoryKind::Multiset)
-                && is_cardinality_relation(name)
-            {
-                sig.set(PredicateSignature::M9_MULTISET);
-                *has_cardinality = true;
-            }
-            // Fixpoint/recursive relation → VPA + Parity Tree
-            if !theory_registered(guard_config, TheoryKind::Fixpoint) && is_fixpoint_relation(name)
-            {
-                sig.set(PredicateSignature::M4_VPA);
-                sig.set(PredicateSignature::M5_PARITY_TREE);
-                *has_recursive = true;
-            }
-            // M12: Arithmetic comparisons → Presburger linear arithmetic
-            if !theory_registered(guard_config, TheoryKind::Presburger)
-                && is_arithmetic_relation(name)
-            {
-                sig.set(PredicateSignature::M12_LINEAR_ARITHMETIC);
-                *has_arithmetic = true;
-            }
-            // M13: Unification/pattern-matching → structural unification
-            if !theory_registered(guard_config, TheoryKind::Unification)
-                && is_unification_relation(name)
-            {
-                sig.set(PredicateSignature::M13_UNIFICATION);
-                *has_unification = true;
-            }
-            // M14: Subtype/type-hierarchy → subtype lattice
-            if !theory_registered(guard_config, TheoryKind::Lattice) && is_subtype_relation(name) {
-                sig.set(PredicateSignature::M14_SUBTYPE_LATTICE);
-                *has_subtype = true;
-            }
-            // Cross-channel detection (independent of theory registration —
-            // channel structure is orthogonal to theory dispatch).
-            for arg in args {
-                if ctx.is_cross_channel(arg) {
-                    sig.set(PredicateSignature::M8_MULTI_TAPE);
-                    sig.set(PredicateSignature::M11_TWO_WAY);
-                    *has_backward = true;
+                if !theory_registered(guard_config, TheoryKind::Register)
+                    && !is_equality_relation(name)
+                    && !is_cardinality_relation(name)
+                {
+                    sig.set(PredicateSignature::M6_REGISTER);
+                    for arg in args {
+                        registers.insert(arg.clone());
+                    }
                 }
-                if let Some(ch) = ctx.channel_of(arg) {
-                    channels.insert(ch.to_string());
-                }
-            }
-            // Default M6 fallback: if no equality / cardinality match was
-            // recorded, the predicate is still a data comparison and feeds
-            // the register automaton. Bypassed under an explicit Register
-            // theory registration, since that becomes the sole authority.
-            if !theory_registered(guard_config, TheoryKind::Register)
-                && !is_equality_relation(name)
-                && !is_cardinality_relation(name)
-            {
-                sig.set(PredicateSignature::M6_REGISTER);
-                for arg in args {
-                    registers.insert(arg.clone());
-                }
-            }
-        },
-
-        PredicateExpr::Bounded { body, .. } => {
-            walk_predicate(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                has_arithmetic,
-                has_unification,
-                has_subtype,
-                guard_config,
-            );
-        },
+            },
+        }
     }
-}
 
+    *depth = initial_depth;
+}
 // ═══════════════════════════════════════════════════════════════════════════════
 // §6  Feature Extraction — WeightedMsoFormula → PredicateProfile
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -527,7 +384,6 @@ pub fn extract_features_mso_with_config(
         &mut channels_seen,
         &mut register_vars,
         &mut profile.has_backward_constraint,
-        &mut profile.has_cardinality,
         &mut profile.has_recursive_predicate,
         guard_config,
     );
@@ -546,13 +402,7 @@ pub fn extract_features_mso_with_config(
     profile
 }
 
-/// Recursive AST walker for `WeightedMsoFormula` feature extraction.
-///
-/// The `guard_config` parameter (optional) gates the `letprop`/`fixpoint`/
-/// `mu`/`nu` recognition (against the `Fixpoint` theory kind) and the
-/// `Order` register activation (against the `Register` theory kind).
-/// All other dispatch is structural (channels, quantifier nesting) and
-/// independent of theory registration.
+/// Stack-safe AST walk for `WeightedMsoFormula` feature extraction.
 #[allow(clippy::too_many_arguments)]
 fn walk_mso_formula(
     formula: &WeightedMsoFormula,
@@ -563,197 +413,90 @@ fn walk_mso_formula(
     channels: &mut HashSet<String>,
     registers: &mut HashSet<String>,
     has_backward: &mut bool,
-    has_cardinality: &mut bool,
     has_recursive: &mut bool,
     guard_config: Option<&crate::GuardConfigSpec>,
 ) {
     let fixpoint_bypassed = theory_registered(guard_config, TheoryKind::Fixpoint);
     let register_bypassed = theory_registered(guard_config, TheoryKind::Register);
+    let initial_depth = *depth;
+    let mut pending = vec![(formula, initial_depth)];
 
-    match formula {
-        WeightedMsoFormula::Constant(_) => {
-            // Base: only M1 + M10
-        },
+    while let Some((formula, current_depth)) = pending.pop() {
+        match formula {
+            WeightedMsoFormula::Constant(_) => {},
 
-        WeightedMsoFormula::AtomicPos { label, var } => {
-            // "letprop" triggers VPA + Parity Tree (recursive predicate definition)
-            if !fixpoint_bypassed
-                && (label == "letprop" || label == "fixpoint" || label == "mu" || label == "nu")
-            {
-                sig.set(PredicateSignature::M4_VPA);
-                sig.set(PredicateSignature::M5_PARITY_TREE);
-                *has_recursive = true;
-            }
-            // Check cross-channel
-            if ctx.is_cross_channel(var) {
-                sig.set(PredicateSignature::M8_MULTI_TAPE);
-                sig.set(PredicateSignature::M11_TWO_WAY);
-                *has_backward = true;
-            }
-            if let Some(ch) = ctx.channel_of(var) {
-                channels.insert(ch.to_string());
-            }
-        },
-
-        WeightedMsoFormula::NegAtomicPos { label, var } => {
-            if !fixpoint_bypassed
-                && (label == "letprop" || label == "fixpoint" || label == "mu" || label == "nu")
-            {
-                sig.set(PredicateSignature::M4_VPA);
-                sig.set(PredicateSignature::M5_PARITY_TREE);
-                *has_recursive = true;
-            }
-            if ctx.is_cross_channel(var) {
-                sig.set(PredicateSignature::M8_MULTI_TAPE);
-                sig.set(PredicateSignature::M11_TWO_WAY);
-                *has_backward = true;
-            }
-            if let Some(ch) = ctx.channel_of(var) {
-                channels.insert(ch.to_string());
-            }
-        },
-
-        WeightedMsoFormula::Order { x, y } | WeightedMsoFormula::NegOrder { x, y } => {
-            // Order relations are register-relevant — bypassed under
-            // explicit Register theory registration.
-            if !register_bypassed {
-                sig.set(PredicateSignature::M6_REGISTER);
-                registers.insert(x.clone());
-                registers.insert(y.clone());
-            }
-            for v in [x, y] {
-                if ctx.is_cross_channel(v) {
+            WeightedMsoFormula::AtomicPos { label, var }
+            | WeightedMsoFormula::NegAtomicPos { label, var } => {
+                if !fixpoint_bypassed
+                    && (label == "letprop" || label == "fixpoint" || label == "mu" || label == "nu")
+                {
+                    sig.set(PredicateSignature::M4_VPA);
+                    sig.set(PredicateSignature::M5_PARITY_TREE);
+                    *has_recursive = true;
+                }
+                if ctx.is_cross_channel(var) {
                     sig.set(PredicateSignature::M8_MULTI_TAPE);
                     sig.set(PredicateSignature::M11_TWO_WAY);
                     *has_backward = true;
                 }
-                if let Some(ch) = ctx.channel_of(v) {
-                    channels.insert(ch.to_string());
+                if let Some(channel) = ctx.channel_of(var) {
+                    channels.insert(channel.to_string());
                 }
-            }
-        },
+            },
 
-        WeightedMsoFormula::InSet { var, set_var }
-        | WeightedMsoFormula::NotInSet { var, set_var } => {
-            // Set membership is MSO-native (already base)
-            for v in [var, set_var] {
-                if ctx.is_cross_channel(v) {
-                    sig.set(PredicateSignature::M8_MULTI_TAPE);
-                    sig.set(PredicateSignature::M11_TWO_WAY);
-                    *has_backward = true;
+            WeightedMsoFormula::Order { x, y } | WeightedMsoFormula::NegOrder { x, y } => {
+                if !register_bypassed {
+                    sig.set(PredicateSignature::M6_REGISTER);
+                    registers.insert(x.clone());
+                    registers.insert(y.clone());
                 }
-                if let Some(ch) = ctx.channel_of(v) {
-                    channels.insert(ch.to_string());
+                for variable in [x, y] {
+                    if ctx.is_cross_channel(variable) {
+                        sig.set(PredicateSignature::M8_MULTI_TAPE);
+                        sig.set(PredicateSignature::M11_TWO_WAY);
+                        *has_backward = true;
+                    }
+                    if let Some(channel) = ctx.channel_of(variable) {
+                        channels.insert(channel.to_string());
+                    }
                 }
-            }
-        },
+            },
 
-        WeightedMsoFormula::And(a, b) | WeightedMsoFormula::Or(a, b) => {
-            walk_mso_formula(
-                a,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                guard_config,
-            );
-            walk_mso_formula(
-                b,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                guard_config,
-            );
-        },
+            WeightedMsoFormula::InSet { var, set_var }
+            | WeightedMsoFormula::NotInSet { var, set_var } => {
+                for variable in [var, set_var] {
+                    if ctx.is_cross_channel(variable) {
+                        sig.set(PredicateSignature::M8_MULTI_TAPE);
+                        sig.set(PredicateSignature::M11_TWO_WAY);
+                        *has_backward = true;
+                    }
+                    if let Some(channel) = ctx.channel_of(variable) {
+                        channels.insert(channel.to_string());
+                    }
+                }
+            },
 
-        WeightedMsoFormula::ExistsFirst { body, .. } => {
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                guard_config,
-            );
-            *depth -= 1;
-        },
+            WeightedMsoFormula::And(left, right) | WeightedMsoFormula::Or(left, right) => {
+                pending.push((right, current_depth));
+                pending.push((left, current_depth));
+            },
 
-        WeightedMsoFormula::ForallFirst { body, .. } => {
-            sig.set(PredicateSignature::M3_AWA); // universal first-order
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                guard_config,
-            );
-            *depth -= 1;
-        },
+            WeightedMsoFormula::ExistsFirst { body, .. }
+            | WeightedMsoFormula::ExistsSecond { body, .. } => {
+                let child_depth = current_depth + 1;
+                *max_depth = (*max_depth).max(child_depth);
+                pending.push((body, child_depth));
+            },
 
-        WeightedMsoFormula::ExistsSecond { body, .. } => {
-            // Second-order existential: MSO-native (already base)
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                guard_config,
-            );
-            *depth -= 1;
-        },
-
-        WeightedMsoFormula::ForallSecond { body, .. } => {
-            sig.set(PredicateSignature::M3_AWA); // universal second-order
-            *depth += 1;
-            *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(
-                body,
-                ctx,
-                sig,
-                depth,
-                max_depth,
-                channels,
-                registers,
-                has_backward,
-                has_cardinality,
-                has_recursive,
-                guard_config,
-            );
-            *depth -= 1;
-        },
+            WeightedMsoFormula::ForallFirst { body, .. }
+            | WeightedMsoFormula::ForallSecond { body, .. } => {
+                sig.set(PredicateSignature::M3_AWA);
+                let child_depth = current_depth + 1;
+                *max_depth = (*max_depth).max(child_depth);
+                pending.push((body, child_depth));
+            },
+        }
     }
+
+    *depth = initial_depth;
 }
