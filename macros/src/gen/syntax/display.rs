@@ -15,6 +15,8 @@
 use crate::gen::capture::capture_layout;
 use crate::gen::native::has_native_type;
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
+use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::type_expr_walk::terminal_base;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
@@ -3252,22 +3254,11 @@ fn generate_engine_syntax_pattern_arm_inner(
     // bindings can skip the Arc-deref map for `Option<BehavioralPred>`.
     let mut guard_params: HashSet<String> = HashSet::new();
 
-    // Opt-Group: flatten the term context so inner params of `#opt(...)`
-    // are visible to the display generator with the same name resolution
-    // as top-level params. The display impl handles Option<T> wrapping
-    // by emitting inner literals/params only when the Option is Some.
-    fn flatten_params<'a>(params: &'a [TermParam], out: &mut Vec<&'a TermParam>) {
-        for p in params {
-            match p {
-                TermParam::Optional { params: inner } => flatten_params(inner, out),
-                _ => out.push(p),
-            }
-        }
-    }
-    let mut flat: Vec<&TermParam> = Vec::new();
-    flatten_params(term_context, &mut flat);
-
-    for param in flat {
+    // Opt-Group: the shared stack-safe leaf iterator makes inner params
+    // visible with the same declaration order as top-level params. Display
+    // handles Option<T> wrapping when it emits the corresponding syntax block.
+    for leaf in TermParamLeaves::new(term_context, false) {
+        let param = leaf.param;
         match param {
             TermParam::Simple { name, ty } => {
                 param_names.push(name.to_string());
@@ -3294,8 +3285,7 @@ fn generate_engine_syntax_pattern_arm_inner(
                 guard_params.insert(name.to_string());
             },
             TermParam::Optional { .. } => {
-                // Already flattened — unreachable.
-                unreachable!("Optional should have been flattened");
+                unreachable!("TermParamLeaves omits grouping nodes");
             },
         }
     }
@@ -5278,14 +5268,7 @@ fn format_terminals(rule: &GrammarRule) -> String {
 
 /// Extract base category identifier from a TypeExpr
 fn extract_base_category_ident(ty: &TypeExpr) -> syn::Ident {
-    match ty {
-        TypeExpr::Base(ident) => ident.clone(),
-        TypeExpr::Collection { element, .. } => extract_base_category_ident(element),
-        TypeExpr::Arrow { codomain, .. } => extract_base_category_ident(codomain),
-        TypeExpr::MultiBinder(inner) => extract_base_category_ident(inner),
-        TypeExpr::Refined { base, .. } => extract_base_category_ident(base),
-        TypeExpr::Map { value, .. } => extract_base_category_ident(value),
-    }
+    terminal_base(ty).clone()
 }
 
 #[cfg(test)]

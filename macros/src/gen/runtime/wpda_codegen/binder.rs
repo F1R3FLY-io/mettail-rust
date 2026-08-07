@@ -31,6 +31,7 @@ use syn::Ident;
 
 use super::builtin_metadata::classify_unary_prefix_shape;
 use super::collection::kv_sep_for;
+use crate::gen::term_param_walk::TermParamLeaves;
 
 /// Stage 3.27d (G-PREFIX-BP, 2026-04-30): map from `(category_src_idx,
 /// rule_idx)` to the unary-prefix binding power, for rules whose shape
@@ -439,136 +440,106 @@ pub(crate) fn classify_binder_in(
     // `optional_params` set lets later code distinguish the two.
     let mut optional_params: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    fn walk_params(
-        params: &[TermParam],
-        in_optional: bool,
-        param_map: &mut std::collections::HashMap<String, ParamKind>,
-        optional_params: &mut std::collections::HashSet<String>,
-        is_multi: &mut bool,
-        has_binder: &mut bool,
-        body_cat: &mut Option<String>,
-        param_cats: &mut Vec<String>,
-    ) -> Option<()> {
-        for p in params {
-            if in_optional {
-                match p {
-                    TermParam::Simple { name, .. }
-                    | TermParam::Abstraction { binder: name, .. }
-                    | TermParam::MultiAbstraction { binder: name, .. }
-                    | TermParam::GuardBody { name } => {
-                        optional_params.insert(name.to_string());
-                    },
-                    TermParam::Optional { .. } => {},
-                }
-            }
+    for leaf in TermParamLeaves::new(tc, false) {
+        let p = leaf.param;
+        let in_optional = leaf.is_optional;
+        if in_optional {
             match p {
-                TermParam::Simple { name, ty } => match ty {
-                    TypeExpr::Base(ident) => {
-                        let cat = ident.to_string();
-                        param_cats.push(cat.clone());
-                        param_map.insert(name.to_string(), ParamKind::Simple { cat });
-                    },
-                    // B9 / Class 2 (2026-05-08): SimpleCollection. Supports
-                    // Vec / HashBag / HashSet / HashMap over a Base element
-                    // type. HashMap uses the grammar's key/value separator
-                    // while preserving the drained `[k0, v0, k1, v1, ...]`
-                    // invariant.
-                    TypeExpr::Collection { coll_type, element } => {
-                        match (coll_type, element.as_ref()) {
-                            (CollectionType::Vec, TypeExpr::Base(elem))
-                            | (CollectionType::HashBag, TypeExpr::Base(elem))
-                            | (CollectionType::HashSet, TypeExpr::Base(elem))
-                            | (CollectionType::HashMap, TypeExpr::Base(elem)) => {
-                                let elem_cat = elem.to_string();
-                                param_cats.push(elem_cat.clone());
-                                param_map.insert(
-                                    name.to_string(),
-                                    ParamKind::SimpleCollection {
-                                        elem_cat,
-                                        coll_kind: coll_type.clone(),
-                                    },
-                                );
-                            },
-                            _ => return None,
-                        }
-                    },
-                    // Phase 4 #5b (2026-05-12): HashMap(K, V) — the
-                    // parser produces `TypeExpr::Map { key, value }`
-                    // rather than `Collection { coll_type: HashMap, ... }`.
-                    // Lower to SimpleCollection with `coll_kind: HashMap`
-                    // when both K and V are `Base(_)` and equal (mirror
-                    // Class-5's same-element-cat assumption for the
-                    // empty-drain materialization invariant `[k0, v0,
-                    // k1, v1, ...]`).
-                    TypeExpr::Map { key, value } => match (key.as_ref(), value.as_ref()) {
-                        (TypeExpr::Base(k_ident), TypeExpr::Base(v_ident))
-                            if k_ident == v_ident =>
-                        {
-                            let elem_cat = k_ident.to_string();
+                TermParam::Simple { name, .. }
+                | TermParam::Abstraction { binder: name, .. }
+                | TermParam::MultiAbstraction { binder: name, .. }
+                | TermParam::GuardBody { name } => {
+                    optional_params.insert(name.to_string());
+                },
+                TermParam::Optional { .. } => {
+                    unreachable!("TermParamLeaves omits grouping nodes")
+                },
+            }
+        }
+        match p {
+            TermParam::Simple { name, ty } => match ty {
+                TypeExpr::Base(ident) => {
+                    let cat = ident.to_string();
+                    param_cats.push(cat.clone());
+                    param_map.insert(name.to_string(), ParamKind::Simple { cat });
+                },
+                // B9 / Class 2 (2026-05-08): SimpleCollection. Supports
+                // Vec / HashBag / HashSet / HashMap over a Base element
+                // type. HashMap uses the grammar's key/value separator
+                // while preserving the drained `[k0, v0, k1, v1, ...]`
+                // invariant.
+                TypeExpr::Collection { coll_type, element } => {
+                    match (coll_type, element.as_ref()) {
+                        (CollectionType::Vec, TypeExpr::Base(elem))
+                        | (CollectionType::HashBag, TypeExpr::Base(elem))
+                        | (CollectionType::HashSet, TypeExpr::Base(elem))
+                        | (CollectionType::HashMap, TypeExpr::Base(elem)) => {
+                            let elem_cat = elem.to_string();
                             param_cats.push(elem_cat.clone());
                             param_map.insert(
                                 name.to_string(),
                                 ParamKind::SimpleCollection {
                                     elem_cat,
-                                    coll_kind: CollectionType::HashMap,
+                                    coll_kind: coll_type.clone(),
                                 },
                             );
                         },
                         _ => return None,
+                    }
+                },
+                // Phase 4 #5b (2026-05-12): HashMap(K, V) — the
+                // parser produces `TypeExpr::Map { key, value }`
+                // rather than `Collection { coll_type: HashMap, ... }`.
+                // Lower to SimpleCollection with `coll_kind: HashMap`
+                // when both K and V are `Base(_)` and equal (mirror
+                // Class-5's same-element-cat assumption for the
+                // empty-drain materialization invariant `[k0, v0,
+                // k1, v1, ...]`).
+                TypeExpr::Map { key, value } => match (key.as_ref(), value.as_ref()) {
+                    (TypeExpr::Base(k_ident), TypeExpr::Base(v_ident)) if k_ident == v_ident => {
+                        let elem_cat = k_ident.to_string();
+                        param_cats.push(elem_cat.clone());
+                        param_map.insert(
+                            name.to_string(),
+                            ParamKind::SimpleCollection {
+                                elem_cat,
+                                coll_kind: CollectionType::HashMap,
+                            },
+                        );
                     },
                     _ => return None,
                 },
-                TermParam::Abstraction { binder, body, ty } => {
-                    let bcat = arrow_codomain_name(ty)?;
-                    *body_cat = Some(bcat.clone());
-                    *has_binder = true;
-                    param_map.insert(binder.to_string(), ParamKind::Binder);
-                    param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
-                    if in_optional {
-                        optional_params.insert(body.to_string());
-                    }
-                },
-                TermParam::MultiAbstraction { binder, body, ty } => {
-                    let bcat = arrow_codomain_name(ty)?;
-                    *body_cat = Some(bcat.clone());
-                    *has_binder = true;
-                    *is_multi = true;
-                    param_map.insert(binder.to_string(), ParamKind::BinderList);
-                    param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
-                    if in_optional {
-                        optional_params.insert(body.to_string());
-                    }
-                },
-                TermParam::GuardBody { name } => {
-                    param_map.insert(name.to_string(), ParamKind::Guard);
-                },
-                TermParam::Optional { params: inner } => {
-                    walk_params(
-                        inner,
-                        true,
-                        param_map,
-                        optional_params,
-                        is_multi,
-                        has_binder,
-                        body_cat,
-                        param_cats,
-                    )?;
-                },
-            }
+                _ => return None,
+            },
+            TermParam::Abstraction { binder, body, ty } => {
+                let bcat = arrow_codomain_name(ty)?;
+                body_cat = Some(bcat.clone());
+                has_binder = true;
+                param_map.insert(binder.to_string(), ParamKind::Binder);
+                param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
+                if in_optional {
+                    optional_params.insert(body.to_string());
+                }
+            },
+            TermParam::MultiAbstraction { binder, body, ty } => {
+                let bcat = arrow_codomain_name(ty)?;
+                body_cat = Some(bcat.clone());
+                has_binder = true;
+                is_multi = true;
+                param_map.insert(binder.to_string(), ParamKind::BinderList);
+                param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
+                if in_optional {
+                    optional_params.insert(body.to_string());
+                }
+            },
+            TermParam::GuardBody { name } => {
+                param_map.insert(name.to_string(), ParamKind::Guard);
+            },
+            TermParam::Optional { .. } => {
+                unreachable!("TermParamLeaves omits grouping nodes")
+            },
         }
-        Some(())
     }
-
-    walk_params(
-        tc,
-        false,
-        &mut param_map,
-        &mut optional_params,
-        &mut is_multi,
-        &mut has_binder,
-        &mut body_cat,
-        &mut param_cats,
-    )?;
 
     // Walk syntax_pattern (skipping index 0 = trigger) building positions
     // + action_args in encountered-order (push order).

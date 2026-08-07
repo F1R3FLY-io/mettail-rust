@@ -42,3 +42,7 @@ impl<'a> Iterator for TermParamLeaves<'a> {
         None
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/term_param_walk_recursive_oracle.rs"]
+mod recursive_oracle;

@@ -48,6 +48,8 @@
 
 #![allow(clippy::cmp_owned)]
 
+use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::type_expr_walk::terminal_base;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
@@ -3615,14 +3617,7 @@ pub(crate) fn variant_kind_from_items(
 
 /// Extract the base category from a TypeExpr
 fn extract_base_category(ty: &TypeExpr) -> Ident {
-    match ty {
-        TypeExpr::Base(ident) => ident.clone(),
-        TypeExpr::Collection { element, .. } => extract_base_category(element),
-        TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
-        TypeExpr::MultiBinder(inner) => extract_base_category(inner),
-        TypeExpr::Refined { base, .. } => extract_base_category(base),
-        TypeExpr::Map { value, .. } => extract_base_category(value),
-    }
+    terminal_base(ty).clone()
 }
 
 /// Extract the binder category from a MultiBinder type (Name* -> ...)
@@ -3743,46 +3738,48 @@ pub(crate) fn field_info_for_guest_body() -> FieldInfo {
     }
 }
 
-/// Opt-Group: create FieldInfo from a TermParam, recursively flattening
+/// Opt-Group: create FieldInfo from a TermParam through the shared stack-safe
+/// leaf iterator, flattening
 /// `TermParam::Optional` so each inner Simple/Abstraction/MultiAbstraction/
 /// GuardBody contributes one FieldInfo with `is_optional: true`. Returns
 /// a Vec because Optional groups may contain multiple inner params, each
 /// becoming its own variant field.
 pub(crate) fn field_infos_from_term_param(param: &TermParam, in_optional: bool) -> Vec<FieldInfo> {
-    match param {
-        TermParam::Simple { ty, .. } => {
-            let mut info = field_info_from_type_expr(ty);
-            info.is_optional = in_optional;
-            vec![info]
-        },
-        TermParam::GuardBody { .. } => {
-            let mut info = field_info_for_guard_slot();
-            info.is_optional = in_optional;
-            vec![info]
-        },
-        TermParam::Optional { params: inner } => inner
-            .iter()
-            .flat_map(|p| field_infos_from_term_param(p, true))
-            .collect(),
-        TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. }
-            if in_optional =>
-        {
-            let body_cat = if let TypeExpr::Arrow { codomain, .. } = ty {
-                extract_base_category(codomain)
-            } else {
-                format_ident!("Unknown")
-            };
-            vec![FieldInfo {
-                category: body_cat,
-                is_collection: false,
-                coll_type: None,
-                is_predicate: false,
-                is_optional: true,
-                opaque_leaf: None,
-            }]
-        },
-        TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => vec![],
+    let mut out = Vec::new();
+    for leaf in TermParamLeaves::new(std::slice::from_ref(param), in_optional) {
+        match leaf.param {
+            TermParam::Simple { ty, .. } => {
+                let mut info = field_info_from_type_expr(ty);
+                info.is_optional = leaf.is_optional;
+                out.push(info);
+            },
+            TermParam::GuardBody { .. } => {
+                let mut info = field_info_for_guard_slot();
+                info.is_optional = leaf.is_optional;
+                out.push(info);
+            },
+            TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. }
+                if leaf.is_optional =>
+            {
+                let body_cat = if let TypeExpr::Arrow { codomain, .. } = ty {
+                    extract_base_category(codomain)
+                } else {
+                    format_ident!("Unknown")
+                };
+                out.push(FieldInfo {
+                    category: body_cat,
+                    is_collection: false,
+                    coll_type: None,
+                    is_predicate: false,
+                    is_optional: true,
+                    opaque_leaf: None,
+                });
+            },
+            TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => {},
+            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
+        }
     }
+    out
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

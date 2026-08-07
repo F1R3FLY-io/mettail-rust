@@ -32,6 +32,7 @@ pub mod term_gen;
 pub mod term_ops;
 pub(crate) mod term_param_walk;
 pub mod test_gen;
+pub(crate) mod type_expr_walk;
 pub mod types;
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};

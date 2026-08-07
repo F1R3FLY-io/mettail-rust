@@ -16,6 +16,8 @@
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
 
+use crate::gen::term_param_walk::TermParamLeaves;
+
 /// Generate simulation integration tests for a language.
 ///
 /// Returns a string containing `#[test]` functions to be appended to the
@@ -620,7 +622,8 @@ pub(crate) fn find_param_category(
 ) -> Option<String> {
     use mettail_ast::grammar::TermParam;
 
-    for param in ctx {
+    for leaf in TermParamLeaves::new(ctx, false) {
+        let param = leaf.param;
         match param {
             TermParam::Simple { name: pname, ty } => {
                 if pname == name {
@@ -642,17 +645,7 @@ pub(crate) fn find_param_category(
                     return Some("Bool".to_string());
                 }
             },
-            TermParam::Optional { params: inner } => {
-                // Opt-Group: simulation-test parser-input synthesis uses
-                // this lookup to pick a category for each named param. A
-                // syntax-pattern reference to an inner-of-Optional param
-                // resolves to the inner's category — when the syntax
-                // emits the Opt block, the synthesizer needs to know the
-                // inner category to generate a valid token. Recurse.
-                if let Some(found) = find_param_category(name, inner) {
-                    return Some(found);
-                }
-            },
+            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
         }
     }
     None
@@ -661,13 +654,16 @@ pub(crate) fn find_param_category(
 /// Extract the simple category name from a TypeExpr.
 pub(crate) fn type_expr_to_category(ty: &mettail_ast::types::TypeExpr) -> Option<String> {
     use mettail_ast::types::TypeExpr;
-    match ty {
-        TypeExpr::Base(ident) => Some(ident.to_string()),
-        TypeExpr::Arrow { codomain, .. } => type_expr_to_category(codomain),
-        TypeExpr::MultiBinder(inner) => type_expr_to_category(inner),
-        TypeExpr::Collection { element, .. } => type_expr_to_category(element),
-        // Refinement and other complex types: return the base type if available.
-        _ => None,
+    let mut current = ty;
+    loop {
+        current = match current {
+            TypeExpr::Base(ident) => return Some(ident.to_string()),
+            TypeExpr::Arrow { codomain, .. } => codomain,
+            TypeExpr::MultiBinder(inner) => inner,
+            TypeExpr::Collection { element, .. } => element,
+            // Refinement and map types remain outside simulation synthesis.
+            TypeExpr::Refined { .. } | TypeExpr::Map { .. } => return None,
+        };
     }
 }
 

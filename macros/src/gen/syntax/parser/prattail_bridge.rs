@@ -13,6 +13,8 @@ use std::collections::HashSet;
 
 use crate::gen::native::native_type_to_full_string;
 use crate::gen::runtime::wpda_codegen::collection::kv_sep_for;
+use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::type_expr_walk::terminal_base;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     language::{AttributeValue, LanguageDef},
@@ -666,12 +668,13 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
     }
 }
 
-/// Opt-Group: find a TermParam by name, recursing into Optional groups
+/// Opt-Group: find a TermParam by name through the stack-safe leaf iterator
 /// so inner-param references inside `#opt(...)` resolve. Returns the
 /// INNERMOST matching TermParam (e.g., the `Simple { name: e, ty: Int }`
 /// inside an `Optional { params: [Simple{e,Int}] }`).
 fn find_param_by_name<'a>(context: &'a [TermParam], name_str: &str) -> Option<&'a TermParam> {
-    for p in context {
+    for leaf in TermParamLeaves::new(context, false) {
+        let p = leaf.param;
         match p {
             TermParam::Simple { name: n, .. } => {
                 if n.to_string() == name_str {
@@ -693,11 +696,7 @@ fn find_param_by_name<'a>(context: &'a [TermParam], name_str: &str) -> Option<&'
                     return Some(p);
                 }
             },
-            TermParam::Optional { params: inner } => {
-                if let Some(found) = find_param_by_name(inner, name_str) {
-                    return Some(found);
-                }
-            },
+            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
         }
     }
     None
@@ -1220,14 +1219,7 @@ fn convert_grammar_items(
 /// Extract the base category name from a TypeExpr.
 /// For Arrow types, follows the codomain (appropriate for body variables).
 fn extract_base_category(ty: &TypeExpr) -> String {
-    match ty {
-        TypeExpr::Base(ident) => ident.to_string(),
-        TypeExpr::Collection { element, .. } => extract_base_category(element),
-        TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
-        TypeExpr::MultiBinder(inner) => extract_base_category(inner),
-        TypeExpr::Refined { base, .. } => extract_base_category(base),
-        TypeExpr::Map { value, .. } => extract_base_category(value),
-    }
+    terminal_base(ty).to_string()
 }
 
 /// Extract the binder's category from an abstraction type.
