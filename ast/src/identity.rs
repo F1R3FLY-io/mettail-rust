@@ -128,28 +128,24 @@ fn push_token_stream_canonical(out: &mut String, stream: &proc_macro2::TokenStre
     let mut tasks = Vec::new();
     push_stream(&mut tasks, stream.clone());
     while let Some(task) = tasks.pop() {
-        let TokenTask::Tree(tree) = task else {
-            let TokenTask::Text(text) = task else {
-                unreachable!()
-            };
-            out.push_str(text);
-            continue;
-        };
-        match tree {
-            proc_macro2::TokenTree::Group(group) => {
-                let (open, close) = match group.delimiter() {
-                    proc_macro2::Delimiter::Parenthesis => ("(", ")"),
-                    proc_macro2::Delimiter::Brace => ("{", "}"),
-                    proc_macro2::Delimiter::Bracket => ("[", "]"),
-                    proc_macro2::Delimiter::None => ("", ""),
-                };
-                out.push_str(open);
-                tasks.push(TokenTask::Text(close));
-                push_stream(&mut tasks, group.stream());
+        match task {
+            TokenTask::Text(text) => out.push_str(text),
+            TokenTask::Tree(tree) => match tree {
+                proc_macro2::TokenTree::Group(group) => {
+                    let (open, close) = match group.delimiter() {
+                        proc_macro2::Delimiter::Parenthesis => ("(", ")"),
+                        proc_macro2::Delimiter::Brace => ("{", "}"),
+                        proc_macro2::Delimiter::Bracket => ("[", "]"),
+                        proc_macro2::Delimiter::None => ("", ""),
+                    };
+                    out.push_str(open);
+                    tasks.push(TokenTask::Text(close));
+                    push_stream(&mut tasks, group.stream());
+                },
+                proc_macro2::TokenTree::Ident(ident) => out.push_str(&ident.to_string()),
+                proc_macro2::TokenTree::Punct(punct) => out.push(punct.as_char()),
+                proc_macro2::TokenTree::Literal(literal) => out.push_str(&literal.to_string()),
             },
-            proc_macro2::TokenTree::Ident(ident) => out.push_str(&ident.to_string()),
-            proc_macro2::TokenTree::Punct(punct) => out.push(punct.as_char()),
-            proc_macro2::TokenTree::Literal(literal) => out.push_str(&literal.to_string()),
         }
     }
 }

@@ -973,8 +973,17 @@ fn refinement_parse_leaf(
     let ident = refinement_take_ident(input, "expected refinement predicate identifier")?;
     if matches!(input.front(), Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == proc_macro2::Delimiter::Parenthesis)
     {
-        let Some(proc_macro2::TokenTree::Group(group)) = input.pop_front() else {
-            unreachable!("relation lookahead requires a parenthesis group")
+        let Some(tree) = input.pop_front() else {
+            return Err(syn::Error::new(
+                ident.span(),
+                "expected parenthesized refinement relation arguments",
+            ));
+        };
+        let proc_macro2::TokenTree::Group(group) = tree else {
+            return Err(syn::Error::new(
+                tree.span(),
+                "expected parenthesized refinement relation arguments",
+            ));
         };
         let arguments = refinement_parse_relation_args(group)?;
         return Ok(RefinementPredicate::Relation {
@@ -1145,15 +1154,24 @@ fn parse_refinement_predicate_tokens(tokens: TokenStream) -> SynResult<Refinemen
                     }
 
                     if let Some(proc_macro2::TokenTree::Group(group)) = state.input.front() {
+                        let group_span = group.span();
                         if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
                             return Err(syn::Error::new(
-                                group.span(),
+                                group_span,
                                 "expected parenthesized refinement predicate",
                             ));
                         }
-                        let Some(proc_macro2::TokenTree::Group(group)) = state.input.pop_front()
-                        else {
-                            unreachable!("group lookahead and removal agree")
+                        let Some(tree) = state.input.pop_front() else {
+                            return Err(syn::Error::new(
+                                group_span,
+                                "expected parenthesized refinement predicate",
+                            ));
+                        };
+                        let proc_macro2::TokenTree::Group(group) = tree else {
+                            return Err(syn::Error::new(
+                                tree.span(),
+                                "expected parenthesized refinement predicate",
+                            ));
                         };
                         tasks.push(Task::ResumeGroup(state));
                         tasks.push(Task::Run(RefinementParseState::new(group.stream())));
@@ -1565,7 +1583,7 @@ impl TreeConstraintParseState {
                 })?;
                 self.values.push(TreeConstraintExpr::Not(Box::new(inner)));
             },
-            TreeConstraintOperator::And | TreeConstraintOperator::Or => {
+            TreeConstraintOperator::And => {
                 let right = self.values.pop().ok_or_else(|| {
                     syn::Error::new(
                         proc_macro2::Span::call_site(),
@@ -1578,15 +1596,24 @@ impl TreeConstraintParseState {
                         "missing left tree-constraint operand",
                     )
                 })?;
-                self.values.push(match operator {
-                    TreeConstraintOperator::And => {
-                        TreeConstraintExpr::And(Box::new(left), Box::new(right))
-                    },
-                    TreeConstraintOperator::Or => {
-                        TreeConstraintExpr::Or(Box::new(left), Box::new(right))
-                    },
-                    TreeConstraintOperator::Not => unreachable!(),
-                });
+                self.values
+                    .push(TreeConstraintExpr::And(Box::new(left), Box::new(right)));
+            },
+            TreeConstraintOperator::Or => {
+                let right = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing right tree-constraint operand",
+                    )
+                })?;
+                let left = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing left tree-constraint operand",
+                    )
+                })?;
+                self.values
+                    .push(TreeConstraintExpr::Or(Box::new(left), Box::new(right)));
             },
         }
         Ok(())
@@ -2892,7 +2919,10 @@ fn parse_premise_tokens(tokens: TokenStream) -> SynResult<Premise> {
             ));
         }
         let proc_macro2::TokenTree::Ident(collection) = &trees[0] else {
-            unreachable!("the prefix check requires an identifier")
+            return Err(syn::Error::new(
+                trees[0].span(),
+                "expected collection identifier before `.*map`",
+            ));
         };
         let proc_macro2::TokenTree::Ident(operator) = &trees[3] else {
             return Err(syn::Error::new(trees[3].span(), "expected `map` after `.*`"));
@@ -3396,8 +3426,17 @@ fn behavioral_parse_leaf(
     }
     if matches!(input.front(), Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == proc_macro2::Delimiter::Parenthesis)
     {
-        let Some(proc_macro2::TokenTree::Group(group)) = input.pop_front() else {
-            unreachable!("relation lookahead requires a parenthesis group")
+        let Some(tree) = input.pop_front() else {
+            return Err(syn::Error::new(
+                ident.span(),
+                "expected parenthesized behavioral relation arguments",
+            ));
+        };
+        let proc_macro2::TokenTree::Group(group) = tree else {
+            return Err(syn::Error::new(
+                tree.span(),
+                "expected parenthesized behavioral relation arguments",
+            ));
         };
         return Ok(BehavioralPred::RelationQuery {
             relation_name: ident,
@@ -3513,15 +3552,24 @@ fn parse_behavioral_predicate_tokens(tokens: TokenStream) -> SynResult<Behaviora
                     }
 
                     if let Some(proc_macro2::TokenTree::Group(group)) = state.input.front() {
+                        let group_span = group.span();
                         if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
                             return Err(syn::Error::new(
-                                group.span(),
+                                group_span,
                                 "expected parenthesized behavioral predicate",
                             ));
                         }
-                        let Some(proc_macro2::TokenTree::Group(group)) = state.input.pop_front()
-                        else {
-                            unreachable!("group lookahead and removal agree")
+                        let Some(tree) = state.input.pop_front() else {
+                            return Err(syn::Error::new(
+                                group_span,
+                                "expected parenthesized behavioral predicate",
+                            ));
+                        };
+                        let proc_macro2::TokenTree::Group(group) = tree else {
+                            return Err(syn::Error::new(
+                                tree.span(),
+                                "expected parenthesized behavioral predicate",
+                            ));
                         };
                         tasks.push(Task::ResumeGroup(state));
                         tasks.push(Task::Run(BehavioralParseState::new(group.stream())));
@@ -4073,7 +4121,10 @@ fn parse_pattern_tokens(tokens: TokenStream) -> SynResult<Pattern> {
                     ));
                 }
                 let proc_macro2::TokenTree::Ident(ident) = &trees[3] else {
-                    unreachable!()
+                    return Err(syn::Error::new(
+                        trees[3].span(),
+                        "expected collection-rest identifier after `...`",
+                    ));
                 };
                 rest = Some(ident.clone());
             } else {
@@ -4226,10 +4277,17 @@ fn parse_pattern_tokens(tokens: TokenStream) -> SynResult<Pattern> {
                             Some(proc_macro2::TokenTree::Group(group))
                                 if group.delimiter() == proc_macro2::Delimiter::Bracket
                         ) {
-                            let proc_macro2::TokenTree::Group(indexed) =
-                                input.pop_front().expect("the bracket group was peeked")
-                            else {
-                                unreachable!()
+                            let Some(tree) = input.pop_front() else {
+                                return Err(syn::Error::new(
+                                    collection.span(),
+                                    "expected bracketed indexed-vector pattern",
+                                ));
+                            };
+                            let proc_macro2::TokenTree::Group(indexed) = tree else {
+                                return Err(syn::Error::new(
+                                    tree.span(),
+                                    "expected bracketed indexed-vector pattern",
+                                ));
                             };
                             let mut indexed: std::collections::VecDeque<_> =
                                 indexed.stream().into_iter().collect();

@@ -137,7 +137,11 @@ impl TypeChecker {
             Pattern(&'pattern Pattern),
             Term(&'pattern PatternTerm),
             AssemblePattern(&'pattern Pattern, usize),
-            AssembleTerm(&'pattern PatternTerm, usize),
+            AssembleApply {
+                result_category: String,
+                value_base: usize,
+            },
+            PassThroughTerm(usize),
         }
 
         let mut tasks = vec![Task::Pattern(pattern)];
@@ -184,21 +188,24 @@ impl TypeChecker {
                                 span: constructor.span(),
                             });
                         };
-                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        tasks.push(Task::AssembleApply {
+                            result_category: constructor_type.result_category.clone(),
+                            value_base: values.len(),
+                        });
                         let paired_arguments =
                             args.len().min(constructor_type.arg_categories.len());
                         tasks.extend(args[..paired_arguments].iter().rev().map(Task::Pattern));
                     },
                     PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
-                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        tasks.push(Task::PassThroughTerm(values.len()));
                         tasks.push(Task::Pattern(body));
                     },
                     PatternTerm::Subst { term: value, .. } => {
-                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        tasks.push(Task::PassThroughTerm(values.len()));
                         tasks.push(Task::Pattern(value));
                     },
                     PatternTerm::MultiSubst { scope, .. } => {
-                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        tasks.push(Task::PassThroughTerm(values.len()));
                         tasks.push(Task::Pattern(scope));
                     },
                 },
@@ -212,24 +219,12 @@ impl TypeChecker {
                     values.truncate(value_base);
                     values.push(inferred);
                 },
-                Task::AssembleTerm(term, value_base) => {
-                    let inferred = match term {
-                        PatternTerm::Var(_) => {
-                            unreachable!("variables produce their value directly")
-                        },
-                        PatternTerm::Apply { constructor, .. } => self
-                            .constructors
-                            .get(&constructor.to_string())
-                            .expect("constructor was checked before visiting its arguments")
-                            .result_category
-                            .clone(),
-                        PatternTerm::Lambda { .. }
-                        | PatternTerm::MultiLambda { .. }
-                        | PatternTerm::Subst { .. }
-                        | PatternTerm::MultiSubst { .. } => {
-                            values.pop().unwrap_or_else(|| "?".to_string())
-                        },
-                    };
+                Task::AssembleApply { result_category, value_base } => {
+                    values.truncate(value_base);
+                    values.push(result_category);
+                },
+                Task::PassThroughTerm(value_base) => {
+                    let inferred = values.pop().unwrap_or_else(|| "?".to_string());
                     values.truncate(value_base);
                     values.push(inferred);
                 },
