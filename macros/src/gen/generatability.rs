@@ -650,6 +650,21 @@ mod tests {
             }
             out.push('\n');
         }
+        out.push_str("\n  ── RULES IN EACH NON-TRIVIAL INTERSECTION ──\n");
+        for (a, b) in [
+            (Generator::TapeBuilder, Generator::UnitTest),
+            (Generator::TapeBuilder, Generator::RandomTerm),
+            (Generator::UnitTest, Generator::RandomTerm),
+        ] {
+            let both = refused_by(rows, a)
+                .intersection(&refused_by(rows, b))
+                .cloned()
+                .collect::<Vec<_>>();
+            out.push_str(&format!("  {} ∩ {} ({} rule(s))\n", a.as_str(), b.as_str(), both.len(),));
+            for (language, category, label, _) in both {
+                out.push_str(&format!("      {language}::{category}::{label}\n"));
+            }
+        }
         out
     }
 
@@ -707,8 +722,9 @@ mod tests {
         //   A∩C =  0   filed 0   ✓
         //   B∩C =  3   filed 2   ✗
         //
-        // And the per-generator totals: A = 14 / 4 languages, EXACTLY as filed. C = 31 / 13
-        // (filed 32 / 14). ★★ B = 35 / 21, filed 16 / 12 — and the discrepancy is the ledger
+        // And the per-generator totals at the initial 2026-07-30 measurement: A = 14 / 4
+        // languages, EXACTLY as filed. C = 31 / 13 (filed 32 / 14). ★★ B = 35 / 21, filed 16 /
+        // 12 — and the discrepancy is the ledger
         // paying for itself on its first run. The filed 16 was counted from the emitted COMMENT
         // in generated output, which only exists for a language with `emit_tests: true`. The 21
         // languages that set `emit_tests: false` emit no unit tests at all, so their B gaps were
@@ -716,6 +732,28 @@ mod tests {
         // and recovers NINETEEN previously invisible refusals across NINE more languages —
         // exactly the outcome #150 predicted when it asked for a corpus derivation "covering all
         // 54 INCLUDING the 21 with emit_tests: false, whose gaps are otherwise unobservable".
+        //
+        // ★ 2026-08-07 RE-DERIVATION OF THE 35 → 36, 31 → 32, B∩C 3 → 4 MOVEMENT.
+        // `438e3a3d` intentionally replaced 47 name-specific Rholang method constructors with
+        // one canonical rule:
+        //
+        // ```text
+        // MethodCall . receiver:Proc, method_name:Ident, arguments:Vec(Proc)
+        // ```
+        //
+        // That commit postdates the pinned matrix and does not edit any classifier or generator.
+        // The new rule reaches two pre-existing, independently named refusal causes:
+        //
+        // * `rule_to_variant_kind` classifies its collection-bearing constructor as
+        //   `VariantKind::Collection`, so the static emitter records
+        //   `CollectionElementSetup`;
+        // * its three `Simple` slots include a collection item, so both depth generators record
+        //   `Class2CollectionArity`.
+        //
+        // The detailed intersection report above names `Rholang::Proc::MethodCall` as the fourth
+        // B∩C rule, while the three prior rules remain unchanged. This is therefore a legitimate
+        // corpus-domain addition, not a generator/classifier regression or a silently narrowed
+        // walk. The measurement moves by exactly one in B, C, and B∩C and nowhere else.
         let pair = |a: Generator, b: Generator| {
             refused_by(&rows, a)
                 .intersection(&refused_by(&rows, b))
@@ -730,7 +768,7 @@ mod tests {
                 pair(Generator::TapeBuilder, Generator::RandomTerm),
                 pair(Generator::UnitTest, Generator::RandomTerm),
             ),
-            (14, 35, 31, 10, 0, 3),
+            (14, 36, 32, 10, 0, 4),
             "the ledger moved. These are MEASUREMENTS, not budgets: re-derive what changed and \
              why before touching this tuple, exactly as #150's own transcribed \
              `A∩B=3, A∩C=0, B∩C=2` had to be re-derived.{report}"
