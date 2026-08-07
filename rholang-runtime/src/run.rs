@@ -1024,39 +1024,41 @@ pub fn drive_cross_check(
 /// `apply_label(^lambda(_), _)` is present anywhere in the term — the static
 /// NF-scan predicate for a Lambda-shaped language (`apply_label = "App"`), with
 /// the reflected-binder constructor name fixed by the reflection ABI
-/// (`^lambda`). Recurses through every structured observation shape; scalar
-/// leaves carry no redex.
+/// (`^lambda`). The explicit DFS visits every structured observation shape;
+/// scalar leaves carry no redex.
 #[cfg(feature = "runtime-report")]
 pub fn binder_apply_redex_present(apply_label: &str, value: &RuntimeObservationValue) -> bool {
-    match value {
-        RuntimeObservationValue::Term { constructor, children } => {
-            if constructor == apply_label {
-                if let Some(RuntimeObservationValue::Term { constructor: head, .. }) =
-                    children.first()
+    let mut work = vec![value];
+    while let Some(value) = work.pop() {
+        match value {
+            RuntimeObservationValue::Term { constructor, children } => {
+                if constructor == apply_label
+                    && matches!(
+                        children.first(),
+                        Some(RuntimeObservationValue::Term { constructor, .. })
+                            if constructor == "^lambda"
+                    )
                 {
-                    if head == "^lambda" {
-                        return true;
-                    }
+                    return true;
                 }
-            }
-            children
-                .iter()
-                .any(|child| binder_apply_redex_present(apply_label, child))
-        },
-        RuntimeObservationValue::List(items)
-        | RuntimeObservationValue::Tuple(items)
-        | RuntimeObservationValue::Set(items) => items
-            .iter()
-            .any(|item| binder_apply_redex_present(apply_label, item)),
-        RuntimeObservationValue::Bag(entries) => entries
-            .iter()
-            .any(|(value, _)| binder_apply_redex_present(apply_label, value)),
-        RuntimeObservationValue::Map(entries) => entries.iter().any(|(key, value)| {
-            binder_apply_redex_present(apply_label, key)
-                || binder_apply_redex_present(apply_label, value)
-        }),
-        _ => false,
+                work.extend(children.iter().rev());
+            },
+            RuntimeObservationValue::List(items)
+            | RuntimeObservationValue::Tuple(items)
+            | RuntimeObservationValue::Set(items) => work.extend(items.iter().rev()),
+            RuntimeObservationValue::Bag(entries) => {
+                work.extend(entries.iter().rev().map(|(value, _)| value));
+            },
+            RuntimeObservationValue::Map(entries) => {
+                for (key, value) in entries.iter().rev() {
+                    work.push(value);
+                    work.push(key);
+                }
+            },
+            _ => {},
+        }
     }
+    false
 }
 
 /// The host value-level flatten over a decoded observation value — the mirror of the
@@ -1071,32 +1073,103 @@ pub fn binder_apply_redex_present(apply_label: &str, value: &RuntimeObservationV
 /// [`crate::RhoMachineInvocation`] drive arm) and the test tier share one flatten.
 #[cfg(feature = "runtime-report")]
 pub fn flatten_observation_value(value: &RuntimeObservationValue) -> RuntimeObservationValue {
-    match value {
-        RuntimeObservationValue::Bag(entries) => {
-            let mut flat: Vec<(RuntimeObservationValue, usize)> = Vec::with_capacity(entries.len());
-            for (element, count) in entries {
-                let element = flatten_observation_value(element);
-                for _ in 0..*count {
-                    match &element {
-                        RuntimeObservationValue::Bag(inner) => {
-                            for (inner_element, inner_count) in inner {
-                                for _ in 0..*inner_count {
-                                    flat.push((inner_element.clone(), 1));
+    enum Work<'a> {
+        Visit(&'a RuntimeObservationValue),
+        Bag {
+            entries: &'a [(RuntimeObservationValue, usize)],
+            index: usize,
+            value_base: usize,
+        },
+        Term {
+            constructor: &'a str,
+            children: &'a [RuntimeObservationValue],
+            index: usize,
+            value_base: usize,
+        },
+    }
+
+    let mut work = vec![Work::Visit(value)];
+    let mut values = Vec::new();
+    while let Some(step) = work.pop() {
+        match step {
+            Work::Visit(value) => match value {
+                RuntimeObservationValue::Bag(entries) if !entries.is_empty() => {
+                    let value_base = values.len();
+                    work.push(Work::Bag { entries, index: 0, value_base });
+                    work.push(Work::Visit(&entries[0].0));
+                },
+                RuntimeObservationValue::Bag(_) => {
+                    values.push(RuntimeObservationValue::Bag(Vec::new()));
+                },
+                RuntimeObservationValue::Term { constructor, children } if !children.is_empty() => {
+                    let value_base = values.len();
+                    work.push(Work::Term {
+                        constructor,
+                        children,
+                        index: 0,
+                        value_base,
+                    });
+                    work.push(Work::Visit(&children[0]));
+                },
+                RuntimeObservationValue::Term { constructor, .. } => {
+                    values.push(RuntimeObservationValue::Term {
+                        constructor: constructor.clone(),
+                        children: Vec::new(),
+                    });
+                },
+                other => values.push(other.clone()),
+            },
+            Work::Bag { entries, index, value_base } => {
+                let next = index + 1;
+                if next < entries.len() {
+                    work.push(Work::Bag { entries, index: next, value_base });
+                    work.push(Work::Visit(&entries[next].0));
+                    continue;
+                }
+
+                let elements = values.split_off(value_base);
+                let mut flat = Vec::with_capacity(entries.len());
+                for (element, (_, count)) in elements.into_iter().zip(entries) {
+                    for _ in 0..*count {
+                        match &element {
+                            RuntimeObservationValue::Bag(inner) => {
+                                for (inner_element, inner_count) in inner {
+                                    for _ in 0..*inner_count {
+                                        flat.push((inner_element.clone(), 1));
+                                    }
                                 }
-                            }
-                        },
-                        other => flat.push((other.clone(), 1)),
+                            },
+                            other => flat.push((other.clone(), 1)),
+                        }
                     }
                 }
-            }
-            RuntimeObservationValue::Bag(flat)
-        },
-        RuntimeObservationValue::Term { constructor, children } => RuntimeObservationValue::Term {
-            constructor: constructor.clone(),
-            children: children.iter().map(flatten_observation_value).collect(),
-        },
-        other => other.clone(),
+                values.push(RuntimeObservationValue::Bag(flat));
+            },
+            Work::Term { constructor, children, index, value_base } => {
+                let next = index + 1;
+                if next < children.len() {
+                    work.push(Work::Term {
+                        constructor,
+                        children,
+                        index: next,
+                        value_base,
+                    });
+                    work.push(Work::Visit(&children[next]));
+                } else {
+                    let children = values.split_off(value_base);
+                    values.push(RuntimeObservationValue::Term {
+                        constructor: constructor.to_owned(),
+                        children,
+                    });
+                }
+            },
+        }
     }
+
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("observation flatten PDA: missing root value")
 }
 
 /// The DATA-shaped host NF-scan of one drive-admitted language (A-S5.6, plan v2 §4.7 /
@@ -1165,17 +1238,13 @@ impl DriveNfScan {
 #[cfg(feature = "runtime-report")]
 fn observation_bag_elements(
     value: &RuntimeObservationValue,
-) -> Option<Vec<&RuntimeObservationValue>> {
+) -> Option<impl Iterator<Item = &RuntimeObservationValue> + Clone> {
     match value {
-        RuntimeObservationValue::Bag(entries) => {
-            let mut elements = Vec::with_capacity(entries.len());
-            for (element, count) in entries {
-                for _ in 0..*count {
-                    elements.push(element);
-                }
-            }
-            Some(elements)
-        },
+        RuntimeObservationValue::Bag(entries) => Some(
+            entries
+                .iter()
+                .flat_map(|(element, count)| std::iter::repeat_n(element, *count)),
+        ),
         _ => None,
     }
 }
@@ -1191,8 +1260,8 @@ fn observation_bag_elements(
 /// * **Out**: some node is `amb_label(m, body)` whose bag body holds `amb_label(n, inner)`
 ///   whose bag `inner` holds `out_label(m, _)` — the single-rooted (Red Out) shape.
 ///
-/// Recurses through every structured observation shape, so under-binder (`^lambda`) and
-/// nested-membrane redexes are found wherever the driver's descent arms would reach them.
+/// The explicit DFS visits every structured observation shape, so under-binder (`^lambda`)
+/// and nested-membrane redexes are found wherever the driver's descent arms would reach them.
 #[cfg(feature = "runtime-report")]
 fn guarded_ac_trio_redex_present(
     amb_label: &str,
@@ -1201,92 +1270,103 @@ fn guarded_ac_trio_redex_present(
     open_label: &str,
     value: &RuntimeObservationValue,
 ) -> bool {
-    let recurse = |child: &RuntimeObservationValue| {
-        guarded_ac_trio_redex_present(amb_label, in_label, out_label, open_label, child)
-    };
-    // (Out) — single-rooted at an ambient node.
-    if let RuntimeObservationValue::Term { constructor, children } = value {
-        if constructor == amb_label && children.len() == 2 {
-            let outer_name = &children[0];
-            if let Some(body) = observation_bag_elements(&children[1]) {
-                for element in &body {
-                    let RuntimeObservationValue::Term { constructor, children } = element else {
-                        continue;
-                    };
-                    if constructor != amb_label || children.len() != 2 {
-                        continue;
-                    }
-                    let Some(inner) = observation_bag_elements(&children[1]) else {
-                        continue;
-                    };
-                    let out_here = inner.iter().any(|inner_element| {
-                        matches!(
-                            inner_element,
-                            RuntimeObservationValue::Term { constructor, children }
-                                if constructor == out_label
-                                    && children.first() == Some(outer_name)
-                        )
-                    });
-                    if out_here {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    // (Open) + (In) — pair-rooted at a bag's top level.
-    if let Some(elements) = observation_bag_elements(value) {
-        for (index, element) in elements.iter().enumerate() {
-            let RuntimeObservationValue::Term { constructor, children } = element else {
-                continue;
-            };
-            let sibling_amb_named = |name: &RuntimeObservationValue| {
-                elements.iter().enumerate().any(|(sibling_index, sibling)| {
-                    sibling_index != index
-                        && matches!(
-                            sibling,
-                            RuntimeObservationValue::Term { constructor, children }
-                                if constructor == amb_label && children.first() == Some(name)
-                        )
-                })
-            };
-            // (Open): open(n, _) beside n[_].
-            if constructor == open_label && children.len() == 2 && sibling_amb_named(&children[0]) {
-                return true;
-            }
-            // (In): n[{in(m, _), …}] beside m[_].
+    let mut work = vec![value];
+    while let Some(value) = work.pop() {
+        // (Out) — single-rooted at an ambient node.
+        if let RuntimeObservationValue::Term { constructor, children } = value {
             if constructor == amb_label && children.len() == 2 {
+                let outer_name = &children[0];
                 if let Some(body) = observation_bag_elements(&children[1]) {
-                    let in_fires = body.iter().any(|body_element| {
-                        matches!(
-                            body_element,
-                            RuntimeObservationValue::Term { constructor, children }
-                                if constructor == in_label
-                                    && children.len() == 2
-                                    && sibling_amb_named(&children[0])
-                        )
-                    });
-                    if in_fires {
-                        return true;
+                    for element in body {
+                        let RuntimeObservationValue::Term { constructor, children } = element
+                        else {
+                            continue;
+                        };
+                        if constructor != amb_label || children.len() != 2 {
+                            continue;
+                        }
+                        let Some(mut inner) = observation_bag_elements(&children[1]) else {
+                            continue;
+                        };
+                        let out_here = inner.any(|inner_element| {
+                            matches!(
+                                inner_element,
+                                RuntimeObservationValue::Term { constructor, children }
+                                    if constructor == out_label
+                                        && children.first() == Some(outer_name)
+                            )
+                        });
+                        if out_here {
+                            return true;
+                        }
                     }
                 }
             }
         }
+        // (Open) + (In) — pair-rooted at a bag's top level.
+        if let Some(elements) = observation_bag_elements(value) {
+            for (index, element) in elements.clone().enumerate() {
+                let RuntimeObservationValue::Term { constructor, children } = element else {
+                    continue;
+                };
+                let sibling_amb_named = |name: &RuntimeObservationValue| {
+                    elements.clone().enumerate().any(|(sibling_index, sibling)| {
+                        sibling_index != index
+                            && matches!(
+                                sibling,
+                                RuntimeObservationValue::Term { constructor, children }
+                                    if constructor == amb_label && children.first() == Some(name)
+                            )
+                    })
+                };
+                // (Open): open(n, _) beside n[_].
+                if constructor == open_label
+                    && children.len() == 2
+                    && sibling_amb_named(&children[0])
+                {
+                    return true;
+                }
+                // (In): n[{in(m, _), …}] beside m[_].
+                if constructor == amb_label && children.len() == 2 {
+                    if let Some(mut body) = observation_bag_elements(&children[1]) {
+                        let in_fires = body.any(|body_element| {
+                            matches!(
+                                body_element,
+                                RuntimeObservationValue::Term { constructor, children }
+                                    if constructor == in_label
+                                        && children.len() == 2
+                                        && sibling_amb_named(&children[0])
+                            )
+                        });
+                        if in_fires {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        // Congruence descent — every structured child position, in the recursive
+        // oracle's original left-to-right depth-first order.
+        match value {
+            RuntimeObservationValue::Term { children, .. } => {
+                work.extend(children.iter().rev());
+            },
+            RuntimeObservationValue::List(items)
+            | RuntimeObservationValue::Tuple(items)
+            | RuntimeObservationValue::Set(items) => work.extend(items.iter().rev()),
+            RuntimeObservationValue::Bag(entries) => {
+                work.extend(entries.iter().rev().map(|(element, _)| element));
+            },
+            RuntimeObservationValue::Map(entries) => {
+                for (key, value) in entries.iter().rev() {
+                    work.push(value);
+                    work.push(key);
+                }
+            },
+            _ => {},
+        }
     }
-    // Congruence descent — every structured child position.
-    match value {
-        RuntimeObservationValue::Term { children, .. } => children.iter().any(recurse),
-        RuntimeObservationValue::List(items)
-        | RuntimeObservationValue::Tuple(items)
-        | RuntimeObservationValue::Set(items) => items.iter().any(recurse),
-        RuntimeObservationValue::Bag(entries) => {
-            entries.iter().any(|(element, _)| recurse(element))
-        },
-        RuntimeObservationValue::Map(entries) => entries
-            .iter()
-            .any(|(key, value)| recurse(key) || recurse(value)),
-        _ => false,
-    }
+    false
 }
 
 /// Build an in-memory `RhoRuntime`, inject an installed Rho-net program composed
