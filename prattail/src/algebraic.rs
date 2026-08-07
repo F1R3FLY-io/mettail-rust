@@ -298,96 +298,11 @@ pub fn build_cfg<W: Semiring>(wpds: &Wpds<W>) -> ControlFlowGraph<W> {
 /// because the CFG uses contiguous `usize` indices rather than the
 /// `HashMap<usize, Vec<usize>>` adjacency format of the WPDS version.
 pub fn tarjan_decompose<W: StarSemiring>(cfg: &ControlFlowGraph<W>) -> Vec<Vec<CfgNode>> {
-    let n = cfg.nodes.len();
-    let succ = cfg.successor_indices();
-
-    let mut index_counter: usize = 0;
-    let mut stack: Vec<usize> = Vec::new();
-    let mut on_stack = vec![false; n];
-    let mut indices = vec![usize::MAX; n]; // usize::MAX = not yet visited
-    let mut lowlinks = vec![0usize; n];
-    let mut result: Vec<Vec<CfgNode>> = Vec::new();
-
-    // Iterative Tarjan's algorithm using an explicit work stack to avoid
-    // deep recursion on large CFGs.
-    //
-    // Each frame records: (node, index into that node's successor list).
-    // When a frame is first pushed (successor_idx == 0), we initialize
-    // the node's index/lowlink and push it onto the Tarjan stack.
-    // We then iterate through successors; when we encounter an unvisited
-    // successor, we push a new frame for it.  When we return from a
-    // successor (successor_idx advances), we update lowlink.  When all
-    // successors are processed, we check if this node is an SCC root.
-    struct TarjanFrame {
-        node: usize,
-        successor_idx: usize,
-    }
-
-    for start in 0..n {
-        if indices[start] != usize::MAX {
-            continue;
-        }
-
-        let mut work_stack: Vec<TarjanFrame> = vec![TarjanFrame { node: start, successor_idx: 0 }];
-
-        while let Some(frame) = work_stack.last_mut() {
-            let v = frame.node;
-
-            if frame.successor_idx == 0 {
-                // First visit: initialize
-                indices[v] = index_counter;
-                lowlinks[v] = index_counter;
-                index_counter += 1;
-                stack.push(v);
-                on_stack[v] = true;
-            }
-
-            let successors = &succ[v];
-            let mut pushed_child = false;
-
-            while frame.successor_idx < successors.len() {
-                let w = successors[frame.successor_idx];
-                if indices[w] == usize::MAX {
-                    // Unvisited successor: push frame for it, but first
-                    // advance our own successor_idx so we resume correctly.
-                    frame.successor_idx += 1;
-                    work_stack.push(TarjanFrame { node: w, successor_idx: 0 });
-                    pushed_child = true;
-                    break;
-                } else if on_stack[w] {
-                    lowlinks[v] = lowlinks[v].min(indices[w]);
-                }
-                frame.successor_idx += 1;
-            }
-
-            if pushed_child {
-                continue;
-            }
-
-            // All successors processed.  Check for SCC root.
-            if lowlinks[v] == indices[v] {
-                let mut scc = Vec::new();
-                loop {
-                    let w = stack.pop().expect("Tarjan stack underflow");
-                    on_stack[w] = false;
-                    scc.push(CfgNode(w));
-                    if w == v {
-                        break;
-                    }
-                }
-                result.push(scc);
-            }
-
-            // Pop this frame and propagate lowlink to parent.
-            let finished_node = work_stack.pop().expect("work stack underflow").node;
-            if let Some(parent_frame) = work_stack.last() {
-                let parent = parent_frame.node;
-                lowlinks[parent] = lowlinks[parent].min(lowlinks[finished_node]);
-            }
-        }
-    }
-
-    result
+    let successors = cfg.successor_indices();
+    crate::graph_algorithms::tarjan_scc(&successors)
+        .into_iter()
+        .map(|component| component.into_iter().map(CfgNode).collect())
+        .collect()
 }
 
 // ==============================================================================

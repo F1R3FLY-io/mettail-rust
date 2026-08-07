@@ -394,68 +394,8 @@ fn occurs(var: &str, term: &Term) -> bool {
 ///
 /// Returns a vector of SCCs, each represented as a vector of node indices.
 fn tarjan_scc_indices(n: usize, adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
-    let mut index_counter: usize = 0;
-    let mut stack: Vec<usize> = Vec::new();
-    let mut on_stack = vec![false; n];
-    let mut indices = vec![usize::MAX; n]; // usize::MAX = undefined
-    let mut lowlinks = vec![0usize; n];
-    let mut result: Vec<Vec<usize>> = Vec::new();
-
-    fn strongconnect(
-        v: usize,
-        adj: &[Vec<usize>],
-        index_counter: &mut usize,
-        stack: &mut Vec<usize>,
-        on_stack: &mut [bool],
-        indices: &mut [usize],
-        lowlinks: &mut [usize],
-        result: &mut Vec<Vec<usize>>,
-    ) {
-        indices[v] = *index_counter;
-        lowlinks[v] = *index_counter;
-        *index_counter += 1;
-        stack.push(v);
-        on_stack[v] = true;
-
-        for &w in &adj[v] {
-            if indices[w] == usize::MAX {
-                strongconnect(w, adj, index_counter, stack, on_stack, indices, lowlinks, result);
-                lowlinks[v] = lowlinks[v].min(lowlinks[w]);
-            } else if on_stack[w] {
-                lowlinks[v] = lowlinks[v].min(indices[w]);
-            }
-        }
-
-        if lowlinks[v] == indices[v] {
-            let mut component = Vec::new();
-            loop {
-                let w = stack.pop().expect("tarjan stack underflow");
-                on_stack[w] = false;
-                component.push(w);
-                if w == v {
-                    break;
-                }
-            }
-            result.push(component);
-        }
-    }
-
-    for v in 0..n {
-        if indices[v] == usize::MAX {
-            strongconnect(
-                v,
-                adj,
-                &mut index_counter,
-                &mut stack,
-                &mut on_stack,
-                &mut indices,
-                &mut lowlinks,
-                &mut result,
-            );
-        }
-    }
-
-    result
+    debug_assert_eq!(n, adj.len());
+    crate::graph_algorithms::tarjan_scc(adj)
 }
 
 /// Check termination of a TRS via the dependency pair method.

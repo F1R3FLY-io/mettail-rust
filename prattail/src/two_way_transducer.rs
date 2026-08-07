@@ -1123,72 +1123,21 @@ pub fn detect_deadlock<W: Semiring>(
 ///
 /// Returns all SCCs of size >= 2 (cycles) as lists of node indices.
 fn tarjan_scc(n: usize, adjacency: &HashMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
-    struct TarjanState {
-        index_counter: usize,
-        stack: Vec<usize>,
-        on_stack: Vec<bool>,
-        index: Vec<Option<usize>>,
-        lowlink: Vec<usize>,
-        result: Vec<Vec<usize>>,
-    }
-
-    fn strongconnect(v: usize, adj: &HashMap<usize, Vec<usize>>, state: &mut TarjanState) {
-        state.index[v] = Some(state.index_counter);
-        state.lowlink[v] = state.index_counter;
-        state.index_counter += 1;
-        state.stack.push(v);
-        state.on_stack[v] = true;
-
-        if let Some(neighbors) = adj.get(&v) {
-            for &w in neighbors {
-                if w >= state.index.len() {
-                    continue;
-                }
-                if state.index[w].is_none() {
-                    strongconnect(w, adj, state);
-                    state.lowlink[v] = state.lowlink[v].min(state.lowlink[w]);
-                } else if state.on_stack[w] {
-                    state.lowlink[v] =
-                        state.lowlink[v].min(state.index[w].expect("index should exist"));
-                }
-            }
-        }
-
-        // Root of an SCC
-        if state.lowlink[v] == state.index[v].expect("index should exist") {
-            let mut component = Vec::new();
-            loop {
-                let w = state.stack.pop().expect("stack should not be empty in SCC");
-                state.on_stack[w] = false;
-                component.push(w);
-                if w == v {
-                    break;
-                }
-            }
-            // Only report cycles (SCC size >= 2)
-            if component.len() >= 2 {
-                component.sort_unstable();
-                state.result.push(component);
-            }
+    let mut dense = vec![Vec::new(); n];
+    for (&source, successors) in adjacency {
+        if source < n {
+            dense[source].extend(successors.iter().copied().filter(|target| *target < n));
         }
     }
 
-    let mut state = TarjanState {
-        index_counter: 0,
-        stack: Vec::new(),
-        on_stack: vec![false; n],
-        index: vec![None; n],
-        lowlink: vec![0; n],
-        result: Vec::new(),
-    };
-
-    for v in 0..n {
-        if state.index[v].is_none() {
-            strongconnect(v, adjacency, &mut state);
-        }
-    }
-
-    state.result
+    crate::graph_algorithms::tarjan_scc(&dense)
+        .into_iter()
+        .filter(|component| component.len() >= 2)
+        .map(|mut component| {
+            component.sort_unstable();
+            component
+        })
+        .collect()
 }
 
 /// Topological sort with fallback to natural order if cycles exist.

@@ -50,6 +50,8 @@
 #[macro_use]
 mod trace;
 
+mod graph_algorithms;
+
 pub mod automata;
 pub mod binding_power;
 pub mod classify;

@@ -106,99 +106,31 @@ pub fn extract_call_graph<W: Semiring>(wpds: &Wpds<W>) -> WpdsCallGraph {
 
 /// Tarjan's strongly connected components algorithm on the call graph.
 fn tarjan_scc(categories: &HashSet<String>, edges: &[CallEdge]) -> Vec<Vec<String>> {
-    // Build adjacency list
-    let cat_list: Vec<String> = categories.iter().cloned().collect();
-    let cat_index: HashMap<&str, usize> = cat_list
+    let category_list: Vec<String> = categories.iter().cloned().collect();
+    let category_index: HashMap<&str, usize> = category_list
         .iter()
         .enumerate()
-        .map(|(i, c)| (c.as_str(), i))
+        .map(|(index, category)| (category.as_str(), index))
         .collect();
-    let n = cat_list.len();
-
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut adjacency = vec![Vec::new(); category_list.len()];
     for edge in edges {
-        if let (Some(&from), Some(&to)) =
-            (cat_index.get(edge.caller_cat.as_str()), cat_index.get(edge.callee_cat.as_str()))
-        {
-            adj[from].push(to);
+        if let (Some(&caller), Some(&callee)) = (
+            category_index.get(edge.caller_cat.as_str()),
+            category_index.get(edge.callee_cat.as_str()),
+        ) {
+            adjacency[caller].push(callee);
         }
     }
 
-    // Tarjan state
-    let mut index_counter: usize = 0;
-    let mut stack: Vec<usize> = Vec::new();
-    let mut on_stack = vec![false; n];
-    let mut indices = vec![usize::MAX; n]; // usize::MAX = undefined
-    let mut lowlinks = vec![0usize; n];
-    let mut result: Vec<Vec<String>> = Vec::new();
-
-    fn strongconnect(
-        v: usize,
-        adj: &[Vec<usize>],
-        index_counter: &mut usize,
-        stack: &mut Vec<usize>,
-        on_stack: &mut [bool],
-        indices: &mut [usize],
-        lowlinks: &mut [usize],
-        result: &mut Vec<Vec<String>>,
-        cat_list: &[String],
-    ) {
-        indices[v] = *index_counter;
-        lowlinks[v] = *index_counter;
-        *index_counter += 1;
-        stack.push(v);
-        on_stack[v] = true;
-
-        for &w in &adj[v] {
-            if indices[w] == usize::MAX {
-                strongconnect(
-                    w,
-                    adj,
-                    index_counter,
-                    stack,
-                    on_stack,
-                    indices,
-                    lowlinks,
-                    result,
-                    cat_list,
-                );
-                lowlinks[v] = lowlinks[v].min(lowlinks[w]);
-            } else if on_stack[w] {
-                lowlinks[v] = lowlinks[v].min(indices[w]);
-            }
-        }
-
-        if lowlinks[v] == indices[v] {
-            let mut component = Vec::new();
-            loop {
-                let w = stack.pop().expect("tarjan stack underflow");
-                on_stack[w] = false;
-                component.push(cat_list[w].clone());
-                if w == v {
-                    break;
-                }
-            }
-            result.push(component);
-        }
-    }
-
-    for v in 0..n {
-        if indices[v] == usize::MAX {
-            strongconnect(
-                v,
-                &adj,
-                &mut index_counter,
-                &mut stack,
-                &mut on_stack,
-                &mut indices,
-                &mut lowlinks,
-                &mut result,
-                &cat_list,
-            );
-        }
-    }
-
-    result
+    crate::graph_algorithms::tarjan_scc(&adjacency)
+        .into_iter()
+        .map(|component| {
+            component
+                .into_iter()
+                .map(|index| category_list[index].clone())
+                .collect()
+        })
+        .collect()
 }
 
 /// Compute the shortest path from any reachable category to a target category
