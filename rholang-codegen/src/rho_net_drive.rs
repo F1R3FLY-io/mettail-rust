@@ -930,32 +930,45 @@ pub(crate) fn bag_fragment_dispatch(
 /// `Node` element is statically non-bag (wrapped unconditionally); a `Binder` element is
 /// the statically-non-bag `^lambda` node (wrapped), its BODY recursing one binder deeper
 /// (F8-AM-1c).
+fn for_each_template_preorder(
+    template: &AcReconstructTemplate,
+    at_bag_element: bool,
+    mut visit: impl FnMut(&AcReconstructTemplate, bool, usize),
+) {
+    let mut work = vec![(template, at_bag_element, 0)];
+    while let Some((template, at_bag_element, depth)) = work.pop() {
+        visit(template, at_bag_element, depth);
+        match template {
+            AcReconstructTemplate::Var(_) => {},
+            AcReconstructTemplate::Node { children, .. } => {
+                work.extend(children.iter().rev().map(|child| (child, false, depth)));
+            },
+            AcReconstructTemplate::Bag { elements, .. } => {
+                work.extend(elements.iter().rev().map(|element| (element, true, depth)));
+            },
+            AcReconstructTemplate::Binder { body } => {
+                work.push((body, false, depth + 1));
+            },
+        }
+    }
+}
+
 fn collect_bag_element_vars(
     template: &AcReconstructTemplate,
     at_bag_element: bool,
     depth: usize,
     out: &mut Vec<(String, usize)>,
 ) {
-    match template {
-        AcReconstructTemplate::Var(name) => {
-            if at_bag_element && !out.iter().any(|(n, d)| n == name && *d == depth) {
-                out.push((name.clone(), depth));
-            }
-        },
-        AcReconstructTemplate::Node { children, .. } => {
-            for child in children {
-                collect_bag_element_vars(child, false, depth, out);
-            }
-        },
-        AcReconstructTemplate::Bag { elements, .. } => {
-            for element in elements {
-                collect_bag_element_vars(element, true, depth, out);
-            }
-        },
-        AcReconstructTemplate::Binder { body } => {
-            collect_bag_element_vars(body, false, depth + 1, out);
-        },
-    }
+    let mut seen: std::collections::HashSet<(String, usize)> = out.iter().cloned().collect();
+    for_each_template_preorder(template, at_bag_element, |template, at_bag_element, relative| {
+        let AcReconstructTemplate::Var(name) = template else {
+            return;
+        };
+        let depth = depth + relative;
+        if at_bag_element && seen.insert((name.clone(), depth)) {
+            out.push((name.clone(), depth));
+        }
+    });
 }
 
 /// Collect (first-appearance order, deduplicated) every `(σ-slot name, binder depth ≥ 1)`
@@ -971,29 +984,53 @@ fn collect_shift_requirements(
     depth: usize,
     out: &mut Vec<(String, usize)>,
 ) {
-    fn push(name: &str, depth: usize, out: &mut Vec<(String, usize)>) {
-        if depth >= 1 && !out.iter().any(|(n, d)| n == name && *d == depth) {
+    fn push(
+        name: &str,
+        depth: usize,
+        seen: &mut std::collections::HashSet<(String, usize)>,
+        out: &mut Vec<(String, usize)>,
+    ) {
+        if depth >= 1 && seen.insert((name.to_owned(), depth)) {
             out.push((name.to_string(), depth));
         }
     }
-    match template {
-        AcReconstructTemplate::Var(name) => push(name, depth, out),
-        AcReconstructTemplate::Node { children, .. } => {
-            for child in children {
-                collect_shift_requirements(child, depth, out);
-            }
-        },
-        AcReconstructTemplate::Bag { elements, rest, .. } => {
-            for element in elements {
-                collect_shift_requirements(element, depth, out);
-            }
-            if let Some(rest) = rest {
-                push(rest, depth, out);
-            }
-        },
-        AcReconstructTemplate::Binder { body } => {
-            collect_shift_requirements(body, depth + 1, out);
-        },
+    let mut seen: std::collections::HashSet<(String, usize)> = out.iter().cloned().collect();
+    enum Work<'a> {
+        Template(&'a AcReconstructTemplate, usize),
+        Rest(&'a str, usize),
+    }
+    let mut work = vec![Work::Template(template, depth)];
+    while let Some(step) = work.pop() {
+        match step {
+            Work::Template(AcReconstructTemplate::Var(name), depth) => {
+                push(name, depth, &mut seen, out);
+            },
+            Work::Template(AcReconstructTemplate::Node { children, .. }, depth) => {
+                work.extend(
+                    children
+                        .iter()
+                        .rev()
+                        .map(|child| Work::Template(child, depth)),
+                );
+            },
+            Work::Template(AcReconstructTemplate::Bag { elements, rest, .. }, depth) => {
+                if let Some(rest) = rest {
+                    work.push(Work::Rest(rest, depth));
+                }
+                work.extend(
+                    elements
+                        .iter()
+                        .rev()
+                        .map(|element| Work::Template(element, depth)),
+                );
+            },
+            Work::Template(AcReconstructTemplate::Binder { body }, depth) => {
+                work.push(Work::Template(body, depth + 1));
+            },
+            Work::Rest(rest, depth) => {
+                push(rest, depth, &mut seen, out);
+            },
+        }
     }
 }
 
@@ -3295,6 +3332,10 @@ pub(crate) fn hashbag_collection_ops(def: &LanguageDef) -> Vec<String> {
 #[cfg(test)]
 #[path = "../tests/support/rho_net_drive_pattern_recursive_oracle.rs"]
 mod pattern_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_drive_template_collectors_recursive_oracle.rs"]
+mod template_collectors_recursive_oracle;
 
 #[cfg(test)]
 #[path = "../tests/support/scion_recursive_oracle.rs"]

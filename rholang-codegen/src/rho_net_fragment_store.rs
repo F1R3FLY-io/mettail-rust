@@ -182,34 +182,39 @@ fn push_u32(out: &mut Vec<u8>, value: usize) {
 /// deterministic): `0x00 seg(var)` / `0x01 seg(op) u32(argc) args…` /
 /// `0x02 seg(op) u32(fixedc) fixed… (0x00 | 0x01 seg(rest))`.
 fn encode_pattern(out: &mut Vec<u8>, pattern: &DvPattern<String>) {
-    match pattern {
-        DvPattern::Var(name) => {
-            out.push(0x00);
-            push_segment(out, name);
-        },
-        DvPattern::App { op, args } => {
-            out.push(0x01);
-            push_segment(out, op);
-            push_u32(out, args.len());
-            for arg in args {
-                encode_pattern(out, arg);
-            }
-        },
-        DvPattern::AcApp { op, fixed, rest } => {
-            out.push(0x02);
-            push_segment(out, op);
-            push_u32(out, fixed.len());
-            for arg in fixed {
-                encode_pattern(out, arg);
-            }
-            match rest {
+    enum Work<'a> {
+        Pattern(&'a DvPattern<String>),
+        AcRest(Option<&'a String>),
+    }
+
+    let mut work = vec![Work::Pattern(pattern)];
+    while let Some(step) = work.pop() {
+        match step {
+            Work::Pattern(DvPattern::Var(name)) => {
+                out.push(0x00);
+                push_segment(out, name);
+            },
+            Work::Pattern(DvPattern::App { op, args }) => {
+                out.push(0x01);
+                push_segment(out, op);
+                push_u32(out, args.len());
+                work.extend(args.iter().rev().map(Work::Pattern));
+            },
+            Work::Pattern(DvPattern::AcApp { op, fixed, rest }) => {
+                out.push(0x02);
+                push_segment(out, op);
+                push_u32(out, fixed.len());
+                work.push(Work::AcRest(rest.as_ref()));
+                work.extend(fixed.iter().rev().map(Work::Pattern));
+            },
+            Work::AcRest(rest) => match rest {
                 None => out.push(0x00),
                 Some(rest) => {
                     out.push(0x01);
                     push_segment(out, rest);
                 },
-            }
-        },
+            },
+        }
     }
 }
 
@@ -998,6 +1003,10 @@ pub fn ladder_accounting<B: FragmentStoreBackend>(snapshots: &[B]) -> LadderAcco
         whole_artifact_bytes,
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_fragment_pattern_recursive_oracle.rs"]
+mod pattern_recursive_oracle;
 
 #[cfg(test)]
 mod tests {

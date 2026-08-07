@@ -259,24 +259,27 @@ pub(crate) fn collect_nested_schedule(
     captures: &mut Vec<String>,
     names: &mut Vec<String>,
 ) {
-    match view.node(state) {
-        AutomatonNode::Var(name) => {
-            captures.push(cap_channel.to_string());
-            names.push(name.to_string());
-        },
-        AutomatonNode::App { op, args } => {
-            descents.push(Descent {
-                loc_channel: loc_channel.to_string(),
-                op: op.to_string(),
-            });
-            for (index, &arg) in args.iter().enumerate() {
-                let child_loc = spread_child_location(loc_channel, op, index);
-                let child_cap = spread_child_location(cap_channel, op, index);
-                collect_nested_schedule(
-                    view, arg, &child_loc, &child_cap, descents, captures, names,
-                );
-            }
-        },
+    let mut work = vec![(state, loc_channel.to_owned(), cap_channel.to_owned())];
+    while let Some((state, loc_channel, cap_channel)) = work.pop() {
+        match view.node(state) {
+            AutomatonNode::Var(name) => {
+                captures.push(cap_channel);
+                names.push(name.to_string());
+            },
+            AutomatonNode::App { op, args } => {
+                descents.push(Descent {
+                    loc_channel: loc_channel.clone(),
+                    op: op.to_string(),
+                });
+                for (index, &arg) in args.iter().enumerate().rev() {
+                    work.push((
+                        arg,
+                        spread_child_location(&loc_channel, op, index),
+                        spread_child_location(&cap_channel, op, index),
+                    ));
+                }
+            },
+        }
     }
 }
 
@@ -648,6 +651,10 @@ pub fn automaton_receiver_network_par(
     };
     multi_pattern_receiver_network_par(view, root_location, &[target], language_fingerprint)
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_automaton_schedule_recursive_oracle.rs"]
+mod schedule_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
