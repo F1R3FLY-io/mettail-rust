@@ -494,19 +494,6 @@ enum Disposition {
     /// licence**: it says the value is unconstructible *today*, and the day the
     /// construction gains a case the refusal goes live and needs a real answer.
     ConstructionInvariant { invariant: &'static str },
-
-    /// The only producer of the input this code refuses is **code in the same module**, so
-    /// a refusal means the producer and consumer have drifted — never that a user typed
-    /// something.
-    ///
-    /// Obligation: `producer` must exist in the same file, and references to the module
-    /// from elsewhere in the workspace must occur only in `sole_consumer`. If a second
-    /// consumer appears — one that might feed bytes from somewhere else — the row stops
-    /// holding and the refusal has to be reconsidered as a real input check.
-    SelfProducedInput {
-        producer: &'static str,
-        sole_consumer: &'static str,
-    },
 }
 
 /// How far from a refusal its witness token may sit and still be that refusal's witness.
@@ -560,27 +547,6 @@ const TIER1_TABLE: &[Row] = &[
         // `TermParam::Optional` is flattened by an earlier pass; the arm exists only
         // because the enum still has the variant.
         disposition: Disposition::EarlierPassNormalised { pass: "flattened" },
-    },
-    Row {
-        file: "ast/src/token_codec.rs",
-        construct: "panic",
-        count: 3,
-        // An invalid spacing byte, an unparseable literal repr, an unknown tag byte. The
-        // bytes come from `token_codec::encode` and from nowhere else: `registry.rs:112`
-        // encodes and `registry.rs:154` decodes, within one build. A refusal here means
-        // the codec disagrees with itself.
-        disposition: Disposition::SelfProducedInput {
-            producer: "pub fn encode",
-            sole_consumer: "ast/src/registry.rs",
-        },
-    },
-    Row {
-        file: "ast/src/token_codec.rs",
-        construct: "unreachable",
-        count: 1,
-        // The inner delimiter `match` re-tests the same four tag constants the outer arm
-        // already matched on.
-        disposition: Disposition::LocallyFiltered { filter: "TAG_GROUP_PAREN" },
     },
 ];
 
@@ -734,52 +700,6 @@ fn every_declared_disposition_still_holds() {
                              trusting is an assumption, not a justification."
                         ));
                     }
-                }
-            },
-            Disposition::SelfProducedInput { producer, sole_consumer } => {
-                if !source.contains(producer) {
-                    failures.push(format!(
-                        "{}: SelfProducedInput names `{producer}` as the sole producer of the \
-                         bytes these refusals check, but that function is no longer in the file.",
-                        row.file
-                    ));
-                }
-                // The module name, derived from its own path — not spelled twice.
-                let module = Path::new(row.file)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .expect("a declared file has a stem");
-                let needle = format!("{module}::");
-                let mut consumers: Vec<String> = Vec::new();
-                for sub in ["macros/src", "ast/src", "prattail/src"] {
-                    for (rel, path) in rust_files_under(&root, sub) {
-                        if rel == row.file {
-                            continue;
-                        }
-                        let Ok(src) = std::fs::read_to_string(&path) else {
-                            continue;
-                        };
-                        // Skip doc-comment mentions; only code counts.
-                        let code_mentions = src
-                            .lines()
-                            .filter(|l| !l.trim_start().starts_with("//"))
-                            .any(|l| l.contains(&needle));
-                        if code_mentions {
-                            consumers.push(rel);
-                        }
-                    }
-                }
-                consumers.sort();
-                consumers.dedup();
-                if consumers != vec![sole_consumer.to_string()] {
-                    failures.push(format!(
-                        "{}: SelfProducedInput claims `{sole_consumer}` is the only consumer of \
-                         `{module}`, so the only bytes these refusals can see are ones \
-                         `{producer}` wrote. The consumers found are {consumers:?}. A second \
-                         consumer may feed bytes from elsewhere, which would make these \
-                         refusals real input checks that need a diagnostic.",
-                        row.file
-                    ));
                 }
             },
         }

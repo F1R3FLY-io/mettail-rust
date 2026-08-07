@@ -147,49 +147,81 @@ enum PatternNode<'pattern> {
 
 enum PatternCloneTask<'pattern> {
     Visit(PatternNode<'pattern>),
-    WrapTerm(usize),
-    Collection(&'pattern Pattern, usize),
-    Map(&'pattern Pattern, usize),
-    Zip(usize),
-    IndexedVec(&'pattern Pattern, usize),
-    Apply(&'pattern PatternTerm, usize),
-    Lambda(&'pattern PatternTerm, usize),
-    MultiLambda(&'pattern PatternTerm, usize),
-    Subst(&'pattern PatternTerm, usize),
-    MultiSubst(&'pattern PatternTerm, usize),
+    WrapTerm {
+        pattern_base: usize,
+        term_base: usize,
+    },
+    Collection {
+        coll_type: &'pattern Option<CollectionType>,
+        rest: &'pattern Option<Ident>,
+        pattern_base: usize,
+    },
+    Map {
+        params: &'pattern [Ident],
+        pattern_base: usize,
+    },
+    Zip {
+        pattern_base: usize,
+    },
+    IndexedVec {
+        collection: &'pattern Ident,
+        index: &'pattern Ident,
+        pattern_base: usize,
+    },
+    Apply {
+        constructor: &'pattern Ident,
+        pattern_base: usize,
+        term_base: usize,
+    },
+    Lambda {
+        binder: &'pattern Ident,
+        pattern_base: usize,
+        term_base: usize,
+    },
+    MultiLambda {
+        binders: &'pattern [Ident],
+        pattern_base: usize,
+        term_base: usize,
+    },
+    Subst {
+        var: &'pattern Ident,
+        pattern_base: usize,
+        term_base: usize,
+    },
+    MultiSubst {
+        pattern_base: usize,
+        term_base: usize,
+    },
 }
 
-enum ClonedPatternNode {
-    Pattern(Pattern),
-    Term(PatternTerm),
-}
-
-fn cloned_pattern(value: ClonedPatternNode) -> Pattern {
-    match value {
-        ClonedPatternNode::Pattern(pattern) => pattern,
-        ClonedPatternNode::Term(_) => panic!("pattern clone PDA expected a Pattern result"),
-    }
-}
-
-fn cloned_term(value: ClonedPatternNode) -> PatternTerm {
-    match value {
-        ClonedPatternNode::Term(term) => term,
-        ClonedPatternNode::Pattern(_) => panic!("pattern clone PDA expected a PatternTerm result"),
-    }
-}
-
-fn clone_pattern_node(root: PatternNode<'_>) -> ClonedPatternNode {
+/// Clone the mutually recursive pattern graph with result stacks separated by type.
+///
+/// A single `enum` result stack made every continuation re-check whether it had received
+/// a `Pattern` or a `PatternTerm`, even though the scheduling transition already fixes
+/// that type. Separate stacks encode that invariant in the continuation itself: pattern
+/// frames can only consume patterns, and term frames can only consume terms.
+fn clone_pattern_graph(
+    root: PatternNode<'_>,
+    patterns: &mut Vec<Pattern>,
+    terms: &mut Vec<PatternTerm>,
+) {
     let mut tasks = vec![PatternCloneTask::Visit(root)];
-    let mut values = Vec::new();
     while let Some(task) = tasks.pop() {
         match task {
             PatternCloneTask::Visit(PatternNode::Pattern(pattern)) => match pattern {
                 Pattern::Term(term) => {
-                    tasks.push(PatternCloneTask::WrapTerm(values.len()));
+                    tasks.push(PatternCloneTask::WrapTerm {
+                        pattern_base: patterns.len(),
+                        term_base: terms.len(),
+                    });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Term(term)));
                 },
-                Pattern::Collection { elements, .. } => {
-                    tasks.push(PatternCloneTask::Collection(pattern, values.len()));
+                Pattern::Collection { coll_type, elements, rest } => {
+                    tasks.push(PatternCloneTask::Collection {
+                        coll_type,
+                        rest,
+                        pattern_base: patterns.len(),
+                    });
                     tasks.extend(
                         elements
                             .iter()
@@ -197,48 +229,71 @@ fn clone_pattern_node(root: PatternNode<'_>) -> ClonedPatternNode {
                             .map(|child| PatternCloneTask::Visit(PatternNode::Pattern(child))),
                     );
                 },
-                Pattern::Map { collection, body, .. } => {
-                    tasks.push(PatternCloneTask::Map(pattern, values.len()));
+                Pattern::Map { collection, params, body } => {
+                    tasks.push(PatternCloneTask::Map { params, pattern_base: patterns.len() });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(body)));
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(collection)));
                 },
                 Pattern::Zip { first, second } => {
-                    tasks.push(PatternCloneTask::Zip(values.len()));
+                    tasks.push(PatternCloneTask::Zip { pattern_base: patterns.len() });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(second)));
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(first)));
                 },
-                Pattern::IndexedVec { element, .. } => {
-                    tasks.push(PatternCloneTask::IndexedVec(pattern, values.len()));
+                Pattern::IndexedVec { collection, index, element } => {
+                    tasks.push(PatternCloneTask::IndexedVec {
+                        collection,
+                        index,
+                        pattern_base: patterns.len(),
+                    });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(element)));
                 },
             },
             PatternCloneTask::Visit(PatternNode::Term(term)) => match term {
                 PatternTerm::Var(ident) => {
-                    values.push(ClonedPatternNode::Term(PatternTerm::Var(ident.clone())));
+                    terms.push(PatternTerm::Var(ident.clone()));
                 },
-                PatternTerm::Apply { args, .. } => {
-                    tasks.push(PatternCloneTask::Apply(term, values.len()));
+                PatternTerm::Apply { constructor, args } => {
+                    tasks.push(PatternCloneTask::Apply {
+                        constructor,
+                        pattern_base: patterns.len(),
+                        term_base: terms.len(),
+                    });
                     tasks.extend(
                         args.iter()
                             .rev()
                             .map(|child| PatternCloneTask::Visit(PatternNode::Pattern(child))),
                     );
                 },
-                PatternTerm::Lambda { body, .. } => {
-                    tasks.push(PatternCloneTask::Lambda(term, values.len()));
+                PatternTerm::Lambda { binder, body } => {
+                    tasks.push(PatternCloneTask::Lambda {
+                        binder,
+                        pattern_base: patterns.len(),
+                        term_base: terms.len(),
+                    });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(body)));
                 },
-                PatternTerm::MultiLambda { body, .. } => {
-                    tasks.push(PatternCloneTask::MultiLambda(term, values.len()));
+                PatternTerm::MultiLambda { binders, body } => {
+                    tasks.push(PatternCloneTask::MultiLambda {
+                        binders,
+                        pattern_base: patterns.len(),
+                        term_base: terms.len(),
+                    });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(body)));
                 },
-                PatternTerm::Subst { term: value, replacement, .. } => {
-                    tasks.push(PatternCloneTask::Subst(term, values.len()));
+                PatternTerm::Subst { term: value, var, replacement } => {
+                    tasks.push(PatternCloneTask::Subst {
+                        var,
+                        pattern_base: patterns.len(),
+                        term_base: terms.len(),
+                    });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(replacement)));
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(value)));
                 },
                 PatternTerm::MultiSubst { scope, replacements } => {
-                    tasks.push(PatternCloneTask::MultiSubst(term, values.len()));
+                    tasks.push(PatternCloneTask::MultiSubst {
+                        pattern_base: patterns.len(),
+                        term_base: terms.len(),
+                    });
                     tasks.push(PatternCloneTask::Visit(PatternNode::Pattern(scope)));
                     tasks.extend(
                         replacements
@@ -248,153 +303,129 @@ fn clone_pattern_node(root: PatternNode<'_>) -> ClonedPatternNode {
                     );
                 },
             },
-            PatternCloneTask::WrapTerm(value_base) => {
-                let term = cloned_term(
-                    values
-                        .pop()
-                        .expect("pattern clone PDA lost a PatternTerm result"),
-                );
-                values.truncate(value_base);
-                values.push(ClonedPatternNode::Pattern(Pattern::Term(term)));
+            PatternCloneTask::WrapTerm { pattern_base, term_base } => {
+                let term = terms
+                    .pop()
+                    .expect("pattern clone PDA lost a PatternTerm result");
+                patterns.truncate(pattern_base);
+                terms.truncate(term_base);
+                patterns.push(Pattern::Term(term));
             },
-            PatternCloneTask::Collection(source, value_base) => {
-                let Pattern::Collection { coll_type, rest, .. } = source else {
-                    unreachable!("collection clone task carries a collection source")
-                };
-                let elements = values.drain(value_base..).map(cloned_pattern).collect();
-                values.push(ClonedPatternNode::Pattern(Pattern::Collection {
+            PatternCloneTask::Collection { coll_type, rest, pattern_base } => {
+                let elements = patterns.drain(pattern_base..).collect();
+                patterns.push(Pattern::Collection {
                     coll_type: coll_type.clone(),
                     elements,
                     rest: rest.clone(),
-                }));
+                });
             },
-            PatternCloneTask::Map(source, value_base) => {
-                let Pattern::Map { params, .. } = source else {
-                    unreachable!("map clone task carries a map source")
-                };
-                let body = cloned_pattern(values.pop().expect("pattern clone PDA lost map body"));
-                let collection =
-                    cloned_pattern(values.pop().expect("pattern clone PDA lost map collection"));
-                values.truncate(value_base);
-                values.push(ClonedPatternNode::Pattern(Pattern::Map {
+            PatternCloneTask::Map { params, pattern_base } => {
+                let body = patterns.pop().expect("pattern clone PDA lost map body");
+                let collection = patterns
+                    .pop()
+                    .expect("pattern clone PDA lost map collection");
+                patterns.truncate(pattern_base);
+                patterns.push(Pattern::Map {
                     collection: Box::new(collection),
-                    params: params.clone(),
+                    params: params.to_vec(),
                     body: Box::new(body),
-                }));
+                });
             },
-            PatternCloneTask::Zip(value_base) => {
-                let second = cloned_pattern(values.pop().expect("pattern clone PDA lost zip RHS"));
-                let first = cloned_pattern(values.pop().expect("pattern clone PDA lost zip LHS"));
-                values.truncate(value_base);
-                values.push(ClonedPatternNode::Pattern(Pattern::Zip {
+            PatternCloneTask::Zip { pattern_base } => {
+                let second = patterns.pop().expect("pattern clone PDA lost zip RHS");
+                let first = patterns.pop().expect("pattern clone PDA lost zip LHS");
+                patterns.truncate(pattern_base);
+                patterns.push(Pattern::Zip {
                     first: Box::new(first),
                     second: Box::new(second),
-                }));
+                });
             },
-            PatternCloneTask::IndexedVec(source, value_base) => {
-                let Pattern::IndexedVec { collection, index, .. } = source else {
-                    unreachable!("indexed clone task carries an IndexedVec source")
-                };
-                let element = cloned_pattern(
-                    values
-                        .pop()
-                        .expect("pattern clone PDA lost indexed element"),
-                );
-                values.truncate(value_base);
-                values.push(ClonedPatternNode::Pattern(Pattern::IndexedVec {
+            PatternCloneTask::IndexedVec { collection, index, pattern_base } => {
+                let element = patterns
+                    .pop()
+                    .expect("pattern clone PDA lost indexed element");
+                patterns.truncate(pattern_base);
+                patterns.push(Pattern::IndexedVec {
                     collection: collection.clone(),
                     index: index.clone(),
                     element: Box::new(element),
-                }));
+                });
             },
-            PatternCloneTask::Apply(source, value_base) => {
-                let PatternTerm::Apply { constructor, .. } = source else {
-                    unreachable!("apply clone task carries an Apply source")
-                };
-                let args = values.drain(value_base..).map(cloned_pattern).collect();
-                values.push(ClonedPatternNode::Term(PatternTerm::Apply {
-                    constructor: constructor.clone(),
-                    args,
-                }));
+            PatternCloneTask::Apply { constructor, pattern_base, term_base } => {
+                let args = patterns.drain(pattern_base..).collect();
+                terms.truncate(term_base);
+                terms.push(PatternTerm::Apply { constructor: constructor.clone(), args });
             },
-            PatternCloneTask::Lambda(source, value_base) => {
-                let PatternTerm::Lambda { binder, .. } = source else {
-                    unreachable!("lambda clone task carries a Lambda source")
-                };
-                let body =
-                    cloned_pattern(values.pop().expect("pattern clone PDA lost lambda body"));
-                values.truncate(value_base);
-                values.push(ClonedPatternNode::Term(PatternTerm::Lambda {
+            PatternCloneTask::Lambda { binder, pattern_base, term_base } => {
+                let body = patterns.pop().expect("pattern clone PDA lost lambda body");
+                patterns.truncate(pattern_base);
+                terms.truncate(term_base);
+                terms.push(PatternTerm::Lambda {
                     binder: binder.clone(),
                     body: Box::new(body),
-                }));
+                });
             },
-            PatternCloneTask::MultiLambda(source, value_base) => {
-                let PatternTerm::MultiLambda { binders, .. } = source else {
-                    unreachable!("multi-lambda clone task carries a MultiLambda source")
-                };
-                let body = cloned_pattern(
-                    values
-                        .pop()
-                        .expect("pattern clone PDA lost multi-lambda body"),
-                );
-                values.truncate(value_base);
-                values.push(ClonedPatternNode::Term(PatternTerm::MultiLambda {
-                    binders: binders.clone(),
+            PatternCloneTask::MultiLambda { binders, pattern_base, term_base } => {
+                let body = patterns
+                    .pop()
+                    .expect("pattern clone PDA lost multi-lambda body");
+                patterns.truncate(pattern_base);
+                terms.truncate(term_base);
+                terms.push(PatternTerm::MultiLambda {
+                    binders: binders.to_vec(),
                     body: Box::new(body),
-                }));
+                });
             },
-            PatternCloneTask::Subst(source, value_base) => {
-                let PatternTerm::Subst { var, .. } = source else {
-                    unreachable!("substitution clone task carries a Subst source")
-                };
-                let replacement = cloned_pattern(
-                    values
-                        .pop()
-                        .expect("pattern clone PDA lost substitution replacement"),
-                );
-                let term = cloned_pattern(
-                    values
-                        .pop()
-                        .expect("pattern clone PDA lost substitution term"),
-                );
-                values.truncate(value_base);
-                values.push(ClonedPatternNode::Term(PatternTerm::Subst {
+            PatternCloneTask::Subst { var, pattern_base, term_base } => {
+                let replacement = patterns
+                    .pop()
+                    .expect("pattern clone PDA lost substitution replacement");
+                let term = patterns
+                    .pop()
+                    .expect("pattern clone PDA lost substitution term");
+                patterns.truncate(pattern_base);
+                terms.truncate(term_base);
+                terms.push(PatternTerm::Subst {
                     term: Box::new(term),
                     var: var.clone(),
                     replacement: Box::new(replacement),
-                }));
+                });
             },
-            PatternCloneTask::MultiSubst(source, value_base) => {
-                let PatternTerm::MultiSubst { .. } = source else {
-                    unreachable!("multi-substitution clone task carries a MultiSubst source")
-                };
-                let scope = cloned_pattern(
-                    values
-                        .pop()
-                        .expect("pattern clone PDA lost multi-substitution scope"),
-                );
-                let replacements = values.drain(value_base..).map(cloned_pattern).collect();
-                values.push(ClonedPatternNode::Term(PatternTerm::MultiSubst {
-                    scope: Box::new(scope),
-                    replacements,
-                }));
+            PatternCloneTask::MultiSubst { pattern_base, term_base } => {
+                let scope = patterns
+                    .pop()
+                    .expect("pattern clone PDA lost multi-substitution scope");
+                let replacements = patterns.drain(pattern_base..).collect();
+                terms.truncate(term_base);
+                terms.push(PatternTerm::MultiSubst { scope: Box::new(scope), replacements });
             },
         }
     }
-    debug_assert_eq!(values.len(), 1);
-    values.pop().expect("pattern clone PDA produced no result")
 }
 
 impl Clone for Pattern {
     fn clone(&self) -> Self {
-        cloned_pattern(clone_pattern_node(PatternNode::Pattern(self)))
+        let mut patterns = Vec::new();
+        let mut terms = Vec::new();
+        clone_pattern_graph(PatternNode::Pattern(self), &mut patterns, &mut terms);
+        debug_assert_eq!(patterns.len(), 1);
+        debug_assert!(terms.is_empty());
+        patterns
+            .pop()
+            .expect("pattern clone PDA produced no Pattern result")
     }
 }
 
 impl Clone for PatternTerm {
     fn clone(&self) -> Self {
-        cloned_term(clone_pattern_node(PatternNode::Term(self)))
+        let mut patterns = Vec::new();
+        let mut terms = Vec::new();
+        clone_pattern_graph(PatternNode::Term(self), &mut patterns, &mut terms);
+        debug_assert!(patterns.is_empty());
+        debug_assert_eq!(terms.len(), 1);
+        terms
+            .pop()
+            .expect("pattern clone PDA produced no PatternTerm result")
     }
 }
 

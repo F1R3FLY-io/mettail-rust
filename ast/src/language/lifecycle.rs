@@ -766,7 +766,13 @@ impl std::fmt::Debug for Condition {
 
 enum BehavioralCloneTask<'pred> {
     Visit(&'pred BehavioralPred),
-    Quantified(&'pred BehavioralPred, usize),
+    Quantified {
+        quantifier: &'pred Quantifier,
+        var: &'pred syn::Ident,
+        domain: &'pred Option<syn::Ident>,
+        bound: Option<usize>,
+        value_base: usize,
+    },
     And(usize),
     Or(usize),
     Not(usize),
@@ -787,8 +793,20 @@ fn clone_behavioral_predicate(root: &BehavioralPred) -> BehavioralPred {
                 args: args.clone(),
                 negated: *negated,
             }),
-            BehavioralCloneTask::Visit(pred @ BehavioralPred::Quantified { body, .. }) => {
-                tasks.push(BehavioralCloneTask::Quantified(pred, values.len()));
+            BehavioralCloneTask::Visit(BehavioralPred::Quantified {
+                quantifier,
+                var,
+                domain,
+                bound,
+                body,
+            }) => {
+                tasks.push(BehavioralCloneTask::Quantified {
+                    quantifier,
+                    var,
+                    domain,
+                    bound: *bound,
+                    value_base: values.len(),
+                });
                 tasks.push(BehavioralCloneTask::Visit(body));
             },
             BehavioralCloneTask::Visit(BehavioralPred::And(left, right)) => {
@@ -817,11 +835,13 @@ fn clone_behavioral_predicate(root: &BehavioralPred) -> BehavioralPred {
                     rest: rest.clone(),
                 }),
             BehavioralCloneTask::Visit(BehavioralPred::Top) => values.push(BehavioralPred::Top),
-            BehavioralCloneTask::Quantified(source, value_base) => {
-                let BehavioralPred::Quantified { quantifier, var, domain, bound, .. } = source
-                else {
-                    unreachable!("quantified clone task carries a quantified predicate")
-                };
+            BehavioralCloneTask::Quantified {
+                quantifier,
+                var,
+                domain,
+                bound,
+                value_base,
+            } => {
                 let body = values
                     .pop()
                     .expect("behavioral clone PDA lost a quantified body");
@@ -830,7 +850,7 @@ fn clone_behavioral_predicate(root: &BehavioralPred) -> BehavioralPred {
                     quantifier: quantifier.clone(),
                     var: var.clone(),
                     domain: domain.clone(),
-                    bound: *bound,
+                    bound,
                     body: Box::new(body),
                 });
             },
@@ -918,35 +938,46 @@ impl Clone for Premise {
     fn clone(&self) -> Self {
         let mut wrappers = Vec::new();
         let mut current = self;
-        while let Premise::ForAll { collection, param, body } = current {
-            wrappers.push((collection.clone(), param.clone()));
-            current = body;
-        }
-        let mut cloned = match current {
-            Premise::Freshness(condition) => Premise::Freshness(condition.clone()),
-            Premise::Congruence { source, target } => Premise::Congruence {
-                source: source.clone(),
-                target: target.clone(),
-            },
-            Premise::CongruenceWithheld { source, target } => Premise::CongruenceWithheld {
-                source: source.clone(),
-                target: target.clone(),
-            },
-            Premise::RelationQuery { relation, args } => Premise::RelationQuery {
-                relation: relation.clone(),
-                args: args.clone(),
-            },
-            Premise::BehavioralGuard(predicate) => Premise::BehavioralGuard(predicate.clone()),
-            Premise::SyntheticInjGuard {
-                inner_var,
-                source_category,
-                excluded_variants,
-            } => Premise::SyntheticInjGuard {
-                inner_var: inner_var.clone(),
-                source_category: source_category.clone(),
-                excluded_variants: excluded_variants.clone(),
-            },
-            Premise::ForAll { .. } => unreachable!("ForAll spine was consumed above"),
+        let mut cloned = loop {
+            match current {
+                Premise::ForAll { collection, param, body } => {
+                    wrappers.push((collection.clone(), param.clone()));
+                    current = body;
+                },
+                Premise::Freshness(condition) => break Premise::Freshness(condition.clone()),
+                Premise::Congruence { source, target } => {
+                    break Premise::Congruence {
+                        source: source.clone(),
+                        target: target.clone(),
+                    };
+                },
+                Premise::CongruenceWithheld { source, target } => {
+                    break Premise::CongruenceWithheld {
+                        source: source.clone(),
+                        target: target.clone(),
+                    };
+                },
+                Premise::RelationQuery { relation, args } => {
+                    break Premise::RelationQuery {
+                        relation: relation.clone(),
+                        args: args.clone(),
+                    };
+                },
+                Premise::BehavioralGuard(predicate) => {
+                    break Premise::BehavioralGuard(predicate.clone());
+                },
+                Premise::SyntheticInjGuard {
+                    inner_var,
+                    source_category,
+                    excluded_variants,
+                } => {
+                    break Premise::SyntheticInjGuard {
+                        inner_var: inner_var.clone(),
+                        source_category: source_category.clone(),
+                        excluded_variants: excluded_variants.clone(),
+                    };
+                },
+            }
         };
         for (collection, param) in wrappers.into_iter().rev() {
             cloned = Premise::ForAll {
@@ -963,27 +994,36 @@ impl Clone for Condition {
     fn clone(&self) -> Self {
         let mut wrappers = Vec::new();
         let mut current = self;
-        while let Condition::ForAll { collection, param, body } = current {
-            wrappers.push((collection.clone(), param.clone()));
-            current = body;
-        }
-        let mut cloned = match current {
-            Condition::Freshness(condition) => Condition::Freshness(condition.clone()),
-            Condition::EnvQuery { relation, args } => Condition::EnvQuery {
-                relation: relation.clone(),
-                args: args.clone(),
-            },
-            Condition::BehavioralGuard(predicate) => Condition::BehavioralGuard(predicate.clone()),
-            Condition::SyntheticInjGuard {
-                inner_var,
-                source_category,
-                excluded_variants,
-            } => Condition::SyntheticInjGuard {
-                inner_var: inner_var.clone(),
-                source_category: source_category.clone(),
-                excluded_variants: excluded_variants.clone(),
-            },
-            Condition::ForAll { .. } => unreachable!("ForAll spine was consumed above"),
+        let mut cloned = loop {
+            match current {
+                Condition::ForAll { collection, param, body } => {
+                    wrappers.push((collection.clone(), param.clone()));
+                    current = body;
+                },
+                Condition::Freshness(condition) => {
+                    break Condition::Freshness(condition.clone());
+                },
+                Condition::EnvQuery { relation, args } => {
+                    break Condition::EnvQuery {
+                        relation: relation.clone(),
+                        args: args.clone(),
+                    };
+                },
+                Condition::BehavioralGuard(predicate) => {
+                    break Condition::BehavioralGuard(predicate.clone());
+                },
+                Condition::SyntheticInjGuard {
+                    inner_var,
+                    source_category,
+                    excluded_variants,
+                } => {
+                    break Condition::SyntheticInjGuard {
+                        inner_var: inner_var.clone(),
+                        source_category: source_category.clone(),
+                        excluded_variants: excluded_variants.clone(),
+                    };
+                },
+            }
         };
         for (collection, param) in wrappers.into_iter().rev() {
             cloned = Condition::ForAll {
@@ -1195,7 +1235,13 @@ enum RefinementBinary {
 
 enum RefinementCloneTask<'pred> {
     Visit(&'pred RefinementPredicate),
-    Quantified(&'pred RefinementPredicate, usize),
+    Quantified {
+        quantifier: &'pred Quantifier,
+        var: &'pred syn::Ident,
+        domain: &'pred Option<syn::Ident>,
+        bound: Option<usize>,
+        value_base: usize,
+    },
     Binary(RefinementBinary, usize),
     Not(usize),
 }
@@ -1224,10 +1270,20 @@ impl Clone for RefinementPredicate {
                     args: args.clone(),
                     negated: *negated,
                 }),
-                RefinementCloneTask::Visit(
-                    source @ RefinementPredicate::Quantified { body, .. },
-                ) => {
-                    tasks.push(RefinementCloneTask::Quantified(source, values.len()));
+                RefinementCloneTask::Visit(RefinementPredicate::Quantified {
+                    quantifier,
+                    var,
+                    domain,
+                    bound,
+                    body,
+                }) => {
+                    tasks.push(RefinementCloneTask::Quantified {
+                        quantifier,
+                        var,
+                        domain,
+                        bound: *bound,
+                        value_base: values.len(),
+                    });
                     tasks.push(RefinementCloneTask::Visit(body));
                 },
                 RefinementCloneTask::Visit(RefinementPredicate::And(left, right)) => {
@@ -1256,12 +1312,13 @@ impl Clone for RefinementPredicate {
                 RefinementCloneTask::Visit(RefinementPredicate::TermNeq(left, right)) => {
                     values.push(RefinementPredicate::TermNeq(left.clone(), right.clone()));
                 },
-                RefinementCloneTask::Quantified(source, value_base) => {
-                    let RefinementPredicate::Quantified { quantifier, var, domain, bound, .. } =
-                        source
-                    else {
-                        unreachable!("quantified clone task carries a quantified predicate")
-                    };
+                RefinementCloneTask::Quantified {
+                    quantifier,
+                    var,
+                    domain,
+                    bound,
+                    value_base,
+                } => {
                     let body = values
                         .pop()
                         .expect("refinement clone PDA lost a quantified body");
@@ -1270,7 +1327,7 @@ impl Clone for RefinementPredicate {
                         quantifier: quantifier.clone(),
                         var: var.clone(),
                         domain: domain.clone(),
-                        bound: *bound,
+                        bound,
                         body: Box::new(body),
                     });
                 },

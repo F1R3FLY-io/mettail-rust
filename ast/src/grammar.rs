@@ -520,81 +520,94 @@ enum SyntaxNode<'syntax> {
 
 enum SyntaxCloneTask<'syntax> {
     Visit(SyntaxNode<'syntax>),
-    WrapOp(usize),
-    Sep(&'syntax PatternOp, usize),
-    Map(&'syntax PatternOp, usize),
-    Opt(usize),
+    WrapOp {
+        expr_base: usize,
+        op_base: usize,
+    },
+    Sep {
+        collection: &'syntax Ident,
+        separator: &'syntax str,
+        op_base: usize,
+    },
+    Map {
+        params: &'syntax [Ident],
+        expr_base: usize,
+        op_base: usize,
+    },
+    Opt {
+        expr_base: usize,
+        op_base: usize,
+    },
 }
 
-enum ClonedSyntaxNode {
-    Expr(SyntaxExpr),
-    Op(PatternOp),
-}
-
-fn cloned_syntax_expr(node: ClonedSyntaxNode) -> SyntaxExpr {
-    match node {
-        ClonedSyntaxNode::Expr(expr) => expr,
-        ClonedSyntaxNode::Op(_) => panic!("syntax clone PDA expected a SyntaxExpr"),
-    }
-}
-
-fn cloned_pattern_op(node: ClonedSyntaxNode) -> PatternOp {
-    match node {
-        ClonedSyntaxNode::Op(op) => op,
-        ClonedSyntaxNode::Expr(_) => panic!("syntax clone PDA expected a PatternOp"),
-    }
-}
-
-fn clone_syntax_node(root: SyntaxNode<'_>) -> ClonedSyntaxNode {
+/// Clone the mutually recursive syntax graph using one result stack per output type.
+///
+/// The transition that schedules a continuation determines whether its child produces a
+/// `SyntaxExpr` or `PatternOp`; keeping those values in separate stacks makes that fact a
+/// property of the machine instead of an enum downcast guarded by a refusal branch.
+fn clone_syntax_graph(
+    root: SyntaxNode<'_>,
+    expressions: &mut Vec<SyntaxExpr>,
+    operations: &mut Vec<PatternOp>,
+) {
     let mut tasks = vec![SyntaxCloneTask::Visit(root)];
-    let mut values = Vec::new();
     while let Some(task) = tasks.pop() {
         match task {
             SyntaxCloneTask::Visit(SyntaxNode::Expr(expr)) => match expr {
                 SyntaxExpr::Literal(value) => {
-                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::Literal(value.clone())));
+                    expressions.push(SyntaxExpr::Literal(value.clone()));
                 },
                 SyntaxExpr::Param(ident) => {
-                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::Param(ident.clone())));
+                    expressions.push(SyntaxExpr::Param(ident.clone()));
                 },
                 SyntaxExpr::Op(op) => {
-                    tasks.push(SyntaxCloneTask::WrapOp(values.len()));
+                    tasks.push(SyntaxCloneTask::WrapOp {
+                        expr_base: expressions.len(),
+                        op_base: operations.len(),
+                    });
                     tasks.push(SyntaxCloneTask::Visit(SyntaxNode::Op(op)));
                 },
                 SyntaxExpr::TokenKind { name, bind } => {
-                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::TokenKind {
-                        name: name.clone(),
-                        bind: bind.clone(),
-                    }));
+                    expressions
+                        .push(SyntaxExpr::TokenKind { name: name.clone(), bind: bind.clone() });
                 },
                 SyntaxExpr::GuestBody { open, close, bind } => {
-                    values.push(ClonedSyntaxNode::Expr(SyntaxExpr::GuestBody {
+                    expressions.push(SyntaxExpr::GuestBody {
                         open: open.clone(),
                         close: close.clone(),
                         bind: bind.clone(),
-                    }));
+                    });
                 },
             },
             SyntaxCloneTask::Visit(SyntaxNode::Op(op)) => match op {
                 PatternOp::Sep { source: None, collection, separator } => {
-                    values.push(ClonedSyntaxNode::Op(PatternOp::Sep {
+                    operations.push(PatternOp::Sep {
                         collection: collection.clone(),
                         separator: separator.clone(),
                         source: None,
-                    }));
+                    });
                 },
-                PatternOp::Sep { source: Some(source), .. } => {
-                    tasks.push(SyntaxCloneTask::Sep(op, values.len()));
+                PatternOp::Sep {
+                    collection,
+                    separator,
+                    source: Some(source),
+                } => {
+                    tasks.push(SyntaxCloneTask::Sep {
+                        collection,
+                        separator,
+                        op_base: operations.len(),
+                    });
                     tasks.push(SyntaxCloneTask::Visit(SyntaxNode::Op(source)));
                 },
                 PatternOp::Zip { left, right } => {
-                    values.push(ClonedSyntaxNode::Op(PatternOp::Zip {
-                        left: left.clone(),
-                        right: right.clone(),
-                    }));
+                    operations.push(PatternOp::Zip { left: left.clone(), right: right.clone() });
                 },
-                PatternOp::Map { source, body, .. } => {
-                    tasks.push(SyntaxCloneTask::Map(op, values.len()));
+                PatternOp::Map { source, params, body } => {
+                    tasks.push(SyntaxCloneTask::Map {
+                        params,
+                        expr_base: expressions.len(),
+                        op_base: operations.len(),
+                    });
                     tasks.extend(
                         body.iter()
                             .rev()
@@ -603,7 +616,10 @@ fn clone_syntax_node(root: SyntaxNode<'_>) -> ClonedSyntaxNode {
                     tasks.push(SyntaxCloneTask::Visit(SyntaxNode::Op(source)));
                 },
                 PatternOp::Opt { inner } => {
-                    tasks.push(SyntaxCloneTask::Opt(values.len()));
+                    tasks.push(SyntaxCloneTask::Opt {
+                        expr_base: expressions.len(),
+                        op_base: operations.len(),
+                    });
                     tasks.extend(
                         inner
                             .iter()
@@ -612,61 +628,72 @@ fn clone_syntax_node(root: SyntaxNode<'_>) -> ClonedSyntaxNode {
                     );
                 },
                 PatternOp::Var(ident) => {
-                    values.push(ClonedSyntaxNode::Op(PatternOp::Var(ident.clone())));
+                    operations.push(PatternOp::Var(ident.clone()));
                 },
             },
-            SyntaxCloneTask::WrapOp(value_base) => {
-                let op =
-                    cloned_pattern_op(values.pop().expect("syntax clone PDA lost an Op result"));
-                values.truncate(value_base);
-                values.push(ClonedSyntaxNode::Expr(SyntaxExpr::Op(op)));
+            SyntaxCloneTask::WrapOp { expr_base, op_base } => {
+                let op = operations
+                    .pop()
+                    .expect("syntax clone PDA lost an Op result");
+                expressions.truncate(expr_base);
+                operations.truncate(op_base);
+                expressions.push(SyntaxExpr::Op(op));
             },
-            SyntaxCloneTask::Sep(source, value_base) => {
-                let PatternOp::Sep { collection, separator, .. } = source else {
-                    unreachable!("Sep clone task carries a Sep source")
-                };
-                let inner =
-                    cloned_pattern_op(values.pop().expect("syntax clone PDA lost a Sep source"));
-                values.truncate(value_base);
-                values.push(ClonedSyntaxNode::Op(PatternOp::Sep {
+            SyntaxCloneTask::Sep { collection, separator, op_base } => {
+                let inner = operations
+                    .pop()
+                    .expect("syntax clone PDA lost a Sep source");
+                operations.truncate(op_base);
+                operations.push(PatternOp::Sep {
                     collection: collection.clone(),
-                    separator: separator.clone(),
+                    separator: separator.to_owned(),
                     source: Some(Box::new(inner)),
-                }));
+                });
             },
-            SyntaxCloneTask::Map(source, value_base) => {
-                let PatternOp::Map { params, .. } = source else {
-                    unreachable!("Map clone task carries a Map source")
-                };
-                let mut cloned = values.drain(value_base..);
-                let source =
-                    cloned_pattern_op(cloned.next().expect("syntax clone PDA lost a Map source"));
-                let body = cloned.map(cloned_syntax_expr).collect();
-                values.push(ClonedSyntaxNode::Op(PatternOp::Map {
+            SyntaxCloneTask::Map { params, expr_base, op_base } => {
+                let source = operations
+                    .pop()
+                    .expect("syntax clone PDA lost a Map source");
+                let body = expressions.drain(expr_base..).collect();
+                operations.truncate(op_base);
+                operations.push(PatternOp::Map {
                     source: Box::new(source),
-                    params: params.clone(),
+                    params: params.to_vec(),
                     body,
-                }));
+                });
             },
-            SyntaxCloneTask::Opt(value_base) => {
-                let inner = values.drain(value_base..).map(cloned_syntax_expr).collect();
-                values.push(ClonedSyntaxNode::Op(PatternOp::Opt { inner }));
+            SyntaxCloneTask::Opt { expr_base, op_base } => {
+                let inner = expressions.drain(expr_base..).collect();
+                operations.truncate(op_base);
+                operations.push(PatternOp::Opt { inner });
             },
         }
     }
-    debug_assert_eq!(values.len(), 1);
-    values.pop().expect("syntax clone PDA produced no result")
 }
 
 impl Clone for SyntaxExpr {
     fn clone(&self) -> Self {
-        cloned_syntax_expr(clone_syntax_node(SyntaxNode::Expr(self)))
+        let mut expressions = Vec::new();
+        let mut operations = Vec::new();
+        clone_syntax_graph(SyntaxNode::Expr(self), &mut expressions, &mut operations);
+        debug_assert_eq!(expressions.len(), 1);
+        debug_assert!(operations.is_empty());
+        expressions
+            .pop()
+            .expect("syntax clone PDA produced no SyntaxExpr result")
     }
 }
 
 impl Clone for PatternOp {
     fn clone(&self) -> Self {
-        cloned_pattern_op(clone_syntax_node(SyntaxNode::Op(self)))
+        let mut expressions = Vec::new();
+        let mut operations = Vec::new();
+        clone_syntax_graph(SyntaxNode::Op(self), &mut expressions, &mut operations);
+        debug_assert!(expressions.is_empty());
+        debug_assert_eq!(operations.len(), 1);
+        operations
+            .pop()
+            .expect("syntax clone PDA produced no PatternOp result")
     }
 }
 
@@ -2156,15 +2183,22 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
     enum Task {
         Syntax(RawSyntax),
         Op(RawOp),
-        WrapOp,
+        WrapOp {
+            syntax_base: usize,
+            op_base: usize,
+        },
         FinishMap {
             params: Vec<Ident>,
             body_len: usize,
             chains: Vec<RawChain>,
+            syntax_base: usize,
+            op_base: usize,
         },
         FinishOpt {
             body_len: usize,
             chains: Vec<RawChain>,
+            syntax_base: usize,
+            op_base: usize,
         },
         ApplyChains(std::vec::IntoIter<RawChain>),
         FinishChainMap {
@@ -2172,49 +2206,50 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
             params: Vec<Ident>,
             body_len: usize,
             remaining: std::vec::IntoIter<RawChain>,
+            syntax_base: usize,
+            op_base: usize,
         },
     }
-    enum Value {
-        Syntax(SyntaxExpr),
-        Op(PatternOp),
-    }
 
-    fn pop_op(values: &mut Vec<Value>) -> PatternOp {
-        match values
-            .pop()
-            .expect("operation continuation requires a value")
-        {
-            Value::Op(op) => op,
-            Value::Syntax(_) => unreachable!("operation continuation received syntax"),
+    fn pop_op(values: &mut Vec<PatternOp>, base: usize) -> SynResult<PatternOp> {
+        if values.len() != base + 1 {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "pattern-operation continuation produced an invalid result count",
+            ));
         }
+        Ok(values.pop().expect("the checked operation result exists"))
     }
-    fn pop_body(values: &mut Vec<Value>, len: usize) -> Vec<SyntaxExpr> {
-        let mut body = Vec::with_capacity(len);
-        for _ in 0..len {
-            match values.pop().expect("body continuation requires a value") {
-                Value::Syntax(expr) => body.push(expr),
-                Value::Op(_) => unreachable!("body continuation received an operation"),
-            }
+    fn pop_body(
+        values: &mut Vec<SyntaxExpr>,
+        base: usize,
+        len: usize,
+    ) -> SynResult<Vec<SyntaxExpr>> {
+        if values.len() != base + len {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "pattern body continuation produced an invalid result count",
+            ));
         }
-        body.reverse();
-        body
+        Ok(values.drain(base..).collect())
     }
     fn schedule_body(tasks: &mut Vec<Task>, body: Vec<RawSyntax>) {
         tasks.extend(body.into_iter().rev().map(Task::Syntax));
     }
 
     let mut tasks = vec![Task::Syntax(root)];
-    let mut values = Vec::new();
+    let mut syntax_values = Vec::new();
+    let mut op_values = Vec::new();
     while let Some(task) = tasks.pop() {
         match task {
             Task::Syntax(RawSyntax::Param(id)) => {
-                values.push(Value::Syntax(SyntaxExpr::Param(id)));
+                syntax_values.push(SyntaxExpr::Param(id));
             },
             Task::Syntax(RawSyntax::TokenKind { name, bind }) => {
-                values.push(Value::Syntax(SyntaxExpr::TokenKind { name, bind: Some(bind) }));
+                syntax_values.push(SyntaxExpr::TokenKind { name, bind: Some(bind) });
             },
             Task::Syntax(RawSyntax::Literal(value)) => {
-                values.push(Value::Syntax(SyntaxExpr::Literal(value)));
+                syntax_values.push(SyntaxExpr::Literal(value));
             },
             Task::Syntax(RawSyntax::GuestBody(content)) => {
                 struct FltContent {
@@ -2232,22 +2267,26 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                     }
                 }
                 let parsed: FltContent = syn::parse2(content)?;
-                values.push(Value::Syntax(SyntaxExpr::GuestBody {
+                syntax_values.push(SyntaxExpr::GuestBody {
                     open: parsed.open,
                     close: parsed.close,
                     bind: parsed.bind,
-                }));
+                });
             },
             Task::Syntax(RawSyntax::Op(op)) => {
-                tasks.push(Task::WrapOp);
+                tasks.push(Task::WrapOp {
+                    syntax_base: syntax_values.len(),
+                    op_base: op_values.len(),
+                });
                 tasks.push(Task::Op(op));
             },
-            Task::WrapOp => {
-                let op = pop_op(&mut values);
-                values.push(Value::Syntax(SyntaxExpr::Op(op)));
+            Task::WrapOp { syntax_base, op_base } => {
+                let op = pop_op(&mut op_values, op_base)?;
+                syntax_values.truncate(syntax_base);
+                syntax_values.push(SyntaxExpr::Op(op));
             },
             Task::Op(RawOp { root: RawOpRoot::Var(id), chains }) => {
-                values.push(Value::Op(PatternOp::Var(id)));
+                op_values.push(PatternOp::Var(id));
                 tasks.push(Task::ApplyChains(chains.into_iter()));
             },
             Task::Op(RawOp {
@@ -2270,11 +2309,11 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                         }
                     }
                     let parsed: SepContent = syn::parse2(content)?;
-                    values.push(Value::Op(PatternOp::Sep {
+                    op_values.push(PatternOp::Sep {
                         collection: parsed.collection,
                         separator: parsed.separator,
                         source: None,
-                    }));
+                    });
                     tasks.push(Task::ApplyChains(chains.into_iter()));
                 },
                 "zip" => {
@@ -2290,21 +2329,31 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                         }
                     }
                     let parsed: ZipContent = syn::parse2(content)?;
-                    values
-                        .push(Value::Op(PatternOp::Zip { left: parsed.left, right: parsed.right }));
+                    op_values.push(PatternOp::Zip { left: parsed.left, right: parsed.right });
                     tasks.push(Task::ApplyChains(chains.into_iter()));
                 },
                 "map" => {
                     let parsed: RawMapContent = syn::parse2(content)?;
                     let body_len = parsed.body.len();
-                    tasks.push(Task::FinishMap { params: parsed.params, body_len, chains });
+                    tasks.push(Task::FinishMap {
+                        params: parsed.params,
+                        body_len,
+                        chains,
+                        syntax_base: syntax_values.len(),
+                        op_base: op_values.len(),
+                    });
                     schedule_body(&mut tasks, parsed.body);
                     tasks.push(Task::Op(parsed.source));
                 },
                 "opt" => {
                     let parsed: RawSyntaxSequence = syn::parse2(content)?;
                     let body_len = parsed.0.len();
-                    tasks.push(Task::FinishOpt { body_len, chains });
+                    tasks.push(Task::FinishOpt {
+                        body_len,
+                        chains,
+                        syntax_base: syntax_values.len(),
+                        op_base: op_values.len(),
+                    });
                     schedule_body(&mut tasks, parsed.0);
                 },
                 _ => {
@@ -2317,21 +2366,38 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                     ));
                 },
             },
-            Task::FinishMap { params, body_len, chains } => {
-                let body = pop_body(&mut values, body_len);
-                let source = pop_op(&mut values);
-                values.push(Value::Op(PatternOp::Map { source: Box::new(source), params, body }));
+            Task::FinishMap {
+                params,
+                body_len,
+                chains,
+                syntax_base,
+                op_base,
+            } => {
+                let body = pop_body(&mut syntax_values, syntax_base, body_len)?;
+                let source = pop_op(&mut op_values, op_base)?;
+                op_values.push(PatternOp::Map { source: Box::new(source), params, body });
                 tasks.push(Task::ApplyChains(chains.into_iter()));
             },
-            Task::FinishOpt { body_len, chains } => {
-                let inner = pop_body(&mut values, body_len);
-                values.push(Value::Op(PatternOp::Opt { inner }));
+            Task::FinishOpt { body_len, chains, syntax_base, op_base } => {
+                let inner = pop_body(&mut syntax_values, syntax_base, body_len)?;
+                if op_values.len() != op_base {
+                    return Err(syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "optional pattern continuation retained an operation result",
+                    ));
+                }
+                op_values.push(PatternOp::Opt { inner });
                 tasks.push(Task::ApplyChains(chains.into_iter()));
             },
             Task::ApplyChains(mut chains) => {
-                let receiver = pop_op(&mut values);
+                let receiver = op_values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "pattern-operation chain has no receiver",
+                    )
+                })?;
                 let Some(chain) = chains.next() else {
-                    values.push(Value::Op(receiver));
+                    op_values.push(receiver);
                     continue;
                 };
                 match chain.name.to_string().as_str() {
@@ -2355,7 +2421,7 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                                 ));
                             },
                         };
-                        values.push(Value::Op(op));
+                        op_values.push(op);
                         tasks.push(Task::ApplyChains(chains));
                     },
                     "map" => {
@@ -2366,6 +2432,8 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                             params: parsed.params,
                             body_len,
                             remaining: chains,
+                            syntax_base: syntax_values.len(),
+                            op_base: op_values.len(),
                         });
                         schedule_body(&mut tasks, parsed.body);
                     },
@@ -2380,18 +2448,35 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                     },
                 }
             },
-            Task::FinishChainMap { receiver, params, body_len, remaining } => {
-                let body = pop_body(&mut values, body_len);
-                values.push(Value::Op(PatternOp::Map { source: Box::new(receiver), params, body }));
+            Task::FinishChainMap {
+                receiver,
+                params,
+                body_len,
+                remaining,
+                syntax_base,
+                op_base,
+            } => {
+                let body = pop_body(&mut syntax_values, syntax_base, body_len)?;
+                if op_values.len() != op_base {
+                    return Err(syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "chained map continuation retained an operation result",
+                    ));
+                }
+                op_values.push(PatternOp::Map { source: Box::new(receiver), params, body });
                 tasks.push(Task::ApplyChains(remaining));
             },
         }
     }
-    debug_assert_eq!(values.len(), 1);
-    match values.pop().expect("syntax parser must produce one value") {
-        Value::Syntax(expr) => Ok(expr),
-        Value::Op(_) => unreachable!("top-level builder must wrap operations as syntax"),
+    if syntax_values.len() != 1 || !op_values.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "syntax parser produced an invalid final result shape",
+        ));
     }
+    Ok(syntax_values
+        .pop()
+        .expect("the checked syntax result exists"))
 }
 
 /// Convert term context to old-style items and bindings for backward compatibility.

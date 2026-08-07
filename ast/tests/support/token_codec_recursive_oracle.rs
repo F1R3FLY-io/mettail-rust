@@ -120,10 +120,12 @@ fn token_codec_matches_the_bounded_recursive_equations() {
         quote::quote! { ((({[gamma]}))) },
     ];
     for (index, stream) in corpus.iter().enumerate() {
-        let encoded = encode(stream);
+        let encoded = encode(stream).expect("corpus token stream must encode");
         assert_eq!(encoded, encode_recursive(stream), "encoded corpus item {index}");
         assert_eq!(
-            decode(&encoded).to_string(),
+            decode(&encoded)
+                .expect("recursive-oracle bytes must decode")
+                .to_string(),
             decode_recursive(&encoded).to_string(),
             "decoded corpus item {index}",
         );
@@ -133,7 +135,7 @@ fn token_codec_matches_the_bounded_recursive_equations() {
 #[test]
 fn token_codec_rejects_a_group_that_crosses_its_parent_boundary() {
     let malformed = [TAG_GROUP_PAREN, 2, 0, 0, 0, TAG_IDENT];
-    let error = try_decode(&malformed).expect_err("cross-boundary group must be rejected");
+    let error = decode(&malformed).expect_err("cross-boundary group must be rejected");
     assert_eq!(error.offset, 1);
     assert!(error.message.contains("crosses its parent boundary"));
 }
@@ -141,7 +143,7 @@ fn token_codec_rejects_a_group_that_crosses_its_parent_boundary() {
 #[test]
 fn token_codec_reports_the_wire_literal_length_bound_without_truncation() {
     let stream = TokenStream::from_iter([TokenTree::Literal(Literal::string(&"x".repeat(70_000)))]);
-    let error = try_encode(&stream).expect_err("oversized literal must not truncate its length");
+    let error = encode(&stream).expect_err("oversized literal must not truncate its length");
     assert_eq!(error.offset, 0);
     assert!(error.message.contains("u16 length"));
 }
@@ -162,11 +164,11 @@ fn token_codec_is_stack_safe_at_depth_20k() {
                 ))]);
             }
 
-            let encoded = encode(&stream);
+            let encoded = encode(&stream).expect("deep token stream must encode");
             assert_eq!(encoded.len(), 4 + 5 * DEPTH);
             std::mem::forget(stream);
 
-            let mut decoded = decode(&encoded);
+            let mut decoded = decode(&encoded).expect("deep token stream must decode");
             for _ in 0..DEPTH {
                 let mut trees = decoded.into_iter();
                 let Some(TokenTree::Group(group)) = trees.next() else {

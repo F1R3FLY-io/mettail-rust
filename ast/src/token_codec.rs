@@ -64,13 +64,8 @@ impl fmt::Display for TokenCodecError {
 
 impl std::error::Error for TokenCodecError {}
 
-/// Encode a `TokenStream` into a compact binary buffer.
-pub fn encode(stream: &TokenStream) -> Vec<u8> {
-    try_encode(stream).unwrap_or_else(|error| panic!("token_codec: {error}"))
-}
-
-/// Fallibly encode a compact token stream, reporting the format's explicit length bounds.
-pub fn try_encode(stream: &TokenStream) -> Result<Vec<u8>, TokenCodecError> {
+/// Encode a `TokenStream` into a compact binary buffer, reporting explicit format bounds.
+pub fn encode(stream: &TokenStream) -> Result<Vec<u8>, TokenCodecError> {
     let mut buf = Vec::new();
     enum EncodeJob {
         Visit(TokenTree),
@@ -147,17 +142,12 @@ pub fn try_encode(stream: &TokenStream) -> Result<Vec<u8>, TokenCodecError> {
     Ok(buf)
 }
 
-/// Decode a binary buffer back into a fresh `TokenStream`.
+/// Decode a binary buffer back into a fresh `TokenStream`, rejecting malformed input.
 ///
 /// All reconstructed tokens use `Span::call_site()` — they are valid
 /// in the current proc-macro bridge session regardless of when the
 /// bytes were originally produced.
-pub fn decode(bytes: &[u8]) -> TokenStream {
-    try_decode(bytes).unwrap_or_else(|error| panic!("token_codec: {error}"))
-}
-
-/// Fallibly decode a compact token stream without native-stack recursion.
-pub fn try_decode(bytes: &[u8]) -> Result<TokenStream, TokenCodecError> {
+pub fn decode(bytes: &[u8]) -> Result<TokenStream, TokenCodecError> {
     let mut cursor = Cursor { data: bytes, pos: 0 };
     struct DecodeFrame {
         end: usize,
@@ -296,7 +286,12 @@ pub fn try_decode(bytes: &[u8]) -> Result<TokenStream, TokenCodecError> {
                     TAG_GROUP_BRACE => Delimiter::Brace,
                     TAG_GROUP_BRACKET => Delimiter::Bracket,
                     TAG_GROUP_NONE => Delimiter::None,
-                    _ => unreachable!(),
+                    other => {
+                        return Err(TokenCodecError::new(
+                            cursor.pos - 1,
+                            format!("unknown group delimiter tag {other:#04x}"),
+                        ));
+                    },
                 };
                 let byte_len = cursor.read_u32_le(frame_end)? as usize;
                 let end = cursor.pos.checked_add(byte_len).ok_or_else(|| {
@@ -392,16 +387,16 @@ mod tests {
     #[test]
     fn roundtrip_ident() {
         let ts: TokenStream = quote! { foo };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         assert_eq!(decoded.to_string(), "foo");
     }
 
     #[test]
     fn roundtrip_punct() {
         let ts: TokenStream = quote! { += };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         // quote! { += } produces two Punct tokens: '+' (Joint) and '=' (Alone)
         let tokens: Vec<TokenTree> = decoded.into_iter().collect();
         assert_eq!(tokens.len(), 2);
@@ -424,32 +419,32 @@ mod tests {
     #[test]
     fn roundtrip_literal_int() {
         let ts: TokenStream = quote! { 42 };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         assert_eq!(decoded.to_string(), "42");
     }
 
     #[test]
     fn roundtrip_literal_string() {
         let ts: TokenStream = quote! { "hello" };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         assert_eq!(decoded.to_string(), "\"hello\"");
     }
 
     #[test]
     fn roundtrip_literal_float() {
         let ts: TokenStream = quote! { 3.14 };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         assert_eq!(decoded.to_string(), "3.14");
     }
 
     #[test]
     fn roundtrip_group_brace() {
         let ts: TokenStream = quote! { { a + b } };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         // Normalize whitespace for comparison
         let original_str = ts.to_string().replace(' ', "");
         let decoded_str = decoded.to_string().replace(' ', "");
@@ -459,8 +454,8 @@ mod tests {
     #[test]
     fn roundtrip_nested_groups() {
         let ts: TokenStream = quote! { fn(x: [i32]) };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         let original_str = ts.to_string().replace(' ', "");
         let decoded_str = decoded.to_string().replace(' ', "");
         assert_eq!(decoded_str, original_str);
@@ -469,9 +464,9 @@ mod tests {
     #[test]
     fn roundtrip_empty_stream() {
         let ts = TokenStream::new();
-        let bytes = encode(&ts);
+        let bytes = encode(&ts).expect("test token stream must encode");
         assert!(bytes.is_empty());
-        let decoded = decode(&bytes);
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
         assert!(decoded.is_empty());
     }
 
@@ -493,8 +488,8 @@ mod tests {
                 AddCongL . | S ~> T |- (Add S R) ~> (Add T R);
             },
         };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
 
         // Verify it re-parses as a LanguageDef
         let parsed: syn::Result<super::super::language::LanguageDef> = syn::parse2(decoded);
@@ -518,8 +513,8 @@ mod tests {
                 SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
             }
         };
-        let bytes = encode(&ts);
-        let decoded = decode(&bytes);
+        let bytes = encode(&ts).expect("test token stream must encode");
+        let decoded = decode(&bytes).expect("encoded test bytes must decode");
 
         let parsed: syn::Result<super::super::fragment::FragmentDef> = syn::parse2(decoded);
         assert!(parsed.is_ok(), "re-parsed FragmentDef failed: {:?}", parsed.err());

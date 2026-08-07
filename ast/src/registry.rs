@@ -109,7 +109,8 @@ fn register(name: &str, kind: EntryKind, input: &proc_macro2::TokenStream) -> Re
     if let Some(diagnostic) = duplicate_registration_diagnostic(name, kind) {
         return Err(diagnostic);
     }
-    let bytes = token_codec::encode(input);
+    let bytes = token_codec::encode(input)
+        .map_err(|error| format!("failed to encode registered definition `{name}`: {error}"))?;
     REGISTRY.with(|r| {
         r.borrow_mut().insert(name.to_string(), (kind, bytes));
     });
@@ -151,7 +152,7 @@ pub fn lookup_language_def(name: &str) -> Option<LanguageDef> {
     REGISTRY.with(|r| {
         let map = r.borrow();
         let (kind, bytes) = map.get(name)?;
-        let ts = token_codec::decode(bytes);
+        let ts = token_codec::decode(bytes).ok()?;
         match kind {
             EntryKind::Language => {
                 let def: LanguageDef =
