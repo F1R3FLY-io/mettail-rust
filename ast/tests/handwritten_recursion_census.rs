@@ -110,6 +110,13 @@ const RECURSION_DISPOSITIONS: &[(&str, Disposition)] = &[
              verbatim so the converted lowering can be differentialled against it",
         ),
     ),
+    (
+        "rholang-runtime/tests/support/observation_scan_recursive_oracle.rs",
+        Disposition::OracleTwin(
+            "the pre-conversion recursive observation binder/mobility/flatten equations retained \
+             only for exact ordered differentials against the SS-G26 production PDAs",
+        ),
+    ),
     // ── the term-op EMITTERS: Phase 5's targets ────────────────────────────────────
     (
         "macros/src/gen/term_ops/depth.rs",
@@ -426,7 +433,7 @@ const RECURSION_DISPOSITIONS: &[(&str, Disposition)] = &[
         Disposition::NotATermDepthCycle("the REPL/run driver loop"),
     ),
     (
-        "rholang-runtime/src/bin/stack_depth_probe.rs",
+        "rholang-runtime/tests/support/stack_depth_probe.rs",
         Disposition::NotATermDepthCycle(
             "★ THE PROBE ITSELF. Its `ast_recursion_control` subject is DELIBERATELY \
              host-recursive and is never to be converted — it is the classifier's non-vacuity \
