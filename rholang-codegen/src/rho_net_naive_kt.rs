@@ -96,7 +96,8 @@ use crate::rho_net_automaton::{
 };
 use crate::rho_net_lower::{
     collapse_capture_location, contextual_hole_bridge_par, contextual_premise_hole_channel,
-    reflect_tag, spread_child_location, spread_root_location, spread_term_par, GroundTerm,
+    reflect_tag, spread_child_location, spread_root_location, spread_term_par,
+    walk_ground_term_locations, GroundTerm,
 };
 use crate::rho_net_ruleset::InRhoMatchingRuleset;
 use crate::rho_net_subst_trs as trs;
@@ -334,14 +335,15 @@ fn collect_non_root_ops(
     state: dovetail::set_automaton::StateId,
     ops: &mut Vec<String>,
 ) {
-    match view.node(state) {
-        AutomatonNode::Var(_) => {},
-        AutomatonNode::App { op, args } => {
-            ops.push(op.to_string());
-            for &arg in args {
-                collect_non_root_ops(view, arg, ops);
-            }
-        },
+    let mut work = vec![state];
+    while let Some(state) = work.pop() {
+        match view.node(state) {
+            AutomatonNode::Var(_) => {},
+            AutomatonNode::App { op, args } => {
+                ops.push(op.to_string());
+                work.extend(args.iter().rev().copied());
+            },
+        }
     }
 }
 
@@ -563,13 +565,12 @@ pub fn naive_kt_entry_receiver_par(
 /// ([`spread_child_location`] folded from `location`), so a receiver built at a
 /// collected site reads exactly the channels the ONE spread publishes there.
 fn collect_entry_sites(node: &GroundTerm, location: &str, root_op: &str, sites: &mut Vec<String>) {
-    if node.constructor == root_op {
-        sites.push(location.to_string());
-    }
-    for (index, child) in node.children.iter().enumerate() {
-        let child_location = spread_child_location(location, &node.constructor, index);
-        collect_entry_sites(child, &child_location, root_op, sites);
-    }
+    walk_ground_term_locations(node, location, |node, location| {
+        if node.constructor == root_op {
+            sites.push(location.to_string());
+        }
+        true
+    });
 }
 
 /// The accept channel of the compiled entry `pid` — an [`InRhoMatchingRuleset`]
@@ -805,13 +806,12 @@ fn collect_ruleset_sites(
     roots: &std::collections::BTreeSet<String>,
     sites: &mut Vec<String>,
 ) {
-    if roots.contains(&node.constructor) {
-        sites.push(location.to_string());
-    }
-    for (index, child) in node.children.iter().enumerate() {
-        let child_location = spread_child_location(location, &node.constructor, index);
-        collect_ruleset_sites(child, &child_location, roots, sites);
-    }
+    walk_ground_term_locations(node, location, |node, location| {
+        if roots.contains(&node.constructor) {
+            sites.push(location.to_string());
+        }
+        true
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -999,29 +999,32 @@ fn collect_selfdriving_arity_map(
     term: &GroundTerm,
     map: &mut BTreeMap<String, usize>,
 ) -> Result<(), NaiveKtUnsupported> {
-    if term.coll_type.is_some() {
-        return Err(NaiveKtUnsupported::SelfDrivingCollectionSubject {
-            op: term.constructor.clone(),
-        });
-    }
-    if respread_reserved_labels().contains(&term.constructor.as_str()) {
-        return Err(NaiveKtUnsupported::SelfDrivingReservedLabel { op: term.constructor.clone() });
-    }
-    match map.get(&term.constructor) {
-        Some(&arity) if arity != term.children.len() => {
-            return Err(NaiveKtUnsupported::SelfDrivingArityConflict {
+    let mut work = vec![term];
+    while let Some(term) = work.pop() {
+        if term.coll_type.is_some() {
+            return Err(NaiveKtUnsupported::SelfDrivingCollectionSubject {
                 op: term.constructor.clone(),
-                arity_a: arity,
-                arity_b: term.children.len(),
             });
-        },
-        Some(_) => {},
-        None => {
-            map.insert(term.constructor.clone(), term.children.len());
-        },
-    }
-    for child in &term.children {
-        collect_selfdriving_arity_map(child, map)?;
+        }
+        if respread_reserved_labels().contains(&term.constructor.as_str()) {
+            return Err(NaiveKtUnsupported::SelfDrivingReservedLabel {
+                op: term.constructor.clone(),
+            });
+        }
+        match map.get(&term.constructor) {
+            Some(&arity) if arity != term.children.len() => {
+                return Err(NaiveKtUnsupported::SelfDrivingArityConflict {
+                    op: term.constructor.clone(),
+                    arity_a: arity,
+                    arity_b: term.children.len(),
+                });
+            },
+            Some(_) => {},
+            None => {
+                map.insert(term.constructor.clone(), term.children.len());
+            },
+        }
+        work.extend(term.children.iter().rev());
     }
     Ok(())
 }
@@ -1289,6 +1292,10 @@ pub fn naive_kt_selfdriving_call_par(
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), installed))
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_naive_kt_recursive_oracle.rs"]
+mod recursive_oracle;
 
 #[cfg(test)]
 mod tests {

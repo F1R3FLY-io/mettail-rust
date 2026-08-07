@@ -1058,6 +1058,17 @@ fn run_census() -> Census {
         .filter(|c| c.len() > 1 || graph.get(&c[0]).is_some_and(|a| a.contains(&c[0])))
         .collect();
 
+    if std::env::var_os("METTAIL_RECURSION_CENSUS_DUMP").is_some() {
+        for component in &recursive {
+            let members = component
+                .iter()
+                .map(|(file, function, ordinal)| format!("{}::{function}#{ordinal}", rel[*file]))
+                .collect::<Vec<_>>()
+                .join(" <-> ");
+            println!("RECURSION_COMPONENT {members}");
+        }
+    }
+
     let term_family: Vec<Vec<Node>> = recursive
         .iter()
         .filter(|c| {
