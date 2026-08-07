@@ -11717,6 +11717,30 @@ where
         }
     }
 
+    /// Return the entry of a cycle in a deterministic successor relation.
+    /// Floyd's algorithm keeps auxiliary space constant and returns `None`
+    /// when the relation terminates.
+    fn deterministic_cycle_entry<T>(start: T, mut next: impl FnMut(T) -> Option<T>) -> Option<T>
+    where
+        T: Copy + Eq,
+    {
+        let mut tortoise = next(start)?;
+        let hare_first = next(start)?;
+        let mut hare = next(hare_first)?;
+        while tortoise != hare {
+            tortoise = next(tortoise)?;
+            let hare_first = next(hare)?;
+            hare = next(hare_first)?;
+        }
+
+        let mut entry = start;
+        while entry != tortoise {
+            entry = next(entry)?;
+            tortoise = next(tortoise)?;
+        }
+        Some(entry)
+    }
+
     /// P4 lattice-order key lookup (identity fallback off the cached map).
     #[inline]
     fn cgll_pk(&self, pos: u32) -> u32 {
@@ -11831,57 +11855,30 @@ where
             },
         };
 
-        let advance = |cur| match step(cur) {
-            HiStep::Done(result) => Err(result),
-            HiStep::Next(next) => Ok(next),
-        };
-
-        let mut tortoise = match advance(id) {
-            Ok(next) => next,
-            Err(result) => return result,
-        };
-        let mut hare = match advance(id).and_then(advance) {
-            Ok(next) => next,
-            Err(result) => return result,
-        };
-        while tortoise != hare {
-            tortoise = match advance(tortoise) {
-                Ok(next) => next,
-                Err(result) => return result,
-            };
-            hare = match advance(hare).and_then(advance) {
-                Ok(next) => next,
-                Err(result) => return result,
-            };
-        }
-
-        // Locate the cycle entry, then inspect exactly one cycle.  An
-        // Intermediate has an intrinsic high-position suitable for the same
-        // defensive fallback the capped implementation used; a packing-only
-        // cycle has no such position.
-        let mut entry = id;
-        while entry != tortoise {
-            entry = match advance(entry) {
-                Ok(next) => next,
-                Err(result) => return result,
-            };
-            tortoise = match advance(tortoise) {
-                Ok(next) => next,
-                Err(result) => return result,
-            };
-        }
-        let cycle_start = entry;
+        let cycle_entry = Self::deterministic_cycle_entry(id, |cur| match step(cur) {
+            HiStep::Done(_) => None,
+            HiStep::Next(next) => Some(next),
+        });
+        let mut cur = id;
+        let mut entered_cycle = false;
+        let mut cycle_fallback = None;
         loop {
-            if let Some(crate::sppf::SppfNode::Intermediate { hi_pos, .. }) = self.sppf.node(entry)
-            {
-                return Some(self.cgll_pk(*hi_pos));
+            if cycle_entry == Some(cur) {
+                if entered_cycle {
+                    return cycle_fallback;
+                }
+                entered_cycle = true;
             }
-            entry = match advance(entry) {
-                Ok(next) => next,
-                Err(result) => return result,
-            };
-            if entry == cycle_start {
-                return None;
+            if entered_cycle && cycle_fallback.is_none() {
+                if let Some(crate::sppf::SppfNode::Intermediate { hi_pos, .. }) =
+                    self.sppf.node(cur)
+                {
+                    cycle_fallback = Some(self.cgll_pk(*hi_pos));
+                }
+            }
+            match step(cur) {
+                HiStep::Done(result) => return result,
+                HiStep::Next(next) => cur = next,
             }
         }
     }
@@ -15014,11 +15011,10 @@ where
     /// "Innermost" resolves as (1) the descriptor's OWN frame if it is a
     /// marker, else (2) the `v_parent` upward walk (recorded at descent;
     /// per-`v`, aligned with classic's shared-forward-sub-parse note). The
-    /// hop cap is a defensive bound only — parent chains are finite (the GSS
-    /// is a DAG; `v_parent` holds each node's first caller), and 64 nesting
-    /// levels of *structural collection frames* is beyond any test corpus;
-    /// hitting the cap degrades to `EMPTY` exactly like classic's
-    /// no-enclosing-frame case.
+    /// Parent chains are expected to be finite (the GSS is a DAG;
+    /// `v_parent` holds each node's first caller). A malformed cycle is
+    /// nevertheless detected in O(1) auxiliary space and degrades to `EMPTY`
+    /// exactly like classic's no-enclosing-frame case.
     fn cgll_pure_frame_ctx(
         &self,
         v_parent: &rustc_hash::FxHashMap<
@@ -15047,16 +15043,25 @@ where
             }
         }
         // (2) Upward walk to the nearest enclosing marker frame.
+        let cycle_entry = Self::deterministic_cycle_entry(d.u, |node| {
+            v_parent.get(&node).map(|(_, parent, _, _)| *parent)
+        });
         let mut u = d.u;
-        while let Some((sym, parent_u, _, _)) = v_parent.get(&u) {
+        let mut entered_cycle = false;
+        loop {
+            if cycle_entry == Some(u) {
+                if entered_cycle {
+                    break;
+                }
+                entered_cycle = true;
+            }
+            let Some((sym, parent_u, _, _)) = v_parent.get(&u) else {
+                break;
+            };
             if matches!(sym.kind, SymbolKind::CollectionMarker) {
                 if let Some(ctx) = project(sym) {
                     return ctx;
                 }
-            }
-            debug_assert_ne!(*parent_u, u, "GSS parent relation must be acyclic");
-            if *parent_u == u {
-                break;
             }
             u = *parent_u;
         }
@@ -17580,14 +17585,25 @@ where
     /// resets (`GroupingMarker` / `MixfixMarker` / `CollectionMarker` /
     /// fresh `RuleAt(0)`); TRANSPARENT through everything else
     /// (CategoryEntry continuations / cross-cat lineages / Return
-    /// pass-throughs — the classic `_ => pop` arm). Budget-bounded.
+    /// pass-throughs — the classic `_ => pop` arm). Cycles terminate after
+    /// exactly one visit to every node in the deterministic cycle.
     fn cgll_pure_enclosing_receiver(
         &self,
         run: &mut CgllPureRun,
         u: crate::gss::GssNodeId,
     ) -> Option<(u16, u16, u8)> {
+        let cycle_entry = Self::deterministic_cycle_entry(u, |node| {
+            self.gss.gll_edges(node).first().map(|edge| edge.target)
+        });
         let mut cur = u;
-        for _ in 0..24 {
+        let mut entered_cycle = false;
+        loop {
+            if cycle_entry == Some(cur) {
+                if entered_cycle {
+                    return None;
+                }
+                entered_cycle = true;
+            }
             let edges = self.gss.gll_edges(cur);
             let first = edges.first()?;
             let ctx = run
@@ -17618,7 +17634,6 @@ where
                 },
             }
         }
-        None
     }
 
     /// Decide + perform the pure Unwinding injection for one InfixLoop Fork
@@ -17641,8 +17656,18 @@ where
         u: crate::gss::GssNodeId,
         body_cat: u16,
     ) -> bool {
+        let cycle_entry = Self::deterministic_cycle_entry(u, |node| {
+            self.gss.gll_edges(node).first().map(|edge| edge.target)
+        });
         let mut cur = u;
-        for _ in 0..24 {
+        let mut entered_cycle = false;
+        loop {
+            if cycle_entry == Some(cur) {
+                if entered_cycle {
+                    return false;
+                }
+                entered_cycle = true;
+            }
             let edges = self.gss.gll_edges(cur);
             let Some(first) = edges.first() else {
                 return false;
@@ -17666,7 +17691,6 @@ where
                 _ => cur = first.target,
             }
         }
-        false
     }
 
     /// P3.f (guard_collection_separator_infix pure form; plan line 65,
@@ -17680,8 +17704,18 @@ where
         run: &mut CgllPureRun,
         u: crate::gss::GssNodeId,
     ) -> Option<&'static str> {
+        let cycle_entry = Self::deterministic_cycle_entry(u, |node| {
+            self.gss.gll_edges(node).first().map(|edge| edge.target)
+        });
         let mut cur = u;
-        for _ in 0..24 {
+        let mut entered_cycle = false;
+        loop {
+            if cycle_entry == Some(cur) {
+                if entered_cycle {
+                    return None;
+                }
+                entered_cycle = true;
+            }
             let edges = self.gss.gll_edges(cur);
             let first = edges.first()?;
             let ctx = run
@@ -17705,7 +17739,6 @@ where
                 _ => cur = first.target,
             }
         }
-        None
     }
 
     /// ARM G (2026-07-12): pure mirror of classic's `crosscat_inherited_floor_reset`
@@ -17892,7 +17925,7 @@ where
 
     /// R-A (2026-07-11): the pure CROSSCAT PROJECTION BOUNDARY walk — the
     /// port of classic `crosscat_projection_target_boundary` onto the
-    /// u-chain. Bounded BFS over `gll_edges` callers (A3 —
+    /// u-chain. Cycle-safe exhaustive DFS over `gll_edges` callers (A3 —
     /// `cgll_pure_enclosing_receiver` is first-edge-only and cannot
     /// implement ANY-yield/ALL-suppress). Per node, in classic's edge
     /// semantics (A2(c)-revised): a hop STOPS iff its push carried NO
@@ -17937,14 +17970,9 @@ where
         let mut frontier: Vec<crate::gss::GssNodeId> = vec![d.u];
         let mut visited: rustc_hash::FxHashSet<crate::gss::GssNodeId> =
             rustc_hash::FxHashSet::default();
-        let mut hops = 0usize;
         while let Some(u) = frontier.pop() {
             if !visited.insert(u) {
                 continue;
-            }
-            hops += 1;
-            if hops > 64 {
-                break; // the established frame-walk budget
             }
             let Some(slot) = run.v_slot.get(&u).copied() else {
                 continue; // seed frame — no push edge, chain ends
