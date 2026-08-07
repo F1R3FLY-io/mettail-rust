@@ -886,12 +886,25 @@ fn convert_pattern_op(
     cat_names: &[String],
     items: &mut Vec<SyntaxItemSpec>,
 ) {
-    match op {
-        PatternOp::Sep { collection, separator, source } => {
-            if let Some(source_op) = source {
-                // Chained pattern: e.g., *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
-                convert_chained_sep(source_op, separator, context, cat_names, items);
-            } else {
+    enum Task<'syntax> {
+        Op(&'syntax PatternOp),
+        Expr(&'syntax SyntaxExpr),
+        FinishOptional,
+    }
+
+    let mut tasks = vec![Task::Op(op)];
+    let mut outputs = vec![Vec::new()];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Op(PatternOp::Sep { collection, separator, source }) => {
+                let output = outputs
+                    .last_mut()
+                    .expect("pattern PDA lost its output frame");
+                if let Some(source_op) = source {
+                    // Chained pattern: e.g., *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
+                    convert_chained_sep(source_op, separator, context, cat_names, output);
+                    continue;
+                }
                 let coll_name = collection.to_string();
 
                 // Check if this is a multi-binder collection (e.g., xs.*sep(",")
@@ -902,7 +915,7 @@ fn convert_pattern_op(
                 });
 
                 if is_multi_binder {
-                    items.push(SyntaxItemSpec::BinderCollection {
+                    output.push(SyntaxItemSpec::BinderCollection {
                         param_name: coll_name,
                         separator: separator.clone(),
                     });
@@ -915,7 +928,7 @@ fn convert_pattern_op(
                     // in `pipeline.rs:4263-4296` so the `:` token is
                     // recognized by the lexer.
                     let (elem_cat, kind, kv) = find_collection_info(&coll_name, context);
-                    items.push(SyntaxItemSpec::Collection {
+                    output.push(SyntaxItemSpec::Collection {
                         param_name: coll_name,
                         element_category: elem_cat,
                         separator: separator.clone(),
@@ -923,90 +936,65 @@ fn convert_pattern_op(
                         kind,
                     });
                 }
-            }
-        },
-        PatternOp::Zip { left, right } => {
-            // Zip is usually followed by Map and Sep — handle at the Map level.
-            // Classify each parameter correctly (binder vs nonterminal vs ident).
-            items.push(classify_param_from_context(&left.to_string(), context, cat_names));
-            items.push(classify_param_from_context(&right.to_string(), context, cat_names));
-        },
-        PatternOp::Map { source: _, params: _, body } => {
-            // Map transforms — convert the body items.
-            // Parameters inside the map body are local closure params (e.g., |n,x|)
-            // and reference the same types as the original term context params.
-            for expr in body {
-                match expr {
-                    SyntaxExpr::Literal(text) => {
-                        items.push(SyntaxItemSpec::Terminal(text.clone()));
-                    },
-                    SyntaxExpr::Param(name) => {
-                        // Map closure params reference original context params.
-                        // Classify them correctly.
-                        items.push(classify_param_from_context(
-                            &name.to_string(),
-                            context,
-                            cat_names,
-                        ));
-                    },
-                    SyntaxExpr::Op(inner_op) => {
-                        convert_pattern_op(inner_op, context, cat_names, items);
-                    },
-                    SyntaxExpr::TokenKind { name, bind } => {
-                        let kind_name = name.to_string();
-                        let param_name = bind
-                            .as_ref()
-                            .map(|b| b.to_string())
-                            .unwrap_or_else(|| format!("__tok_{}", kind_name));
-                        items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
-                    },
-                    SyntaxExpr::GuestBody { open, bind, .. } => {
-                        items.push(SyntaxItemSpec::TokenKindCapture {
-                            kind_name: open.to_string(),
-                            param_name: bind.to_string(),
-                        });
-                    },
-                }
-            }
-        },
-        PatternOp::Opt { inner } => {
-            // Optional groups: collect inner items and wrap in SyntaxItemSpec::Optional
-            let mut opt_items = Vec::new();
-            for expr in inner {
-                match expr {
-                    SyntaxExpr::Literal(text) => {
-                        opt_items.push(SyntaxItemSpec::Terminal(text.clone()));
-                    },
-                    SyntaxExpr::Param(name) => {
-                        let item =
-                            classify_param_from_context(&name.to_string(), context, cat_names);
-                        opt_items.push(item);
-                    },
-                    SyntaxExpr::Op(inner_op) => {
-                        convert_pattern_op(inner_op, context, cat_names, &mut opt_items);
-                    },
-                    SyntaxExpr::TokenKind { name, bind } => {
-                        let kind_name = name.to_string();
-                        let param_name = bind
-                            .as_ref()
-                            .map(|b| b.to_string())
-                            .unwrap_or_else(|| format!("__tok_{}", kind_name));
-                        opt_items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
-                    },
-                    SyntaxExpr::GuestBody { open, bind, .. } => {
-                        opt_items.push(SyntaxItemSpec::TokenKindCapture {
-                            kind_name: open.to_string(),
-                            param_name: bind.to_string(),
-                        });
-                    },
-                }
-            }
-            items.push(SyntaxItemSpec::Optional { inner: opt_items });
-        },
-        PatternOp::Var(name) => {
-            items.push(SyntaxItemSpec::IdentCapture { param_name: name.to_string() });
-        },
+            },
+            Task::Op(PatternOp::Zip { left, right }) => {
+                let output = outputs
+                    .last_mut()
+                    .expect("pattern PDA lost its output frame");
+                output.push(classify_param_from_context(&left.to_string(), context, cat_names));
+                output.push(classify_param_from_context(&right.to_string(), context, cat_names));
+            },
+            Task::Op(PatternOp::Map { body, .. }) => {
+                tasks.extend(body.iter().rev().map(Task::Expr));
+            },
+            Task::Op(PatternOp::Opt { inner }) => {
+                outputs.push(Vec::new());
+                tasks.push(Task::FinishOptional);
+                tasks.extend(inner.iter().rev().map(Task::Expr));
+            },
+            Task::Op(PatternOp::Var(name)) => outputs
+                .last_mut()
+                .expect("pattern PDA lost its output frame")
+                .push(SyntaxItemSpec::IdentCapture { param_name: name.to_string() }),
+            Task::Expr(SyntaxExpr::Literal(text)) => outputs
+                .last_mut()
+                .expect("pattern PDA lost its output frame")
+                .push(SyntaxItemSpec::Terminal(text.clone())),
+            Task::Expr(SyntaxExpr::Param(name)) => outputs
+                .last_mut()
+                .expect("pattern PDA lost its output frame")
+                .push(classify_param_from_context(&name.to_string(), context, cat_names)),
+            Task::Expr(SyntaxExpr::Op(inner_op)) => tasks.push(Task::Op(inner_op)),
+            Task::Expr(SyntaxExpr::TokenKind { name, bind }) => {
+                let kind_name = name.to_string();
+                let param_name = bind
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("__tok_{kind_name}"));
+                outputs
+                    .last_mut()
+                    .expect("pattern PDA lost its output frame")
+                    .push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
+            },
+            Task::Expr(SyntaxExpr::GuestBody { open, bind, .. }) => outputs
+                .last_mut()
+                .expect("pattern PDA lost its output frame")
+                .push(SyntaxItemSpec::TokenKindCapture {
+                    kind_name: open.to_string(),
+                    param_name: bind.to_string(),
+                }),
+            Task::FinishOptional => {
+                let inner = outputs.pop().expect("pattern PDA lost its optional frame");
+                outputs
+                    .last_mut()
+                    .expect("pattern PDA optional frame has no parent")
+                    .push(SyntaxItemSpec::Optional { inner });
+            },
+        }
     }
+    let root = outputs.pop().expect("pattern PDA lost its root output");
+    debug_assert!(outputs.is_empty(), "pattern PDA retained unfinished optional frames");
+    items.extend(root);
 }
 
 /// Convert a chained Sep(Map(Zip(...))) pattern into composed Sep/Zip/Map items.
@@ -1353,21 +1341,29 @@ fn collect_constructor_idents_from_token_stream(
     known_labels: &HashSet<String>,
     labels: &mut HashSet<String>,
 ) {
-    for tt in tokens.clone() {
-        match tt {
-            proc_macro2::TokenTree::Ident(ident) => {
+    let mut streams = vec![tokens.clone().into_iter()];
+    while let Some(stream) = streams.last_mut() {
+        match stream.next() {
+            None => {
+                streams.pop();
+            },
+            Some(proc_macro2::TokenTree::Ident(ident)) => {
                 let s = ident.to_string();
                 if known_labels.contains(&s) {
                     labels.insert(s);
                 }
             },
-            proc_macro2::TokenTree::Group(group) => {
-                collect_constructor_idents_from_token_stream(&group.stream(), known_labels, labels);
+            Some(proc_macro2::TokenTree::Group(group)) => {
+                streams.push(group.stream().into_iter());
             },
-            _ => {}, // Punct, Literal — skip
+            Some(_) => {}, // Punct, Literal — skip
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/support/prattail_bridge_recursive_oracle.rs"]
+mod recursive_oracle;
 
 /// Generate the PraTTaIL parser along with pipeline analysis data.
 ///

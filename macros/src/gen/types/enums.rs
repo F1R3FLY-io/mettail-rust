@@ -8,7 +8,7 @@ use mettail_ast::{
     language::LanguageDef,
     types::{CollectionType, TypeExpr},
 };
-use proc_macro2::TokenStream;
+use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use quote::quote;
 use std::collections::HashMap;
 
@@ -697,6 +697,10 @@ fn type_expr_to_field_type(
     ty: &TypeExpr,
     language_category: Option<(&LanguageDef, &syn::Ident)>,
 ) -> TokenStream {
+    let mut ty = ty;
+    while let TypeExpr::Refined { base, .. } = ty {
+        ty = base;
+    }
     match ty {
         TypeExpr::Base(ident) => match NonTerminalKind::classify(&ident.to_string()) {
             NonTerminalKind::Var => quote! { mettail_runtime::OrdVar },
@@ -743,10 +747,7 @@ fn type_expr_to_field_type(
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
         },
-        TypeExpr::Refined { base, .. } => {
-            // Refinement type: delegate to the base type
-            type_expr_to_field_type(base, language_category)
-        },
+        TypeExpr::Refined { .. } => unreachable!("refinement cursor stopped on a refinement"),
         TypeExpr::Map { key, value } => {
             // Phase 4 #5b (2026-05-12): Map binder slot. Lower to
             // `HashMapLit<K, V>` for consistency with the action body's
@@ -766,37 +767,61 @@ fn type_expr_to_field_type(
 
 /// Convert TypeExpr to a Rust type (for use inside Box<>, etc.)
 fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
-    match ty {
-        TypeExpr::Base(ident) => {
-            quote! { #ident }
-        },
-        TypeExpr::Collection { coll_type, element } => {
-            let elem_type = type_expr_to_rust_type(element);
-            match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
-                    quote! { mettail_runtime::HashBag<#elem_type> }
-                },
-                CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
-                CollectionType::Vec => quote! { Vec<#elem_type> },
-            }
-        },
-        TypeExpr::Arrow { domain, codomain } => {
-            let dom = type_expr_to_rust_type(domain);
-            let cod = type_expr_to_rust_type(codomain);
-            quote! { (#dom -> #cod) }
-        },
-        TypeExpr::MultiBinder(inner) => {
-            let inner_type = type_expr_to_rust_type(inner);
-            quote! { Vec<#inner_type> }
-        },
-        TypeExpr::Refined { base, .. } => {
-            // Refinement type: delegate to the base type
-            type_expr_to_rust_type(base)
-        },
-        TypeExpr::Map { key, value } => {
-            let k = type_expr_to_rust_type(key);
-            let v = type_expr_to_rust_type(value);
-            quote! { mettail_runtime::HashMapLit<#k, #v> }
-        },
+    enum Task<'ty> {
+        Visit(&'ty TypeExpr),
+        Tokens(TokenStream),
+        FinishParen(TokenStream),
     }
+
+    let mut tasks = vec![Task::Visit(ty)];
+    let mut output = TokenStream::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(TypeExpr::Base(ident)) => output.extend(quote! { #ident }),
+            Task::Visit(TypeExpr::Collection { coll_type, element }) => {
+                output.extend(match coll_type {
+                    CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
+                        quote! { mettail_runtime::HashBag< }
+                    },
+                    CollectionType::HashSet => quote! { std::collections::HashSet< },
+                    CollectionType::Vec => quote! { Vec< },
+                });
+                tasks.push(Task::Tokens(quote! { > }));
+                tasks.push(Task::Visit(element));
+            },
+            Task::Visit(TypeExpr::Arrow { domain, codomain }) => {
+                let outer = std::mem::take(&mut output);
+                tasks.push(Task::FinishParen(outer));
+                tasks.push(Task::Visit(codomain));
+                tasks.push(Task::Tokens(quote! { -> }));
+                tasks.push(Task::Visit(domain));
+            },
+            Task::Visit(TypeExpr::MultiBinder(inner)) => {
+                output.extend(quote! { Vec< });
+                tasks.push(Task::Tokens(quote! { > }));
+                tasks.push(Task::Visit(inner));
+            },
+            Task::Visit(TypeExpr::Refined { base, .. }) => tasks.push(Task::Visit(base)),
+            Task::Visit(TypeExpr::Map { key, value }) => {
+                output.extend(quote! { mettail_runtime::HashMapLit< });
+                tasks.push(Task::Tokens(quote! { > }));
+                tasks.push(Task::Visit(value));
+                tasks.push(Task::Tokens(quote! { , }));
+                tasks.push(Task::Visit(key));
+            },
+            Task::Tokens(tokens) => output.extend(tokens),
+            Task::FinishParen(mut outer) => {
+                outer.extend(std::iter::once(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    output,
+                ))));
+                output = outer;
+            },
+        }
+    }
+    output
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/type_expr_emit_recursive_oracle.rs"]
+mod recursive_oracle;

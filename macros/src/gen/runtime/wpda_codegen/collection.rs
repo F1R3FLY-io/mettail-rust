@@ -19,6 +19,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::BTreeSet;
 
+use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::type_expr_walk::TypeExprBaseIdents;
+
 use super::binder::{classify_binder_in, BinderPosition, BinderShape, CollectionSepInfo};
 
 /// Classification of a collection-literal rule.
@@ -1335,20 +1338,7 @@ pub(crate) fn emit_category_is_binder_scoped_lookup(
     // domain/codomain, MultiBinder, Collection element, Map key/value, Refined
     // base).
     fn collect_base_cats(ty: &TypeExpr, out: &mut Vec<String>) {
-        match ty {
-            TypeExpr::Base(id) => out.push(id.to_string()),
-            TypeExpr::Arrow { domain, codomain } => {
-                collect_base_cats(domain, out);
-                collect_base_cats(codomain, out);
-            },
-            TypeExpr::MultiBinder(inner) => collect_base_cats(inner, out),
-            TypeExpr::Collection { element, .. } => collect_base_cats(element, out),
-            TypeExpr::Map { key, value } => {
-                collect_base_cats(key, out);
-                collect_base_cats(value, out);
-            },
-            TypeExpr::Refined { base, .. } => collect_base_cats(base, out),
-        }
+        out.extend(TypeExprBaseIdents::new(ty).map(ToString::to_string));
     }
     fn arrow_domain_cats(ty: &TypeExpr, out: &mut Vec<String>) {
         if let TypeExpr::Arrow { domain, .. } = ty {
@@ -1362,34 +1352,40 @@ pub(crate) fn emit_category_is_binder_scoped_lookup(
     }
     // Referenced categories of a rule (category-reference graph out-edges).
     fn rule_ref_cats(params: &[TermParam], out: &mut Vec<String>) {
-        for p in params {
-            match p {
+        for leaf in TermParamLeaves::new(params, false) {
+            match leaf.param {
                 TermParam::Simple { ty, .. } => collect_base_cats(ty, out),
                 TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                     collect_base_cats(ty, out)
                 },
                 TermParam::GuardBody { .. } => {},
-                TermParam::Optional { params } => rule_ref_cats(params, out),
+                TermParam::Optional { .. } => {
+                    unreachable!("term-parameter leaf iterator yielded a group")
+                },
             }
         }
     }
     // A rule opens a binder scope iff a param (recursively) is an abstraction.
     fn opens_scope(params: &[TermParam]) -> bool {
-        params.iter().any(|p| match p {
+        TermParamLeaves::new(params, false).any(|leaf| match leaf.param {
             TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => true,
-            TermParam::Optional { params } => opens_scope(params),
+            TermParam::Optional { .. } => {
+                unreachable!("term-parameter leaf iterator yielded a group")
+            },
             _ => false,
         })
     }
     // (domain, codomain) base cats of a rule's abstraction params.
     fn scope_slot_cats(params: &[TermParam], dom: &mut Vec<String>, cod: &mut Vec<String>) {
-        for p in params {
-            match p {
+        for leaf in TermParamLeaves::new(params, false) {
+            match leaf.param {
                 TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                     arrow_domain_cats(ty, dom);
                     arrow_codomain_cats(ty, cod);
                 },
-                TermParam::Optional { params } => scope_slot_cats(params, dom, cod),
+                TermParam::Optional { .. } => {
+                    unreachable!("term-parameter leaf iterator yielded a group")
+                },
                 _ => {},
             }
         }
