@@ -142,9 +142,9 @@ pub enum Premise {
     ///
     /// # What reads it
     ///
-    /// * [`RewriteRule::withholds_congruence`] — the predicate; **disjoint** from
-    ///   [`RewriteRule::is_congruence_rule`], so no reader that routes on "is this a
-    ///   congruence?" can silently treat a denial as an assertion.
+    /// * [`RewriteRule::withholds_congruence`] — the polarity-specific predicate. A rule
+    ///   may parse with both premise variants, but the Dovetail withholding classifier
+    ///   refuses that contradictory rule before lowering.
     /// * `macros/src/gen/runtime/dovetail_report.rs` — derives the severed position set
     ///   and lowers the field to a payload-verbatim leaf, which is the ONLY way an
     ///   e-graph can honour a non-congruence (see `macros/docs/codegen/congruence-closure.md`).
@@ -848,10 +848,9 @@ impl RewriteRule {
     /// ★ (#195) Whether this rule DENIES a congruence (has a
     /// [`Premise::CongruenceWithheld`]).
     ///
-    /// ⚠ **Disjoint from [`Self::is_congruence_rule`] by construction**, and the
-    /// disjointness is enforced at parse time: `crate::language::parse` rejects a rule
-    /// carrying both polarities for the same source metavariable, because such a rule
-    /// would assert and deny the same inference.
+    /// ⚠ This predicate and [`Self::is_congruence_rule`] inspect distinct premise variants,
+    /// but both may be true for one parsed rule. The Dovetail withholding classifier rejects
+    /// that contradictory rule by name before emitting either interpretation.
     pub fn withholds_congruence(&self) -> bool {
         self.withheld_congruence_premise().is_some()
     }

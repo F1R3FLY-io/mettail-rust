@@ -1,344 +1,222 @@
-# Congruence Rule Generation
+# Dovetail Congruence Closure and Explicit Withholding
 
-**Source**: [`macros/src/logic/congruence.rs`](../../src/logic/congruence.rs)
+Primary implementation sources:
 
-## 1. Overview / Purpose
+- [`dovetail_report.rs`](../../src/gen/runtime/dovetail_report.rs)
+- [`withholding.rs`](../../src/gen/runtime/dovetail_report/withholding.rs)
+- [`typed_lowering.rs`](../../src/gen/runtime/dovetail_report/typed_lowering.rs)
+- [`reconstruct.rs`](../../src/gen/runtime/dovetail_report/reconstruct.rs)
+- [`CongruenceWithholding.v`](../../../dovetail/formal/rocq/theories/Lowering/CongruenceWithholding.v)
 
-The congruence module generates explicit rewrite congruence rules declared
-in user grammars. These rules propagate rewrites through constructors:
-if a subterm rewrites, the enclosing constructor rewrites too.
+## 1. Purpose
 
-**Critical distinction**: Rewrite congruences are NOT auto-generated. Users
-explicitly control where rewrites propagate (e.g., rewrites through PPar
-but not POutput). Equality congruences ARE auto-generated in `equations.rs`
-since `eq(x,y) => eq(f(x), f(y))` is always sound.
+Dovetail evaluates a term language in an **e-graph**, a data structure whose
+equivalence classes are called **e-classes** and whose operator applications
+are called **e-nodes**. An e-node key contains its operator and the canonical
+e-class identifiers of its child positions. That representation supplies
+congruence closure intrinsically: once two child e-classes merge, parents that
+differ only by those children acquire the same canonical key.
 
-The module classifies each congruence rule into one of three strategies
-(Simple, Collection, Binding), generates the appropriate Ascent code, and
-consolidates Simple congruences by field category for reduced code size.
+MeTTaIL exposes three authorial states for a rewrite context:
 
-## 2. Architecture and Data Flow
+| declaration | meaning | Dovetail disposition |
+|---|---|---|
+| `| S ~> T |- C(... S ...) ~> C(... T ...)` | require propagation at the position occupied by `S` | delivered by e-graph congruence closure when that position is a child e-class; otherwise declined by name |
+| no premise | infer the ordinary e-graph behavior | intrinsic congruence closure, with no explicit rule |
+| `| S ~/> T |- C(... S ...) ~> C(... T ...)` | explicitly withhold propagation at the position occupied by `S` | sever the position, or decline the declaration by name when severance is not representable |
 
-```
- LanguageDef.rewrites
-     |
-     v
- generate_all_explicit_congruences(language, cat_filter, emit_diagnostics)
-     |
-     +---> For each rewrite where is_congruence_rule():
-     |         |
-     |         v
-     |     classify_and_generate_congruence(rewrite, language, &mut simple_groups)
-     |         |
-     |         +---> find_rewrite_context(pattern, source_var, language)
-     |         |         |
-     |         |         v
-     |         |     RewriteContext::Collection  --> generate_collection_congruence()
-     |         |     RewriteContext::Binding     --> generate_binding_congruence()
-     |         |     RewriteContext::Simple      --> collected into simple_groups
-     |         |
-     |         v
-     |     TokenStream (Collection/Binding) or None (Simple, deferred)
-     |
-     +---> For each (src_cat, fld_cat) group in simple_groups:
-     |         |
-     |         v
-     |     generate_consolidated_simple_congruence(source_cat, field_cat, entries)
-     |         |
-     |         +---> Build TLS pool arms for field extraction
-     |         +---> Build rebuild match arms for constructor reconstruction
-     |         +---> ART04: Build BloomFilter and matches!() guard
-     |         |
-     |         v
-     |     TokenStream (consolidated rule with N match arms)
-     |
-     +---> Emit G38 diagnostic (ART04 guard summary)
-     |
-     v
- Vec<TokenStream>
+An **evaluation context** is a constructor position through which a child
+rewrite propagates. **Severance** changes such a position from a child e-class
+carrier into a payload-verbatim leaf. The payload remains reconstructable, but
+the e-graph cannot inspect, match, or rewrite inside it.
+
+The retired Ascent clause generator is not part of this pipeline. Its remaining
+module, [`logic/rules.rs`](../../src/logic/rules.rs), emits only the freshness
+helper used by the Dovetail binder path.
+
+## 2. Representation theorem
+
+Let `$`f`$` be an operator and `$`c_0,\ldots,c_n`$` its child e-class
+identifiers. The canonical e-node key is:
+
+```math
+K_f(c_0,\ldots,c_n)
+=
+\left(f,\operatorname{find}(c_0),\ldots,\operatorname{find}(c_n)\right).
 ```
 
-## 3. Key Types and Functions
+Suppose `$`\operatorname{find}(a)=\operatorname{find}(b)`$`. Replacing `$`a`$`
+with `$`b`$` at any child position leaves `$`K_f`$` unchanged. Hash-consing must
+therefore place the two enclosing e-nodes in the same e-class. Congruence at a
+child e-class position is a representation invariant, not a policy switch.
 
-### `RewriteContext` (internal enum)
+This yields **Theorem W1**:
 
-```rust
-enum RewriteContext {
-    Collection {
-        category: Ident,
-        constructor: Ident,
-        element_category: Ident,
-        has_rest: bool,
-    },
-    Binding {
-        category: Ident,
-        constructor: Ident,
-        field_idx: usize,
-        body_category: Ident,
-    },
-    Simple {
-        category: Ident,
-        constructor: Ident,
-        field_idx: usize,
-        field_category: Ident,
-    },
-}
+> To withhold propagation at a position, the position must cease to store a
+> child e-class identifier.
+
+The typed lowering realizes W1 with a `FieldWithheld<Category>` carrier holding
+the original category value. The carrier is a leaf from the e-graph's point of
+view, while the generated inverse reconstructs the value losslessly. A lossy
+`FieldOpaque(Debug)` carrier is not used for withholding because a term with no
+redex could then fail reconstruction.
+
+The Rocq development proves:
+
+- `withholding_requires_severance`: merged child identifiers produce identical
+  parent keys when the position uses `ChildClass`;
+- `severed_payload_key_injective`: a `WithheldPayload` key remains injective in
+  the original payload;
+- `severance_removes_exactly_the_withheld_edges`: the severed edge relation
+  retains exactly the ordinary propagation edges outside the derived withheld
+  position set;
+- preservation and rejection corollaries for unwithheld and withheld positions.
+
+The proof uses no axioms, conjectures, parameters, admissions, or admitted
+tactics. Its identifiers and payloads are natural numbers because the argument
+requires only equality and child canonicalization.
+
+## 3. Lowering architecture
+
+```text
+LanguageDef.rewrites
+        |
+        v
+classify_withholdings
+        |
+        +-- accepted position --> typed field lowering --> FieldWithheld<Category>
+        |                                                    |
+        |                                                    v
+        |                                           generated reconstruction
+        |
+        +-- unsupported position --> named refusal --> generated compile_error!
+
+ordinary positive congruence --> child carrier reachable? -- yes --> closure disposition
+                                                        |
+                                                        no
+                                                        v
+                                                   named decline
 ```
 
-### `SimpleCongruenceEntry` (internal struct)
+`needs_typed_dovetail_path` routes every language containing a negative
+congruence premise to the typed path. This routing includes declarations that
+will be refused, ensuring the refusal is emitted on the same path that owns the
+withholding semantics. The untyped `EGraph<String>` path never receives a
+`WithholdingSet` and has no payload-bearing inverse carrier.
 
-```rust
-struct SimpleCongruenceEntry {
-    constructor: Ident,
-    field_idx: usize,
-    n_fields: usize,
-    is_boxed: bool,
-}
+The same derived set is consumed by both sides of the typed isomorphism:
+
+- `typed_lowering::field_child_expr_typed` emits a withheld carrier before any
+  builtin, predicate, optional, collection, or ordinary-child branch;
+- `reconstruct` recognizes the same severed positions and generates the inverse;
+- `op_enum` derives the required `FieldWithheld<Category>` variants from the
+  accepted positions.
+
+No handwritten constructor-position table exists. The position is derived
+from the declaring rewrite's left-hand side (LHS), then checked against the
+constructor shape generated from the same `LanguageDef`.
+
+## 4. Classification algorithms
+
+**Algorithm 1 (Derive the withholding set).** For every negative premise, derive
+one constructor-field coordinate or retain a named refusal. A declaration is
+never silently dropped.
+
+```pseudocode
+procedure CLASSIFY_WITHHOLDINGS(language)
+  positions <- empty sequence
+  refusals <- empty sequence
+  for each rewrite in language.rewrites do
+    premise <- rewrite.withheld_congruence_premise()
+    if premise is absent then
+      continue
+    end if
+    result <- CLASSIFY_ONE(language, rewrite, premise.source)
+    if result is a position then
+      append result to positions
+    else
+      append the rule name and refusal reason to refusals
+    end if
+  end for
+  return (positions, refusals)
+end procedure
 ```
 
-### Public API
+`CLASSIFY_ONE` refuses the following shapes explicitly:
 
-| Function                            | Returns             | Purpose                          |
-|-------------------------------------|---------------------|----------------------------------|
-| `generate_all_explicit_congruences` | `Vec<TokenStream>`  | Generate all explicit congruence rules |
+- a rule carrying both positive and negative polarities;
+- a left-hand side that is not a constructor application;
+- zero or multiple direct occurrences of the source metavariable;
+- a constructor whose generated shape is not `Regular`;
+- an arity mismatch between the pattern and generated constructor;
+- a builtin grammar slot, predicate, capture leaf, collection field, or
+  optional field.
 
-### Internal Functions
+A native-backed language category such as `![i64] as Int` is deliberately not
+a builtin grammar slot such as `Integer`. A field of category `Int` still holds
+a child term/e-class and may be severed; an `Integer` field is already an opaque
+leaf and has nothing to sever.
 
-| Function                                    | Purpose                                          |
-|---------------------------------------------|--------------------------------------------------|
-| `classify_and_generate_congruence`          | Classify and generate/collect a congruence rule   |
-| `find_rewrite_context`                      | Determine where the rewrite variable appears      |
-| `find_rewrite_context_in_term`              | Recursive context search in PatternTerm           |
-| `pattern_contains_var`                      | Check if a pattern references a variable          |
-| `generate_collection_congruence`            | Generate collection element rewrite propagation   |
-| `generate_binding_congruence`               | Generate binder body rewrite propagation          |
-| `generate_consolidated_simple_congruence`   | Generate consolidated simple field congruence     |
-| `field_is_boxed_in_ast`                     | Check if a field is stored as Box<T>              |
-| `get_binder_body_category`                  | Get body type for a binder at given index         |
+**Algorithm 2 (Lower one typed field).** Accepted severance is checked first so
+the generated carrier and classifier cannot disagree about branch precedence.
 
-## 4. Algorithm Description
-
-### Classification
-
-Each congruence rewrite has the form `| S ~> T |- C(... S ...) ~> C(... T ...)`.
-The classifier examines the LHS pattern to determine where `S` appears:
-
-```
-classify_and_generate_congruence(rewrite, language, simple_groups):
-    (source_var, target_var) = rewrite.congruence_premise()
-    context = find_rewrite_context(rewrite.left, source_var, language)
-
-    match context:
-        Collection { category, constructor, element_category, has_rest }:
-            return generate_collection_congruence(...)
-        Binding { category, constructor, field_idx, body_category }:
-            return generate_binding_congruence(...)
-        Simple { category, constructor, field_idx, field_category }:
-            // Defer: collect for consolidation
-            simple_groups[(category, field_category)].push(entry)
-            return None
+```pseudocode
+procedure LOWER_TYPED_FIELD(owner, index, field, value, withheld)
+  if withheld.is_severed(owner, index) then
+    emit payload-verbatim FieldWithheld leaf
+  else if field is builtin, a predicate, or a capture leaf then
+    emit the corresponding atomic leaf
+  else if field is optional or a collection then
+    emit its specialized carrier
+  else
+    enqueue a visit of the child category
+  end if
+end procedure
 ```
 
-### Simple Congruence Consolidation
+**Algorithm 3 (Record one rewrite disposition).** The report distinguishes a
+delivered inference from an explicit suppression and from an unsupported
+declaration.
 
-Multiple constructors with the same `(source_cat, field_cat)` pair are
-consolidated into a single Ascent rule with inline match expressions:
-
-```
-Before consolidation (N rules, one per constructor x field):
-    rw_proc(lhs, Proc::PDrop(t)) <-- proc(lhs), if let Proc::PDrop(f0) = lhs,
-        rw_name(f0.clone(), t);
-    rw_proc(lhs, Proc::POutput(f0, t, f2)) <-- proc(lhs),
-        if let Proc::POutput(f0, f1, f2) = lhs, rw_name(f1.clone(), t);
-
-After consolidation (1 rule with N match arms):
-    rw_proc(lhs.clone(), rebuild(lhs, vi, t)) <--
-        proc(lhs),
-        if matches!(lhs, Proc::PDrop(..) | Proc::POutput(..)),  // ART04
-        for (field_val, vi) in TLS_POOL.extract(lhs),
-        rw_name(field_val, t);
-```
-
-### TLS Pool Pattern
-
-The consolidated rule uses a thread-local Vec pool for zero-allocation
-iteration (from `common::generate_tls_pool_iter`):
-
-```
-Extraction pool arms:
-    Proc::PDrop(x0)         => { buf.push(((*x0).clone(), 0)); }
-    Proc::POutput(_, x1, _) => { buf.push(((*x1).clone(), 1)); }
-    _                       => {}
-
-Rebuild match arms:
-    (Proc::PDrop(_), 0)           => Proc::PDrop(Box::new(t.clone()))
-    (Proc::POutput(x0, _, x2), 1) => Proc::POutput(x0.clone(), Box::new(t.clone()), x2.clone())
-    _                             => unreachable!()
+```pseudocode
+procedure LOWER_REWRITE(language, rewrite)
+  if rewrite has an unsupported side condition then
+    return Declined("has side conditions")
+  else if rewrite has a negative congruence premise then
+    return the classifier's Suppressed or Declined disposition
+  else if rewrite has a positive congruence premise then
+    if its carrier is unreachable by child e-class closure then
+      return Declined(the carrier-specific reason)
+    else
+      return DeliveredElsewhere(EGraphCongruenceClosure)
+    end if
+  else
+    continue with structural and native-rule lowering
+  end if
+end procedure
 ```
 
-### Collection Congruence
+The parser stores the two polarities as distinct premise variants. It may parse
+a rule containing both; Algorithm 1 refuses that contradiction by name before
+lowering. Keeping parsing structural makes the semantic rejection observable
+and testable.
 
-For collection constructors like `PPar {S, ...rest}`:
+## 5. Correctness and regression gates
 
-```
-rw_proc(parent.clone(), result) <--
-    proc(parent),
-    if let Proc::PPar(ref bag) = parent,
-    for (elem, _count) in bag.iter(),
-    rw_proc(elem.clone(), elem_rewritten),
-    let result = Proc::PPar({
-        let mut new_bag = bag.clone();
-        new_bag.remove(elem);
-        Proc::insert_into_ppar(&mut new_bag, elem_rewritten.clone());
-        new_bag
-    });
-```
+The following layers guard the design:
 
-The rule iterates over all elements of the collection bag, rewrites each one
-that has a rewrite, and reconstructs the collection with the rewritten element.
+| gate | obligation |
+|---|---|
+| withholding unit tests | empty baseline, scalar severance, nested refusal, contradictory-polarity refusal, builtin refusal, and native-category severance |
+| [`congruence_declaration_witness.rs`](../../../languages/tests/congruence_declaration_witness.rs) | declared, undeclared, unreachable-carrier, and severed runtime behavior |
+| [`congruence_withholding.rs`](../../../languages/tests/congruence_withholding.rs) | accepted withholding round-trip and reduction behavior |
+| Rocq compilation | W1, payload injectivity, and edge-set theorems type-check |
+| zero-admission scanner | the critical Rocq suites contain no unproved assumptions or admissions |
+| reflected lowering dispositions | every declaration is delivered, suppressed, delivered elsewhere, or declined; silence is not a state |
 
-### Binding Congruence
-
-For binding constructors like `PNew x S`:
-
-```
-rw_proc(lhs.clone(), rhs) <--
-    proc(lhs),
-    if let Proc::PNew(ref scope) = lhs,
-    let binder = scope.unsafe_pattern().clone(),
-    let body = scope.unsafe_body(),
-    rw_proc((**body).clone(), body_rewritten),
-    let rhs = Proc::PNew(
-        mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone()))
-    );
-```
-
-Note the use of `unsafe_pattern()` and `unsafe_body()` to access scope
-internals without opening/re-binding (which would change the binder identity
-and potentially cause infinite loops in the fixpoint).
-
-### ART04 Bloom Filter Integration
-
-For consolidated simple congruence, a bloom filter verifies the constructor set:
-
-```
-1. Build BloomFilter from participating constructor labels
-2. debug_assert! all labels pass might_contain_str (zero false negatives)
-3. Generate matches!() guard from the known set
-4. Emit G38 diagnostic with guard count
-```
-
-## 5. Generated Code Patterns
-
-### Simple (consolidated) -- 2 constructors, 1 field category:
-
-```rust
-rw_proc(lhs.clone(), match (lhs, vi) {
-    (Proc::PDrop(_), 0) => Proc::PDrop(Box::new(t.clone())),
-    (Proc::POutput(x0, _, x2), 1) => Proc::POutput(x0.clone(), Box::new(t.clone()), x2.clone()),
-    _ => unreachable!(),
-}) <--
-    proc(lhs),
-    if matches!(lhs, Proc::PDrop(..) | Proc::POutput(..)),
-    for (field_val, vi) in {
-        thread_local! {
-            static POOL_PROC_SCONG_NAME: std::cell::Cell<Vec<(Name, usize)>> =
-                const { std::cell::Cell::new(Vec::new()) };
-        }
-        let mut buf = POOL_PROC_SCONG_NAME.with(|p| p.take());
-        buf.clear();
-        match lhs {
-            Proc::PDrop(x0) => { buf.push(((*x0).clone(), 0)); },
-            Proc::POutput(_, x1, _) => { buf.push(((*x1).clone(), 1)); },
-            _ => {},
-        }
-        let iter_buf = std::mem::take(&mut buf);
-        POOL_PROC_SCONG_NAME.with(|p| p.set(buf));
-        iter_buf
-    }.into_iter(),
-    rw_name(field_val, t);
-```
-
-### Collection -- bag element rewrite:
-
-```rust
-rw_proc(parent.clone(), result) <--
-    proc(parent),
-    if let Proc::PPar(ref bag) = parent,
-    for (elem, _count) in bag.iter(),
-    rw_proc(elem.clone(), elem_rewritten),
-    let result = Proc::PPar({ /* bag clone, remove, insert */ });
-```
-
-### Binding -- scope body rewrite:
-
-```rust
-rw_proc(lhs.clone(), rhs) <--
-    proc(lhs),
-    if let Proc::PNew(ref scope) = lhs,
-    let binder = scope.unsafe_pattern().clone(),
-    let body = scope.unsafe_body(),
-    rw_proc((**body).clone(), body_rewritten),
-    let rhs = Proc::PNew(Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
-```
-
-## 6. Integration with Pipeline
-
-Called from `mod.rs::generate_rewrite_rules()` which is invoked from
-`generate_ascent_source()`:
-
-```rust
-let congruence_rules = congruence::generate_all_explicit_congruences(
-    language, cat_filter, emit_diagnostics,
-);
-```
-
-The `emit_diagnostics` flag is `true` for the main struct and `false` for
-the core struct (avoiding duplicate diagnostics in SCC splitting).
-
-The resulting `TokenStream` rules are appended to the rewrite rules section
-of the generated Ascent content.
-
-### Demand-Driven Filtering (ART06)
-
-Categories not in the demanded set are skipped via `in_cat_filter()`. The
-category filter is applied at the top of `generate_all_explicit_congruences()`.
-
-## 7. Diagnostic Emissions
-
-| Lint ID | Name                               | Severity | Trigger                           |
-|---------|------------------------------------|----------|-----------------------------------|
-| G38     | `bloom-filter-rw-congruence-guard` | Note     | Rewrite congruence groups guarded by discriminant pre-check |
-
-The G38 diagnostic includes:
-- Number of guarded rewrite congruence groups
-- Total participating constructor count
-- Hint explaining the ART04 optimization
-
-## 8. Test Coverage
-
-The congruence module is tested through integration tests that compile
-full language definitions with explicit congruence rules:
-
-- **Rholang tests**: Exercise all three congruence strategies (Simple for
-  POutput fields, Collection for PPar bag elements, Binding for PNew scope)
-- **Lambda tests**: Exercise binding congruence
-- **Ambient tests**: Exercise collection congruence
-
-No standalone unit tests exist in `congruence.rs` itself; coverage is
-achieved through the end-to-end compilation pipeline.
-
-## 9. Source References
-
-- **Primary source**: [`macros/src/logic/congruence.rs`](../../src/logic/congruence.rs) (~722 lines)
-- **TLS pool generation**: [`macros/src/logic/common.rs`](../../src/logic/common.rs), `generate_tls_pool_iter()`
-- **Bloom filter**: [`macros/src/logic/bloom_filter.rs`](../../src/logic/bloom_filter.rs)
-- **Invocation**: [`macros/src/logic/mod.rs`](../../src/logic/mod.rs), via `generate_rewrite_rules()`
-
-## 10. Cross-References
-
-- [bloom-filter.md](bloom-filter.md) -- ART04 pre-check used in consolidated simple congruence
-- [equation-system.md](equation-system.md) -- equality congruences (auto-generated, different from rewrite congruences here)
-- [rule-generation.md](rule-generation.md) -- unified rule clause generation shared with rewrite rules
-- [rule-fusion.md](rule-fusion.md) -- congruence rules are explicitly excluded from BCG02 fusion
-- [`docs/design/codegen-optimization-catalog.md`](../../../docs/design/codegen-optimization-catalog.md) -- ART04 catalog entry
+The source of truth for the machine-checked model is
+[`CongruenceWithholding.v`](../../../dovetail/formal/rocq/theories/Lowering/CongruenceWithholding.v).
+The source of truth for runtime classification is
+[`withholding.rs`](../../src/gen/runtime/dovetail_report/withholding.rs). Any
+future carrier extension must update the classifier, typed lowering,
+reconstruction, tests, and proof obligations together.

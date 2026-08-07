@@ -73,7 +73,8 @@
 //! [`WithholdingSet`], which answers exactly two questions:
 //!
 //!  * [`WithholdingSet::is_severed`] — "is `(constructor, field_index)` severed?", read by
-//!    `typed_lowering::field_child_expr_typed` and by `super::field_child_expr`;
+//!    `typed_lowering::field_child_expr_typed` while emitting the typed carrier and by
+//!    `reconstruct` while generating its inverse;
 //!  * [`WithholdingSet::refusals`] — every declaration the lane cannot honour, each
 //!    carrying the reason, emitted as a `compile_error!` so an unhonourable declaration
 //!    **cannot ship silently**.
@@ -133,8 +134,9 @@ pub(crate) struct WithholdingSet {
 impl WithholdingSet {
     /// Whether `(constructor, field_index)` is a severed position.
     ///
-    /// ⚠ Read by BOTH e-graph lowerings (typed and `EGraph<String>`) so the two cannot
-    /// disagree about which fields are severed.
+    /// ⚠ Read by the typed e-graph lowering and its reconstruction generator. Any language
+    /// with a withholding declaration is routed through `super::needs_typed_dovetail_path`,
+    /// so the `EGraph<String>` lowering never receives this set.
     pub(crate) fn is_severed(&self, constructor: &Ident, field_index: usize) -> bool {
         let label = constructor.to_string();
         self.positions
@@ -263,7 +265,7 @@ impl WithholdingSet {
 ///     (S, T) ← WITHHELD-CONGRUENCE-PREMISE(rw)          ▷ absent ⇒ not a withholding
 ///     if absent then continue
 ///     if rw also carries `S ~> T` then                   ▷ assert and deny at once
-///       REFUSE(rw, "carries both polarities")            ▷ (rejected at parse time too)
+///       REFUSE(rw, "carries both polarities")            ▷ parser accepts; classifier refuses
 ///     (ctor, args) ← APPLY-HEAD(rw.left)                 ▷ else REFUSE: LHS not an application
 ///     i ← the unique j with args[j] = Var(S)             ▷ else REFUSE: 0 or ≥2 occurrences
 ///     kind ← VARIANT-KIND(language, ctor)                ▷ the AST shape the codegen built
@@ -581,17 +583,17 @@ mod tests {
         );
     }
 
-    /// A withholding on a builtin-typed field has no child e-class to sever; refused with
+    /// A withholding on a builtin grammar field has no child e-class to sever; refused with
     /// the reason, so the author learns propagation never reached it in the first place.
     #[test]
     fn a_builtin_field_withholding_is_refused_because_it_was_never_a_child() {
         let language = parse(
             r#"
                 name: BuiltinWithholding,
-                types { Proc, ![i64] as Int }
+                types { Proc }
                 terms {
                     PZero . |- "0" : Proc ;
-                    PLit . n:Int, p:Proc |- "lit" n p : Proc ;
+                    PLit . n:Integer, p:Proc |- "lit" n p : Proc ;
                 }
                 equations {}
                 rewrites {
@@ -608,5 +610,29 @@ mod tests {
             "reason: {}",
             set.refusals()[0].reason
         );
+    }
+
+    /// A native-backed language category is not a builtin grammar slot. A field of that
+    /// category still stores a child term/e-class, so withholding it remains severable.
+    #[test]
+    fn a_native_backed_category_field_is_still_a_severable_child() {
+        let language = parse(
+            r#"
+                name: NativeCategoryWithholding,
+                types { Proc; ![i64] as Int }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    PLit . n:Int, p:Proc |- "lit" n p : Proc ;
+                }
+                equations {}
+                rewrites {
+                    LitWithheld . | S ~/> T |- (PLit S P) ~> (PLit T P) ;
+                }
+            "#,
+        );
+        let set = classify_withholdings(&language);
+        assert!(set.refusals().is_empty());
+        assert_eq!(set.positions().len(), 1);
+        assert!(set.is_severed(&position_ident("PLit"), 0));
     }
 }
