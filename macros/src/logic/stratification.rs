@@ -220,7 +220,33 @@ pub fn analyze(language: &LanguageDef) -> StratificationReport {
 /// Used by callers that build the graph from inline guard predicates.
 fn collect_relation_refs(pred: &BehavioralPred) -> Vec<(String, EdgeKind)> {
     let mut acc = Vec::new();
-    collect_relation_refs_inner(pred, false, &mut acc);
+    let mut work = vec![(pred, false)];
+    while let Some((pred, inside_negation)) = work.pop() {
+        match pred {
+            BehavioralPred::RelationQuery { relation_name, negated, .. } => {
+                let effective_negated = inside_negation ^ negated;
+                let kind = if effective_negated {
+                    EdgeKind::Negative
+                } else {
+                    EdgeKind::Positive
+                };
+                acc.push((relation_name.to_string(), kind));
+            },
+            BehavioralPred::Not(inner) => work.push((inner, !inside_negation)),
+            BehavioralPred::And(left, right) | BehavioralPred::Or(left, right) => {
+                // LIFO scheduling preserves the recursive walk's left-to-right order.
+                work.push((right, inside_negation));
+                work.push((left, inside_negation));
+            },
+            BehavioralPred::Implies(antecedent, consequent) => {
+                // P ⟹ Q ≡ ¬P ∨ Q: only the antecedent changes polarity.
+                work.push((consequent, inside_negation));
+                work.push((antecedent, !inside_negation));
+            },
+            BehavioralPred::Quantified { body, .. } => work.push((body, inside_negation)),
+            BehavioralPred::AcMatch { .. } | BehavioralPred::Top => {},
+        }
+    }
     acc
 }
 
@@ -244,6 +270,12 @@ fn add_premise_edge(
     graph: &mut BTreeMap<String, Vec<(String, EdgeKind)>>,
     node_set: &mut BTreeSet<String>,
 ) {
+    // Universal premises form a unary spine, so a cursor is the minimal PDA.
+    let mut premise = premise;
+    while let Premise::ForAll { body, .. } = premise {
+        premise = body;
+    }
+
     match premise {
         Premise::RelationQuery { relation, .. } => {
             add_edge(source, relation.to_string(), EdgeKind::Positive, graph, node_set);
@@ -253,9 +285,7 @@ fn add_premise_edge(
                 add_edge(source, target, kind, graph, node_set);
             }
         },
-        Premise::ForAll { body, .. } => {
-            add_premise_edge(source, body, graph, node_set);
-        },
+        Premise::ForAll { .. } => unreachable!("ForAll premise spine was consumed above"),
         // ★ (#195) A WITHHELD congruence adds no dependency edge, for the same reason a
         // declared one does not: neither names a RELATION. Listed explicitly so a future
         // edge on either polarity cannot be added to one and forgotten on the other.
@@ -281,40 +311,6 @@ fn add_edge(
         .push((target, kind));
 }
 
-fn collect_relation_refs_inner(
-    pred: &BehavioralPred,
-    inside_negation: bool,
-    acc: &mut Vec<(String, EdgeKind)>,
-) {
-    match pred {
-        BehavioralPred::RelationQuery { relation_name, negated, .. } => {
-            let effective_negated = inside_negation ^ negated;
-            let kind = if effective_negated {
-                EdgeKind::Negative
-            } else {
-                EdgeKind::Positive
-            };
-            acc.push((relation_name.to_string(), kind));
-        },
-        BehavioralPred::Not(inner) => {
-            collect_relation_refs_inner(inner, !inside_negation, acc);
-        },
-        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) => {
-            collect_relation_refs_inner(a, inside_negation, acc);
-            collect_relation_refs_inner(b, inside_negation, acc);
-        },
-        BehavioralPred::Implies(a, b) => {
-            // P ⟹ Q ≡ ¬P ∨ Q : the antecedent is negated.
-            collect_relation_refs_inner(a, !inside_negation, acc);
-            collect_relation_refs_inner(b, inside_negation, acc);
-        },
-        BehavioralPred::Quantified { body, .. } => {
-            collect_relation_refs_inner(body, inside_negation, acc);
-        },
-        BehavioralPred::AcMatch { .. } | BehavioralPred::Top => {},
-    }
-}
-
 /// Tarjan's strongly connected components algorithm.
 ///
 /// Returns SCCs in reverse topological order. Each SCC is a vector of
@@ -330,36 +326,28 @@ fn tarjan_scc(graph: &BTreeMap<String, Vec<(String, EdgeKind)>>) -> Vec<Vec<Stri
         sccs: Vec<Vec<String>>,
     }
 
-    fn strong_connect<'a>(state: &mut State<'a>, v: &'a str) {
-        state.index_of.insert(v, state.index);
-        state.lowlink.insert(v, state.index);
+    struct Frame<'a> {
+        node: &'a str,
+        parent: Option<&'a str>,
+        next_edge: usize,
+    }
+
+    fn discover<'a>(state: &mut State<'a>, node: &'a str) {
+        state.index_of.insert(node, state.index);
+        state.lowlink.insert(node, state.index);
         state.index += 1;
-        state.stack.push(v);
-        state.on_stack.insert(v);
+        state.stack.push(node);
+        state.on_stack.insert(node);
+    }
 
-        if let Some(edges) = state.graph.get(v) {
-            for (w, _) in edges {
-                let w_str: &str = w.as_str();
-                if !state.index_of.contains_key(w_str) {
-                    strong_connect(state, w_str);
-                    let w_low = state.lowlink[w_str];
-                    let v_low = state.lowlink[v];
-                    state.lowlink.insert(v, v_low.min(w_low));
-                } else if state.on_stack.contains(w_str) {
-                    let w_idx = state.index_of[w_str];
-                    let v_low = state.lowlink[v];
-                    state.lowlink.insert(v, v_low.min(w_idx));
-                }
-            }
-        }
-
-        if state.lowlink[v] == state.index_of[v] {
+    fn finish_component<'a>(state: &mut State<'a>, root: &'a str) {
+        if state.lowlink[root] == state.index_of[root] {
             let mut scc = Vec::new();
             loop {
                 let w = state.stack.pop().expect("non-empty stack inside SCC");
                 state.on_stack.remove(w);
                 scc.push(w.to_string());
-                if w == v {
+                if w == root {
                     break;
                 }
             }
@@ -379,13 +367,58 @@ fn tarjan_scc(graph: &BTreeMap<String, Vec<(String, EdgeKind)>>) -> Vec<Vec<Stri
 
     for v in graph.keys() {
         let v_str: &str = v.as_str();
-        if !state.index_of.contains_key(v_str) {
-            strong_connect(&mut state, v_str);
+        if state.index_of.contains_key(v_str) {
+            continue;
+        }
+
+        discover(&mut state, v_str);
+        let mut frames = vec![Frame { node: v_str, parent: None, next_edge: 0 }];
+
+        while let Some(frame) = frames.last_mut() {
+            let node = frame.node;
+            let next_target = state
+                .graph
+                .get(node)
+                .and_then(|edges| edges.get(frame.next_edge))
+                .map(|(target, _)| target.as_str());
+
+            if let Some(target) = next_target {
+                frame.next_edge += 1;
+                if !state.index_of.contains_key(target) {
+                    discover(&mut state, target);
+                    frames.push(Frame {
+                        node: target,
+                        parent: Some(node),
+                        next_edge: 0,
+                    });
+                } else if state.on_stack.contains(target) {
+                    let target_index = state.index_of[target];
+                    let node_lowlink = state.lowlink[node];
+                    state.lowlink.insert(node, node_lowlink.min(target_index));
+                }
+                continue;
+            }
+
+            let frame = frames.pop().expect("Tarjan PDA frame disappeared");
+            // Recursive Tarjan closes a child's SCC before returning to update
+            // its parent's lowlink. Preserve that order exactly.
+            finish_component(&mut state, frame.node);
+            if let Some(parent) = frame.parent {
+                let child_lowlink = state.lowlink[frame.node];
+                let parent_lowlink = state.lowlink[parent];
+                state
+                    .lowlink
+                    .insert(parent, parent_lowlink.min(child_lowlink));
+            }
         }
     }
 
     state.sccs
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/stratification_recursive_oracle.rs"]
+mod recursive_oracle;
 
 #[cfg(test)]
 mod tests {
