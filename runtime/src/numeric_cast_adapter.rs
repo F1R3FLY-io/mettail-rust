@@ -19,7 +19,7 @@
 //!
 //! Each generic reduction reproduces the previously hand-written per-language control flow
 //! and its order exactly: width → element-peel → numeric-string fast-path → nested same-op
-//! recursion (only the arities that had it) → BigRat-eval fast-path (float only) →
+//! traversal (only the arities that had it) → BigRat-eval fast-path (float only) →
 //! `to_numeric_input` fallthrough → the shared typed pipeline.
 
 use crate::numeric_cast_dispatch::{
@@ -84,7 +84,7 @@ pub trait ProcToNumericInput {
         None
     }
 
-    /// Nested same-op recursion hooks: if `self` is itself the int/float/fixed binary-cast
+    /// Nested same-op decomposition hooks: if `self` is itself the int/float/fixed binary-cast
     /// redex, yield its (inner arg, extracted width). A width that fails extraction yields
     /// `None` here, and the reduction then falls through to [`Self::to_numeric_input`]
     /// (which carries the same redex arm), preserving the original semantics. Default `None`.
@@ -121,6 +121,18 @@ pub trait CastResult: Sized {
 // uses `numeric_int_bin_i64` (and `proc_int_bin` wraps it). The `_i32` path narrows through
 // `to_i32` and so rejects values an `i64` would accept — this is intentional and preserved.
 
+#[inline]
+fn apply_enclosing_widths<T>(
+    mut value: T,
+    enclosing_widths: Vec<i64>,
+    apply: impl Fn(T, i64) -> Option<T>,
+) -> Option<T> {
+    for width in enclosing_widths.into_iter().rev() {
+        value = apply(value, width)?;
+    }
+    Some(value)
+}
+
 /// `int(a, m) : i32` — Calculator's native int cast.
 #[inline]
 pub fn numeric_int_bin_i32<P, W>(a: &P, w: W) -> Option<i32>
@@ -128,16 +140,25 @@ where
     P: ProcToNumericInput,
     W: CastWidth,
 {
-    let width = w.into_width_i64()?;
-    let a = a.peel_numeric_elem();
-    if let Some(s) = a.as_numeric_str() {
-        return int_bin_pipeline_decimal_str_i32(s, width);
+    let mut width = w.into_width_i64()?;
+    let mut current = a;
+    let mut enclosing_widths = Vec::new();
+    loop {
+        current = current.peel_numeric_elem();
+        let value = if let Some(s) = current.as_numeric_str() {
+            int_bin_pipeline_decimal_str_i32(s, width)?
+        } else if let Some((inner, inner_width)) = current.as_int_bin() {
+            enclosing_widths.push(width);
+            current = inner;
+            width = inner_width;
+            continue;
+        } else {
+            int_bin_pipeline_i32(current.to_numeric_input()?, width)?
+        };
+        return apply_enclosing_widths(value, enclosing_widths, |value, width| {
+            int_bin_pipeline_i32(NumericInput::I32(value), width)
+        });
     }
-    if let Some((inner_a, inner_w)) = a.as_int_bin() {
-        let n = numeric_int_bin_i32(inner_a, inner_w)?;
-        return int_bin_pipeline_i32(NumericInput::I32(n), width);
-    }
-    int_bin_pipeline_i32(a.to_numeric_input()?, width)
 }
 
 /// `int(a, m) : i64` — Rholang's int cast value (also the body of [`proc_int_bin`]).
@@ -147,16 +168,25 @@ where
     P: ProcToNumericInput,
     W: CastWidth,
 {
-    let width = w.into_width_i64()?;
-    let a = a.peel_numeric_elem();
-    if let Some(s) = a.as_numeric_str() {
-        return int_bin_pipeline_decimal_str_i64(s, width);
+    let mut width = w.into_width_i64()?;
+    let mut current = a;
+    let mut enclosing_widths = Vec::new();
+    loop {
+        current = current.peel_numeric_elem();
+        let value = if let Some(s) = current.as_numeric_str() {
+            int_bin_pipeline_decimal_str_i64(s, width)?
+        } else if let Some((inner, inner_width)) = current.as_int_bin() {
+            enclosing_widths.push(width);
+            current = inner;
+            width = inner_width;
+            continue;
+        } else {
+            int_bin_pipeline_i64(current.to_numeric_input()?, width)?
+        };
+        return apply_enclosing_widths(value, enclosing_widths, |value, width| {
+            int_bin_pipeline_i64(NumericInput::I64(value), width)
+        });
     }
-    if let Some((inner_a, inner_w)) = a.as_int_bin() {
-        let n = numeric_int_bin_i64(inner_a, inner_w)?;
-        return int_bin_pipeline_i64(NumericInput::I64(n), width);
-    }
-    int_bin_pipeline_i64(a.to_numeric_input()?, width)
 }
 
 /// `uint(a, m) : u32`. No nested-recursion fast-path (neither language had one here).
@@ -181,19 +211,27 @@ where
     P: ProcToNumericInput,
     W: CastWidth,
 {
-    let width = w.into_width_i64()?;
-    let a = a.peel_numeric_elem();
-    if let Some(s) = a.as_numeric_str() {
-        return float_bin_pipeline_parse_f64(s, width);
+    let mut width = w.into_width_i64()?;
+    let mut current = a;
+    let mut enclosing_widths = Vec::new();
+    loop {
+        current = current.peel_numeric_elem();
+        let value = if let Some(s) = current.as_numeric_str() {
+            float_bin_pipeline_parse_f64(s, width)?
+        } else if let Some(rat) = current.as_evaluable_bigrat() {
+            float_bin_pipeline(NumericInput::BigRat(rat.get()), width)?
+        } else if let Some((inner, inner_width)) = current.as_float_bin() {
+            enclosing_widths.push(width);
+            current = inner;
+            width = inner_width;
+            continue;
+        } else {
+            float_bin_pipeline(current.to_numeric_input()?, width)?
+        };
+        return apply_enclosing_widths(value, enclosing_widths, |value, width| {
+            float_bin_pipeline(NumericInput::F64(value.get()), width)
+        });
     }
-    if let Some(rat) = a.as_evaluable_bigrat() {
-        return float_bin_pipeline(NumericInput::BigRat(rat.get()), width);
-    }
-    if let Some((inner_a, inner_w)) = a.as_float_bin() {
-        let cf = numeric_float_bin(inner_a, inner_w)?;
-        return float_bin_pipeline(NumericInput::F64(cf.get()), width);
-    }
-    float_bin_pipeline(a.to_numeric_input()?, width)
 }
 
 /// `fixed(a, m)`. No nested-recursion fast-path.
@@ -379,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_redex_recurses() {
+    fn nested_redex_applies_inner_then_outer_width() {
         // int(int(9, 16), 8) → 9
         let nested = FakeProc::IntBin(Box::new(FakeProc::IntLit(9)), 16);
         assert_eq!(numeric_int_bin_i64(&nested, 8i64), Some(9));
