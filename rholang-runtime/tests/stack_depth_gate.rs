@@ -1569,8 +1569,12 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
     ),
     (
         "metadata.rs",
-        "nth_index",
-        Coverage::NotADepthTraversal("static grammar metadata tables; `nth_index` is a helper"),
+        "decode_byte_array_literal",
+        Coverage::NotADepthTraversal(
+            "static grammar metadata tables; the embedded `definition_source` text defines \
+             `decode_byte_array_literal` and calls it once, so the deliberately loose textual \
+             recursion detector sees a helper definition/call pair rather than host recursion",
+        ),
     ),
     (
         "rho_fold_dataflow.rs",
