@@ -3081,23 +3081,101 @@ mod tests {
     /// receiver to short-circuit, so its body was changed to `Proc::Err` at the declaration
     /// site (matching its five sibling arms). The other 146 are closed by this function alone.
     ///
-    /// # ⚠ The floor is the non-vacuity control
+    /// # ⚠ The source-derived coverage equation is the non-vacuity control
     ///
     /// "No offenders" is also what a census that found no folds reports. The subject is
     /// [`crate::gen::runtime::binder_congruence::tests::bundled_languages`] — the ONE corpus
-    /// derivation, which already carries its own ≥ 50-language floor — and this cell adds a
-    /// fold-count floor on top, because a language set that reconstructs while its folds
-    /// stop being collected would satisfy every assertion below in silence.
+    /// derivation, whose own gate proves that every reconstructible language definition is
+    /// represented. For each language this test independently records the source-ordered names
+    /// of the declarations whose `eval_mode` is `Fold` and requires
+    ///
+    /// ```text
+    /// declared folds = recorded dispositions
+    /// emitted folds  = dispositions whose outcome is Delivered.
+    /// ```
+    ///
+    /// The first equality compares the complete ordered construct-name sequences, so it also
+    /// detects substitution, duplication, and reordering rather than only a count mismatch.
+    /// The second detects a `Delivered` record whose executable fold was not emitted (or vice
+    /// versa). Together they fail on a collector omission without pinning today's corpus size as
+    /// a permanent budget. A source change may legitimately add or remove folds; it cannot make
+    /// a declared fold disappear from the collector's disposition inventory.
     #[test]
     fn every_declared_fold_body_defers_instead_of_panicking() {
         use quote::quote;
 
+        let mut declared_folds_seen = 0usize;
         let mut folds_seen = 0usize;
+        let mut dispositions_seen = 0usize;
+        let mut delivered_dispositions_seen = 0usize;
+        let mut declined_dispositions_seen = 0usize;
         let mut offenders: Vec<String> = Vec::new();
         let mut unreporting: Vec<String> = Vec::new();
 
         for lang in crate::gen::runtime::binder_congruence::tests::bundled_languages() {
-            let (folds, _dispositions) = super::collect_fold_rules(&lang.def);
+            let declared_names: Vec<String> = lang
+                .def
+                .terms
+                .iter()
+                .filter(|rule| rule.eval_mode == Some(mettail_ast::types::EvalMode::Fold))
+                .map(|rule| rule.label.to_string())
+                .collect();
+            let (folds, dispositions) = super::collect_fold_rules(&lang.def);
+            let recorded_names: Vec<&str> = dispositions
+                .iter()
+                .map(|disposition| disposition.construct.as_str())
+                .collect();
+            assert_eq!(
+                recorded_names,
+                declared_names
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                "★ {}'s source-ordered declared fold names differ from the collector's \
+                 disposition names; a declaration was lost, duplicated, substituted, or \
+                 reordered",
+                lang.name,
+            );
+            assert!(
+                dispositions
+                    .iter()
+                    .all(|disposition| disposition.construct_kind
+                        == mettail_runtime::LoweredConstructKind::Fold),
+                "★ {} returned a non-fold disposition from `collect_fold_rules`",
+                lang.name,
+            );
+            let delivered_in_language = dispositions
+                .iter()
+                .filter(|disposition| {
+                    matches!(
+                        disposition.outcome,
+                        crate::gen::runtime::disposition::LoweringOutcome::Delivered { .. }
+                    )
+                })
+                .count();
+            let declined_in_language = dispositions
+                .iter()
+                .filter(|disposition| disposition.is_declined())
+                .count();
+            assert_eq!(
+                delivered_in_language + declined_in_language,
+                dispositions.len(),
+                "★ {} returned a fold disposition other than Delivered or Declined",
+                lang.name,
+            );
+            assert_eq!(
+                folds.len(),
+                delivered_in_language,
+                "★ {} emitted {} executable fold rule(s), but recorded {} Delivered \
+                 disposition(s)",
+                lang.name,
+                folds.len(),
+                delivered_in_language,
+            );
+            declared_folds_seen += declared_names.len();
+            dispositions_seen += dispositions.len();
+            delivered_dispositions_seen += delivered_in_language;
+            declined_dispositions_seen += declined_in_language;
             for fold in &folds {
                 folds_seen += 1;
                 let label = {
@@ -3139,11 +3217,24 @@ mod tests {
         }
 
         assert!(
-            folds_seen >= 150,
-            "★ only {folds_seen} fold rule(s) were collected across the whole corpus. The \
-             bundled languages declare over two hundred, so the census or `collect_fold_rules` \
-             has changed shape and the offender check below would be reporting success over a \
-             domain that is not the corpus.",
+            declared_folds_seen > 0,
+            "★ the complete bundled-language corpus declares no folds; the fold-emission \
+             property would be vacuous",
+        );
+        assert_eq!(
+            dispositions_seen, declared_folds_seen,
+            "★ corpus fold coverage does not balance: {declared_folds_seen} declared != \
+             {dispositions_seen} disposition records",
+        );
+        assert_eq!(
+            folds_seen, delivered_dispositions_seen,
+            "★ corpus executable-fold coverage does not balance: {folds_seen} emitted != \
+             {delivered_dispositions_seen} Delivered dispositions",
+        );
+        eprintln!(
+            "  fold corpus coverage: {declared_folds_seen} declared = {dispositions_seen} \
+             disposition records ({delivered_dispositions_seen} Delivered/emitted + \
+             {declined_dispositions_seen} Declined)"
         );
         assert!(
             offenders.is_empty(),
