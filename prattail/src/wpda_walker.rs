@@ -11749,8 +11749,16 @@ where
     ///     constituent; fold chains are left-deep so the walk is short).
     ///     Childless (zero-width weight carriers): `key(hi_pos)` — their
     ///     `hi` is the fold position, a real node.
-    /// Depth-capped against the tolerated ForRow unit-rule cycles.
+    /// Tolerated ForRow unit-rule cycles are detected with Floyd's algorithm:
+    /// auxiliary space stays O(1), while acyclic spines have no artificial
+    /// depth limit.  A cycle resolves to its first intrinsic Intermediate
+    /// high-position (or `None` when the cycle contains no positional node).
     fn cgll_hi_key(&self, id: crate::sppf::SppfId) -> Option<u32> {
+        enum HiStep {
+            Done(Option<u32>),
+            Next(crate::sppf::SppfId),
+        }
+
         let leaf_end = |pos: &crate::sppf::PosOrSynth,
                         text_handle: crate::sppf::TextHandle,
                         kind: &TokenKind| {
@@ -11783,19 +11791,22 @@ where
                 crate::sppf::PosOrSynth::Synthesized(p) => self.cgll_pk(*p),
             }
         };
-        let mut cur = id;
-        for _ in 0..128 {
-            match self.sppf.node(cur)? {
+
+        let step = |cur| match self.sppf.node(cur) {
+            None => HiStep::Done(None),
+            Some(node) => match node {
                 crate::sppf::SppfNode::Terminal { pos, text_handle, token_kind, .. } => {
-                    return Some(leaf_end(pos, *text_handle, token_kind));
+                    HiStep::Done(Some(leaf_end(pos, *text_handle, token_kind)))
                 },
                 crate::sppf::SppfNode::TriggerTerminal { pos, text_handle, token_kind, .. } => {
-                    return Some(leaf_end(pos, *text_handle, token_kind));
+                    HiStep::Done(Some(leaf_end(pos, *text_handle, token_kind)))
                 },
                 crate::sppf::SppfNode::Epsilon { pos }
-                | crate::sppf::SppfNode::OptAbsent { pos } => return Some(self.cgll_pk(*pos)),
+                | crate::sppf::SppfNode::OptAbsent { pos } => {
+                    HiStep::Done(Some(self.cgll_pk(*pos)))
+                },
                 crate::sppf::SppfNode::Symbol { hi_pos, .. } => {
-                    return Some(self.cgll_pk(*hi_pos));
+                    HiStep::Done(Some(self.cgll_pk(*hi_pos)))
                 },
                 crate::sppf::SppfNode::Intermediate { hi_pos, .. } => {
                     let fallback = self.cgll_pk(*hi_pos);
@@ -11805,23 +11816,74 @@ where
                         .first()
                         .and_then(|&pk| self.sppf.node(pk))
                     {
-                        Some(crate::sppf::SppfNode::Packing { children, .. })
-                            if !children.is_empty() =>
-                        {
-                            cur = *children.last().expect("non-empty checked");
-                        },
-                        _ => return Some(fallback),
+                        Some(crate::sppf::SppfNode::Packing { children, .. }) => children
+                            .last()
+                            .copied()
+                            .map_or(HiStep::Done(Some(fallback)), HiStep::Next),
+                        _ => HiStep::Done(Some(fallback)),
                     }
                 },
-                crate::sppf::SppfNode::Packing { children, .. } => match children.last() {
-                    Some(&c) => cur = c,
-                    None => return None,
-                },
-                _ => return None,
+                crate::sppf::SppfNode::Packing { children, .. } => children
+                    .last()
+                    .copied()
+                    .map_or(HiStep::Done(None), HiStep::Next),
+                _ => HiStep::Done(None),
+            },
+        };
+
+        let advance = |cur| match step(cur) {
+            HiStep::Done(result) => Err(result),
+            HiStep::Next(next) => Ok(next),
+        };
+
+        let mut tortoise = match advance(id) {
+            Ok(next) => next,
+            Err(result) => return result,
+        };
+        let mut hare = match advance(id).and_then(advance) {
+            Ok(next) => next,
+            Err(result) => return result,
+        };
+        while tortoise != hare {
+            tortoise = match advance(tortoise) {
+                Ok(next) => next,
+                Err(result) => return result,
+            };
+            hare = match advance(hare).and_then(advance) {
+                Ok(next) => next,
+                Err(result) => return result,
+            };
+        }
+
+        // Locate the cycle entry, then inspect exactly one cycle.  An
+        // Intermediate has an intrinsic high-position suitable for the same
+        // defensive fallback the capped implementation used; a packing-only
+        // cycle has no such position.
+        let mut entry = id;
+        while entry != tortoise {
+            entry = match advance(entry) {
+                Ok(next) => next,
+                Err(result) => return result,
+            };
+            tortoise = match advance(tortoise) {
+                Ok(next) => next,
+                Err(result) => return result,
+            };
+        }
+        let cycle_start = entry;
+        loop {
+            if let Some(crate::sppf::SppfNode::Intermediate { hi_pos, .. }) = self.sppf.node(entry)
+            {
+                return Some(self.cgll_pk(*hi_pos));
+            }
+            entry = match advance(entry) {
+                Ok(next) => next,
+                Err(result) => return result,
+            };
+            if entry == cycle_start {
+                return None;
             }
         }
-        // Depth cap hit (tolerated unit-rule cycle): the stored hi.
-        self.sppf.span_hi(cur).map(|h| self.cgll_pk(h))
     }
 
     /// P4 item-1: the SPINE BODY category — the category of the LAST
@@ -21804,6 +21866,62 @@ mod tests {
             weight,
             WpdaState::Ready { min_bp: 0 },
         )
+    }
+
+    #[test]
+    fn cgll_hi_key_walks_20k_spine_on_256k_native_stack() {
+        std::thread::Builder::new()
+            .name("cgll-hi-key-deep-spine".into())
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+                let expected_hi = 73;
+                let mut spine = walker.sppf.intern_epsilon(expected_hi);
+
+                for depth in 0..20_000_u32 {
+                    let packing = walker.sppf.intern_packing(
+                        depth,
+                        vec![spine],
+                        LexicographicWeight::one_ref(),
+                    );
+                    // Intermediate high positions are intentionally untrusted
+                    // sentinels: the old 128-hop cap returned one of these
+                    // instead of reaching the true leaf.
+                    let intermediate = walker.sppf.intern_intermediate(depth, 0, 1_000_000 + depth);
+                    walker.sppf.link_packing_to_symbol(intermediate, packing);
+                    spine = intermediate;
+                }
+
+                assert_eq!(walker.cgll_hi_key(spine), Some(expected_hi));
+            })
+            .expect("spawn deep-spine test thread")
+            .join()
+            .expect("deep-spine test thread panicked");
+    }
+
+    #[test]
+    fn cgll_hi_key_terminates_on_unit_rule_cycles() {
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+
+        // A packing-only cycle has no intrinsic high-position.
+        let packing_id = walker.sppf.len() as crate::sppf::SppfId;
+        let packing =
+            walker
+                .sppf
+                .intern_packing(0, vec![packing_id], LexicographicWeight::one_ref());
+        assert_eq!(packing, packing_id);
+        assert_eq!(walker.cgll_hi_key(packing), None);
+
+        // A tolerated Intermediate/Packing unit-rule cycle falls back to the
+        // Intermediate's stored high-position, independent of cycle length.
+        let packing = walker.sppf.intern_packing(
+            1,
+            vec![(walker.sppf.len() + 1) as crate::sppf::SppfId],
+            LexicographicWeight::one_ref(),
+        );
+        let intermediate = walker.sppf.intern_intermediate(1, 0, 91);
+        walker.sppf.link_packing_to_symbol(intermediate, packing);
+        assert_eq!(walker.cgll_hi_key(intermediate), Some(91));
     }
 
     #[test]
