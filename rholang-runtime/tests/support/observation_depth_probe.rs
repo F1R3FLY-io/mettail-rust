@@ -67,3 +67,4 @@ fn observation_value_traits(depth: usize) {
 
     // Normal scope exit exercises both explicit destructors on this process's main thread.
 }
+

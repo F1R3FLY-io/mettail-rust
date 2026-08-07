@@ -911,11 +911,11 @@ required-features = ["runtime-report"]
 
 # The child half of `tests/stack_depth_gate.rs`. It is a `[[bin]]` rather than a `#[test]`
 # because libtest runs every test on a SPAWNED thread, and the traversal being gated is on the
-# MAIN thread — see `src/bin/stack_depth_probe.rs`. The gate reaches it through
+# MAIN thread — see `tests/support/stack_depth_probe.rs`. The gate reaches it through
 # `CARGO_BIN_EXE_stack_depth_probe`, which Cargo sets for integration tests of this package.
 [[bin]]
 name = "stack_depth_probe"
-path = "src/bin/stack_depth_probe.rs"
+path = "tests/support/stack_depth_probe.rs"
 required-features = ["rholang-runtime"]
 
 # Lightweight main-thread probe for the unconditional observation renderer. Keeping this
@@ -923,4 +923,4 @@ required-features = ["rholang-runtime"]
 # compiling the generated Rholang language; see the binary's module documentation.
 [[bin]]
 name = "observation_depth_probe"
-path = "src/bin/observation_depth_probe.rs"
+path = "tests/support/observation_depth_probe.rs"

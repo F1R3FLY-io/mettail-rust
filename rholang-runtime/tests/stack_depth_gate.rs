@@ -30,7 +30,7 @@
 //! stack is one `mmap` with a guard page, while a main thread's is a kernel-grown
 //! VMA bounded by `RLIMIT_STACK` — and it is the latter that production faults
 //! on. Every probe here therefore forks
-//! [`stack_depth_probe`](../../src/bin/stack_depth_probe.rs), a program whose
+//! [`stack_depth_probe`](support/stack_depth_probe.rs), a program whose
 //! `main` runs the subject directly, with `RLIMIT_STACK` installed in the child
 //! before `exec`. That is exactly what `ulimit -s` does in the shell harness of
 //! the audit's Appendix A, driven from Rust so the ladder is reproducible.
@@ -112,7 +112,7 @@
 // ---------------------------------------------------------------------------
 // the probe mechanism
 //
-// The subjects themselves live in `src/bin/stack_depth_probe.rs`, because they
+// The subjects themselves live in `tests/support/stack_depth_probe.rs`, because they
 // must run on a MAIN thread and libtest cannot give them one (see the module
 // header). This file owns the ladder, the bisection and the assertions.
 // ---------------------------------------------------------------------------

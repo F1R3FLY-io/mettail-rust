@@ -634,7 +634,7 @@ bounded by the rlimit, and §1.1 is the whole reason it is the latter that produ
 
 The probe therefore had to stop being a `#[test]`, for a mechanical reason: **libtest runs every
 test on a spawned thread**, so a `#[test]` body cannot execute on a main thread whatever the
-parent sets. It is now `rholang-runtime/src/bin/stack_depth_probe.rs`, a program whose `main`
+parent sets. It is now `rholang-runtime/tests/support/stack_depth_probe.rs`, a program whose `main`
 runs the subject directly.
 
 Two independent historical cross-validations showed the instruments agreeing where they
