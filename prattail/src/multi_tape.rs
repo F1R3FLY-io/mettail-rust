@@ -972,6 +972,24 @@ impl fmt::Display for MultiTapeAnalysis {
     }
 }
 
+/// Find a union-find representative and compress the entire traversed path.
+///
+/// The parent forest can be as deep as the number of grammar categories, so
+/// this must remain an explicit two-pass walk rather than recursive descent.
+fn union_find_root(parent: &mut [usize], mut node: usize) -> usize {
+    let mut root = node;
+    while parent[root] != root {
+        root = parent[root];
+    }
+
+    while parent[node] != node {
+        let next = parent[node];
+        parent[node] = root;
+        node = next;
+    }
+    root
+}
+
 /// Analyze grammar multi-stream structure using multi-tape automata.
 ///
 /// Builds a category dependency graph and finds:
@@ -1016,16 +1034,9 @@ pub fn analyze_from_bundle(
     // Union-Find for connected components
     let mut parent: Vec<usize> = (0..num_cats).collect();
 
-    fn find(parent: &mut [usize], x: usize) -> usize {
-        if parent[x] != x {
-            parent[x] = find(parent, parent[x]);
-        }
-        parent[x]
-    }
-
     fn union(parent: &mut [usize], a: usize, b: usize) {
-        let ra = find(parent, a);
-        let rb = find(parent, b);
+        let ra = union_find_root(parent, a);
+        let rb = union_find_root(parent, b);
         if ra != rb {
             parent[ra] = rb;
         }
@@ -1041,7 +1052,7 @@ pub fn analyze_from_bundle(
     // (no cross-category references at all)
     let mut component_members: HashMap<usize, Vec<usize>> = HashMap::new();
     for i in 0..num_cats {
-        let root = find(&mut parent, i);
+        let root = union_find_root(&mut parent, i);
         component_members.entry(root).or_default().push(i);
     }
 
@@ -1751,6 +1762,27 @@ pub fn build_synced_stream_automaton_k<W: Semiring, const K: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn union_find_root_compresses_a_deep_chain_on_a_small_stack() {
+        const DEPTH: usize = 20_000;
+        const STACK_SIZE: usize = 256 * 1024;
+
+        let mut parent = (1..=DEPTH).collect::<Vec<_>>();
+        parent.push(DEPTH);
+        std::thread::Builder::new()
+            .name("multi-tape-union-find-stack-gate".into())
+            .stack_size(STACK_SIZE)
+            .spawn(move || {
+                assert_eq!(union_find_root(&mut parent, 0), DEPTH);
+                assert!(parent[..DEPTH]
+                    .iter()
+                    .all(|representative| *representative == DEPTH));
+            })
+            .expect("spawn union-find stack gate")
+            .join()
+            .expect("union-find stack gate overflowed or panicked");
+    }
     use crate::automata::semiring::{LogWeight, TropicalWeight};
 
     // ── Helper: build a simple 1-tape automaton ──────────────────────────────

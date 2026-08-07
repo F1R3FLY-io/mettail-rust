@@ -726,31 +726,32 @@ fn flatten_repair_steps(
     token_id_map: &TokenIdMap,
     out: &mut Vec<ResolvedRepairAction>,
 ) -> Option<()> {
-    match action {
-        action @ RepairAction::Composite { .. } => {
-            for step in action
-                .into_composite_steps()
-                .expect("matched composite action without steps")
-            {
-                flatten_repair_steps(step, token_id_map, out)?;
-            }
-        },
-        RepairAction::SkipToSync { skip_count, .. } => {
-            out.push(ResolvedRepairAction::SkipToSync { skip_count });
-        },
-        RepairAction::DeleteToken => out.push(ResolvedRepairAction::DeleteToken),
-        RepairAction::InsertToken { token } => {
-            let (kind, text) = recovery_token_payload(token_id_map, token)?;
-            out.push(ResolvedRepairAction::InsertToken { kind, text });
-        },
-        RepairAction::SubstituteToken { replacement } => {
-            let (kind, text) = recovery_token_payload(token_id_map, replacement)?;
-            out.push(ResolvedRepairAction::SubstituteToken { kind, text });
-        },
-        RepairAction::SwapTokens { pos_a, pos_b } => {
-            out.push(ResolvedRepairAction::SwapTokens { pos_a, pos_b });
-        },
-        RepairAction::CategorySwitch { .. } => return None,
+    let mut pending = vec![action];
+    while let Some(action) = pending.pop() {
+        match action {
+            action @ RepairAction::Composite { .. } => {
+                let steps = action
+                    .into_composite_steps()
+                    .expect("matched composite action without steps");
+                pending.extend(steps.into_iter().rev());
+            },
+            RepairAction::SkipToSync { skip_count, .. } => {
+                out.push(ResolvedRepairAction::SkipToSync { skip_count });
+            },
+            RepairAction::DeleteToken => out.push(ResolvedRepairAction::DeleteToken),
+            RepairAction::InsertToken { token } => {
+                let (kind, text) = recovery_token_payload(token_id_map, token)?;
+                out.push(ResolvedRepairAction::InsertToken { kind, text });
+            },
+            RepairAction::SubstituteToken { replacement } => {
+                let (kind, text) = recovery_token_payload(token_id_map, replacement)?;
+                out.push(ResolvedRepairAction::SubstituteToken { kind, text });
+            },
+            RepairAction::SwapTokens { pos_a, pos_b } => {
+                out.push(ResolvedRepairAction::SwapTokens { pos_a, pos_b });
+            },
+            RepairAction::CategorySwitch { .. } => return None,
+        }
     }
     Some(())
 }
@@ -1444,6 +1445,30 @@ mod tests {
                 ResolvedRepairAction::SkipToSync { skip_count: 2 },
             ],
         );
+    }
+
+    #[test]
+    fn flatten_repair_steps_handles_deep_composites_on_a_small_stack() {
+        const DEPTH: usize = 20_000;
+        const STACK_SIZE: usize = 256 * 1024;
+
+        let mut action = RepairAction::DeleteToken;
+        for _ in 0..DEPTH {
+            action = RepairAction::Composite { steps: vec![action] };
+        }
+        let map = TokenIdMap::from_names(Vec::new());
+        std::thread::Builder::new()
+            .name("recovery-flatten-stack-gate".into())
+            .stack_size(STACK_SIZE)
+            .spawn(move || {
+                let mut resolved = Vec::new();
+                flatten_repair_steps(action, &map, &mut resolved)
+                    .expect("flatten nested composite action");
+                assert_eq!(resolved, vec![ResolvedRepairAction::DeleteToken]);
+            })
+            .expect("spawn recovery flatten stack gate")
+            .join()
+            .expect("recovery flatten stack gate overflowed or panicked");
     }
 
     #[test]
