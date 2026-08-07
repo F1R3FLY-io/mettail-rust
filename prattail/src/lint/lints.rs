@@ -2553,6 +2553,65 @@ fn one_insertion_away(longer: &[char], shorter: &[char]) -> bool {
 // C01: Cast Cycle
 // ══════════════════════════════════════════════════════════════════════════════
 
+fn cycle_guarded_longest_paths<'a>(
+    roots: impl IntoIterator<Item = &'a str>,
+    adjacency: &HashMap<&'a str, Vec<&'a str>>,
+) -> HashMap<&'a str, usize> {
+    struct Frame<'a> {
+        node: &'a str,
+        next_neighbor: usize,
+        longest_child: usize,
+    }
+
+    let mut lengths = HashMap::new();
+    let mut active = HashSet::new();
+    for root in roots {
+        if lengths.contains_key(root) {
+            continue;
+        }
+        active.insert(root);
+        let mut work = vec![Frame {
+            node: root,
+            next_neighbor: 0,
+            longest_child: 0,
+        }];
+        while let Some(frame) = work.last_mut() {
+            let next = adjacency
+                .get(frame.node)
+                .and_then(|neighbors| neighbors.get(frame.next_neighbor))
+                .copied();
+            if let Some(next) = next {
+                frame.next_neighbor += 1;
+                if let Some(&known) = lengths.get(next) {
+                    frame.longest_child = frame.longest_child.max(known + 1);
+                } else if active.contains(next) {
+                    // Match the historical recursion guard: the repeated node
+                    // contributes zero depth, while the edge to it contributes one.
+                    frame.longest_child = frame.longest_child.max(1);
+                } else {
+                    active.insert(next);
+                    work.push(Frame {
+                        node: next,
+                        next_neighbor: 0,
+                        longest_child: 0,
+                    });
+                }
+                continue;
+            }
+
+            let finished = work
+                .pop()
+                .expect("longest-path work stack contains its frame");
+            active.remove(finished.node);
+            lengths.insert(finished.node, finished.longest_child);
+            if let Some(parent) = work.last_mut() {
+                parent.longest_child = parent.longest_child.max(finished.longest_child + 1);
+            }
+        }
+    }
+    lengths
+}
+
 pub(crate) fn lint_c01_cast_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     // Build adjacency list from cast rules
     let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -2576,58 +2635,60 @@ pub(crate) fn lint_c01_cast_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintD
         category_names.iter().map(|&c| (c, Color::White)).collect();
     let mut path: Vec<&str> = Vec::new();
 
-    fn dfs<'a>(
+    struct DfsFrame<'a> {
         node: &'a str,
-        adjacency: &HashMap<&'a str, Vec<&'a str>>,
-        color: &mut HashMap<&'a str, Color>,
-        path: &mut Vec<&'a str>,
-        diagnostics: &mut Vec<LintDiagnostic>,
-        grammar_name: &str,
-    ) {
-        color.insert(node, Color::Gray);
-        path.push(node);
+        next_neighbor: usize,
+    }
 
-        if let Some(neighbors) = adjacency.get(node) {
-            for &next in neighbors {
+    for &category in &category_names {
+        if color.get(category) != Some(&Color::White) {
+            continue;
+        }
+
+        color.insert(category, Color::Gray);
+        path.push(category);
+        let mut work = vec![DfsFrame { node: category, next_neighbor: 0 }];
+        while let Some(frame) = work.last_mut() {
+            let next = adjacency
+                .get(frame.node)
+                .and_then(|neighbors| neighbors.get(frame.next_neighbor))
+                .copied();
+            if let Some(next) = next {
+                frame.next_neighbor += 1;
                 match color.get(next) {
                     Some(Color::Gray) => {
-                        // Found a cycle — extract the cycle path
-                        let cycle_start = path.iter().position(|&n| n == next).unwrap_or(0);
-                        let mut cycle_path: Vec<&str> = path[cycle_start..].to_vec();
+                        let cycle_start = path.iter().position(|&node| node == next).unwrap_or(0);
+                        let mut cycle_path = path[cycle_start..].to_vec();
                         cycle_path.push(next);
-                        let cycle_str = cycle_path.join(" -> ");
-
                         diagnostics.push(LintDiagnostic {
                             id: DiagnosticId::C01,
                             name: "cast-cycle",
                             severity: LintSeverity::Error,
                             category: None,
                             rule: None,
-                            message: format!("cast cycle detected: {}", cycle_str),
+                            message: format!("cast cycle detected: {}", cycle_path.join(" -> ")),
                             hint: Some(
                                 "break the cycle by removing one cast direction".to_string(),
                             ),
-                            grammar_name: Some(grammar_name.to_string()),
+                            grammar_name: Some(ctx.grammar_name.to_string()),
                             source_location: None,
                         });
                     },
                     Some(Color::White) | None => {
-                        dfs(next, adjacency, color, path, diagnostics, grammar_name);
+                        color.insert(next, Color::Gray);
+                        path.push(next);
+                        work.push(DfsFrame { node: next, next_neighbor: 0 });
                     },
-                    Some(Color::Black) => {
-                        // Already fully explored, no cycle through this node
-                    },
+                    Some(Color::Black) => {},
                 }
+                continue;
             }
-        }
 
-        path.pop();
-        color.insert(node, Color::Black);
-    }
-
-    for &cat in &category_names {
-        if color.get(cat) == Some(&Color::White) {
-            dfs(cat, &adjacency, &mut color, &mut path, diagnostics, ctx.grammar_name);
+            let finished = work
+                .pop()
+                .expect("cast-cycle work stack contains its frame");
+            path.pop();
+            color.insert(finished.node, Color::Black);
         }
     }
 }
@@ -2835,40 +2896,9 @@ pub(crate) fn lint_p03_deep_cast_nesting(ctx: &LintContext, diagnostics: &mut Ve
 
     let category_names: Vec<&str> = ctx.categories.iter().map(|c| c.name.as_str()).collect();
 
-    // Topological sort + DP to find longest path (only valid for DAGs — C01 catches cycles)
-    let mut longest_path: HashMap<&str, usize> = HashMap::new();
-
-    fn dp_longest<'a>(
-        node: &'a str,
-        adjacency: &HashMap<&'a str, Vec<&'a str>>,
-        memo: &mut HashMap<&'a str, usize>,
-        visited: &mut HashSet<&'a str>,
-    ) -> usize {
-        if let Some(&cached) = memo.get(node) {
-            return cached;
-        }
-        // Cycle guard (C01 should catch this, but be defensive)
-        if !visited.insert(node) {
-            return 0;
-        }
-
-        let max_child = adjacency.get(node).map_or(0, |neighbors| {
-            neighbors
-                .iter()
-                .map(|&next| dp_longest(next, adjacency, memo, visited) + 1)
-                .max()
-                .unwrap_or(0)
-        });
-
-        visited.remove(node);
-        memo.insert(node, max_child);
-        max_child
-    }
-
-    let mut visited = HashSet::new();
-    for &cat in &category_names {
-        dp_longest(cat, &adjacency, &mut longest_path, &mut visited);
-    }
+    // C01 diagnoses cycles; this memoized explicit PDA computes the
+    // longest cycle-guarded path in linear time on the intended DAG input.
+    let longest_path = cycle_guarded_longest_paths(category_names.iter().copied(), &adjacency);
 
     let max_depth = longest_path.values().copied().max().unwrap_or(0);
     if max_depth > 3 {
@@ -5233,7 +5263,7 @@ pub(crate) fn lint_lex05_float_integer_ambiguity(
 pub(crate) fn lint_par01_deep_rd_chain(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     // Build a call graph from syntax: category A references category B via NonTerminal.
     // Find the longest chain depth.
-    let mut call_graph: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut call_graph: HashMap<&str, Vec<&str>> = HashMap::new();
     for (_, category, syntax) in ctx.all_syntax {
         for item in syntax {
             if let SyntaxItemSpec::NonTerminal { category: nt_cat, .. } = item {
@@ -5241,39 +5271,20 @@ pub(crate) fn lint_par01_deep_rd_chain(ctx: &LintContext, diagnostics: &mut Vec<
                     call_graph
                         .entry(category.as_str())
                         .or_default()
-                        .insert(nt_cat.as_str());
+                        .push(nt_cat.as_str());
                 }
             }
         }
     }
 
-    // DFS to find max depth (with cycle detection)
-    fn max_depth<'a>(
-        cat: &'a str,
-        graph: &HashMap<&'a str, HashSet<&'a str>>,
-        visited: &mut HashSet<&'a str>,
-    ) -> usize {
-        if visited.contains(cat) {
-            return 0; // Cycle — don't recurse
-        }
-        visited.insert(cat);
-        let depth = graph
-            .get(cat)
-            .map(|callees| {
-                callees
-                    .iter()
-                    .map(|&c| 1 + max_depth(c, graph, visited))
-                    .max()
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0);
-        visited.remove(cat);
-        depth
-    }
+    let category_names = ctx.categories.iter().map(|category| category.name.as_str());
+    let longest_paths = cycle_guarded_longest_paths(category_names, &call_graph);
 
     for cat_info in ctx.categories {
-        let mut visited = HashSet::new();
-        let depth = max_depth(&cat_info.name, &call_graph, &mut visited);
+        let depth = longest_paths
+            .get(cat_info.name.as_str())
+            .copied()
+            .unwrap_or(0);
         if depth > 5 {
             diagnostics.push(LintDiagnostic {
                 id: DiagnosticId::PAR01,

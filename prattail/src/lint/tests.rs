@@ -4061,6 +4061,56 @@ fn par01_silent_on_shallow_chain() {
     assert!(diags.is_empty());
 }
 
+#[test]
+fn graph_depth_lints_handle_twenty_thousand_edges_on_a_small_stack() {
+    const DEPTH: usize = 20_000;
+    const STACK_SIZE: usize = 256 * 1024;
+
+    std::thread::Builder::new()
+        .name("lint-graph-stack-gate".into())
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            let mut builder = CtxBuilder::new();
+            builder.categories.push(cat_info("N0", None, true));
+            for index in 0..DEPTH {
+                let source = format!("N{index}");
+                let target = format!("N{}", index + 1);
+                builder.cast_rules.push(CastRule {
+                    label: format!("C{index}"),
+                    source_category: source.clone(),
+                    target_category: target.clone(),
+                    shares_infix_with_target: false,
+                });
+                builder.all_syntax.push((
+                    format!("R{index}"),
+                    source,
+                    vec![SyntaxItemSpec::NonTerminal {
+                        category: target,
+                        param_name: "next".into(),
+                    }],
+                ));
+            }
+
+            let context = builder.ctx();
+            let mut cycle_diagnostics = Vec::new();
+            lint_c01_cast_cycle(&context, &mut cycle_diagnostics);
+            assert!(cycle_diagnostics.is_empty());
+
+            let mut cast_depth_diagnostics = Vec::new();
+            lint_p03_deep_cast_nesting(&context, &mut cast_depth_diagnostics);
+            assert_eq!(cast_depth_diagnostics.len(), 1);
+            assert!(cast_depth_diagnostics[0].message.contains("20000"));
+
+            let mut rd_depth_diagnostics = Vec::new();
+            lint_par01_deep_rd_chain(&context, &mut rd_depth_diagnostics);
+            assert_eq!(rd_depth_diagnostics.len(), 1);
+            assert!(rd_depth_diagnostics[0].message.contains("20000"));
+        })
+        .expect("spawn lint graph stack gate")
+        .join()
+        .expect("lint graph stack gate overflowed or panicked");
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // DIS03: Decision Tree Depth
 // ══════════════════════════════════════════════════════════════════════
