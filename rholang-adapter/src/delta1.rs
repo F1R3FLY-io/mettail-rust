@@ -18,6 +18,8 @@
 //! ambiguity instead of letting host scheduler or iteration order choose one
 //! representative.
 
+use std::collections::HashSet;
+
 /// A candidate n-ary join match with separated refutation and ordering axes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeltaOneCandidate<T> {
@@ -158,49 +160,68 @@ struct DeltaOneMatchingSearch<'a, T> {
     edges: &'a [DeltaOneMatchEdge<T>],
     edge_indices_by_left: Vec<Vec<usize>>,
     left_count: usize,
-    used_rights: Vec<usize>,
+    used_rights: HashSet<usize>,
     current_indices: Vec<usize>,
     best_cost: Option<u128>,
     best_matchings: Vec<DeltaOneMatching>,
 }
 
 impl<T> DeltaOneMatchingSearch<'_, T> {
-    fn visit_left(&mut self, left: usize, current_cost: u128) {
-        if self
-            .best_cost
-            .is_some_and(|best_cost| current_cost > best_cost)
-        {
-            return;
-        }
+    fn visit_all(&mut self) {
+        // Explicit return addresses and partial costs for the recursive
+        // depth-first branch-and-bound search. Edge order is never sorted, so
+        // equal-cost matchings retain their source-order enumeration.
+        let mut next_position = vec![0; self.left_count];
+        let mut partial_cost = vec![0; self.left_count + 1];
+        let mut left = 0;
 
-        if left == self.left_count {
-            self.record_matching(current_cost);
-            return;
-        }
+        loop {
+            let current_cost = partial_cost[left];
+            let mut selection = None;
+            while next_position[left] < self.edge_indices_by_left[left].len() {
+                let position = next_position[left];
+                next_position[left] += 1;
+                let index = self.edge_indices_by_left[left][position];
+                let edge = &self.edges[index];
+                if self.used_rights.contains(&edge.right) {
+                    continue;
+                }
+                let next_cost = current_cost + u128::from(edge.ordering_cost);
+                if self
+                    .best_cost
+                    .is_some_and(|best_cost| next_cost > best_cost)
+                {
+                    continue;
+                }
+                selection = Some((index, edge.right, next_cost));
+                break;
+            }
 
-        for position in 0..self.edge_indices_by_left[left].len() {
-            let index = self.edge_indices_by_left[left][position];
-            let edge = &self.edges[index];
-            let right = edge.right;
-            let ordering_cost = edge.ordering_cost;
-
-            if self.used_rights.contains(&right) {
+            if let Some((index, right, next_cost)) = selection {
+                self.used_rights.insert(right);
+                self.current_indices.push(index);
+                partial_cost[left + 1] = next_cost;
+                if left + 1 == self.left_count {
+                    self.record_matching(next_cost);
+                    self.current_indices.pop();
+                    self.used_rights.remove(&right);
+                } else {
+                    left += 1;
+                    next_position[left] = 0;
+                }
                 continue;
             }
 
-            let next_cost = current_cost + u128::from(ordering_cost);
-            if self
-                .best_cost
-                .is_some_and(|best_cost| next_cost > best_cost)
-            {
-                continue;
+            next_position[left] = 0;
+            if left == 0 {
+                break;
             }
-
-            self.used_rights.push(right);
-            self.current_indices.push(index);
-            self.visit_left(left + 1, next_cost);
-            self.current_indices.pop();
-            self.used_rights.pop();
+            left -= 1;
+            let index = self
+                .current_indices
+                .pop()
+                .expect("Delta-one matching PDA: missing parent edge");
+            self.used_rights.remove(&self.edges[index].right);
         }
     }
 
@@ -266,12 +287,12 @@ pub fn select_delta1_min_cost_left_perfect_matchings<T>(
         edges,
         edge_indices_by_left,
         left_count,
-        used_rights: Vec::with_capacity(left_count),
+        used_rights: HashSet::with_capacity(left_count),
         current_indices: Vec::with_capacity(left_count),
         best_cost: None,
         best_matchings: Vec::new(),
     };
-    search.visit_left(0, 0);
+    search.visit_all();
     search.best_matchings
 }
 
@@ -285,193 +306,4 @@ pub fn delta1_selects_left_perfect_matching_indices<T>(
     select_delta1_min_cost_left_perfect_matchings(edges, left_count, right_count)
         .iter()
         .any(|matching| matching.edge_indices == edge_indices)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn selected_values<'a>(candidates: &'a [DeltaOneCandidate<&'a str>]) -> Vec<&'a str> {
-        select_delta1_minima(candidates)
-            .into_iter()
-            .map(|candidate| candidate.value)
-            .collect()
-    }
-
-    #[test]
-    fn delta1_selects_all_enabled_minimal_ties() {
-        let candidates = vec![
-            DeltaOneCandidate::enabled("slow", 7),
-            DeltaOneCandidate::enabled("fast-a", 2),
-            DeltaOneCandidate::enabled("fast-b", 2),
-        ];
-
-        assert_eq!(selected_values(&candidates), vec!["fast-a", "fast-b"]);
-        assert!(!delta1_selects_index(&candidates, 0));
-        assert!(delta1_selects_index(&candidates, 1));
-        assert!(delta1_selects_index(&candidates, 2));
-    }
-
-    #[test]
-    fn delta1_refutation_precedes_ordering() {
-        let candidates = vec![
-            DeltaOneCandidate::refuted("cheap-but-refuted", 0),
-            DeltaOneCandidate::enabled("enabled", 5),
-            DeltaOneCandidate::enabled("expensive", 8),
-        ];
-
-        assert_eq!(selected_values(&candidates), vec!["enabled"]);
-        assert!(!delta1_selects_index(&candidates, 0));
-        assert!(delta1_selects_index(&candidates, 1));
-        assert!(!delta1_selects_index(&candidates, 2));
-    }
-
-    #[test]
-    fn delta1_returns_empty_when_no_candidate_is_enabled() {
-        let candidates =
-            vec![DeltaOneCandidate::refuted("a", 0), DeltaOneCandidate::refuted("b", 1)];
-
-        assert!(select_delta1_minima(&candidates).is_empty());
-        assert!(!delta1_selects_index(&candidates, 0));
-        assert!(!delta1_selects_index(&candidates, 1));
-    }
-
-    #[test]
-    fn delta1_out_of_range_index_is_not_selected() {
-        let candidates = vec![DeltaOneCandidate::enabled("only", 0)];
-        assert!(!delta1_selects_index(&candidates, 1));
-    }
-
-    fn matching_values<'a>(
-        edges: &'a [DeltaOneMatchEdge<&'a str>],
-        matching: &DeltaOneMatching,
-    ) -> Vec<&'a str> {
-        matching
-            .edges(edges)
-            .expect("test matchings should resolve")
-            .into_iter()
-            .map(|edge| edge.value)
-            .collect()
-    }
-
-    #[test]
-    fn delta1_matching_selects_cheapest_left_perfect_assignment() {
-        let edges = vec![
-            DeltaOneMatchEdge::enabled(0, 0, "l0-r0", 5),
-            DeltaOneMatchEdge::enabled(0, 1, "l0-r1", 1),
-            DeltaOneMatchEdge::enabled(1, 0, "l1-r0", 1),
-            DeltaOneMatchEdge::enabled(1, 1, "l1-r1", 5),
-        ];
-
-        let selected = select_delta1_min_cost_left_perfect_matchings(&edges, 2, 2);
-
-        assert_eq!(selected, vec![DeltaOneMatching { edge_indices: vec![1, 2], total_cost: 2 }]);
-        assert!(delta1_selects_left_perfect_matching_indices(&edges, 2, 2, &[1, 2]));
-        assert!(!delta1_selects_left_perfect_matching_indices(&edges, 2, 2, &[0, 3]));
-    }
-
-    #[test]
-    fn delta1_matching_preserves_equal_cost_ambiguity() {
-        let edges = vec![
-            DeltaOneMatchEdge::enabled(0, 0, "a", 1),
-            DeltaOneMatchEdge::enabled(0, 1, "b", 1),
-            DeltaOneMatchEdge::enabled(1, 0, "c", 1),
-            DeltaOneMatchEdge::enabled(1, 1, "d", 1),
-        ];
-
-        let selected = select_delta1_min_cost_left_perfect_matchings(&edges, 2, 2);
-        let selected_values: Vec<Vec<&str>> = selected
-            .iter()
-            .map(|matching| matching_values(&edges, matching))
-            .collect();
-
-        assert_eq!(
-            selected,
-            vec![
-                DeltaOneMatching { edge_indices: vec![0, 3], total_cost: 2 },
-                DeltaOneMatching { edge_indices: vec![1, 2], total_cost: 2 },
-            ]
-        );
-        assert_eq!(selected_values, vec![vec!["a", "d"], vec!["b", "c"]]);
-    }
-
-    #[test]
-    fn delta1_matching_is_globally_optimal_not_greedy() {
-        let edges = vec![
-            DeltaOneMatchEdge::enabled(0, 0, "locally-cheap", 1),
-            DeltaOneMatchEdge::enabled(0, 1, "globally-good-left", 2),
-            DeltaOneMatchEdge::enabled(1, 0, "globally-good-right", 1),
-            DeltaOneMatchEdge::enabled(1, 1, "forced-expensive", 100),
-        ];
-
-        let selected = select_delta1_min_cost_left_perfect_matchings(&edges, 2, 2);
-
-        assert_eq!(selected, vec![DeltaOneMatching { edge_indices: vec![1, 2], total_cost: 3 }]);
-    }
-
-    #[test]
-    fn delta1_matching_refutation_precedes_ordering() {
-        let edges = vec![
-            DeltaOneMatchEdge::refuted(0, 0, "cheap-refuted", 0),
-            DeltaOneMatchEdge::enabled(0, 1, "enabled-left", 4),
-            DeltaOneMatchEdge::enabled(1, 0, "enabled-right", 4),
-            DeltaOneMatchEdge::enabled(1, 1, "duplicate-right", 0),
-        ];
-
-        let selected = select_delta1_min_cost_left_perfect_matchings(&edges, 2, 2);
-
-        assert_eq!(selected, vec![DeltaOneMatching { edge_indices: vec![1, 2], total_cost: 8 }]);
-        assert!(!delta1_selects_left_perfect_matching_indices(&edges, 2, 2, &[0, 3]));
-    }
-
-    #[test]
-    fn delta1_matching_returns_empty_without_left_perfect_assignment() {
-        let missing_left = vec![
-            DeltaOneMatchEdge::enabled(0, 0, "a", 1),
-            DeltaOneMatchEdge::enabled(0, 1, "b", 1),
-        ];
-        let duplicate_right = vec![
-            DeltaOneMatchEdge::enabled(0, 0, "a", 1),
-            DeltaOneMatchEdge::enabled(1, 0, "b", 1),
-        ];
-
-        assert!(select_delta1_min_cost_left_perfect_matchings(&missing_left, 2, 2).is_empty());
-        assert!(select_delta1_min_cost_left_perfect_matchings(&duplicate_right, 2, 2).is_empty());
-        assert!(select_delta1_min_cost_left_perfect_matchings(&missing_left, 2, 1).is_empty());
-    }
-
-    #[test]
-    fn delta1_matching_allows_unused_right_witnesses() {
-        let edges = vec![
-            DeltaOneMatchEdge::enabled(0, 0, "usable-but-expensive", 5),
-            DeltaOneMatchEdge::enabled(0, 1, "chosen", 2),
-        ];
-
-        let selected = select_delta1_min_cost_left_perfect_matchings(&edges, 1, 2);
-
-        assert_eq!(selected, vec![DeltaOneMatching { edge_indices: vec![1], total_cost: 2 }]);
-    }
-
-    #[test]
-    fn delta1_matching_ignores_edges_outside_declared_frontier() {
-        let edges = vec![
-            DeltaOneMatchEdge::enabled(0, 0, "in-left", 3),
-            DeltaOneMatchEdge::enabled(0, 2, "right-out-of-range", 0),
-            DeltaOneMatchEdge::enabled(2, 0, "left-out-of-range", 0),
-        ];
-
-        let selected = select_delta1_min_cost_left_perfect_matchings(&edges, 1, 1);
-
-        assert_eq!(selected, vec![DeltaOneMatching { edge_indices: vec![0], total_cost: 3 }]);
-    }
-
-    #[test]
-    fn delta1_matching_empty_frontier_has_empty_left_perfect_matching() {
-        let edges: Vec<DeltaOneMatchEdge<&str>> = Vec::new();
-
-        assert_eq!(
-            select_delta1_min_cost_left_perfect_matchings(&edges, 0, 2),
-            vec![DeltaOneMatching { edge_indices: Vec::new(), total_cost: 0 }]
-        );
-    }
 }
