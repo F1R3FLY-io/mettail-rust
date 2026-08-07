@@ -1,4 +1,5 @@
 use super::*;
+use prost::Message;
 
 const BINDER_FRAGMENT: &str = r#"
     name: BinderTemplate,
@@ -310,6 +311,73 @@ fn recursive_instantiate(
     }
 }
 
+fn recursive_reflect_bound(
+    template: &AcReconstructTemplate,
+    slot_of: &HashMap<String, usize>,
+    free_count: usize,
+    language_fingerprint: &str,
+) -> Par {
+    match template {
+        AcReconstructTemplate::Var(name) => {
+            let level = *slot_of
+                .get(name)
+                .expect("a nested-AC reduct var is bound by the operand pattern");
+            let bv_index = free_count - 1 - level;
+            new_boundvar_par(bv_index as i32, create_bit_vector(&[bv_index]), false)
+        },
+        AcReconstructTemplate::Node { constructor, children } => {
+            let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+                language_fingerprint,
+                constructor,
+            ));
+            let mut items = Vec::with_capacity(children.len() + 1);
+            let mut locally_free = tag.locally_free.clone();
+            items.push(tag);
+            for child in children {
+                let child =
+                    recursive_reflect_bound(child, slot_of, free_count, language_fingerprint);
+                locally_free = union(locally_free, child.locally_free.clone());
+                items.push(child);
+            }
+            new_elist_par(items, locally_free.clone(), false, None, locally_free, false)
+        },
+        AcReconstructTemplate::Bag { op, elements, rest } => {
+            let element_channel = ac_soup_channel(language_fingerprint, op);
+            let mut soup = Par::default();
+            for element in elements {
+                let element =
+                    recursive_reflect_bound(element, slot_of, free_count, language_fingerprint);
+                let free = element.locally_free.clone();
+                let send = new_send_par(
+                    new_gstring_par(element_channel.clone(), Vec::new(), false),
+                    vec![element],
+                    false,
+                    free.clone(),
+                    false,
+                    free,
+                    false,
+                );
+                soup = soup.append(send);
+            }
+            if let Some(rest_name) = rest {
+                let level = *slot_of
+                    .get(rest_name)
+                    .expect("a nested-AC reduct bag rest is bound by the operand pattern");
+                let bv_index = free_count - 1 - level;
+                soup = soup.append(new_boundvar_par(
+                    bv_index as i32,
+                    create_bit_vector(&[bv_index]),
+                    false,
+                ));
+            }
+            soup
+        },
+        AcReconstructTemplate::Binder { .. } => {
+            unreachable!("recursive oracle only receives binder-free templates")
+        },
+    }
+}
+
 fn branching_template() -> AcReconstructTemplate {
     AcReconstructTemplate::Node {
         constructor: "Root".to_owned(),
@@ -411,6 +479,28 @@ fn ac_template_pdas_match_recursive_oracles() {
             recursive_shift_by(&ground, 0, amount)
         );
     }
+
+    let bound_template = AcReconstructTemplate::Node {
+        constructor: "Root".to_owned(),
+        children: vec![
+            AcReconstructTemplate::Bag {
+                op: "PPar".to_owned(),
+                elements: vec![
+                    AcReconstructTemplate::Var("x".to_owned()),
+                    AcReconstructTemplate::Node {
+                        constructor: "Leaf".to_owned(),
+                        children: vec![AcReconstructTemplate::Var("y".to_owned())],
+                    },
+                ],
+                rest: Some("rest".to_owned()),
+            },
+            AcReconstructTemplate::Var("y".to_owned()),
+        ],
+    };
+    let slots = HashMap::from([("x".to_owned(), 0), ("y".to_owned(), 1), ("rest".to_owned(), 2)]);
+    let expected = recursive_reflect_bound(&bound_template, &slots, 3, "oracle-fingerprint");
+    let actual = reflect_ac_template_bound_par(&bound_template, &slots, 3, "oracle-fingerprint");
+    assert_eq!(actual.encode_to_vec(), expected.encode_to_vec());
 }
 
 #[test]
@@ -446,10 +536,46 @@ fn deep_ac_template_lifecycle_and_instantiation_fit_on_a_small_native_stack() {
             })
             .expect("deep template must instantiate");
             assert_eq!(ground.constructor, "Node");
+
+            let slots = HashMap::from([("x".to_owned(), 0)]);
+            let reflected = reflect_ac_template_bound_par(&template, &slots, 1, "deep-fingerprint");
+            let mut cursor = &reflected;
+            for _ in 0..DEPTH {
+                let Some(ExprInstance::EListBody(list)) = cursor
+                    .exprs
+                    .first()
+                    .and_then(|expr| expr.expr_instance.as_ref())
+                else {
+                    panic!("deep reflected node must remain an EList");
+                };
+                cursor = &list.ps[1];
+            }
+            assert!(matches!(
+                cursor
+                    .exprs
+                    .first()
+                    .and_then(|expr| expr.expr_instance.as_ref()),
+                Some(ExprInstance::EVarBody(_))
+            ));
+
             drop(ground);
+            drop(reflected);
             drop(clone);
             drop(template);
             drop(pattern);
+
+            let wide = AcReconstructTemplate::Bag {
+                op: "PPar".to_owned(),
+                elements: (0..DEPTH)
+                    .map(|_| AcReconstructTemplate::Var("x".to_owned()))
+                    .collect(),
+                rest: None,
+            };
+            let reflected_wide =
+                reflect_ac_template_bound_par(&wide, &slots, 1, "wide-fingerprint");
+            assert_eq!(reflected_wide.sends.len(), DEPTH);
+            drop(reflected_wide);
+            drop(wide);
 
             let mut binders = AcReconstructTemplate::Var("x".to_owned());
             for _ in 0..DEPTH {

@@ -1204,32 +1204,51 @@ fn descend_child_call(
     }
 }
 
-/// Parallel composition of zero or more nodes. Field order is the iterator order.
+/// Move one owned component into a parallel `Par` accumulator in exact [`Par::append`] field order.
 ///
-/// This is the move-based twin of `Par::append`: the latter borrows and clones its complete
-/// left operand, which makes a left fold over a wide soup quadratic. Every component is owned
-/// here, so its field vectors can be appended in amortized linear time without changing the
-/// normalized `Par`, protobuf bytes, or byte hash.
+/// The bytewise OR deliberately retains the longer input's trailing clear bytes: the runtime's
+/// `models::rust::utils::union` does too, and those bytes are part of the protobuf/hash image even
+/// though they denote no additional locally-free index.
+fn append_parallel_component(par: &mut Par, mut component: Par) {
+    if par.locally_free.len() < component.locally_free.len() {
+        par.locally_free.resize(component.locally_free.len(), 0);
+    }
+    for (index, bit) in component.locally_free.drain(..).enumerate() {
+        par.locally_free[index] |= bit;
+    }
+    par.sends.append(&mut component.sends);
+    par.receives.append(&mut component.receives);
+    par.news.append(&mut component.news);
+    par.exprs.append(&mut component.exprs);
+    par.matches.append(&mut component.matches);
+    par.unforgeables.append(&mut component.unforgeables);
+    par.bundles.append(&mut component.bundles);
+    par.connectives.append(&mut component.connectives);
+    par.conditionals.append(&mut component.conditionals);
+    par.connective_used |= component.connective_used;
+}
+
+/// Parallel composition of zero or more owned `Par`s. Field order is the iterator order.
+///
+/// This is the move-based twin of [`Par::append`]: the latter borrows and clones its complete left
+/// operand, which makes a left fold over a wide soup quadratic. Moving each field vector into one
+/// accumulator is amortized linear without changing the normalized `Par`, protobuf bytes, or byte
+/// hash.
+pub(crate) fn parallel_par(pars: impl IntoIterator<Item = Par>) -> Par {
+    let mut par = Par::default();
+    for component in pars {
+        append_parallel_component(&mut par, component);
+    }
+    par
+}
+
+/// Parallel composition of zero or more nodes. Field order is the iterator order, and the free-set
+/// is the sorted union of every component's free-set.
 pub(crate) fn parallel(nodes: impl IntoIterator<Item = Node>) -> Node {
     let mut par = Par::default();
     let mut free = Vec::new();
-    for Node { par: mut component, free: component_free } in nodes {
-        if par.locally_free.len() < component.locally_free.len() {
-            par.locally_free.resize(component.locally_free.len(), 0);
-        }
-        for (index, bit) in component.locally_free.drain(..).enumerate() {
-            par.locally_free[index] |= bit;
-        }
-        par.sends.append(&mut component.sends);
-        par.receives.append(&mut component.receives);
-        par.news.append(&mut component.news);
-        par.exprs.append(&mut component.exprs);
-        par.matches.append(&mut component.matches);
-        par.unforgeables.append(&mut component.unforgeables);
-        par.bundles.append(&mut component.bundles);
-        par.connectives.append(&mut component.connectives);
-        par.conditionals.append(&mut component.conditionals);
-        par.connective_used |= component.connective_used;
+    for Node { par: component, free: component_free } in nodes {
+        append_parallel_component(&mut par, component);
         free.extend(component_free);
     }
     free.sort_unstable();

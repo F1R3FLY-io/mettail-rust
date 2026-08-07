@@ -39,7 +39,7 @@ use models::rust::utils::{
 };
 
 use crate::rho_net_lower::{
-    assemble_positional_ground_node, is_ground_marker_par, is_marked_object_label,
+    assemble_positional_ground_node, ground_marker_tag_par, is_marked_object_label,
     par_carries_ground_marker, reflect_ground_term_par, reflect_tag, GroundTerm,
     BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
     PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
@@ -567,43 +567,93 @@ fn peano_ground_term(n: usize) -> GroundTerm {
 /// hence every ancestor marker) is preserved; preserving the existing marker on a rebuild is
 /// therefore identical to the reducer's `tagged` recompute, keeping the shared ABI byte-identical.
 fn host_oshift(par: &Par, cutoff: usize, fingerprint: &str) -> Par {
-    // (1) ground short-circuit — verbatim identity (matches `ground_guard_case`; covers `^free`).
-    if par_carries_ground_marker(par, fingerprint) {
-        return par.clone();
+    enum Task<'par> {
+        Visit {
+            par: &'par Par,
+            cutoff: usize,
+        },
+        Assemble {
+            head: &'par Par,
+            marker: Option<&'par Par>,
+            child_count: usize,
+        },
     }
-    let ps = match elist_ps(par) {
-        Some(ps) if !ps.is_empty() => ps,
-        // A non-EList leaf (a bare scalar / GString) carries no `^bound` — passthrough.
-        _ => return par.clone(),
-    };
-    let head = &ps[0];
-    if head == &flt_tag_par(fingerprint, BOUND_VAR_REFLECT_LABEL) {
-        // (2) `[⌜^bound⌝, ⌜^nog⌝, ⟦n⟧]`.
-        match peano_value(ps.get(2), fingerprint) {
-            Some(n) if n >= cutoff => bound_var_par(n + 1, fingerprint),
-            // n < cutoff (keep) or a malformed index (e.g. a `^multilambda` GString binder leaf) →
-            // verbatim, matching the reducer's `Lt` rebuild of the unchanged leaf.
-            _ => par.clone(),
+
+    // These dispatch tokens are constant for the complete traversal. Constructing them once avoids
+    // hashing the fingerprint/label pair at every node while retaining exact `Par` comparisons.
+    let ground_marker = ground_marker_tag_par(fingerprint, true);
+    let nonground_marker = ground_marker_tag_par(fingerprint, false);
+    let bound_tag = flt_tag_par(fingerprint, BOUND_VAR_REFLECT_LABEL);
+    let lambda_tag = flt_tag_par(fingerprint, LAMBDA_REFLECT_LABEL);
+    let peano_zero = flt_tag_par(fingerprint, PEANO_ZERO_REFLECT_LABEL);
+    let peano_succ = flt_tag_par(fingerprint, PEANO_SUCC_REFLECT_LABEL);
+
+    let mut tasks = vec![Task::Visit { par, cutoff }];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit { par, cutoff } => {
+                // (1) ground short-circuit — verbatim identity (matches `ground_guard_case`;
+                // covers `^free`).
+                if matches!(
+                    elist_ps(par),
+                    Some(ps) if ps.get(1) == Some(&ground_marker)
+                ) {
+                    values.push(par.clone());
+                    continue;
+                }
+                let ps = match elist_ps(par) {
+                    Some(ps) if !ps.is_empty() => ps,
+                    // A non-EList leaf (a bare scalar / GString) carries no `^bound` — passthrough.
+                    _ => {
+                        values.push(par.clone());
+                        continue;
+                    },
+                };
+                let head = &ps[0];
+                if head == &bound_tag {
+                    // (2) `[⌜^bound⌝, ⌜^nog⌝, ⟦n⟧]`.
+                    values.push(match peano_value_with_tags(ps.get(2), &peano_zero, &peano_succ) {
+                        Some(n) if n >= cutoff => bound_var_par(n + 1, fingerprint),
+                        // n < cutoff (keep) or a malformed index (e.g. a `^multilambda` GString
+                        // binder leaf) → verbatim, matching the reducer's `Lt` rebuild.
+                        _ => par.clone(),
+                    });
+                } else if head == &lambda_tag {
+                    // (3) `[⌜^lambda⌝, marker, ⟦b⟧]`: descend at `cutoff + 1`.
+                    tasks.push(Task::Assemble { head, marker: ps.get(1), child_count: 1 });
+                    tasks.push(Task::Visit { par: &ps[2], cutoff: cutoff + 1 });
+                } else {
+                    // (4) generic object: descend every child at the same cutoff, preserving marker.
+                    let marked =
+                        ps.len() >= 2 && (ps[1] == ground_marker || ps[1] == nonground_marker);
+                    let children_start = if marked { 2 } else { 1 };
+                    tasks.push(Task::Assemble {
+                        head,
+                        marker: marked.then(|| &ps[1]),
+                        child_count: ps.len() - children_start,
+                    });
+                    tasks.extend(
+                        ps[children_start..]
+                            .iter()
+                            .rev()
+                            .map(|par| Task::Visit { par, cutoff }),
+                    );
+                }
+            },
+            Task::Assemble { head, marker, child_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("host oshift PDA lost a child result");
+                let children = values.split_off(first);
+                values.push(rebuild_object_node(head, marker.cloned(), children));
+            },
         }
-    } else if head == &flt_tag_par(fingerprint, LAMBDA_REFLECT_LABEL) {
-        // (3) `[⌜^lambda⌝, marker, ⟦b⟧]` → recurse the body at `cutoff + 1`.
-        let marker = ps.get(1).cloned();
-        let body = host_oshift(&ps[2], cutoff + 1, fingerprint);
-        rebuild_object_node(head, marker, vec![body])
-    } else {
-        // (4) a generic object node → recurse every child at the SAME cutoff, preserving the marker.
-        let marked = ps.len() >= 2 && is_ground_marker_par(&ps[1], fingerprint);
-        let (marker, children_start) = if marked {
-            (ps.get(1).cloned(), 2)
-        } else {
-            (None, 1)
-        };
-        let children: Vec<Par> = ps[children_start..]
-            .iter()
-            .map(|child| host_oshift(child, cutoff, fingerprint))
-            .collect();
-        rebuild_object_node(head, marker, children)
     }
+
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("host oshift PDA produced no result")
 }
 
 /// Rebuild a reflected object `EList[head, marker?, children…]` (the shared reflected-ABI shape:
@@ -632,18 +682,24 @@ fn flt_tag_par(fingerprint: &str, label: &str) -> Par {
 
 /// Decode a reflected Peano numeral `⟦S(S(…Z))⟧` back to its integer value; `None` if `par` is not
 /// a well-formed Peano numeral (`Z`/`S` are UNMARKED, so the successor child is at index 1).
+#[cfg(test)]
 fn peano_value(par: Option<&Par>, fingerprint: &str) -> Option<usize> {
     let zero = flt_tag_par(fingerprint, PEANO_ZERO_REFLECT_LABEL);
     let succ = flt_tag_par(fingerprint, PEANO_SUCC_REFLECT_LABEL);
+    peano_value_with_tags(par, &zero, &succ)
+}
+
+/// [`peano_value`] with traversal-invariant tags supplied by its caller.
+fn peano_value_with_tags(par: Option<&Par>, zero: &Par, succ: &Par) -> Option<usize> {
     let mut node = par?;
     let mut count = 0usize;
     loop {
         let ps = elist_ps(node)?;
         let head = ps.first()?;
-        if head == &zero {
+        if head == zero {
             return Some(count);
         }
-        if head == &succ {
+        if head == succ {
             count += 1;
             node = ps.get(1)?;
         } else {
@@ -970,6 +1026,10 @@ fn validate_hole_declarations(holes: &[FltHole]) -> Result<(), FltReflectError> 
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_flt_oshift_recursive_oracle.rs"]
+mod oshift_recursive_oracle;
 
 #[cfg(test)]
 mod tests {

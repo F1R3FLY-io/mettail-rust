@@ -9189,82 +9189,118 @@ fn reflect_ac_template_bound_par(
     free_count: usize,
     language_fingerprint: &str,
 ) -> Par {
-    match template {
-        AcReconstructTemplate::Var(name) => {
-            let level = *slot_of
-                .get(name)
-                .expect("a nested-AC reduct var is bound by the operand pattern");
-            let bv_index = free_count - 1 - level;
-            new_boundvar_par(bv_index as i32, create_bit_vector(&[bv_index]), false)
+    enum Task<'template> {
+        Visit(&'template AcReconstructTemplate),
+        AssembleNode {
+            constructor: &'template str,
+            child_count: usize,
         },
-        AcReconstructTemplate::Node { constructor, children } => {
-            let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-                language_fingerprint,
-                constructor,
-            ));
-            let mut items = Vec::with_capacity(children.len() + 1);
-            let mut locally_free = tag.locally_free.clone();
-            items.push(tag);
-            for child in children {
-                let child =
-                    reflect_ac_template_bound_par(child, slot_of, free_count, language_fingerprint);
-                locally_free = union(locally_free, child.locally_free.clone());
-                items.push(child);
-            }
-            new_elist_par(items, locally_free.clone(), false, None, locally_free, false)
+        AssembleBag {
+            op: &'template str,
+            rest: Option<&'template str>,
+            element_count: usize,
         },
-        AcReconstructTemplate::Bag { op, elements, rest } => {
-            let element_channel = ac_soup_channel(language_fingerprint, op);
-            let mut soup = Par::default();
-            for element in elements {
-                let element = reflect_ac_template_bound_par(
-                    element,
-                    slot_of,
-                    free_count,
+    }
+
+    let bound_slot = |name: &str| {
+        let level = *slot_of
+            .get(name)
+            .expect("a nested-AC reduct var is bound by the operand pattern");
+        let bv_index = free_count - 1 - level;
+        new_boundvar_par(bv_index as i32, create_bit_vector(&[bv_index]), false)
+    };
+
+    let mut tasks = vec![Task::Visit(template)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(AcReconstructTemplate::Var(name)) => values.push(bound_slot(name)),
+            Task::Visit(AcReconstructTemplate::Node { constructor, children }) => {
+                tasks.push(Task::AssembleNode { constructor, child_count: children.len() });
+                tasks.extend(children.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(AcReconstructTemplate::Bag { op, elements, rest }) => {
+                tasks.push(Task::AssembleBag {
+                    op,
+                    rest: rest.as_deref(),
+                    element_count: elements.len(),
+                });
+                tasks.extend(elements.iter().rev().map(Task::Visit));
+            },
+            // A-S5.8 (F8-AM-1b): UNREACHABLE BY CONSTRUCTION — a binder-templated rule never
+            // builds a site-keyed match receiver (its σ-slot shift rule needs the ASYNC
+            // `^shift`, which a value-position rebuild cannot inline): `lower_base_rewrite`
+            // routes such a rule to the fail-closed NO-MATCH-ENTRY disposition
+            // (`NestedStructuralAcBinderTemplated`) and `nested_structural_ac_rule_receiver`
+            // declines it, so this builder is only ever called on binder-free templates. The
+            // assertion is the codegen-time guard that keeps it that way (the C2-assertion
+            // discipline).
+            Task::Visit(AcReconstructTemplate::Binder { .. }) => unreachable!(
+                "reflect_ac_template_bound_par reached a Binder template — binder-templated \
+                 nested-AC rules take the NO-MATCH-ENTRY disposition (A-S5.8 F8-AM-1b) and \
+                 never build a site-keyed match receiver"
+            ),
+            Task::AssembleNode { constructor, child_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("nested-AC reflection PDA lost a node child result");
+                let children = values.split_off(first);
+                let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
                     language_fingerprint,
-                );
-                let free = element.locally_free.clone();
-                let send = new_send_par(
-                    new_gstring_par(element_channel.clone(), Vec::new(), false),
-                    vec![element],
+                    constructor,
+                ));
+                let mut items = Vec::with_capacity(children.len() + 1);
+                let mut locally_free = tag.locally_free.clone();
+                items.push(tag);
+                for child in children {
+                    locally_free = union(locally_free, child.locally_free.clone());
+                    items.push(child);
+                }
+                values.push(new_elist_par(
+                    items,
+                    locally_free.clone(),
                     false,
-                    free.clone(),
-                    false,
-                    free,
-                    false,
-                );
-                soup = soup.append(send);
-            }
-            // The residual `...rest`: the operand pattern bound it to the leftover bag soup, so
-            // appending its bound σ slot parallel-composes — hence SPLICES — the residual sends into
-            // the flat reduct bag (mirroring the reflection PDA's HashBag case, one level deeper).
-            if let Some(rest_name) = rest {
-                let level = *slot_of
-                    .get(rest_name)
-                    .expect("a nested-AC reduct bag rest is bound by the operand pattern");
-                let bv_index = free_count - 1 - level;
-                soup = soup.append(new_boundvar_par(
-                    bv_index as i32,
-                    create_bit_vector(&[bv_index]),
+                    None,
+                    locally_free,
                     false,
                 ));
-            }
-            soup
-        },
-        // A-S5.8 (F8-AM-1b): UNREACHABLE BY CONSTRUCTION — a binder-templated rule never
-        // builds a site-keyed match receiver (its σ-slot shift rule needs the ASYNC
-        // `^shift`, which a value-position rebuild cannot inline): `lower_base_rewrite`
-        // routes such a rule to the fail-closed NO-MATCH-ENTRY disposition
-        // (`NestedStructuralAcBinderTemplated`) and `nested_structural_ac_rule_receiver`
-        // declines it, so this builder is only ever called on binder-free templates. The
-        // assertion is the codegen-time guard that keeps it that way (the C2-assertion
-        // discipline).
-        AcReconstructTemplate::Binder { .. } => unreachable!(
-            "reflect_ac_template_bound_par reached a Binder template — binder-templated \
-             nested-AC rules take the NO-MATCH-ENTRY disposition (A-S5.8 F8-AM-1b) and \
-             never build a site-keyed match receiver"
-        ),
+            },
+            Task::AssembleBag { op, rest, element_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(element_count)
+                    .expect("nested-AC reflection PDA lost a bag element result");
+                let elements = values.split_off(first);
+                let element_channel = ac_soup_channel(language_fingerprint, op);
+                let mut components =
+                    Vec::with_capacity(elements.len() + usize::from(rest.is_some()));
+                for element in elements {
+                    let free = element.locally_free.clone();
+                    components.push(new_send_par(
+                        new_gstring_par(element_channel.clone(), Vec::new(), false),
+                        vec![element],
+                        false,
+                        free.clone(),
+                        false,
+                        free,
+                        false,
+                    ));
+                }
+                // The residual `...rest`: the operand pattern bound it to the leftover bag soup,
+                // so parallel composition SPLICES the residual sends into the flat reduct bag.
+                if let Some(rest_name) = rest {
+                    components.push(bound_slot(rest_name));
+                }
+                values.push(crate::rho_net_subst_trs::parallel_par(components));
+            },
+        }
     }
+
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("nested-AC reflection PDA produced no result")
 }
 
 /// Build the SPREAD DEPTH-2 nested structural-AC MATCH receiver for a [`NestedStructuralAcShape`]: a
