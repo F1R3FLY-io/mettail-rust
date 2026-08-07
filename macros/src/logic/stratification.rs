@@ -272,27 +272,27 @@ fn add_premise_edge(
 ) {
     // Universal premises form a unary spine, so a cursor is the minimal PDA.
     let mut premise = premise;
-    while let Premise::ForAll { body, .. } = premise {
-        premise = body;
-    }
-
-    match premise {
-        Premise::RelationQuery { relation, .. } => {
-            add_edge(source, relation.to_string(), EdgeKind::Positive, graph, node_set);
-        },
-        Premise::BehavioralGuard(pred) => {
-            for (target, kind) in collect_relation_refs(pred) {
-                add_edge(source, target, kind, graph, node_set);
-            }
-        },
-        Premise::ForAll { .. } => unreachable!("ForAll premise spine was consumed above"),
-        // ★ (#195) A WITHHELD congruence adds no dependency edge, for the same reason a
-        // declared one does not: neither names a RELATION. Listed explicitly so a future
-        // edge on either polarity cannot be added to one and forgotten on the other.
-        Premise::Freshness(_)
-        | Premise::Congruence { .. }
-        | Premise::CongruenceWithheld { .. }
-        | Premise::SyntheticInjGuard { .. } => {},
+    loop {
+        match premise {
+            Premise::ForAll { body, .. } => premise = body,
+            Premise::RelationQuery { relation, .. } => {
+                add_edge(source, relation.to_string(), EdgeKind::Positive, graph, node_set);
+                break;
+            },
+            Premise::BehavioralGuard(pred) => {
+                for (target, kind) in collect_relation_refs(pred) {
+                    add_edge(source, target, kind, graph, node_set);
+                }
+                break;
+            },
+            // ★ (#195) A WITHHELD congruence adds no dependency edge, for the same reason a
+            // declared one does not: neither names a RELATION. Listed explicitly so a future
+            // edge on either polarity cannot be added to one and forgotten on the other.
+            Premise::Freshness(_)
+            | Premise::Congruence { .. }
+            | Premise::CongruenceWithheld { .. }
+            | Premise::SyntheticInjGuard { .. } => break,
+        }
     }
 }
 

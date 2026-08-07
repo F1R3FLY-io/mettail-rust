@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use crate::gen::native::native_type_to_full_string;
 use crate::gen::runtime::wpda_codegen::collection::kv_sep_for;
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::token_tree_walk::TokenTreeLeaves;
 use crate::gen::type_expr_walk::terminal_base;
 use mettail_ast::{
@@ -675,29 +675,23 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
 /// inside an `Optional { params: [Simple{e,Int}] }`).
 fn find_param_by_name<'a>(context: &'a [TermParam], name_str: &str) -> Option<&'a TermParam> {
     for leaf in TermParamLeaves::new(context, false) {
-        let p = leaf.param;
-        match p {
-            TermParam::Simple { name: n, .. } => {
+        match leaf.kind {
+            TermParamLeafKind::Simple { param, name: n, .. } => {
                 if n.to_string() == name_str {
-                    return Some(p);
+                    return Some(param);
                 }
             },
-            TermParam::Abstraction { binder, body, .. } => {
+            TermParamLeafKind::Abstraction { param, binder, body, .. }
+            | TermParamLeafKind::MultiAbstraction { param, binder, body, .. } => {
                 if binder.to_string() == name_str || body.to_string() == name_str {
-                    return Some(p);
+                    return Some(param);
                 }
             },
-            TermParam::MultiAbstraction { binder, body, .. } => {
-                if binder.to_string() == name_str || body.to_string() == name_str {
-                    return Some(p);
-                }
-            },
-            TermParam::GuardBody { name } => {
+            TermParamLeafKind::GuardBody { param, name } => {
                 if name.to_string() == name_str {
-                    return Some(p);
+                    return Some(param);
                 }
             },
-            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
         }
     }
     None

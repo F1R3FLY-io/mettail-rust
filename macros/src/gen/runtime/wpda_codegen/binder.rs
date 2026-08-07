@@ -31,7 +31,7 @@ use syn::Ident;
 
 use super::builtin_metadata::classify_unary_prefix_shape;
 use super::collection::kv_sep_for;
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 
 /// Stage 3.27d (G-PREFIX-BP, 2026-04-30): map from `(category_src_idx,
 /// rule_idx)` to the unary-prefix binding power, for rules whose shape
@@ -357,13 +357,19 @@ enum TraversalResume {
 }
 
 struct BinderListSite<'position> {
-    position: &'position BinderPosition,
+    separator: &'position str,
+    close: &'position str,
+    inner_positions: &'position [BinderPosition],
+    collection_param_cat: &'position Option<String>,
+    slot_idx: u8,
     frame_idx: u32,
     resume: TraversalResume,
 }
 
 struct OptionalSite<'position> {
-    position: &'position BinderPosition,
+    positions: &'position [BinderPosition],
+    group_idx: u32,
+    first_token_set: &'position [String],
     resume: TraversalResume,
 }
 
@@ -400,11 +406,7 @@ impl TraversalMarkerTable {
                 let result_src_idx = cat_i as u16;
                 let rule_idx = rule_i as u16;
                 let sites = traversal_sites(&shape.positions);
-                for OptionalSite { position, .. } in sites.optionals {
-                    let BinderPosition::OptionalGroup { positions, group_idx, .. } = position
-                    else {
-                        unreachable!("optional marker site must name an optional group");
-                    };
+                for OptionalSite { positions, group_idx, .. } in sites.optionals {
                     let final_sub_pos = u32::try_from(positions.len() + 1)
                         .expect("optional marker count exceeds compact addressability");
                     for sub_pos in 0..=final_sub_pos {
@@ -412,22 +414,18 @@ impl TraversalMarkerTable {
                         next_marker_id = next_marker_id
                             .checked_add(1)
                             .expect("traversal marker table exceeds u32 addressability");
-                        let coordinate =
-                            TraversalMarkerCoordinate::Optional { group_idx: *group_idx, sub_pos };
+                        let coordinate = TraversalMarkerCoordinate::Optional { group_idx, sub_pos };
                         ids.insert((result_src_idx, rule_idx, coordinate), marker_id);
                         optional_metadata.push((
                             marker_id,
                             result_src_idx,
                             rule_idx,
-                            *group_idx,
+                            group_idx,
                             sub_pos,
                         ));
                     }
                 }
-                for BinderListSite { position, frame_idx, .. } in sites.binder_lists {
-                    let BinderPosition::BinderListLoop { inner_positions, .. } = position else {
-                        unreachable!("binder marker site must name a binder-list frame");
-                    };
+                for BinderListSite { inner_positions, frame_idx, .. } in sites.binder_lists {
                     let final_sub_pos = u32::try_from(inner_positions.len() + 1)
                         .expect("binder marker count exceeds compact addressability");
                     for sub_pos in 0..=final_sub_pos {
@@ -480,8 +478,13 @@ fn traversal_sites(positions: &[BinderPosition]) -> TraversalSites<'_> {
     let mut binder_frame_indices = HashMap::new();
     while let Some(Pending { position, resume }) = pending.pop() {
         match position {
-            BinderPosition::OptionalGroup { positions, group_idx, .. } => {
-                optionals.push(OptionalSite { position, resume });
+            BinderPosition::OptionalGroup { positions, group_idx, first_token_set } => {
+                optionals.push(OptionalSite {
+                    positions,
+                    group_idx: *group_idx,
+                    first_token_set,
+                    resume,
+                });
                 for (idx, child) in positions.iter().enumerate().rev() {
                     pending.push(Pending {
                         position: child,
@@ -492,11 +495,26 @@ fn traversal_sites(positions: &[BinderPosition]) -> TraversalSites<'_> {
                     });
                 }
             },
-            BinderPosition::BinderListLoop { inner_positions, .. } => {
+            BinderPosition::BinderListLoop {
+                separator,
+                close,
+                inner_positions,
+                collection_param_cat,
+                slot_idx,
+                ..
+            } => {
                 let frame_idx = u32::try_from(binder_lists.len())
                     .expect("binder-list frame count exceeds compact marker addressability");
                 binder_frame_indices.insert(position as *const BinderPosition, frame_idx);
-                binder_lists.push(BinderListSite { position, frame_idx, resume });
+                binder_lists.push(BinderListSite {
+                    separator,
+                    close,
+                    inner_positions,
+                    collection_param_cat,
+                    slot_idx: *slot_idx,
+                    frame_idx,
+                    resume,
+                });
                 let last = inner_positions.len().saturating_sub(1);
                 for (idx, child) in inner_positions.iter().enumerate().rev() {
                     pending.push(Pending {
@@ -975,23 +993,19 @@ pub(crate) fn classify_binder_in(
     let mut optional_params: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for leaf in TermParamLeaves::new(tc, false) {
-        let p = leaf.param;
         let in_optional = leaf.is_optional;
         if in_optional {
-            match p {
-                TermParam::Simple { name, .. }
-                | TermParam::Abstraction { binder: name, .. }
-                | TermParam::MultiAbstraction { binder: name, .. }
-                | TermParam::GuardBody { name } => {
+            match leaf.kind {
+                TermParamLeafKind::Simple { name, .. }
+                | TermParamLeafKind::Abstraction { binder: name, .. }
+                | TermParamLeafKind::MultiAbstraction { binder: name, .. }
+                | TermParamLeafKind::GuardBody { name, .. } => {
                     optional_params.insert(name.to_string());
-                },
-                TermParam::Optional { .. } => {
-                    unreachable!("TermParamLeaves omits grouping nodes")
                 },
             }
         }
-        match p {
-            TermParam::Simple { name, ty } => match ty {
+        match leaf.kind {
+            TermParamLeafKind::Simple { name, ty, .. } => match ty {
                 TypeExpr::Base(ident) => {
                     let cat = ident.to_string();
                     param_cats.push(cat.clone());
@@ -1045,7 +1059,7 @@ pub(crate) fn classify_binder_in(
                 },
                 _ => return None,
             },
-            TermParam::Abstraction { binder, body, ty } => {
+            TermParamLeafKind::Abstraction { binder, body, ty, .. } => {
                 let bcat = arrow_codomain_name(ty)?;
                 body_cat = Some(bcat.clone());
                 has_binder = true;
@@ -1055,7 +1069,7 @@ pub(crate) fn classify_binder_in(
                     optional_params.insert(body.to_string());
                 }
             },
-            TermParam::MultiAbstraction { binder, body, ty } => {
+            TermParamLeafKind::MultiAbstraction { binder, body, ty, .. } => {
                 let bcat = arrow_codomain_name(ty)?;
                 body_cat = Some(bcat.clone());
                 has_binder = true;
@@ -1066,11 +1080,8 @@ pub(crate) fn classify_binder_in(
                     optional_params.insert(body.to_string());
                 }
             },
-            TermParam::GuardBody { name } => {
+            TermParamLeafKind::GuardBody { name, .. } => {
                 param_map.insert(name.to_string(), ParamKind::Guard);
-            },
-            TermParam::Optional { .. } => {
-                unreachable!("TermParamLeaves omits grouping nodes")
             },
         }
     }
@@ -2457,24 +2468,22 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(
             let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
-            for BinderListSite { position, frame_idx, .. } in
-                traversal_sites(&shape.positions).binder_lists
+            for BinderListSite {
+                inner_positions,
+                collection_param_cat,
+                slot_idx,
+                frame_idx,
+                ..
+            } in traversal_sites(&shape.positions).binder_lists
             {
-                let BinderPosition::BinderListLoop {
-                    inner_positions,
-                    collection_param_cat: Some(_),
-                    slot_idx,
-                    ..
-                } = position
-                else {
+                if collection_param_cat.is_none() {
                     continue;
-                };
+                }
                 for (index, inner) in inner_positions.iter().enumerate() {
                     if matches!(inner, BinderPosition::ParamParse { collection: Some(_), .. }) {
                         let cat = cat_i as u16;
                         let rule_idx = rule_i as u16;
                         let target_sub_pos = (index + 2) as u32;
-                        let slot_idx = *slot_idx;
                         arms.push(quote! {
                             (#cat, #rule_idx, #frame_idx, #target_sub_pos) =>
                                 Some(#slot_idx),
@@ -2555,16 +2564,12 @@ pub(crate) fn emit_is_class3_collection_per_slot(
             let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
-            for BinderListSite { position, .. } in traversal_sites(&shape.positions).binder_lists {
-                if let BinderPosition::BinderListLoop {
-                    collection_param_cat: Some(_),
-                    slot_idx,
-                    ..
-                } = position
-                {
+            for BinderListSite { collection_param_cat, slot_idx, .. } in
+                traversal_sites(&shape.positions).binder_lists
+            {
+                if collection_param_cat.is_some() {
                     let cat = cat_i as u16;
                     let rule_idx = rule_i as u16;
-                    let slot_idx = *slot_idx;
                     arms.push(quote! { (#cat, #rule_idx, #slot_idx) => true, });
                 }
             }
@@ -2613,17 +2618,16 @@ pub(crate) fn emit_binder_list_loop_body(
             let rule_idx = rule_i as u16;
             let TraversalSites { binder_lists, binder_frame_indices, .. } =
                 traversal_sites(&shape.positions);
-            for BinderListSite { position, frame_idx, resume } in binder_lists {
-                let BinderPosition::BinderListLoop {
-                    separator,
-                    close,
-                    inner_positions,
-                    collection_param_cat,
-                    ..
-                } = position
-                else {
-                    unreachable!("binder-list site must name a binder-list frame");
-                };
+            for BinderListSite {
+                separator,
+                close,
+                inner_positions,
+                collection_param_cat,
+                frame_idx,
+                resume,
+                ..
+            } in binder_lists
+            {
                 let resume_symbol =
                     traversal_resume_symbol(resume, result_src_idx, rule_idx, markers);
 
@@ -3200,18 +3204,14 @@ pub(crate) fn emit_optional_group_body(
             let TraversalSites { optionals, binder_frame_indices, .. } =
                 traversal_sites(&shape.positions);
 
-            for OptionalSite { position: outer_pos, resume } in optionals {
-                let BinderPosition::OptionalGroup {
-                    positions: inner,
-                    first_token_set,
-                    group_idx,
-                    ..
-                } = outer_pos
-                else {
-                    unreachable!("optional site must name an optional group");
-                };
-
-                let group_idx_value = *group_idx;
+            for OptionalSite {
+                positions: inner,
+                first_token_set,
+                group_idx,
+                resume,
+            } in optionals
+            {
+                let group_idx_value = group_idx;
                 let final_sub_pos = (inner.len() + 1) as u32;
                 let resume_symbol =
                     traversal_resume_symbol(resume, result_src_idx, rule_idx, markers);
@@ -3849,231 +3849,11 @@ pub(crate) fn emit_binder_action_entry(
                 field_names.push(quote! { #var });
             },
             ActionArgKind::Optional(inner_kinds) => {
-                if inner_kinds
-                    .iter()
-                    .any(|kind| matches!(kind, ActionArgKind::Optional(_)))
-                {
-                    let nested = emit_nested_optional_action(i, inner_kinds);
-                    extracts.push(nested.extract);
-                    field_names.extend(nested.fields);
-                    collection_drain_sites.extend(nested.collection_drains);
-                    continue;
-                }
-                // Opt-Group: extract the Optional arg, exposing each inner
-                // field as `Option<Box<T>>` (or Option<...> per inner kind).
-                // The runtime pushes ActionArg::Optional(Some(inner_args))
-                // when taken, Optional(None) when skipped. Inner args are
-                // ordered identically to inner_kinds (matches enums.rs's
-                // flat field emission).
-                let opt_var = format_ident!("opt_{}", i);
-                let mut inner_ext: Vec<TokenStream> = Vec::new();
-                let mut inner_idents: Vec<Ident> = Vec::new();
-                for (j, k) in inner_kinds.iter().enumerate() {
-                    let inner_var = format_ident!("inner_{}_{}", i, j);
-                    inner_idents.push(inner_var.clone());
-                    let extract_inner = match k {
-                        ActionArgKind::TokenText { .. } => quote! {
-                            let #inner_var: Option<String> =
-                                match #opt_var.as_mut() {
-                                    Some(inner_iter) => inner_iter
-                                        .next()
-                                        .and_then(|a| a.as_token_text().map(|s| s.to_string())),
-                                    None => None,
-                                };
-                        },
-                        // The `Ident`-capture twin inside an `#opt(...)` group: same
-                        // `Option<String>` destination, `as_ident()` accessor.
-                        ActionArgKind::IdentText { .. } => quote! {
-                            let #inner_var: Option<String> =
-                                match #opt_var.as_mut() {
-                                    Some(inner_iter) => inner_iter
-                                        .next()
-                                        .and_then(|a| a.as_ident().map(|s| s.to_string())),
-                                    None => None,
-                                };
-                        },
-                        ActionArgKind::GuestBody { .. } => quote! {
-                            let #inner_var: Option<std::sync::Arc<mettail_runtime::FltNode>> =
-                                match #opt_var.as_mut() {
-                                    Some(inner_iter) => inner_iter.next().and_then(|a| {
-                                        a.as_guest_body().map(|gb| std::sync::Arc::new(
-                                            mettail_runtime::FltNode {
-                                                tag: gb.tag.clone(),
-                                                body_src: gb.body_src.clone(),
-                                                holes: gb.holes.iter().map(|h| mettail_runtime::FltHole {
-                                                    name: h.name.clone(),
-                                                    category: h.category.clone(),
-                                                    offset: h.offset,
-                                                }).collect(),
-                                                position: gb.position,
-                                            }
-                                        ))
-                                    }),
-                                    None => None,
-                                };
-                        },
-                        ActionArgKind::Term(cat) => {
-                            let cat_id = format_ident!("{}", cat);
-                            quote! {
-                                let #inner_var: Option<std::sync::Arc<#cat_id>> =
-                                    match #opt_var.as_mut() {
-                                        Some(inner_iter) => inner_iter.next()
-                                            .and_then(|a| a.into_term::<#cat_id>())
-                                            .map(std::sync::Arc::new),
-                                        None => None,
-                                    };
-                            }
-                        },
-                        ActionArgKind::BinderName => quote! {
-                            let #inner_var: Option<String> =
-                                match #opt_var.as_mut() {
-                                    Some(inner_iter) => inner_iter.next()
-                                        .and_then(|a| a.into_ident_name()),
-                                    None => None,
-                                };
-                        },
-                        ActionArgKind::Predicate => quote! {
-                            let #inner_var: Option<mettail_runtime::BehavioralPred> =
-                                match #opt_var.as_mut() {
-                                    Some(inner_iter) => inner_iter.next()
-                                        .and_then(|a| a.into_predicate::<mettail_runtime::BehavioralPred>()),
-                                    None => None,
-                                };
-                        },
-                        ActionArgKind::BinderList => quote! {
-                            let #inner_var: Option<Vec<String>> =
-                                match #opt_var.as_mut() {
-                                    Some(inner_iter) => inner_iter.next()
-                                        .and_then(|a| a.into_binder_scope())
-                                        .map(|h| h.names),
-                                    None => None,
-                                };
-                        },
-                        ActionArgKind::Optional(_) => unreachable!(
-                            "nested optionals are emitted by the iterative optional-action PDA"
-                        ),
-                        ActionArgKind::CollectionDrain { elem_cat, coll_kind } => {
-                            // Phase 4 #3 (2026-05-12): Class-2 SimpleCollection
-                            // inside *opt. When the optional was TAKEN, the
-                            // inner_iter yields ActionArg::CollectionId(id);
-                            // drain the slot from live.collection_stack and
-                            // materialize into the container kind. When NOT
-                            // TAKEN, emit None.
-                            //
-                            // The drain order is locally LIFO-safe: the
-                            // optional collection slot is the innermost open
-                            // slot at the point this materialization fires
-                            // (the optional scope is the innermost scope,
-                            // and the collection inside it is its innermost
-                            // child).
-                            let elem_id = format_ident!("{}", elem_cat);
-                            match coll_kind {
-                                CollectionType::Vec => quote! {
-                                    let #inner_var: Option<std::vec::Vec<#elem_id>> =
-                                        match #opt_var.as_mut() {
-                                            Some(inner_iter) => match inner_iter.next() {
-                                                Some(arg) => match arg.as_collection_id() {
-                                                    Some(id) => {
-                                                        let drained = b.drain_collection(id);
-                                                        Some(
-                                                            drained.into_iter()
-                                                                .filter_map(|a| a.into_term::<#elem_id>())
-                                                                .collect()
-                                                        )
-                                                    },
-                                                    None => None,
-                                                },
-                                                None => None,
-                                            },
-                                            None => None,
-                                        };
-                                },
-                                CollectionType::HashBag => quote! {
-                                    let #inner_var: Option<mettail_runtime::HashBag<#elem_id>> =
-                                        match #opt_var.as_mut() {
-                                            Some(inner_iter) => match inner_iter.next() {
-                                                Some(arg) => match arg.as_collection_id() {
-                                                    Some(id) => {
-                                                        let drained = b.drain_collection(id);
-                                                        Some(mettail_runtime::HashBag::<#elem_id>::from_iter(
-                                                            drained.into_iter()
-                                                                .filter_map(|a| a.into_term::<#elem_id>())
-                                                        ))
-                                                    },
-                                                    None => None,
-                                                },
-                                                None => None,
-                                            },
-                                            None => None,
-                                        };
-                                },
-                                CollectionType::HashSet => quote! {
-                                    let #inner_var: Option<std::collections::HashSet<#elem_id>> =
-                                        match #opt_var.as_mut() {
-                                            Some(inner_iter) => match inner_iter.next() {
-                                                Some(arg) => match arg.as_collection_id() {
-                                                    Some(id) => {
-                                                        let drained = b.drain_collection(id);
-                                                        Some(std::collections::HashSet::<#elem_id>::from_iter(
-                                                            drained.into_iter()
-                                                                .filter_map(|a| a.into_term::<#elem_id>())
-                                                        ))
-                                                    },
-                                                    None => None,
-                                                },
-                                                None => None,
-                                            },
-                                            None => None,
-                                        };
-                                },
-                                CollectionType::HashMap | CollectionType::PathMap => quote! {
-                                    let #inner_var: Option<mettail_runtime::HashMapLit<#elem_id, #elem_id>> =
-                                        match #opt_var.as_mut() {
-                                            Some(inner_iter) => match inner_iter.next() {
-                                                Some(arg) => match arg.as_collection_id() {
-                                                    Some(id) => {
-                                                        let drained = b.drain_collection(id);
-                                                        let mut iter_drained = drained.into_iter();
-                                                        let mut container = mettail_runtime::HashMapLit::<#elem_id, #elem_id>::default();
-                                                        while let Some(k_arg) = iter_drained.next() {
-                                                            let v_arg = match iter_drained.next() {
-                                                                Some(v) => v,
-                                                                None => break,
-                                                            };
-                                                            if let (Some(k), Some(v)) = (
-                                                                k_arg.into_term::<#elem_id>(),
-                                                                v_arg.into_term::<#elem_id>(),
-                                                            ) {
-                                                                container.insert(k, v);
-                                                            }
-                                                        }
-                                                        Some(container)
-                                                    },
-                                                    None => None,
-                                                },
-                                                None => None,
-                                            },
-                                            None => None,
-                                        };
-                                },
-                            }
-                        },
-                    };
-                    inner_ext.push(extract_inner);
-                }
-                extracts.push(quote! {
-                    let mut #opt_var: Option<std::vec::IntoIter<mettail_prattail::wpda_runtime::ActionArg>> =
-                        match iter.next() {
-                            Some(arg) => arg.into_optional()
-                                .flatten()
-                                .map(|v| v.into_iter()),
-                            _ => return,
-                        };
-                    #(#inner_ext)*
-                });
-                for ident in inner_idents {
-                    field_names.push(quote! { #ident });
-                }
+                let nested = emit_nested_optional_action(i, inner_kinds);
+                extracts.push(nested.extract);
+                field_names.extend(nested.fields);
+                collection_drain_sites.extend(nested.collection_drains);
+                continue;
             },
         }
     }

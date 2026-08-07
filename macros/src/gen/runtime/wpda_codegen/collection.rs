@@ -19,7 +19,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::BTreeSet;
 
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::type_expr_walk::TypeExprBaseIdents;
 
 use super::binder::{classify_binder_in, BinderPosition, BinderShape, CollectionSepInfo};
@@ -1353,38 +1353,31 @@ pub(crate) fn emit_category_is_binder_scoped_lookup(
     // Referenced categories of a rule (category-reference graph out-edges).
     fn rule_ref_cats(params: &[TermParam], out: &mut Vec<String>) {
         for leaf in TermParamLeaves::new(params, false) {
-            match leaf.param {
-                TermParam::Simple { ty, .. } => collect_base_cats(ty, out),
-                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
-                    collect_base_cats(ty, out)
-                },
-                TermParam::GuardBody { .. } => {},
-                TermParam::Optional { .. } => {
-                    unreachable!("term-parameter leaf iterator yielded a group")
-                },
+            match leaf.kind {
+                TermParamLeafKind::Simple { ty, .. } => collect_base_cats(ty, out),
+                TermParamLeafKind::Abstraction { ty, .. }
+                | TermParamLeafKind::MultiAbstraction { ty, .. } => collect_base_cats(ty, out),
+                TermParamLeafKind::GuardBody { .. } => {},
             }
         }
     }
     // A rule opens a binder scope iff a param (recursively) is an abstraction.
     fn opens_scope(params: &[TermParam]) -> bool {
-        TermParamLeaves::new(params, false).any(|leaf| match leaf.param {
-            TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => true,
-            TermParam::Optional { .. } => {
-                unreachable!("term-parameter leaf iterator yielded a group")
+        TermParamLeaves::new(params, false).any(|leaf| match leaf.kind {
+            TermParamLeafKind::Abstraction { .. } | TermParamLeafKind::MultiAbstraction { .. } => {
+                true
             },
-            _ => false,
+            TermParamLeafKind::Simple { .. } | TermParamLeafKind::GuardBody { .. } => false,
         })
     }
     // (domain, codomain) base cats of a rule's abstraction params.
     fn scope_slot_cats(params: &[TermParam], dom: &mut Vec<String>, cod: &mut Vec<String>) {
         for leaf in TermParamLeaves::new(params, false) {
-            match leaf.param {
-                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
+            match leaf.kind {
+                TermParamLeafKind::Abstraction { ty, .. }
+                | TermParamLeafKind::MultiAbstraction { ty, .. } => {
                     arrow_domain_cats(ty, dom);
                     arrow_codomain_cats(ty, cod);
-                },
-                TermParam::Optional { .. } => {
-                    unreachable!("term-parameter leaf iterator yielded a group")
                 },
                 _ => {},
             }

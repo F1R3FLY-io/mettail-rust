@@ -83,7 +83,7 @@ use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::types::TypeExpr;
 use std::collections::HashSet;
 
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 
 /// One non-scope variant field contributed by a capture-bearing rule, in
 /// syntax-pattern encounter order.
@@ -235,21 +235,19 @@ pub(crate) fn field_layout<'a>(
     // (mirrors `variant_kind_from_term_context`'s precedence).
     let scope_param = term_context
         .iter()
-        .find(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        .find_map(|param| match param {
+            TermParam::MultiAbstraction { body, .. } => Some((param, body)),
+            _ => None,
+        })
         .or_else(|| {
-            term_context
-                .iter()
-                .find(|p| matches!(p, TermParam::Abstraction { .. }))
+            term_context.iter().find_map(|param| match param {
+                TermParam::Abstraction { body, .. } => Some((param, body)),
+                _ => None,
+            })
         });
-    if let Some(param) = scope_param {
-        let name = match param {
-            TermParam::Abstraction { body, .. } | TermParam::MultiAbstraction { body, .. } => {
-                body.to_string()
-            },
-            _ => unreachable!("scope_param matched only the two abstraction variants"),
-        };
+    if let Some((param, body)) = scope_param {
         slots.push(FieldSlot {
-            name,
+            name: body.to_string(),
             source: FieldSlotSource::Param(param),
             optional: false,
         });
@@ -267,26 +265,22 @@ fn push_declaration_order<'a>(
     out: &mut Vec<FieldSlot<'a>>,
 ) {
     for leaf in TermParamLeaves::new(term_context, optional) {
-        let param = leaf.param;
         let optional = leaf.is_optional;
-        match param {
-            TermParam::Simple { name, .. } => out.push(FieldSlot {
+        match leaf.kind {
+            TermParamLeafKind::Simple { param, name, .. }
+            | TermParamLeafKind::GuardBody { param, name } => out.push(FieldSlot {
                 name: name.to_string(),
                 source: FieldSlotSource::Param(param),
                 optional,
             }),
-            TermParam::GuardBody { name } => out.push(FieldSlot {
-                name: name.to_string(),
-                source: FieldSlotSource::Param(param),
-                optional,
-            }),
-            TermParam::Abstraction { body, .. } | TermParam::MultiAbstraction { body, .. } => out
-                .push(FieldSlot {
+            TermParamLeafKind::Abstraction { param, body, .. }
+            | TermParamLeafKind::MultiAbstraction { param, body, .. } => {
+                out.push(FieldSlot {
                     name: body.to_string(),
                     source: FieldSlotSource::Param(param),
                     optional,
-                }),
-            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
+                });
+            },
         }
     }
 }
@@ -348,10 +342,9 @@ pub(crate) fn capture_layout<'a>(
 /// Returns the parameter and whether it was declared INSIDE an `#opt(…)` group.
 fn find_param<'a>(term_context: &'a [TermParam], name: &str) -> Option<(&'a TermParam, bool)> {
     for leaf in TermParamLeaves::new(term_context, false) {
-        let param = leaf.param;
-        match param {
-            TermParam::Simple { name: candidate, .. }
-            | TermParam::GuardBody { name: candidate }
+        match leaf.kind {
+            TermParamLeafKind::Simple { param, name: candidate, .. }
+            | TermParamLeafKind::GuardBody { param, name: candidate }
                 if candidate == name =>
             {
                 return Some((param, leaf.is_optional));

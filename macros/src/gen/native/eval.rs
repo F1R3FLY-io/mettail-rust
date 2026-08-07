@@ -5,7 +5,7 @@ use crate::gen::capture::{capture_layout, CaptureFieldKind};
 use crate::gen::native::lossless_coercion::build_lossless_coercion;
 use crate::gen::native::{native_type_to_string, NativeType};
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
@@ -140,8 +140,8 @@ fn collect_native_dependencies(
     out: &mut Vec<usize>,
 ) {
     for leaf in TermParamLeaves::new(params, false) {
-        match leaf.param {
-            TermParam::Simple { ty: TypeExpr::Base(target), .. } => {
+        match leaf.kind {
+            TermParamLeafKind::Simple { ty: TypeExpr::Base(target), .. } => {
                 if let Some(&index) = native_index.get(&target.to_string()) {
                     out.push(index);
                 }
@@ -239,8 +239,8 @@ fn classify_hol_rule_for_pda(rule: &GrammarRule) -> Option<Vec<PdaParam<'_>>> {
 fn classify_term_params_for_pda(params: &[TermParam]) -> Option<Vec<PdaParam<'_>>> {
     let mut out = Vec::with_capacity(params.len());
     for leaf in TermParamLeaves::new(params, false) {
-        match leaf.param {
-            TermParam::Simple { name, ty } => {
+        match leaf.kind {
+            TermParamLeafKind::Simple { name, ty, .. } => {
                 let TypeExpr::Base(base) = ty else {
                     return None;
                 };
@@ -250,11 +250,12 @@ fn classify_term_params_for_pda(params: &[TermParam]) -> Option<Vec<PdaParam<'_>
                     is_optional: leaf.is_optional,
                 });
             },
-            TermParam::GuardBody { name } => {
+            TermParamLeafKind::GuardBody { name, .. } => {
                 out.push(PdaParam::Guard { name: name.clone() });
             },
-            TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => return None,
-            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
+            TermParamLeafKind::Abstraction { .. } | TermParamLeafKind::MultiAbstraction { .. } => {
+                return None
+            },
         }
     }
     Some(out)
@@ -1213,7 +1214,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     #value_type::#value_variant(__value) => {
                         ::std::option::Option::Some(__value)
                     },
-                    _ => unreachable!("evaluator PDA root value/category mismatch"),
+                    _ => ::std::option::Option::None,
                 }
             }
         };

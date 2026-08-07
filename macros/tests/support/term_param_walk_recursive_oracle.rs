@@ -15,7 +15,22 @@ fn collect_recursive<'a>(
     for param in params {
         match param {
             TermParam::Optional { params } => collect_recursive(params, true, out),
-            _ => out.push(TermParamLeaf { param, is_optional }),
+            TermParam::Simple { name, ty } => out.push(TermParamLeaf {
+                kind: TermParamLeafKind::Simple { param, name, ty },
+                is_optional,
+            }),
+            TermParam::GuardBody { name } => out.push(TermParamLeaf {
+                kind: TermParamLeafKind::GuardBody { param, name },
+                is_optional,
+            }),
+            TermParam::Abstraction { binder, body, ty } => out.push(TermParamLeaf {
+                kind: TermParamLeafKind::Abstraction { param, binder, body, ty },
+                is_optional,
+            }),
+            TermParam::MultiAbstraction { binder, body, ty } => out.push(TermParamLeaf {
+                kind: TermParamLeafKind::MultiAbstraction { param, binder, body, ty },
+                is_optional,
+            }),
         }
     }
 }
@@ -51,7 +66,7 @@ fn leaf_iterator_matches_recursive_preorder_on_every_term_param_variant() {
     collect_recursive(&params, false, &mut expected);
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(expected) {
-        assert!(std::ptr::eq(actual.param, expected.param));
+        assert!(std::ptr::eq(actual.kind.param(), expected.kind.param()));
         assert_eq!(actual.is_optional, expected.is_optional);
     }
 }

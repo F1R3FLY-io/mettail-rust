@@ -15,7 +15,7 @@
 use crate::gen::capture::capture_layout;
 use crate::gen::native::has_native_type;
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::type_expr_walk::terminal_base;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
@@ -3258,34 +3258,30 @@ fn generate_engine_syntax_pattern_arm_inner(
     // visible with the same declaration order as top-level params. Display
     // handles Option<T> wrapping when it emits the corresponding syntax block.
     for leaf in TermParamLeaves::new(term_context, false) {
-        let param = leaf.param;
-        match param {
-            TermParam::Simple { name, ty } => {
+        match leaf.kind {
+            TermParamLeafKind::Simple { name, ty, .. } => {
                 param_names.push(name.to_string());
                 param_types.insert(name.to_string(), ty);
             },
-            TermParam::Abstraction { binder, body, ty: _ } => {
+            TermParamLeafKind::Abstraction { binder, body, .. } => {
                 has_abstraction = true;
                 abstraction_binder = Some(binder.to_string());
                 abstraction_body = Some(body.to_string());
                 let _ = body;
             },
-            TermParam::MultiAbstraction { binder, body, ty: _ } => {
+            TermParamLeafKind::MultiAbstraction { binder, body, .. } => {
                 has_abstraction = true;
                 is_multi_binder = true;
                 abstraction_binder = Some(binder.to_string());
                 abstraction_body = Some(body.to_string());
                 let _ = body;
             },
-            TermParam::GuardBody { name } => {
+            TermParamLeafKind::GuardBody { name, .. } => {
                 // Phase 2E: register the guard slot's name so the
                 // syntax pattern's reference resolves and the
                 // per-instance BehavioralPred field is rendered.
                 param_names.push(name.to_string());
                 guard_params.insert(name.to_string());
-            },
-            TermParam::Optional { .. } => {
-                unreachable!("TermParamLeaves omits grouping nodes");
             },
         }
     }

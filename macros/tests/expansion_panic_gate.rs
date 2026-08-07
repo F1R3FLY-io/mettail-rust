@@ -455,9 +455,9 @@ fn scan_subtree(root: &Path, relative: &str) -> (Vec<Site>, usize, usize) {
 ///   asserted where it belongs — in that crate, by
 ///   `token_kind_lex_error_has_no_constructor_in_this_crate`, which checks the
 ///   zero-constructor claim against the source rather than trusting a comment.
-/// * `PreValidated` → [`Disposition::LocallyFiltered`] and
-///   [`Disposition::EarlierPassNormalised`], split because the two have different
-///   obligations: one names a predicate a few lines up, the other names a whole pass.
+/// * `PreValidated` is now **absent**. The last locally filtered and earlier-pass rows
+///   were removed by encoding their narrowed shapes in the iterator and traversal-site
+///   types, so no remaining refusal relies on prevalidation.
 /// * `Converted` is **not a variant**, because it cannot be one. This table's domain is
 ///   the set of *remaining* refusal macros; a site that now emits `compile_error!` is not
 ///   in the domain at all, so a `Converted` row could never be inhabited and would be
@@ -471,21 +471,6 @@ fn scan_subtree(root: &Path, relative: &str) -> (Vec<Site>, usize, usize) {
 ///   `w_emits_the_same_bytes_as_write`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Disposition {
-    /// A predicate in the **same function**, a few lines above, already narrowed the value
-    /// so the refusing arm cannot be selected.
-    ///
-    /// Obligation: `filter` must appear within [`WITNESS_WINDOW`] lines *above* the
-    /// refusal. If the filter is moved, renamed or deleted, the row stops holding.
-    LocallyFiltered { filter: &'static str },
-
-    /// An **earlier pass of the same expansion** normalises the shape away before this
-    /// code runs.
-    ///
-    /// Obligation: `pass` must appear within [`WITNESS_WINDOW`] lines of the refusal —
-    /// the site has to *say* which pass it is trusting, which is the difference between a
-    /// justified refusal and an assumption.
-    EarlierPassNormalised { pass: &'static str },
-
     /// The refused value cannot be built: the data structure's construction never
     /// produces it.
     ///
@@ -520,35 +505,16 @@ struct Row {
 /// Asserted as **set equality in both directions**: a new site fails because it is
 /// undeclared, and a *fixed* site fails because its row is now unmatched. It can neither
 /// grow silently nor be quietly forgotten once repaired.
-const TIER1_TABLE: &[Row] = &[
-    Row {
-        file: "macros/src/gen/capture.rs",
-        construct: "unreachable",
-        count: 1,
-        // The `match param` two lines below a `find` whose predicate admits only
-        // `TermParam::MultiAbstraction` and `TermParam::Abstraction`; the `_` arm is the
-        // complement of a set the same function just selected.
-        disposition: Disposition::LocallyFiltered { filter: "MultiAbstraction" },
-    },
-    Row {
-        file: "macros/src/gen/runtime/wpda_codegen/factoring.rs",
-        construct: "panic",
-        count: 4,
-        // S1-FACTORING F5-2. Two are the spine-coordinate walk refusing kind 1 ("the
-        // spine never runs kind 1 because its marker never bumps"); two are a
-        // `MemberCommit` shape refusing a discovery-kind drift. All four are statements
-        // about what `SpineTree`/`MemberCommit` construction can yield.
-        disposition: Disposition::ConstructionInvariant { invariant: "F5-2" },
-    },
-    Row {
-        file: "macros/src/gen/syntax/display.rs",
-        construct: "unreachable",
-        count: 1,
-        // `TermParam::Optional` is flattened by an earlier pass; the arm exists only
-        // because the enum still has the variant.
-        disposition: Disposition::EarlierPassNormalised { pass: "flattened" },
-    },
-];
+const TIER1_TABLE: &[Row] = &[Row {
+    file: "macros/src/gen/runtime/wpda_codegen/factoring.rs",
+    construct: "panic",
+    count: 4,
+    // S1-FACTORING F5-2. Two are the spine-coordinate walk refusing kind 1 ("the
+    // spine never runs kind 1 because its marker never bumps"); two are a
+    // `MemberCommit` shape refusing a discovery-kind drift. All four are statements
+    // about what `SpineTree`/`MemberCommit` construction can yield.
+    disposition: Disposition::ConstructionInvariant { invariant: "F5-2" },
+}];
 
 /// The scanned domain of Tier 1, as `(file, construct) -> count`.
 fn tier1_scanned(root: &Path) -> (BTreeMap<(String, String), usize>, Vec<Site>, usize) {
@@ -652,8 +618,8 @@ fn tier1_every_refusal_in_macros_and_ast_is_classified() {
 
 /// ★ TIER 1's teeth — every row's OBLIGATION is re-checked, not just its count.
 ///
-/// This is what stops a row from being a shrug. A `LocallyFiltered` row that names a
-/// filter somebody has since deleted fails here while its count is still correct.
+/// This is what stops a row from being a shrug. A construction-invariant row whose
+/// witness has since disappeared fails here while its count is still correct.
 #[test]
 fn every_declared_disposition_still_holds() {
     let root = workspace_root();
@@ -671,23 +637,7 @@ fn every_declared_disposition_still_holds() {
             .collect();
 
         match row.disposition {
-            Disposition::LocallyFiltered { filter } => {
-                for site in &row_sites {
-                    let lo = site.line.saturating_sub(WITNESS_WINDOW).saturating_sub(1);
-                    let hi = site.line.min(lines.len());
-                    let window = lines[lo..hi].join("\n");
-                    if !window.contains(filter) {
-                        failures.push(format!(
-                            "{site}: LocallyFiltered names the filter `{filter}`, but it does \
-                             not appear in the {WITNESS_WINDOW} lines above the refusal. \
-                             Either the filter was removed — in which case the refusal is \
-                             now REACHABLE — or the row is stale."
-                        ));
-                    }
-                }
-            },
-            Disposition::EarlierPassNormalised { pass }
-            | Disposition::ConstructionInvariant { invariant: pass } => {
+            Disposition::ConstructionInvariant { invariant: pass } => {
                 for site in &row_sites {
                     let lo = site.line.saturating_sub(WITNESS_WINDOW).saturating_sub(1);
                     let hi = (site.line + WITNESS_WINDOW).min(lines.len());

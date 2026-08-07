@@ -16,7 +16,7 @@
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
 
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 
 /// Generate simulation integration tests for a language.
 ///
@@ -620,32 +620,24 @@ pub(crate) fn find_param_category(
     name: &syn::Ident,
     ctx: &[mettail_ast::grammar::TermParam],
 ) -> Option<String> {
-    use mettail_ast::grammar::TermParam;
-
     for leaf in TermParamLeaves::new(ctx, false) {
-        let param = leaf.param;
-        match param {
-            TermParam::Simple { name: pname, ty } => {
+        match leaf.kind {
+            TermParamLeafKind::Simple { name: pname, ty, .. } => {
                 if pname == name {
                     return type_expr_to_category(ty);
                 }
             },
-            TermParam::Abstraction { binder, body, ty } => {
+            TermParamLeafKind::Abstraction { binder, body, ty, .. }
+            | TermParamLeafKind::MultiAbstraction { binder, body, ty, .. } => {
                 if binder == name || body == name {
                     return type_expr_to_category(ty);
                 }
             },
-            TermParam::MultiAbstraction { binder, body, ty } => {
-                if binder == name || body == name {
-                    return type_expr_to_category(ty);
-                }
-            },
-            TermParam::GuardBody { name: gname, .. } => {
+            TermParamLeafKind::GuardBody { name: gname, .. } => {
                 if gname == name {
                     return Some("Bool".to_string());
                 }
             },
-            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
         }
     }
     None

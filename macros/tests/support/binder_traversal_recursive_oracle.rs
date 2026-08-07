@@ -80,12 +80,7 @@ fn iterative_trace(positions: &[BinderPosition]) -> SiteTrace {
         optionals: sites
             .optionals
             .into_iter()
-            .map(|site| {
-                let BinderPosition::OptionalGroup { group_idx, .. } = site.position else {
-                    unreachable!("optional table contains only optional positions");
-                };
-                (*group_idx as usize, trace_resume(site.resume))
-            })
+            .map(|site| (site.group_idx as usize, trace_resume(site.resume)))
             .collect(),
         binder_lists: sites
             .binder_lists

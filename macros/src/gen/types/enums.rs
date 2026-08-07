@@ -698,70 +698,72 @@ fn type_expr_to_field_type(
     language_category: Option<(&LanguageDef, &syn::Ident)>,
 ) -> TokenStream {
     let mut ty = ty;
-    while let TypeExpr::Refined { base, .. } = ty {
-        ty = base;
-    }
-    match ty {
-        TypeExpr::Base(ident) => match NonTerminalKind::classify(&ident.to_string()) {
-            NonTerminalKind::Var => quote! { mettail_runtime::OrdVar },
-            NonTerminalKind::Integer => quote! { i64 },
-            NonTerminalKind::Boolean => quote! { bool },
-            NonTerminalKind::StringLiteral => quote! { std::string::String },
-            // An `Ident`-typed param is the token's TEXT, carried inertly. It is the SAME
-            // Rust type as `StringLiteral` on purpose — every String-field seam (Eq/Hash/
-            // Ord/subst/normalize/semantic_hash/Display) already treats it as an opaque
-            // leaf, so no term operation can bind, capture, or rename it. Deliberately NOT
-            // `OrdVar`: see `NonTerminalKind::Ident`'s doc for why binder semantics here
-            // would let `new nth in { … }` capture a method name.
-            NonTerminalKind::Ident => quote! { std::string::String },
-            NonTerminalKind::FloatLiteral => language_category
-                .and_then(|(lang, cat)| {
-                    lang.types
-                        .iter()
-                        .find(|t| t.name == *cat)
-                        .and_then(|t| t.native_type.as_ref())
-                })
-                .map(|native_type| match NativeType::from_syn_type(native_type) {
-                    NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
-                    _ => quote! { mettail_runtime::CanonicalFloat64 },
-                })
-                .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 }),
-            NonTerminalKind::Category => quote! { std::sync::Arc<#ident> },
-        },
-        TypeExpr::Collection { coll_type, element } => {
-            let elem_type = type_expr_to_rust_type(element);
-            match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
-                    quote! { mettail_runtime::HashBag<#elem_type> }
-                },
-                CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
-                CollectionType::Vec => quote! { Vec<#elem_type> },
-            }
-        },
-        TypeExpr::Arrow { .. } => {
-            // Arrow types in simple params shouldn't happen, but handle gracefully
-            quote! { Box<dyn std::any::Any> }
-        },
-        TypeExpr::MultiBinder(inner) => {
-            // MultiBinder in simple context: Vec<T>
-            let inner_type = type_expr_to_rust_type(inner);
-            quote! { Vec<#inner_type> }
-        },
-        TypeExpr::Refined { .. } => unreachable!("refinement cursor stopped on a refinement"),
-        TypeExpr::Map { key, value } => {
-            // Phase 4 #5b (2026-05-12): Map binder slot. Lower to
-            // `HashMapLit<K, V>` for consistency with the action body's
-            // CollectionDrain materialization (which produces a
-            // `HashMapLit<elem, elem>` per binder.rs::3072-3090). The
-            // prior behavior — `type_expr_to_field_type(value)` →
-            // `Box<#value>` for `Base` value — was incorrect: it
-            // produced a Box<Proc> field that did not match the
-            // materialized HashMapLit container, causing a type
-            // mismatch at variant construction.
-            let k = type_expr_to_rust_type(key);
-            let v = type_expr_to_rust_type(value);
-            quote! { mettail_runtime::HashMapLit<#k, #v> }
-        },
+    loop {
+        return match ty {
+            TypeExpr::Base(ident) => match NonTerminalKind::classify(&ident.to_string()) {
+                NonTerminalKind::Var => quote! { mettail_runtime::OrdVar },
+                NonTerminalKind::Integer => quote! { i64 },
+                NonTerminalKind::Boolean => quote! { bool },
+                NonTerminalKind::StringLiteral => quote! { std::string::String },
+                // An `Ident`-typed param is the token's TEXT, carried inertly. It is the SAME
+                // Rust type as `StringLiteral` on purpose — every String-field seam (Eq/Hash/
+                // Ord/subst/normalize/semantic_hash/Display) already treats it as an opaque
+                // leaf, so no term operation can bind, capture, or rename it. Deliberately NOT
+                // `OrdVar`: see `NonTerminalKind::Ident`'s doc for why binder semantics here
+                // would let `new nth in { … }` capture a method name.
+                NonTerminalKind::Ident => quote! { std::string::String },
+                NonTerminalKind::FloatLiteral => language_category
+                    .and_then(|(lang, cat)| {
+                        lang.types
+                            .iter()
+                            .find(|t| t.name == *cat)
+                            .and_then(|t| t.native_type.as_ref())
+                    })
+                    .map(|native_type| match NativeType::from_syn_type(native_type) {
+                        NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+                        _ => quote! { mettail_runtime::CanonicalFloat64 },
+                    })
+                    .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 }),
+                NonTerminalKind::Category => quote! { std::sync::Arc<#ident> },
+            },
+            TypeExpr::Collection { coll_type, element } => {
+                let elem_type = type_expr_to_rust_type(element);
+                match coll_type {
+                    CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
+                        quote! { mettail_runtime::HashBag<#elem_type> }
+                    },
+                    CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
+                    CollectionType::Vec => quote! { Vec<#elem_type> },
+                }
+            },
+            TypeExpr::Arrow { .. } => {
+                // Arrow types in simple params shouldn't happen, but handle gracefully
+                quote! { Box<dyn std::any::Any> }
+            },
+            TypeExpr::MultiBinder(inner) => {
+                // MultiBinder in simple context: Vec<T>
+                let inner_type = type_expr_to_rust_type(inner);
+                quote! { Vec<#inner_type> }
+            },
+            TypeExpr::Refined { base, .. } => {
+                ty = base;
+                continue;
+            },
+            TypeExpr::Map { key, value } => {
+                // Phase 4 #5b (2026-05-12): Map binder slot. Lower to
+                // `HashMapLit<K, V>` for consistency with the action body's
+                // CollectionDrain materialization (which produces a
+                // `HashMapLit<elem, elem>` per binder.rs::3072-3090). The
+                // prior behavior — `type_expr_to_field_type(value)` →
+                // `Box<#value>` for `Base` value — was incorrect: it
+                // produced a Box<Proc> field that did not match the
+                // materialized HashMapLit container, causing a type
+                // mismatch at variant construction.
+                let k = type_expr_to_rust_type(key);
+                let v = type_expr_to_rust_type(value);
+                quote! { mettail_runtime::HashMapLit<#k, #v> }
+            },
+        };
     }
 }
 

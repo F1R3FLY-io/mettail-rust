@@ -1,9 +1,49 @@
 use mettail_ast::grammar::TermParam;
+use mettail_ast::types::TypeExpr;
+use syn::Ident;
+
+/// A non-grouping term parameter, with the variant-specific fields exposed by type.
+#[derive(Clone, Copy)]
+pub(crate) enum TermParamLeafKind<'a> {
+    Simple {
+        param: &'a TermParam,
+        name: &'a Ident,
+        ty: &'a TypeExpr,
+    },
+    GuardBody {
+        param: &'a TermParam,
+        name: &'a Ident,
+    },
+    Abstraction {
+        param: &'a TermParam,
+        binder: &'a Ident,
+        body: &'a Ident,
+        ty: &'a TypeExpr,
+    },
+    MultiAbstraction {
+        param: &'a TermParam,
+        binder: &'a Ident,
+        body: &'a Ident,
+        ty: &'a TypeExpr,
+    },
+}
+
+impl<'a> TermParamLeafKind<'a> {
+    #[cfg(test)]
+    pub(crate) fn param(self) -> &'a TermParam {
+        match self {
+            Self::Simple { param, .. }
+            | Self::GuardBody { param, .. }
+            | Self::Abstraction { param, .. }
+            | Self::MultiAbstraction { param, .. } => param,
+        }
+    }
+}
 
 /// One non-grouping term parameter encountered in declaration preorder.
 #[derive(Clone, Copy)]
 pub(crate) struct TermParamLeaf<'a> {
-    pub(crate) param: &'a TermParam,
+    pub(crate) kind: TermParamLeafKind<'a>,
     /// True once the path to this leaf has entered an `Optional` group.
     pub(crate) is_optional: bool,
 }
@@ -37,7 +77,18 @@ impl<'a> Iterator for TermParamLeaves<'a> {
                     .extend(params.iter().rev().map(|param| (param, true)));
                 continue;
             }
-            return Some(TermParamLeaf { param, is_optional });
+            let kind = match param {
+                TermParam::Simple { name, ty } => TermParamLeafKind::Simple { param, name, ty },
+                TermParam::GuardBody { name } => TermParamLeafKind::GuardBody { param, name },
+                TermParam::Abstraction { binder, body, ty } => {
+                    TermParamLeafKind::Abstraction { param, binder, body, ty }
+                },
+                TermParam::MultiAbstraction { binder, body, ty } => {
+                    TermParamLeafKind::MultiAbstraction { param, binder, body, ty }
+                },
+                TermParam::Optional { .. } => continue,
+            };
+            return Some(TermParamLeaf { kind, is_optional });
         }
         None
     }

@@ -48,7 +48,7 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::gen::term_param_walk::TermParamLeaves;
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::type_expr_walk::terminal_base;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, SyntaxExpr, TermParam};
@@ -3747,18 +3747,19 @@ pub(crate) fn field_info_for_guest_body() -> FieldInfo {
 pub(crate) fn field_infos_from_term_param(param: &TermParam, in_optional: bool) -> Vec<FieldInfo> {
     let mut out = Vec::new();
     for leaf in TermParamLeaves::new(std::slice::from_ref(param), in_optional) {
-        match leaf.param {
-            TermParam::Simple { ty, .. } => {
+        match leaf.kind {
+            TermParamLeafKind::Simple { ty, .. } => {
                 let mut info = field_info_from_type_expr(ty);
                 info.is_optional = leaf.is_optional;
                 out.push(info);
             },
-            TermParam::GuardBody { .. } => {
+            TermParamLeafKind::GuardBody { .. } => {
                 let mut info = field_info_for_guard_slot();
                 info.is_optional = leaf.is_optional;
                 out.push(info);
             },
-            TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. }
+            TermParamLeafKind::Abstraction { ty, .. }
+            | TermParamLeafKind::MultiAbstraction { ty, .. }
                 if leaf.is_optional =>
             {
                 let body_cat = if let TypeExpr::Arrow { codomain, .. } = ty {
@@ -3775,8 +3776,8 @@ pub(crate) fn field_infos_from_term_param(param: &TermParam, in_optional: bool) 
                     opaque_leaf: None,
                 });
             },
-            TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => {},
-            TermParam::Optional { .. } => unreachable!("TermParamLeaves omits grouping nodes"),
+            TermParamLeafKind::Abstraction { .. } | TermParamLeafKind::MultiAbstraction { .. } => {
+            },
         }
     }
     out
