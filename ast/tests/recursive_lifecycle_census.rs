@@ -128,74 +128,75 @@ fn derives(attrs: &[Attribute]) -> BTreeSet<String> {
 }
 
 fn type_references(ty: &Type, operations: u16, out: &mut Vec<TypeReference>) {
-    if operations == 0 {
-        return;
-    }
-    match ty {
-        Type::Array(array) => type_references(&array.elem, operations, out),
-        Type::Group(group) => type_references(&group.elem, operations, out),
-        Type::Paren(paren) => type_references(&paren.elem, operations, out),
-        Type::Slice(slice) => type_references(&slice.elem, operations, out),
-        Type::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                type_references(elem, operations, out);
-            }
-        },
-        Type::Path(path) => {
-            let Some(segment) = path.path.segments.last() else {
-                return;
-            };
-            let name = segment.ident.to_string();
-            if matches!(name.as_str(), "PhantomData" | "Weak") {
-                return;
-            }
-            let first = path
-                .path
-                .segments
-                .first()
-                .map(|part| part.ident.to_string());
-            let externally_qualified = path.path.segments.len() > 1
-                && !matches!(first.as_deref(), Some("crate" | "self" | "super" | "Self"));
-            out.push(TypeReference {
-                name: name.clone(),
-                operations,
-                externally_qualified,
-            });
+    let mut pending = vec![(ty, operations)];
+    while let Some((ty, operations)) = pending.pop() {
+        if operations == 0 {
+            continue;
+        }
+        match ty {
+            Type::Array(array) => pending.push((&array.elem, operations)),
+            Type::Group(group) => pending.push((&group.elem, operations)),
+            Type::Paren(paren) => pending.push((&paren.elem, operations)),
+            Type::Slice(slice) => pending.push((&slice.elem, operations)),
+            Type::Tuple(tuple) => {
+                pending.extend(tuple.elems.iter().map(|elem| (elem, operations)));
+            },
+            Type::Path(path) => {
+                let Some(segment) = path.path.segments.last() else {
+                    continue;
+                };
+                let name = segment.ident.to_string();
+                if matches!(name.as_str(), "PhantomData" | "Weak") {
+                    continue;
+                }
+                let first = path
+                    .path
+                    .segments
+                    .first()
+                    .map(|part| part.ident.to_string());
+                let externally_qualified = path.path.segments.len() > 1
+                    && !matches!(first.as_deref(), Some("crate" | "self" | "super" | "Self"));
+                out.push(TypeReference {
+                    name: name.clone(),
+                    operations,
+                    externally_qualified,
+                });
 
-            let child_operations = match name.as_str() {
-                // Cloning a shared pointer increments its count; it does not
-                // clone the recursively owned payload. Its other structural
-                // traits and last-owner destruction do follow the edge.
-                "Arc" | "Rc" => operations & !CLONE,
-                // ManuallyDrop suppresses only implicit destruction.
-                "ManuallyDrop" => operations & !DROP,
-                _ => operations,
-            };
-            if let PathArguments::AngleBracketed(arguments) = &segment.arguments {
-                for argument in &arguments.args {
-                    match argument {
-                        GenericArgument::Type(inner) => {
-                            type_references(inner, child_operations, out);
-                        },
-                        GenericArgument::AssocType(binding) => {
-                            type_references(&binding.ty, child_operations, out);
-                        },
-                        GenericArgument::Constraint(_)
-                        | GenericArgument::Lifetime(_)
-                        | GenericArgument::Const(_)
-                        | GenericArgument::AssocConst(_)
-                        | _ => {},
+                let child_operations = match name.as_str() {
+                    // Cloning a shared pointer increments its count; it does not
+                    // clone the recursively owned payload. Its other structural
+                    // traits and last-owner destruction do follow the edge.
+                    "Arc" | "Rc" => operations & !CLONE,
+                    // ManuallyDrop suppresses only implicit destruction.
+                    "ManuallyDrop" => operations & !DROP,
+                    _ => operations,
+                };
+                if let PathArguments::AngleBracketed(arguments) = &segment.arguments {
+                    for argument in &arguments.args {
+                        match argument {
+                            GenericArgument::Type(inner) => {
+                                pending.push((inner, child_operations));
+                            },
+                            GenericArgument::AssocType(binding) => {
+                                pending.push((&binding.ty, child_operations));
+                            },
+                            GenericArgument::Constraint(_)
+                            | GenericArgument::Lifetime(_)
+                            | GenericArgument::Const(_)
+                            | GenericArgument::AssocConst(_)
+                            | _ => {},
+                        }
                     }
                 }
-            }
-        },
-        Type::Reference(reference) => {
-            // References neither clone nor destroy the referent. Formatting,
-            // comparison, hashing, and serialization do inspect it.
-            type_references(&reference.elem, operations & !(CLONE | DROP | DESERIALIZE), out);
-        },
-        Type::Ptr(_) | Type::BareFn(_) => {},
-        _ => {},
+            },
+            Type::Reference(reference) => {
+                // References neither clone nor destroy the referent. Formatting,
+                // comparison, hashing, and serialization do inspect it.
+                pending.push((&reference.elem, operations & !(CLONE | DROP | DESERIALIZE)));
+            },
+            Type::Ptr(_) | Type::BareFn(_) => {},
+            _ => {},
+        }
     }
 }
 
@@ -284,9 +285,14 @@ fn workspace_root() -> PathBuf {
 }
 
 fn source_files(root: &Path) -> Vec<PathBuf> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut files = Vec::new();
+    let mut pending = CRATE_ROOTS
+        .iter()
+        .map(|crate_root| root.join(crate_root))
+        .collect::<Vec<_>>();
+    while let Some(dir) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
+            continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -296,82 +302,115 @@ fn source_files(root: &Path) -> Vec<PathBuf> {
                 if matches!(name.as_ref(), "target" | ".git" | ".claude" | "node_modules") {
                     continue;
                 }
-                walk(&path, out);
+                pending.push(path);
             } else if name.ends_with(".rs") {
-                out.push(path);
+                files.push(path);
             }
         }
-    }
-
-    let mut files = Vec::new();
-    for crate_root in CRATE_ROOTS {
-        walk(&root.join(crate_root), &mut files);
     }
     files.sort();
     files
 }
 
 fn strongly_connected(graph: &[BTreeSet<usize>]) -> Vec<Vec<usize>> {
-    struct Tarjan<'graph> {
-        graph: &'graph [BTreeSet<usize>],
-        next_index: usize,
-        indexes: Vec<Option<usize>>,
-        lowlinks: Vec<usize>,
-        stack: Vec<usize>,
-        on_stack: Vec<bool>,
-        components: Vec<Vec<usize>>,
+    struct DfsFrame<'graph> {
+        node: usize,
+        parent: Option<usize>,
+        successors: std::collections::btree_set::Iter<'graph, usize>,
     }
 
-    impl Tarjan<'_> {
-        fn visit(&mut self, node: usize) {
-            let index = self.next_index;
-            self.next_index += 1;
-            self.indexes[node] = Some(index);
-            self.lowlinks[node] = index;
-            self.stack.push(node);
-            self.on_stack[node] = true;
+    let len = graph.len();
+    let mut next_index = 0;
+    let mut indexes = vec![None; len];
+    let mut lowlinks = vec![0; len];
+    let mut tarjan_stack = Vec::new();
+    let mut on_stack = vec![false; len];
+    let mut components = Vec::new();
 
-            for &next in &self.graph[node] {
-                if self.indexes[next].is_none() {
-                    self.visit(next);
-                    self.lowlinks[node] = self.lowlinks[node].min(self.lowlinks[next]);
-                } else if self.on_stack[next] {
-                    self.lowlinks[node] = self.lowlinks[node]
-                        .min(self.indexes[next].expect("an on-stack node has an index"));
+    for root in 0..len {
+        if indexes[root].is_some() {
+            continue;
+        }
+        indexes[root] = Some(next_index);
+        lowlinks[root] = next_index;
+        next_index += 1;
+        tarjan_stack.push(root);
+        on_stack[root] = true;
+
+        let mut dfs = vec![DfsFrame {
+            node: root,
+            parent: None,
+            successors: graph[root].iter(),
+        }];
+        while !dfs.is_empty() {
+            let edge = {
+                let frame = dfs.last_mut().expect("non-empty DFS stack");
+                frame
+                    .successors
+                    .next()
+                    .copied()
+                    .map(|next| (frame.node, next))
+            };
+            if let Some((node, next)) = edge {
+                if indexes[next].is_none() {
+                    indexes[next] = Some(next_index);
+                    lowlinks[next] = next_index;
+                    next_index += 1;
+                    tarjan_stack.push(next);
+                    on_stack[next] = true;
+                    dfs.push(DfsFrame {
+                        node: next,
+                        parent: Some(node),
+                        successors: graph[next].iter(),
+                    });
+                } else if on_stack[next] {
+                    lowlinks[node] =
+                        lowlinks[node].min(indexes[next].expect("an on-stack node has an index"));
                 }
+                continue;
             }
 
-            if self.lowlinks[node] == index {
+            let frame = dfs.pop().expect("non-empty DFS stack");
+            let node = frame.node;
+            if let Some(parent) = frame.parent {
+                lowlinks[parent] = lowlinks[parent].min(lowlinks[node]);
+            }
+            if lowlinks[node] == indexes[node].expect("a discovered node has an index") {
                 let mut component = Vec::new();
                 loop {
-                    let member = self.stack.pop().expect("Tarjan stack contains its root");
-                    self.on_stack[member] = false;
+                    let member = tarjan_stack.pop().expect("Tarjan stack contains its root");
+                    on_stack[member] = false;
                     component.push(member);
                     if member == node {
                         break;
                     }
                 }
-                self.components.push(component);
+                components.push(component);
             }
         }
     }
+    components
+}
 
-    let len = graph.len();
-    let mut tarjan = Tarjan {
-        graph,
-        next_index: 0,
-        indexes: vec![None; len],
-        lowlinks: vec![0; len],
-        stack: Vec::new(),
-        on_stack: vec![false; len],
-        components: Vec::new(),
-    };
-    for node in 0..len {
-        if tarjan.indexes[node].is_none() {
-            tarjan.visit(node);
-        }
-    }
-    tarjan.components
+#[test]
+fn iterative_tarjan_handles_20k_cycle_on_256k_native_stack() {
+    std::thread::Builder::new()
+        .name("recursive-lifecycle-tarjan".into())
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut graph = vec![BTreeSet::new(); 20_000];
+            for (node, successors) in graph.iter_mut().enumerate().take(19_999) {
+                successors.insert(node + 1);
+            }
+            graph[19_999].insert(0);
+
+            let components = strongly_connected(&graph);
+            assert_eq!(components.len(), 1);
+            assert_eq!(components[0].len(), 20_000);
+        })
+        .expect("spawn iterative Tarjan test thread")
+        .join()
+        .expect("iterative Tarjan test thread panicked");
 }
 
 fn operation_graph(
