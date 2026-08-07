@@ -2972,10 +2972,23 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     let drive_float_seeded = drive_opted_in
         && crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language)
         && mettail_rholang_codegen::equations_boundary_canonicalizable(language);
-    let drive_invocation_assembler = if drive_float_seeded {
-        quote! { ::mettail_rholang_codegen::rho_net_drive_float_invocation }
+    let drive_invocation_assembly = if drive_float_seeded {
+        quote! {
+            ::mettail_rholang_codegen::rho_net_drive_float_invocation(
+                &__artifacts.def,
+                &__ruleset.language_fingerprint,
+                __subject_par,
+                out_channel,
+            )
+        }
     } else {
-        quote! { ::mettail_rholang_codegen::rho_net_drive_invocation }
+        quote! {
+            ::mettail_rholang_codegen::rho_net_drive_invocation(
+                &__ruleset.language_fingerprint,
+                __subject_par,
+                out_channel,
+            )
+        }
     };
     let drive_fn = if drive_opted_in {
         quote! {
@@ -3067,11 +3080,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     &__subject,
                     &__ruleset.language_fingerprint,
                 );
-                ::core::result::Result::Ok(#drive_invocation_assembler(
-                    &__ruleset.language_fingerprint,
-                    __subject_par,
-                    out_channel,
-                ))
+                ::core::result::Result::Ok(#drive_invocation_assembly)
             }
         }
     } else {

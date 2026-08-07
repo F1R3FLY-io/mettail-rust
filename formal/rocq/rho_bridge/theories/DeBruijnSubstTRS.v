@@ -134,6 +134,57 @@ Section DeBruijnSubstTRS.
     | S k' => oshift 0 (oshiftk k' a)
     end.
 
+  (* The native shift contract's single-pass specification.  `oshift_by c k t` traverses
+     `t` once and adds `k` to every index free at cutoff `c`; under a binder the cutoff
+     increments exactly as in `oshift`.  The executable implementation is an explicit-stack
+     PDA over the reflected Par (including HashBag soup children). *)
+  Fixpoint oshift_by (c k : nat) (t : Obj) : Obj :=
+    match t with
+    | oBound n => oBound (if n <? c then n else n + k)
+    | oFree x => oFree x
+    | oLam b => oLam (oshift_by (S c) k b)
+    | oNode op ts => oNode op (map (oshift_by c k) ts)
+    end.
+
+  Lemma oshift_by_zero : forall t c, oshift_by c 0 t = t.
+  Proof.
+    intro t. induction t as [n | x | b IH | op ts IH] using Obj_ind'; intro c; simpl.
+    - destruct (n <? c); f_equal; lia.
+    - reflexivity.
+    - rewrite IH. reflexivity.
+    - f_equal. replace ts with (map (fun child => child) ts) at 2 by apply map_id.
+      apply map_ext_in. intros child Hin.
+      apply Forall_forall with (x := child) in IH; auto.
+  Qed.
+
+  (* One ordinary shift after a `k`-amount pass is the `(k+1)`-amount pass.  This is
+     the algebraic fusion law that removes the repeated whole-tree traversal. *)
+  Lemma oshift_after_oshift_by : forall t c k,
+    oshift c (oshift_by c k t) = oshift_by c (S k) t.
+  Proof.
+    intro t. induction t as [n | x | b IH | op ts IH] using Obj_ind'; intros c k; simpl.
+    - destruct (n <? c) eqn:Hlt; simpl.
+      + rewrite Hlt. reflexivity.
+      + apply Nat.ltb_ge in Hlt.
+        assert (Hshifted : (n + k <? c) = false) by (apply Nat.ltb_ge; lia).
+        rewrite Hshifted. f_equal. lia.
+    - reflexivity.
+    - rewrite IH. reflexivity.
+    - f_equal. rewrite map_map. apply map_ext_in. intros child Hin.
+      apply Forall_forall with (x := child) in IH; auto.
+  Qed.
+
+  (* The native one-pass result is extensionally identical to the recursive `^shiftk`
+     implementation it replaces.  Thus the generated program/COMM shape changes, but the
+     reflected contractum does not. *)
+  Theorem oshift_by_is_oshiftk : forall k t,
+    oshift_by 0 k t = oshiftk k t.
+  Proof.
+    intro k. induction k as [| k IH]; intro t.
+    - simpl. apply oshift_by_zero.
+    - simpl. rewrite <- IH. symmetry. apply oshift_after_oshift_by.
+  Qed.
+
   (* de-Bruijn single SUBSTITUTION `t[a/j]`.  On a bound index `n`: if `n = j` replace
      with `a` lifted past the `j` binders it now sits under (`oshiftk j a` -- CAPTURE
      AVOIDANCE); if `n > j` decrement (the binder `j` is being removed); if `n < j`

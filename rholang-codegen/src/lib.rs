@@ -103,6 +103,9 @@ pub mod lower;
 /// (held-fold + native, the single enumeration point), the [`NativeHandlerSpec`] the
 /// generated report-free match body records, and its thread-local pending registry.
 pub mod native_handler;
+/// A-S5.8: constant-size native shift-by-k ABI plus the stack-safe single-pass reflected-`Par`
+/// PDA used by the runtime system process.
+pub mod native_shift;
 pub mod need;
 /// E-3 Stage-0: SELF-time span instrumentation of the six-phase in-Rho compilation
 /// pipeline (thread-local span stack; collection off by default). The phases re-enter
@@ -193,6 +196,12 @@ pub use native_handler::{
     clear_pending_native_handler_specs, native_contract_body_ref, native_contract_channel,
     native_handler_urn, record_pending_native_handler_specs, take_pending_native_handler_specs,
     NativeHandlerEvaluator, NativeHandlerSpec,
+};
+pub use native_shift::{
+    clear_pending_native_shift_specs, decode_native_shift_amount, native_shift_amount_par,
+    native_shift_body_ref, native_shift_call_par, native_shift_channel, native_shift_urn,
+    record_pending_native_shift_spec, shift_reflected_par_by, take_pending_native_shift_specs,
+    NativeShiftError, NativeShiftSpec,
 };
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
@@ -290,7 +299,7 @@ pub use rho_net_subst_trs::{
 pub use system_process_band::{
     check_body_refs_pairwise_distinct, fingerprint_digest, BandAllocationError, SystemProcessBand,
     HELD_FOLD_BAND, LOOKAHEAD_BAND, MTL_FOLD_CHANNEL_TAG, MTL_LOOKAHEAD_CHANNEL_TAG,
-    MTL_NATIVE_CHANNEL_TAG, NATIVE_HANDLER_BAND,
+    MTL_NATIVE_CHANNEL_TAG, MTL_NATIVE_SHIFT_CHANNEL_TAG, NATIVE_HANDLER_BAND, NATIVE_SHIFT_BAND,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

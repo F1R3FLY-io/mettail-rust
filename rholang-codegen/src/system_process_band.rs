@@ -1,12 +1,14 @@
 //! **THE** reserved-band allocator for every MeTTaIL system-process contract (#36 S4 + S5).
 //!
-//! MeTTaIL installs two families of f1r3node *system processes* — machine-side contracts the
+//! MeTTaIL installs four families of f1r3node *system processes* — machine-side contracts the
 //! emitted Rholang calls through a fixed unforgeable channel:
 //!
 //! | band | what it serves | built by |
 //! |---|---|---|
 //! | **held-fold** (Tier-3 trampoline) | one contract per width/precision fold SITE | `rholang-runtime/src/fold_contract.rs` |
 //! | **native-handler** (A-S3) | one contract per registrable native RULE | `rholang-runtime/src/native_contract.rs` |
+//! | **lookahead** | the `[*]` / `[n]` request servers | `rholang-runtime/src/speculation/server.rs` |
+//! | **native-shift** (A-S5.8) | one shift-by-k PDA per language | `rholang-runtime/src/shift_contract.rs` |
 //!
 //! Each contract needs two identifiers, and f1r3node treats them very differently:
 //!
@@ -21,7 +23,7 @@
 //!
 //! # The defect this module exists to remove
 //!
-//! Both bands used to key on a bare index alone — `GPrivate{id: [0xF1, rule_index]}` with
+//! The first two bands used to key on a bare index alone — `GPrivate{id: [0xF1, rule_index]}` with
 //! `body_ref = 0xF100 + rule_index`, and `GPrivate{id: [0xF0, site_index]}` with
 //! `body_ref = 0xF000 + site_index`. The language fingerprint appeared only in the `Definition`
 //! URN, which f1r3node does not key on.
@@ -63,12 +65,14 @@
 //! └───────┴────────────┴─────────────┴──────────────────────────┘
 //!  always   1=held-fold  site_index /   FNV-1a over the whole
 //!  clear    2=native      rule_index    fingerprint string
+//!           3=lookahead   request kind
+//!           4=shift       zero
 //! ```
 //!
 //! * bit 63 is always clear, so every `body_ref` is a positive `i64` (f1r3node compares them as
 //!   signed);
-//! * the band id occupies bits 62..56, so the two bands occupy the strictly disjoint ranges
-//!   `0x0100_0000_0000_0000..=0x01FF_…` and `0x0200_0000_0000_0000..=0x02FF_…`, and both sit
+//! * the band id occupies bits 62..56, so all four bands occupy strictly disjoint ranges
+//!   `0x0100_…` through `0x04FF_…`, and all sit
 //!   astronomically above f1r3node's own std (`0..=36`) and test-framework (`101..=108`)
 //!   `body_ref`s and outside `non_deterministic_ops()`;
 //! * the index occupies bits 55..48, so within ONE language two different sites/rules can never
@@ -121,10 +125,10 @@ pub fn fingerprint_digest(language_fingerprint: &str) -> u64 {
 
 /// One reserved system-process band: a channel tag byte plus a `body_ref` band id.
 ///
-/// Construct nothing at runtime — the two bands are the `const`s [`HELD_FOLD_BAND`] and
-/// [`NATIVE_HANDLER_BAND`]. Making this a type rather than two parallel sets of free functions
-/// is the point of #36 S5: the held-fold and native-handler bands had the identical defect and
-/// were being fixed separately, which is how they drifted apart in the first place.
+/// Construct nothing at runtime: every allocation policy is one of this module's band `const`s.
+/// Making this a type rather than parallel sets of free functions is the point of #36 S5: the
+/// original held-fold and native-handler bands had the identical defect and were being fixed
+/// separately, which is how they drifted apart in the first place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemProcessBand {
     /// Human-readable band name, for error messages.
@@ -168,6 +172,14 @@ pub const LOOKAHEAD_BAND: SystemProcessBand = SystemProcessBand {
     channel_tag: MTL_LOOKAHEAD_CHANNEL_TAG,
 };
 
+/// The A-S5.8 native single-pass de Bruijn shift-by-k contract. Index zero is the only
+/// allocation in this band; the language fingerprint scopes both identifiers.
+pub const NATIVE_SHIFT_BAND: SystemProcessBand = SystemProcessBand {
+    name: "native-shift",
+    band_id: 4,
+    channel_tag: MTL_NATIVE_SHIFT_CHANNEL_TAG,
+};
+
 /// Leading byte of every held-fold contract channel id.
 pub const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
 /// Leading byte of every native-handler contract channel id.
@@ -176,6 +188,8 @@ pub const MTL_NATIVE_CHANNEL_TAG: u8 = 0xF1;
 /// itself (see [`LOOKAHEAD_BAND`]) and reserved so that no later band can claim it and make
 /// two unrelated allocations equal.
 pub const MTL_LOOKAHEAD_CHANNEL_TAG: u8 = 0xF2;
+/// Leading byte of the fingerprint-scoped native shift-by-k contract channel.
+pub const MTL_NATIVE_SHIFT_CHANNEL_TAG: u8 = 0xF3;
 
 impl SystemProcessBand {
     /// The unforgeable contract channel for `(index, fingerprint)` in this band:
@@ -302,7 +316,7 @@ mod tests {
     /// longer produce the same channel or the same `body_ref` in either band.
     #[test]
     fn index_zero_in_two_languages_no_longer_collides() {
-        for band in [HELD_FOLD_BAND, NATIVE_HANDLER_BAND, LOOKAHEAD_BAND] {
+        for band in [HELD_FOLD_BAND, NATIVE_HANDLER_BAND, LOOKAHEAD_BAND, NATIVE_SHIFT_BAND] {
             assert_ne!(
                 band.channel(0, FP_A),
                 band.channel(0, FP_B),
@@ -341,18 +355,20 @@ mod tests {
         );
     }
 
-    /// The three bands are disjoint from each other and from f1r3node's own `body_ref`s, and
+    /// The four bands are disjoint from each other and from f1r3node's own `body_ref`s, and
     /// every allocation is a positive `i64` (the sign bit is structurally clear).
     #[test]
     fn the_bands_are_disjoint_and_positive() {
         let fold = HELD_FOLD_BAND.body_ref_range();
         let native = NATIVE_HANDLER_BAND.body_ref_range();
         let lookahead = LOOKAHEAD_BAND.body_ref_range();
+        let shift = NATIVE_SHIFT_BAND.body_ref_range();
         assert!(fold.end() < native.start(), "the fold and native bands must not overlap");
         assert!(
             native.end() < lookahead.start(),
             "the native and lookahead bands must not overlap"
         );
+        assert!(lookahead.end() < shift.start(), "lookahead and shift bands must not overlap");
         assert!(
             *fold.start() > 108,
             "every band sits above f1r3node's std (0-36) and test-framework (101-108) body_refs"
@@ -363,6 +379,7 @@ mod tests {
                     (HELD_FOLD_BAND, &fold),
                     (NATIVE_HANDLER_BAND, &native),
                     (LOOKAHEAD_BAND, &lookahead),
+                    (NATIVE_SHIFT_BAND, &shift),
                 ] {
                     let body_ref = band.body_ref(index, fingerprint);
                     assert!(body_ref > 0, "{}: body_ref must be positive", band.name);

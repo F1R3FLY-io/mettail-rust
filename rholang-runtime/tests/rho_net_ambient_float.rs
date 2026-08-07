@@ -39,8 +39,8 @@
 use mettail_languages::ambient::AmbientLanguage;
 use mettail_rholang_codegen::{
     reflect_ground_term_par, rho_net_drive_float_call_par_with_fuel, CollectionType, GroundTerm,
-    BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
-    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    NativeShiftSpec, BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, FREE_VAR_REFLECT_LABEL,
+    LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{DriveObservationChannels, PlannedRhoBackend};
 use mettail_runtime::{Language, RuntimeObservationValue};
@@ -48,7 +48,7 @@ use mettail_runtime::{Language, RuntimeObservationValue};
 // ── backends ───────────────────────────────────────────────────────────────────────────
 
 /// The PRODUCTION Ambient backend (the `rho_net_ambient_full.rs` derivation).
-fn ambient_backend() -> (PlannedRhoBackend, String) {
+fn ambient_backend() -> (PlannedRhoBackend, String, NativeShiftSpec) {
     let source = AmbientLanguage
         .metadata()
         .definition_source()
@@ -57,7 +57,7 @@ fn ambient_backend() -> (PlannedRhoBackend, String) {
 }
 
 /// Plan a backend for a `language!` body source (production or the name-keyed witness).
-fn backend_for_source(source: &str) -> (PlannedRhoBackend, String) {
+fn backend_for_source(source: &str) -> (PlannedRhoBackend, String, NativeShiftSpec) {
     let def = mettail_rholang_codegen::reconstruct_language_def(source)
         .expect("the language body must reconstruct as a LanguageDef");
     let lowering = mettail_rholang_codegen::lower_language_def(&def);
@@ -70,7 +70,8 @@ fn backend_for_source(source: &str) -> (PlannedRhoBackend, String) {
     let plan = mettail_rholang_codegen::plan_rho_default_backend(&def, requirements)
         .expect("the language must plan its Rho-default backend");
     let fingerprint = plan.definition_fingerprint().to_string();
-    (PlannedRhoBackend::from_plan(plan), fingerprint)
+    let shift_spec = NativeShiftSpec::for_language(&def, &fingerprint);
+    (PlannedRhoBackend::from_plan(plan), fingerprint, shift_spec)
 }
 
 /// THE WITNESS DEF (F8-AM-1a pinned `Seal` shape, corrected to the step-2 depth-2-nested
@@ -376,6 +377,7 @@ fn contains_bound(value: &Value) -> bool {
 async fn drive_float_raw(
     backend: &PlannedRhoBackend,
     fingerprint: &str,
+    shift_spec: &NativeShiftSpec,
     subject: &GroundTerm,
     fuel: i64,
 ) -> (mettail_rholang_runtime::DriveObservationSet, DriveObservationChannels) {
@@ -386,8 +388,11 @@ async fn drive_float_raw(
         "OUT",
     );
     let channels = DriveObservationChannels::for_fingerprint(fingerprint, "OUT");
+    let definitions =
+        mettail_rholang_runtime::native_shift_definitions_for(std::slice::from_ref(shift_spec))
+            .expect("the fingerprint-scoped native shift Definition allocates");
     let set = backend
-        .run_rho_net_with_call_and_read_observation_set(&seed, &channels)
+        .run_rho_net_with_call_definitions_and_read_observation_set(&seed, definitions, &channels)
         .await
         .expect("the float-routed drive seed runs on the reducer");
     (set, channels)
@@ -423,13 +428,13 @@ fn assert_float_drive_green(
 #[tokio::test]
 async fn raw_f1_subject_fires_through_the_in_rho_float_without_the_host_float() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_bag(vec![
         g_lam(g_amb(g_name("n"), g_bag(vec![g_in(g_name("m"), g_zero())]))),
         g_amb(g_name("m"), g_bag(vec![g_amb(g_name("x"), g_bag(vec![g_zero()]))])),
     ]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["InRule"]);
     let expected = olam(obag(vec![oamb(
         oname("m"),
@@ -457,7 +462,7 @@ async fn raw_f1_subject_fires_through_the_in_rho_float_without_the_host_float() 
 #[tokio::test]
 async fn raw_am2_bag_bodied_nu_subject_splices_and_fires() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_bag(vec![
         g_lam(g_bag(vec![
             g_amb(g_name("n"), g_bag(vec![g_in(g_name("m"), g_zero())])),
@@ -466,7 +471,7 @@ async fn raw_am2_bag_bodied_nu_subject_splices_and_fires() {
         g_amb(g_name("m"), g_bag(vec![g_zero()])),
     ]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["InRule"]);
     let expected = olam(obag(vec![
         oamb(oname("m"), obag(vec![oamb(oname("n"), obag(vec![ozero()])), ozero()])),
@@ -492,13 +497,13 @@ async fn raw_am2_bag_bodied_nu_subject_splices_and_fires() {
 #[tokio::test]
 async fn witness_seal_contractum_nu_is_floated_and_open_fires() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = backend_for_source(WITNESS_SEAL_SOURCE);
+    let (backend, fingerprint, shift_spec) = backend_for_source(WITNESS_SEAL_SOURCE);
     let subject = g_bag(vec![
         g_seal(g_name("n"), g_leaf_amb("p")),
         g_amb(g_name("n"), g_bag(vec![g_leaf_amb("q")])),
     ]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["OpenRule", "Seal"]);
     let expected = olam(obag(vec![o_leaf_amb("p"), o_leaf_amb("q")]));
     assert!(
@@ -518,13 +523,13 @@ async fn witness_seal_contractum_nu_is_floated_and_open_fires() {
 #[tokio::test]
 async fn witness_double_binder_subject_shifts_consistently_and_fires() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = backend_for_source(WITNESS_SEAL_SOURCE);
+    let (backend, fingerprint, shift_spec) = backend_for_source(WITNESS_SEAL_SOURCE);
     let subject = g_lam(g_bag(vec![
         g_seal(g_bound(0), g_leaf_amb("p")),
         g_amb(g_bound(0), g_bag(vec![g_leaf_amb("q")])),
     ]));
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["OpenRule", "Seal"]);
     let expected = olam(olam(obag(vec![o_leaf_amb("p"), o_leaf_amb("q")])));
     assert!(
@@ -542,14 +547,14 @@ async fn witness_double_binder_subject_shifts_consistently_and_fires() {
 #[tokio::test]
 async fn eight_binder_run_extrudes_fully_and_fires() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let nu4 = |core: GroundTerm| g_lam(g_lam(g_lam(g_lam(core))));
     let subject = g_bag(vec![
         nu4(g_amb(g_name("n"), g_bag(vec![g_in(g_name("m"), g_zero())]))),
         nu4(g_amb(g_name("m"), g_bag(vec![g_zero()]))),
     ]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["InRule"]);
     let (run, _body) = strip_run(&observed);
     assert_eq!(run, 8, "all 8 binders extrude into ONE top run: {observed:?}");
@@ -577,13 +582,13 @@ async fn eight_binder_run_extrudes_fully_and_fires() {
 #[tokio::test]
 async fn multi_seam_nested_binders_hoist_merge_and_fire() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_bag(vec![
         g_lam(g_amb(g_name("n"), g_bag(vec![g_lam(g_in(g_name("m"), g_zero()))]))),
         g_amb(g_name("m"), g_bag(vec![g_zero()])),
     ]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["InRule"]);
     let (run, _body) = strip_run(&observed);
     assert_eq!(run, 2, "both seams' binders reach the top run: {observed:?}");
@@ -604,10 +609,10 @@ async fn multi_seam_nested_binders_hoist_merge_and_fire() {
 #[tokio::test]
 async fn nu_over_the_empty_bag_rests_as_itself() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_lam(g_bag(Vec::new()));
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &[]);
     assert_eq!(observed, olam(obag(Vec::new())), "^lambda(Nil) is its own float/drive NF");
 }
@@ -618,10 +623,10 @@ async fn nu_over_the_empty_bag_rests_as_itself() {
 #[tokio::test]
 async fn element_lambda_nil_wraps_the_rest() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_bag(vec![g_lam(g_bag(Vec::new())), g_leaf_amb("c")]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &[]);
     let expected = olam(obag(vec![o_leaf_amb("c")]));
     assert!(
@@ -638,10 +643,10 @@ async fn element_lambda_nil_wraps_the_rest() {
 #[tokio::test]
 async fn shift_nil_arm_is_load_bearing_for_the_empty_bag_element_merge() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_bag(vec![g_bag(Vec::new()), g_lam(g_amb(g_bound(0), g_bag(vec![g_zero()])))]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &[]);
     let expected = olam(obag(vec![oamb(obound(0), obag(vec![ozero()]))]));
     assert!(
@@ -659,11 +664,11 @@ async fn shift_nil_arm_is_load_bearing_for_the_empty_bag_element_merge() {
 #[tokio::test]
 async fn nu_over_a_same_op_soup_splices_flat() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject =
         g_bag(vec![g_lam(g_bag(vec![g_leaf_amb("a"), g_leaf_amb("b")])), g_leaf_amb("c")]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &[]);
     let expected = olam(obag(vec![o_leaf_amb("a"), o_leaf_amb("b"), o_leaf_amb("c")]));
     assert!(
@@ -691,13 +696,13 @@ async fn nu_over_a_same_op_soup_splices_flat() {
 #[tokio::test]
 async fn am3_empty_bag_open_through_the_float_path() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_bag(vec![
         g_open(g_name("n"), g_bag(Vec::new())),
         g_amb(g_name("n"), g_bag(vec![g_leaf_amb("c")])),
     ]);
     let (set, _channels) =
-        drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+        drive_float_raw(&backend, &fingerprint, &shift_spec, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["OpenRule"]);
     assert_eq!(
         observed,
@@ -722,7 +727,7 @@ fn tau_float_is_witnessed_by_a_drive_seeded_trace() {
     use mettail_runtime::{ReductionStepper, RuntimeTauClass};
 
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint) = ambient_backend();
+    let (backend, fingerprint, shift_spec) = ambient_backend();
     let subject = g_bag(vec![
         g_lam(g_amb(g_name("n"), g_bag(vec![g_in(g_name("m"), g_zero())]))),
         g_amb(g_name("m"), g_bag(vec![g_amb(g_name("x"), g_bag(vec![g_zero()]))])),
@@ -738,9 +743,12 @@ fn tau_float_is_witnessed_by_a_drive_seeded_trace() {
         .installed_rho_net_program_par()
         .expect("production Ambient installs")
         .append(seed);
+    let definitions =
+        mettail_rholang_runtime::native_shift_definitions_for(std::slice::from_ref(&shift_spec))
+            .expect("the fingerprint-scoped native shift Definition allocates");
     let mut session = StepSession::start(
         program,
-        Vec::new(),
+        definitions,
         Some("OUT".to_string()),
         Some(TauChannelClassifier::for_language_fingerprint(&fingerprint)),
     )

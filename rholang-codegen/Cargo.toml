@@ -26,6 +26,7 @@ mettail-ast = { package = "ast", path = "../ast" }
 mettail-runtime = { package = "runtime", path = "../runtime" }
 syn = { workspace = true }
 models = { workspace = true }
+prost = "0.14"
 # The set automaton (positional matcher) whose interned pattern DAG the Stage 1
 # in-Rho lowering serializes into an sa:-receiver network. codegen → dovetail is
 # acyclic (dovetail does not depend on rholang-codegen).
@@ -71,6 +72,6 @@ bench-scion = []
 proptest = "1"
 # A-S5.5 no-regression pins: the Lambda `^drive` receiver family and the legacy Ambient
 # AC σ-receivers are pinned BYTE-identical across the AC-arm extension by prost-encoding
-# the generated `Par`s and comparing length + hash goldens. Same prost version (0.14)
-# f1r3node-rust's `models` uses.
-prost = "0.14"
+# the generated `Par`s and comparing length + hash goldens. `prost` is a normal dependency
+# now because the native shift ABI validates fingerprinted reflected tags with the exact
+# inverse of `GPrivateBuilder::new_par_from_string`.

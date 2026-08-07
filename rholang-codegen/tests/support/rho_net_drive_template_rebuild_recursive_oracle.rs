@@ -1,33 +1,5 @@
 use super::*;
 
-fn shift_recursive(
-    fingerprint: &str,
-    env: &Env,
-    value_name: &str,
-    dest_name: &str,
-    k: usize,
-) -> Node {
-    let zero = || ground(nullary_term(fingerprint, crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL));
-    if k == 1 {
-        return send(
-            ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-            vec![zero(), env.var(value_name), env.var(dest_name)],
-        );
-    }
-    new_scope(1, {
-        let env = env.push(&["__t"]);
-        let first = send(
-            ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-            vec![zero(), env.var(value_name), env.var("__t")],
-        );
-        let rest = for1(env.var("__t"), {
-            let env = env.push(&["__w"]);
-            shift_recursive(fingerprint, &env, "__w", dest_name, k - 1)
-        });
-        par2(first, rest)
-    })
-}
-
 fn rebuild_recursive(
     template: &AcReconstructTemplate,
     env: &Env,
@@ -110,16 +82,8 @@ fn corpus() -> AcReconstructTemplate {
 }
 
 #[test]
-fn iterative_shift_and_template_rebuild_match_recursive_bytes() {
+fn iterative_template_rebuild_matches_recursive_bytes() {
     use prost::Message;
-
-    let shift_env = Env::root(&["value", "dest"]);
-    for depth in 1..=8 {
-        let actual = chained_shift_node("shift-oracle", &shift_env, "value", "dest", depth);
-        let expected = shift_recursive("shift-oracle", &shift_env, "value", "dest", depth);
-        assert_eq!(actual.free, expected.free);
-        assert_eq!(actual.par.encode_to_vec(), expected.par.encode_to_vec());
-    }
 
     let template = corpus();
     let rebuild_env = Env::root(&[
@@ -137,42 +101,32 @@ fn iterative_shift_and_template_rebuild_match_recursive_bytes() {
 }
 
 #[test]
-fn shift_builder_does_not_shadow_a_sigma_slot_named_like_its_private_frame() {
+fn shift_builder_is_one_constant_size_call_in_the_caller_frame() {
     use prost::Message;
 
-    let env = Env::root(&["__t", "dest"]);
-    let actual = chained_shift_node("shift-shadow", &env, "__t", "dest", 2);
-    let expected = new_scope(
-        1,
-        par2(
-            send(
-                ground(tag_par("shift-shadow", crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-                vec![
-                    ground(nullary_term(
-                        "shift-shadow",
-                        crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL,
-                    )),
-                    bv(2),
-                    bv(0),
-                ],
-            ),
-            for1(
-                bv(0),
-                send(
-                    ground(tag_par("shift-shadow", crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-                    vec![
-                        ground(nullary_term(
-                            "shift-shadow",
-                            crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL,
-                        )),
-                        bv(0),
-                        bv(2),
-                    ],
-                ),
-            ),
-        ),
+    let env = Env::root(&["value", "dest"]);
+    let shallow = chained_shift_node("shift-compact", &env, "value", "dest", 1);
+    let deep = chained_shift_node("shift-compact", &env, "value", "dest", 20_000);
+    assert_eq!(shallow.free, [0, 1]);
+    assert_eq!(deep.free, [0, 1]);
+    assert_eq!(shallow.par.sends.len(), 1);
+    assert_eq!(deep.par.sends.len(), 1);
+    assert!(shallow.par.news.is_empty() && shallow.par.receives.is_empty());
+    assert!(deep.par.news.is_empty() && deep.par.receives.is_empty());
+    let shallow_send = &shallow.par.sends[0];
+    let deep_send = &deep.par.sends[0];
+    assert_eq!(
+        shallow_send.chan.as_ref(),
+        Some(&crate::native_shift::native_shift_channel("shift-compact"))
     );
-    assert_eq!(actual.par.encode_to_vec(), expected.par.encode_to_vec());
+    assert_eq!(deep_send.chan, shallow_send.chan);
+    assert_eq!(crate::native_shift::decode_native_shift_amount(&shallow_send.data[0]), Ok(1));
+    assert_eq!(crate::native_shift::decode_native_shift_amount(&deep_send.data[0]), Ok(20_000));
+    assert_eq!(
+        shallow.par.encode_to_vec().len(),
+        deep.par.encode_to_vec().len(),
+        "binder depth changes only the fixed-width amount bytes"
+    );
 }
 
 #[test]
@@ -186,6 +140,7 @@ fn shift_and_template_rebuild_are_stack_safe_at_twenty_thousand_levels() {
             let shift_env = Env::root(&["value", "dest"]);
             let shift = chained_shift_node("deep-shift", &shift_env, "value", "dest", DEPTH);
             assert_eq!(shift.free, [0, 1]);
+            assert_eq!(shift.par.sends.len(), 1);
             drop(shift);
 
             let mut template = AcReconstructTemplate::Var("x".to_owned());

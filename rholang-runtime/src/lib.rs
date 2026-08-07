@@ -98,6 +98,8 @@ pub mod rholang_ast;
 #[cfg(feature = "rholang-runtime")]
 pub mod rholang_formula;
 pub mod run;
+/// A-S5.8 native single-pass shift-by-k system process.
+pub mod shift_contract;
 /// **Stage 1 of the `[*]` speculation space fork** — `SpeculativeSandbox`: a fresh in-memory
 /// tuplespace whose reducer STAGES every produce/consume so nothing fires until a rendezvous is
 /// named, plus `E(S)` (the enabled rendezvous set), the named firing, and the exact state install.
@@ -205,5 +207,6 @@ pub use run::{
     run_rholang_source_sequence_for_oracle_and_read_ints,
     run_rholang_source_sequence_for_oracle_and_read_strings,
 };
+pub use shift_contract::{native_shift_definition, native_shift_definitions_for};
 #[cfg(feature = "runtime-report")]
 pub use step::{StepSession, TauChannelClassifier};

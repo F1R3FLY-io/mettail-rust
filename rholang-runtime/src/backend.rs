@@ -471,6 +471,29 @@ impl PlannedRhoBackend {
         run_installed_program_with_call_and_read_observation_set(&installed, call, channels).await
     }
 
+    /// Direct-test/debug sibling of [`Self::run_rho_net_with_call_and_read_observation_set`]
+    /// with explicit system-process Definitions. Production obtains the same Definitions from
+    /// the invocation compiler's clear/drain bracket.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_rho_net_with_call_definitions_and_read_observation_set(
+        &self,
+        call: &Par,
+        definitions: Vec<rholang::rust::interpreter::system_processes::Definition>,
+        channels: &DriveObservationChannels,
+    ) -> Result<DriveObservationSet, String> {
+        let installed = self
+            .plan()
+            .installed_rho_net_program_par()
+            .map_err(|err| err.to_string())?;
+        crate::run::run_installed_program_with_call_definitions_and_read_observation_set(
+            &installed,
+            call,
+            definitions,
+            channels,
+        )
+        .await
+    }
+
     /// [`run_rho_net_with_call_and_observe_runtime_values`](Self::run_rho_net_with_call_and_observe_runtime_values)
     /// with EXPLICIT extra system-process `Definition`s (the MeTTaIL-injected held-fold / A-S3
     /// native-handler contracts) installed on the runtime before the composed program runs.
@@ -1307,7 +1330,7 @@ impl RhoBackendInvocation {
 
 /// Tier-3 + A-S3: clear the pending system-process session state before an invocation compiler
 /// runs, so the `Definition`s it registers can be collected afterwards with
-/// [`drain_pending_fold_definitions`]. Covers BOTH bands: the rholang held-fold lift sites
+/// [`drain_pending_fold_definitions`]. Covers every invocation-scoped band: held-fold lift sites
 /// (no-op unless the rholang lowering is compiled in — a dependency boundary, not a behavior
 /// gate) and the A-S3 native-handler specs the generated report-free match body records
 /// (`rho_net_match_invocation_to`).
@@ -1316,14 +1339,16 @@ fn clear_pending_fold_sites() {
     #[cfg(feature = "rholang-runtime")]
     crate::rholang_ast::clear_held_fold_sites();
     mettail_rholang_codegen::clear_pending_native_handler_specs();
+    mettail_rholang_codegen::clear_pending_native_shift_specs();
 }
 
-/// Tier-3 + A-S3 + A-S4: drain every system-process `Definition` recorded by the just-run
+/// Tier-3 + A-S3 + A-S4 + A-S5.8: drain every system-process `Definition` recorded by the just-run
 /// invocation compiler — the fold contracts (A-S4: one per lifted width/precision fold site,
 /// GROUND operands included — pre-A-S4 only COMM-held folds lifted) plus the A-S3 native-handler
 /// contracts (empty unless the report-free compile ADMITTED
-/// located native sites). Both ride the same `extra_system_processes` seam into
-/// [`run_rho_invocation_blocking`]; both bands are allocated by the ONE fingerprint-scoped
+/// located native sites), plus the language-specific one-pass shift PDA when a float-routed
+/// drive invocation can rebuild below binders. All ride the same `extra_system_processes` seam
+/// into [`run_rho_invocation_blocking`]; their bands are allocated by the ONE fingerprint-scoped
 /// allocator (`mettail_rholang_codegen::system_process_band`) and are disjoint from each other
 /// and from f1r3node's own bands by construction. On a DEFERRAL return the drained definitions
 /// are simply dropped — nothing leaks into the fallback compile, which re-brackets itself.
@@ -1346,6 +1371,9 @@ fn drain_pending_fold_definitions() -> Result<
     let mut definitions: Vec<rholang::rust::interpreter::system_processes::Definition> = Vec::new();
     definitions.extend(crate::native_contract::native_definitions_for(
         &mettail_rholang_codegen::take_pending_native_handler_specs(),
+    )?);
+    definitions.extend(crate::shift_contract::native_shift_definitions_for(
+        &mettail_rholang_codegen::take_pending_native_shift_specs(),
     )?);
     Ok(definitions)
 }

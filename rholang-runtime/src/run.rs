@@ -1421,6 +1421,47 @@ pub async fn run_installed_program_with_call_and_read_observation_set(
     })
 }
 
+/// [`run_installed_program_with_call_and_read_observation_set`] with explicit injected
+/// system-process definitions. This is the direct-test/debug seam for a drive program whose
+/// generated carrier calls the native shift contract; production threads the same Definition
+/// through the invocation compiler's pending-definition bracket.
+#[cfg(feature = "runtime-report")]
+pub async fn run_installed_program_with_call_definitions_and_read_observation_set(
+    installed_program: &Par,
+    call: &Par,
+    definitions: Vec<Definition>,
+    channels: &DriveObservationChannels,
+) -> Result<DriveObservationSet, String> {
+    let composed = installed_program.append(call.clone());
+    let runtime = {
+        let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
+        inj_on_runtime(&mut runtime, composed, &refusals).await?;
+        runtime
+    };
+
+    let out_raw = read_ground_from_runtime(&runtime, &channels.out, par_verbatim).await;
+    let mut out_values = Vec::with_capacity(out_raw.len());
+    for par in &out_raw {
+        match par_as_runtime_observation_value(par) {
+            Some(value) => out_values.push(value),
+            None => {
+                return Err(format!(
+                    "drive OUT channel {:?} datum did not decode as a closed runtime \
+                     observation value: {par:?}",
+                    channels.out,
+                ));
+            },
+        }
+    }
+
+    Ok(DriveObservationSet {
+        out_values,
+        fired_data: read_ground_from_runtime(&runtime, &channels.fired, par_verbatim).await,
+        err_data: read_ground_from_runtime(&runtime, &channels.err, par_verbatim).await,
+        fuel_data: read_ground_from_runtime(&runtime, &channels.fuel, par_verbatim).await,
+    })
+}
+
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every ground boolean left resting on the quoted
 /// channel `@"<out_channel>"`.

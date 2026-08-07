@@ -215,10 +215,9 @@ use crate::rho_net_ruleset::{
     compile_in_rho_matching_ruleset, in_rho_static_gate, InRhoMatchingRuleset,
 };
 use crate::rho_net_subst_trs::{
-    bv, for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope,
-    node_from_par, nullary_term, object_congruence_constructors, par2, parallel, pat_free,
-    pat_tagged, pat_wildcard, persistent_contract, send, tag_par, tagged, union_free, Case, Env,
-    Node,
+    for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope, node_from_par,
+    object_congruence_constructors, par2, parallel, pat_free, pat_tagged, pat_wildcard,
+    persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -547,10 +546,17 @@ pub fn rho_net_drive_float_call_par(
 /// for exactly the languages passing the float gate. Same observation channels; the
 /// [`RhoNetDriveInvocation::subject`] field carries the raw reflected subject (F8-AM-5a).
 pub fn rho_net_drive_float_invocation(
+    def: &LanguageDef,
     language_fingerprint: &str,
     subject: Par,
     out_channel: &str,
 ) -> RhoNetDriveInvocation {
+    // Binder-template rebuilds call the fingerprint-scoped native shift PDA. Record
+    // the exact generated `^shift` domain inside the invocation compiler's clear/drain
+    // bracket so the native handler cannot accept constructors the old receiver lacks.
+    crate::native_shift::record_pending_native_shift_spec(
+        crate::native_shift::NativeShiftSpec::for_language(def, language_fingerprint),
+    );
     RhoNetDriveInvocation {
         call: rho_net_drive_float_call_par(language_fingerprint, subject.clone(), out_channel),
         subject,
@@ -1046,10 +1052,11 @@ fn slot_value_name(slot: &str, depth: usize) -> String {
     }
 }
 
-/// Emit the `k`-fold `^shift(Z, ·)` chain for one σ slot (A-S5.8, F8-AM-1c): shift the
-/// value named `value_name` `k ≥ 1` times at cutoff `Z`, resting the result on the channel
-/// named `dest_name`. `k` composed applications — the exact F8-AM-1c form (each
-/// application increments every `^bound(n)` with `n ≥ 0` by one).
+/// Emit one constant-size call to the native single-pass shift-by-`k` PDA for a σ slot.
+/// The old exact `k`-frame `new/for/^shift` spelling repeated a growing `locally_free`
+/// vector in every nested protobuf `Par` and therefore occupied Θ(k²) bytes. The amount is
+/// one fixed-width scalar and the value/out references stay in the caller frame: Θ(1)
+/// generated size, one cost-accounted dispatch COMM, one iterative traversal.
 fn chained_shift_node(
     fingerprint: &str,
     env: &Env,
@@ -1058,41 +1065,13 @@ fn chained_shift_node(
     k: usize,
 ) -> Node {
     assert!(k >= 1, "a shift chain has at least one application");
-    let zero = || ground(nullary_term(fingerprint, crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL));
-    if k == 1 {
-        return send(
-            ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-            vec![zero(), env.var(value_name), env.var(dest_name)],
-        );
+    let value = env.var(value_name);
+    let dest = env.var(dest_name);
+    let free = union_free(&[value.free.as_slice(), dest.free.as_slice()]);
+    Node {
+        par: crate::native_shift::native_shift_call_par(fingerprint, k, value.par, dest.par),
+        free,
     }
-
-    // Capture the caller's slots before introducing the private `__t` / `__w`
-    // binders. Besides avoiding an Env clone at every level, this keeps a legal sigma
-    // slot literally named `__t` from being shadowed by this builder's implementation
-    // detail.
-    let value_index = env.var(value_name).free[0];
-    let dest_index = env.var(dest_name).free[0];
-    let deepest_dest_index = (k - 1)
-        .checked_mul(2)
-        .and_then(|binder_count| dest_index.checked_add(binder_count))
-        .expect("shift-chain De Bruijn index exceeds usize");
-    let mut chain = send(
-        ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-        vec![zero(), bv(0), bv(deepest_dest_index)],
-    );
-
-    for level in (0..(k - 1)).rev() {
-        // In the fresh-name body the current value has shifted out by one. At
-        // level zero it is the caller's slot; all deeper levels receive it as
-        // the immediately enclosing `__w` (BoundVar(0) before this `new`).
-        let shifted_value_index = if level == 0 { value_index + 1 } else { 1 };
-        let first = send(
-            ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-            vec![zero(), bv(shifted_value_index), bv(0)],
-        );
-        chain = new_scope(1, par2(first, for1(bv(0), chain)));
-    }
-    chain
 }
 
 /// Rebuild one reduct template as a receiver-body [`Node`] over the carrier's bound σ
@@ -3982,8 +3961,8 @@ mod tests {
     }
 
     /// ★ A-S5.8 (F8-AM-1): the Seal carrier's Binder-template rebuild — the carrier
-    /// receiver pre-shifts the under-binder σ slots (`N`/`P` at depth 1 — ONE
-    /// `^shift(Z, ·)` application each, the F8-AM-1c rule) on fresh channels and emits
+    /// receiver pre-shifts the under-binder σ slots (`N`/`P` at depth 1 — one
+    /// fixed-width native shift-by-1 call each, the F8-AM-1c rule) on fresh channels and emits
     /// the ctor-erased `⌜^lambda⌝` node; the whole-arm transcription carries the
     /// cross-level guard exactly like a binder-free nested rule.
     #[test]
@@ -4000,17 +3979,22 @@ mod tests {
         assert_eq!(arm.free_count, 3, "2 cross-level guard slots (N × 2) + the bound outer rest");
         assert!(!arm.guard.exprs.is_empty(), "the non-linear guard is real");
         // The carrier receiver: persistent, on the reserved channel, with the shift
-        // pre-stage (a `^shift` send appears in its body — the F8-AM-1c σ-slot shifts)
+        // pre-stage (a native-shift send appears in its body — the F8-AM-1c σ-slot shifts)
         // and the ctor-erased `^lambda` tag in its rebuild.
         assert_eq!(arm.receiver.receives.len(), 1);
         let receive = &arm.receiver.receives[0];
         assert!(receive.persistent);
         let body_debug = format!("{:?}", receive.body.as_ref().expect("carrier body"));
-        let shift_tag =
-            format!("{:?}", tag_par("fp-witness", crate::rho_net_lower::SHIFT_RESERVED_LABEL));
+        let shift_channel =
+            format!("{:?}", crate::native_shift::native_shift_channel("fp-witness"));
         assert!(
-            body_debug.contains(&shift_tag),
-            "the carrier body pre-shifts under-binder σ slots through ⌜^shift⌝"
+            body_debug.contains(&shift_channel),
+            "the carrier body pre-shifts under-binder σ slots through the native PDA"
+        );
+        let shift_one = format!("{:?}", crate::native_shift::native_shift_amount_par(1));
+        assert!(
+            body_debug.contains(&shift_one),
+            "the carrier body carries a fixed-width shift amount of one"
         );
         let lambda_tag = format!("{:?}", tag_par("fp-witness", LAMBDA_REFLECT_LABEL));
         assert!(
