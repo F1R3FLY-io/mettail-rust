@@ -165,61 +165,81 @@ fn component_names(component: &BTreeSet<usize>, network: &ChannelNetwork) -> Vec
 
 fn strongly_connected_components(edges: &[BTreeSet<usize>]) -> Vec<BTreeSet<usize>> {
     struct SccDfs<'a> {
-        edges: &'a [BTreeSet<usize>],
+        edges: &'a [Vec<usize>],
         index: usize,
         stack: Vec<usize>,
-        on_stack: BTreeSet<usize>,
+        on_stack: Vec<bool>,
         indices: Vec<Option<usize>>,
         lowlinks: Vec<usize>,
         components: Vec<BTreeSet<usize>>,
     }
 
     impl<'a> SccDfs<'a> {
-        fn new(edges: &'a [BTreeSet<usize>]) -> Self {
+        fn new(edges: &'a [Vec<usize>]) -> Self {
             Self {
                 edges,
                 index: 0,
                 stack: Vec::new(),
-                on_stack: BTreeSet::new(),
+                on_stack: vec![false; edges.len()],
                 indices: vec![None; edges.len()],
                 lowlinks: vec![0; edges.len()],
                 components: Vec::new(),
             }
         }
 
-        fn visit(&mut self, node: usize) {
+        fn enter(&mut self, node: usize) {
             self.indices[node] = Some(self.index);
             self.lowlinks[node] = self.index;
             self.index += 1;
             self.stack.push(node);
-            self.on_stack.insert(node);
+            self.on_stack[node] = true;
+        }
 
-            for &next in &self.edges[node] {
-                if self.indices[next].is_none() {
-                    self.visit(next);
-                    self.lowlinks[node] = self.lowlinks[node].min(self.lowlinks[next]);
-                } else if self.on_stack.contains(&next) {
-                    self.lowlinks[node] =
-                        self.lowlinks[node].min(self.indices[next].expect("indexed stack node"));
-                }
-            }
-
-            if self.lowlinks[node] == self.indices[node].expect("current node indexed") {
-                let mut component = BTreeSet::new();
-                loop {
-                    let item = self.stack.pop().expect("SCC root must have stack entries");
-                    self.on_stack.remove(&item);
-                    component.insert(item);
-                    if item == node {
-                        break;
+        fn visit(&mut self, root: usize) {
+            // The frame's successor index is the return address of recursive Tarjan DFS. Keeping
+            // adjacency in sorted vectors preserves BTreeSet iteration and component emission order
+            // while visiting every vertex and edge once.
+            let mut work = vec![(root, 0usize)];
+            self.enter(root);
+            while let Some((node, next_index)) = work.last_mut() {
+                if let Some(&next) = self.edges[*node].get(*next_index) {
+                    *next_index += 1;
+                    if self.indices[next].is_none() {
+                        self.enter(next);
+                        work.push((next, 0));
+                    } else if self.on_stack[next] {
+                        self.lowlinks[*node] = self.lowlinks[*node]
+                            .min(self.indices[next].expect("indexed stack node"));
                     }
+                    continue;
                 }
-                self.components.push(component);
+
+                let node = *node;
+                work.pop();
+                if let Some((parent, _)) = work.last() {
+                    self.lowlinks[*parent] = self.lowlinks[*parent].min(self.lowlinks[node]);
+                }
+                if self.lowlinks[node] == self.indices[node].expect("current node indexed") {
+                    let mut component = BTreeSet::new();
+                    loop {
+                        let item = self.stack.pop().expect("SCC root must have stack entries");
+                        self.on_stack[item] = false;
+                        component.insert(item);
+                        if item == node {
+                            break;
+                        }
+                    }
+                    self.components.push(component);
+                }
             }
         }
     }
 
-    let mut dfs = SccDfs::new(edges);
+    let adjacency = edges
+        .iter()
+        .map(|successors| successors.iter().copied().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let mut dfs = SccDfs::new(&adjacency);
 
     for node in 0..edges.len() {
         if dfs.indices[node].is_none() {
@@ -282,6 +302,10 @@ pub fn analyze_channel_deadlocks(network: &ChannelNetwork) -> ChannelDeadlockRep
         seed_channels: network.seed_channels.clone(),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/deadlock_scc_recursive_oracle.rs"]
+mod scc_recursive_oracle;
 
 #[cfg(test)]
 mod tests {

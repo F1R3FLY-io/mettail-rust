@@ -673,63 +673,71 @@ fn ground_string(par: &Par) -> Option<&str> {
 }
 
 fn is_closed_ground_value(par: &Par) -> bool {
-    if !par.sends.is_empty()
-        || !par.receives.is_empty()
-        || !par.news.is_empty()
-        || !par.matches.is_empty()
-        || !par.bundles.is_empty()
-        || !par.connectives.is_empty()
-        || !par.conditionals.is_empty()
-        || !metadata_eq(par, &[], false)
-    {
-        return false;
-    }
+    let mut work = vec![par];
+    while let Some(par) = work.pop() {
+        if !par.sends.is_empty()
+            || !par.receives.is_empty()
+            || !par.news.is_empty()
+            || !par.matches.is_empty()
+            || !par.bundles.is_empty()
+            || !par.connectives.is_empty()
+            || !par.conditionals.is_empty()
+            || !metadata_eq(par, &[], false)
+        {
+            return false;
+        }
 
-    if par.exprs.is_empty() {
-        return par.unforgeables.len() == 1 && par.unforgeables[0].unf_instance.is_some();
-    }
-    if !par.unforgeables.is_empty() {
-        return false;
-    }
+        if par.exprs.is_empty() {
+            if par.unforgeables.len() != 1 || par.unforgeables[0].unf_instance.is_none() {
+                return false;
+            }
+            continue;
+        }
+        if !par.unforgeables.is_empty() {
+            return false;
+        }
 
-    let [expr] = par.exprs.as_slice() else {
-        return false;
-    };
-    let Some(expr) = expr.expr_instance.as_ref() else {
-        return false;
-    };
+        let [expr] = par.exprs.as_slice() else {
+            return false;
+        };
+        let Some(expr) = expr.expr_instance.as_ref() else {
+            return false;
+        };
 
-    match expr {
-        ExprInstance::GBool(_)
-        | ExprInstance::GInt(_)
-        | ExprInstance::GString(_)
-        | ExprInstance::GUri(_)
-        | ExprInstance::GByteArray(_)
-        | ExprInstance::GDouble(_)
-        | ExprInstance::GBigInt(_)
-        | ExprInstance::GBigRat(_)
-        | ExprInstance::GFixedPoint(_) => true,
-        ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
-            list.ps.iter().all(is_closed_ground_value)
-        },
-        ExprInstance::ETupleBody(tuple) if !tuple.connective_used => {
-            tuple.ps.iter().all(is_closed_ground_value)
-        },
-        ExprInstance::ESetBody(set) if set.remainder.is_none() && !set.connective_used => {
-            set.ps.iter().all(is_closed_ground_value)
-        },
-        ExprInstance::EMapBody(map) if map.remainder.is_none() && !map.connective_used => {
-            map.kvs.iter().all(|pair| {
-                pair.key
-                    .as_ref()
-                    .zip(pair.value.as_ref())
-                    .is_some_and(|(key, value)| {
-                        is_closed_ground_value(key) && is_closed_ground_value(value)
-                    })
-            })
-        },
-        _ => false,
+        match expr {
+            ExprInstance::GBool(_)
+            | ExprInstance::GInt(_)
+            | ExprInstance::GString(_)
+            | ExprInstance::GUri(_)
+            | ExprInstance::GByteArray(_)
+            | ExprInstance::GDouble(_)
+            | ExprInstance::GBigInt(_)
+            | ExprInstance::GBigRat(_)
+            | ExprInstance::GFixedPoint(_) => {},
+            ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
+                work.extend(list.ps.iter().rev());
+            },
+            ExprInstance::ETupleBody(tuple) if !tuple.connective_used => {
+                work.extend(tuple.ps.iter().rev());
+            },
+            ExprInstance::ESetBody(set) if set.remainder.is_none() && !set.connective_used => {
+                work.extend(set.ps.iter().rev());
+            },
+            ExprInstance::EMapBody(map) if map.remainder.is_none() && !map.connective_used => {
+                // Reverse the pair sequence and push value before key so LIFO visitation retains
+                // the recursive equation's left-to-right, key-before-value fail-fast order.
+                for pair in map.kvs.iter().rev() {
+                    let (Some(key), Some(value)) = (pair.key.as_ref(), pair.value.as_ref()) else {
+                        return false;
+                    };
+                    work.push(value);
+                    work.push(key);
+                }
+            },
+            _ => return false,
+        }
     }
+    true
 }
 
 fn free_var_index(par: &Par) -> Option<i32> {
@@ -751,6 +759,10 @@ fn bound_var_index(par: Option<&Par>) -> Option<i32> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/validate_closed_ground_recursive_oracle.rs"]
+mod closed_ground_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
