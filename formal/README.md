@@ -22,7 +22,7 @@ zero-admission (enforced by `rocq-critical-zero-admission`; ~154 `.v` across the
 | Rocq — codegen_optimizations | `formal/rocq/codegen_optimizations/theories` | 13 | generated-codegen soundness, disjoint-first |
 | Rocq — advanced_automata | `formal/rocq/advanced_automata/theories` | 12 | **positional set automaton** (`PositionalSetAutomatonSound`), MSO / register / PATA equivalence |
 | Rocq — ascent_optimizations | `formal/rocq/ascent_optimizations/theories` | 7 | retired-Ascent-era optimization proofs |
-| Rocq — trampoline | `formal/rocq/trampoline/theories` | 7 | Tier-3 held-fold trampoline soundness |
+| Rocq — trampoline | `formal/rocq/trampoline/theories` | 10 | Tier-3 held-fold trampoline soundness, evaluator SCC simulation, formula and lifecycle PDA equivalence |
 | Rocq — sft | `formal/rocq/sft/theories` | 6 | symbolic finite transducers |
 | Rocq — mathematical_analyses | `formal/rocq/mathematical_analyses/theories` | 9 | KAT, exact VPA decisions/delimiters, and analysis soundness |
 | Rocq — rule_consolidation | `formal/rocq/rule_consolidation/theories` | 5 | **Dovetail** disjoint-pattern consolidation |
