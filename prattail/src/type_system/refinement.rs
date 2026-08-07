@@ -64,11 +64,10 @@ impl<S: TypeSystem> TypeSystemAlgebra<S> {
     /// Evaluate a type predicate in the current environment.
     pub fn evaluate_pred(&self, pred: &TypePred<S>) -> bool {
         evaluate_type_pred(pred, |node| match node {
-            TypePred::True => Some(true),
-            TypePred::False => Some(false),
-            TypePred::HasType(ty) => Some(self.system.is_inhabited(&self.env, ty)),
-            TypePred::Subtype { sub, sup } => Some(self.system.is_subtype(&self.env, sub, sup)),
-            TypePred::And(_, _) | TypePred::Or(_, _) | TypePred::Not(_) => None,
+            TypePredLeaf::True => true,
+            TypePredLeaf::False => false,
+            TypePredLeaf::HasType(ty) => self.system.is_inhabited(&self.env, ty),
+            TypePredLeaf::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
         })
     }
 
@@ -258,19 +257,25 @@ impl<S: TypeSystem> crate::symbolic::BooleanAlgebra for TypeSystemAlgebra<S> {
 
     fn evaluate(&self, pred: &TypePred<S>, elem: &S::Type) -> bool {
         evaluate_type_pred(pred, |node| match node {
-            TypePred::True => Some(true),
-            TypePred::False => Some(false),
-            TypePred::HasType(ty) => Some(self.system.is_subtype(&self.env, elem, ty)),
-            TypePred::Subtype { sub, sup } => Some(self.system.is_subtype(&self.env, sub, sup)),
-            TypePred::And(_, _) | TypePred::Or(_, _) | TypePred::Not(_) => None,
+            TypePredLeaf::True => true,
+            TypePredLeaf::False => false,
+            TypePredLeaf::HasType(ty) => self.system.is_subtype(&self.env, elem, ty),
+            TypePredLeaf::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
         })
     }
+}
+
+enum TypePredLeaf<'pred, S: TypeSystem> {
+    True,
+    False,
+    HasType(&'pred S::Type),
+    Subtype { sub: &'pred S::Type, sup: &'pred S::Type },
 }
 
 fn evaluate_type_pred<S, F>(pred: &TypePred<S>, mut leaf: F) -> bool
 where
     S: TypeSystem,
-    F: FnMut(&TypePred<S>) -> Option<bool>,
+    F: for<'pred> FnMut(TypePredLeaf<'pred, S>) -> bool,
 {
     enum Task<'pred, S: TypeSystem> {
         Visit(&'pred TypePred<S>),
@@ -283,31 +288,25 @@ where
     let mut values = Vec::new();
     while let Some(task) = tasks.pop() {
         match task {
-            Task::Visit(node) => {
-                if let Some(value) = leaf(node) {
-                    values.push(value);
-                } else {
-                    match node {
-                        TypePred::And(left, right) => {
-                            tasks.push(Task::AndRight(right));
-                            tasks.push(Task::Visit(left));
-                        },
-                        TypePred::Or(left, right) => {
-                            tasks.push(Task::OrRight(right));
-                            tasks.push(Task::Visit(left));
-                        },
-                        TypePred::Not(inner) => {
-                            tasks.push(Task::Not);
-                            tasks.push(Task::Visit(inner));
-                        },
-                        TypePred::True
-                        | TypePred::False
-                        | TypePred::HasType(_)
-                        | TypePred::Subtype { .. } => {
-                            unreachable!("type-predicate leaf evaluator omitted a leaf")
-                        },
-                    }
-                }
+            Task::Visit(TypePred::True) => values.push(leaf(TypePredLeaf::True)),
+            Task::Visit(TypePred::False) => values.push(leaf(TypePredLeaf::False)),
+            Task::Visit(TypePred::HasType(ty)) => {
+                values.push(leaf(TypePredLeaf::HasType(ty)));
+            },
+            Task::Visit(TypePred::Subtype { sub, sup }) => {
+                values.push(leaf(TypePredLeaf::Subtype { sub, sup }));
+            },
+            Task::Visit(TypePred::And(left, right)) => {
+                tasks.push(Task::AndRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(TypePred::Or(left, right)) => {
+                tasks.push(Task::OrRight(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(TypePred::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
             },
             Task::Not => {
                 let value = values

@@ -101,9 +101,13 @@ impl SetTheoreticTypeSystem {
 
         enum Task<'ty> {
             Visit(&'ty SetType),
+            Binary(Binary),
+            Negation,
+        }
+
+        enum Binary {
             Union,
             Intersection,
-            Negation,
         }
 
         let mut tasks = vec![Task::Visit(ty)];
@@ -117,12 +121,12 @@ impl SetTheoreticTypeSystem {
                         .unwrap_or_else(TreeAutomaton::new),
                 ),
                 Task::Visit(SetType::Union(left, right)) => {
-                    tasks.push(Task::Union);
+                    tasks.push(Task::Binary(Binary::Union));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SetType::Intersection(left, right)) => {
-                    tasks.push(Task::Intersection);
+                    tasks.push(Task::Binary(Binary::Intersection));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -138,17 +142,16 @@ impl SetTheoreticTypeSystem {
                 ),
                 Task::Visit(SetType::Top) => values.push(self.universal_automaton()),
                 Task::Visit(SetType::Bottom) => values.push(TreeAutomaton::new()),
-                Task::Union | Task::Intersection => {
+                Task::Binary(binary) => {
                     let right = values
                         .pop()
                         .expect("set-type automaton PDA lost its right operand");
                     let left = values
                         .pop()
                         .expect("set-type automaton PDA lost its left operand");
-                    values.push(match task {
-                        Task::Union => self.union_automata(&left, &right),
-                        Task::Intersection => self.intersect_automata(&left, &right),
-                        Task::Visit(_) | Task::Negation => unreachable!(),
+                    values.push(match binary {
+                        Binary::Union => self.union_automata(&left, &right),
+                        Binary::Intersection => self.intersect_automata(&left, &right),
                     });
                 },
                 Task::Negation => {

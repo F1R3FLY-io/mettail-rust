@@ -927,15 +927,13 @@ where
                 let resolved = args
                     .iter()
                     .map(|arg| match arg {
-                        QuantifiedArg::Var(variable) => {
-                            runtime_env.get(variable).cloned().unwrap_or_else(|| {
-                                panic!("unbound variable '{}' in formula", variable)
-                            })
-                        },
-                        QuantifiedArg::Constant(constant) => constant.clone(),
+                        QuantifiedArg::Var(variable) => runtime_env.get(variable).cloned(),
+                        QuantifiedArg::Constant(constant) => Some(constant.clone()),
                     })
-                    .collect::<Vec<_>>();
-                values.push(R::from_bool(relation_query(relation, &resolved)));
+                    .collect::<Option<Vec<_>>>();
+                values.push(R::from_bool(
+                    resolved.is_some_and(|resolved| relation_query(relation, &resolved)),
+                ));
             },
             Task::Visit(QuantifiedFormula::And(left, right)) => {
                 tasks.push(Task::BinaryAfterLeft { operation: FormulaBinary::And, right });

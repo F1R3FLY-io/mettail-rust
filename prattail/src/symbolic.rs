@@ -196,25 +196,26 @@ pub enum IntervalPred {
 impl fmt::Display for IntervalPred {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut cursor = self;
-        while let IntervalPred::Not(inner) = cursor {
-            f.write_str("~")?;
-            cursor = inner;
-        }
-        match cursor {
-            IntervalPred::True => write!(f, "TRUE"),
-            IntervalPred::False => write!(f, "FALSE"),
-            IntervalPred::Range(lo, hi) => write!(f, "[{}, {})", lo, hi),
-            IntervalPred::Union(ranges) => {
-                write!(f, "(")?;
-                for (i, (lo, hi)) in ranges.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
+        loop {
+            match cursor {
+                IntervalPred::Not(inner) => {
+                    f.write_str("~")?;
+                    cursor = inner;
+                },
+                IntervalPred::True => return write!(f, "TRUE"),
+                IntervalPred::False => return write!(f, "FALSE"),
+                IntervalPred::Range(lo, hi) => return write!(f, "[{}, {})", lo, hi),
+                IntervalPred::Union(ranges) => {
+                    write!(f, "(")?;
+                    for (i, (lo, hi)) in ranges.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, " | ")?;
+                        }
+                        write!(f, "[{}, {})", lo, hi)?;
                     }
-                    write!(f, "[{}, {})", lo, hi)?;
-                }
-                write!(f, ")")
-            },
-            IntervalPred::Not(_) => unreachable!("leading negations were drained"),
+                    return write!(f, ")");
+                },
+            }
         }
     }
 }
@@ -251,40 +252,33 @@ impl IntervalAlgebra {
     fn normalize(&self, pred: &IntervalPred) -> Vec<(i64, i64)> {
         let mut cursor = pred;
         let mut negated = false;
-        while let IntervalPred::Not(inner) = cursor {
-            negated = !negated;
-            cursor = inner;
-        }
-        let ranges = match cursor {
-            IntervalPred::True => vec![(self.min_val, self.max_val)],
-            IntervalPred::False => vec![],
-            IntervalPred::Range(lo, hi) => {
-                let lo = (*lo).max(self.min_val);
-                let hi = (*hi).min(self.max_val);
-                if lo < hi {
-                    vec![(lo, hi)]
-                } else {
-                    vec![]
-                }
-            },
-            IntervalPred::Union(ranges) => {
-                // Clip and merge ranges into canonical form.
-                let mut clipped: Vec<(i64, i64)> = ranges
-                    .iter()
-                    .filter_map(|&(lo, hi)| {
-                        let lo = lo.max(self.min_val);
-                        let hi = hi.min(self.max_val);
-                        if lo < hi {
-                            Some((lo, hi))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                clipped.sort_unstable();
-                merge_ranges(&clipped)
-            },
-            IntervalPred::Not(_) => unreachable!("leading negations were drained"),
+        let ranges = loop {
+            match cursor {
+                IntervalPred::Not(inner) => {
+                    negated = !negated;
+                    cursor = inner;
+                },
+                IntervalPred::True => break vec![(self.min_val, self.max_val)],
+                IntervalPred::False => break vec![],
+                IntervalPred::Range(lo, hi) => {
+                    let lo = (*lo).max(self.min_val);
+                    let hi = (*hi).min(self.max_val);
+                    break if lo < hi { vec![(lo, hi)] } else { vec![] };
+                },
+                IntervalPred::Union(ranges) => {
+                    // Clip and merge ranges into canonical form.
+                    let mut clipped: Vec<(i64, i64)> = ranges
+                        .iter()
+                        .filter_map(|&(lo, hi)| {
+                            let lo = lo.max(self.min_val);
+                            let hi = hi.min(self.max_val);
+                            (lo < hi).then_some((lo, hi))
+                        })
+                        .collect();
+                    clipped.sort_unstable();
+                    break merge_ranges(&clipped);
+                },
+            }
         };
         if negated {
             complement_ranges(&ranges, self.min_val, self.max_val)
@@ -449,35 +443,36 @@ mod lifecycle;
 impl fmt::Display for CharClassPred {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut cursor = self;
-        while let CharClassPred::Not(inner) = cursor {
-            f.write_str("~")?;
-            cursor = inner;
-        }
-        match cursor {
-            CharClassPred::True => write!(f, "TRUE"),
-            CharClassPred::False => write!(f, "FALSE"),
-            CharClassPred::Range(lo, hi) => {
-                if lo == hi {
-                    write!(f, "[{}]", lo.escape_debug())
-                } else {
-                    write!(f, "[{}-{}]", lo.escape_debug(), hi.escape_debug())
-                }
-            },
-            CharClassPred::Union(ranges) => {
-                write!(f, "[")?;
-                for (i, (lo, hi)) in ranges.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, "|")?;
-                    }
-                    if lo == hi {
-                        write!(f, "{}", lo.escape_debug())?;
+        loop {
+            match cursor {
+                CharClassPred::Not(inner) => {
+                    f.write_str("~")?;
+                    cursor = inner;
+                },
+                CharClassPred::True => return write!(f, "TRUE"),
+                CharClassPred::False => return write!(f, "FALSE"),
+                CharClassPred::Range(lo, hi) => {
+                    return if lo == hi {
+                        write!(f, "[{}]", lo.escape_debug())
                     } else {
-                        write!(f, "{}-{}", lo.escape_debug(), hi.escape_debug())?;
+                        write!(f, "[{}-{}]", lo.escape_debug(), hi.escape_debug())
+                    };
+                },
+                CharClassPred::Union(ranges) => {
+                    write!(f, "[")?;
+                    for (i, (lo, hi)) in ranges.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, "|")?;
+                        }
+                        if lo == hi {
+                            write!(f, "{}", lo.escape_debug())?;
+                        } else {
+                            write!(f, "{}-{}", lo.escape_debug(), hi.escape_debug())?;
+                        }
                     }
-                }
-                write!(f, "]")
-            },
-            CharClassPred::Not(_) => unreachable!("leading negations were drained"),
+                    return write!(f, "]");
+                },
+            }
         }
     }
 }
@@ -502,35 +497,30 @@ impl CharClassAlgebra {
     fn normalize_u32(pred: &CharClassPred) -> Vec<(u32, u32)> {
         let mut cursor = pred;
         let mut negated = false;
-        while let CharClassPred::Not(inner) = cursor {
-            negated = !negated;
-            cursor = inner;
-        }
-        let ranges = match cursor {
-            CharClassPred::True => vec![(0, (char::MAX as u32) + 1)],
-            CharClassPred::False => vec![],
-            CharClassPred::Range(lo, hi) => {
-                if *lo <= *hi {
-                    vec![(*lo as u32, (*hi as u32) + 1)]
-                } else {
-                    vec![]
-                }
-            },
-            CharClassPred::Union(ranges) => {
-                let mut u32_ranges: Vec<(u32, u32)> = ranges
-                    .iter()
-                    .filter_map(|&(lo, hi)| {
-                        if lo <= hi {
-                            Some((lo as u32, (hi as u32) + 1))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                u32_ranges.sort_unstable();
-                merge_u32_ranges(&u32_ranges)
-            },
-            CharClassPred::Not(_) => unreachable!("leading negations were drained"),
+        let ranges = loop {
+            match cursor {
+                CharClassPred::Not(inner) => {
+                    negated = !negated;
+                    cursor = inner;
+                },
+                CharClassPred::True => break vec![(0, (char::MAX as u32) + 1)],
+                CharClassPred::False => break vec![],
+                CharClassPred::Range(lo, hi) => {
+                    break if *lo <= *hi {
+                        vec![(*lo as u32, (*hi as u32) + 1)]
+                    } else {
+                        vec![]
+                    };
+                },
+                CharClassPred::Union(ranges) => {
+                    let mut u32_ranges: Vec<(u32, u32)> = ranges
+                        .iter()
+                        .filter_map(|&(lo, hi)| (lo <= hi).then_some((lo as u32, (hi as u32) + 1)))
+                        .collect();
+                    u32_ranges.sort_unstable();
+                    break merge_u32_ranges(&u32_ranges);
+                },
+            }
         };
         if negated {
             complement_u32_ranges(&ranges, 0, (char::MAX as u32) + 1)
@@ -734,6 +724,11 @@ impl KatBooleanAlgebra {
         relevant.sort_unstable();
         relevant.dedup();
 
+        struct Branch {
+            index: usize,
+            tried_true: bool,
+        }
+
         let mut assignment = vec![None; self.atoms.len()];
         let mut branches = Vec::new();
         loop {
@@ -754,18 +749,17 @@ impl KatBooleanAlgebra {
                         .find(|index| assignment[*index].is_none())
                         .expect("partial Boolean evaluation lost an unknown atom");
                     assignment[index] = Some(false);
-                    branches.push(index);
+                    branches.push(Branch { index, tried_true: false });
                 },
                 PartialTruth::False => loop {
-                    let index = branches.pop()?;
-                    match assignment[index] {
-                        Some(false) => {
-                            assignment[index] = Some(true);
-                            branches.push(index);
-                            break;
-                        },
-                        Some(true) => assignment[index] = None,
-                        None => unreachable!("Boolean search branch was not assigned"),
+                    let mut branch = branches.pop()?;
+                    if branch.tried_true {
+                        assignment[branch.index] = None;
+                    } else {
+                        assignment[branch.index] = Some(true);
+                        branch.tried_true = true;
+                        branches.push(branch);
+                        break;
                     }
                 },
             }
@@ -791,6 +785,10 @@ fn partial_eval_test(
     enum Task<'test> {
         Visit(&'test BooleanTest),
         Not,
+        Binary(Binary),
+    }
+
+    enum Binary {
         And,
         Or,
     }
@@ -827,12 +825,12 @@ fn partial_eval_test(
                 tasks.push(Task::Visit(body));
             },
             Task::Visit(BooleanTest::And(left, right)) => {
-                tasks.push(Task::And);
+                tasks.push(Task::Binary(Binary::And));
                 tasks.push(Task::Visit(right));
                 tasks.push(Task::Visit(left));
             },
             Task::Visit(BooleanTest::Or(left, right)) => {
-                tasks.push(Task::Or);
+                tasks.push(Task::Binary(Binary::Or));
                 tasks.push(Task::Visit(right));
                 tasks.push(Task::Visit(left));
             },
@@ -846,22 +844,24 @@ fn partial_eval_test(
                     PartialTruth::True => PartialTruth::False,
                 };
             },
-            kind @ (Task::And | Task::Or) => {
+            Task::Binary(binary) => {
                 let right = values
                     .pop()
                     .expect("partial Boolean evaluation lost right operand");
                 let left = values
                     .pop()
                     .expect("partial Boolean evaluation lost left operand");
-                values.push(match (kind, left, right) {
-                    (Task::And, PartialTruth::False, _)
-                    | (Task::And, _, PartialTruth::False)
-                    | (Task::Or, PartialTruth::False, PartialTruth::False) => PartialTruth::False,
-                    (Task::And, PartialTruth::True, PartialTruth::True)
-                    | (Task::Or, PartialTruth::True, _)
-                    | (Task::Or, _, PartialTruth::True) => PartialTruth::True,
-                    (Task::And | Task::Or, _, _) => PartialTruth::Unknown,
-                    _ => unreachable!(),
+                values.push(match binary {
+                    Binary::And => match (left, right) {
+                        (PartialTruth::False, _) | (_, PartialTruth::False) => PartialTruth::False,
+                        (PartialTruth::True, PartialTruth::True) => PartialTruth::True,
+                        _ => PartialTruth::Unknown,
+                    },
+                    Binary::Or => match (left, right) {
+                        (PartialTruth::True, _) | (_, PartialTruth::True) => PartialTruth::True,
+                        (PartialTruth::False, PartialTruth::False) => PartialTruth::False,
+                        _ => PartialTruth::Unknown,
+                    },
                 });
             },
         }

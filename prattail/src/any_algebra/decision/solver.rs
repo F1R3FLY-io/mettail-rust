@@ -111,56 +111,51 @@ impl Future for WitnessQuery<'_> {
 enum Frame<'a> {
     Sat {
         future: Pin<Box<dyn Future<Output = bool> + 'a>>,
-        answer: Option<SatAnswer>,
+        answer: SatAnswer,
     },
     Witness {
         future: Pin<Box<dyn Future<Output = Option<AnyDomain>> + 'a>>,
-        answer: Option<WitnessAnswer>,
+        answer: WitnessAnswer,
     },
 }
 
-enum RootResult {
-    Sat(bool),
-    Witness(Option<AnyDomain>),
+enum FrameStep {
+    Completed,
+    Pending,
 }
 
-fn execute<'a>(root: Frame<'a>, oracle: &DecisionOracle<'a>) -> RootResult {
+fn execute<'a>(root: Frame<'a>, oracle: &DecisionOracle<'a>) {
     let mut frames = vec![root];
     let waker = Waker::noop();
     let mut context = Context::from_waker(waker);
     loop {
-        let ready = match frames
+        let step = match frames
             .last_mut()
             .expect("decision executor lost its root frame")
         {
-            Frame::Sat { future, .. } => future.as_mut().poll(&mut context).map(RootResult::Sat),
-            Frame::Witness { future, .. } => {
-                future.as_mut().poll(&mut context).map(RootResult::Witness)
+            Frame::Sat { future, answer } => match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => {
+                    answer.set(Some(value));
+                    FrameStep::Completed
+                },
+                Poll::Pending => FrameStep::Pending,
+            },
+            Frame::Witness { future, answer } => match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => {
+                    *answer.borrow_mut() = Some(value);
+                    FrameStep::Completed
+                },
+                Poll::Pending => FrameStep::Pending,
             },
         };
-        match ready {
-            Poll::Ready(RootResult::Sat(value)) => {
-                let Frame::Sat { answer, .. } = frames.pop().expect("missing SAT frame") else {
-                    unreachable!("SAT result came from witness frame")
-                };
-                if let Some(answer) = answer {
-                    answer.set(Some(value));
-                } else {
-                    return RootResult::Sat(value);
+        match step {
+            FrameStep::Completed => {
+                frames.pop();
+                if frames.is_empty() {
+                    return;
                 }
             },
-            Poll::Ready(RootResult::Witness(value)) => {
-                let Frame::Witness { answer, .. } = frames.pop().expect("missing witness frame")
-                else {
-                    unreachable!("witness result came from SAT frame")
-                };
-                if let Some(answer) = answer {
-                    *answer.borrow_mut() = Some(value);
-                } else {
-                    return RootResult::Witness(value);
-                }
-            },
-            Poll::Pending => {
+            FrameStep::Pending => {
                 let request = oracle
                     .pending
                     .borrow_mut()
@@ -169,11 +164,11 @@ fn execute<'a>(root: Frame<'a>, oracle: &DecisionOracle<'a>) -> RootResult {
                 frames.push(match request {
                     Request::Sat { algebra, predicate, answer } => Frame::Sat {
                         future: Box::pin(decide_sat(oracle.clone(), algebra, predicate)),
-                        answer: Some(answer),
+                        answer,
                     },
                     Request::Witness { algebra, predicate, answer } => Frame::Witness {
                         future: Box::pin(decide_witness(oracle.clone(), algebra, predicate)),
-                        answer: Some(answer),
+                        answer,
                     },
                 });
             },
@@ -183,26 +178,28 @@ fn execute<'a>(root: Frame<'a>, oracle: &DecisionOracle<'a>) -> RootResult {
 
 pub(super) fn is_satisfiable(algebra: &AnyAlgebra, predicate: &AnyPred) -> bool {
     let oracle = DecisionOracle::new();
+    let answer = Rc::new(Cell::new(None));
     let root = Frame::Sat {
         future: Box::pin(decide_sat(oracle.clone(), algebra, predicate.clone())),
-        answer: None,
+        answer: Rc::clone(&answer),
     };
-    let RootResult::Sat(value) = execute(root, &oracle) else {
-        unreachable!("SAT executor returned a witness")
-    };
-    value
+    execute(root, &oracle);
+    answer.take().expect("SAT executor produced no root result")
 }
 
 pub(super) fn witness(algebra: &AnyAlgebra, predicate: &AnyPred) -> Option<AnyDomain> {
     let oracle = DecisionOracle::new();
+    let answer = Rc::new(RefCell::new(None));
     let root = Frame::Witness {
         future: Box::pin(decide_witness(oracle.clone(), algebra, predicate.clone())),
-        answer: None,
+        answer: Rc::clone(&answer),
     };
-    let RootResult::Witness(value) = execute(root, &oracle) else {
-        unreachable!("witness executor returned SAT")
-    };
-    value
+    execute(root, &oracle);
+    let result = answer
+        .borrow_mut()
+        .take()
+        .expect("witness executor produced no root result");
+    result
 }
 
 fn fold_owned<A, F>(algebra: &A, predicate: AnyPred, leaf: F) -> A::Predicate

@@ -510,6 +510,10 @@ fn substitute_atom(pred: &BooleanTest, atom_name: &str, value: bool) -> BooleanT
     enum Task<'test> {
         Visit(&'test BooleanTest),
         Not,
+        Binary(Binary),
+    }
+
+    enum Binary {
         And,
         Or,
     }
@@ -534,12 +538,12 @@ fn substitute_atom(pred: &BooleanTest, atom_name: &str, value: bool) -> BooleanT
                 tasks.push(Task::Visit(body));
             },
             Task::Visit(BooleanTest::And(left, right)) => {
-                tasks.push(Task::And);
+                tasks.push(Task::Binary(Binary::And));
                 tasks.push(Task::Visit(right));
                 tasks.push(Task::Visit(left));
             },
             Task::Visit(BooleanTest::Or(left, right)) => {
-                tasks.push(Task::Or);
+                tasks.push(Task::Binary(Binary::Or));
                 tasks.push(Task::Visit(right));
                 tasks.push(Task::Visit(left));
             },
@@ -547,13 +551,12 @@ fn substitute_atom(pred: &BooleanTest, atom_name: &str, value: bool) -> BooleanT
                 let body = values.pop().expect("Boolean substitution lost negand");
                 values.push(BooleanTest::Not(Box::new(body)));
             },
-            Task::And | Task::Or => {
+            Task::Binary(binary) => {
                 let right = values.pop().expect("Boolean substitution lost binary RHS");
                 let left = values.pop().expect("Boolean substitution lost binary LHS");
-                values.push(match task {
-                    Task::And => BooleanTest::And(Box::new(left), Box::new(right)),
-                    Task::Or => BooleanTest::Or(Box::new(left), Box::new(right)),
-                    _ => unreachable!(),
+                values.push(match binary {
+                    Binary::And => BooleanTest::And(Box::new(left), Box::new(right)),
+                    Binary::Or => BooleanTest::Or(Box::new(left), Box::new(right)),
                 });
             },
         }
@@ -580,11 +583,15 @@ pub fn compile_with_algebra(
 
     enum Task<'formula> {
         Visit(&'formula WeightedMsoFormula),
-        And,
-        Or,
+        Binary(Binary),
         ExistsFirst(&'formula str),
         ExistsSecond(&'formula str),
         ForallFirst(&'formula str),
+    }
+
+    enum Binary {
+        And,
+        Or,
     }
 
     // Reject Full MSO upfront.
@@ -621,12 +628,12 @@ pub fn compile_with_algebra(
             Task::Visit(Order { x, y }) => values.push(compile_order(x, y, algebra)),
             Task::Visit(NegOrder { x, y }) => values.push(compile_neg_order(x, y, algebra)),
             Task::Visit(And(left, right)) => {
-                tasks.push(Task::And);
+                tasks.push(Task::Binary(Binary::And));
                 tasks.push(Task::Visit(right));
                 tasks.push(Task::Visit(left));
             },
             Task::Visit(Or(left, right)) => {
-                tasks.push(Task::Or);
+                tasks.push(Task::Binary(Binary::Or));
                 tasks.push(Task::Visit(right));
                 tasks.push(Task::Visit(left));
             },
@@ -647,13 +654,12 @@ pub fn compile_with_algebra(
                     reason: "∀X is in the Full MSO fragment".to_string(),
                 });
             },
-            Task::And | Task::Or => {
+            Task::Binary(binary) => {
                 let right = values.pop().expect("weighted-MSO compiler lost binary RHS");
                 let left = values.pop().expect("weighted-MSO compiler lost binary LHS");
-                values.push(match task {
-                    Task::And => left.intersect(&right),
-                    Task::Or => left.union(&right),
-                    _ => unreachable!(),
+                values.push(match binary {
+                    Binary::And => left.intersect(&right),
+                    Binary::Or => left.union(&right),
                 });
             },
             Task::ExistsFirst(var) => {

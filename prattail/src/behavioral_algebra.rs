@@ -332,25 +332,28 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
         // and may have been truncated.
         let mut limits = Vec::new();
         let mut cursor = domain;
-        while let QDomain::Bounded(inner, limit) = cursor {
-            limits.push(*limit);
-            cursor = inner;
-        }
-        let (mut values, mut exact) = match cursor {
-            QDomain::Values(vs) => (vs.clone(), true),
-            QDomain::Active => (self.facts.active_domain().into_iter().collect(), true),
-            QDomain::RelationColumn(rel, col) => {
-                let mut vals = BTreeSet::new();
-                if let Some(tuples) = self.facts.relations.get(rel) {
-                    for t in tuples {
-                        if let Some(v) = t.get(*col) {
-                            vals.insert(v.clone());
+        let (mut values, mut exact) = loop {
+            match cursor {
+                QDomain::Bounded(inner, limit) => {
+                    limits.push(*limit);
+                    cursor = inner;
+                },
+                QDomain::Values(vs) => break (vs.clone(), true),
+                QDomain::Active => {
+                    break (self.facts.active_domain().into_iter().collect(), true);
+                },
+                QDomain::RelationColumn(rel, col) => {
+                    let mut vals = BTreeSet::new();
+                    if let Some(tuples) = self.facts.relations.get(rel) {
+                        for t in tuples {
+                            if let Some(v) = t.get(*col) {
+                                vals.insert(v.clone());
+                            }
                         }
                     }
-                }
-                (vals.into_iter().collect(), true)
-            },
-            QDomain::Bounded(..) => unreachable!("QDomain spine scan stopped on a wrapper"),
+                    break (vals.into_iter().collect(), true);
+                },
+            }
         };
         for limit in limits.into_iter().rev() {
             let truncated = values.len() > limit;
@@ -363,7 +366,11 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
     /// Evaluate `formula` against the snapshot with the given bindings. Returns
     /// `(result, exact)`; `exact = false` when a bounded quantifier may have
     /// been truncated (so a `false`/`true` could be budget-limited).
-    fn eval(&self, formula: &BehavioralFormula, env: &BTreeMap<String, String>) -> (bool, bool) {
+    fn eval(
+        &self,
+        formula: &BehavioralFormula,
+        env: &BTreeMap<String, String>,
+    ) -> Option<(bool, bool)> {
         struct QuantFrame<'formula> {
             forall: bool,
             var: &'formula str,
@@ -446,7 +453,7 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
                     | BehavioralFormula::Mu(..)
                     | BehavioralFormula::Nu(..)
                     | BehavioralFormula::FixVar(_),
-                ) => unreachable!("modal formula reached the relational evaluator"),
+                ) => return None,
                 Task::Not => {
                     let (result, exact) = values.pop().expect("relational PDA lost a Not operand");
                     values.push((!result, exact));
@@ -512,7 +519,7 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
             }
         }
         debug_assert_eq!(values.len(), 1);
-        values.pop().expect("relational PDA produced no result")
+        Some(values.pop().expect("relational PDA produced no result"))
     }
 
     /// Build the finite reachable LTS from `root` (BFS).
@@ -597,11 +604,16 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
                         .collect(),
                 ),
                 Task::Visit(formula @ BehavioralFormula::Relation { .. }) => {
-                    values.push(if self.eval(formula, &environment).0 {
-                        all_states()
-                    } else {
-                        HashSet::new()
-                    });
+                    values.push(
+                        if self
+                            .eval(formula, &environment)
+                            .is_some_and(|value| value.0)
+                        {
+                            all_states()
+                        } else {
+                            HashSet::new()
+                        },
+                    );
                 },
                 Task::Visit(BehavioralFormula::Forall { var, domain, body }) => {
                     let (domain_values, _) = self.domain_values(domain);
@@ -839,7 +851,9 @@ impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
             }
             // If there are free vars but the domain is empty, no assignment can
             // satisfy a positive atom; evaluate once with empty env.
-            let (sat, exact) = self.eval(a, &env);
+            let Some((sat, exact)) = self.eval(a, &env) else {
+                return Sat3::DontKnow;
+            };
             all_exact = all_exact && exact;
             if sat {
                 return Sat3::Sat;
@@ -876,7 +890,7 @@ impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
     fn evaluate(&self, pred: &BehavioralFormula, elem: &BehavioralWorld<H>) -> bool {
         if !pred.has_modal() {
             // Relational fast path: evaluate against the fact base + bindings.
-            return self.eval(pred, &elem.env).0;
+            return self.eval(pred, &elem.env).is_some_and(|value| value.0);
         }
         // Modal/temporal: model-check over the term's reachable LTS.
         let (states, adj) = self.build_lts(&elem.term);

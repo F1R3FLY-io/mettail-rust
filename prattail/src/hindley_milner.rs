@@ -275,13 +275,14 @@ pub fn unify(left: &HmType, right: &HmType) -> Result<Substitution, HmError> {
         FinishArrow(Substitution),
     }
 
-    fn take_arrow(mut ty: HmType) -> (HmType, HmType) {
-        let HmType::Arrow(domain, codomain) = &mut ty else {
-            unreachable!("HM unification PDA classified an owned type as Arrow")
-        };
-        let domain = std::mem::replace(domain, Box::new(HmType::Mono(String::new())));
-        let codomain = std::mem::replace(codomain, Box::new(HmType::Mono(String::new())));
-        (*domain, *codomain)
+    fn take_arrow(mut ty: HmType) -> Result<(HmType, HmType), HmType> {
+        if let HmType::Arrow(domain, codomain) = &mut ty {
+            let domain = std::mem::replace(domain, Box::new(HmType::Mono(String::new())));
+            let codomain = std::mem::replace(codomain, Box::new(HmType::Mono(String::new())));
+            Ok((*domain, *codomain))
+        } else {
+            Err(ty)
+        }
     }
 
     let mut tasks = vec![Task::Compare(Input::Borrowed(left), Input::Borrowed(right))];
@@ -341,8 +342,21 @@ pub fn unify(left: &HmType, right: &HmType) -> Result<Substitution, HmError> {
                             ));
                         },
                         (left, right) => {
-                            let (domain1, codomain1) = take_arrow(left.into_owned());
-                            let (domain2, codomain2) = take_arrow(right.into_owned());
+                            let right = right.into_owned();
+                            let (domain1, codomain1) = match take_arrow(left.into_owned()) {
+                                Ok(parts) => parts,
+                                Err(left) => {
+                                    return Err(HmError::UnificationFailure { left, right });
+                                },
+                            };
+                            let (domain2, codomain2) = match take_arrow(right) {
+                                Ok(parts) => parts,
+                                Err(right) => {
+                                    let left =
+                                        HmType::Arrow(Box::new(domain1), Box::new(codomain1));
+                                    return Err(HmError::UnificationFailure { left, right });
+                                },
+                            };
                             tasks.push(Task::Codomain(
                                 Input::Owned(codomain1),
                                 Input::Owned(codomain2),
@@ -363,16 +377,13 @@ pub fn unify(left: &HmType, right: &HmType) -> Result<Substitution, HmError> {
                     .pop()
                     .expect("HM unification PDA lost domain substitution");
                 let is_empty = domain_substitution.is_empty();
-                tasks.push(Task::FinishArrow(domain_substitution));
                 if is_empty {
+                    tasks.push(Task::FinishArrow(domain_substitution));
                     tasks.push(Task::Compare(left, right));
                 } else {
-                    let substitution = match tasks.last() {
-                        Some(Task::FinishArrow(substitution)) => substitution,
-                        _ => unreachable!("HM unification PDA lost arrow continuation"),
-                    };
-                    let left = substitution.apply(left.as_ref());
-                    let right = substitution.apply(right.as_ref());
+                    let left = domain_substitution.apply(left.as_ref());
+                    let right = domain_substitution.apply(right.as_ref());
+                    tasks.push(Task::FinishArrow(domain_substitution));
                     tasks.push(Task::Compare(Input::Owned(left), Input::Owned(right)));
                 }
             },

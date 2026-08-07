@@ -570,6 +570,10 @@ impl<'ctx> Z3Env<'ctx> {
         enum Task<'constraint> {
             Visit(&'constraint SmtConstraint),
             Not,
+            Binary(Binary),
+        }
+
+        enum Binary {
             And,
             Or,
         }
@@ -605,12 +609,12 @@ impl<'ctx> Z3Env<'ctx> {
                     tasks.push(Task::Visit(inner));
                 },
                 Task::Visit(SmtConstraint::And(left, right)) => {
-                    tasks.push(Task::And);
+                    tasks.push(Task::Binary(Binary::And));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SmtConstraint::Or(left, right)) => {
-                    tasks.push(Task::Or);
+                    tasks.push(Task::Binary(Binary::Or));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
@@ -618,13 +622,12 @@ impl<'ctx> Z3Env<'ctx> {
                     let value = values.pop().expect("SMT Z3 translation lost negated value");
                     values.push(value.not());
                 },
-                Task::And | Task::Or => {
+                Task::Binary(binary) => {
                     let right = values.pop().expect("SMT Z3 translation lost boolean RHS");
                     let left = values.pop().expect("SMT Z3 translation lost boolean LHS");
-                    let value = match task {
-                        Task::And => z3::ast::Bool::and(self.ctx, &[&left, &right]),
-                        Task::Or => z3::ast::Bool::or(self.ctx, &[&left, &right]),
-                        _ => unreachable!("boolean reducer receives only And or Or"),
+                    let value = match binary {
+                        Binary::And => z3::ast::Bool::and(self.ctx, &[&left, &right]),
+                        Binary::Or => z3::ast::Bool::or(self.ctx, &[&left, &right]),
                     };
                     values.push(value);
                 },

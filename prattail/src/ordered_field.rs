@@ -138,6 +138,13 @@ impl OrderedPoint for BigRational {
     fn witness_in(lo: &Bound<BigRational>, hi: &Bound<BigRational>) -> Option<BigRational> {
         let two = || BigRational::from_integer(BigInt::from(2));
         let one = || BigRational::one();
+        let between = |a: &BigRational, a_incl, b: &BigRational, b_incl| match a.cmp(b) {
+            Ordering::Greater => None,
+            Ordering::Equal => (a_incl && b_incl).then(|| a.clone()),
+            // Dense: the midpoint is strictly between a and b, so it
+            // satisfies every open/closed combination.
+            Ordering::Less => Some((a + b) / two()),
+        };
         match (lo, hi) {
             (Bound::PosInf, _) | (_, Bound::NegInf) => None,
             (Bound::NegInf, Bound::PosInf) => Some(BigRational::from_integer(BigInt::ZERO)),
@@ -145,25 +152,10 @@ impl OrderedPoint for BigRational {
             (Bound::NegInf, Bound::Excl(b)) => Some(b - one()),
             (Bound::Incl(a), Bound::PosInf) => Some(a.clone()),
             (Bound::Excl(a), Bound::PosInf) => Some(a + one()),
-            (lo_b, hi_b) => {
-                let (a, a_incl) = match lo_b {
-                    Bound::Incl(a) => (a.clone(), true),
-                    Bound::Excl(a) => (a.clone(), false),
-                    _ => unreachable!("handled above"),
-                };
-                let (b, b_incl) = match hi_b {
-                    Bound::Incl(b) => (b.clone(), true),
-                    Bound::Excl(b) => (b.clone(), false),
-                    _ => unreachable!("handled above"),
-                };
-                match a.cmp(&b) {
-                    Ordering::Greater => None,
-                    Ordering::Equal => (a_incl && b_incl).then_some(a),
-                    // Dense: the midpoint is strictly between a and b, so it
-                    // satisfies every open/closed combination.
-                    Ordering::Less => Some((&a + &b) / two()),
-                }
-            },
+            (Bound::Incl(a), Bound::Incl(b)) => between(a, true, b, true),
+            (Bound::Incl(a), Bound::Excl(b)) => between(a, true, b, false),
+            (Bound::Excl(a), Bound::Incl(b)) => between(a, false, b, true),
+            (Bound::Excl(a), Bound::Excl(b)) => between(a, false, b, false),
         }
     }
 }

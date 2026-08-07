@@ -64,10 +64,20 @@ impl StrPred {
         #[derive(Clone, Copy)]
         enum Task<'pred> {
             Visit(&'pred StrPred),
+            Binary(Binary),
+            Unary(Unary),
+        }
+
+        #[derive(Clone, Copy)]
+        enum Binary {
             Concat,
             Alt,
-            Star,
             Inter,
+        }
+
+        #[derive(Clone, Copy)]
+        enum Unary {
+            Star,
             Compl,
         }
 
@@ -94,44 +104,42 @@ impl StrPred {
                     values.push(RegexPred::Length(*lower, *upper));
                 },
                 Task::Visit(StrPred::Concat(left, right)) => {
-                    tasks.push(Task::Concat);
+                    tasks.push(Task::Binary(Binary::Concat));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(StrPred::Alt(left, right)) => {
-                    tasks.push(Task::Alt);
+                    tasks.push(Task::Binary(Binary::Alt));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(StrPred::Inter(left, right)) => {
-                    tasks.push(Task::Inter);
+                    tasks.push(Task::Binary(Binary::Inter));
                     tasks.push(Task::Visit(right));
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(StrPred::Star(body)) => {
-                    tasks.push(Task::Star);
+                    tasks.push(Task::Unary(Unary::Star));
                     tasks.push(Task::Visit(body));
                 },
                 Task::Visit(StrPred::Compl(body)) => {
-                    tasks.push(Task::Compl);
+                    tasks.push(Task::Unary(Unary::Compl));
                     tasks.push(Task::Visit(body));
                 },
-                Task::Concat | Task::Alt | Task::Inter => {
+                Task::Binary(binary) => {
                     let right = values.pop().expect("string desugaring lost right body");
                     let left = values.pop().expect("string desugaring lost left body");
-                    values.push(match task {
-                        Task::Concat => RegexPred::Concat(Box::new(left), Box::new(right)),
-                        Task::Alt => RegexPred::Alt(Box::new(left), Box::new(right)),
-                        Task::Inter => RegexPred::Inter(Box::new(left), Box::new(right)),
-                        Task::Visit(_) | Task::Star | Task::Compl => unreachable!(),
+                    values.push(match binary {
+                        Binary::Concat => RegexPred::Concat(Box::new(left), Box::new(right)),
+                        Binary::Alt => RegexPred::Alt(Box::new(left), Box::new(right)),
+                        Binary::Inter => RegexPred::Inter(Box::new(left), Box::new(right)),
                     });
                 },
-                Task::Star | Task::Compl => {
+                Task::Unary(unary) => {
                     let body = values.pop().expect("string desugaring lost unary body");
-                    values.push(match task {
-                        Task::Star => RegexPred::Star(Box::new(body)),
-                        Task::Compl => RegexPred::Compl(Box::new(body)),
-                        Task::Visit(_) | Task::Concat | Task::Alt | Task::Inter => unreachable!(),
+                    values.push(match unary {
+                        Unary::Star => RegexPred::Star(Box::new(body)),
+                        Unary::Compl => RegexPred::Compl(Box::new(body)),
                     });
                 },
             }
