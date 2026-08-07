@@ -264,7 +264,12 @@ fn push_declaration_order<'a>(
     optional: bool,
     out: &mut Vec<FieldSlot<'a>>,
 ) {
-    for param in term_context {
+    let mut work: Vec<(&TermParam, bool)> = term_context
+        .iter()
+        .rev()
+        .map(|param| (param, optional))
+        .collect();
+    while let Some((param, optional)) = work.pop() {
         match param {
             TermParam::Simple { name, .. } => out.push(FieldSlot {
                 name: name.to_string(),
@@ -282,7 +287,9 @@ fn push_declaration_order<'a>(
                     source: FieldSlotSource::Param(param),
                     optional,
                 }),
-            TermParam::Optional { params } => push_declaration_order(params, true, out),
+            TermParam::Optional { params } => {
+                work.extend(params.iter().rev().map(|param| (param, true)));
+            },
         }
     }
 }
@@ -339,33 +346,30 @@ pub(crate) fn capture_layout<'a>(
     Some(CaptureLayout { non_scope, scope })
 }
 
-/// Recursively find a term param by name, descending into `Optional` groups.
+/// Find a term param by name, descending into `Optional` groups without using
+/// the machine stack.
 /// Returns the parameter and whether it was declared INSIDE an `#opt(…)` group.
 fn find_param<'a>(term_context: &'a [TermParam], name: &str) -> Option<(&'a TermParam, bool)> {
-    fn go<'a>(
-        params: &'a [TermParam],
-        name: &str,
-        optional: bool,
-    ) -> Option<(&'a TermParam, bool)> {
-        for p in params {
-            match p {
-                TermParam::Simple { name: n, .. } if n.to_string() == name => {
-                    return Some((p, optional))
-                },
-                TermParam::GuardBody { name: n } if n.to_string() == name => {
-                    return Some((p, optional))
-                },
-                TermParam::Optional { params } => {
-                    if let Some(found) = go(params, name, true) {
-                        return Some(found);
-                    }
-                },
-                _ => {},
-            }
+    let mut work: Vec<(&TermParam, bool)> = term_context
+        .iter()
+        .rev()
+        .map(|param| (param, false))
+        .collect();
+    while let Some((param, optional)) = work.pop() {
+        match param {
+            TermParam::Simple { name: candidate, .. }
+            | TermParam::GuardBody { name: candidate }
+                if candidate == name =>
+            {
+                return Some((param, optional));
+            },
+            TermParam::Optional { params } => {
+                work.extend(params.iter().rev().map(|param| (param, true)));
+            },
+            _ => {},
         }
-        None
     }
-    go(term_context, name, false)
+    None
 }
 
 /// Push the slot for the term-context parameter named `n`, if there is one.
@@ -395,7 +399,9 @@ fn walk_pattern<'a>(
     optional: bool,
     out: &mut Vec<FieldSlot<'a>>,
 ) {
-    for expr in exprs {
+    let mut work: Vec<(&SyntaxExpr, bool)> =
+        exprs.iter().rev().map(|expr| (expr, optional)).collect();
+    while let Some((expr, optional)) = work.pop() {
         match expr {
             SyntaxExpr::Literal(_) => {},
             SyntaxExpr::TokenKind { name, bind } => {
@@ -422,7 +428,7 @@ fn walk_pattern<'a>(
                 });
             },
             SyntaxExpr::Op(PatternOp::Opt { inner }) => {
-                walk_pattern(inner, term_context, abstraction_names, true, out);
+                work.extend(inner.iter().rev().map(|expr| (expr, true)));
             },
             // `coll.*sep("…")` — a Class-2 collection slot, or a PNew-style
             // binder list. `classify_binder_in` pushes a `CollectionDrain`
@@ -572,15 +578,168 @@ pub(crate) mod bundled_corpus {
 }
 
 #[cfg(test)]
+#[path = "../../tests/support/capture_recursive_oracle.rs"]
+mod recursive_oracle;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use mettail_ast::grammar::SyntaxExpr;
     use mettail_ast::types::TypeExpr;
     use proc_macro2::Span;
+    use std::ptr;
     use syn::Ident;
 
     fn id(s: &str) -> Ident {
         Ident::new(s, Span::call_site())
+    }
+
+    fn assert_same_slots(actual: &[FieldSlot<'_>], expected: &[FieldSlot<'_>]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_eq!(actual.name, expected.name);
+            assert_eq!(actual.optional, expected.optional);
+            match (&actual.source, &expected.source) {
+                (FieldSlotSource::TokenText, FieldSlotSource::TokenText) => {},
+                (
+                    FieldSlotSource::GuestBody { open: actual_open, close: actual_close },
+                    FieldSlotSource::GuestBody {
+                        open: expected_open,
+                        close: expected_close,
+                    },
+                ) => {
+                    assert_eq!(*actual_open, *expected_open);
+                    assert_eq!(*actual_close, *expected_close);
+                },
+                (FieldSlotSource::Param(actual), FieldSlotSource::Param(expected)) => {
+                    assert!(ptr::eq(*actual, *expected));
+                },
+                _ => panic!("field-slot source changed during iterative conversion"),
+            }
+        }
+    }
+
+    fn nested_term_context_fixture() -> Vec<TermParam> {
+        vec![
+            TermParam::Simple {
+                name: id("head"),
+                ty: TypeExpr::Base(id("Proc")),
+            },
+            TermParam::Optional {
+                params: vec![
+                    TermParam::GuardBody { name: id("guard") },
+                    TermParam::Optional {
+                        params: vec![TermParam::Simple {
+                            name: id("nested"),
+                            ty: TypeExpr::Base(id("Name")),
+                        }],
+                    },
+                ],
+            },
+            TermParam::Abstraction {
+                binder: id("x"),
+                body: id("body"),
+                ty: TypeExpr::Arrow {
+                    domain: Box::new(TypeExpr::Base(id("Name"))),
+                    codomain: Box::new(TypeExpr::Base(id("Proc"))),
+                },
+            },
+        ]
+    }
+
+    #[test]
+    fn iterative_capture_walkers_match_recursive_oracles() {
+        let term_context = nested_term_context_fixture();
+
+        let mut actual_declarations = Vec::new();
+        push_declaration_order(&term_context, false, &mut actual_declarations);
+        let mut expected_declarations = Vec::new();
+        recursive_oracle::push_declaration_order(&term_context, false, &mut expected_declarations);
+        assert_same_slots(&actual_declarations, &expected_declarations);
+
+        for name in ["head", "guard", "nested", "missing"] {
+            let actual = find_param(&term_context, name);
+            let expected = recursive_oracle::find_param(&term_context, name);
+            assert_eq!(
+                actual.map(|(_, optional)| optional),
+                expected.map(|(_, optional)| optional)
+            );
+            match (actual, expected) {
+                (Some((actual, _)), Some((expected, _))) => assert!(ptr::eq(actual, expected)),
+                (None, None) => {},
+                _ => panic!("find_param result changed during iterative conversion"),
+            }
+        }
+
+        let syntax_pattern = vec![
+            SyntaxExpr::Literal("prefix".into()),
+            SyntaxExpr::Param(id("head")),
+            SyntaxExpr::Op(PatternOp::Opt {
+                inner: vec![
+                    SyntaxExpr::TokenKind { name: id("Word"), bind: Some(id("word")) },
+                    SyntaxExpr::Param(id("nested")),
+                    SyntaxExpr::GuestBody {
+                        open: id("Open"),
+                        close: id("Close"),
+                        bind: id("guest"),
+                    },
+                ],
+            }),
+        ];
+        let abstraction_names = HashSet::new();
+        let mut actual_pattern = Vec::new();
+        walk_pattern(
+            &syntax_pattern,
+            &term_context,
+            &abstraction_names,
+            false,
+            &mut actual_pattern,
+        );
+        let mut expected_pattern = Vec::new();
+        recursive_oracle::walk_pattern(
+            &syntax_pattern,
+            &term_context,
+            &abstraction_names,
+            false,
+            &mut expected_pattern,
+        );
+        assert_same_slots(&actual_pattern, &expected_pattern);
+    }
+
+    #[test]
+    fn capture_walkers_handle_20k_nesting_on_a_256k_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut nested_param = TermParam::Simple {
+                    name: id("leaf"),
+                    ty: TypeExpr::Base(id("Proc")),
+                };
+                for _ in 0..20_000 {
+                    nested_param = TermParam::Optional { params: vec![nested_param] };
+                }
+                let term_context = vec![nested_param];
+
+                let mut declarations = Vec::new();
+                push_declaration_order(&term_context, false, &mut declarations);
+                assert_eq!(declarations.len(), 1);
+                assert!(declarations[0].optional);
+                assert!(matches!(find_param(&term_context, "leaf"), Some((_, true))));
+
+                let mut nested_pattern =
+                    SyntaxExpr::TokenKind { name: id("Word"), bind: Some(id("leaf")) };
+                for _ in 0..20_000 {
+                    nested_pattern = SyntaxExpr::Op(PatternOp::Opt { inner: vec![nested_pattern] });
+                }
+                let syntax_pattern = [nested_pattern];
+                let mut slots = Vec::new();
+                walk_pattern(&syntax_pattern, &[], &HashSet::new(), false, &mut slots);
+                assert_eq!(slots.len(), 1);
+                assert!(slots[0].optional);
+            })
+            .expect("spawn low-stack capture-walker gate")
+            .join()
+            .expect("capture walkers must not consume nesting-proportional call stack");
     }
 
     #[test]
