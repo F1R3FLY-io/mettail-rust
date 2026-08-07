@@ -425,65 +425,15 @@ enum RegexUnaryKind {
     Compl,
 }
 
-enum PredValue {
-    Any(AnyPred),
-    Product(NaryProductPred<AnyPred>),
-    Sum(SumPred<AnyPred>),
-    Regex(RegexPred<AnyPred>),
-    Bag(BagPred<AnyPred>),
-    Tree(TreePred<AnyPred>),
-    Map(MapPred<AnyPred, AnyPred>),
-}
-
-impl PredValue {
-    fn any(self, context: &str) -> AnyPred {
-        match self {
-            PredValue::Any(value) => value,
-            _ => panic!("{context}: expected AnyPred value"),
-        }
-    }
-
-    fn product(self, context: &str) -> NaryProductPred<AnyPred> {
-        match self {
-            PredValue::Product(value) => value,
-            _ => panic!("{context}: expected product-predicate value"),
-        }
-    }
-
-    fn sum(self, context: &str) -> SumPred<AnyPred> {
-        match self {
-            PredValue::Sum(value) => value,
-            _ => panic!("{context}: expected sum-predicate value"),
-        }
-    }
-
-    fn regex(self, context: &str) -> RegexPred<AnyPred> {
-        match self {
-            PredValue::Regex(value) => value,
-            _ => panic!("{context}: expected regex-predicate value"),
-        }
-    }
-
-    fn bag(self, context: &str) -> BagPred<AnyPred> {
-        match self {
-            PredValue::Bag(value) => value,
-            _ => panic!("{context}: expected bag-predicate value"),
-        }
-    }
-
-    fn tree(self, context: &str) -> TreePred<AnyPred> {
-        match self {
-            PredValue::Tree(value) => value,
-            _ => panic!("{context}: expected tree-predicate value"),
-        }
-    }
-
-    fn map(self, context: &str) -> MapPred<AnyPred, AnyPred> {
-        match self {
-            PredValue::Map(value) => value,
-            _ => panic!("{context}: expected map-predicate value"),
-        }
-    }
+#[derive(Default)]
+struct PredCloneValues {
+    any: Vec<AnyPred>,
+    product: Vec<NaryProductPred<AnyPred>>,
+    sum: Vec<SumPred<AnyPred>>,
+    regex: Vec<RegexPred<AnyPred>>,
+    bag: Vec<BagPred<AnyPred>>,
+    tree: Vec<TreePred<AnyPred>>,
+    map: Vec<MapPred<AnyPred, AnyPred>>,
 }
 
 enum PredCloneTask<'pred> {
@@ -494,6 +444,10 @@ enum PredCloneTask<'pred> {
     Bag(&'pred BagPred<AnyPred>),
     Tree(&'pred TreePred<AnyPred>),
     Map(&'pred MapPred<AnyPred, AnyPred>),
+    Reduce(PredCloneReduce),
+}
+
+enum PredCloneReduce {
     AnyNot,
     AnyBinary(BoolKind),
     WrapProduct,
@@ -535,63 +489,63 @@ enum PredCloneTask<'pred> {
 impl Clone for AnyPred {
     fn clone(&self) -> Self {
         let mut tasks = vec![PredCloneTask::Any(self)];
-        let mut values = Vec::new();
+        let mut values = PredCloneValues::default();
         while let Some(task) = tasks.pop() {
             match task {
-                PredCloneTask::Any(AnyPred::True) => values.push(PredValue::Any(AnyPred::True)),
-                PredCloneTask::Any(AnyPred::False) => values.push(PredValue::Any(AnyPred::False)),
+                PredCloneTask::Any(AnyPred::True) => values.any.push(AnyPred::True),
+                PredCloneTask::Any(AnyPred::False) => values.any.push(AnyPred::False),
                 PredCloneTask::Any(AnyPred::Int(value)) => {
-                    values.push(PredValue::Any(AnyPred::Int(value.clone())));
+                    values.any.push(AnyPred::Int(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::Char(value)) => {
-                    values.push(PredValue::Any(AnyPred::Char(value.clone())));
+                    values.any.push(AnyPred::Char(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::Bool(value)) => {
-                    values.push(PredValue::Any(AnyPred::Bool(value.clone())));
+                    values.any.push(AnyPred::Bool(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::BigInt(value)) => {
-                    values.push(PredValue::Any(AnyPred::BigInt(value.clone())));
+                    values.any.push(AnyPred::BigInt(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::BigRat(value)) => {
-                    values.push(PredValue::Any(AnyPred::BigRat(value.clone())));
+                    values.any.push(AnyPred::BigRat(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::Fixed(value)) => {
-                    values.push(PredValue::Any(AnyPred::Fixed(value.clone())));
+                    values.any.push(AnyPred::Fixed(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::Float(value)) => {
-                    values.push(PredValue::Any(AnyPred::Float(value.clone())));
+                    values.any.push(AnyPred::Float(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::Str(value)) => {
-                    values.push(PredValue::Any(AnyPred::Str(value.clone())));
+                    values.any.push(AnyPred::Str(value.clone()));
                 },
                 PredCloneTask::Any(AnyPred::Product(value)) => {
-                    tasks.push(PredCloneTask::WrapProduct);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::WrapProduct));
                     tasks.push(PredCloneTask::Product(value));
                 },
                 PredCloneTask::Any(AnyPred::Sum(value)) => {
-                    tasks.push(PredCloneTask::WrapSum);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::WrapSum));
                     tasks.push(PredCloneTask::Sum(value));
                 },
                 PredCloneTask::Any(AnyPred::List(value)) => {
-                    tasks.push(PredCloneTask::WrapRegex);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::WrapRegex));
                     tasks.push(PredCloneTask::Regex(value));
                 },
                 PredCloneTask::Any(AnyPred::Bag(value)) => {
-                    tasks.push(PredCloneTask::WrapBag);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::WrapBag));
                     tasks.push(PredCloneTask::Bag(value));
                 },
                 PredCloneTask::Any(AnyPred::Tree(value)) => {
-                    tasks.push(PredCloneTask::WrapTree);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::WrapTree));
                     tasks.push(PredCloneTask::Tree(value));
                 },
                 PredCloneTask::Any(AnyPred::Map(value)) => {
-                    tasks.push(PredCloneTask::WrapMap);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::WrapMap));
                     tasks.push(PredCloneTask::Map(value));
                 },
                 PredCloneTask::Any(AnyPred::And(left, right)) => {
                     push_pred_clone_binary(
                         &mut tasks,
-                        PredCloneTask::AnyBinary(BoolKind::And),
+                        PredCloneReduce::AnyBinary(BoolKind::And),
                         left,
                         right,
                     );
@@ -599,30 +553,30 @@ impl Clone for AnyPred {
                 PredCloneTask::Any(AnyPred::Or(left, right)) => {
                     push_pred_clone_binary(
                         &mut tasks,
-                        PredCloneTask::AnyBinary(BoolKind::Or),
+                        PredCloneReduce::AnyBinary(BoolKind::Or),
                         left,
                         right,
                     );
                 },
                 PredCloneTask::Any(AnyPred::Not(body)) => {
-                    tasks.push(PredCloneTask::AnyNot);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::AnyNot));
                     tasks.push(PredCloneTask::Any(body));
                 },
 
                 PredCloneTask::Product(NaryProductPred::True) => {
-                    values.push(PredValue::Product(NaryProductPred::True));
+                    values.product.push(NaryProductPred::True);
                 },
                 PredCloneTask::Product(NaryProductPred::False) => {
-                    values.push(PredValue::Product(NaryProductPred::False));
+                    values.product.push(NaryProductPred::False);
                 },
                 PredCloneTask::Product(NaryProductPred::Field(index, pred)) => {
-                    tasks.push(PredCloneTask::ProductField(*index));
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::ProductField(*index)));
                     tasks.push(PredCloneTask::Any(pred));
                 },
                 PredCloneTask::Product(NaryProductPred::And(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::ProductBinary(BoolKind::And),
+                        PredCloneReduce::ProductBinary(BoolKind::And),
                         PredCloneTask::Product,
                         left,
                         right,
@@ -631,30 +585,30 @@ impl Clone for AnyPred {
                 PredCloneTask::Product(NaryProductPred::Or(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::ProductBinary(BoolKind::Or),
+                        PredCloneReduce::ProductBinary(BoolKind::Or),
                         PredCloneTask::Product,
                         left,
                         right,
                     );
                 },
                 PredCloneTask::Product(NaryProductPred::Not(body)) => {
-                    tasks.push(PredCloneTask::ProductNot);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::ProductNot));
                     tasks.push(PredCloneTask::Product(body));
                 },
 
-                PredCloneTask::Sum(SumPred::True) => values.push(PredValue::Sum(SumPred::True)),
-                PredCloneTask::Sum(SumPred::False) => values.push(PredValue::Sum(SumPred::False)),
+                PredCloneTask::Sum(SumPred::True) => values.sum.push(SumPred::True),
+                PredCloneTask::Sum(SumPred::False) => values.sum.push(SumPred::False),
                 PredCloneTask::Sum(SumPred::InVariant(index, pred)) => {
-                    tasks.push(PredCloneTask::SumInVariant(*index));
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::SumInVariant(*index)));
                     tasks.push(PredCloneTask::Any(pred));
                 },
                 PredCloneTask::Sum(SumPred::TagIs(index)) => {
-                    values.push(PredValue::Sum(SumPred::TagIs(*index)));
+                    values.sum.push(SumPred::TagIs(*index));
                 },
                 PredCloneTask::Sum(SumPred::And(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::SumBinary(BoolKind::And),
+                        PredCloneReduce::SumBinary(BoolKind::And),
                         PredCloneTask::Sum,
                         left,
                         right,
@@ -663,29 +617,29 @@ impl Clone for AnyPred {
                 PredCloneTask::Sum(SumPred::Or(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::SumBinary(BoolKind::Or),
+                        PredCloneReduce::SumBinary(BoolKind::Or),
                         PredCloneTask::Sum,
                         left,
                         right,
                     );
                 },
                 PredCloneTask::Sum(SumPred::Not(body)) => {
-                    tasks.push(PredCloneTask::SumNot);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::SumNot));
                     tasks.push(PredCloneTask::Sum(body));
                 },
 
                 PredCloneTask::Regex(RegexPred::Empty) => {
-                    values.push(PredValue::Regex(RegexPred::Empty));
+                    values.regex.push(RegexPred::Empty);
                 },
                 PredCloneTask::Regex(RegexPred::Epsilon) => {
-                    values.push(PredValue::Regex(RegexPred::Epsilon));
+                    values.regex.push(RegexPred::Epsilon);
                 },
                 PredCloneTask::Regex(RegexPred::Elem(pred)) => {
-                    tasks.push(PredCloneTask::RegexElem);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::RegexElem));
                     tasks.push(PredCloneTask::Any(pred));
                 },
                 PredCloneTask::Regex(RegexPred::Length(lo, hi)) => {
-                    values.push(PredValue::Regex(RegexPred::Length(*lo, *hi)));
+                    values.regex.push(RegexPred::Length(*lo, *hi));
                 },
                 PredCloneTask::Regex(RegexPred::Concat(left, right)) => {
                     push_regex_clone_binary(&mut tasks, RegexBinaryKind::Concat, left, right)
@@ -697,24 +651,31 @@ impl Clone for AnyPred {
                     push_regex_clone_binary(&mut tasks, RegexBinaryKind::Inter, left, right)
                 },
                 PredCloneTask::Regex(RegexPred::Star(body)) => {
-                    tasks.push(PredCloneTask::RegexUnary(RegexUnaryKind::Star));
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::RegexUnary(
+                        RegexUnaryKind::Star,
+                    )));
                     tasks.push(PredCloneTask::Regex(body));
                 },
                 PredCloneTask::Regex(RegexPred::Compl(body)) => {
-                    tasks.push(PredCloneTask::RegexUnary(RegexUnaryKind::Compl));
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::RegexUnary(
+                        RegexUnaryKind::Compl,
+                    )));
                     tasks.push(PredCloneTask::Regex(body));
                 },
 
-                PredCloneTask::Bag(BagPred::True) => values.push(PredValue::Bag(BagPred::True)),
-                PredCloneTask::Bag(BagPred::False) => values.push(PredValue::Bag(BagPred::False)),
+                PredCloneTask::Bag(BagPred::True) => values.bag.push(BagPred::True),
+                PredCloneTask::Bag(BagPred::False) => values.bag.push(BagPred::False),
                 PredCloneTask::Bag(BagPred::Count { class, lo, hi }) => {
-                    tasks.push(PredCloneTask::BagCount { lo: *lo, hi: *hi });
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::BagCount {
+                        lo: *lo,
+                        hi: *hi,
+                    }));
                     tasks.push(PredCloneTask::Any(class));
                 },
                 PredCloneTask::Bag(BagPred::And(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::BagBinary(BoolKind::And),
+                        PredCloneReduce::BagBinary(BoolKind::And),
                         PredCloneTask::Bag,
                         left,
                         right,
@@ -723,28 +684,26 @@ impl Clone for AnyPred {
                 PredCloneTask::Bag(BagPred::Or(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::BagBinary(BoolKind::Or),
+                        PredCloneReduce::BagBinary(BoolKind::Or),
                         PredCloneTask::Bag,
                         left,
                         right,
                     );
                 },
                 PredCloneTask::Bag(BagPred::Not(body)) => {
-                    tasks.push(PredCloneTask::BagNot);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::BagNot));
                     tasks.push(PredCloneTask::Bag(body));
                 },
 
-                PredCloneTask::Tree(TreePred::True) => values.push(PredValue::Tree(TreePred::True)),
-                PredCloneTask::Tree(TreePred::False) => {
-                    values.push(PredValue::Tree(TreePred::False))
-                },
-                PredCloneTask::Tree(TreePred::Wild) => values.push(PredValue::Tree(TreePred::Wild)),
+                PredCloneTask::Tree(TreePred::True) => values.tree.push(TreePred::True),
+                PredCloneTask::Tree(TreePred::False) => values.tree.push(TreePred::False),
+                PredCloneTask::Tree(TreePred::Wild) => values.tree.push(TreePred::Wild),
                 PredCloneTask::Tree(TreePred::Node { constructor, payload_guard, children }) => {
-                    tasks.push(PredCloneTask::TreeNode {
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::TreeNode {
                         constructor: constructor.clone(),
                         has_payload: payload_guard.is_some(),
                         child_count: children.len(),
-                    });
+                    }));
                     for child in children.iter().rev() {
                         tasks.push(PredCloneTask::Tree(child));
                     }
@@ -755,7 +714,7 @@ impl Clone for AnyPred {
                 PredCloneTask::Tree(TreePred::And(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::TreeBinary(BoolKind::And),
+                        PredCloneReduce::TreeBinary(BoolKind::And),
                         PredCloneTask::Tree,
                         left,
                         right,
@@ -764,28 +723,31 @@ impl Clone for AnyPred {
                 PredCloneTask::Tree(TreePred::Or(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::TreeBinary(BoolKind::Or),
+                        PredCloneReduce::TreeBinary(BoolKind::Or),
                         PredCloneTask::Tree,
                         left,
                         right,
                     );
                 },
                 PredCloneTask::Tree(TreePred::Not(body)) => {
-                    tasks.push(PredCloneTask::TreeNot);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::TreeNot));
                     tasks.push(PredCloneTask::Tree(body));
                 },
 
-                PredCloneTask::Map(MapPred::True) => values.push(PredValue::Map(MapPred::True)),
-                PredCloneTask::Map(MapPred::False) => values.push(PredValue::Map(MapPred::False)),
+                PredCloneTask::Map(MapPred::True) => values.map.push(MapPred::True),
+                PredCloneTask::Map(MapPred::False) => values.map.push(MapPred::False),
                 PredCloneTask::Map(MapPred::CountEntries { key_class, val_class, lo, hi }) => {
-                    tasks.push(PredCloneTask::MapCount { lo: *lo, hi: *hi });
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::MapCount {
+                        lo: *lo,
+                        hi: *hi,
+                    }));
                     tasks.push(PredCloneTask::Any(val_class));
                     tasks.push(PredCloneTask::Any(key_class));
                 },
                 PredCloneTask::Map(MapPred::And(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::MapBinary(BoolKind::And),
+                        PredCloneReduce::MapBinary(BoolKind::And),
                         PredCloneTask::Map,
                         left,
                         right,
@@ -794,47 +756,50 @@ impl Clone for AnyPred {
                 PredCloneTask::Map(MapPred::Or(left, right)) => {
                     push_wrapper_clone_binary(
                         &mut tasks,
-                        PredCloneTask::MapBinary(BoolKind::Or),
+                        PredCloneReduce::MapBinary(BoolKind::Or),
                         PredCloneTask::Map,
                         left,
                         right,
                     );
                 },
                 PredCloneTask::Map(MapPred::Not(body)) => {
-                    tasks.push(PredCloneTask::MapNot);
+                    tasks.push(PredCloneTask::Reduce(PredCloneReduce::MapNot));
                     tasks.push(PredCloneTask::Map(body));
                 },
 
-                build => reduce_pred_clone(build, &mut values),
+                PredCloneTask::Reduce(build) => reduce_pred_clone(build, &mut values),
             }
         }
-        debug_assert_eq!(values.len(), 1);
-        values
-            .pop()
-            .expect("AnyPred clone produced no value")
-            .any("AnyPred clone root")
+        debug_assert_eq!(values.any.len(), 1);
+        debug_assert!(values.product.is_empty());
+        debug_assert!(values.sum.is_empty());
+        debug_assert!(values.regex.is_empty());
+        debug_assert!(values.bag.is_empty());
+        debug_assert!(values.tree.is_empty());
+        debug_assert!(values.map.is_empty());
+        values.any.pop().expect("AnyPred clone produced no value")
     }
 }
 
 fn push_pred_clone_binary<'pred>(
     tasks: &mut Vec<PredCloneTask<'pred>>,
-    build: PredCloneTask<'pred>,
+    build: PredCloneReduce,
     left: &'pred AnyPred,
     right: &'pred AnyPred,
 ) {
-    tasks.push(build);
+    tasks.push(PredCloneTask::Reduce(build));
     tasks.push(PredCloneTask::Any(right));
     tasks.push(PredCloneTask::Any(left));
 }
 
 fn push_wrapper_clone_binary<'pred, P>(
     tasks: &mut Vec<PredCloneTask<'pred>>,
-    build: PredCloneTask<'pred>,
+    build: PredCloneReduce,
     visit: fn(&'pred P) -> PredCloneTask<'pred>,
     left: &'pred P,
     right: &'pred P,
 ) {
-    tasks.push(build);
+    tasks.push(PredCloneTask::Reduce(build));
     tasks.push(visit(right));
     tasks.push(visit(left));
 }
@@ -845,235 +810,188 @@ fn push_regex_clone_binary<'pred>(
     left: &'pred RegexPred<AnyPred>,
     right: &'pred RegexPred<AnyPred>,
 ) {
-    tasks.push(PredCloneTask::RegexBinary(kind));
+    tasks.push(PredCloneTask::Reduce(PredCloneReduce::RegexBinary(kind)));
     tasks.push(PredCloneTask::Regex(right));
     tasks.push(PredCloneTask::Regex(left));
 }
 
-fn reduce_pred_clone(task: PredCloneTask<'_>, values: &mut Vec<PredValue>) {
-    let pop = |values: &mut Vec<PredValue>, context| {
-        values
-            .pop()
-            .unwrap_or_else(|| panic!("{context}: clone PDA value stack underflow"))
-    };
+fn reduce_pred_clone(task: PredCloneReduce, values: &mut PredCloneValues) {
     match task {
-        PredCloneTask::AnyNot => {
-            let body = pop(values, "AnyPred Not").any("AnyPred Not");
-            values.push(PredValue::Any(AnyPred::Not(Box::new(body))));
+        PredCloneReduce::AnyNot => {
+            let body = pop_clone_value(&mut values.any, "AnyPred clone lost Not body");
+            values.any.push(AnyPred::Not(Box::new(body)));
         },
-        PredCloneTask::AnyBinary(kind) => {
-            let right = pop(values, "AnyPred binary RHS").any("AnyPred binary RHS");
-            let left = pop(values, "AnyPred binary LHS").any("AnyPred binary LHS");
-            values.push(PredValue::Any(match kind {
+        PredCloneReduce::AnyBinary(kind) => {
+            let right = pop_clone_value(&mut values.any, "AnyPred clone lost binary RHS");
+            let left = pop_clone_value(&mut values.any, "AnyPred clone lost binary LHS");
+            values.any.push(match kind {
                 BoolKind::And => AnyPred::And(Box::new(left), Box::new(right)),
                 BoolKind::Or => AnyPred::Or(Box::new(left), Box::new(right)),
-            }));
+            });
         },
-        PredCloneTask::WrapProduct => {
-            let pred = pop(values, "AnyPred Product").product("AnyPred Product");
-            values.push(PredValue::Any(AnyPred::Product(Box::new(pred))));
+        PredCloneReduce::WrapProduct => {
+            let pred = pop_clone_value(&mut values.product, "AnyPred clone lost Product body");
+            values.any.push(AnyPred::Product(Box::new(pred)));
         },
-        PredCloneTask::WrapSum => {
-            let pred = pop(values, "AnyPred Sum").sum("AnyPred Sum");
-            values.push(PredValue::Any(AnyPred::Sum(Box::new(pred))));
+        PredCloneReduce::WrapSum => {
+            let pred = pop_clone_value(&mut values.sum, "AnyPred clone lost Sum body");
+            values.any.push(AnyPred::Sum(Box::new(pred)));
         },
-        PredCloneTask::WrapRegex => {
-            let pred = pop(values, "AnyPred List").regex("AnyPred List");
-            values.push(PredValue::Any(AnyPred::List(Box::new(pred))));
+        PredCloneReduce::WrapRegex => {
+            let pred = pop_clone_value(&mut values.regex, "AnyPred clone lost List body");
+            values.any.push(AnyPred::List(Box::new(pred)));
         },
-        PredCloneTask::WrapBag => {
-            let pred = pop(values, "AnyPred Bag").bag("AnyPred Bag");
-            values.push(PredValue::Any(AnyPred::Bag(Box::new(pred))));
+        PredCloneReduce::WrapBag => {
+            let pred = pop_clone_value(&mut values.bag, "AnyPred clone lost Bag body");
+            values.any.push(AnyPred::Bag(Box::new(pred)));
         },
-        PredCloneTask::WrapTree => {
-            let pred = pop(values, "AnyPred Tree").tree("AnyPred Tree");
-            values.push(PredValue::Any(AnyPred::Tree(Box::new(pred))));
+        PredCloneReduce::WrapTree => {
+            let pred = pop_clone_value(&mut values.tree, "AnyPred clone lost Tree body");
+            values.any.push(AnyPred::Tree(Box::new(pred)));
         },
-        PredCloneTask::WrapMap => {
-            let pred = pop(values, "AnyPred Map").map("AnyPred Map");
-            values.push(PredValue::Any(AnyPred::Map(Box::new(pred))));
+        PredCloneReduce::WrapMap => {
+            let pred = pop_clone_value(&mut values.map, "AnyPred clone lost Map body");
+            values.any.push(AnyPred::Map(Box::new(pred)));
         },
-        PredCloneTask::ProductField(index) => {
-            let pred = pop(values, "product Field").any("product Field");
-            values.push(PredValue::Product(NaryProductPred::Field(index, pred)));
+        PredCloneReduce::ProductField(index) => {
+            let pred = pop_clone_value(&mut values.any, "product clone lost Field predicate");
+            values.product.push(NaryProductPred::Field(index, pred));
         },
-        PredCloneTask::ProductNot => reduce_wrapper_unary(
-            values,
-            "product Not",
-            |body| NaryProductPred::Not(Box::new(body)),
-            PredValue::product,
-            PredValue::Product,
-        ),
-        PredCloneTask::ProductBinary(kind) => reduce_wrapper_binary(
-            values,
+        PredCloneReduce::ProductNot => {
+            reduce_wrapper_unary(&mut values.product, "product clone lost Not body", |body| {
+                NaryProductPred::Not(Box::new(body))
+            })
+        },
+        PredCloneReduce::ProductBinary(kind) => reduce_wrapper_binary(
+            &mut values.product,
             kind,
-            "product binary",
+            "product clone lost binary operand",
             |l, r| NaryProductPred::And(Box::new(l), Box::new(r)),
             |l, r| NaryProductPred::Or(Box::new(l), Box::new(r)),
-            PredValue::product,
-            PredValue::Product,
         ),
-        PredCloneTask::SumInVariant(index) => {
-            let pred = pop(values, "sum InVariant").any("sum InVariant");
-            values.push(PredValue::Sum(SumPred::InVariant(index, pred)));
+        PredCloneReduce::SumInVariant(index) => {
+            let pred = pop_clone_value(&mut values.any, "sum clone lost InVariant predicate");
+            values.sum.push(SumPred::InVariant(index, pred));
         },
-        PredCloneTask::SumNot => reduce_wrapper_unary(
-            values,
-            "sum Not",
-            |body| SumPred::Not(Box::new(body)),
-            PredValue::sum,
-            PredValue::Sum,
-        ),
-        PredCloneTask::SumBinary(kind) => reduce_wrapper_binary(
-            values,
+        PredCloneReduce::SumNot => {
+            reduce_wrapper_unary(&mut values.sum, "sum clone lost Not body", |body| {
+                SumPred::Not(Box::new(body))
+            })
+        },
+        PredCloneReduce::SumBinary(kind) => reduce_wrapper_binary(
+            &mut values.sum,
             kind,
-            "sum binary",
+            "sum clone lost binary operand",
             |l, r| SumPred::And(Box::new(l), Box::new(r)),
             |l, r| SumPred::Or(Box::new(l), Box::new(r)),
-            PredValue::sum,
-            PredValue::Sum,
         ),
-        PredCloneTask::RegexElem => {
-            let pred = pop(values, "regex Elem").any("regex Elem");
-            values.push(PredValue::Regex(RegexPred::Elem(pred)));
+        PredCloneReduce::RegexElem => {
+            let pred = pop_clone_value(&mut values.any, "regex clone lost Elem predicate");
+            values.regex.push(RegexPred::Elem(pred));
         },
-        PredCloneTask::RegexUnary(kind) => {
-            let body = pop(values, "regex unary").regex("regex unary");
-            values.push(PredValue::Regex(match kind {
+        PredCloneReduce::RegexUnary(kind) => {
+            let body = pop_clone_value(&mut values.regex, "regex clone lost unary body");
+            values.regex.push(match kind {
                 RegexUnaryKind::Star => RegexPred::Star(Box::new(body)),
                 RegexUnaryKind::Compl => RegexPred::Compl(Box::new(body)),
-            }));
+            });
         },
-        PredCloneTask::RegexBinary(kind) => {
-            let right = pop(values, "regex binary RHS").regex("regex binary RHS");
-            let left = pop(values, "regex binary LHS").regex("regex binary LHS");
-            values.push(PredValue::Regex(match kind {
+        PredCloneReduce::RegexBinary(kind) => {
+            let right = pop_clone_value(&mut values.regex, "regex clone lost binary RHS");
+            let left = pop_clone_value(&mut values.regex, "regex clone lost binary LHS");
+            values.regex.push(match kind {
                 RegexBinaryKind::Concat => RegexPred::Concat(Box::new(left), Box::new(right)),
                 RegexBinaryKind::Alt => RegexPred::Alt(Box::new(left), Box::new(right)),
                 RegexBinaryKind::Inter => RegexPred::Inter(Box::new(left), Box::new(right)),
-            }));
+            });
         },
-        PredCloneTask::BagCount { lo, hi } => {
-            let class = pop(values, "bag Count").any("bag Count");
-            values.push(PredValue::Bag(BagPred::Count { class, lo, hi }));
+        PredCloneReduce::BagCount { lo, hi } => {
+            let class = pop_clone_value(&mut values.any, "bag clone lost Count class");
+            values.bag.push(BagPred::Count { class, lo, hi });
         },
-        PredCloneTask::BagNot => reduce_wrapper_unary(
-            values,
-            "bag Not",
-            |body| BagPred::Not(Box::new(body)),
-            PredValue::bag,
-            PredValue::Bag,
-        ),
-        PredCloneTask::BagBinary(kind) => reduce_wrapper_binary(
-            values,
+        PredCloneReduce::BagNot => {
+            reduce_wrapper_unary(&mut values.bag, "bag clone lost Not body", |body| {
+                BagPred::Not(Box::new(body))
+            })
+        },
+        PredCloneReduce::BagBinary(kind) => reduce_wrapper_binary(
+            &mut values.bag,
             kind,
-            "bag binary",
+            "bag clone lost binary operand",
             |l, r| BagPred::And(Box::new(l), Box::new(r)),
             |l, r| BagPred::Or(Box::new(l), Box::new(r)),
-            PredValue::bag,
-            PredValue::Bag,
         ),
-        PredCloneTask::TreeNode { constructor, has_payload, child_count } => {
+        PredCloneReduce::TreeNode { constructor, has_payload, child_count } => {
             let start = values
+                .tree
                 .len()
                 .checked_sub(child_count)
                 .expect("tree Node lost children");
-            let children = values
-                .drain(start..)
-                .map(|value| value.tree("tree Node child"))
-                .collect();
-            let payload_guard =
-                has_payload.then(|| pop(values, "tree Node payload").any("tree Node payload"));
-            values.push(PredValue::Tree(TreePred::Node { constructor, payload_guard, children }));
+            let children = values.tree.drain(start..).collect();
+            let payload_guard = has_payload
+                .then(|| pop_clone_value(&mut values.any, "tree clone lost Node payload"));
+            values
+                .tree
+                .push(TreePred::Node { constructor, payload_guard, children });
         },
-        PredCloneTask::TreeNot => reduce_wrapper_unary(
-            values,
-            "tree Not",
-            |body| TreePred::Not(Box::new(body)),
-            PredValue::tree,
-            PredValue::Tree,
-        ),
-        PredCloneTask::TreeBinary(kind) => reduce_wrapper_binary(
-            values,
+        PredCloneReduce::TreeNot => {
+            reduce_wrapper_unary(&mut values.tree, "tree clone lost Not body", |body| {
+                TreePred::Not(Box::new(body))
+            })
+        },
+        PredCloneReduce::TreeBinary(kind) => reduce_wrapper_binary(
+            &mut values.tree,
             kind,
-            "tree binary",
+            "tree clone lost binary operand",
             |l, r| TreePred::And(Box::new(l), Box::new(r)),
             |l, r| TreePred::Or(Box::new(l), Box::new(r)),
-            PredValue::tree,
-            PredValue::Tree,
         ),
-        PredCloneTask::MapCount { lo, hi } => {
-            let val_class = pop(values, "map CountEntries value").any("map CountEntries value");
-            let key_class = pop(values, "map CountEntries key").any("map CountEntries key");
-            values.push(PredValue::Map(MapPred::CountEntries { key_class, val_class, lo, hi }));
+        PredCloneReduce::MapCount { lo, hi } => {
+            let val_class =
+                pop_clone_value(&mut values.any, "map clone lost CountEntries value class");
+            let key_class =
+                pop_clone_value(&mut values.any, "map clone lost CountEntries key class");
+            values
+                .map
+                .push(MapPred::CountEntries { key_class, val_class, lo, hi });
         },
-        PredCloneTask::MapNot => reduce_wrapper_unary(
-            values,
-            "map Not",
-            |body| MapPred::Not(Box::new(body)),
-            PredValue::map,
-            PredValue::Map,
-        ),
-        PredCloneTask::MapBinary(kind) => reduce_wrapper_binary(
-            values,
+        PredCloneReduce::MapNot => {
+            reduce_wrapper_unary(&mut values.map, "map clone lost Not body", |body| {
+                MapPred::Not(Box::new(body))
+            })
+        },
+        PredCloneReduce::MapBinary(kind) => reduce_wrapper_binary(
+            &mut values.map,
             kind,
-            "map binary",
+            "map clone lost binary operand",
             |l, r| MapPred::And(Box::new(l), Box::new(r)),
             |l, r| MapPred::Or(Box::new(l), Box::new(r)),
-            PredValue::map,
-            PredValue::Map,
         ),
-        PredCloneTask::Any(_)
-        | PredCloneTask::Product(_)
-        | PredCloneTask::Sum(_)
-        | PredCloneTask::Regex(_)
-        | PredCloneTask::Bag(_)
-        | PredCloneTask::Tree(_)
-        | PredCloneTask::Map(_) => unreachable!("visits are reduced in the main clone loop"),
     }
 }
 
-fn reduce_wrapper_unary<T>(
-    values: &mut Vec<PredValue>,
-    context: &str,
-    build: impl FnOnce(T) -> T,
-    extract: fn(PredValue, &str) -> T,
-    wrap: fn(T) -> PredValue,
-) {
-    let body = extract(
-        values
-            .pop()
-            .unwrap_or_else(|| panic!("{context}: missing body")),
-        context,
-    );
-    values.push(wrap(build(body)));
+fn pop_clone_value<T>(values: &mut Vec<T>, context: &str) -> T {
+    values.pop().expect(context)
+}
+
+fn reduce_wrapper_unary<T>(values: &mut Vec<T>, context: &str, build: impl FnOnce(T) -> T) {
+    let body = pop_clone_value(values, context);
+    values.push(build(body));
 }
 
 fn reduce_wrapper_binary<T>(
-    values: &mut Vec<PredValue>,
+    values: &mut Vec<T>,
     kind: BoolKind,
     context: &str,
     and: impl FnOnce(T, T) -> T,
     or: impl FnOnce(T, T) -> T,
-    extract: fn(PredValue, &str) -> T,
-    wrap: fn(T) -> PredValue,
 ) {
-    let right = extract(
-        values
-            .pop()
-            .unwrap_or_else(|| panic!("{context}: missing RHS")),
-        context,
-    );
-    let left = extract(
-        values
-            .pop()
-            .unwrap_or_else(|| panic!("{context}: missing LHS")),
-        context,
-    );
-    values.push(wrap(match kind {
+    let right = pop_clone_value(values, context);
+    let left = pop_clone_value(values, context);
+    values.push(match kind {
         BoolKind::And => and(left, right),
         BoolKind::Or => or(left, right),
-    }));
+    });
 }
 
 enum PredPair<'pred> {
@@ -1726,37 +1644,48 @@ fn take_any_box(child: &mut Box<AnyPred>) -> AnyPred {
     *std::mem::replace(child, Box::new(AnyPred::True))
 }
 
-fn take_any_pred_children(pred: &mut AnyPred, work: &mut Vec<PredValue>) {
+#[derive(Default)]
+struct PredDropWork {
+    any: Vec<AnyPred>,
+    product: Vec<NaryProductPred<AnyPred>>,
+    sum: Vec<SumPred<AnyPred>>,
+    regex: Vec<RegexPred<AnyPred>>,
+    bag: Vec<BagPred<AnyPred>>,
+    tree: Vec<TreePred<AnyPred>>,
+    map: Vec<MapPred<AnyPred, AnyPred>>,
+}
+
+fn take_any_pred_children(pred: &mut AnyPred, work: &mut PredDropWork) {
     match pred {
         AnyPred::Product(wrapper) => {
             let wrapper = std::mem::replace(wrapper, Box::new(NaryProductPred::True));
-            work.push(PredValue::Product(*wrapper));
+            work.product.push(*wrapper);
         },
         AnyPred::Sum(wrapper) => {
             let wrapper = std::mem::replace(wrapper, Box::new(SumPred::True));
-            work.push(PredValue::Sum(*wrapper));
+            work.sum.push(*wrapper);
         },
         AnyPred::List(wrapper) => {
             let wrapper = std::mem::replace(wrapper, Box::new(RegexPred::Empty));
-            work.push(PredValue::Regex(*wrapper));
+            work.regex.push(*wrapper);
         },
         AnyPred::Bag(wrapper) => {
             let wrapper = std::mem::replace(wrapper, Box::new(BagPred::True));
-            work.push(PredValue::Bag(*wrapper));
+            work.bag.push(*wrapper);
         },
         AnyPred::Tree(wrapper) => {
             let wrapper = std::mem::replace(wrapper, Box::new(TreePred::True));
-            work.push(PredValue::Tree(*wrapper));
+            work.tree.push(*wrapper);
         },
         AnyPred::Map(wrapper) => {
             let wrapper = std::mem::replace(wrapper, Box::new(MapPred::True));
-            work.push(PredValue::Map(*wrapper));
+            work.map.push(*wrapper);
         },
         AnyPred::And(left, right) | AnyPred::Or(left, right) => {
-            work.push(PredValue::Any(take_any_box(left)));
-            work.push(PredValue::Any(take_any_box(right)));
+            work.any.push(take_any_box(left));
+            work.any.push(take_any_box(right));
         },
-        AnyPred::Not(body) => work.push(PredValue::Any(take_any_box(body))),
+        AnyPred::Not(body) => work.any.push(take_any_box(body)),
         AnyPred::True
         | AnyPred::False
         | AnyPred::Int(_)
@@ -1770,109 +1699,147 @@ fn take_any_pred_children(pred: &mut AnyPred, work: &mut Vec<PredValue>) {
     }
 }
 
-fn take_pred_value_children(value: &mut PredValue, work: &mut Vec<PredValue>) {
-    match value {
-        PredValue::Any(pred) => take_any_pred_children(pred, work),
-        PredValue::Product(pred) => match pred {
-            NaryProductPred::Field(_, inner) => {
-                work.push(PredValue::Any(std::mem::replace(inner, AnyPred::True)));
-            },
-            NaryProductPred::And(left, right) | NaryProductPred::Or(left, right) => {
-                work.push(PredValue::Product(*std::mem::replace(
-                    left,
-                    Box::new(NaryProductPred::True),
-                )));
-                work.push(PredValue::Product(*std::mem::replace(
-                    right,
-                    Box::new(NaryProductPred::True),
-                )));
-            },
-            NaryProductPred::Not(body) => work.push(PredValue::Product(*std::mem::replace(
-                body,
-                Box::new(NaryProductPred::True),
-            ))),
-            NaryProductPred::True | NaryProductPred::False => {},
+fn take_product_pred_children(pred: &mut NaryProductPred<AnyPred>, work: &mut PredDropWork) {
+    match pred {
+        NaryProductPred::Field(_, inner) => {
+            work.any.push(std::mem::replace(inner, AnyPred::True));
         },
-        PredValue::Sum(pred) => match pred {
-            SumPred::InVariant(_, inner) => {
-                work.push(PredValue::Any(std::mem::replace(inner, AnyPred::True)));
-            },
-            SumPred::And(left, right) | SumPred::Or(left, right) => {
-                work.push(PredValue::Sum(*std::mem::replace(left, Box::new(SumPred::True))));
-                work.push(PredValue::Sum(*std::mem::replace(right, Box::new(SumPred::True))));
-            },
-            SumPred::Not(body) => {
-                work.push(PredValue::Sum(*std::mem::replace(body, Box::new(SumPred::True))));
-            },
-            SumPred::True | SumPred::False | SumPred::TagIs(_) => {},
+        NaryProductPred::And(left, right) | NaryProductPred::Or(left, right) => {
+            work.product
+                .push(*std::mem::replace(left, Box::new(NaryProductPred::True)));
+            work.product
+                .push(*std::mem::replace(right, Box::new(NaryProductPred::True)));
         },
-        PredValue::Regex(pred) => match pred {
-            RegexPred::Elem(inner) => {
-                work.push(PredValue::Any(std::mem::replace(inner, AnyPred::True)));
-            },
-            RegexPred::Concat(left, right)
-            | RegexPred::Alt(left, right)
-            | RegexPred::Inter(left, right) => {
-                work.push(PredValue::Regex(*std::mem::replace(left, Box::new(RegexPred::Empty))));
-                work.push(PredValue::Regex(*std::mem::replace(right, Box::new(RegexPred::Empty))));
-            },
-            RegexPred::Star(body) | RegexPred::Compl(body) => {
-                work.push(PredValue::Regex(*std::mem::replace(body, Box::new(RegexPred::Empty))));
-            },
-            RegexPred::Empty | RegexPred::Epsilon | RegexPred::Length(_, _) => {},
+        NaryProductPred::Not(body) => work
+            .product
+            .push(*std::mem::replace(body, Box::new(NaryProductPred::True))),
+        NaryProductPred::True | NaryProductPred::False => {},
+    }
+}
+
+fn take_sum_pred_children(pred: &mut SumPred<AnyPred>, work: &mut PredDropWork) {
+    match pred {
+        SumPred::InVariant(_, inner) => {
+            work.any.push(std::mem::replace(inner, AnyPred::True));
         },
-        PredValue::Bag(pred) => match pred {
-            BagPred::Count { class, .. } => {
-                work.push(PredValue::Any(std::mem::replace(class, AnyPred::True)));
-            },
-            BagPred::And(left, right) | BagPred::Or(left, right) => {
-                work.push(PredValue::Bag(*std::mem::replace(left, Box::new(BagPred::True))));
-                work.push(PredValue::Bag(*std::mem::replace(right, Box::new(BagPred::True))));
-            },
-            BagPred::Not(body) => {
-                work.push(PredValue::Bag(*std::mem::replace(body, Box::new(BagPred::True))));
-            },
-            BagPred::True | BagPred::False => {},
+        SumPred::And(left, right) | SumPred::Or(left, right) => {
+            work.sum
+                .push(*std::mem::replace(left, Box::new(SumPred::True)));
+            work.sum
+                .push(*std::mem::replace(right, Box::new(SumPred::True)));
         },
-        PredValue::Tree(pred) => match pred {
-            TreePred::Node { payload_guard, children, .. } => {
-                if let Some(payload) = payload_guard.take() {
-                    work.push(PredValue::Any(payload));
-                }
-                work.extend(std::mem::take(children).into_iter().map(PredValue::Tree));
-            },
-            TreePred::And(left, right) | TreePred::Or(left, right) => {
-                work.push(PredValue::Tree(*std::mem::replace(left, Box::new(TreePred::True))));
-                work.push(PredValue::Tree(*std::mem::replace(right, Box::new(TreePred::True))));
-            },
-            TreePred::Not(body) => {
-                work.push(PredValue::Tree(*std::mem::replace(body, Box::new(TreePred::True))));
-            },
-            TreePred::True | TreePred::False | TreePred::Wild => {},
+        SumPred::Not(body) => {
+            work.sum
+                .push(*std::mem::replace(body, Box::new(SumPred::True)));
         },
-        PredValue::Map(pred) => match pred {
-            MapPred::CountEntries { key_class, val_class, .. } => {
-                work.push(PredValue::Any(std::mem::replace(key_class, AnyPred::True)));
-                work.push(PredValue::Any(std::mem::replace(val_class, AnyPred::True)));
-            },
-            MapPred::And(left, right) | MapPred::Or(left, right) => {
-                work.push(PredValue::Map(*std::mem::replace(left, Box::new(MapPred::True))));
-                work.push(PredValue::Map(*std::mem::replace(right, Box::new(MapPred::True))));
-            },
-            MapPred::Not(body) => {
-                work.push(PredValue::Map(*std::mem::replace(body, Box::new(MapPred::True))));
-            },
-            MapPred::True | MapPred::False => {},
+        SumPred::True | SumPred::False | SumPred::TagIs(_) => {},
+    }
+}
+
+fn take_regex_pred_children(pred: &mut RegexPred<AnyPred>, work: &mut PredDropWork) {
+    match pred {
+        RegexPred::Elem(inner) => {
+            work.any.push(std::mem::replace(inner, AnyPred::True));
         },
+        RegexPred::Concat(left, right)
+        | RegexPred::Alt(left, right)
+        | RegexPred::Inter(left, right) => {
+            work.regex
+                .push(*std::mem::replace(left, Box::new(RegexPred::Empty)));
+            work.regex
+                .push(*std::mem::replace(right, Box::new(RegexPred::Empty)));
+        },
+        RegexPred::Star(body) | RegexPred::Compl(body) => {
+            work.regex
+                .push(*std::mem::replace(body, Box::new(RegexPred::Empty)));
+        },
+        RegexPred::Empty | RegexPred::Epsilon | RegexPred::Length(_, _) => {},
+    }
+}
+
+fn take_bag_pred_children(pred: &mut BagPred<AnyPred>, work: &mut PredDropWork) {
+    match pred {
+        BagPred::Count { class, .. } => {
+            work.any.push(std::mem::replace(class, AnyPred::True));
+        },
+        BagPred::And(left, right) | BagPred::Or(left, right) => {
+            work.bag
+                .push(*std::mem::replace(left, Box::new(BagPred::True)));
+            work.bag
+                .push(*std::mem::replace(right, Box::new(BagPred::True)));
+        },
+        BagPred::Not(body) => {
+            work.bag
+                .push(*std::mem::replace(body, Box::new(BagPred::True)));
+        },
+        BagPred::True | BagPred::False => {},
+    }
+}
+
+fn take_tree_pred_children(pred: &mut TreePred<AnyPred>, work: &mut PredDropWork) {
+    match pred {
+        TreePred::Node { payload_guard, children, .. } => {
+            if let Some(payload) = payload_guard.take() {
+                work.any.push(payload);
+            }
+            work.tree.append(children);
+        },
+        TreePred::And(left, right) | TreePred::Or(left, right) => {
+            work.tree
+                .push(*std::mem::replace(left, Box::new(TreePred::True)));
+            work.tree
+                .push(*std::mem::replace(right, Box::new(TreePred::True)));
+        },
+        TreePred::Not(body) => {
+            work.tree
+                .push(*std::mem::replace(body, Box::new(TreePred::True)));
+        },
+        TreePred::True | TreePred::False | TreePred::Wild => {},
+    }
+}
+
+fn take_map_pred_children(pred: &mut MapPred<AnyPred, AnyPred>, work: &mut PredDropWork) {
+    match pred {
+        MapPred::CountEntries { key_class, val_class, .. } => {
+            work.any.push(std::mem::replace(key_class, AnyPred::True));
+            work.any.push(std::mem::replace(val_class, AnyPred::True));
+        },
+        MapPred::And(left, right) | MapPred::Or(left, right) => {
+            work.map
+                .push(*std::mem::replace(left, Box::new(MapPred::True)));
+            work.map
+                .push(*std::mem::replace(right, Box::new(MapPred::True)));
+        },
+        MapPred::Not(body) => {
+            work.map
+                .push(*std::mem::replace(body, Box::new(MapPred::True)));
+        },
+        MapPred::True | MapPred::False => {},
     }
 }
 
 impl Drop for AnyPred {
     fn drop(&mut self) {
-        let mut work = Vec::new();
+        let mut work = PredDropWork::default();
         take_any_pred_children(self, &mut work);
-        while let Some(mut value) = work.pop() {
-            take_pred_value_children(&mut value, &mut work);
+        loop {
+            if let Some(mut pred) = work.any.pop() {
+                take_any_pred_children(&mut pred, &mut work);
+            } else if let Some(mut pred) = work.product.pop() {
+                take_product_pred_children(&mut pred, &mut work);
+            } else if let Some(mut pred) = work.sum.pop() {
+                take_sum_pred_children(&mut pred, &mut work);
+            } else if let Some(mut pred) = work.regex.pop() {
+                take_regex_pred_children(&mut pred, &mut work);
+            } else if let Some(mut pred) = work.bag.pop() {
+                take_bag_pred_children(&mut pred, &mut work);
+            } else if let Some(mut pred) = work.tree.pop() {
+                take_tree_pred_children(&mut pred, &mut work);
+            } else if let Some(mut pred) = work.map.pop() {
+                take_map_pred_children(&mut pred, &mut work);
+            } else {
+                break;
+            }
         }
     }
 }
