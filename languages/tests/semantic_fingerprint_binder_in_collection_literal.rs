@@ -358,7 +358,7 @@ fn the_fingerprint_collision_census_is_exactly_the_declared_one() {
     // 2026-07-30 with `Proc::parse`:
     //
     //   {}        => PPar(HashBag { counts: {}, total_count: 0 })
-    //   {||}      => CastPathmap(PathmapLit(PathMapLit(HashMapLit({}))))
+    //   {||}      => CastPathmap(PathmapLit(Empty))
     //   []        => CastList(ListLit([]))
     //   Set()     => CastSet(SetLit(HashSetLit({})))
     //

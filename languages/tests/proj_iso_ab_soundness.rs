@@ -1136,7 +1136,7 @@ const REP_ELECTION_PINS: &[(&str, &[&str])] = &[
         &["POutputShort(POutputNil(CastInt(NumLit(0))), CastInt(NumLit(0)))"],
     ),
     // ── ★ WITNESS via the PREFIX LEX FORK: open_len 2 vs 3 ──
-    ("@Nil!({||})", &["POutputNil(CastPathmap(PathmapLit(PathMapLit(HashMapLit({})))))"]),
+    ("@Nil!({||})", &["POutputNil(CastPathmap(PathmapLit(Empty)))"]),
     // ── CONTROL: 9 folds, 0 divergences — must be identical under both rules ──
     (
         "@(a)!(0)",

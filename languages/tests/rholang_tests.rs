@@ -4719,7 +4719,8 @@ mod par_reading_count_pins {
     /// This row used to pin `CastPathmap(PathmapLit(PathMapLit(HashMapLit({}))))`
     /// — an EMPTY pathmap for a two-entry literal — under the note "PINNED AS
     /// MEASURED, NOT AS ENDORSED … pinning it here means a change to it must be
-    /// deliberate." This is that deliberate change.
+    /// deliberate." This is that deliberate change. A genuinely empty literal
+    /// now has the distinct unresolved mode `CastPathmap(PathmapLit(Empty))`.
     ///
     /// `@a` and `@b` are `Name`s; the pathmap slot's declared element category
     /// is `Proc` (upstream's `key_value_pair` is
