@@ -51,7 +51,9 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::Range;
 
+use crate::parenthesized_terms::{ParenthesizedTerms, TermView};
 use crate::repair::{RepairAction, RepairKind, RepairSet, RepairSuggestion};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -440,12 +442,11 @@ pub fn verify_preservation(morphism: &TheoryMorphism, source_axioms: &[String]) 
 ///
 /// The translated term as a string representation, or an error if the
 /// term contains unmapped operations.
-/// Recursively translate a term from the source theory to the target theory.
-///
 /// Terms are represented as strings with the syntax `Op(arg1, arg2, ...)`
 /// for applications, or bare identifiers for constants/variables. The function
-/// parses the term structure, looks up each operation in the morphism's
-/// operation map, and recursively translates the arguments.
+/// indexes the term structure in one pass, looks up each operation in the
+/// morphism's operation map, and translates arguments with explicit postorder
+/// frames.
 ///
 /// Variables (lowercase identifiers not in the operation map) are passed
 /// through unchanged.
@@ -454,103 +455,138 @@ pub fn translate_term(morphism: &TheoryMorphism, term: &str) -> Result<String, S
     if term.is_empty() {
         return Err("Empty term".to_string());
     }
+    let terms =
+        ParenthesizedTerms::new(term).map_err(|()| format!("Malformed term: '{}'", term))?;
 
-    // Check if the term is of the form `Op(arg1, arg2, ...)`.
-    if let Some(paren_pos) = term.find('(') {
-        // Ensure the term ends with ')'.
-        if !term.ends_with(')') {
-            return Err(format!("Malformed term: '{}'", term));
-        }
+    enum Task {
+        Visit(Range<usize>),
+        Assemble { operation: String, child_count: usize },
+    }
 
-        let op_name = &term[..paren_pos];
-        let args_str = &term[paren_pos + 1..term.len() - 1];
+    let mut tasks = vec![Task::Visit(terms.root())];
+    let mut values = Vec::<usize>::new();
+    let mut rendered_nodes = Vec::<TranslatedTerm>::new();
+    let mut rendered_children = Vec::<usize>::new();
 
-        // Parse the comma-separated arguments, respecting nested parentheses.
-        let args = split_args(args_str);
-
-        // Recursively translate each argument.
-        let translated_args: Result<Vec<String>, String> = args
-            .iter()
-            .map(|arg| translate_term(morphism, arg))
-            .collect();
-        let translated_args = translated_args?;
-
-        // Look up the operation in the morphism's operation map.
-        match morphism.operation_map.get(op_name) {
-            Some(TranslationCase::Direct { target_op }) => {
-                if translated_args.is_empty() {
-                    Ok(format!("{}()", target_op))
-                } else {
-                    Ok(format!("{}({})", target_op, translated_args.join(", ")))
-                }
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(range) => match terms
+                .view(range)
+                .map_err(|()| format!("Malformed term: '{}'", term))?
+            {
+                TermView::Empty => return Err("Empty term".to_string()),
+                TermView::Atom(atom) => {
+                    let literal = match morphism.operation_map.get(atom) {
+                        Some(TranslationCase::Direct { target_op }) => target_op.clone(),
+                        Some(TranslationCase::Identity) => atom.to_string(),
+                        Some(TranslationCase::Compound { template, .. }) => template.clone(),
+                        None => atom.to_string(),
+                    };
+                    values.push(rendered_nodes.len());
+                    rendered_nodes.push(TranslatedTerm::Literal(literal));
+                },
+                TermView::Application { head, arguments } => {
+                    // Preserve the historical `split_args` behavior: a single
+                    // trailing empty argument after a comma is ignored, while a
+                    // leading or interior empty argument is an error when visited.
+                    let arguments = if arguments
+                        .last()
+                        .is_some_and(|argument| terms.is_empty(argument))
+                    {
+                        &arguments[..arguments.len() - 1]
+                    } else {
+                        arguments
+                    };
+                    tasks.push(Task::Assemble {
+                        operation: head.to_string(),
+                        child_count: arguments.len(),
+                    });
+                    tasks.extend(arguments.iter().rev().cloned().map(Task::Visit));
+                },
             },
-            Some(TranslationCase::Identity) => {
-                if translated_args.is_empty() {
-                    Ok(format!("{}()", op_name))
-                } else {
-                    Ok(format!("{}({})", op_name, translated_args.join(", ")))
-                }
-            },
-            Some(TranslationCase::Compound { template, .. }) => {
-                // Substitute $1, $2, etc. with the translated arguments.
-                let mut result = template.clone();
-                for (i, arg) in translated_args.iter().enumerate() {
-                    let marker = format!("${}", i + 1);
-                    result = result.replace(&marker, arg);
-                }
-                Ok(result)
-            },
-            None => {
-                // Not in the operation map — pass through as-is (e.g., a
-                // variable or an operation from the target theory).
-                if translated_args.is_empty() {
-                    Ok(format!("{}()", op_name))
-                } else {
-                    Ok(format!("{}({})", op_name, translated_args.join(", ")))
-                }
-            },
-        }
-    } else {
-        // Bare identifier (constant or variable).
-        // Check if it is a nullary operation in the map.
-        match morphism.operation_map.get(term) {
-            Some(TranslationCase::Direct { target_op }) => Ok(target_op.clone()),
-            Some(TranslationCase::Identity) => Ok(term.to_string()),
-            Some(TranslationCase::Compound { template, .. }) => Ok(template.clone()),
-            None => {
-                // Variable or unmapped constant — pass through unchanged.
-                Ok(term.to_string())
+            Task::Assemble { operation, child_count } => {
+                let children = values.split_off(values.len() - child_count);
+                let node = match morphism.operation_map.get(operation.as_str()) {
+                    Some(TranslationCase::Direct { target_op }) => TranslatedTerm::Application {
+                        operation: target_op.clone(),
+                        children: append_children(&mut rendered_children, children),
+                    },
+                    Some(TranslationCase::Identity) | None => TranslatedTerm::Application {
+                        operation,
+                        children: append_children(&mut rendered_children, children),
+                    },
+                    Some(TranslationCase::Compound { template, .. }) => {
+                        // Compound templates intentionally preserve the original
+                        // sequential replacement semantics, including markers
+                        // introduced by an earlier substituted argument.
+                        let mut result = template.clone();
+                        for (index, child) in children.into_iter().enumerate() {
+                            let marker = format!("${}", index + 1);
+                            let argument =
+                                render_translated_term(&rendered_nodes, &rendered_children, child);
+                            result = result.replace(&marker, &argument);
+                        }
+                        TranslatedTerm::Literal(result)
+                    },
+                };
+                values.push(rendered_nodes.len());
+                rendered_nodes.push(node);
             },
         }
     }
+
+    debug_assert_eq!(values.len(), 1);
+    let root = values
+        .pop()
+        .expect("term translation PDA produced no root value");
+    Ok(render_translated_term(&rendered_nodes, &rendered_children, root))
 }
 
-/// Split a comma-separated argument list, respecting nested parentheses.
-fn split_args(s: &str) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0;
+enum TranslatedTerm {
+    Literal(String),
+    Application {
+        operation: String,
+        children: Range<usize>,
+    },
+}
 
-    for (i, ch) in s.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.saturating_sub(1);
+fn append_children(children: &mut Vec<usize>, appended: Vec<usize>) -> Range<usize> {
+    let start = children.len();
+    children.extend(appended);
+    start..children.len()
+}
+
+fn render_translated_term(nodes: &[TranslatedTerm], children: &[usize], root: usize) -> String {
+    enum Task {
+        Node(usize),
+        Separator,
+        Close,
+    }
+
+    let mut output = String::new();
+    let mut tasks = vec![Task::Node(root)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Node(node) => match &nodes[node] {
+                TranslatedTerm::Literal(literal) => output.push_str(literal),
+                TranslatedTerm::Application { operation, children: child_range } => {
+                    output.push_str(operation);
+                    output.push('(');
+                    tasks.push(Task::Close);
+                    for (position, &child) in children[child_range.clone()].iter().enumerate().rev()
+                    {
+                        tasks.push(Task::Node(child));
+                        if position > 0 {
+                            tasks.push(Task::Separator);
+                        }
+                    }
+                },
             },
-            ',' if depth == 0 => {
-                args.push(s[start..i].trim().to_string());
-                start = i + 1;
-            },
-            _ => {},
+            Task::Separator => output.push_str(", "),
+            Task::Close => output.push(')'),
         }
     }
-
-    let last = s[start..].trim();
-    if !last.is_empty() {
-        args.push(last.to_string());
-    }
-
-    args
+    output
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

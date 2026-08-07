@@ -42,8 +42,10 @@
 //! finite-tree-automaton verdict.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use crate::any_algebra::{AnyAlgebra, AnyDomain, SortRegistry};
+use crate::parenthesized_terms::{ParenthesizedTerms, TermView};
 use crate::pipeline::CategoryInfo;
 use crate::sym_tree::{SymTerm, SymbolicTreeAutomaton, TreeAlgebra, TreeTrans};
 use crate::symbolic::BooleanAlgebra;
@@ -415,64 +417,74 @@ fn parse_term_pattern(s: &str, alpha: &RankedAlphabet) -> Option<TreePred<AnyPre
     if s.is_empty() {
         return None;
     }
-    match s.find('(') {
-        Some(open) => {
-            // Constructor application `c(args)`: the matching close must be the
-            // final char, and `args` is a comma-split at depth 0.
-            if !s.ends_with(')') {
-                return None;
-            }
-            let ctor_token = s[..open].trim();
-            if ctor_token.is_empty() || !is_ident(ctor_token) {
-                return None;
-            }
-            let inner = &s[open + 1..s.len() - 1];
-            let arg_strs = split_top_level_commas(inner)?;
-            // The applied constructor token MUST resolve to a grammar rule label
-            // (else the pattern cannot match any well-formed term — fall back to
-            // the heuristic). The resolved label is the alphabet constructor used
-            // by `category_automaton`, so the pattern automaton and the category
-            // automaton share constructor identity.
-            let ctor = resolve_constructor(ctor_token, alpha)?;
-            // Arity agreement guards against a malformed pattern (`cons(x)`).
-            if alpha.arities.get(&ctor).copied() != Some(arg_strs.len()) {
-                return None;
-            }
-            let mut children = Vec::with_capacity(arg_strs.len());
-            for a in &arg_strs {
-                children.push(parse_term_pattern(a, alpha)?);
-            }
-            Some(TreePred::Node {
-                constructor: ctor,
-                payload_guard: None,
-                children,
-            })
-        },
-        None => {
-            // Bare identifier: a nullary constructor of the grammar ⇒ Node;
-            // otherwise a pattern variable ⇒ Wild.
-            if !is_ident(s) {
-                return None;
-            }
-            match resolve_constructor(s, alpha) {
-                Some(ctor) if alpha.arities.get(&ctor).copied() == Some(0) => {
-                    Some(TreePred::Node {
-                        constructor: ctor,
-                        payload_guard: None,
-                        children: Vec::new(),
-                    })
-                },
-                // A non-nullary constructor used as a bare atom is malformed;
-                // anything that resolves to no constructor is a pattern variable.
-                Some(_) => None,
-                None => Some(TreePred::Wild),
-            }
-        },
+    let terms = ParenthesizedTerms::new(s).ok()?;
+    let constructors = ConstructorResolver::new(alpha);
+
+    enum Task {
+        Visit(Range<usize>),
+        Assemble { constructor: String, child_count: usize },
     }
+
+    let mut tasks = vec![Task::Visit(terms.root())];
+    let mut values: Vec<TreePred<AnyPred>> = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(range) => match terms.view(range).ok()? {
+                TermView::Empty => return None,
+                TermView::Atom(atom) => {
+                    if !is_ident(atom) {
+                        return None;
+                    }
+                    match constructors.resolve(atom) {
+                        Some((constructor, 0)) => values.push(TreePred::Node {
+                            constructor: constructor.to_string(),
+                            payload_guard: None,
+                            children: Vec::new(),
+                        }),
+                        // A non-nullary constructor used as a bare atom is malformed;
+                        // anything unresolved is a pattern variable.
+                        Some(_) => return None,
+                        None => values.push(TreePred::Wild),
+                    }
+                },
+                TermView::Application { head, arguments } => {
+                    let constructor_token = head.trim();
+                    if !is_ident(constructor_token)
+                        || arguments.iter().any(|argument| terms.is_empty(argument))
+                    {
+                        return None;
+                    }
+                    // Applied constructor tokens must resolve to the grammar's
+                    // actual rule label so the pattern and category automata use
+                    // identical constructor identities.
+                    let (constructor, arity) = constructors.resolve(constructor_token)?;
+                    if arity != arguments.len() {
+                        return None;
+                    }
+                    tasks.push(Task::Assemble {
+                        constructor: constructor.to_string(),
+                        child_count: arguments.len(),
+                    });
+                    tasks.extend(arguments.iter().rev().cloned().map(Task::Visit));
+                },
+            },
+            Task::Assemble { constructor, child_count } => {
+                let children = values.split_off(values.len() - child_count);
+                values.push(TreePred::Node {
+                    constructor,
+                    payload_guard: None,
+                    children,
+                });
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    values.pop()
 }
 
-/// Resolve a refinement-predicate constructor *token* to the grammar's actual
-/// rule-label constructor (an `alpha.arities` key).
+/// Resolve refinement-predicate constructor tokens to actual grammar rule labels.
 ///
 /// Refinement predicates are written in the user's surface syntax, where a
 /// constructor may be spelled differently from its grammar **rule label** — most
@@ -484,20 +496,30 @@ fn parse_term_pattern(s: &str, alpha: &RankedAlphabet) -> Option<TreePred<AnyPre
 ///   2. a unique case-insensitive match (`cons` → `Cons`).
 /// A token that matches no constructor (a pattern variable), or matches more than
 /// one case-insensitively (ambiguous), returns `None`.
-fn resolve_constructor(token: &str, alpha: &RankedAlphabet) -> Option<String> {
-    if alpha.arities.contains_key(token) {
-        return Some(token.to_string());
-    }
-    let mut found: Option<&String> = None;
-    for label in alpha.arities.keys() {
-        if label.eq_ignore_ascii_case(token) {
-            if found.is_some() {
-                return None; // ambiguous — refuse rather than guess
-            }
-            found = Some(label);
+struct ConstructorResolver<'a> {
+    alpha: &'a RankedAlphabet,
+    folded: HashMap<String, Option<&'a str>>,
+}
+
+impl<'a> ConstructorResolver<'a> {
+    fn new(alpha: &'a RankedAlphabet) -> Self {
+        let mut folded = HashMap::with_capacity(alpha.arities.len());
+        for label in alpha.arities.keys() {
+            folded
+                .entry(label.to_ascii_lowercase())
+                .and_modify(|resolved| *resolved = None)
+                .or_insert(Some(label.as_str()));
         }
+        Self { alpha, folded }
     }
-    found.cloned()
+
+    fn resolve(&self, token: &str) -> Option<(&'a str, usize)> {
+        if let Some((label, &arity)) = self.alpha.arities.get_key_value(token) {
+            return Some((label.as_str(), arity));
+        }
+        let label = (*self.folded.get(&token.to_ascii_lowercase())?)?;
+        Some((label, self.alpha.arities[label]))
+    }
 }
 
 /// Whether `s` is a single identifier token (no internal whitespace, parens, or
@@ -506,40 +528,6 @@ fn is_ident(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
-}
-
-/// Split `inner` (the contents between a constructor's parens) on the
-/// *top-level* commas (depth-0 w.r.t. nested parens), trimming each piece.
-/// Returns `None` on unbalanced parens.
-fn split_top_level_commas(inner: &str) -> Option<Vec<String>> {
-    let inner = inner.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-    let mut parts = Vec::new();
-    let mut depth: i32 = 0;
-    let mut start = 0usize;
-    for (i, c) in inner.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth < 0 {
-                    return None;
-                }
-            },
-            ',' if depth == 0 => {
-                parts.push(inner[start..i].trim().to_string());
-                start = i + 1;
-            },
-            _ => {},
-        }
-    }
-    if depth != 0 {
-        return None;
-    }
-    parts.push(inner[start..].trim().to_string());
-    Some(parts)
 }
 
 /// Build the [`SymbolicTreeAutomaton`] recognizing the terms of `base_cat` that

@@ -78,57 +78,77 @@ impl DecisionTreeBuilder {
     /// Convert an RD rule's syntax items to typed pattern elements.
     pub fn pattern_from_rd_rule(&self, rule: &RDRuleInfo) -> Vec<PatternElement> {
         let mut elements = Vec::with_capacity(rule.items.len());
-        for item in &rule.items {
-            match item {
-                RDSyntaxItem::Terminal(t) => {
-                    let variant = terminal_to_variant_name(t);
-                    if let Some(id) = self.encode_terminal(&variant) {
-                        elements.push(PatternElement::Terminal { variant, id });
+        enum Task<'a> {
+            Scan {
+                items: &'a [RDSyntaxItem],
+                next: usize,
+                halt_on_unsupported: bool,
+            },
+            OptionalEnd,
+        }
+
+        let mut tasks = vec![Task::Scan {
+            items: &rule.items,
+            next: 0,
+            halt_on_unsupported: true,
+        }];
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::OptionalEnd => elements.push(PatternElement::OptionalEnd),
+                Task::Scan { items, mut next, halt_on_unsupported } => {
+                    while let Some(item) = items.get(next) {
+                        next += 1;
+                        match item {
+                            RDSyntaxItem::Terminal(terminal) => {
+                                let variant = terminal_to_variant_name(terminal);
+                                if let Some(id) = self.encode_terminal(&variant) {
+                                    elements.push(PatternElement::Terminal { variant, id });
+                                }
+                            },
+                            RDSyntaxItem::NonTerminal { category, .. } => {
+                                if let Some(&category_id) = self.category_id_map.get(category) {
+                                    elements.push(PatternElement::NonTerminal {
+                                        category: category.clone(),
+                                        category_id,
+                                    });
+                                }
+                            },
+                            RDSyntaxItem::IdentCapture { param_name } => {
+                                elements.push(PatternElement::IdentCapture {
+                                    param_name: param_name.clone(),
+                                });
+                            },
+                            RDSyntaxItem::Binder { param_name, .. } => {
+                                elements.push(PatternElement::BinderCapture {
+                                    param_name: param_name.clone(),
+                                });
+                            },
+                            RDSyntaxItem::Optional { inner } => {
+                                elements.push(PatternElement::OptionalStart);
+                                tasks.push(Task::Scan { items, next, halt_on_unsupported });
+                                tasks.push(Task::OptionalEnd);
+                                // Historically each optional child was encoded through
+                                // its own one-item rule.  Thus an unsupported child skips
+                                // only itself rather than truncating its siblings.
+                                tasks.push(Task::Scan {
+                                    items: inner,
+                                    next: 0,
+                                    halt_on_unsupported: false,
+                                });
+                                break;
+                            },
+                            // L9-3 Option A: a custom-kind capture has no fixed
+                            // dispatch byte. Complex constructs likewise do not
+                            // participate in prefix dispatch.
+                            _ => {
+                                if halt_on_unsupported {
+                                    break;
+                                }
+                            },
+                        }
                     }
                 },
-                RDSyntaxItem::NonTerminal { category, .. } => {
-                    if let Some(&cat_id) = self.category_id_map.get(category) {
-                        elements.push(PatternElement::NonTerminal {
-                            category: category.clone(),
-                            category_id: cat_id,
-                        });
-                    }
-                },
-                RDSyntaxItem::IdentCapture { param_name } => {
-                    elements.push(PatternElement::IdentCapture { param_name: param_name.clone() });
-                },
-                RDSyntaxItem::Binder { param_name, .. } => {
-                    elements.push(PatternElement::BinderCapture { param_name: param_name.clone() });
-                },
-                RDSyntaxItem::Optional { inner } => {
-                    elements.push(PatternElement::OptionalStart);
-                    // Recursively encode inner items
-                    for inner_item in inner {
-                        let inner_rule = RDRuleInfo {
-                            label: String::new(),
-                            category: String::new(),
-                            items: vec![inner_item.clone()],
-                            has_binder: false,
-                            has_multi_binder: false,
-                            is_collection: false,
-                            collection_type: None,
-                            separator: None,
-                            prefix_bp: None,
-                            eval_mode: None,
-                        };
-                        let inner_elements = self.pattern_from_rd_rule(&inner_rule);
-                        elements.extend(inner_elements);
-                    }
-                    elements.push(PatternElement::OptionalEnd);
-                },
-                // L9-3 Option A: a custom-kind capture has no fixed dispatch byte,
-                // so it does not contribute a PatternElement — stop here (the
-                // walker's kind gate resolves it by trial). Explicit for intent.
-                RDSyntaxItem::TokenKindCapture { .. } => break,
-                // Collection, Sep, Map, Zip, SepList, BinderCollection
-                // are complex constructs — they don't participate in prefix dispatch.
-                // Rules with these items are handled by standalone functions.
-                _ => break,
             }
         }
         elements

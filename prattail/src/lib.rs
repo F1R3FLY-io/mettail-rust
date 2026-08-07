@@ -288,6 +288,8 @@ pub mod cra;
 /// Theory morphisms: cross-theory translation and proof transfer.
 pub mod morphism;
 
+mod parenthesized_terms;
+
 /// Layered proof output: verdicts, human-readable explanations, Rocq certificates.
 pub mod proof_output;
 

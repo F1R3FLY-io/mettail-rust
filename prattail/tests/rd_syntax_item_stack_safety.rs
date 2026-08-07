@@ -1,4 +1,9 @@
+use std::collections::{HashMap, HashSet};
+
+use mettail_prattail::decision_tree::{DecisionTreeBuilder, PatternElement};
 use mettail_prattail::grammar::ir::{CollectionKind, RDRuleInfo, RDSyntaxItem};
+use mettail_prattail::prediction::first_of_rd_suffix;
+use mettail_prattail::token_id::TokenIdMap;
 
 const DEPTH: usize = 20_000;
 const STACK_BYTES: usize = 256 * 1024;
@@ -161,4 +166,52 @@ fn rd_syntax_item_and_rule_lifecycle_are_stack_safe_at_depth_20k() {
         .expect("spawn depth-gate thread")
         .join()
         .expect("RD syntax-item stack-safety gate");
+}
+
+#[test]
+fn rd_pattern_and_first_set_walkers_are_stack_safe_at_depth_20k() {
+    std::thread::Builder::new()
+        .stack_size(STACK_BYTES)
+        .spawn(|| {
+            let mut token_ids = TokenIdMap::new();
+            token_ids.get_or_insert("KwLeaf");
+            let builder =
+                DecisionTreeBuilder::new(token_ids, HashMap::new(), Vec::new(), HashSet::new());
+            let rule = RDRuleInfo {
+                label: "DeepDispatch".into(),
+                category: "Proc".into(),
+                items: vec![nested_optional(DEPTH)],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
+            };
+
+            let pattern = builder.pattern_from_rd_rule(&rule);
+            assert_eq!(pattern.len(), DEPTH * 2 + 1);
+            assert_eq!(
+                pattern
+                    .iter()
+                    .filter(|element| matches!(element, PatternElement::OptionalStart))
+                    .count(),
+                DEPTH
+            );
+            assert_eq!(
+                pattern
+                    .iter()
+                    .filter(|element| matches!(element, PatternElement::OptionalEnd))
+                    .count(),
+                DEPTH
+            );
+
+            let (first, nullable) = first_of_rd_suffix(&rule.items, &HashMap::new());
+            assert!(first.contains("KwLeaf"));
+            assert!(nullable);
+        })
+        .expect("spawn RD walker depth-gate thread")
+        .join()
+        .expect("RD walker stack-safety gate");
 }

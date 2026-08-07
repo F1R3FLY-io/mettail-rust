@@ -656,92 +656,126 @@ pub fn first_of_rd_suffix(
 ) -> (FirstSet, bool) {
     use crate::grammar::ir::RDSyntaxItem;
 
-    let mut result = FirstSet::new();
-    let mut nullable = true; // empty suffix is nullable
+    #[derive(Clone, Copy)]
+    enum MergeMode {
+        AlwaysNullable,
+        ChildControlsNullability,
+    }
 
-    for item in items {
-        match item {
-            RDSyntaxItem::Terminal(t) => {
-                result.insert(&terminal_to_variant_name(t));
-                nullable = false;
-                break;
-            },
-            RDSyntaxItem::NonTerminal { category, .. } => {
-                if let Some(cat_first) = first_sets.get(category) {
-                    for token in &cat_first.tokens {
-                        result.insert(token);
-                    }
-                    if !cat_first.nullable {
-                        nullable = false;
-                        break;
-                    }
+    enum Task<'a> {
+        Scan {
+            items: &'a [RDSyntaxItem],
+            result: FirstSet,
+        },
+        Merge {
+            remaining: &'a [RDSyntaxItem],
+            result: FirstSet,
+            mode: MergeMode,
+        },
+    }
+
+    let mut tasks = vec![Task::Scan { items, result: FirstSet::new() }];
+    let mut values: Vec<(FirstSet, bool)> = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Merge { remaining, mut result, mode } => {
+                let (child_first, child_nullable) = values
+                    .pop()
+                    .expect("RD FIRST-set PDA continuation without a child value");
+                result.union(&child_first);
+                if matches!(mode, MergeMode::ChildControlsNullability) && !child_nullable {
+                    values.push((result, false));
                 } else {
-                    nullable = false;
-                    break;
+                    tasks.push(Task::Scan { items: remaining, result });
                 }
             },
-            RDSyntaxItem::IdentCapture { .. } => {
-                result.insert("Ident");
-                nullable = false;
-                break;
-            },
-            RDSyntaxItem::TokenKindCapture { kind_name, .. } => {
-                result.insert(kind_name);
-                nullable = false;
-                break;
-            },
-            RDSyntaxItem::Binder { .. } => {
-                result.insert("Ident");
-                nullable = false;
-                break;
-            },
-            RDSyntaxItem::BinderCollection { .. } => {
-                result.insert("Ident");
-                // Binder collections can be empty, nullable — continue
-            },
-            RDSyntaxItem::Collection { element_category, .. }
-            | RDSyntaxItem::SepList { element_category, .. } => {
-                if let Some(cat_first) = first_sets.get(element_category) {
-                    for token in &cat_first.tokens {
-                        result.insert(token);
-                    }
+            Task::Scan { items, mut result } => {
+                let Some((item, remaining)) = items.split_first() else {
+                    values.push((result, true));
+                    continue;
+                };
+                match item {
+                    RDSyntaxItem::Terminal(terminal) => {
+                        result.insert(&terminal_to_variant_name(terminal));
+                        values.push((result, false));
+                    },
+                    RDSyntaxItem::NonTerminal { category, .. } => {
+                        if let Some(category_first) = first_sets.get(category) {
+                            for token in &category_first.tokens {
+                                result.insert(token);
+                            }
+                            if category_first.nullable {
+                                tasks.push(Task::Scan { items: remaining, result });
+                            } else {
+                                values.push((result, false));
+                            }
+                        } else {
+                            values.push((result, false));
+                        }
+                    },
+                    RDSyntaxItem::IdentCapture { .. }
+                    | RDSyntaxItem::Binder { .. }
+                    | RDSyntaxItem::GuardExpression { .. } => {
+                        result.insert("Ident");
+                        values.push((result, false));
+                    },
+                    RDSyntaxItem::TokenKindCapture { kind_name, .. } => {
+                        result.insert(kind_name);
+                        values.push((result, false));
+                    },
+                    RDSyntaxItem::BinderCollection { .. } => {
+                        result.insert("Ident");
+                        tasks.push(Task::Scan { items: remaining, result });
+                    },
+                    RDSyntaxItem::Collection { element_category, .. }
+                    | RDSyntaxItem::SepList { element_category, .. } => {
+                        if let Some(category_first) = first_sets.get(element_category) {
+                            for token in &category_first.tokens {
+                                result.insert(token);
+                            }
+                        }
+                        tasks.push(Task::Scan { items: remaining, result });
+                    },
+                    RDSyntaxItem::Sep { body, .. } | RDSyntaxItem::Zip { body, .. } => {
+                        tasks.push(Task::Merge {
+                            remaining,
+                            result,
+                            mode: MergeMode::AlwaysNullable,
+                        });
+                        tasks.push(Task::Scan {
+                            items: std::slice::from_ref(body.as_ref()),
+                            result: FirstSet::new(),
+                        });
+                    },
+                    RDSyntaxItem::Map { body_items } => {
+                        tasks.push(Task::Merge {
+                            remaining,
+                            result,
+                            mode: MergeMode::ChildControlsNullability,
+                        });
+                        tasks.push(Task::Scan {
+                            items: body_items,
+                            result: FirstSet::new(),
+                        });
+                    },
+                    RDSyntaxItem::Optional { inner } => {
+                        tasks.push(Task::Merge {
+                            remaining,
+                            result,
+                            mode: MergeMode::AlwaysNullable,
+                        });
+                        tasks.push(Task::Scan { items: inner, result: FirstSet::new() });
+                    },
                 }
-                // Collections can be empty, nullable — continue
-            },
-            RDSyntaxItem::Sep { body, .. } => {
-                let (body_first, _) =
-                    first_of_rd_suffix(std::slice::from_ref(body.as_ref()), first_sets);
-                result.union(&body_first);
-                // Sep is nullable (0 iterations) — continue
-            },
-            RDSyntaxItem::Map { body_items } => {
-                let (map_first, map_nullable) = first_of_rd_suffix(body_items, first_sets);
-                result.union(&map_first);
-                if !map_nullable {
-                    nullable = false;
-                    break;
-                }
-            },
-            RDSyntaxItem::Zip { body, .. } => {
-                let (body_first, _) =
-                    first_of_rd_suffix(std::slice::from_ref(body.as_ref()), first_sets);
-                result.union(&body_first);
-                // Zip delegates to body; body itself may be nullable
-            },
-            RDSyntaxItem::Optional { inner } => {
-                let (inner_first, _) = first_of_rd_suffix(inner, first_sets);
-                result.union(&inner_first);
-                // Optional is nullable by definition — continue
-            },
-            RDSyntaxItem::GuardExpression { .. } => {
-                result.insert("Ident");
-                nullable = false;
-                break;
             },
         }
     }
 
-    (result, nullable)
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("RD FIRST-set PDA produced no root value")
 }
 
 /// Add all tokens from a FIRST set to a category's FOLLOW set.
