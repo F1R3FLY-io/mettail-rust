@@ -1204,11 +1204,42 @@ fn descend_child_call(
     }
 }
 
-/// Parallel composition `p | q` — the free-set is the union (parallel composition binds nothing).
-pub(crate) fn par2(p: Node, q: Node) -> Node {
-    let free = union_free(&[p.free.as_slice(), q.free.as_slice()]);
-    let par = p.par.append(q.par);
+/// Parallel composition of zero or more nodes. Field order is the iterator order.
+///
+/// This is the move-based twin of `Par::append`: the latter borrows and clones its complete
+/// left operand, which makes a left fold over a wide soup quadratic. Every component is owned
+/// here, so its field vectors can be appended in amortized linear time without changing the
+/// normalized `Par`, protobuf bytes, or byte hash.
+pub(crate) fn parallel(nodes: impl IntoIterator<Item = Node>) -> Node {
+    let mut par = Par::default();
+    let mut free = Vec::new();
+    for Node { par: mut component, free: component_free } in nodes {
+        if par.locally_free.len() < component.locally_free.len() {
+            par.locally_free.resize(component.locally_free.len(), 0);
+        }
+        for (index, bit) in component.locally_free.drain(..).enumerate() {
+            par.locally_free[index] |= bit;
+        }
+        par.sends.append(&mut component.sends);
+        par.receives.append(&mut component.receives);
+        par.news.append(&mut component.news);
+        par.exprs.append(&mut component.exprs);
+        par.matches.append(&mut component.matches);
+        par.unforgeables.append(&mut component.unforgeables);
+        par.bundles.append(&mut component.bundles);
+        par.connectives.append(&mut component.connectives);
+        par.conditionals.append(&mut component.conditionals);
+        par.connective_used |= component.connective_used;
+        free.extend(component_free);
+    }
+    free.sort_unstable();
+    free.dedup();
     Node { par, free }
+}
+
+/// Binary parallel composition `p | q`.
+pub(crate) fn par2(p: Node, q: Node) -> Node {
+    parallel([p, q])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1390,6 +1421,10 @@ pub fn subst_seed_send_par(fingerprint: &str, arg: Par, body: Par, out_channel: 
 fn persistent_contract_over(source: Par, n_formals: usize, body: Node) -> Node {
     polyadic_receive(source, n_formals, body, true)
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_subst_parallel_append_oracle.rs"]
+mod parallel_append_oracle;
 
 #[cfg(test)]
 mod tests {

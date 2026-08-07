@@ -215,9 +215,10 @@ use crate::rho_net_ruleset::{
     compile_in_rho_matching_ruleset, in_rho_static_gate, InRhoMatchingRuleset,
 };
 use crate::rho_net_subst_trs::{
-    for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope, node_from_par,
-    nullary_term, object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard,
-    persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
+    bv, for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope,
+    node_from_par, nullary_term, object_congruence_constructors, par2, parallel, pat_free,
+    pat_tagged, pat_wildcard, persistent_contract, send, tag_par, tagged, union_free, Case, Env,
+    Node,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1056,7 +1057,7 @@ fn chained_shift_node(
     dest_name: &str,
     k: usize,
 ) -> Node {
-    debug_assert!(k >= 1, "a shift chain has at least one application");
+    assert!(k >= 1, "a shift chain has at least one application");
     let zero = || ground(nullary_term(fingerprint, crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL));
     if k == 1 {
         return send(
@@ -1064,18 +1065,34 @@ fn chained_shift_node(
             vec![zero(), env.var(value_name), env.var(dest_name)],
         );
     }
-    new_scope(1, {
-        let env = env.push(&["__t"]);
+
+    // Capture the caller's slots before introducing the private `__t` / `__w`
+    // binders. Besides avoiding an Env clone at every level, this keeps a legal sigma
+    // slot literally named `__t` from being shadowed by this builder's implementation
+    // detail.
+    let value_index = env.var(value_name).free[0];
+    let dest_index = env.var(dest_name).free[0];
+    let deepest_dest_index = (k - 1)
+        .checked_mul(2)
+        .and_then(|binder_count| dest_index.checked_add(binder_count))
+        .expect("shift-chain De Bruijn index exceeds usize");
+    let mut chain = send(
+        ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
+        vec![zero(), bv(0), bv(deepest_dest_index)],
+    );
+
+    for level in (0..(k - 1)).rev() {
+        // In the fresh-name body the current value has shifted out by one. At
+        // level zero it is the caller's slot; all deeper levels receive it as
+        // the immediately enclosing `__w` (BoundVar(0) before this `new`).
+        let shifted_value_index = if level == 0 { value_index + 1 } else { 1 };
         let first = send(
             ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
-            vec![zero(), env.var(value_name), env.var("__t")],
+            vec![zero(), bv(shifted_value_index), bv(0)],
         );
-        let rest = for1(env.var("__t"), {
-            let env = env.push(&["__w"]);
-            chained_shift_node(fingerprint, &env, "__w", dest_name, k - 1)
-        });
-        par2(first, rest)
-    })
+        chain = new_scope(1, par2(first, for1(bv(0), chain)));
+    }
+    chain
 }
 
 /// Rebuild one reduct template as a receiver-body [`Node`] over the carrier's bound σ
@@ -1103,62 +1120,89 @@ fn rebuild_template_node(
     fingerprint: &str,
     depth: usize,
 ) -> Node {
-    match template {
-        AcReconstructTemplate::Var(name) => env.var(&slot_value_name(name, depth)),
-        AcReconstructTemplate::Node { constructor, children } => tagged(
-            fingerprint,
-            constructor,
-            children
-                .iter()
-                .map(|child| rebuild_template_node(child, env, fingerprint, depth))
-                .collect(),
-        ),
-        AcReconstructTemplate::Binder { body } => tagged(
-            fingerprint,
-            LAMBDA_REFLECT_LABEL,
-            vec![rebuild_template_node(body, env, fingerprint, depth + 1)],
-        ),
-        AcReconstructTemplate::Bag { op, elements, rest } => {
-            let mut soup: Option<Node> = None;
-            let push = |node: Node, soup: &mut Option<Node>| {
-                *soup = Some(match soup.take() {
-                    None => node,
-                    Some(acc) => par2(acc, node),
-                });
-            };
-            for element in elements {
-                let node = match element {
-                    // A σ-slot element: its THREE-CASE fragment was pre-computed onto
-                    // `__frag…` (see [`ac_carrier_receiver_par`]) — composing it IS
-                    // the one-level splice.
-                    AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name, depth)),
-                    // A constructor / binder element is statically non-bag ⟹ wrap.
-                    AcReconstructTemplate::Node { .. } | AcReconstructTemplate::Binder { .. } => {
-                        wrap_element_send(
-                            fingerprint,
-                            op,
-                            rebuild_template_node(element, env, fingerprint, depth),
-                        )
-                    },
-                    // An inner literal bag: same-op ⟹ static splice; different-op ⟹ its
-                    // soup wrapped as one element.
-                    AcReconstructTemplate::Bag { op: inner_op, .. } => {
-                        let rebuilt = rebuild_template_node(element, env, fingerprint, depth);
-                        if inner_op == op {
-                            rebuilt
-                        } else {
-                            wrap_element_send(fingerprint, op, rebuilt)
-                        }
-                    },
-                };
-                push(node, &mut soup);
-            }
-            if let Some(rest_name) = rest {
-                push(env.var(&slot_value_name(rest_name, depth)), &mut soup);
-            }
-            soup.unwrap_or_else(|| ground(Par::default()))
-        },
+    enum Task<'template> {
+        Visit(&'template AcReconstructTemplate, usize),
+        BagElement(&'template AcReconstructTemplate, &'template str, usize),
+        FinishTagged(&'template str, usize),
+        FinishBag(Option<&'template str>, usize, usize),
+        Wrap(&'template str),
     }
+
+    let mut tasks = vec![Task::Visit(template, depth)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(AcReconstructTemplate::Var(name), depth) => {
+                values.push(env.var(&slot_value_name(name, depth)));
+            },
+            Task::Visit(AcReconstructTemplate::Node { constructor, children }, depth) => {
+                tasks.push(Task::FinishTagged(constructor, children.len()));
+                tasks.extend(children.iter().rev().map(|child| Task::Visit(child, depth)));
+            },
+            Task::Visit(AcReconstructTemplate::Binder { body }, depth) => {
+                tasks.push(Task::FinishTagged(LAMBDA_REFLECT_LABEL, 1));
+                tasks.push(Task::Visit(body, depth + 1));
+            },
+            Task::Visit(AcReconstructTemplate::Bag { op, elements, rest }, depth) => {
+                tasks.push(Task::FinishBag(rest.as_deref(), depth, elements.len()));
+                tasks.extend(
+                    elements
+                        .iter()
+                        .rev()
+                        .map(|element| Task::BagElement(element, op, depth)),
+                );
+            },
+            Task::BagElement(AcReconstructTemplate::Var(name), _, depth) => {
+                // A sigma-slot element's precomputed three-case fragment is already
+                // a process soup, so composing it performs the one-level splice.
+                values.push(env.var(&fragment_value_name(name, depth)));
+            },
+            Task::BagElement(element @ AcReconstructTemplate::Node { .. }, op, depth)
+            | Task::BagElement(element @ AcReconstructTemplate::Binder { .. }, op, depth) => {
+                tasks.push(Task::Wrap(op));
+                tasks.push(Task::Visit(element, depth));
+            },
+            Task::BagElement(
+                element @ AcReconstructTemplate::Bag { op: inner_op, .. },
+                op,
+                depth,
+            ) => {
+                if inner_op != op {
+                    tasks.push(Task::Wrap(op));
+                }
+                tasks.push(Task::Visit(element, depth));
+            },
+            Task::FinishTagged(label, child_count) => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("template rebuild PDA lost a child result");
+                let children = values.split_off(first);
+                values.push(tagged(fingerprint, label, children));
+            },
+            Task::FinishBag(rest, depth, element_count) => {
+                let first = values
+                    .len()
+                    .checked_sub(element_count)
+                    .expect("template rebuild PDA lost a bag element result");
+                let mut elements = values.split_off(first);
+                if let Some(rest) = rest {
+                    elements.push(env.var(&slot_value_name(rest, depth)));
+                }
+                values.push(parallel(elements));
+            },
+            Task::Wrap(op) => {
+                let element = values
+                    .pop()
+                    .expect("template rebuild PDA lost a wrapped element");
+                values.push(wrap_element_send(fingerprint, op, element));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("template rebuild PDA produced no result")
 }
 
 /// The synthetic frame name carrying a σ slot's pre-computed three-case FRAGMENT value at
@@ -3336,6 +3380,10 @@ mod pattern_recursive_oracle;
 #[cfg(test)]
 #[path = "../tests/support/rho_net_drive_template_collectors_recursive_oracle.rs"]
 mod template_collectors_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_drive_template_rebuild_recursive_oracle.rs"]
+mod template_rebuild_recursive_oracle;
 
 #[cfg(test)]
 #[path = "../tests/support/scion_recursive_oracle.rs"]
