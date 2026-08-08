@@ -51,10 +51,14 @@
 //!
 //! 1. Each variant arm WRITES discriminant inline (NOT in dispatch fn) so
 //!    transparent variants can SKIP the discriminant write.
-//! 2. `Box<T>` children are pushed as `SemanticHashTask` variants onto a
-//!    thread-local work stack — no recursion across category boundaries.
-//! 3. Re-entrancy safety: `try_with` for thread-shutdown gracefully degrades
-//!    to a local stack.
+//! 2. Every category child, including children inside ordered and unordered
+//!    collections, is pushed onto the same explicit work stack.
+//! 3. Unordered containers suspend a resumable runtime PDA while each element
+//!    writes into a stable boxed `FxHasher`; no callback re-enters the public
+//!    method.
+//! 4. Fold-alias reconstructions are owned by explicit keep-alive tasks until
+//!    their canonical subtree has been consumed.
+//! 5. `try_with` gracefully degrades to a local stack during thread shutdown.
 //!
 //! ## Generated Items
 //!
@@ -66,6 +70,7 @@
 use crate::gen::runtime::wpda_codegen::builtin_metadata::{
     classify_fold_alias_send_shape, classify_fold_alias_shape, classify_simple_projection_shape,
 };
+use crate::gen::term_ops::collection_walk::{field_carrier, FieldCarrier};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::grammar::{GrammarRule, TermParam};
 use mettail_ast::language::LanguageDef;
@@ -197,6 +202,78 @@ struct FoldAliasSendArm {
     /// in order: whether each is a `Vec` collection. Aligned 1:1 with the sugar's
     /// operand params (`sugar_params[1..]`).
     poly_operand_is_collection: Vec<bool>,
+}
+
+/// Exact inventory of optional task shapes needed by one generated language.
+/// Keeping this census beside the generator prevents a collection-free or
+/// fold-free grammar from paying in emitted code or `SemanticHashTask` size for
+/// machinery it cannot reach.
+#[derive(Default)]
+struct SemanticTaskUsage {
+    unordered_element_categories: HashSet<String>,
+    needs_opaque: bool,
+    needs_keep_alive: bool,
+}
+
+impl SemanticTaskUsage {
+    fn record_collection(&mut self, element_cat: &Ident, coll_type: &CollectionType) {
+        if matches!(
+            coll_type,
+            CollectionType::HashSet
+                | CollectionType::HashBag
+                | CollectionType::HashMap
+                | CollectionType::PathMap
+        ) {
+            self.unordered_element_categories
+                .insert(element_cat.to_string());
+        }
+    }
+
+    fn record_field(&mut self, field: &FieldInfo) {
+        match field_carrier(field) {
+            FieldCarrier::Leaf => self.needs_opaque = true,
+            FieldCarrier::Collection { coll_type }
+            | FieldCarrier::OptionalCollection { coll_type } => {
+                self.record_collection(&field.category, &coll_type);
+            },
+            FieldCarrier::Child | FieldCarrier::OptionalChild => {},
+        }
+    }
+}
+
+fn semantic_task_usage(language: &LanguageDef, needs_keep_alive: bool) -> SemanticTaskUsage {
+    let mut usage = SemanticTaskUsage {
+        needs_keep_alive,
+        ..SemanticTaskUsage::default()
+    };
+
+    for lang_type in &language.types {
+        for variant in collect_category_variants(&lang_type.name, language) {
+            match variant {
+                VariantKind::CollectionLiteral { element_cat, coll_type, .. }
+                | VariantKind::Collection { element_cat, coll_type, .. } => {
+                    usage.record_collection(&element_cat, &coll_type);
+                },
+                VariantKind::Regular { fields, .. } => {
+                    for field in &fields {
+                        usage.record_field(field);
+                    }
+                },
+                VariantKind::Binder { pre_scope_fields, .. }
+                | VariantKind::MultiBinder { pre_scope_fields, .. } => {
+                    for field in &pre_scope_fields {
+                        usage.record_field(field);
+                    }
+                },
+                VariantKind::Refused { .. }
+                | VariantKind::Nullary { .. }
+                | VariantKind::Literal { .. }
+                | VariantKind::Var { .. } => {},
+            }
+        }
+    }
+
+    usage
 }
 
 /// Whether a `TermParam` is a `Simple` category param; returns `(ident,
@@ -338,6 +415,7 @@ fn generate_fold_alias_send_arm(
     sugar_label: &Ident,
     arm: &FoldAliasSendArm,
 ) -> TokenStream {
+    let task_variant = format_ident!("SemHash{}", category);
     let field_names: Vec<Ident> = (0..arm.sugar_params.len())
         .map(|i| format_ident!("f{}", i))
         .collect();
@@ -388,7 +466,12 @@ fn generate_fold_alias_send_arm(
                 #channel_expr,
                 #(#operand_exprs),*
             );
-            __canonical.semantic_hash(state);
+            let (__keep_alive, __canonical_ptr) = semantic_hash_keep_alive(__canonical);
+            stack.push(__keep_alive);
+            stack.push(SemanticHashTask::#task_variant {
+                value: __canonical_ptr,
+                target,
+            });
         }
     }
 }
@@ -427,12 +510,18 @@ pub fn generate_semantic_hash(language: &LanguageDef) -> TokenStream {
     let fold_alias_send_map: HashMap<String, FoldAliasSendArm> =
         build_fold_alias_send_map(language);
 
-    let task_enum = generate_semantic_task_enum(language);
+    let usage = semantic_task_usage(
+        language,
+        !fold_alias_map.is_empty() || !fold_alias_send_map.is_empty(),
+    );
+
+    let task_enum = generate_semantic_task_enum(language, &usage);
     let engine = generate_semantic_engine(
         language,
         &transparent_labels,
         &fold_alias_map,
         &fold_alias_send_map,
+        &usage,
     );
     let impls = generate_semantic_impls(language);
 
@@ -447,20 +536,114 @@ pub fn generate_semantic_hash(language: &LanguageDef) -> TokenStream {
 // SemanticHashTask Enum + TLS Pool
 // =============================================================================
 
-fn generate_semantic_task_enum(language: &LanguageDef) -> TokenStream {
+fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage) -> TokenStream {
+    let scratch_target = (!usage.unordered_element_categories.is_empty()).then(|| {
+        quote! {
+            Scratch(*mut mettail_runtime::CollectionSemanticHasher),
+        }
+    });
     let variants: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
             let variant_name = format_ident!("SemHash{}", cat);
+            let resume_variant = usage
+                .unordered_element_categories
+                .contains(&cat.to_string())
+                .then(|| {
+                    let resume_name = format_ident!("ResumeSemHashCollection{}", cat);
+                    quote! {
+                        ,
+                        #resume_name {
+                            pda: Box<mettail_runtime::CollectionSemanticHashPda>,
+                            target: SemanticHashTarget,
+                        }
+                    }
+                });
             quote! {
-                #variant_name(*const #cat)
+                #variant_name {
+                    value: *const #cat,
+                    target: SemanticHashTarget,
+                }
+                #resume_variant
             }
         })
         .collect();
 
+    let opaque_variant = usage.needs_opaque.then(|| {
+        quote! {
+            Opaque {
+                value: *const (),
+                hash: unsafe fn(*const (), *mut ()),
+                target: SemanticHashTarget,
+            },
+        }
+    });
+    let keep_alive_variant = usage.needs_keep_alive.then(|| {
+        quote! {
+            KeepAlive {
+                value: *mut (),
+                drop_value: unsafe fn(*mut ()),
+            },
+        }
+    });
+    let opaque_helper = usage.needs_opaque.then(|| {
+        quote! {
+            #[inline]
+            fn semantic_hash_opaque_task<T, S>(
+                value: &T,
+                target: SemanticHashTarget,
+            ) -> SemanticHashTask
+            where
+                T: std::hash::Hash,
+                S: std::hash::Hasher,
+            {
+                unsafe fn apply<T, S>(value: *const (), state: *mut ())
+                where
+                    T: std::hash::Hash,
+                    S: std::hash::Hasher,
+                {
+                    let value = unsafe { &*value.cast::<T>() };
+                    let state = unsafe { &mut *state.cast::<S>() };
+                    std::hash::Hash::hash(value, state);
+                }
+
+                SemanticHashTask::Opaque {
+                    value: value as *const T as *const (),
+                    hash: apply::<T, S>,
+                    target,
+                }
+            }
+        }
+    });
+    let keep_alive_helper = usage.needs_keep_alive.then(|| {
+        quote! {
+            #[inline]
+            fn semantic_hash_keep_alive<T>(value: T) -> (SemanticHashTask, *const T) {
+                unsafe fn drop_value<T>(value: *mut ()) {
+                    drop(unsafe { Box::from_raw(value.cast::<T>()) });
+                }
+
+                let value = Box::into_raw(Box::new(value));
+                (
+                    SemanticHashTask::KeepAlive {
+                        value: value.cast::<()>(),
+                        drop_value: drop_value::<T>,
+                    },
+                    value,
+                )
+            }
+        }
+    });
+
     quote! {
+        #[derive(Clone, Copy)]
+        enum SemanticHashTarget {
+            Root,
+            #scratch_target
+        }
+
         /// Work item for the iterative semantic_hash engine (Stage 2.3).
         ///
         /// Each variant wraps a raw pointer to a value of one category.
@@ -477,8 +660,24 @@ fn generate_semantic_task_enum(language: &LanguageDef) -> TokenStream {
             /// `Elem::semantic_hash(e, state)` per element — a whole-value
             /// re-entry, Θ(depth). Measured 4,096 B/level (debug) the moment #154
             /// routed the collection-literal arm here from structural `Hash`.
-            AbsorbUsize(usize),
+            AbsorbUsize {
+                value: usize,
+                target: SemanticHashTarget,
+            },
+            AbsorbU8 {
+                value: u8,
+                target: SemanticHashTarget,
+            },
+            AbsorbPathMapMode {
+                value: mettail_runtime::PathMapMode,
+                target: SemanticHashTarget,
+            },
+            #opaque_variant
+            #keep_alive_variant
         }
+
+        #opaque_helper
+        #keep_alive_helper
 
         // SAFETY: same justification as `HashTask` in iterative_hash.rs.
         unsafe impl Send for SemanticHashTask {}
@@ -502,7 +701,9 @@ fn generate_semantic_engine(
     transparent_labels: &HashSet<String>,
     fold_alias_map: &HashMap<String, FoldAliasArm>,
     fold_alias_send_map: &HashMap<String, FoldAliasSendArm>,
+    usage: &SemanticTaskUsage,
 ) -> TokenStream {
+    let has_scratch_target = !usage.unordered_element_categories.is_empty();
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
@@ -514,6 +715,13 @@ fn generate_semantic_engine(
             let native_type = t.native_type.as_ref();
             let cat_str = cat.to_string().to_lowercase();
             let helper_fn = format_ident!("semantic_hash_handle_{}", cat_str);
+            let visit_fn = format_ident!("semantic_hash_visit_{}", cat_str);
+            let resume_fn = format_ident!("semantic_hash_resume_collection_{}", cat_str);
+            let task_variant = format_ident!("SemHash{}", cat);
+            let resume_variant = format_ident!("ResumeSemHashCollection{}", cat);
+            let needs_resume = usage
+                .unordered_element_categories
+                .contains(&cat.to_string());
             let variants = collect_category_variants(cat, language);
             // Phase F.13 Stage 2.3.6 (2026-05-23): per-variant indices
             // for per-node u8 discriminator. Reduces semantic_hash byte
@@ -544,12 +752,59 @@ fn generate_semantic_engine(
                     )
                 })
                 .collect();
+            let resume_helper = needs_resume.then(|| quote! {
+                #[inline(never)]
+                #[allow(dead_code)]
+                fn #resume_fn<H: std::hash::Hasher>(
+                    stack: &mut Vec<SemanticHashTask>,
+                    root_state: &mut H,
+                    mut pda: Box<mettail_runtime::CollectionSemanticHashPda>,
+                    target: SemanticHashTarget,
+                ) {
+                    loop {
+                        match pda.resume() {
+                            mettail_runtime::CollectionSemanticHashStep::Hash { value, state } => {
+                                stack.push(SemanticHashTask::#resume_variant { pda, target });
+                                stack.push(SemanticHashTask::#task_variant {
+                                    value: value.cast::<#cat>(),
+                                    target: SemanticHashTarget::Scratch(state),
+                                });
+                                return;
+                            },
+                            mettail_runtime::CollectionSemanticHashStep::WriteUsize(value) => {
+                                semantic_hash_write_usize(root_state, target, value);
+                            },
+                            mettail_runtime::CollectionSemanticHashStep::WriteU64(value) => {
+                                semantic_hash_write_u64(root_state, target, value);
+                            },
+                            mettail_runtime::CollectionSemanticHashStep::Done => return,
+                        }
+                    }
+                }
+            });
+            let dispatch = if has_scratch_target {
+                quote! {
+                    match target {
+                        SemanticHashTarget::Root => {
+                            #visit_fn(stack, root_state, target, ptr);
+                        },
+                        SemanticHashTarget::Scratch(state) => {
+                            #visit_fn(stack, unsafe { &mut *state }, target, ptr);
+                        },
+                    }
+                }
+            } else {
+                quote! {
+                    #visit_fn(stack, root_state, target, ptr);
+                }
+            };
             quote! {
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
-                fn #helper_fn<H: std::hash::Hasher>(
+                fn #visit_fn<S: std::hash::Hasher>(
                     stack: &mut Vec<SemanticHashTask>,
-                    state: &mut H,
+                    state: &mut S,
+                    target: SemanticHashTarget,
                     ptr: *const #cat,
                 ) {
                     let val = unsafe { &*ptr };
@@ -561,6 +816,19 @@ fn generate_semantic_engine(
                         #(#variant_arms)*
                     }
                 }
+
+                #[inline(never)]
+                #[allow(dead_code)]
+                fn #helper_fn<H: std::hash::Hasher>(
+                    stack: &mut Vec<SemanticHashTask>,
+                    root_state: &mut H,
+                    target: SemanticHashTarget,
+                    ptr: *const #cat,
+                ) {
+                    #dispatch
+                }
+
+                #resume_helper
             }
         })
         .collect();
@@ -571,18 +839,136 @@ fn generate_semantic_engine(
         .map(|t| {
             let cat = &t.name;
             let task_variant = format_ident!("SemHash{}", cat);
+            let resume_variant = format_ident!("ResumeSemHashCollection{}", cat);
             let helper_fn =
                 format_ident!("semantic_hash_handle_{}", cat.to_string().to_lowercase());
+            let resume_fn =
+                format_ident!("semantic_hash_resume_collection_{}", cat.to_string().to_lowercase());
+            let resume_arm = usage
+                .unordered_element_categories
+                .contains(&cat.to_string())
+                .then(|| {
+                    quote! {
+                        SemanticHashTask::#resume_variant { pda, target } => {
+                            #resume_fn(stack, state, pda, target);
+                        }
+                    }
+                });
             quote! {
-                SemanticHashTask::#task_variant(ptr) => {
-                    #helper_fn(stack, state, ptr);
+                SemanticHashTask::#task_variant { value, target } => {
+                    #helper_fn(stack, state, target, value);
                 }
+                #resume_arm
             }
         })
         .collect();
 
+    let opaque_scratch_arm = has_scratch_target.then(|| {
+        quote! {
+            SemanticHashTarget::Scratch(state) => unsafe {
+                hash(value, state.cast::<()>());
+            },
+        }
+    });
+    let opaque_apply_helper = usage.needs_opaque.then(|| {
+        quote! {
+            #[inline]
+            unsafe fn semantic_hash_apply_opaque<H: std::hash::Hasher>(
+                root_state: &mut H,
+                target: SemanticHashTarget,
+                value: *const (),
+                hash: unsafe fn(*const (), *mut ()),
+            ) {
+                match target {
+                    SemanticHashTarget::Root => unsafe {
+                        hash(value, root_state as *mut H as *mut ());
+                    },
+                    #opaque_scratch_arm
+                }
+            }
+        }
+    });
+    let opaque_task_arm = usage.needs_opaque.then(|| {
+        quote! {
+            SemanticHashTask::Opaque { value, hash, target } => unsafe {
+                semantic_hash_apply_opaque(state, target, value, hash);
+            },
+        }
+    });
+    let keep_alive_task_arm = usage.needs_keep_alive.then(|| {
+        quote! {
+            SemanticHashTask::KeepAlive { value, drop_value } => unsafe {
+                drop_value(value);
+            },
+        }
+    });
+    let scratch_hash_arm = has_scratch_target.then(|| {
+        quote! {
+            SemanticHashTarget::Scratch(state) => {
+                std::hash::Hash::hash(&value, unsafe { &mut *state });
+            },
+        }
+    });
+    let write_u64_helper = has_scratch_target.then(|| {
+        quote! {
+            #[inline]
+            fn semantic_hash_write_u64<H: std::hash::Hasher>(
+                root_state: &mut H,
+                target: SemanticHashTarget,
+                value: u64,
+            ) {
+                match target {
+                    SemanticHashTarget::Root => std::hash::Hash::hash(&value, root_state),
+                    SemanticHashTarget::Scratch(state) => {
+                        std::hash::Hash::hash(&value, unsafe { &mut *state });
+                    },
+                }
+            }
+        }
+    });
+
     quote! {
         #(#helper_fns)*
+
+        #[inline]
+        fn semantic_hash_write_usize<H: std::hash::Hasher>(
+            root_state: &mut H,
+            target: SemanticHashTarget,
+            value: usize,
+        ) {
+            match target {
+                SemanticHashTarget::Root => std::hash::Hash::hash(&value, root_state),
+                #scratch_hash_arm
+            }
+        }
+
+        #[inline]
+        fn semantic_hash_write_u8<H: std::hash::Hasher>(
+            root_state: &mut H,
+            target: SemanticHashTarget,
+            value: u8,
+        ) {
+            match target {
+                SemanticHashTarget::Root => std::hash::Hash::hash(&value, root_state),
+                #scratch_hash_arm
+            }
+        }
+
+        #write_u64_helper
+
+        #[inline]
+        fn semantic_hash_write_pathmap_mode<H: std::hash::Hasher>(
+            root_state: &mut H,
+            target: SemanticHashTarget,
+            value: mettail_runtime::PathMapMode,
+        ) {
+            match target {
+                SemanticHashTarget::Root => std::hash::Hash::hash(&value, root_state),
+                #scratch_hash_arm
+            }
+        }
+
+        #opaque_apply_helper
 
         /// Iterative semantic_hash engine. Processes the work stack
         /// until empty, hashing each node's fields into `state`.
@@ -596,9 +982,17 @@ fn generate_semantic_engine(
                     #(#task_arms)*
                     // ★ #162 — `state.write_usize(n)`, the exact call the eager
                     // form made, issued at its own position in the stream.
-                    SemanticHashTask::AbsorbUsize(n) => {
-                        std::hash::Hasher::write_usize(state, n);
+                    SemanticHashTask::AbsorbUsize { value, target } => {
+                        semantic_hash_write_usize(state, target, value);
                     }
+                    SemanticHashTask::AbsorbU8 { value, target } => {
+                        semantic_hash_write_u8(state, target, value);
+                    }
+                    SemanticHashTask::AbsorbPathMapMode { value, target } => {
+                        semantic_hash_write_pathmap_mode(state, target, value);
+                    }
+                    #opaque_task_arm
+                    #keep_alive_task_arm
                 }
             }
         }
@@ -613,12 +1007,13 @@ fn generate_semantic_engine(
 /// alpha-irrelevant value into the semantic fingerprint (`exact_key`). The
 /// collection's order semantics are preserved per kind:
 /// - `Vec`: ordered — length + each element in order.
-/// - `HashBag`: order-independent multiset combine (`HashBag::semantic_hash_into`).
+/// - `HashBag`: order-independent multiset combine, reproduced by
+///   `CollectionSemanticHashPda` without a recursive callback.
 /// - `HashMap`: order-independent map combine, ordered by semantic digest
-///   (`HashMapLit::semantic_hash_into`).
-/// - `HashSet`: no language declares a set of a category element, so this arm is
-///   reachable only for non-binder elements whose structural `Hash` is already
-///   canonical; it falls back to that.
+///   through the same resumable PDA.
+/// - `HashSet`: order-independent sorted semantic element digests.
+/// - `PathMap`: a homogeneous Empty/Set/Map mode tag followed by the matching
+///   map-PDA stream; set mode uses an intentionally empty unit-value digest.
 ///
 /// `coll_expr` borrows the collection; `element_cat` is its element category.
 fn semantic_hash_collection(
@@ -626,52 +1021,191 @@ fn semantic_hash_collection(
     element_cat: &Ident,
     coll_type: &CollectionType,
 ) -> TokenStream {
+    let task_variant = format_ident!("SemHash{}", element_cat);
+    let resume_variant = format_ident!("ResumeSemHashCollection{}", element_cat);
     match coll_type {
-        // ★ #162 — one task per element, so the walk stays on the work stack.
-        //
-        // ⚠ The LENGTH PREFIX is written FIRST, so on a LIFO stack it is pushed
-        // LAST. Same discipline as `iterative_hash::hash_collection_stmts`, and the
-        // OPPOSITE of `iterative_cmp`, where `Vec`'s length is the lexicographic
-        // tiebreak and therefore pops last.
         CollectionType::Vec => {
-            let task_variant = format_ident!("SemHash{}", element_cat);
             quote! {
                 for __e in #coll_expr.iter().rev() {
-                    stack.push(SemanticHashTask::#task_variant(__e as *const _));
+                    stack.push(SemanticHashTask::#task_variant {
+                        value: __e as *const _,
+                        target,
+                    });
                 }
-                stack.push(SemanticHashTask::AbsorbUsize(#coll_expr.len()));
+                stack.push(SemanticHashTask::AbsorbUsize {
+                    value: #coll_expr.len(),
+                    target,
+                });
+            }
+        },
+        CollectionType::HashSet => quote! {
+            {
+                let __items = #coll_expr
+                    .iter()
+                    .map(mettail_runtime::CollectionSemanticHashItem::unary)
+                    .collect();
+                stack.push(SemanticHashTask::#resume_variant {
+                    pda: Box::new(mettail_runtime::CollectionSemanticHashPda::set(__items)),
+                    target,
+                });
             }
         },
         CollectionType::HashBag => quote! {
-            #coll_expr.semantic_hash_into(state, |__e, __h| #element_cat::semantic_hash(__e, __h));
+            {
+                let __items = #coll_expr
+                    .iter()
+                    .map(|(__value, __count)| {
+                        mettail_runtime::CollectionSemanticHashItem::repeated(
+                            __value,
+                            __count,
+                        )
+                    })
+                    .collect();
+                stack.push(SemanticHashTask::#resume_variant {
+                    pda: Box::new(mettail_runtime::CollectionSemanticHashPda::bag(
+                        #coll_expr.len(),
+                        __items,
+                    )),
+                    target,
+                });
+            }
         },
         CollectionType::HashMap => quote! {
-            #coll_expr.semantic_hash_into(
-                state,
-                |__k, __h| #element_cat::semantic_hash(__k, __h),
-                |__v, __h| #element_cat::semantic_hash(__v, __h),
-            );
+            {
+                let __items = #coll_expr
+                    .iter()
+                    .map(|(__key, __value)| {
+                        mettail_runtime::CollectionSemanticHashItem::pair(__key, __value)
+                    })
+                    .collect();
+                stack.push(SemanticHashTask::#resume_variant {
+                    pda: Box::new(mettail_runtime::CollectionSemanticHashPda::map(__items)),
+                    target,
+                });
+            }
         },
-        // Pathmap mode is hashed once by the homogeneous container. Set mode
-        // hashes keys only; map mode hashes both key and value terms.
         CollectionType::PathMap => quote! {
-            #coll_expr.semantic_hash_into(
-                state,
-                |__k, __h| #element_cat::semantic_hash(__k, __h),
-                |__v, __h| #element_cat::semantic_hash(__v, __h),
-            );
+            {
+                match #coll_expr {
+                    mettail_runtime::PathMapLit::Empty => {
+                        stack.push(SemanticHashTask::AbsorbUsize {
+                            value: 0,
+                            target,
+                        });
+                    },
+                    mettail_runtime::PathMapLit::Set(__entries) => {
+                        let __items = __entries
+                            .keys()
+                            .map(mettail_runtime::CollectionSemanticHashItem::key_only)
+                            .collect();
+                        stack.push(SemanticHashTask::#resume_variant {
+                            pda: Box::new(
+                                mettail_runtime::CollectionSemanticHashPda::map(__items),
+                            ),
+                            target,
+                        });
+                    },
+                    mettail_runtime::PathMapLit::Map(__entries) => {
+                        let __items = __entries
+                            .iter()
+                            .map(|(__key, __value)| {
+                                mettail_runtime::CollectionSemanticHashItem::pair(
+                                    __key,
+                                    __value,
+                                )
+                            })
+                            .collect();
+                        stack.push(SemanticHashTask::#resume_variant {
+                            pda: Box::new(
+                                mettail_runtime::CollectionSemanticHashPda::map(__items),
+                            ),
+                            target,
+                        });
+                    },
+                }
+                stack.push(SemanticHashTask::AbsorbPathMapMode {
+                    value: #coll_expr.mode(),
+                    target,
+                });
+            }
         },
-        // ★ #154 — was `std::hash::Hash::hash(#coll_expr, state)`, i.e. STRUCTURAL,
-        // and therefore leaked a binder's run-varying `unique_id` exactly as the
-        // collection-literal arm did. It read as correct next to its siblings
-        // because the whole helper is named `semantic_hash_collection`; the only way
-        // to see it was to read the arm. `HashSetLit::semantic_hash_into` was added
-        // for this call.
-        CollectionType::HashSet => quote! {
-            #coll_expr.semantic_hash_into(
-                state,
-                |__e, __h| #element_cat::semantic_hash(__e, __h),
-            );
+    }
+}
+
+/// Push one field's complete semantic-hash contribution onto the generated
+/// work stack. Callers visit fields in reverse so the LIFO engine observes the
+/// original field order.
+fn semantic_hash_field_tasks(field: &FieldInfo, name: &Ident) -> TokenStream {
+    match field_carrier(field) {
+        FieldCarrier::Leaf if field.is_optional => quote! {
+            match #name.as_ref() {
+                None => stack.push(SemanticHashTask::AbsorbU8 {
+                    value: 0u8,
+                    target,
+                }),
+                Some(__leaf) => {
+                    stack.push(semantic_hash_opaque_task::<_, S>(__leaf, target));
+                    stack.push(SemanticHashTask::AbsorbU8 {
+                        value: 1u8,
+                        target,
+                    });
+                },
+            }
+        },
+        FieldCarrier::Leaf => quote! {
+            stack.push(semantic_hash_opaque_task::<_, S>(#name, target));
+        },
+        FieldCarrier::OptionalChild => {
+            let task_variant = format_ident!("SemHash{}", field.category);
+            quote! {
+                match #name.as_ref() {
+                    None => stack.push(SemanticHashTask::AbsorbU8 {
+                        value: 0u8,
+                        target,
+                    }),
+                    Some(__child) => {
+                        stack.push(SemanticHashTask::#task_variant {
+                            value: &**__child as *const _,
+                            target,
+                        });
+                        stack.push(SemanticHashTask::AbsorbU8 {
+                            value: 1u8,
+                            target,
+                        });
+                    },
+                }
+            }
+        },
+        FieldCarrier::OptionalCollection { coll_type } => {
+            let collection =
+                semantic_hash_collection(&quote! { __collection }, &field.category, &coll_type);
+            quote! {
+                match #name.as_ref() {
+                    None => stack.push(SemanticHashTask::AbsorbU8 {
+                        value: 0u8,
+                        target,
+                    }),
+                    Some(__collection) => {
+                        #collection
+                        stack.push(SemanticHashTask::AbsorbU8 {
+                            value: 1u8,
+                            target,
+                        });
+                    },
+                }
+            }
+        },
+        FieldCarrier::Collection { coll_type } => {
+            semantic_hash_collection(&quote! { #name }, &field.category, &coll_type)
+        },
+        FieldCarrier::Child => {
+            let task_variant = format_ident!("SemHash{}", field.category);
+            quote! {
+                stack.push(SemanticHashTask::#task_variant {
+                    value: &**#name as *const _,
+                    target,
+                });
+            }
         },
     }
 }
@@ -841,8 +1375,8 @@ fn variant_label(variant: &VariantKind) -> &Ident {
 
 /// Emit the `semantic_hash` arm for a fold-alias (sugar) variant: bind each
 /// param to a `&Cat` borrow of the corresponding boxed field, run the rule's own
-/// `fold` action to RECONSTRUCT the canonical node, and recurse `semantic_hash`
-/// on it. This makes `semantic_hash(POutputShort(p, q))` byte-identical to
+/// `fold` action to RECONSTRUCT the canonical node, and schedule that node on
+/// the same explicit work stack. This makes `semantic_hash(POutputShort(p, q))` byte-identical to
 /// `semantic_hash(POutput(NQuote(p), q))`, so the realize-dedup collapses the
 /// sugar reading with its fold target.
 ///
@@ -853,28 +1387,36 @@ fn variant_label(variant: &VariantKind) -> &Ident {
 /// sugar≡target is merged, never two distinct sends (their params, hence
 /// hashes, differ). `classify_fold_alias_shape` forbids a self-reconstruction
 /// (root variant ≠ rule label); since each fold target is a normal-form
-/// canonical constructor (not itself a fold-alias in practice), the nested
-/// `semantic_hash` does not re-enter this arm — reconstruction terminates with
-/// the fold relation (which terminates because it is the evaluator's).
+/// canonical constructor. The owned reconstruction remains below its visit on
+/// the task stack, so its pointer is live through every descendant and is
+/// released only after the visit completes. No public-method re-entry occurs.
 ///
 /// ## Cost
 ///
-/// Reconstruction clones the sugar node's subtree once and runs a (re-entrant,
-/// TLS-pooled) nested `semantic_hash`. Sugar nodes are rare and shallow, so the
-/// extra clone is negligible; correctness of the dedup fingerprint is the goal.
+/// Reconstruction retains the fold action's existing clone cost, but traversal
+/// of the result reuses the current driver and task buffer. The keep-alive task
+/// adds one box per active reconstructed alias rather than one native frame per
+/// descendant.
 fn generate_fold_alias_arm(
     category: &Ident,
     variant: &VariantKind,
     arm: &FoldAliasArm,
 ) -> TokenStream {
     let body = &arm.body;
+    let task_variant = format_ident!("SemHash{}", category);
     match variant {
         VariantKind::Nullary { label } => {
             // Zero-param sugar, e.g. `NQuoteNil → NQuote(PZero)`.
             quote! {
                 #category::#label => {
                     let __canonical: #category = #body;
-                    __canonical.semantic_hash(state);
+                    let (__keep_alive, __canonical_ptr) =
+                        semantic_hash_keep_alive(__canonical);
+                    stack.push(__keep_alive);
+                    stack.push(SemanticHashTask::#task_variant {
+                        value: __canonical_ptr,
+                        target,
+                    });
                 }
             }
         },
@@ -902,7 +1444,13 @@ fn generate_fold_alias_arm(
                 #category::#label(#(ref #field_names),*) => {
                     #(#bindings)*
                     let __canonical: #category = #body;
-                    __canonical.semantic_hash(state);
+                    let (__keep_alive, __canonical_ptr) =
+                        semantic_hash_keep_alive(__canonical);
+                    stack.push(__keep_alive);
+                    stack.push(SemanticHashTask::#task_variant {
+                        value: __canonical_ptr,
+                        target,
+                    });
                 }
             }
         },
@@ -1414,13 +1962,13 @@ fn generate_semantic_regular_arm(
         let field = &fields[0];
         if field.is_predicate || field.is_collection || field.is_optional || field.is_opaque_leaf()
         {
-            // Shouldn't happen for transparent rules (would fail
-            // classify_simple_projection_shape), but be defensive.
-            // Fall back to non-transparent behavior.
+            let message = format!(
+                "mettail internal error: transparent semantic-hash wrapper `{label_str}` has a \
+                 non-scalar category field; the projection classifier and emitter disagree",
+            );
             quote! {
                 #category::#label(inner) => {
-                    state.write_u8(#variant_idx);
-                    std::hash::Hash::hash(inner, state);
+                    compile_error!(#message);
                 }
             }
         } else {
@@ -1429,176 +1977,26 @@ fn generate_semantic_regular_arm(
                 #category::#label(inner) => {
                     // Transparent wrapper: NO discriminant. Just push the
                     // child's semantic_hash task to the stack.
-                    stack.push(SemanticHashTask::#task_variant(&**inner as *const _));
+                    stack.push(SemanticHashTask::#task_variant {
+                        value: &**inner as *const _,
+                        target,
+                    });
                 }
             }
         }
     } else {
-        // Non-transparent: emit u8 variant_idx + recurse on fields.
-        // Follows the iterative_hash pattern with eager Box<T> hashing
-        // when before a collection field, stack push for trailing Box<T>.
         let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
-
-        let last_coll_idx = fields.iter().rposition(|f| f.is_collection);
-        let eager_end = last_coll_idx.map(|i| i + 1).unwrap_or(0);
-
-        let mut final_stmts: Vec<TokenStream> = Vec::new();
-
-        // Emit single-byte variant discriminator ONCE at the top.
-        final_stmts.push(quote! {
-            state.write_u8(#variant_idx);
-        });
-
-        // Fields up to and including last collection: hash eagerly.
-        for (i, field) in fields.iter().enumerate().take(eager_end) {
-            let name = &field_names[i];
-            if field.is_optional && field.is_collection {
-                // (FIX-A) element semantic_hash, not structural Hash.
-                let coll_type = field
-                    .coll_type
-                    .as_ref()
-                    .expect("collection field must carry a CollectionType");
-                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
-                final_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__c) => {
-                            state.write_u8(1u8);
-                            #sem
-                        }
-                    }
-                });
-            } else if field.is_optional && (field.is_predicate || field.is_opaque_leaf()) {
-                // Task #14 (Option<Guard>): 0/1 discriminant + structural
-                // Hash of the inner predicate (no Arc deref — the Option
-                // payload is a bare BehavioralPred). Predicates carry no
-                // host-term alpha-structure to canonicalize, so structural
-                // Hash IS the semantic hash BY CONVENTION (matches the
-                // bare-predicate arm below; Eq-consistent).
-                final_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__b) => {
-                            state.write_u8(1u8);
-                            std::hash::Hash::hash(__b, state);
-                        }
-                    }
-                });
-            } else if field.is_optional {
-                // Optional Box<T>: discriminant + recurse via standard
-                // semantic_hash (re-entrant; bounded because the inner
-                // task enters the trampoline).
-                final_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__b) => {
-                            state.write_u8(1u8);
-                            (&**__b).semantic_hash(state);
-                        }
-                    }
-                });
-            } else if field.is_predicate || field.is_opaque_leaf() {
-                // Predicate fields hash inline via standard Hash. L9-3:
-                // token-text captures (bare `String`) hash inline identically —
-                // a token's text carries no host-term α-structure, so structural
-                // Hash IS its semantic hash (Eq-consistent).
-                final_stmts.push(quote! {
-                    std::hash::Hash::hash(#name, state);
-                });
-            } else if field.is_collection {
-                // (FIX-A) Collection fields of category elements hash via the
-                // element's alpha-canonical `semantic_hash`, not structural `Hash`.
-                let coll_type = field
-                    .coll_type
-                    .as_ref()
-                    .expect("collection field must carry a CollectionType");
-                final_stmts.push(semantic_hash_collection(
-                    &quote! { #name },
-                    &field.category,
-                    coll_type,
-                ));
-            } else {
-                // Box<T> before a collection: eager via re-entrant
-                // semantic_hash (stack-safe — inner uses the trampoline).
-                final_stmts.push(quote! {
-                    (&**#name).semantic_hash(state);
-                });
-            }
-        }
-
-        // Trailing Box<T> fields after last collection: push in reverse
-        // order so they pop in field order.
-        let deferred: Vec<(usize, &FieldInfo)> =
-            fields.iter().enumerate().skip(eager_end).collect();
-
-        for &(i, field) in deferred.iter().rev() {
-            let name = &field_names[i];
-            if field.is_optional && field.is_collection {
-                // (FIX-A) element semantic_hash, not structural Hash.
-                let coll_type = field
-                    .coll_type
-                    .as_ref()
-                    .expect("collection field must carry a CollectionType");
-                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
-                final_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__c) => {
-                            state.write_u8(1u8);
-                            #sem
-                        }
-                    }
-                });
-            } else if field.is_optional && (field.is_predicate || field.is_opaque_leaf()) {
-                // Task #14 (Option<Guard>): deferred twin of the eager arm
-                // — 0/1 discriminant + structural Hash, no Arc deref.
-                final_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__b) => {
-                            state.write_u8(1u8);
-                            std::hash::Hash::hash(__b, state);
-                        }
-                    }
-                });
-            } else if field.is_optional {
-                final_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__b) => {
-                            state.write_u8(1u8);
-                            (&**__b).semantic_hash(state);
-                        }
-                    }
-                });
-            } else if field.is_predicate || field.is_opaque_leaf() {
-                // L9-3: deferred twin — token-text captures hash inline.
-                final_stmts.push(quote! {
-                    std::hash::Hash::hash(#name, state);
-                });
-            } else if field.is_collection {
-                // (FIX-A) Collection fields of category elements hash via the
-                // element's alpha-canonical `semantic_hash`, not structural `Hash`.
-                let coll_type = field
-                    .coll_type
-                    .as_ref()
-                    .expect("collection field must carry a CollectionType");
-                final_stmts.push(semantic_hash_collection(
-                    &quote! { #name },
-                    &field.category,
-                    coll_type,
-                ));
-            } else {
-                let task_variant = format_ident!("SemHash{}", field.category);
-                final_stmts.push(quote! {
-                    stack.push(SemanticHashTask::#task_variant(&**#name as *const _));
-                });
-            }
-        }
+        let field_pushes: Vec<TokenStream> = fields
+            .iter()
+            .zip(field_names.iter())
+            .rev()
+            .map(|(field, name)| semantic_hash_field_tasks(field, name))
+            .collect();
 
         quote! {
             #category::#label(#(ref #field_names),*) => {
-                #(#final_stmts)*
+                state.write_u8(#variant_idx);
+                #(#field_pushes)*
             }
         }
     }
@@ -1614,80 +2012,7 @@ fn generate_semantic_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
 ) -> TokenStream {
-    let _ = label; // label_str no longer hashed; idx is the discriminator
-    let total_fields = pre_scope_fields.len() + 1;
-    let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
-    let scope_name = &field_names[total_fields - 1];
-
-    let mut hash_stmts: Vec<TokenStream> = Vec::new();
-
-    // Per-variant u8 discriminator (replaces tag + label.as_bytes()).
-    hash_stmts.push(quote! {
-        state.write_u8(#variant_idx);
-    });
-
-    // Hash pre-scope fields eagerly via re-entrant semantic_hash.
-    for (i, field) in pre_scope_fields.iter().enumerate() {
-        let name = &field_names[i];
-        if field.is_predicate {
-            hash_stmts.push(quote! {
-                std::hash::Hash::hash(#name, state);
-            });
-        } else if field.is_collection {
-            // (FIX-A) pre-scope collection: element semantic_hash, not std Hash.
-            // Handles both `Coll` and `*opt(Coll)` = `Option<Coll>` shapes.
-            let coll_type = field
-                .coll_type
-                .as_ref()
-                .expect("collection field must carry a CollectionType");
-            if field.is_optional {
-                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
-                hash_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__c) => {
-                            state.write_u8(1u8);
-                            #sem
-                        }
-                    }
-                });
-            } else {
-                hash_stmts.push(semantic_hash_collection(
-                    &quote! { #name },
-                    &field.category,
-                    coll_type,
-                ));
-            }
-        } else {
-            hash_stmts.push(quote! {
-                (&**#name).semantic_hash(state);
-            });
-        }
-    }
-
-    // Scope: hash the binder ARITY (always 1 for a single binder), NOT the
-    // binder's `FreeVar` identity. (FIX-A) moniker `FreeVar::Hash` hashes only
-    // `unique_id`, a process-global counter freshened by every `unbind` and
-    // never reset — so hashing the pattern leaked a run-varying, alpha-irrelevant
-    // value into the semantic fingerprint (`exact_key`/`content_key`), making it
-    // non-deterministic and non-alpha-canonical. The bound occurrences in the
-    // body are de-Bruijn `BoundVar{scope,binder}` coordinates (name-free, already
-    // alpha-canonical) and are hashed via the trampolined body task below, so the
-    // arity is the only structural information the binder position must contribute.
-    let body_task = format_ident!("SemHash{}", body_cat);
-    hash_stmts.push(quote! {
-        {
-            state.write_usize(1usize);
-            let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
-            stack.push(SemanticHashTask::#body_task(body_ptr));
-        }
-    });
-
-    quote! {
-        #category::#label(#(ref #field_names),*) => {
-            #(#hash_stmts)*
-        }
-    }
+    generate_semantic_scoped_arm(category, variant_idx, label, pre_scope_fields, body_cat, false)
 }
 
 /// Generate semantic_hash arm for a MultiBinder variant.
@@ -1698,74 +2023,46 @@ fn generate_semantic_multi_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
 ) -> TokenStream {
-    let _ = label; // label_str no longer hashed; idx is the discriminator
+    generate_semantic_scoped_arm(category, variant_idx, label, pre_scope_fields, body_cat, true)
+}
+
+fn generate_semantic_scoped_arm(
+    category: &Ident,
+    variant_idx: u8,
+    label: &Ident,
+    pre_scope_fields: &[FieldInfo],
+    body_cat: &Ident,
+    is_multi: bool,
+) -> TokenStream {
     let total_fields = pre_scope_fields.len() + 1;
     let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
     let scope_name = &field_names[total_fields - 1];
-
-    let mut hash_stmts: Vec<TokenStream> = Vec::new();
-
-    hash_stmts.push(quote! {
-        state.write_u8(#variant_idx);
-    });
-
-    for (i, field) in pre_scope_fields.iter().enumerate() {
-        let name = &field_names[i];
-        if field.is_predicate {
-            hash_stmts.push(quote! {
-                std::hash::Hash::hash(#name, state);
-            });
-        } else if field.is_collection {
-            // (FIX-A) pre-scope collection: element semantic_hash, not std Hash.
-            // Handles both `Coll` and `*opt(Coll)` = `Option<Coll>` shapes.
-            let coll_type = field
-                .coll_type
-                .as_ref()
-                .expect("collection field must carry a CollectionType");
-            if field.is_optional {
-                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
-                hash_stmts.push(quote! {
-                    match #name.as_ref() {
-                        None => state.write_u8(0u8),
-                        Some(__c) => {
-                            state.write_u8(1u8);
-                            #sem
-                        }
-                    }
-                });
-            } else {
-                hash_stmts.push(semantic_hash_collection(
-                    &quote! { #name },
-                    &field.category,
-                    coll_type,
-                ));
-            }
-        } else {
-            hash_stmts.push(quote! {
-                (&**#name).semantic_hash(state);
-            });
-        }
-    }
-
-    // Scope: hash the binder ARITY (number of binders), NOT the binders'
-    // `FreeVar` identities. (FIX-A) See the single-binder arm above for the
-    // rationale; for a multi-binder the arity (`unsafe_pattern.len()`) is the
-    // structural information that distinguishes, e.g., a 2-binder from a 3-binder
-    // scope whose bodies coincide on a shared de-Bruijn prefix. The body's
-    // `BoundVar{scope,binder}` coordinates (incl. `BinderIndex`) disambiguate
-    // which binder each occurrence references and are hashed via the body task.
+    let pre_scope_pushes: Vec<TokenStream> = pre_scope_fields
+        .iter()
+        .zip(field_names.iter())
+        .rev()
+        .map(|(field, name)| semantic_hash_field_tasks(field, name))
+        .collect();
     let body_task = format_ident!("SemHash{}", body_cat);
-    hash_stmts.push(quote! {
-        {
-            state.write_usize(#scope_name.inner().unsafe_pattern.len());
-            let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
-            stack.push(SemanticHashTask::#body_task(body_ptr));
-        }
-    });
+    let arity = if is_multi {
+        quote! { #scope_name.inner().unsafe_pattern.len() }
+    } else {
+        quote! { 1usize }
+    };
 
     quote! {
         #category::#label(#(ref #field_names),*) => {
-            #(#hash_stmts)*
+            state.write_u8(#variant_idx);
+            let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
+            stack.push(SemanticHashTask::#body_task {
+                value: body_ptr,
+                target,
+            });
+            stack.push(SemanticHashTask::AbsorbUsize {
+                value: #arity,
+                target,
+            });
+            #(#pre_scope_pushes)*
         }
     }
 }
@@ -1808,7 +2105,10 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
                     let mut stack = cell.take();
                     let was_empty = stack.is_empty();
 
-                    stack.push(SemanticHashTask::#task_variant(self as *const _));
+                    stack.push(SemanticHashTask::#task_variant {
+                        value: self as *const _,
+                        target: SemanticHashTarget::Root,
+                    });
                     semantic_hash_iterative(&mut stack, state);
 
                     if was_empty {
@@ -1822,7 +2122,10 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
                 }
 
                 // Fallback: TLS unavailable (thread shutdown). Local stack.
-                let mut stack = vec![SemanticHashTask::#task_variant(self as *const _)];
+                let mut stack = vec![SemanticHashTask::#task_variant {
+                    value: self as *const _,
+                    target: SemanticHashTarget::Root,
+                }];
                 semantic_hash_iterative(&mut stack, state);
             }
         }
@@ -1856,17 +2159,105 @@ mod task14_tests {
             generate_semantic_regular_arm(&cat, 3u8, &label, &fields, &HashSet::new(), &language)
                 .to_string();
         assert!(
-            arm.contains("hash (__b , state)"),
-            "the Some arm must hash the bare inner pred structurally: {arm}",
+            arm.contains("semantic_hash_opaque_task :: < _ , S > (__leaf , target)"),
+            "the Some arm must defer the bare predicate's exact structural hash calls: {arm}",
         );
         assert!(
             !arm.contains("* * __b"),
             "no Arc deref exists on an Option<BehavioralPred> payload: {arm}",
         );
         assert!(
-            arm.contains("write_u8 (0u8)") && arm.contains("write_u8 (1u8)"),
-            "the None/Some discriminant scheme must be kept: {arm}",
+            arm.contains("value : 0u8") && arm.contains("value : 1u8"),
+            "the deferred None/Some discriminant scheme must be kept: {arm}",
         );
+        assert!(
+            !arm.contains("semantic_hash (state)"),
+            "no child semantic hash may re-enter the public driver: {arm}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod task_usage_tests {
+    use super::*;
+
+    fn compact(tokens: TokenStream) -> String {
+        tokens
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    #[test]
+    fn unreachable_optional_task_shapes_are_not_emitted() {
+        let language = crate::gen::empty_language_for_tests();
+        let generated = compact(generate_semantic_hash(&language));
+
+        for absent in [
+            "semantic_hash_opaque_task",
+            "semantic_hash_keep_alive",
+            "SemanticHashTask::Opaque",
+            "SemanticHashTask::KeepAlive",
+            "ResumeSemHashCollection",
+            "Scratch(*mutmettail_runtime::CollectionSemanticHasher)",
+            "fnsemantic_hash_write_u64",
+        ] {
+            assert!(
+                !generated.contains(absent),
+                "an empty language cannot reach `{absent}`, so emitting it is dead code"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_unordered_element_category_gets_a_resume_driver() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let generated = compact(generate_semantic_hash(&language));
+
+        assert!(
+            generated.contains("ResumeSemHashCollectionProc"),
+            "the fixture's Bag/Set/Map/Pathmap literals all require the Proc resume driver"
+        );
+        assert!(
+            generated.contains("Scratch(*mutmettail_runtime::CollectionSemanticHasher)")
+                && generated.contains("fnsemantic_hash_write_u64"),
+            "an unordered collection requires scratch hashing and the PDA's u64 lane"
+        );
+        for category in ["List", "Bag", "Set", "Map", "Pathmap", "Int"] {
+            assert!(
+                !generated.contains(&format!("ResumeSemHashCollection{category}")),
+                "{category} is a wrapper category, not an unordered collection element"
+            );
+        }
+        assert_eq!(
+            generated
+                .matches("fnsemantic_hash_resume_collection_proc")
+                .count(),
+            1,
+            "all four unordered shapes share one category-specific resume driver"
+        );
+    }
+
+    #[test]
+    fn leaf_and_fold_usage_enable_their_exact_task_shapes() {
+        let mut usage = SemanticTaskUsage::default();
+        usage.record_field(&FieldInfo {
+            category: format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: true,
+            opaque_leaf: None,
+        });
+        usage.needs_keep_alive = true;
+
+        let generated =
+            compact(generate_semantic_task_enum(&crate::gen::empty_language_for_tests(), &usage));
+        assert!(generated.contains("semantic_hash_opaque_task"));
+        assert!(generated.contains("SemanticHashTask::Opaque"));
+        assert!(generated.contains("semantic_hash_keep_alive"));
+        assert!(generated.contains("SemanticHashTask::KeepAlive"));
     }
 }
 
@@ -2062,8 +2453,12 @@ mod residual_11_1_send_fold_tests {
         assert!(ts.contains("Proc :: POutput2Plus"), "reconstructs the polyadic canonical: {ts}");
         assert!(ts.contains("NQuote"), "channel rewrap lifted from the body: {ts}");
         assert!(
-            ts.contains("semantic_hash"),
-            "recurses semantic_hash on the reconstruction: {ts}"
+            ts.contains("SemHashProc") && ts.contains("semantic_hash_keep_alive"),
+            "the canonical reconstruction must be retained and scheduled on the current PDA: {ts}"
+        );
+        assert!(
+            !ts.contains(". semantic_hash ("),
+            "a fold alias must not re-enter the public semantic-hash driver: {ts}",
         );
         // The `bs` Vec rest is cloned through (NOT mk_proc_list-packed) so the
         // reconstruction matches POutput2Plus's (chan, first, rest-Vec) split.

@@ -27,8 +27,8 @@
 //! Each test below says which mechanism would break it.
 #![cfg(feature = "rholang")]
 
-use mettail_languages::rholang::{List, Proc};
-use mettail_runtime::FramedSemanticKeyHasher;
+use mettail_languages::rholang::{Bag, List, Map, Pathmap, Proc, Set};
+use mettail_runtime::{FramedSemanticKeyHasher, PathMapLit, PathMapMode};
 use std::hash::Hash;
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,34 @@ fn nested_list_source(depth: usize, leaf: i64) -> String {
         source = format!("[{source}]");
     }
     source
+}
+
+fn nested_hashbag_spine(depth: usize) -> Proc {
+    let mut term = Proc::PZero;
+    for _ in 0..depth {
+        let mut bag = mettail_runtime::HashBag::new();
+        bag.insert(term);
+        term = Proc::PPar(bag);
+    }
+    term
+}
+
+fn nested_vec_spine(depth: usize) -> Proc {
+    let mut term = Proc::PZero;
+    for _ in 0..depth {
+        term = Proc::MethodCall(std::sync::Arc::new(Proc::PZero), "deep".to_owned(), vec![term]);
+    }
+    term
+}
+
+fn on_256k_stack(name: &str, operation: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .name(name.to_owned())
+        .stack_size(256 * 1024)
+        .spawn(operation)
+        .expect("the OS must create the constrained generated-trait thread")
+        .join()
+        .expect("a generated trait overflowed or panicked on a 256 KiB stack");
 }
 
 // ---------------------------------------------------------------------------
@@ -506,4 +534,111 @@ fn the_corpus_really_does_contain_collection_literals_and_binders() {
          ladder the stack gate measures is exactly this shape.",
         nested_list_source(8, 1)
     );
+}
+
+// ---------------------------------------------------------------------------
+// 5. CLONE — exact collection shape and native-stack independence
+// ---------------------------------------------------------------------------
+
+/// A derived clone used to recurse once through every owned `HashBag<Proc>` or
+/// `Vec<Proc>` element.  These two spines exercise both generated collection
+/// rebuild paths on an ordinary 256 KiB Rust stack.  Construction and teardown
+/// are iterative as well, so the gate has no hidden enlarged-stack dependency.
+#[test]
+fn generated_clone_is_stack_safe_for_deep_owned_hashbag_and_vec_spines() {
+    const DEPTH: usize = 20_000;
+
+    on_256k_stack("rholang-hashbag-clone-256k", || {
+        let original = nested_hashbag_spine(DEPTH);
+        let cloned = original.clone();
+        assert_eq!(cloned.term_depth(), original.term_depth());
+        drop(cloned);
+        drop(original);
+    });
+
+    on_256k_stack("rholang-vec-clone-256k", || {
+        let original = nested_vec_spine(DEPTH);
+        let cloned = original.clone();
+        assert_eq!(cloned.term_depth(), original.term_depth());
+        drop(cloned);
+        drop(original);
+    });
+}
+
+/// The manual generated Clone must conserve the concrete carrier and PathMap
+/// mode.  The expected values are constructed independently rather than by
+/// cloning the source, so an Empty/Set/Map collapse or a key/value projection
+/// is observable here.
+#[test]
+fn generated_clone_preserves_every_collection_carrier_and_pathmap_mode() {
+    let bag = Bag::BagLit(mettail_runtime::HashBag::from_iter([
+        Proc::PZero,
+        Proc::PZero,
+        Proc::POutputNilEmpty,
+    ]));
+    let expected_bag = Bag::BagLit(mettail_runtime::HashBag::from_iter([
+        Proc::PZero,
+        Proc::PZero,
+        Proc::POutputNilEmpty,
+    ]));
+    assert_eq!(bag.clone(), expected_bag);
+
+    let set = Set::SetLit([Proc::PZero, Proc::POutputNilEmpty].into_iter().collect());
+    let expected_set = Set::SetLit([Proc::PZero, Proc::POutputNilEmpty].into_iter().collect());
+    assert_eq!(set.clone(), expected_set);
+
+    let map = Map::MapLit(
+        [(Proc::PZero, Proc::POutputNilEmpty), (Proc::POutputNilEmpty, Proc::PZero)]
+            .into_iter()
+            .collect(),
+    );
+    let expected_map = Map::MapLit(
+        [(Proc::PZero, Proc::POutputNilEmpty), (Proc::POutputNilEmpty, Proc::PZero)]
+            .into_iter()
+            .collect(),
+    );
+    assert_eq!(map.clone(), expected_map);
+
+    let cases = [
+        PathMapLit::Empty,
+        PathMapLit::from_set_iter([Proc::PZero, Proc::POutputNilEmpty]),
+        PathMapLit::from_map_iter([
+            (Proc::PZero, Proc::POutputNilEmpty),
+            (Proc::POutputNilEmpty, Proc::PZero),
+        ]),
+    ];
+    for (source, expected_mode) in
+        cases
+            .into_iter()
+            .zip([PathMapMode::Empty, PathMapMode::Set, PathMapMode::Map])
+    {
+        let expected = Pathmap::PathmapLit(match expected_mode {
+            PathMapMode::Empty => PathMapLit::Empty,
+            PathMapMode::Set => PathMapLit::from_set_iter([Proc::PZero, Proc::POutputNilEmpty]),
+            PathMapMode::Map => PathMapLit::from_map_iter([
+                (Proc::PZero, Proc::POutputNilEmpty),
+                (Proc::POutputNilEmpty, Proc::PZero),
+            ]),
+        });
+        let cloned = Pathmap::PathmapLit(source).clone();
+        let Pathmap::PathmapLit(cloned_entries) = &cloned else {
+            panic!("cloning PathmapLit changed its constructor")
+        };
+        assert_eq!(cloned_entries.mode(), expected_mode);
+        assert_eq!(cloned, expected);
+    }
+}
+
+/// Ordinary recursive fields are `Arc` boundaries.  The hand-written PDA must
+/// retain derived Clone's pointer-sharing semantics instead of needlessly
+/// descending into an already shared collection literal.
+#[test]
+fn generated_clone_preserves_arc_pointer_sharing() {
+    let shared = std::sync::Arc::new(Pathmap::PathmapLit(PathMapLit::from_set_iter([Proc::PZero])));
+    let original = Proc::CastPathmap(shared.clone());
+    let cloned = original.clone();
+    let Proc::CastPathmap(cloned_pathmap) = &cloned else {
+        panic!("cloning CastPathmap changed its constructor")
+    };
+    assert!(std::sync::Arc::ptr_eq(&shared, cloned_pathmap));
 }

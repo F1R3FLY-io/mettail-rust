@@ -55,7 +55,7 @@ use mettail_languages::rholang::{
 };
 use mettail_rholang_codegen::FltReflect;
 use mettail_rholang_runtime::rholang_ast::{lower_proc_in_env, BoundEnv};
-use mettail_runtime::{Binder, Scope};
+use mettail_runtime::{Binder, HashBag, Scope};
 use models::rust::rholang::par_children::dismantle;
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,67 @@ fn nested_par(depth: usize) -> Proc {
         p = Proc::PParInfix(Arc::new(Proc::PZero), Arc::new(p));
     }
     p
+}
+
+/// A direct owned-collection spine for the generated Clone PDA. Unlike
+/// [`nested_list`], no `Arc` boundary can turn cloning into a refcount bump:
+/// every `PPar` owns the `Proc` stored in its `HashBag`.
+fn nested_owned_hashbag(depth: usize) -> Proc {
+    let mut p = Proc::PZero;
+    for _ in 0..depth {
+        let mut bag = HashBag::new();
+        bag.insert(p);
+        p = Proc::PPar(bag);
+    }
+    p
+}
+
+/// The ordered owned-collection counterpart of [`nested_owned_hashbag`].
+/// `MethodCall` owns its `Vec<Proc>` arguments while its receiver remains an
+/// intentionally shallow `Arc` field.
+fn nested_owned_vec(depth: usize) -> Proc {
+    let mut p = Proc::PZero;
+    for _ in 0..depth {
+        p = Proc::MethodCall(Arc::new(Proc::PZero), "clone_probe".to_owned(), vec![p]);
+    }
+    p
+}
+
+fn assert_owned_hashbag_depth(root: &Proc, expected: usize) {
+    let mut cursor = root;
+    for level in 0..expected {
+        let Proc::PPar(bag) = cursor else {
+            panic!("stack_depth_probe: clone hashbag spine ended at level {level}")
+        };
+        assert_eq!(bag.len(), 1, "clone hashbag spine changed multiplicity at level {level}");
+        let (next, count) = bag
+            .iter()
+            .next()
+            .expect("clone hashbag spine lost its sole element");
+        assert_eq!(count, 1, "clone hashbag spine changed its sole count at level {level}");
+        cursor = next;
+    }
+    assert!(
+        matches!(cursor, Proc::PZero),
+        "stack_depth_probe: clone hashbag spine did not reach PZero at depth {expected}"
+    );
+}
+
+fn assert_owned_vec_depth(root: &Proc, expected: usize) {
+    let mut cursor = root;
+    for level in 0..expected {
+        let Proc::MethodCall(receiver, method, arguments) = cursor else {
+            panic!("stack_depth_probe: clone vec spine ended at level {level}")
+        };
+        assert!(matches!(receiver.as_ref(), Proc::PZero));
+        assert_eq!(method, "clone_probe");
+        assert_eq!(arguments.len(), 1, "clone vec spine changed arity at level {level}");
+        cursor = &arguments[0];
+    }
+    assert!(
+        matches!(cursor, Proc::PZero),
+        "stack_depth_probe: clone vec spine did not reach PZero at depth {expected}"
+    );
 }
 
 /// `- - - … - 1` with `depth` signs: the `Int::NegInt` chain, which had its OWN Θ(depth) axis
@@ -1555,13 +1616,9 @@ fn ast_match_pattern_add_body(depth: usize) {
     std::mem::forget(pattern);
 }
 
-/// ★★ `Clone` — and it is NOT a generated driver, which is the whole point.
-///
-/// `iterative_clone.rs` existed and was DELETED (`651499e2`). The ARC refactor
-/// (`9c55d81d`) changed recursive AST children from `Box<Cat>` to `Arc<Cat>`, so the derived
-/// `Clone` is `Arc::clone` per child — a refcount increment that stops at the `Arc` boundary
-/// and never descends the subtree. This subject is the executable form of that claim: it
-/// clones a deep term on the ALTERNATING ladder, where every other driver is sloped.
+/// The `Arc` fast path of the generated Clone PDA. Recursive scalar fields retain
+/// derived Clone's pointer-sharing behavior, so this alternating ladder must stop
+/// at its first `Arc` rather than unnecessarily duplicating the subtree.
 ///
 /// ⚠ ANTI-VACUITY: the clone must be OBSERVED, or the optimiser may drop it entirely. Its
 /// root discriminant is compared and both terms are then forgotten.
@@ -1574,6 +1631,28 @@ fn ast_clone_body(depth: usize) {
     );
     std::mem::forget(a);
     std::mem::forget(b);
+}
+
+/// The complementary owned-collection path of `iterative_clone.rs`.
+///
+/// Both an unordered `HashBag<Proc>` spine and an ordered `Vec<Proc>` spine are
+/// cloned. The result is inspected by independent iterative loops, so the probe
+/// cannot pass if the Clone PDA merely preserves the root discriminant, loses a
+/// child, changes multiplicity/arity, or accidentally shallow-copies an owned
+/// container.
+fn ast_clone_owned_body(depth: usize) {
+    let hashbag = nested_owned_hashbag(depth);
+    let hashbag_clone = hashbag.clone();
+    assert_owned_hashbag_depth(&hashbag_clone, depth);
+
+    let vector = nested_owned_vec(depth);
+    let vector_clone = vector.clone();
+    assert_owned_vec_depth(&vector_clone, depth);
+
+    std::mem::forget(hashbag);
+    std::mem::forget(hashbag_clone);
+    std::mem::forget(vector);
+    std::mem::forget(vector_clone);
 }
 
 /// `Clone` on the pure chain, for the 2x2.
@@ -1703,8 +1782,9 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     ("ast_subst_add", ast_subst_add_body),
     ("ast_normalize_add", ast_normalize_add_body),
     ("ast_match_pattern_add", ast_match_pattern_add_body),
-    // -------- ★ Clone: stack-safe by REPRESENTATION, not by a driver --------
+    // -------- ★ Clone: shallow Arc fast path plus owned-collection PDA --------
     ("ast_clone", ast_clone_body),
+    ("ast_clone_owned", ast_clone_owned_body),
     ("ast_clone_add", ast_clone_add_body),
     ("build_one", build_one_body),
     // -------- discriminators --------

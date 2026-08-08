@@ -148,6 +148,15 @@ pub use pathmap_bridge::{
 mod hashset_lit;
 pub use hashset_lit::HashSetLit;
 
+mod collection_cmp_pda;
+pub use collection_cmp_pda::{CollectionCmpItem, CollectionCmpPda, CollectionCmpStep};
+
+mod collection_semantic_hash_pda;
+pub use collection_semantic_hash_pda::{
+    CollectionSemanticHashItem, CollectionSemanticHashPda, CollectionSemanticHashStep,
+    CollectionSemanticHasher,
+};
+
 // Language metadata for REPL introspection
 mod metadata;
 pub use metadata::*;

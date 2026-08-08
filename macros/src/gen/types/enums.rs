@@ -246,21 +246,16 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         // Float categories use canonical wrapper payload (Eq/Hash/Ord).
         // NOTE: Debug is NOT derived — it is manually implemented via an iterative work-stack
         // in gen/syntax/debug.rs to avoid stack overflow on deeply nested terms.
-        // NOTE: Clone IS derived (ARC refactor, 2026-05-28). Recursive AST
-        // children are now `std::sync::Arc<Cat>` (was `Box<Cat>`), so derived
-        // `Clone` is `Arc::clone` per child — O(1) and NON-recursive (it stops
-        // at the Arc boundary, never descending the subtree). This collapses
-        // the former O(N²) deep-clone (`into_term` cloned the whole accumulated
-        // subtree at every chain step; heaptrack: 96% of peak heap at
-        // chain_1000) to O(N) sharing. The old iterative work-stack clone
-        // (gen/term_ops/iterative_clone.rs) existed solely to avoid stack
-        // overflow on deep `Box` chains — obsolete now that Arc::clone does not
-        // recurse; that module was removed (2026-06-22).
+        // NOTE: Clone is manually generated. Ordinary recursive children are
+        // `Arc<Cat>` and therefore remain shallow clones, preserving pointer
+        // sharing exactly. Owned terms inside Vec/Set/Bag/Map/PathMap fields do
+        // not cross an Arc boundary, so their clone is driven by the generated
+        // collection PDA instead of recursing through `Container::clone`.
         // NOTE: PartialEq, Eq, PartialOrd, Ord, Hash are NOT derived — they are manually
         // implemented via iterative work-stacks in gen/term_ops/iterative_cmp.rs and
         // gen/term_ops/iterative_hash.rs to avoid stack overflow on deeply nested terms
         // (these still traverse the full tree, so iterative stack-safety is retained).
-        let derives = quote! { #[derive(Clone, mettail_runtime::BoundTerm)] };
+        let derives = quote! { #[derive(mettail_runtime::BoundTerm)] };
         quote! {
             #derives
             pub enum #cat_name {

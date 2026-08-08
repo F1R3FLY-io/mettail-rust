@@ -4,6 +4,7 @@
 //! - `subst` - Capture-avoiding substitution
 //! - `normalize` - Collection canonicalization (flatten + normalize)
 //! - `depth` - Term nesting depth measurement (A-RT05)
+//! - `iterative_clone` - Trampolined Clone for owned collection subterms
 //! - `iterative_drop` - Trampolined Drop for stack-safe deallocation
 //! - `iterative_cmp` - Trampolined PartialEq/Eq/PartialOrd/Ord for stack-safe comparison
 //! - `iterative_hash` - Trampolined Hash for stack-safe hashing
@@ -17,6 +18,7 @@ pub mod arm_integrity;
 pub mod collection_walk;
 pub mod depth;
 pub mod ground;
+pub mod iterative_clone;
 pub mod iterative_cmp;
 pub mod iterative_drop;
 pub mod iterative_hash;

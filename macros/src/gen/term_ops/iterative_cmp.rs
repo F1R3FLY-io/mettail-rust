@@ -10,17 +10,18 @@
 //! Instead of relying on the compiler-generated recursive comparison, each category
 //! gets manual `impl PartialEq`, `impl Eq`, `impl PartialOrd`, and `impl Ord` that:
 //!
-//! 1. Push comparison tasks for `Box<T>` child pairs onto a thread-local work stack.
-//! 2. The outermost comparison call iteratively processes the stack, comparing
-//!    children level by level.
-//! 3. Early-exits on first inequality (for eq) or first non-Equal ordering (for cmp).
+//! 1. Push comparison tasks for category children onto a thread-local work stack.
+//! 2. Drive unordered collections through one shared canonical-order collection
+//!    PDA whose requested element comparisons rejoin the same iterative engine.
+//! 3. Iteratively process the work stack and early-exit on the first inequality.
 //!
 //! ## Re-Entrancy Safety
 //!
-//! When collection fields (Vec, HashBag, HashSet) delegate to their own `PartialEq`
-//! or `Ord`, that re-enters our iterative engine. The inner call gets an empty pool
-//! via `cell.take()`, uses it, and returns it. The outer call retains its pool.
-//! This is safe — same `Cell<Vec<_>>` pattern as `iterative_drop.rs`.
+//! Generated category comparisons never delegate a category-bearing collection
+//! to its public `PartialEq` or `Ord` implementation. Ordered collections schedule
+//! their elements directly; unordered collections use `CollectionCmpPda`. Equality
+//! drives that ordering PDA on a dedicated auxiliary task stack, so a comparison
+//! remains heap-backed even when unordered collections contain deeply nested terms.
 //!
 //! ## Thread Shutdown Safety
 //!
@@ -42,7 +43,7 @@
 
 use crate::gen::term_ops::collection_walk::{
     field_carrier, for_each_subterm_pair, plan_for, CollectionPlan, FieldCarrier, OrderSensitivity,
-    WalkOrder,
+    WalkOrder, WholeValueReason,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
@@ -100,13 +101,25 @@ fn eq_collection_stmts(
                 #pushes
             }
         },
-        // The declared residue: an unordered container's `PartialEq` is a
-        // membership/multiplicity question its own impl answers, and answering it
-        // element-wise from here would need the canonical order it computes
-        // internally. One host frame, then the element walk is flat again.
-        CollectionPlan::WholeValue { .. } => quote! {
-            if #left_expr != #right_expr {
-                return false;
+        CollectionPlan::WholeValue {
+            reason: WholeValueReason::UnorderedContainer,
+        } => {
+            let resume_fn =
+                format_ident!("cmp_resume_collection_{}", element_cat.to_string().to_lowercase());
+            let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr);
+            quote! {
+                if !eq_unordered_collection(#machine, #resume_fn) {
+                    return false;
+                }
+            }
+        },
+        CollectionPlan::WholeValue {
+            reason: WholeValueReason::ElementIsNotACategory,
+        } => {
+            quote! {
+                if #left_expr != #right_expr {
+                    return false;
+                }
             }
         },
     }
@@ -147,12 +160,139 @@ fn cmp_collection_push_stmts(
                 #pushes
             }
         },
-        // The declared residue — see `eq_collection_stmts`. The verdict is
-        // computed here and consulted in position order, so the ORDER of the
-        // comparison is unchanged from the eager form this replaced.
-        CollectionPlan::WholeValue { .. } => quote! {
-            stack.push(CmpTask::Verdict(#left_expr.cmp(#right_expr)));
+        CollectionPlan::WholeValue {
+            reason: WholeValueReason::UnorderedContainer,
+        } => unordered_collection_cmp_push_stmts(element_cat, coll_type, left_expr, right_expr),
+        CollectionPlan::WholeValue {
+            reason: WholeValueReason::ElementIsNotACategory,
+        } => {
+            quote! {
+                stack.push(CmpTask::Verdict(#left_expr.cmp(#right_expr)));
+            }
         },
+    }
+}
+
+fn unordered_collection_cmp_push_stmts(
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    left_expr: &TokenStream,
+    right_expr: &TokenStream,
+) -> TokenStream {
+    let resume_fn =
+        format_ident!("cmp_resume_collection_{}", element_cat.to_string().to_lowercase());
+    let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr);
+
+    quote! {
+        stack.push(CmpTask::StartCollection(
+            Box::new(#machine),
+            #resume_fn,
+        ));
+    }
+}
+
+/// Build the one canonical-order comparison machine shared by `Eq` and `Ord`.
+/// Keeping this expression in one generator function prevents the two traits
+/// from drifting on mode order, multiplicities, or key/value pairing.
+fn unordered_collection_cmp_machine_expr(
+    coll_type: &CollectionType,
+    left_expr: &TokenStream,
+    right_expr: &TokenStream,
+) -> TokenStream {
+    let (lead, left_items, right_items) = match coll_type {
+        CollectionType::HashSet => (
+            quote! { std::cmp::Ordering::Equal },
+            quote! {
+                #left_expr
+                    .iter()
+                    .map(mettail_runtime::CollectionCmpItem::unary)
+                    .collect()
+            },
+            quote! {
+                #right_expr
+                    .iter()
+                    .map(mettail_runtime::CollectionCmpItem::unary)
+                    .collect()
+            },
+        ),
+        CollectionType::HashBag => (
+            quote! { #left_expr.len().cmp(&#right_expr.len()) },
+            quote! {
+                #left_expr
+                    .iter()
+                    .map(|(__item, __count)| {
+                        mettail_runtime::CollectionCmpItem::repeated(__item, __count)
+                    })
+                    .collect()
+            },
+            quote! {
+                #right_expr
+                    .iter()
+                    .map(|(__item, __count)| {
+                        mettail_runtime::CollectionCmpItem::repeated(__item, __count)
+                    })
+                    .collect()
+            },
+        ),
+        CollectionType::HashMap => (
+            quote! { std::cmp::Ordering::Equal },
+            quote! {
+                #left_expr
+                    .iter()
+                    .map(|(__key, __value)| {
+                        mettail_runtime::CollectionCmpItem::pair(__key, __value)
+                    })
+                    .collect()
+            },
+            quote! {
+                #right_expr
+                    .iter()
+                    .map(|(__key, __value)| {
+                        mettail_runtime::CollectionCmpItem::pair(__key, __value)
+                    })
+                    .collect()
+            },
+        ),
+        CollectionType::PathMap => (
+            quote! { #left_expr.mode().cmp(&#right_expr.mode()) },
+            quote! {
+                #left_expr
+                    .iter()
+                    .map(|__entry| match __entry.value() {
+                        Some(__value) => mettail_runtime::CollectionCmpItem::pair(
+                            __entry.key(),
+                            __value,
+                        ),
+                        None => mettail_runtime::CollectionCmpItem::unary(__entry.key()),
+                    })
+                    .collect()
+            },
+            quote! {
+                #right_expr
+                    .iter()
+                    .map(|__entry| match __entry.value() {
+                        Some(__value) => mettail_runtime::CollectionCmpItem::pair(
+                            __entry.key(),
+                            __value,
+                        ),
+                        None => mettail_runtime::CollectionCmpItem::unary(__entry.key()),
+                    })
+                    .collect()
+            },
+        ),
+        CollectionType::Vec => {
+            return quote! {
+                compile_error!("unordered collection comparison machine requested for Vec")
+            };
+        },
+    };
+
+    quote! {
+        mettail_runtime::CollectionCmpPda::new(
+            #lead,
+            #left_items,
+            #right_items,
+        )
     }
 }
 
@@ -198,8 +338,24 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
             }
         })
         .collect();
+    let collection_resume_variants: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let variant_name = format_ident!("ResumeCollection{}", t.name);
+            quote! {
+                #variant_name(Box<mettail_runtime::CollectionCmpPda>)
+            }
+        })
+        .collect();
 
     quote! {
+        type CollectionCmpResume = fn(
+            &mut Vec<CmpTask>,
+            Box<mettail_runtime::CollectionCmpPda>,
+            Option<std::cmp::Ordering>,
+        ) -> Option<std::cmp::Ordering>;
+
         /// Work item for the iterative comparison engines (eq and cmp).
         ///
         /// Each per-category variant wraps a pair of raw pointers to values of
@@ -209,6 +365,15 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
         #[allow(dead_code)]
         enum CmpTask {
             #(#variants,)*
+            #(#collection_resume_variants,)*
+            /// Begin a canonical-order comparison at its exact lexicographic
+            /// position. Deferring the first `resume(None)` call is essential:
+            /// a mode or multiplicity verdict computed while an arm is being
+            /// pushed would otherwise outrank earlier fields.
+            StartCollection(
+                Box<mettail_runtime::CollectionCmpPda>,
+                CollectionCmpResume,
+            ),
             /// ★ #162 — an ALREADY-COMPUTED verdict, consulted in field order.
             ///
             /// A comparison arm has to interleave two kinds of work: DESCENTS
@@ -237,11 +402,18 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
             /// Pool for reusing `CmpTask` work stacks across comparison calls.
             ///
             /// The `Cell<Vec<CmpTask>>` pattern allows zero-allocation
-            /// steady-state operation: the first comparison allocates, subsequent
-            /// comparisons reuse the same buffer. Re-entrant comparisons (from
-            /// collection fields delegating to their own PartialEq/Ord) get fresh
-            /// empty vectors; the outermost call retains pool capacity.
+            /// steady-state operation: the first comparison allocates and later
+            /// comparisons reuse the same buffer. Category-bearing collections
+            /// remain inside the generated drivers rather than re-entering the
+            /// public trait implementations.
             static CMP_TASK_POOL: std::cell::Cell<Vec<CmpTask>> =
+                std::cell::Cell::new(Vec::new());
+
+            /// Reusable work stack for the canonical-order PDA used by equality
+            /// at unordered collection boundaries. It is distinct from
+            /// `CMP_TASK_POOL` because the outer equality traversal still owns
+            /// that stack while an individual collection is being compared.
+            static CMP_AUX_TASK_POOL: std::cell::Cell<Vec<CmpTask>> =
                 std::cell::Cell::new(Vec::new());
         }
     }
@@ -384,8 +556,64 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
             }
         })
         .collect();
+    let resume_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let variant = format_ident!("ResumeCollection{}", t.name);
+            quote! {
+                CmpTask::#variant(_) => {
+                    unreachable!("collection ordering continuation reached equality engine");
+                }
+            }
+        })
+        .collect();
 
     quote! {
+        /// Decide equality of one unordered collection by driving the same
+        /// canonical-order PDA used by `Ord`. The category-specific resume
+        /// function converts the PDA's erased pointers back to the correct
+        /// generated category before scheduling `CmpTask` work.
+        #[inline]
+        #[allow(dead_code)]
+        fn eq_unordered_collection(
+            machine: mettail_runtime::CollectionCmpPda,
+            resume: CollectionCmpResume,
+        ) -> bool {
+            #[inline]
+            fn drive(
+                stack: &mut Vec<CmpTask>,
+                machine: mettail_runtime::CollectionCmpPda,
+                resume: CollectionCmpResume,
+            ) -> bool {
+                stack.push(CmpTask::StartCollection(Box::new(machine), resume));
+                cmp_iterative(stack) == std::cmp::Ordering::Equal
+            }
+
+            let mut machine = Some(machine);
+            let tls_result = CMP_AUX_TASK_POOL.try_with(|cell| {
+                let mut stack = cell.take();
+                stack.clear();
+                let result = drive(
+                    &mut stack,
+                    machine.take().expect("collection PDA must be driven exactly once"),
+                    resume,
+                );
+                stack.clear();
+                cell.set(stack);
+                result
+            });
+
+            match tls_result {
+                Ok(result) => result,
+                Err(_) => drive(
+                    &mut Vec::new(),
+                    machine.expect("TLS failure must leave the collection PDA available"),
+                    resume,
+                ),
+            }
+        }
+
         #(#helper_fns)*
 
         /// Iterative equality engine. Processes the work stack until empty.
@@ -402,6 +630,10 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
+                    #(#resume_arms)*
+                    CmpTask::StartCollection(_, _) => {
+                        unreachable!("collection ordering start reached equality engine");
+                    }
                     // ★ #162 — a precomputed leaf verdict. `PartialEq` only asks
                     // whether every position agrees, so any non-`Equal` verdict
                     // is a mismatch regardless of direction.
@@ -537,9 +769,9 @@ fn eq_arm_stmts(
                 if #lname != #rname { return false; }
             },
 
-            // Phase 4 #3 (2026-05-12): Optional-Collection — delegate to
-            // `Option<Container>::PartialEq`, which is the container's own
-            // element-wise `PartialEq` under a `Some`/`None` tag.
+            // Optional-Collection: compare the option tag, then route
+            // `Some`/`Some` through the same explicit inner-container walk as a
+            // non-optional collection.
             //
             // ⚠ This is the arm the two binder loops did not have. Reaching the
             // `Collection` arm instead emitted `Option::len` (E0624, the method is
@@ -547,14 +779,25 @@ fn eq_arm_stmts(
             // `Option`'s `len`/`iter` describe the OPTION — one item, the container
             // — and not the container's elements.
             //
-            // ★ The residual host recursion here is the same DECLARED residue
-            // `collection_walk`'s header describes for an unordered container: one
-            // whole-value re-entry, after which the element walk is flat again. It
-            // is Θ(count of nested optional-container levels), not Θ(term depth),
-            // and `cmp_arm_stmts`'s `is_stack_expressible` already classified this
-            // carrier the same way on the `Ord` side.
-            FieldCarrier::OptionalCollection { .. } => quote! {
-                if #lname != #rname { return false; }
+            // Destructuring is essential: `Option::iter` would yield the
+            // container as its single item, not the container's term elements.
+            FieldCarrier::OptionalCollection { coll_type } => {
+                let inner = eq_collection_stmts(
+                    &field.category,
+                    &coll_type,
+                    &quote! { __left_collection },
+                    &quote! { __right_collection },
+                    language,
+                );
+                quote! {
+                    match (#lname.as_ref(), #rname.as_ref()) {
+                        (None, None) => {},
+                        (Some(__left_collection), Some(__right_collection)) => {
+                            #inner
+                        },
+                        _ => return false,
+                    }
+                }
             },
 
             // Opt-Group: equality on `Option<Box<Cat>>`. Push a `CmpTask` when both
@@ -715,6 +958,38 @@ fn generate_eq_multi_binder_arm(
 /// the ordering result; `Equal` means "continue draining stack", anything
 /// else means "stop and propagate".
 fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
+    let collection_resume_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let cmp_variant = format_ident!("Cmp{}", cat);
+            let resume_variant = format_ident!("ResumeCollection{}", cat);
+            let resume_fn =
+                format_ident!("cmp_resume_collection_{}", cat.to_string().to_lowercase());
+            quote! {
+                #[inline]
+                fn #resume_fn(
+                    stack: &mut Vec<CmpTask>,
+                    mut machine: Box<mettail_runtime::CollectionCmpPda>,
+                    result: Option<std::cmp::Ordering>,
+                ) -> Option<std::cmp::Ordering> {
+                    match machine.resume(result) {
+                        mettail_runtime::CollectionCmpStep::Compare { left, right } => {
+                            stack.push(CmpTask::#resume_variant(machine));
+                            stack.push(CmpTask::#cmp_variant(
+                                left.cast::<#cat>(),
+                                right.cast::<#cat>(),
+                            ));
+                            None
+                        },
+                        mettail_runtime::CollectionCmpStep::Done(ordering) => Some(ordering),
+                    }
+                }
+            }
+        })
+        .collect();
+
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
@@ -743,13 +1018,11 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                     let l_idx = #index_fn(left);
                     let r_idx = #index_fn(right);
                     if l_idx != r_idx {
-                        stack.clear();
                         return l_idx.cmp(&r_idx);
                     }
                     match (left, right) {
                         #(#variant_arms)*
                         _ => {
-                            stack.clear();
                             return l_idx.cmp(&r_idx);
                         }
                     }
@@ -770,7 +1043,57 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                 CmpTask::#cmp_variant(left_ptr, right_ptr) => {
                     let ord = #helper_fn(stack, left_ptr, right_ptr);
                     if ord != std::cmp::Ordering::Equal {
-                        return ord;
+                        if let Some(root_ordering) = cmp_deliver(stack, ord) {
+                            return root_ordering;
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let resume_task_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let resume_variant = format_ident!("ResumeCollection{}", t.name);
+            let resume_fn =
+                format_ident!("cmp_resume_collection_{}", t.name.to_string().to_lowercase());
+            quote! {
+                CmpTask::#resume_variant(machine) => {
+                    if let Some(ordering) = #resume_fn(
+                        stack,
+                        machine,
+                        Some(std::cmp::Ordering::Equal),
+                    ) {
+                        if ordering != std::cmp::Ordering::Equal {
+                            if let Some(root_ordering) = cmp_deliver(stack, ordering) {
+                                return root_ordering;
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let deliver_resume_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let resume_variant = format_ident!("ResumeCollection{}", t.name);
+            let resume_fn =
+                format_ident!("cmp_resume_collection_{}", t.name.to_string().to_lowercase());
+            quote! {
+                CmpTask::#resume_variant(machine) => {
+                    match #resume_fn(stack, machine, Some(ordering)) {
+                        None => return None,
+                        Some(std::cmp::Ordering::Equal) => return None,
+                        Some(next) => {
+                            ordering = next;
+                            resumed = true;
+                            break;
+                        },
                     }
                 }
             }
@@ -778,7 +1101,27 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         .collect();
 
     quote! {
+        #(#collection_resume_fns)*
         #(#helper_fns)*
+
+        #[allow(dead_code, unused_variables)]
+        fn cmp_deliver(
+            stack: &mut Vec<CmpTask>,
+            mut ordering: std::cmp::Ordering,
+        ) -> Option<std::cmp::Ordering> {
+            loop {
+                let mut resumed = false;
+                while let Some(task) = stack.pop() {
+                    match task {
+                        #(#deliver_resume_arms)*
+                        _ => {},
+                    }
+                }
+                if !resumed {
+                    return Some(ordering);
+                }
+            }
+        }
 
         /// Iterative ordering engine. Processes the work stack until empty.
         ///
@@ -794,14 +1137,25 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
+                    CmpTask::StartCollection(machine, resume) => {
+                        if let Some(ordering) = resume(stack, machine, None) {
+                            if ordering != std::cmp::Ordering::Equal {
+                                if let Some(root_ordering) = cmp_deliver(stack, ordering) {
+                                    return root_ordering;
+                                }
+                            }
+                        }
+                    }
+                    #(#resume_task_arms)*
                     // ★ #162 — a precomputed leaf verdict. Because tasks are
                     // pushed in REVERSE position order, popping them yields
                     // strict left-to-right (lexicographic) semantics: the FIRST
                     // non-`Equal` verdict decides, exactly as `derive(Ord)` does.
                     CmpTask::Verdict(ord) => {
                         if ord != std::cmp::Ordering::Equal {
-                            stack.clear();
-                            return ord;
+                            if let Some(root_ordering) = cmp_deliver(stack, ord) {
+                                return root_ordering;
+                            }
                         }
                     }
                 }
@@ -836,7 +1190,6 @@ fn generate_cmp_variant_arm(
                 (#category::#label(a), #category::#label(b)) => {
                     let ord = a.cmp(b);
                     if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
                         return ord;
                     }
                 }
@@ -866,7 +1219,6 @@ fn generate_cmp_variant_arm(
                 (#category::#label(a), #category::#label(b)) => {
                     let ord = a.cmp(b);
                     if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
                         return ord;
                     }
                 }
@@ -930,11 +1282,11 @@ fn generate_cmp_variant_arm(
 /// ```text
 ///   split = index of the FIRST field that can be expressed as a task
 ///   fields [0, split)      → compared eagerly, in field order, early-returning
-///                            (only leaves and unordered collections land here)
+///                            (only primitive/opaque leaves land here)
 ///   fields [split, n)      → pushed in REVERSE field order; leaves become
 ///                            `Verdict`, `Box<Cat>` becomes a descent, and an
-///                            order-faithful collection becomes ONE PUSH PER
-///                            ELEMENT plus a trailing length `Verdict`
+///                            ordered collection becomes one task per element;
+///                            an unordered one becomes one `StartCollection` task
 /// ```
 ///
 /// **Both schemes yield exactly strict field order**, so `Ord` is byte-for-byte
@@ -979,23 +1331,30 @@ fn cmp_arm_stmts(
     language: &LanguageDef,
 ) -> Vec<TokenStream> {
     // Can this field's contribution be expressed as work ON THE STACK? A leaf
-    // cannot (it is not a category), and neither can an unordered collection (its
-    // `Ord` is its own; see `collection_walk`'s boundary) — but a `Box<Cat>`
-    // child can, an `Option<Box<Cat>>` child can, and so can every element of an
-    // order-faithful collection.
+    // cannot because it is not a category. Boxed children, optional children,
+    // and every category-bearing collection can: unordered containers use the
+    // resumable canonical-order PDA rather than a synchronous whole-value call.
     let is_stack_expressible = |field: &FieldInfo| -> bool {
         match field_carrier(field) {
             // A leaf is not a category, so no `Cmp<Cat>` task can carry it.
             FieldCarrier::Leaf => false,
             // A boxed category child, optional or not.
             FieldCarrier::Child | FieldCarrier::OptionalChild => true,
-            // Phase 4 #3: `Option<Container>` is compared by `Option<C>::cmp`, which
-            // is the container's own `Ord` under a tag — one whole value, not a
-            // sequence of positions.
-            FieldCarrier::OptionalCollection { .. } => false,
+            // The option tag is explicit; `Some`/`Some` delegates to the
+            // inner-container plan.
+            FieldCarrier::OptionalCollection { coll_type } => matches!(
+                plan_for(&field.category, &coll_type, OrderSensitivity::OrderSensitive, language),
+                CollectionPlan::PerElement { .. }
+                    | CollectionPlan::WholeValue {
+                        reason: WholeValueReason::UnorderedContainer,
+                    }
+            ),
             FieldCarrier::Collection { coll_type } => matches!(
                 plan_for(&field.category, &coll_type, OrderSensitivity::OrderSensitive, language),
                 CollectionPlan::PerElement { .. }
+                    | CollectionPlan::WholeValue {
+                        reason: WholeValueReason::UnorderedContainer,
+                    }
             ),
         }
     };
@@ -1007,11 +1366,10 @@ fn cmp_arm_stmts(
 
     let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
-    // ── the eager segment: leaves and unordered containers, in field order ──
+    // ── the eager segment: primitive leaves, in field order ──
     //
-    // Phase 3A-B2 / L9-3: `BehavioralPred` and token-text captures derive `Ord`
-    // and have no sub-terms. Phase 4 #3: `Option<Container>` delegates to
-    // `Option<C>::cmp`. An unordered container is the declared residue.
+    // `BehavioralPred` and token-text captures derive `Ord` and have no
+    // sub-terms. Every category-bearing carrier begins the pushed segment.
     for i in 0..split {
         let lname = &left_names[i];
         let rname = &right_names[i];
@@ -1019,7 +1377,6 @@ fn cmp_arm_stmts(
             {
                 let ord = #lname.cmp(#rname);
                 if ord != std::cmp::Ordering::Equal {
-                    stack.clear();
                     return ord;
                 }
             }
@@ -1048,10 +1405,30 @@ fn cmp_arm_stmts(
                 stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
             },
 
-            // Phase 4 #3: `Option<Container>: Ord` is the container's own `Ord`
-            // under a `None < Some` tag — one whole value, so one `Verdict`.
-            FieldCarrier::OptionalCollection { .. } => quote! {
-                stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
+            // `Option<Container>: Ord` uses `None < Some`; `Some`/`Some` then
+            // schedules the inner container without a host-stack re-entry.
+            FieldCarrier::OptionalCollection { coll_type } => {
+                let inner = cmp_collection_push_stmts(
+                    &field.category,
+                    &coll_type,
+                    &quote! { __left_collection },
+                    &quote! { __right_collection },
+                    language,
+                );
+                quote! {
+                    match (#lname.as_ref(), #rname.as_ref()) {
+                        (None, None) => {},
+                        (None, Some(_)) => {
+                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Less));
+                        },
+                        (Some(_), None) => {
+                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Greater));
+                        },
+                        (Some(__left_collection), Some(__right_collection)) => {
+                            #inner
+                        },
+                    }
+                }
             },
 
             // Opt-Group, `Option<Box<Cat>>`: `None < Some(_)`, and `Some` vs
@@ -1385,7 +1762,8 @@ mod carrier_cell_census {
     /// carriers because it is the ORDER-FAITHFUL container — the one whose plain
     /// form is walked per-element — which makes the optional/non-optional contrast
     /// maximally sharp: the plain form must produce a `len` + element walk and the
-    /// optional form must produce neither.
+    /// optional form must destructure the `Option` before producing the same
+    /// inner-container walk.
     fn one_per_carrier() -> Vec<(&'static str, FieldInfo)> {
         vec![
             ("Leaf/predicate", field(false, None, true, false, None)),
@@ -1432,9 +1810,9 @@ mod carrier_cell_census {
     /// The load-bearing pair is `Collection` vs `OptionalCollection`: they differ
     /// only in one boolean, and conflating them is precisely the defect. A plain
     /// `Vec` MUST produce `l0.len()` and a zipped element walk; an
-    /// `Option<Vec<…>>` MUST produce neither, because `Option::len` is private
-    /// (E0624) and `Option::iter` yields the CONTAINER, whose reference is not
-    /// castable to an element pointer (E0606).
+    /// `Option<Vec<…>>` MUST destructure the option before applying either
+    /// operation to the inner vector. Calling `len` or `iter` on the option
+    /// itself would instead describe its zero-or-one container payload.
     #[test]
     fn every_carrier_is_handled_in_every_position_on_both_sides() {
         let language = crate::gen::collection_literal_language_for_tests();
@@ -1511,37 +1889,36 @@ mod carrier_cell_census {
                     "OptionalCollection" => {
                         // ★ THE REGRESSION CELL.
                         assert!(
-                            eq.contains("ifl0!=r0"),
-                            "{position} / {carrier}: `Option<Container>` is compared by its own \
-                             `PartialEq` — the container's element-wise `PartialEq` under a \
-                             `Some`/`None` tag. Got: {eq}"
+                            eq.contains("match(l0.as_ref(),r0.as_ref())")
+                                && eq.contains("__left_collection.len()")
+                                && eq.contains(
+                                    "__left_collection.iter().zip(__right_collection.iter())"
+                                ),
+                            "{position} / {carrier}: `Option<Container>` must be destructured, \
+                             then the inner container must use the same explicit element PDA as \
+                             a non-optional collection. Got: {eq}"
                         );
                         assert!(
-                            !eq.contains("l0.len()"),
-                            "★ {position} / {carrier}: emitted `Option::len`, which is a \
-                             PRIVATE method (E0624). This is the exact regression #197 \
-                             repaired: `Option`'s `len`/`iter` describe the OPTION — one item, \
-                             the container — and not the container's elements. Got: {eq}"
+                            !eq.contains("l0.len()") && !eq.contains("l0.iter()"),
+                            "★ {position} / {carrier}: the walk escaped the destructured inner \
+                             container and called a collection operation on the option. Got: {eq}"
                         );
                         assert!(
-                            !eq.contains("as*const_"),
-                            "★ {position} / {carrier}: emitted an element-pointer cast. \
-                             `Option::iter` yields `&Vec<Elem>`, and `&Vec<Elem> as *const \
-                             Elem` is not a valid cast (E0606). Got: {eq}"
+                            eq.contains("CmpTask::CmpProc(__walk_leftas*const_"),
+                            "★ {position} / {carrier}: the destructured vector's elements must \
+                             become category comparison tasks. Got: {eq}"
                         );
-                        // ⚠ `l0.cmp(r0)` rather than `Verdict(l0.cmp(r0))`: a
-                        // whole-value position takes the EAGER form when it
-                        // precedes the first stack-expressible field (an early
-                        // `return ord`) and the `Verdict` form when it follows one.
-                        // Both are the same judgement — one whole value — and which
-                        // one appears is a function of the field's INDEX, not its
-                        // carrier. `the_pushed_segment_form_of_an_optional_collection`
-                        // pins the other form.
                         assert!(
-                            cmp.contains("l0.cmp(r0)") && !cmp.contains("l0.len()"),
-                            "{position} / {carrier}: the `Ord` side must agree with the `eq` \
-                             side about what this carrier IS — one whole value, compared by \
-                             `Option<Container>::cmp`. Got: {cmp}"
+                            cmp.contains("match(l0.as_ref(),r0.as_ref())")
+                                && cmp.contains("Ordering::Less")
+                                && cmp.contains("Ordering::Greater")
+                                && cmp.contains(
+                                    "__left_collection.len().cmp(&__right_collection.len())"
+                                )
+                                && cmp.contains("CmpTask::CmpProc(__walk_leftas*const_"),
+                            "{position} / {carrier}: the `Ord` side must reproduce the option \
+                             tag ordering and schedule the inner vector's lexicographic PDA. \
+                             Got: {cmp}"
                         );
                     },
                     other => panic!(
@@ -1562,22 +1939,17 @@ mod carrier_cell_census {
         );
     }
 
-    /// ★ The OTHER form of a whole-value position: inside the PUSHED segment.
+    /// ★ The pushed form of an optional collection.
     ///
     /// `cmp_arm_stmts` splits an arm at the first stack-expressible field —
     /// everything before it is compared eagerly (with an early `return ord`),
     /// everything from it onward is pushed in reverse so the engine pops it in
-    /// field order. A whole-value carrier therefore has two emissions, and which
-    /// one it gets depends on its INDEX and not on its carrier. Putting a `Child`
-    /// at index 0 forces `split = 0`, which puts the optional collection at index
-    /// 1 into the pushed segment where it must become a precomputed `Verdict`.
-    ///
-    /// ⚠ Without this cell the census would pin only the eager form, and a change
-    /// that broke the pushed form would pass — the `Verdict` variant is exactly
-    /// what #162 added to dissolve the eager prefix, so it is the form under the
-    /// most pressure from future edits.
+    /// field order. Putting a `Child` at index 0 forces `split = 0`, which puts
+    /// the optional collection at index 1 into that pushed segment. The option
+    /// tag remains a verdict, while `Some`/`Some` schedules the inner vector's
+    /// length tiebreak and element comparisons separately.
     #[test]
-    fn the_pushed_segment_form_of_an_optional_collection_is_a_verdict() {
+    fn the_pushed_segment_form_of_an_optional_collection_is_an_inner_walk() {
         let language = crate::gen::collection_literal_language_for_tests();
         let fields = [
             field(false, None, false, false, None),
@@ -1593,46 +1965,112 @@ mod carrier_cell_census {
              forces `split = 0` and puts index 1 into the pushed segment. Got: {cmp}"
         );
         assert!(
-            cmp.contains("CmpTask::Verdict(l1.cmp(r1))"),
-            "★ an `Option<Vec<…>>` in the PUSHED segment is a precomputed `Verdict` — the \
-             judgement is made when the arm runs and consulted when the engine pops it, which \
-             is what lets the stack express the whole comparison in field order. Got: {cmp}"
+            cmp.contains("match(l1.as_ref(),r1.as_ref())")
+                && cmp.contains("__left_collection.len().cmp(&__right_collection.len())")
+                && cmp.contains("CmpTask::CmpProc(__walk_leftas*const_"),
+            "★ an `Option<Vec<…>>` in the pushed segment must compare its tag and then \
+             schedule the inner vector's exact lexicographic walk. Got: {cmp}"
         );
         assert!(
-            !cmp.contains("l1.len()"),
-            "★ `Option::len` is private (E0624) — the #197 regression, on the `Ord` side. \
+            !cmp.contains("l1.len()") && !cmp.contains("l1.iter()"),
+            "★ collection operations must apply to the destructured vector, not the option. \
              Got: {cmp}"
         );
 
         let eq = rendered(eq_arm_stmts(&fields, &left, &right, None, &language));
         assert!(
-            eq.contains("ifl1!=r1") && !eq.contains("l1.len()"),
-            "the `eq` side of the same two-field arm must still compare the optional \
-             collection whole. Got: {eq}"
+            eq.contains("match(l1.as_ref(),r1.as_ref())")
+                && eq.contains("__left_collection.len()")
+                && eq.contains("CmpTask::CmpProc(__walk_leftas*const_")
+                && !eq.contains("l1.len()"),
+            "the `eq` side of the same two-field arm must destructure and walk the inner \
+             collection. Got: {eq}"
         );
     }
 
     /// ★ The two sides must classify a field IDENTICALLY. Before #197 they did
     /// not: `cmp_arm_stmts` treated `Option<Container>` as one whole value while
-    /// the eq binder arms treated it as a walkable container. Agreement is now
-    /// structural — both sides call `field_carrier` — and this asserts it stays so.
+    /// the eq binder arms accidentally walked the option itself. Agreement is
+    /// now structural — both sides call `field_carrier`, destructure the option,
+    /// and schedule the inner container — and this asserts it stays so.
     #[test]
     fn the_eq_and_cmp_sides_agree_on_every_carrier() {
         for (carrier, f) in one_per_carrier() {
-            let stack_expressible_as_cmp_sees_it = !matches!(
-                field_carrier(&f),
-                FieldCarrier::Leaf | FieldCarrier::OptionalCollection { .. }
-            );
-            let whole_value_on_the_eq_side = matches!(
-                field_carrier(&f),
-                FieldCarrier::Leaf | FieldCarrier::OptionalCollection { .. }
-            );
-            assert_ne!(
-                stack_expressible_as_cmp_sees_it, whole_value_on_the_eq_side,
-                "{carrier}: a carrier is either expressible as stack work or compared whole, \
-                 and both sides must reach the same verdict from the same classifier"
+            let stack_expressible = !matches!(field_carrier(&f), FieldCarrier::Leaf);
+            let descends_on_eq = !matches!(field_carrier(&f), FieldCarrier::Leaf);
+            assert_eq!(
+                stack_expressible, descends_on_eq,
+                "{carrier}: both sides must agree whether the carrier contains category \
+                 descents that belong on the explicit work stack"
             );
         }
+    }
+
+    /// Every unordered collection shape must construct the same runtime PDA on
+    /// both trait sides. Equality may ask whether its ordering is `Equal`, but it
+    /// must not call the collection or element category's public comparison
+    /// implementation as one whole recursive value. Ordering must defer even a
+    /// mode/length lead verdict until the collection's exact field position.
+    #[test]
+    fn unordered_eq_and_ord_share_one_deferred_collection_pda() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let proc = format_ident!("Proc");
+        let left = quote! { left };
+        let right = quote! { right };
+        let compact = |tokens: TokenStream| {
+            tokens
+                .to_string()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        };
+
+        for coll_type in [
+            CollectionType::HashSet,
+            CollectionType::HashBag,
+            CollectionType::HashMap,
+            CollectionType::PathMap,
+        ] {
+            let machine = compact(unordered_collection_cmp_machine_expr(&coll_type, &left, &right));
+            let eq = compact(eq_collection_stmts(&proc, &coll_type, &left, &right, &language));
+            let ord =
+                compact(cmp_collection_push_stmts(&proc, &coll_type, &left, &right, &language));
+
+            assert!(
+                eq.contains(&machine) && ord.contains(&machine),
+                "{coll_type:?}: Eq and Ord must instantiate the identical collection PDA.\n\
+                 Eq: {eq}\nOrd: {ord}\nMachine: {machine}"
+            );
+            assert!(
+                eq.contains("eq_unordered_collection(")
+                    && eq.contains("cmp_resume_collection_proc"),
+                "{coll_type:?}: Eq must drive the shared ordering PDA through the Proc \
+                 continuation. Got: {eq}"
+            );
+            assert!(
+                ord.contains("CmpTask::StartCollection(")
+                    && ord.contains("cmp_resume_collection_proc"),
+                "{coll_type:?}: Ord must defer the initial PDA step as a work item, so \
+                 an eager lead verdict cannot violate field order. Got: {ord}"
+            );
+            assert!(
+                !eq.contains("left!=right") && !ord.contains("left.cmp(right)"),
+                "{coll_type:?}: a category-bearing unordered collection escaped as a whole \
+                 public-trait comparison. Eq: {eq}; Ord: {ord}"
+            );
+        }
+
+        let generated = compact(generate_iterative_cmp(&language));
+        assert_eq!(
+            generated.matches("fneq_unordered_collection(").count(),
+            1,
+            "the auxiliary equality driver is shared across every category"
+        );
+        assert_eq!(
+            generated.matches("staticCMP_AUX_TASK_POOL").count(),
+            1,
+            "the auxiliary work-stack pool is shared across every category"
+        );
     }
 
     /// The scope group is emitted exactly once and LAST, in both binder positions

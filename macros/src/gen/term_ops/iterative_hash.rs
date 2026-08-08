@@ -15,12 +15,14 @@
 //! 3. The outermost `hash()` call iteratively processes the stack, hashing children
 //!    level by level into the same `Hasher` state.
 //!
-//! ## Re-Entrancy Safety
+//! ## Collection boundaries
 //!
-//! When collection fields (Vec, HashBag, HashSet) delegate to their own `Hash`,
-//! that re-enters our iterative engine. The inner call gets an empty pool via
-//! `cell.take()`, uses it, and returns it. The outer call retains its pool.
-//! This is safe — same `Cell<Vec<_>>` pattern as `iterative_drop.rs`.
+//! Category-bearing collections never call a whole-container `Hash` that would
+//! re-enter this driver. Ordered vectors schedule their elements directly;
+//! sets, maps, and homogeneous path maps schedule a canonical ordering of
+//! borrowed entries; bags absorb their maintained order-independent summary in
+//! constant time. Collections of non-category leaves remain one bounded opaque
+//! task because they contain no generated recursive term.
 //!
 //! ## Thread Shutdown Safety
 //!
@@ -43,7 +45,7 @@
 //! - `impl Hash for Cat`: delegates to `hash_iterative`
 
 use crate::gen::term_ops::collection_walk::{
-    for_each_subterm, plan_for, CollectionPlan, OrderSensitivity, WalkOrder,
+    for_each_subterm, plan_for, CollectionPlan, OrderSensitivity, WalkOrder, WholeValueReason,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
@@ -115,6 +117,33 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
             /// what lets the inner value be a DESCENT instead of an eager
             /// `Hash::hash(&**__b, state)` re-entry.
             AbsorbU8(u8),
+            HashPathMapMode(mettail_runtime::PathMapMode),
+            Opaque {
+                value: *const (),
+                hash: unsafe fn(*const (), *mut ()),
+            },
+        }
+
+        #[inline]
+        fn hash_opaque_task<T, H>(value: &T) -> HashTask
+        where
+            T: std::hash::Hash,
+            H: std::hash::Hasher,
+        {
+            unsafe fn apply<T, H>(value: *const (), state: *mut ())
+            where
+                T: std::hash::Hash,
+                H: std::hash::Hasher,
+            {
+                let value = unsafe { &*value.cast::<T>() };
+                let state = unsafe { &mut *state.cast::<H>() };
+                std::hash::Hash::hash(value, state);
+            }
+
+            HashTask::Opaque {
+                value: value as *const T as *const (),
+                hash: apply::<T, H>,
+            }
         }
 
         // SAFETY: HashTask holds *const pointers that are only dereferenced
@@ -219,6 +248,12 @@ fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
                     HashTask::AbsorbU8(b) => {
                         std::hash::Hash::hash(&b, state);
                     }
+                    HashTask::HashPathMapMode(mode) => {
+                        std::hash::Hash::hash(&mode, state);
+                    }
+                    HashTask::Opaque { value, hash } => {
+                        unsafe { hash(value, state as *mut H as *mut ()) };
+                    }
                 }
             }
         }
@@ -234,9 +269,10 @@ fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
 /// For `Vec` that is exact and provable: `Hash for [T]` writes the length prefix
 /// and then each element in index order, so the conversion is
 /// `AbsorbUsize(len)` + one `Hash{Elem}` per element, pushed so they pop in that
-/// order. For every other container shape the stream is NOT reproducible
-/// element-wise (see [`collection_walk::is_order_faithful`]), and the whole-value
-/// call stays — the declared residue.
+/// order. Unordered wrappers use their exact public hashing contracts: sorted
+/// element/entry order for sets and maps, a cached commutative summary for bags,
+/// and a homogeneous mode tag plus sorted entries for path maps. No
+/// category-bearing container remains a synchronous recursive escape.
 fn hash_collection_stmts(
     element_cat: &Ident,
     coll_type: &CollectionType,
@@ -263,8 +299,87 @@ fn hash_collection_stmts(
                 stack.push(HashTask::AbsorbUsize(#coll_expr.len()));
             }
         },
-        CollectionPlan::WholeValue { .. } => quote! {
-            std::hash::Hash::hash(#coll_expr, state);
+        CollectionPlan::WholeValue {
+            reason: WholeValueReason::UnorderedContainer,
+        } => unordered_collection_hash_stmts(element_cat, coll_type, coll_expr),
+        CollectionPlan::WholeValue {
+            reason: WholeValueReason::ElementIsNotACategory,
+        } => {
+            quote! {
+                stack.push(hash_opaque_task::<_, H>(#coll_expr));
+            }
+        },
+    }
+}
+
+fn unordered_collection_hash_stmts(
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    coll_expr: &TokenStream,
+) -> TokenStream {
+    let task_variant = format_ident!("Hash{}", element_cat);
+    match coll_type {
+        CollectionType::HashSet => quote! {
+            {
+                let mut __items: Vec<_> = #coll_expr.iter().collect();
+                __items.sort_by(|__left, __right| (*__left).cmp(*__right));
+                for __item in __items.into_iter().rev() {
+                    stack.push(HashTask::#task_variant(__item as *const _));
+                }
+                stack.push(HashTask::AbsorbUsize(#coll_expr.len()));
+            }
+        },
+        CollectionType::HashBag => quote! {
+            stack.push(hash_opaque_task::<_, H>(#coll_expr));
+        },
+        CollectionType::HashMap => quote! {
+            {
+                let mut __items: Vec<_> = #coll_expr.iter().collect();
+                __items.sort_by(|(__left_key, __left_value), (__right_key, __right_value)| {
+                    __left_key
+                        .cmp(__right_key)
+                        .then_with(|| __left_value.cmp(__right_value))
+                });
+                for (__key, __value) in __items.into_iter().rev() {
+                    stack.push(HashTask::#task_variant(__value as *const _));
+                    stack.push(HashTask::#task_variant(__key as *const _));
+                }
+                stack.push(HashTask::AbsorbUsize(#coll_expr.len()));
+            }
+        },
+        CollectionType::PathMap => quote! {
+            {
+                match #coll_expr {
+                    mettail_runtime::PathMapLit::Empty => {},
+                    mettail_runtime::PathMapLit::Set(__entries) => {
+                        let mut __items: Vec<_> = __entries.iter().collect();
+                        __items.sort_by(|__left, __right| __left.0.cmp(__right.0));
+                        for (__key, _) in __items.into_iter().rev() {
+                            stack.push(HashTask::#task_variant(__key as *const _));
+                        }
+                        stack.push(HashTask::AbsorbUsize(__entries.len()));
+                    },
+                    mettail_runtime::PathMapLit::Map(__entries) => {
+                        let mut __items: Vec<_> = __entries.iter().collect();
+                        __items.sort_by(
+                            |(__left_key, __left_value), (__right_key, __right_value)| {
+                                __left_key
+                                    .cmp(__right_key)
+                                    .then_with(|| __left_value.cmp(__right_value))
+                            },
+                        );
+                        for (__key, __value) in __items.into_iter().rev() {
+                            stack.push(HashTask::#task_variant(__value as *const _));
+                            stack.push(HashTask::#task_variant(__key as *const _));
+                        }
+                        stack.push(HashTask::AbsorbUsize(__entries.len()));
+                    },
+                }
+                stack.push(HashTask::HashPathMapMode(#coll_expr.mode()));
+            }
+        },
+        CollectionType::Vec => quote! {
+            compile_error!("unordered collection hashing requested for Vec");
         },
     }
 }
@@ -342,7 +457,7 @@ fn generate_hash_variant_arm(
 
 /// Generate hash arm for a Regular variant.
 ///
-/// ## ★ #162 — the EAGER PREFIX is gone, and what replaced it
+/// ## ★ #162 — exact call order without recursive re-entry
 ///
 /// A `Hash` arm must write its fields' contributions to `state` in FIELD ORDER,
 /// because the digest is that stream. Before this change the only work the task
@@ -353,32 +468,21 @@ fn generate_hash_variant_arm(
 /// which meant a `Box<Cat>` child sitting before a collection was hashed by
 /// `Hash::hash(&**f, state)`, a whole-value re-entry, i.e. HOST RECURSION.
 ///
-/// With `HashTask::AbsorbUsize` / `AbsorbU8` the stack can carry the two kinds of
-/// non-descent content the arms actually need (a `Vec` length prefix and an
-/// `Option` tag byte), so the split moves to the FIRST DESCENT:
+/// `HashTask::AbsorbUsize`, `AbsorbU8`, and `Opaque` can carry every contribution
+/// that may follow a descent while preserving the original sequence of
+/// `Hasher::write_*` calls. The split therefore moves to the first deferred
+/// category contribution:
 ///
 /// ```text
-///   split = index of the first field expressible as a task
-///   [0, split)   hashed eagerly, in field order — leaves only, no sub-terms
+///   split = index of the first category-bearing field
+///   [0, split)   hashed eagerly, in field order — bounded leaves only
 ///   [split, n)   pushed in REVERSE, so they pop in field order
 /// ```
 ///
-/// ## ⚠ The one shape this cannot express, and the measurement that bounds it
-///
-/// A LEAF whose contribution must be written AFTER a descent cannot be a task:
-/// its stream is arbitrary (a `String`, a `BehavioralPred`, a `Binder<String>`),
-/// and byte-splicing a recorded stream is NOT equivalent — a `Hasher` may frame
-/// each `write` call, so `write(&recorded_bytes)` and the original sequence of
-/// `write_*` calls can produce different digests. (`FramedSemanticKeyHasher` in
-/// this workspace does exactly that framing.)
-///
-/// Such a variant therefore keeps the legacy eager-prefix emission, marked in the
-/// generated source with `HASH_ORDER_RESIDUE` so the set is greppable rather than
-/// implicit. **Measured 2026-07-30 across the generated rholang tree: ZERO
-/// variants take it.** Every rholang `Binder` has an empty pre-scope field list,
-/// so its `Binder<String>` pattern is always position 0; and every predicate /
-/// token-text leaf precedes its variant's descents. The fallback exists for a
-/// FUTURE grammar, and if one arrives the residue announces itself.
+/// `Opaque` stores a type-erased function pointer specialized to the caller's
+/// hasher type, so it replays the leaf's exact calls against the original hasher;
+/// it never hashes to an intermediate byte buffer. Consequently there is no
+/// field-order residue for future grammar shapes either.
 fn generate_hash_regular_arm(
     category: &Ident,
     label: &Ident,
@@ -394,33 +498,31 @@ fn generate_hash_regular_arm(
     }
 }
 
-/// Is this field's hash contribution expressible as work ON THE STACK?
+/// Does this field begin the suffix that must be represented on the work stack?
 ///
 /// A boxed category child is (`Hash{Cat}`); an `Option<Box<Cat>>` is (`AbsorbU8`
-/// for the tag, then `Hash{Cat}`); an order-faithful collection is
-/// (`AbsorbUsize` for the length, then one `Hash{Elem}` per element). A bare
-/// leaf, an `Option<Container>` and an unordered container are NOT — see
-/// [`generate_hash_regular_arm`].
-fn hash_field_is_stack_expressible(field: &FieldInfo, language: &LanguageDef) -> bool {
+/// for the tag, then `Hash{Cat}`); every category-bearing collection has a
+/// specialized deferred representation. Bounded leaves before the first such
+/// field stay eager to avoid needless task traffic; leaves after it use
+/// `HashTask::Opaque`.
+fn hash_field_begins_deferred_suffix(field: &FieldInfo, language: &LanguageDef) -> bool {
     if field.is_predicate || field.is_opaque_leaf() {
         return false;
     }
     if !field.is_collection {
         return true;
     }
-    if field.is_optional {
-        return false;
-    }
     let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
     matches!(
         plan_for(&field.category, &coll_type, OrderSensitivity::OrderSensitive, language),
         CollectionPlan::PerElement { .. }
+            | CollectionPlan::WholeValue {
+                reason: WholeValueReason::UnorderedContainer,
+            }
     )
 }
 
-/// The eager, in-field-order hash of one field — the pre-#162 emission, retained
-/// verbatim for the fields that legitimately belong in the eager prefix and for
-/// the `HASH_ORDER_RESIDUE` fallback.
+/// Hash one bounded field in the eager prefix, in original field order.
 fn hash_field_eagerly(field: &FieldInfo, name: &Ident) -> TokenStream {
     if field.is_optional {
         if field.is_collection {
@@ -480,32 +582,11 @@ fn hash_arm_stmts(
     scope_pushes: Option<TokenStream>,
     language: &LanguageDef,
 ) -> Vec<TokenStream> {
-    let expressible: Vec<bool> = fields
+    let deferred: Vec<bool> = fields
         .iter()
-        .map(|f| hash_field_is_stack_expressible(f, language))
+        .map(|f| hash_field_begins_deferred_suffix(f, language))
         .collect();
-    let split = expressible.iter().position(|e| *e).unwrap_or(fields.len());
-    // A leaf whose bytes must land AFTER a descent — the shape no task can carry.
-    let leaf_after_descent = expressible.iter().skip(split).any(|e| !*e);
-
-    if leaf_after_descent {
-        let mut legacy: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
-        // ⚠ A REAL TOKEN, not a comment. A `//` comment inside `quote!` is not a
-        // token and does not reach the generated file at all — the first version of
-        // this marker was therefore invisible, and the "zero residues" reading it
-        // produced was VACUOUS. A binding is greppable in `target/generated/**`.
-        legacy.push(quote! {
-            let _HASH_ORDER_RESIDUE_leaf_after_descent = ();
-        });
-        for (i, field) in fields.iter().enumerate() {
-            legacy.push(hash_field_eagerly(field, &field_names[i]));
-        }
-        if let Some(scope_pushes) = scope_pushes {
-            legacy.push(scope_pushes);
-        }
-        return legacy;
-    }
-
+    let split = deferred.iter().position(|e| *e).unwrap_or(fields.len());
     let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
     // ── the eager segment: leaves, in field order ──
@@ -520,39 +601,61 @@ fn hash_arm_stmts(
 
     for (i, field) in fields.iter().enumerate().skip(split).rev() {
         let name = &field_names[i];
-
-        if field.is_optional {
-            // Opt-Group `Option<Box<Cat>>`: tag byte, then the inner value. Pop
-            // order must be tag-then-value, so the value is pushed first.
-            //
-            // ★ This replaces an eager `Hash::hash(&**__b, state)` re-entry.
-            let task_variant = format_ident!("Hash{}", field.category);
-            stmts.push(quote! {
-                match #name.as_ref() {
-                    None => stack.push(HashTask::AbsorbU8(0u8)),
-                    Some(__b) => {
-                        stack.push(HashTask::#task_variant(&**__b as *const _));
-                        stack.push(HashTask::AbsorbU8(1u8));
+        stmts.push(match crate::gen::term_ops::collection_walk::field_carrier(field) {
+            crate::gen::term_ops::collection_walk::FieldCarrier::Leaf if field.is_optional => {
+                quote! {
+                    match #name.as_ref() {
+                        None => stack.push(HashTask::AbsorbU8(0u8)),
+                        Some(__leaf) => {
+                            stack.push(hash_opaque_task::<_, H>(__leaf));
+                            stack.push(HashTask::AbsorbU8(1u8));
+                        },
                     }
                 }
-            });
-            continue;
-        }
-
-        if field.is_collection {
-            let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
-            stmts.push(hash_collection_stmts(
-                &field.category,
-                &coll_type,
-                &quote! { #name },
-                language,
-            ));
-            continue;
-        }
-
-        let task_variant = format_ident!("Hash{}", field.category);
-        stmts.push(quote! {
-            stack.push(HashTask::#task_variant(&**#name as *const _));
+            },
+            crate::gen::term_ops::collection_walk::FieldCarrier::Leaf => quote! {
+                stack.push(hash_opaque_task::<_, H>(#name));
+            },
+            crate::gen::term_ops::collection_walk::FieldCarrier::OptionalChild => {
+                let task_variant = format_ident!("Hash{}", field.category);
+                quote! {
+                    match #name.as_ref() {
+                        None => stack.push(HashTask::AbsorbU8(0u8)),
+                        Some(__child) => {
+                            stack.push(HashTask::#task_variant(&**__child as *const _));
+                            stack.push(HashTask::AbsorbU8(1u8));
+                        },
+                    }
+                }
+            },
+            crate::gen::term_ops::collection_walk::FieldCarrier::OptionalCollection {
+                coll_type,
+            } => {
+                let collection = hash_collection_stmts(
+                    &field.category,
+                    &coll_type,
+                    &quote! { __collection },
+                    language,
+                );
+                quote! {
+                    match #name.as_ref() {
+                        None => stack.push(HashTask::AbsorbU8(0u8)),
+                        Some(__collection) => {
+                            #collection
+                            stack.push(HashTask::AbsorbU8(1u8));
+                        },
+                    }
+                }
+            },
+            crate::gen::term_ops::collection_walk::FieldCarrier::Collection { coll_type } => {
+                hash_collection_stmts(&field.category, &coll_type, &quote! { #name }, language)
+            },
+            crate::gen::term_ops::collection_walk::FieldCarrier::Child => {
+                let task_variant = format_ident!("Hash{}", field.category);
+                quote! {
+                    stack.push(HashTask::#task_variant(&**#name as *const _));
+                }
+            },
         });
     }
 
@@ -561,26 +664,13 @@ fn hash_arm_stmts(
 
 /// Generate hash arm for a Binder variant.
 ///
-/// ## ★ #162 — why this arm is UNCHANGED, and that is a derivation not an omission
-///
 /// A binder arm's positions are `pre_scope_fields… , pattern , body`. The PATTERN
 /// (a `Binder<String>`, or a `Vec<Binder<String>>` for the multi form) is a LEAF
 /// with an arbitrary hash stream, and it sits immediately before the body
-/// descent. So:
-///
-/// * If the pre-scope list contains NO descent — every rholang binder, whose
-///   pre-scope list is EMPTY — the fields and the pattern are all leaves and
-///   belong in the eager segment anyway, and the body is the single pushed task.
-///   That is exactly the pre-#162 emission, so there is nothing to change.
-/// * If the pre-scope list DOES contain a descent (a `Box<Cat>` child or an
-///   order-faithful collection), the pattern leaf would have to be written AFTER
-///   it — the one shape `HashTask` cannot carry byte-exactly (see
-///   [`generate_hash_regular_arm`]). The arm therefore stays eager and announces
-///   itself with `HASH_ORDER_RESIDUE`.
-///
-/// ⚠ Which means a binder with a `Box<Cat>` pre-scope field is still Θ(depth) in
-/// `Hash`. No shipped grammar has one — the marker is what makes that checkable
-/// instead of assumed.
+/// descent. It is therefore an `Opaque` task followed by the body category task.
+/// Pre-scope fields share the regular-arm suffix builder, including collection
+/// PDAs, so binders with recursive pre-scope fields remain stack-safe for any
+/// grammar shape.
 fn generate_hash_binder_arm(
     category: &Ident,
     label: &Ident,
@@ -618,36 +708,15 @@ fn generate_hash_scoped_arm(
     let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
     let scope_name = &field_names[total_fields - 1];
 
-    let mut hash_stmts: Vec<TokenStream> = Vec::with_capacity(total_fields + 1);
-
-    // The pattern leaf follows every pre-scope position, so a pre-scope DESCENT
-    // would make the pattern a leaf-after-descent. Announce it.
-    if pre_scope_fields
-        .iter()
-        .any(|f| hash_field_is_stack_expressible(f, language))
-    {
-        // A REAL TOKEN — see the sibling marker in `hash_arm_stmts`.
-        hash_stmts.push(quote! {
-            let _HASH_ORDER_RESIDUE_binder_pattern_after_descent = ();
-        });
-    }
-
-    // Pre-scope fields, eagerly and in field order. Every one of them precedes the
-    // pattern leaf, so none may be deferred.
-    for (i, field) in pre_scope_fields.iter().enumerate() {
-        hash_stmts.push(hash_field_eagerly(field, &field_names[i]));
-    }
-
     let body_task = format_ident!("Hash{}", body_cat);
-    hash_stmts.push(quote! {
+    let scope_pushes = quote! {
         {
-            // The pattern is a leaf — `Binder<String>` / `Vec<Binder<String>>` — so
-            // it goes straight into `state`, in position, before the body descent.
-            std::hash::Hash::hash(&#scope_name.inner().unsafe_pattern, state);
             let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
             stack.push(HashTask::#body_task(body_ptr));
+            stack.push(hash_opaque_task::<_, H>(&#scope_name.inner().unsafe_pattern));
         }
-    });
+    };
+    let hash_stmts = hash_arm_stmts(pre_scope_fields, &field_names, Some(scope_pushes), language);
 
     quote! {
         #category::#label(#(ref #field_names),*) => {

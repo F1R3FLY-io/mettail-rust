@@ -83,6 +83,7 @@ pub fn generate_all(
     use term_gen::{generate_random_generation, generate_term_generation};
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
+    use term_ops::iterative_clone::generate_iterative_clone;
     use term_ops::iterative_cmp::generate_iterative_cmp;
     use term_ops::iterative_drop::generate_iterative_drop;
     use term_ops::iterative_hash::generate_iterative_hash;
@@ -168,6 +169,8 @@ pub fn generate_all(
         spill_and_include(&lang_name, "term_depth", generate_term_depth_methods(language));
     let match_pattern_impl =
         spill_and_include(&lang_name, "match_pattern", generate_match_pattern(language));
+    let iterative_clone_impl =
+        spill_and_include(&lang_name, "iterative_clone", generate_iterative_clone(language));
     let iterative_cmp_impl =
         spill_and_include(&lang_name, "iterative_cmp", generate_iterative_cmp(language));
     let iterative_drop_impl =
@@ -247,6 +250,8 @@ pub fn generate_all(
         #term_depth_impl
 
         #match_pattern_impl
+
+        #iterative_clone_impl
 
         #iterative_cmp_impl
 

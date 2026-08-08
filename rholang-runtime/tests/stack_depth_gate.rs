@@ -820,9 +820,9 @@ fn observation_rendering_is_depth_independent() {
 // The two gates below are deliberately asymmetric, and the asymmetry is the policy:
 //
 //   * what is FLAT is gated as flat, by the same `assert_depth_independent` the converted
-//     lowering answers to. `ast_display` and `ast_clone` are not merely passing subjects — they
-//     are the existence proof that this shape CAN be walked in O(1) stack, and if either
-//     regressed silently the rewrite would lose its model.
+//     lowering answers to. `ast_display`, `ast_clone`'s shallow Arc path, and
+//     `ast_clone_owned`'s explicit collection PDA are not merely passing subjects — they are
+//     existence proofs that both ownership shapes can be cloned in O(1) native stack.
 //   * what is SLOPED gets NO CEILING. A ceiling records a defect as a budget, and `ast_display`
 //     proves the budget is unnecessary. What the sloped set gets instead is an assertion on its
 //     MEMBERSHIP: exactly these subjects slope, no more and no fewer.
@@ -890,11 +890,11 @@ fn observation_rendering_is_depth_independent() {
 ///     (`display.rs:14827`) where every sloped driver handed the whole `Vec` to a
 ///     trait method. It is the shape the rewrite copied, and
 ///     `collection_walk::for_each_subterm` is that shape generalised.
-///   * `ast_clone` is O(1) by REPRESENTATION, not by a driver at all:
-///     `iterative_clone.rs` was DELETED (`651499e2`) once the ARC refactor
-///     (`9c55d81d`) made recursive children `Arc<Cat>`, so the derived `Clone` is a
-///     refcount bump per child that never descends. It is the reminder that some of
-///     these traversals do not need converting so much as deleting.
+///   * `ast_clone` pins the generated driver's shallow `Arc` fast path: scalar
+///     recursive fields remain pointer-shared exactly as derived Clone made them.
+///     `ast_clone_owned` pins the complementary case that invalidated deletion of
+///     the driver: `HashBag<Proc>` and `Vec<Proc>` own their elements and therefore
+///     require the explicit Clone PDA to descend without host recursion.
 ///
 /// ⚠ A reading of 0 here is NOT evidence on its own that the conversion is correct —
 /// only that it is heap-bounded. The conversion also has to leave `Hash`, `Ord`,
@@ -1165,6 +1165,7 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     ("ast_normalize_noassert", Shape::Flat),
     ("ast_display", Shape::Flat),
     ("ast_clone", Shape::Flat),
+    ("ast_clone_owned", Shape::Flat),
     // ── the pure ladder: flat for everything that HAS a work stack, and that is the finding ──
     ("ast_cmp_add", Shape::Flat),
     ("ast_debug_add", Shape::Flat),
@@ -1200,7 +1201,7 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
 /// a renamed mode, a probe that failed to run, a redirect that swallowed stdout — every
 /// assertion below would iterate an empty set and PASS. This is the count at the time of writing;
 /// it may only grow, and it must never be silently reduced to match a shrunken enumeration.
-const MIN_DRIVER_SUBJECTS: usize = 39;
+const MIN_DRIVER_SUBJECTS: usize = 40;
 
 /// The `ast_*` subjects the PROBE dispatches, read from the probe itself.
 ///
@@ -1335,7 +1336,8 @@ fn the_sloped_driver_set_is_exactly_the_declared_one() {
                 Shape::Flat,
                 "REGRESSION: `{declared}` is declared FLAT and now needs more than {} KiB at \
                  depth {}. A driver that was O(1) in stack has acquired a per-level frame. If \
-                 this is `ast_display` or `ast_clone`, the rewrite has lost its reference model.",
+                 this is `ast_display`, `ast_clone`, or `ast_clone_owned`, the rewrite has lost \
+                 its reference model.",
                 CLASSIFY_STACK / 1024,
                 CLASSIFY_DEPTH
             ),
@@ -1452,6 +1454,7 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
     // membership is the rows below; `every_generated_traversal_has_a_probe_subject` is
     // what enforces that each has a subject, and its failure message prints the set.
     ("iterative_cmp.rs", "cmp", Coverage::Subject("ast_cmp")),
+    ("iterative_clone.rs", "clone_iterative", Coverage::Subject("ast_clone_owned")),
     ("iterative_hash.rs", "hash", Coverage::Subject("ast_hash")),
     ("iterative_drop.rs", "drop", Coverage::Subject("ast_drop")),
     ("semantic_hash.rs", "semantic_hash", Coverage::Subject("ast_semantic_hash")),
