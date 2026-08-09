@@ -19,10 +19,10 @@
 //!
 //! | half | spelling | kind | site |
 //! |---|---|---|---|
-//! | `@*N = N` | `QuoteDrop . \|- (NQuote (PDrop N)) = N ;` | **equation** | `rholang.rs:3764` |
-//! | `*@P ~> P` | `Exec . \|- (PDrop (NQuote P)) ~> P ;` | **plain rewrite** | `rholang.rs:3752` |
-//! | `*@P ~> P` (short surface) | `ExecQuoteShort . \|- (PDrop (NQuoteShort P)) ~> P ;` | plain rewrite | `rholang.rs:3753` |
-//! | `*@P ~> P` (paren surface) | `ExecParenQuote . \|- (PDrop (NParen (NQuote P))) ~> P ;` | plain rewrite | `rholang.rs:3754` |
+//! | `@*N = N` | `QuoteDrop . \|- (NQuote (PDrop N)) = N ;` | **equation** | `languages/src/rholang.rs`, `equations` |
+//! | `*@P ~> P` | `Exec . \|- (PDrop (NQuote P)) ~> P ;` | **plain rewrite** | `languages/src/rholang.rs`, `rewrites` |
+//! | `*@P ~> P` (short surface) | `ExecQuoteShort . \|- (PDrop (NQuoteShort P)) ~> P ;` | plain rewrite | same block |
+//! | `*@P ~> P` (paren surface) | `ExecParenQuote . \|- (PDrop (NParen (NQuote P))) ~> P ;` | plain rewrite | same block |
 //!
 //! ⚠ **And `#140` filed the propagation of `Exec` under `POutput` as a DEFECT.** Its CONTROL
 //! row is `@(0)!(*@(1))` reducing to `@0!(1)` — which is `Exec` firing inside a send's
@@ -31,19 +31,22 @@
 //! would therefore have deleted that behaviour. This file is the executable form of that
 //! objection.
 //!
-//! # 2. Why three kinds and not one
+//! # 2. Why four semantic kinds and not one
 //!
 //! `#140`'s witness (`congruence_declaration_witness.rs`) measured **congruences only**.
-//! A null result for one kind says nothing about the others, and the three are lowered by
-//! three *different* functions:
+//! A null result for one kind says nothing about the others. Equations have their own lowering;
+//! the other three are distinct branches of rewrite lowering:
 //!
 //! | kind | lowering | disposition today |
 //! |---|---|---|
 //! | equation | `dovetail_report::lower_equation` — up to TWO `RewriteRule`s (forward + reverse) | `Delivered` |
 //! | plain rewrite | `dovetail_report::lower_rewrite` tail — ONE `RewriteRule` | `Delivered` |
 //! | congruence | `dovetail_report::lower_rewrite`'s `is_congruence_rule()` branch | `DeliveredElsewhere { EGraphCongruenceClosure }` — **no rule at all** |
+//! | withheld congruence | `dovetail_report::lower_rewrite`'s `withholds_congruence()` branch | `Suppressed` after severing the named field — **no rule at all** |
 //!
-//! So "is the declaration load-bearing?" has three answers, and only the third was measured.
+//! So "is the declaration load-bearing?" has four answers. The original witness measured the
+//! third; #195 added the fourth, and the census below keeps it distinct from an executable
+//! kernel.
 //!
 //! # 3. What a row means
 //!
@@ -55,6 +58,7 @@
 
 #![cfg(feature = "rholang")]
 
+use mettail_ast::{auto_inject::reconstruct_language_def, language::LanguageDef};
 use mettail_languages::rholang::{Proc, RholangLanguage, RholangTerm, RholangTermInner};
 use mettail_runtime::Language;
 
@@ -62,6 +66,14 @@ use mettail_runtime::Language;
 /// cannot disagree because one was given a bigger budget.
 const DOVETAIL_ITERS: usize = 256;
 const DOVETAIL_NODES: usize = 4_000_000;
+
+fn augmented_definition() -> LanguageDef {
+    let source = RholangLanguage
+        .metadata()
+        .definition_source()
+        .expect("Rholang metadata carries its definition source");
+    reconstruct_language_def(source).expect("Rholang definition source reconstructs")
+}
 
 fn parse(src: &str) -> Proc {
     mettail_runtime::clear_var_cache();
@@ -201,7 +213,8 @@ fn the_five_regression_witnesses_and_their_two_controls() {
 /// ★★ THE PER-KIND VERDICT, derived from the reflected metadata rather than read off a table.
 ///
 /// `#140` asked "is a declaration load-bearing?" of congruences only. This derives the answer
-/// for **all three kinds** from `lowering_dispositions()` — the generator's own record of what
+/// for **all four semantic kinds** from `lowering_dispositions()` and the reconstructed source
+/// AST — the generator's own records of what
 /// it did with each declared construct — so the verdict cannot drift from the lowering.
 ///
 /// The three kinds are load-bearing in genuinely different senses, and conflating them is how
@@ -214,6 +227,8 @@ fn the_five_regression_witnesses_and_their_two_controls() {
 /// * a **congruence** emits nothing (`DeliveredElsewhere { EGraphCongruenceClosure }`) — the
 ///   closure that would satisfy it is intrinsic to the e-graph, so removing the declaration
 ///   changes no behaviour. That is the whole content of `#140`.
+/// * a **withheld congruence** also emits no rewrite, but is not a kernel and is not an active
+///   congruence: it is `Suppressed` only after the named field has been severed from closure.
 #[test]
 fn the_per_kind_disposition_verdict_is_derived() {
     use mettail_runtime::{LoweredConstructKind, LoweringLane, LoweringOutcomeKind};
@@ -225,6 +240,7 @@ fn the_per_kind_disposition_verdict_is_derived() {
     let mut equations_other = Vec::new();
     let mut rewrites_delivered = 0usize;
     let mut rewrites_elsewhere_closure = 0usize;
+    let mut rewrites_suppressed = 0usize;
     let mut rewrites_other = Vec::new();
 
     for d in dispositions.iter() {
@@ -241,6 +257,8 @@ fn the_per_kind_disposition_verdict_is_derived() {
                     rewrites_delivered += 1;
                 } else if d.lane == Some(LoweringLane::EGraphCongruenceClosure) {
                     rewrites_elsewhere_closure += 1;
+                } else if d.outcome == LoweringOutcomeKind::Suppressed {
+                    rewrites_suppressed += 1;
                 } else {
                     rewrites_other.push((d.construct, d.outcome.as_str()));
                 }
@@ -249,14 +267,25 @@ fn the_per_kind_disposition_verdict_is_derived() {
         }
     }
 
-    // The DECLARED split, from the same metadata: a rewrite carrying `Premise::Congruence`
-    // is a congruence, everything else in `rewrites { }` is a plain rewrite.
-    let (mut plain, mut congruence) = (0usize, 0usize);
-    for rw in metadata.rewrites() {
-        if rw.is_congruence() {
-            congruence += 1;
-        } else {
-            plain += 1;
+    // The four-way split comes from the reconstructed augmented source AST. Reflected
+    // `RewriteDef::premise` deliberately stores only an ACTIVE congruence, so a two-way split
+    // over it would mislabel `S ~/> T` as a plain executable rewrite.
+    let definition = augmented_definition();
+    assert_eq!(
+        definition.rewrites.len(),
+        metadata.rewrites().len(),
+        "source reconstruction and reflected metadata must cover the same augmented rewrites",
+    );
+    let (mut plain, mut withheld, mut congruence) = (0usize, 0usize, 0usize);
+    for rw in &definition.rewrites {
+        match (rw.is_congruence_rule(), rw.withholds_congruence()) {
+            (true, false) => congruence += 1,
+            (false, true) => withheld += 1,
+            (false, false) => plain += 1,
+            (true, true) => panic!(
+                "rewrite `{}` cannot declare and withhold congruence simultaneously",
+                rw.name,
+            ),
         }
     }
     let equations = metadata.equations().len();
@@ -268,6 +297,7 @@ fn the_per_kind_disposition_verdict_is_derived() {
          \x20 ├────────────────┼──────────┼───────────────────────────────────────────────┤\n\
          \x20 │ equation       │ {equations:>8} │ Delivered: {equations_delivered:<4} other: {:<20?} │\n\
          \x20 │ plain rewrite  │ {plain:>8} │ Delivered: {rewrites_delivered:<4}                              │\n\
+         \x20 │ withheld       │ {withheld:>8} │ Suppressed after severance: {rewrites_suppressed:<4}               │\n\
          \x20 │ congruence     │ {congruence:>8} │ DeliveredElsewhere{{closure}}: {rewrites_elsewhere_closure:<4}          │\n\
          \x20 └────────────────┴──────────┴───────────────────────────────────────────────┘\n\
          \x20 other rewrite outcomes: {:?}\n",
@@ -285,7 +315,19 @@ fn the_per_kind_disposition_verdict_is_derived() {
          nothing else may be. If these differ, the two mechanisms disagree about what a \
          congruence is.{report}"
     );
-    // (ii) EVERY plain rewrite is Delivered — an emitted rule. So a plain rewrite IS
+    // (ii) Every explicit withholding is suppressed after the named position is severed. It is
+    //      neither a kernel nor a closure-delivered active congruence.
+    assert_eq!(
+        rewrites_suppressed, withheld,
+        "every withheld congruence must have exactly one Suppressed disposition after \
+         severance.{report}",
+    );
+    assert_eq!(
+        withheld, 1,
+        "one-evaluator convergence declares exactly one receiver withholding for the generic \
+         MethodCall surface.{report}",
+    );
+    // (iii) EVERY plain rewrite is Delivered — an emitted rule. So a plain rewrite IS
     //      load-bearing: delete it and the rule vanishes.
     // ⚠ MEASURED, not assumed: 9 of Rholang's 15 plain rewrites are Delivered. The other
     // SIX are the auto-injected `NormCast*InProc` rewrites the generator emits over
@@ -311,7 +353,7 @@ fn the_per_kind_disposition_verdict_is_derived() {
          (`NormCast{{Int,UInt32,BigInt}}To{{BigInt,BigRat,Int}}InProc`). A change here is a \
          change to `ast/src/auto_inject.rs`'s output and must be reported.{report}"
     );
-    // (iii) At least one equation is Delivered, and the count is pinned so a silent drop
+    // (iv) At least one equation is Delivered, and the count is pinned so a silent drop
     //       reports. ⚠ NOT `== equations`: `Extrude` carries a `ForAll` freshness premise
     //       the structural lowering does not model, so it is legitimately not delivered —
     //       and the point of pinning the number is that the legitimate exception cannot
@@ -446,20 +488,35 @@ fn the_size_of_the_complete_congruence_set_is_derived() {
 }
 
 /// The derived size of the complete congruence set — every child-e-class position in
-/// Rholang's declared constructors. **MEASURED 2026-07-30, not chosen: 193.**
+/// Rholang's declared constructors.
 ///
-/// ★ Read against `THE_DECLARED_SET` (142) this is the whole cost argument for #195:
-/// **51 propagating positions carry no declaration.** So
+/// ★★ One-evaluator convergence re-derived this population instead of relaxing the old pin.
+/// Before commit `438e3a3d`, the grammar had 193 child-e-class positions and 142 active
+/// congruences. Removing 47 method-specific constructors removed 73 `Proc` child positions;
+/// the generic `MethodCall(receiver:Proc, method_name:Ident, arguments:Vec(Proc))` replacement
+/// adds back exactly one child position: the receiver. `Ident` is opaque and `Vec(Proc)` is one
+/// ordered carrier leaf. Thus the complete set is `193 - 73 + 1 = 121`. The same refactor
+/// removed 70 method-position congruences, so the active set is `142 - 70 = 72`.
 ///
-///  * **(A) narrow the closure to the declarations** would silence 51 positions — and `W2`
+/// Read against the current `THE_DECLARED_SET` (72), **49 propagating positions carry no active
+/// declaration.** So
+///
+///  * **(A) narrow the closure to the declarations** would silence 49 positions — and `W2`
 ///    and `W3` prove two of them carry the owner's `*@p == p` / `@*p == p` behaviour;
-///  * **(C) complete the declaration set by hand** means writing 51 new congruence rules and
+///  * **(C) complete the declaration set by hand** means writing 49 new congruence rules and
 ///    keeping them in step with every future constructor — a hand-maintained mirror of a
 ///    computable domain, which is the failure mode
 ///    `feedback_complete_the_list_is_not_a_repair_derive_it` names and which this campaign has
 ///    already shipped four times;
 ///  * **(C-derived)** — emit those 51 from THIS census, as `auto_inject` already does for cast
 ///    congruences — is the same repair with the mirror removed.
-const THE_COMPLETE_SET: usize = 193;
+const COMPLETE_SET_BEFORE_METHOD_CONVERGENCE: usize = 193;
+const REMOVED_METHOD_CHILD_POSITIONS: usize = 73;
+const GENERIC_METHOD_CHILD_POSITIONS: usize = 1;
+const THE_COMPLETE_SET: usize = COMPLETE_SET_BEFORE_METHOD_CONVERGENCE
+    - REMOVED_METHOD_CHILD_POSITIONS
+    + GENERIC_METHOD_CHILD_POSITIONS;
 /// The derived size of the declared congruence set (axis B: declared + auto-injected).
-const THE_DECLARED_SET: usize = 142;
+const DECLARED_SET_BEFORE_METHOD_CONVERGENCE: usize = 142;
+const REMOVED_METHOD_CONGRUENCES: usize = 70;
+const THE_DECLARED_SET: usize = DECLARED_SET_BEFORE_METHOD_CONVERGENCE - REMOVED_METHOD_CONGRUENCES;
