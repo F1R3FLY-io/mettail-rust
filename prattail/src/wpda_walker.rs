@@ -283,7 +283,14 @@ struct CgllKTuple<W> {
     weight: W,
     /// K-C: structural decisions (token position, depth, emission ordinal);
     /// sorted at comparison by (position, innermost-first).
-    decisions: Vec<(u32, u32, u16)>,
+    ///
+    /// This is persistent because a parent key is the concatenation of its
+    /// child keys plus a small number of local decisions.  A plain `Vec`
+    /// copied the complete child prefix at every unary level, retaining
+    /// quadratic memory on deep inputs.  `im::Vector` shares those prefixes,
+    /// appends in O(log n), clones in O(1), and has logarithmic tree depth for
+    /// stack-safe destruction.
+    decisions: im::Vector<(u32, u32, u16)>,
 }
 
 impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
@@ -291,18 +298,18 @@ impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
         CgllKTuple {
             lateness: 0,
             weight: W::one_ref(),
-            decisions: Vec::new(),
+            decisions: im::Vector::new(),
         }
     }
 
     fn absorb_child(&mut self, child: CgllKTuple<W>) {
         self.lateness += child.lateness;
         self.weight = self.weight.times_ref(&child.weight);
-        self.decisions.extend(child.decisions);
+        self.decisions.append(child.decisions);
     }
 
     fn sorted_ordinals(&self) -> Vec<u16> {
-        let mut d = self.decisions.clone();
+        let mut d: Vec<(u32, u32, u16)> = self.decisions.iter().copied().collect();
         // (token position ASC, innermost-first at equal position = depth DESC).
         d.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
         d.into_iter().map(|(_, _, o)| o).collect()
@@ -590,8 +597,6 @@ impl<W> KbestNode<W> {
 /// flag (read on memo-hits too; OR'd over the session's demanded set by
 /// `cgll_kbest_session_truncated`).
 struct KbestNode<W> {
-    /// Packing family snapshot (insertion order — the K-D contract).
-    packings: Vec<crate::sppf::SppfId>,
     main: KbestNodeSub<W>,
     raw: Option<Box<KbestNodeSub<W>>>,
     truncated: bool,
@@ -3968,6 +3973,57 @@ const CGLL_KC_D2_BIT: u8 = 0x40;
 /// a `(slot, lo, hi)` identity. Bit 31 remains [`CGLL_BIN_TAG`].
 const CGLL_WRAP_TAG: u32 = 0x4000_0000;
 
+/// Context inherited by every descriptor whose GSS node is `v`.
+///
+/// Each field is a prefix summary of `v`'s first-parent chain.  Computing the
+/// summaries once, when `v` is created, is both semantically exact (the pure
+/// arm already commits to the first caller for a shared `v`) and essential for
+/// linear traversal: recomputing the nearest collection frame by walking the
+/// parent chain for every descriptor makes a depth-`n` input take
+/// `Theta(n^2)` hash-table probes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CgllPureFrameKey {
+    category_src_idx: u16,
+    rule_index_in_category: u16,
+    slot_idx: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CgllPureReceiverKey {
+    category_src_idx: u16,
+    rule_index_in_category: u16,
+    item_pos: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CgllPureAcceptorKey {
+    Collection,
+    Rule {
+        category_src_idx: u16,
+        rule_index_in_category: u16,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CgllPureParentCtx {
+    caller_sym: StackSymbolV2,
+    parent_u: crate::gss::GssNodeId,
+    inherited_scope_depth: u16,
+    has_xcat_ancestor: bool,
+    /// Compact locator for the nearest enclosing collection.  Storing three
+    /// small grammar indices instead of three fat `&str` pointers keeps the
+    /// per-GSS-node summary small; the generated collection table projects the
+    /// delimiters in O(1) when a descriptor actually needs them.
+    enclosing_frame: Option<CgllPureFrameKey>,
+    /// Nearest collection frame visible to the direct-separator guard.  Unlike
+    /// `enclosing_frame`, grouping, mixfix, and rule frames reset this view.
+    direct_separator_frame: Option<CgllPureFrameKey>,
+    /// Nearest channel-first receiver before a scope-resetting frame.
+    enclosing_receiver: Option<CgllPureReceiverKey>,
+    /// Nearest structured consumer for the body-category acceptance query.
+    enclosing_acceptor: Option<CgllPureAcceptorKey>,
+}
+
 /// Whole-run mutable state of one `step_canonical_pure` invocation: the
 /// `{R}` worklist, the accept frontier, the two PURE side-maps (both keyed
 /// by GSS node/edge identity, populated at descent, grammar×n bounded — see
@@ -4000,10 +4056,7 @@ struct CgllPureRun {
     /// sub-parse"). Multi-caller re-inserts with a DIFFERENT parent are
     /// counted (`ctx_conflicts`) and the first insert wins (conservative:
     /// the walk sees one shared chain).
-    v_parent: rustc_hash::FxHashMap<
-        crate::gss::GssNodeId,
-        (StackSymbolV2, crate::gss::GssNodeId, u16, bool),
-    >,
+    v_parent: rustc_hash::FxHashMap<crate::gss::GssNodeId, CgllPureParentCtx>,
     /// Accepting `(root, pos)` pairs (amendment 3: recorded ONLY at a
     /// seed-frame pop at logical EOI), deduped.
     accepting: Vec<(crate::sppf::SppfId, usize)>,
@@ -12145,7 +12198,7 @@ where
                             let c = kp.children[*scan_idx];
                             match self.sppf.node(c) {
                                 Some(crate::sppf::SppfNode::OptAbsent { pos }) => {
-                                    kp.t.decisions.push((
+                                    kp.t.decisions.push_back((
                                         self.cgll_pk(*pos),
                                         fdepth,
                                         self.engine.fork_emission_ordinal(1, 0, 0),
@@ -12167,7 +12220,7 @@ where
                                         .first()
                                         .and_then(|&ic| self.sppf.span_lo(ic))
                                         .unwrap_or(0);
-                                    kp.t.decisions.push((
+                                    kp.t.decisions.push_back((
                                         self.cgll_pk(pos),
                                         fdepth,
                                         self.engine.fork_emission_ordinal(0, 0, 0),
@@ -12276,7 +12329,7 @@ where
                 .first()
                 .and_then(|&c| self.sppf.span_lo(c))
                 .unwrap_or(0);
-            t.decisions.push((
+            t.decisions.push_back((
                 self.cgll_pk(pos),
                 fdepth,
                 self.engine.fork_emission_ordinal(0, 0, 0),
@@ -12364,7 +12417,7 @@ where
                         .unwrap_or(false);
                     if !declared_coercion {
                         if let (Some(lo), _) = fnode_span {
-                            t.decisions.push((
+                            t.decisions.push_back((
                                 self.cgll_pk(lo),
                                 fdepth,
                                 self.engine.fork_emission_ordinal(2, cat, local),
@@ -12760,7 +12813,7 @@ where
                 for &c in children {
                     match self.sppf.node(c) {
                         Some(crate::sppf::SppfNode::OptAbsent { pos }) => {
-                            t.decisions.push((
+                            t.decisions.push_back((
                                 self.cgll_pk(*pos),
                                 fdepth,
                                 self.engine.fork_emission_ordinal(1, 0, 0),
@@ -12775,7 +12828,7 @@ where
                                 .first()
                                 .and_then(|&ic| self.sppf.span_lo(ic))
                                 .unwrap_or(0);
-                            t.decisions.push((
+                            t.decisions.push_back((
                                 self.cgll_pk(pos),
                                 fdepth,
                                 self.engine.fork_emission_ordinal(0, 0, 0),
@@ -12856,10 +12909,12 @@ where
         let mut raw_seen: rustc_hash::FxHashSet<crate::sppf::SppfId> =
             rustc_hash::FxHashSet::default();
         let mut guard = 0usize;
-        // level = (children, j, child_idx, slot_cur).
-        let mut levels: Vec<(Vec<crate::sppf::SppfId>, Vec<u32>, usize, usize)> =
+        // level = (packing children, j, child_idx, slot_cur).  SPPF storage is
+        // immutable during extraction, so levels borrow its child slices
+        // instead of allocating copies at every visited Intermediate.
+        let mut levels: Vec<(&[crate::sppf::SppfId], Vec<u32>, usize, usize)> =
             Vec::with_capacity(8);
-        levels.push((children.clone(), j.to_vec(), 0, 0));
+        levels.push((children, j.to_vec(), 0, 0));
         loop {
             let step = {
                 let Some((lc, _, ci, _)) = levels.last_mut() else {
@@ -12911,7 +12966,7 @@ where
                         return None;
                     };
                     plan.flat_weight = plan.flat_weight.times_ref(iw);
-                    levels.push((ich.clone(), ij, 0, 0));
+                    levels.push((ich, ij, 0, 0));
                 },
                 Some(crate::sppf::SppfNode::Symbol { .. }) => {
                     tripwire(state, c);
@@ -13315,7 +13370,6 @@ where
                     }
                     let (len, was_seeded) = {
                         let n = state.nodes.entry(node).or_insert_with(|| KbestNode {
-                            packings: self.sppf.packings_of(node).to_vec(),
                             main: KbestNodeSub::new(),
                             raw: None,
                             truncated: false,
@@ -13362,17 +13416,12 @@ where
                 } => {
                     let child_depth = fdepths.get(&node).copied().unwrap_or(assign_depth) + 1;
                     loop {
-                        let pk = {
-                            let n = state.nodes.get(&node).expect("kbest node state exists");
-                            match n.packings.get(pk_idx) {
-                                Some(&p) => p,
-                                None => break,
-                            }
+                        let pk = match self.sppf.packings_of(node).get(pk_idx) {
+                            Some(&p) => p,
+                            None => break,
                         };
-                        let children: Vec<crate::sppf::SppfId> = match self.sppf.node(pk) {
-                            Some(crate::sppf::SppfNode::Packing { children, .. }) => {
-                                children.clone()
-                            },
+                        let children: &[crate::sppf::SppfId] = match self.sppf.node(pk) {
+                            Some(crate::sppf::SppfNode::Packing { children, .. }) => children,
                             _ => {
                                 pk_idx += 1;
                                 scan_pass = false;
@@ -13416,12 +13465,12 @@ where
                         }
                         if child_idx < children.len() {
                             let c = children[child_idx];
-                            let inners: Option<Vec<crate::sppf::SppfId>> = match self.sppf.node(c) {
+                            let inners: Option<&[crate::sppf::SppfId]> = match self.sppf.node(c) {
                                 Some(crate::sppf::SppfNode::Packing {
                                     rule_idx: pr,
                                     children: pch,
                                     ..
-                                }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => Some(pch.clone()),
+                                }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => Some(pch),
                                 _ => None,
                             };
                             match inners {
@@ -13473,19 +13522,14 @@ where
                 },
                 KbestFrameStage::SeedCands { mut pk_idx } => {
                     loop {
-                        let pk = {
-                            let n = state.nodes.get(&node).expect("kbest node state exists");
-                            match n.packings.get(pk_idx) {
-                                Some(&p) => p,
-                                None => break,
-                            }
+                        let pk = match self.sppf.packings_of(node).get(pk_idx) {
+                            Some(&p) => p,
+                            None => break,
                         };
                         let pkidx_u32 = pk_idx as u32;
                         pk_idx += 1;
-                        let children: Vec<crate::sppf::SppfId> = match self.sppf.node(pk) {
-                            Some(crate::sppf::SppfNode::Packing { children, .. }) => {
-                                children.clone()
-                            },
+                        let children: &[crate::sppf::SppfId] = match self.sppf.node(pk) {
+                            Some(crate::sppf::SppfNode::Packing { children, .. }) => children,
                             _ => continue,
                         };
                         let Some(slots) = self.cgll_kbest_slot_layout(&children, kind) else {
@@ -13775,9 +13819,9 @@ where
                         frames[fi].stage = KbestFrameStage::LoopHead;
                         continue 'drive;
                     };
-                    let children: Vec<crate::sppf::SppfId> = match self.sppf.node(pk) {
-                        Some(crate::sppf::SppfNode::Packing { children, .. }) => children.clone(),
-                        _ => Vec::new(),
+                    let children: &[crate::sppf::SppfId] = match self.sppf.node(pk) {
+                        Some(crate::sppf::SppfNode::Packing { children, .. }) => children,
+                        _ => &[],
                     };
                     let slots = self
                         .cgll_kbest_slot_layout(&children, kind)
@@ -14552,25 +14596,72 @@ where
         // (a scope is open exactly while its frame sits in that state —
         // opened by the `start_scope` ident consume, closed by the `)`
         // `EndBinderScope`).
-        let inherited_depth = run
-            .v_parent
-            .get(&caller.u)
-            .map(|e| e.2)
+        let inherited_parent = run.v_parent.get(&caller.u).copied();
+        let inherited_depth = inherited_parent
+            .map(|e| e.inherited_scope_depth)
             .unwrap_or(0)
             .saturating_add(matches!(caller.state, WpdaState::BinderListLoop { .. }) as u16);
         // R-A §2.2 ancestry fast-bit: `xcat != 0` here or anywhere above —
         // the O(1) fast-reject mirror of classic's
         // `crosscat_lhs_stack_has_scope_edge` (deep-chain inputs must not
         // pay an O(depth) walk per InfixLoop descriptor).
-        let has_xcat_ancestor =
-            xcat != 0 || run.v_parent.get(&caller.u).map(|e| e.3).unwrap_or(false);
+        let has_xcat_ancestor = xcat != 0
+            || inherited_parent
+                .map(|e| e.has_xcat_ancestor)
+                .unwrap_or(false);
+        // The child inherits the nearest collection frame from the caller.
+        // A replacement may change the caller symbol before descent, so use
+        // `caller_sym_now`, exactly as the former upward walk did.  If that
+        // symbol is not a collection frame (or has no collection spec), the
+        // caller's already-derived prefix summary is the next-nearest frame.
+        let enclosing_frame = self
+            .cgll_pure_frame_key(&caller_sym_now)
+            .or_else(|| inherited_parent.and_then(|e| e.enclosing_frame));
+        let direct_separator_frame = match caller_sym_now.kind {
+            SymbolKind::CollectionMarker => self.cgll_pure_frame_key(&caller_sym_now),
+            SymbolKind::GroupingMarker | SymbolKind::MixfixMarker | SymbolKind::RuleAt(_) => None,
+            _ => inherited_parent.and_then(|e| e.direct_separator_frame),
+        };
+        let enclosing_receiver = match caller_sym_now.kind {
+            SymbolKind::RuleAt(item_pos) if item_pos > 0 => Some(CgllPureReceiverKey {
+                category_src_idx: caller_sym_now.category_src_idx,
+                rule_index_in_category: caller_sym_now.rule_index_in_category,
+                item_pos,
+            }),
+            SymbolKind::RuleAt(_)
+            | SymbolKind::GroupingMarker
+            | SymbolKind::MixfixMarker
+            | SymbolKind::CollectionMarker => None,
+            _ => inherited_parent.and_then(|e| e.enclosing_receiver),
+        };
+        let enclosing_acceptor = match caller_sym_now.kind {
+            SymbolKind::MixfixMarker | SymbolKind::RuleAt(_) => Some(CgllPureAcceptorKey::Rule {
+                category_src_idx: caller_sym_now.category_src_idx,
+                rule_index_in_category: caller_sym_now.rule_index_in_category,
+            }),
+            SymbolKind::CollectionMarker => Some(CgllPureAcceptorKey::Collection),
+            _ => inherited_parent.and_then(|e| e.enclosing_acceptor),
+        };
+        let parent_ctx = CgllPureParentCtx {
+            caller_sym: caller_sym_now,
+            parent_u: caller.u,
+            inherited_scope_depth: inherited_depth,
+            has_xcat_ancestor,
+            enclosing_frame,
+            direct_separator_frame,
+            enclosing_receiver,
+            enclosing_acceptor,
+        };
         match run.v_parent.entry(v) {
             std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert((caller_sym_now, caller.u, inherited_depth, has_xcat_ancestor));
+                e.insert(parent_ctx);
             },
             std::collections::hash_map::Entry::Occupied(e) => {
-                if *e.get() != (caller_sym_now, caller.u, inherited_depth, has_xcat_ancestor) {
+                if *e.get() != parent_ctx {
                     run.stats.ctx_conflicts += 1;
+                    if e.get().caller_sym != parent_ctx.caller_sym {
+                        run.stats.chain_ctx_divergence += 1;
+                    }
                 }
             },
         }
@@ -15009,63 +15100,57 @@ where
     /// INNERMOST enclosing `CollectionMarker` frame's
     /// [`WpdaEngine::collection_spec`] delimiters; never a union of frames.
     /// "Innermost" resolves as (1) the descriptor's OWN frame if it is a
-    /// marker, else (2) the `v_parent` upward walk (recorded at descent;
-    /// per-`v`, aligned with classic's shared-forward-sub-parse note). The
-    /// Parent chains are expected to be finite (the GSS is a DAG;
-    /// `v_parent` holds each node's first caller). A malformed cycle is
-    /// nevertheless detected in O(1) auxiliary space and degrades to `EMPTY`
-    /// exactly like classic's no-enclosing-frame case.
+    /// marker, else (2) the prefix summary cached in `v_parent` when this GSS
+    /// node was created.  The summary is the former first-parent upward walk
+    /// evaluated incrementally: one projection and one O(1) lookup per new
+    /// node instead of an O(depth) lookup per descriptor.
+    fn cgll_pure_frame_key(&self, sym: &StackSymbolV2) -> Option<CgllPureFrameKey> {
+        if !matches!(sym.kind, SymbolKind::CollectionMarker) {
+            return None;
+        }
+        let slot_idx = sym.bp.unwrap_or(0);
+        self.engine
+            .collection_spec(sym.category_src_idx, sym.rule_index_in_category, slot_idx)
+            .map(|_| CgllPureFrameKey {
+                category_src_idx: sym.category_src_idx,
+                rule_index_in_category: sym.rule_index_in_category,
+                slot_idx,
+            })
+    }
+
+    fn cgll_pure_project_frame_ctx(
+        &self,
+        key: CgllPureFrameKey,
+    ) -> Option<crate::wpda_runtime::FrameCtx> {
+        self.engine
+            .collection_spec(key.category_src_idx, key.rule_index_in_category, key.slot_idx)
+            .map(|spec| crate::wpda_runtime::FrameCtx {
+                close: spec.close,
+                sep: spec.sep,
+                kv_sep: spec.kv_sep,
+                has_frame: true,
+            })
+    }
+
     fn cgll_pure_frame_ctx(
         &self,
-        v_parent: &rustc_hash::FxHashMap<
-            crate::gss::GssNodeId,
-            (StackSymbolV2, crate::gss::GssNodeId, u16, bool),
-        >,
+        v_parent: &rustc_hash::FxHashMap<crate::gss::GssNodeId, CgllPureParentCtx>,
         d: &CgllPureDescriptor,
     ) -> crate::wpda_runtime::FrameCtx {
         use crate::wpda_runtime::FrameCtx;
-        let project = |sym: &StackSymbolV2| -> Option<FrameCtx> {
-            let slot_idx = sym.bp.unwrap_or(0);
-            self.engine
-                .collection_spec(sym.category_src_idx, sym.rule_index_in_category, slot_idx)
-                .map(|spec| FrameCtx {
-                    close: spec.close,
-                    sep: spec.sep,
-                    kv_sep: spec.kv_sep,
-                    has_frame: true,
-                })
-        };
         // (1) The descriptor's own frame is the innermost when it IS a marker
         // (standalone collections dispatch elements in-frame).
-        if matches!(d.cur_sym.kind, SymbolKind::CollectionMarker) {
-            if let Some(ctx) = project(&d.cur_sym) {
+        if let Some(key) = self.cgll_pure_frame_key(&d.cur_sym) {
+            if let Some(ctx) = self.cgll_pure_project_frame_ctx(key) {
                 return ctx;
             }
         }
-        // (2) Upward walk to the nearest enclosing marker frame.
-        let cycle_entry = Self::deterministic_cycle_entry(d.u, |node| {
-            v_parent.get(&node).map(|(_, parent, _, _)| *parent)
-        });
-        let mut u = d.u;
-        let mut entered_cycle = false;
-        loop {
-            if cycle_entry == Some(u) {
-                if entered_cycle {
-                    break;
-                }
-                entered_cycle = true;
-            }
-            let Some((sym, parent_u, _, _)) = v_parent.get(&u) else {
-                break;
-            };
-            if matches!(sym.kind, SymbolKind::CollectionMarker) {
-                if let Some(ctx) = project(sym) {
-                    return ctx;
-                }
-            }
-            u = *parent_u;
-        }
-        FrameCtx::EMPTY
+        // (2) The node's cached first-parent prefix summary.
+        v_parent
+            .get(&d.u)
+            .and_then(|e| e.enclosing_frame)
+            .and_then(|key| self.cgll_pure_project_frame_ctx(key))
+            .unwrap_or(FrameCtx::EMPTY)
     }
 
     /// P3.e: the pure `EndBinderScope` — intern the completed
@@ -15121,7 +15206,11 @@ where
                 ns
             },
         };
-        let depth = run.v_parent.get(&d.u).map(|e| e.2).unwrap_or(0);
+        let depth = run
+            .v_parent
+            .get(&d.u)
+            .map(|e| e.inherited_scope_depth)
+            .unwrap_or(0);
         let sid = self.sppf.intern_binder_scope(&names, depth);
         // POSITION-SALTED annotation slot: binder-list folds (ident markers,
         // this BinderScope, weight carriers) all happen under ONE
@@ -15869,7 +15958,11 @@ where
                 }
                 let cid = self.sppf.intern_collection_id(coll_id, items);
                 let z = if is_class3 {
-                    let depth = run.v_parent.get(&d.u).map(|e| e.2).unwrap_or(0);
+                    let depth = run
+                        .v_parent
+                        .get(&d.u)
+                        .map(|e| e.inherited_scope_depth)
+                        .unwrap_or(0);
                     let leaf = self.sppf.intern_binder_scope(&binder_names, depth);
                     // Position-salted annotation pairing (CID is span-less,
                     // the leaf zero-width — the salt keeps distinct closes
@@ -17585,55 +17678,17 @@ where
     /// resets (`GroupingMarker` / `MixfixMarker` / `CollectionMarker` /
     /// fresh `RuleAt(0)`); TRANSPARENT through everything else
     /// (CategoryEntry continuations / cross-cat lineages / Return
-    /// pass-throughs — the classic `_ => pop` arm). Cycles terminate after
-    /// exactly one visit to every node in the deterministic cycle.
+    /// pass-throughs — the classic `_ => pop` arm).  The first-parent result
+    /// is summarized once at descent, so each query is O(1).
     fn cgll_pure_enclosing_receiver(
         &self,
-        run: &mut CgllPureRun,
+        run: &CgllPureRun,
         u: crate::gss::GssNodeId,
     ) -> Option<(u16, u16, u8)> {
-        let cycle_entry = Self::deterministic_cycle_entry(u, |node| {
-            self.gss.gll_edges(node).first().map(|edge| edge.target)
-        });
-        let mut cur = u;
-        let mut entered_cycle = false;
-        loop {
-            if cycle_entry == Some(cur) {
-                if entered_cycle {
-                    return None;
-                }
-                entered_cycle = true;
-            }
-            let edges = self.gss.gll_edges(cur);
-            let first = edges.first()?;
-            let ctx = run
-                .edge_ctx
-                .get(&(cur, first.target, first.operand_w))
-                .copied()?;
-            for e in &edges[1..] {
-                if let Some(other) = run.edge_ctx.get(&(cur, e.target, e.operand_w)) {
-                    if other.caller_sym != ctx.caller_sym {
-                        run.stats.chain_ctx_divergence += 1;
-                    }
-                }
-            }
-            match ctx.caller_sym.kind {
-                SymbolKind::RuleAt(k) if k > 0 => {
-                    return Some((
-                        ctx.caller_sym.category_src_idx,
-                        ctx.caller_sym.rule_index_in_category,
-                        k,
-                    ));
-                },
-                SymbolKind::RuleAt(_)
-                | SymbolKind::GroupingMarker
-                | SymbolKind::MixfixMarker
-                | SymbolKind::CollectionMarker => return None,
-                _ => {
-                    cur = first.target;
-                },
-            }
-        }
+        run.v_parent
+            .get(&u)
+            .and_then(|ctx| ctx.enclosing_receiver)
+            .map(|key| (key.category_src_idx, key.rule_index_in_category, key.item_pos))
     }
 
     /// Decide + perform the pure Unwinding injection for one InfixLoop Fork
@@ -17656,40 +17711,15 @@ where
         u: crate::gss::GssNodeId,
         body_cat: u16,
     ) -> bool {
-        let cycle_entry = Self::deterministic_cycle_entry(u, |node| {
-            self.gss.gll_edges(node).first().map(|edge| edge.target)
-        });
-        let mut cur = u;
-        let mut entered_cycle = false;
-        loop {
-            if cycle_entry == Some(cur) {
-                if entered_cycle {
-                    return false;
-                }
-                entered_cycle = true;
-            }
-            let edges = self.gss.gll_edges(cur);
-            let Some(first) = edges.first() else {
-                return false;
-            };
-            let Some(ctx) = run
-                .edge_ctx
-                .get(&(cur, first.target, first.operand_w))
-                .copied()
-            else {
-                return false;
-            };
-            match ctx.caller_sym.kind {
-                SymbolKind::MixfixMarker | SymbolKind::RuleAt(_) => {
-                    return self.action_accepts_single_body_category(
-                        ctx.caller_sym.category_src_idx,
-                        ctx.caller_sym.rule_index_in_category,
-                        body_cat,
-                    );
-                },
-                SymbolKind::CollectionMarker => return true,
-                _ => cur = first.target,
-            }
+        match run.v_parent.get(&u).and_then(|ctx| ctx.enclosing_acceptor) {
+            Some(CgllPureAcceptorKey::Collection) => true,
+            Some(CgllPureAcceptorKey::Rule { category_src_idx, rule_index_in_category }) => self
+                .action_accepts_single_body_category(
+                    category_src_idx,
+                    rule_index_in_category,
+                    body_cat,
+                ),
+            None => false,
         }
     }
 
@@ -17698,47 +17728,18 @@ where
     /// innermost enclosing collection's ELEMENT separator text, from the
     /// u-ancestry (edge-ctx caller chain), stopping at scope-resetting
     /// frames exactly like the classic edge-stack walk (GroupingMarker /
-    /// MixfixMarker / RuleAt reset; CollectionMarker answers).
+    /// MixfixMarker / RuleAt reset; CollectionMarker answers).  The matching
+    /// compact frame key is summarized at descent, making this query O(1).
     fn cgll_pure_enclosing_collection_sep(
         &self,
         run: &mut CgllPureRun,
         u: crate::gss::GssNodeId,
     ) -> Option<&'static str> {
-        let cycle_entry = Self::deterministic_cycle_entry(u, |node| {
-            self.gss.gll_edges(node).first().map(|edge| edge.target)
-        });
-        let mut cur = u;
-        let mut entered_cycle = false;
-        loop {
-            if cycle_entry == Some(cur) {
-                if entered_cycle {
-                    return None;
-                }
-                entered_cycle = true;
-            }
-            let edges = self.gss.gll_edges(cur);
-            let first = edges.first()?;
-            let ctx = run
-                .edge_ctx
-                .get(&(cur, first.target, first.operand_w))
-                .copied()?;
-            match ctx.caller_sym.kind {
-                SymbolKind::CollectionMarker => {
-                    return self
-                        .engine
-                        .collection_spec(
-                            ctx.caller_sym.category_src_idx,
-                            ctx.caller_sym.rule_index_in_category,
-                            ctx.caller_sym.bp.unwrap_or(0),
-                        )
-                        .map(|spec| spec.sep);
-                },
-                SymbolKind::GroupingMarker | SymbolKind::MixfixMarker | SymbolKind::RuleAt(_) => {
-                    return None
-                },
-                _ => cur = first.target,
-            }
-        }
+        run.v_parent
+            .get(&u)
+            .and_then(|ctx| ctx.direct_separator_frame)
+            .and_then(|key| self.cgll_pure_project_frame_ctx(key))
+            .map(|ctx| ctx.sep)
     }
 
     /// ARM G (2026-07-12): pure mirror of classic's `crosscat_inherited_floor_reset`
@@ -17953,7 +17954,12 @@ where
         }
         // Ancestry fast-bit (§2.2): O(1) reject on chains with no crosscat
         // hop anywhere above (deep-chain inputs must not pay the walk).
-        if !run.v_parent.get(&d.u).map(|e| e.3).unwrap_or(false) {
+        if !run
+            .v_parent
+            .get(&d.u)
+            .map(|e| e.has_xcat_ancestor)
+            .unwrap_or(false)
+        {
             return out;
         }
         let Some(token) = tokens.peek_text(d.pos) else {
@@ -18068,9 +18074,9 @@ where
                 xcat_bp: slot.xcat_bp,
                 xcat_wrap: slot.xcat_wrap,
                 pushed_cat: slot.pushed_cat,
-                caller_kind: caller.map(|(csym, _, _, _)| csym.kind),
+                caller_kind: caller.map(|ctx| ctx.caller_sym.kind),
                 caller_cat: caller
-                    .map(|(csym, _, _, _)| csym.category_src_idx)
+                    .map(|ctx| ctx.caller_sym.category_src_idx)
                     .unwrap_or(u16::MAX),
             };
             let __verdict = crate::crosscat_boundary::classify_hop(&__hop);
@@ -18141,8 +18147,8 @@ where
                 frontier.push(e.target);
             }
             if self.gss.gll_edges(u).is_empty() {
-                if let Some((_, pu, _, _)) = caller {
-                    frontier.push(pu);
+                if let Some(ctx) = caller {
+                    frontier.push(ctx.parent_u);
                 }
             }
         }
@@ -18379,9 +18385,14 @@ where
                 && d.cur_sym.kind == SymbolKind::CategoryEntry
                 && d.w != crate::sppf::SPPF_ID_NONE
             {
-                if let Some(&(csym, cu, _, _)) = run.v_parent.get(&d.u) {
+                if let Some(&ctx) = run.v_parent.get(&d.u) {
+                    let csym = ctx.caller_sym;
                     let mid_rule = matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
-                    let xcat_above = run.v_parent.get(&cu).map(|e| e.3).unwrap_or(false);
+                    let xcat_above = run
+                        .v_parent
+                        .get(&ctx.parent_u)
+                        .map(|e| e.has_xcat_ancestor)
+                        .unwrap_or(false);
                     if mid_rule && xcat_above {
                         let body_cat = self
                             .sppf_symbol_category(d.w)

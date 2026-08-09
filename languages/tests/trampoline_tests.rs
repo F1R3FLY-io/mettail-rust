@@ -194,22 +194,15 @@ fn test_right_assoc_chain_10000() {
     assert!(result.is_ok(), "10000 right-assoc ops should parse: {:?}", result.err());
 }
 
-// ── Tests: Left-associative chains (already iterative in Pratt loop) ──
-// Note: 10K is used instead of 100K because the resulting AST is deeply nested
-// and AST operations (Display, Drop) still recurse on the call stack.
-// Sprint 2 (AST Work-Stack) will make AST operations stack-safe too.
+// ── Tests: Left-associative chains (iterative in the Pratt loop) ──
 
-// Phase F.13 chain_10000 Exp 14 Substage 7 + Exp 15 Substage 7
-// (2026-05-27): un-ignored per protocol amendment at
-// `prattail/docs/design/plans/chain-10000-experiments-ledger.md`. The
-// original 24 GB ceiling was a bench-protocol convention (operator-set
-// `systemd-run --user --scope -p MemoryMax=24G`), not a CI requirement.
-// `cargo test` honors no memory cap; on the host (125 GB RAM) the test
-// runs to completion at the empirically measured ~45-60 GB peak (post-
-// Tomita per-arc + im::OrdSet visited_* migrations, commit `0743246`).
-// Test is long-running (~30-60 min); kept under the `tramp_*` test
-// invocations that explicitly include chain probes, not the prattail-
-// lib gauntlet.
+// Living performance disposition (2026-08-09): the old Phase-F.13
+// 45–60 GiB / 30–60 minute observation is retired.  Prefix summaries remove
+// repeated GSS ancestry walks, and persistent election-decision vectors remove
+// the unary-prefix quadratic retention.  The complete 31-test binary,
+// including both 10k associativity chains, 20k unary/ternary chains, and 100k
+// grouping depth, completed in 5.79 s at 964,384 KiB maximum RSS under a 2 GiB
+// systemd memory cap, with the default native stack.
 #[test]
 fn test_left_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
@@ -247,16 +240,8 @@ fn test_left_assoc_chain_200() {
     assert!(result.is_ok(), "200 left-assoc ops should parse: {:?}", result.err());
 }
 
-// Phase F.13 chain_10000 Exp 16 round 3 (2026-05-26): scaling probes
-// for walker memory attribution. left_assoc_chain at N=2000 and 5000
-// should fit in 24 GB by linear/quadratic projection from chain_1000's
-// 15 MB peak. Used with --features walker-stats to plot the actual
-// scaling exponent of walker live state.
-// Phase F.13 chain_10000 Exp 14 Substage 7 (2026-05-27): un-ignored.
-// chain_500 LEFT-assoc passes post-Tomita Subs 3-6 in 10:13 wall, 13.6 GB
-// peak RSS (was 17:02, 21.2 GB pre-Tomita: -40% wall, -36% RSS). Kept
-// in the gauntlet as a long-running scaling probe + memory-regression
-// canary.
+// Retained scaling rungs: these make a regression visible below the 10k gate
+// and keep the parser's shape coverage independent of one terminal depth.
 #[test]
 fn test_left_assoc_chain_500() {
     mettail_runtime::clear_var_cache();
@@ -313,12 +298,9 @@ fn test_ternary_chain_2000() {
 // Residual #11-3 D1 (2026-07-14): the EXACT-TOKEN partner of the passing
 // `test_deep_unary_neg_20000`. `ternary_chain(5000)` = `"0 ? 1 : "`×5000 +
 // `"0"` = 20,001 tokens — identical token count to `nested_unary(20000)`
-// (20,000 `-` + `1`). Pre-registered discriminator D1: at equal tokens, if
-// walls/RSS track within ~1.5× the ceiling is token-driven (one shared
-// quadratic law); if the ternary is >~3× the arity/mixfix packing
-// population drives it. Deliberately NOT `unary_40000` (its out-of-scope
-// Display/Drop term-depth recursion would SIGSEGV at the 8 MiB default
-// stack and contaminate D1 with the wrong mechanism).
+// (20,000 `-` + `1`). It remains a shape-control after the discriminator found
+// and eliminated two distinct causes: repeated GSS ancestry walks for ternary
+// chains and copied election-decision prefixes for unary chains.
 #[test]
 fn test_ternary_chain_5000() {
     mettail_runtime::clear_var_cache();
@@ -335,13 +317,10 @@ fn test_ternary_chain_10000() {
     assert!(result.is_ok(), "10000 nested ternaries should parse: {:?}", result.err());
 }
 
-// S2-F3 G2 (2026-07-11): deeper scaling probes for the ITERATIVE realize
-// conversion. Depth 20000 deliberately: pre-fix pure failed at 10k already
-// (clean discriminator), while the pre-existing classic-shared TERM-depth
-// recursions (generated semantic_hash, AST Display/Drop — the "Sprint 2
-// AST Work-Stack" note above) are measured green at 10k and sized
-// ~100-200 B/frame, leaving ≥2× headroom at 20k; 100k would gate on those
-// out-of-scope ceilings, not on this conversion.
+// S2-F3 G2 (2026-07-11): deep scaling probe for the iterative realize
+// conversion.  The generated term lifecycle is now stack-safe as well, so this
+// gate exercises parsing, realization, assertion formatting, and teardown on
+// the default native stack without a recursion workaround.
 #[test]
 fn test_ternary_chain_20000() {
     mettail_runtime::clear_var_cache();
