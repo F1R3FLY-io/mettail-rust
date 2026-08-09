@@ -16,11 +16,13 @@
 //!                                        ↑ these two are BYTE-IDENTICAL to every reader
 //! ```
 //!
-//! The second and third rows are indistinguishable, and the second row is the *common*
-//! one: 400 of a language's 461 declared rewrites take it (a congruence rewrite needs no
-//! lowered rule, because e-graph congruence closure propagates the merge for it). So
-//! "silence means a defect" is false 400 times over, and "silence means fine" hides every
-//! real drop. A boolean cannot express the difference. A **disposition** can:
+//! The second and third rows are indistinguishable, and the second row is common across the
+//! production corpus: an active congruence rewrite needs no explicit lowered rule because
+//! e-graph congruence closure propagates the merge for it. The exact population is derived by
+//! `languages/tests/lowering_disposition_inventory.rs`; it deliberately is not transcribed
+//! here because grammar convergence changes the population without changing this argument.
+//! Thus "silence means a defect" produces hundreds of false positives, while "silence means
+//! fine" hides every real drop. A boolean cannot express the difference. A **disposition** can:
 //!
 //! | outcome | meaning |
 //! |---|---|

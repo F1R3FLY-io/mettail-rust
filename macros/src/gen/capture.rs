@@ -508,8 +508,9 @@ pub(crate) mod bundled_corpus {
     /// The three composed definitions in `languages/src/composition/` cannot be
     /// (their bases live in a runtime registry the macro populates), so they are
     /// absent here and covered instead by the build itself, which runs the same
-    /// generator over them. Callers assert a non-vacuity floor rather than
-    /// assuming a count.
+    /// generator over them. Callers derive their expected work directly from the
+    /// reconstructed definitions and assert exact visitation rather than retaining a
+    /// grammar-size floor.
     pub(crate) fn bundled_languages() -> Vec<BundledLanguage> {
         let root =
             mettail_ast::manifest::find_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))

@@ -1845,11 +1845,12 @@ fn lower_equation(
 ///
 /// ★ THE ANTI-VACUITY POINT OF THE WHOLE MECHANISM LIVES HERE. Five of this function's
 /// early returns used to be `return (Vec::new(), Vec::new())` — no rule, no excuse — and they
-/// are the OVERWHELMING MAJORITY case: for the bundled Rholang, 400 of 461 declared rewrites
-/// leave through the congruence branch alone. Those five returns are correct: another lane
-/// really does cover the rewrite. But because they were spelled the same way as a silent drop,
-/// no test could distinguish "covered elsewhere" from "covered nowhere", and turning silence
-/// into an error would have produced 400 false positives.
+/// are a common case across the production corpus: active congruences leave through the
+/// congruence branch alone. The exact population is derived by
+/// `languages/tests/lowering_disposition_inventory.rs`, not copied here. Those five returns are
+/// correct: another lane really does cover the rewrite. But because they were spelled the same
+/// way as a silent drop, no test could distinguish "covered elsewhere" from "covered nowhere",
+/// and turning silence into an error would have produced hundreds of false positives.
 ///
 /// Each of the five now returns [`LoweringOutcome::DeliveredElsewhere`] naming the covering
 /// lane, so the distinction is a fact in the generated metadata rather than a comment.

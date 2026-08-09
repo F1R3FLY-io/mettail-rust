@@ -14,10 +14,12 @@ use mettail_macros::language;
 //
 // RED A and RED B both assert that something IS a declination. A mechanism could pass both by
 // declaring everything it does not emit a rule for to be a declination — and it would then be
-// catastrophically wrong, because the overwhelmingly common reason a rewrite produces no rule is
-// that ANOTHER LANE COVERS IT. In the bundled Rholang, 400 of 461 declared rewrites produce no
-// structural rule for exactly that reason. Calling them declinations would bury the fifteen real
-// ones under four hundred false positives and make the inventory worthless.
+// catastrophically wrong, because the common reason a rewrite produces no rule is that ANOTHER
+// LANE COVERS IT. The production-corpus population is derived in
+// `lowering_disposition_inventory.rs`; transcribing it here became stale when one-evaluator
+// convergence removed 70 method-specific congruences. Calling the surviving population
+// declinations would still bury the real declinations under hundreds of false positives and make
+// the inventory worthless.
 //
 // `WrapCong` is that case in miniature. It is a congruence rewrite:
 //

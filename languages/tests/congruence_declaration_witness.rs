@@ -73,34 +73,105 @@
 
 #![cfg(feature = "rholang")]
 
+use mettail_ast::{
+    auto_inject::reconstruct_language_def,
+    language::{LanguageDef, RewriteRule},
+};
 use mettail_languages::rholang::{Proc, RholangLanguage, RholangTerm, RholangTermInner};
-use mettail_runtime::Language;
+use mettail_runtime::{
+    Language, LoweredConstructKind, LoweredConstructOrigin, LoweringLane, LoweringOutcomeKind,
+};
 
 const DOVETAIL_ITERS: usize = 256;
 const DOVETAIL_NODES: usize = 4_000_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RewriteCensus {
+    total: usize,
+    kernels: usize,
+    withheld: usize,
+    congruences: usize,
+}
+
+impl RewriteCensus {
+    const fn add(self, other: Self) -> Self {
+        Self {
+            total: self.total + other.total,
+            kernels: self.kernels + other.kernels,
+            withheld: self.withheld + other.withheld,
+            congruences: self.congruences + other.congruences,
+        }
+    }
+
+    const fn subtract(self, other: Self) -> Self {
+        Self {
+            total: self.total - other.total,
+            kernels: self.kernels - other.kernels,
+            withheld: self.withheld - other.withheld,
+            congruences: self.congruences - other.congruences,
+        }
+    }
+}
+
+fn augmented_definition() -> LanguageDef {
+    let source = RholangLanguage
+        .metadata()
+        .definition_source()
+        .expect("Rholang metadata carries its definition source");
+    reconstruct_language_def(source).expect("Rholang definition source reconstructs")
+}
+
+fn census<'a>(rewrites: impl IntoIterator<Item = &'a RewriteRule>) -> RewriteCensus {
+    let mut result = RewriteCensus {
+        total: 0,
+        kernels: 0,
+        withheld: 0,
+        congruences: 0,
+    };
+    for rewrite in rewrites {
+        let congruence = rewrite.is_congruence_rule();
+        let withheld = rewrite.withholds_congruence();
+        assert!(
+            !(congruence && withheld),
+            "rewrite `{}` cannot both declare and withhold congruence",
+            rewrite.name,
+        );
+        result.total += 1;
+        if congruence {
+            result.congruences += 1;
+        } else if withheld {
+            result.withheld += 1;
+        } else {
+            result.kernels += 1;
+        }
+    }
+    result
+}
+
 // ══════════════════════════════════════════════════════════════════════════════════════════
-// THE DECLARED SET — derived from the generated metadata, never written down
+// THE AUGMENTED SET — derived from the generated metadata, never written down
 // ══════════════════════════════════════════════════════════════════════════════════════════
 
-/// Every declared Rholang rewrite, split by whether it carries a `Premise::Congruence`.
+/// Every augmented Rholang rewrite, split by whether it carries an active
+/// `Premise::Congruence`.
 ///
 /// `RewriteDef::is_congruence()` is the SAME predicate `dovetail_report::lower_rewrite` and
 /// `rho_net::plan` route on (`RewriteDef::premise` is emitted from `Premise::Congruence` by
-/// `macros/src/gen/runtime/metadata.rs:872`), so this split is the generator's own, not a
-/// re-implementation of it.
-fn declared_split() -> (Vec<&'static str>, Vec<&'static str>) {
+/// `macros/src/gen/runtime/metadata.rs`), so this split is the generator's own, not a
+/// re-implementation of it. A `CongruenceWithheld` premise deliberately appears in the
+/// non-congruence partition; the source-AST census below separates it from executable kernels.
+fn metadata_split() -> (Vec<&'static str>, Vec<&'static str>) {
     let mut congruences = Vec::new();
-    let mut kernels = Vec::new();
+    let mut non_congruences = Vec::new();
     for rw in RholangLanguage.metadata().rewrites() {
         let target = if rw.is_congruence() {
             &mut congruences
         } else {
-            &mut kernels
+            &mut non_congruences
         };
         target.push(rw.lhs);
     }
-    (kernels, congruences)
+    (non_congruences, congruences)
 }
 
 /// Whether ANY declared congruence propagates into a `POutput`-family send payload.
@@ -182,86 +253,205 @@ fn render(rows: &[Row]) -> String {
 // the figure is right on NO axis, and the three axes disagree with each other by more than the
 // drift:
 //
-// | axis | domain | what reads it | total | kernels | congruences | % cong |
-// |---|---|---|---|---|---|---|
-// | **A** — AS DECLARED | the `rewrites { }` block in `languages/src/rholang.rs` | the author | 133 | 3 | 130 | 97.7% |
-// | **B** — AS AUGMENTED | axis A + `auto_inject`'s synthetic `*Cong`/`NormCast*` rules | `lower_rewrite`, `rho_net::plan` | see `THE_AUGMENTED_*` | | | |
-// | **C** — DISPOSITION ENTRIES | one entry per (construct, orientation) the lowering walked | `lowering_disposition_inventory.rs` | see `dispositions()` | | | |
+// | axis | domain | what reads it | total | kernels | withheld | congruences | % cong |
+// |---|---|---|---|---|---|---|---|
+// | **A** — AS DECLARED | the `rewrites { }` block in `languages/src/rholang.rs` | the author | 64 | 3 | 1 | 60 | 93.8% |
+// | **B** — AS AUGMENTED | axis A + `auto_inject`'s synthetic `*Cong`/`NormCast*` rules | `lower_rewrite`, `rho_net::plan` | 88 | 15 | 1 | 72 | 81.8% |
+// | **C** — DISPOSITION ENTRIES | one entry per construct the lowering walked | `lowering_disposition_inventory.rs` | 88 | — | 1 suppressed | 72 elsewhere | — |
 //
 // ★ Axis B is the one #140's claim is ABOUT: `lower_rewrite` walks the augmented set, so the
 // claim "the live backend reads none of them" ranges over axis B, not axis A. Every figure below
 // is asserted so a grammar edit REPORTS rather than silently re-measuring a different corpus.
+//
+// ★★ One-evaluator convergence (2026-08-04, commit `438e3a3d`) changed the population rather
+// than its theorem. The grammar removed 70 method-position congruences and replaced them with
+// one `MethodCallReceiverWithheld` declaration because method evaluation now belongs solely to
+// f1r3node's reducer. This is the exact transition:
+//
+// ```text
+// declared before       133 =   3 kernels + 0 withheld + 130 congruences
+// remove method rules   -70 =   0 kernels + 0 withheld + -70 congruences
+// generic replacement    +1 =   0 kernels + 1 withheld +   0 congruences
+// declared now           64 =   3 kernels + 1 withheld +  60 congruences
+// auto injection         24 =  12 kernels + 0 withheld +  12 congruences
+// augmented now          88 =  15 kernels + 1 withheld +  72 congruences
+// ```
+//
+// The source-AST reconstruction below derives all four columns and distinguishes `S ~/> T`
+// from a kernel. The emitted metadata intentionally reflects a withholding with
+// `premise == None`, so the former two-way split reported 16 "kernels" and silently mislabeled
+// the new third state. The disposition census independently proves that the one withholding is
+// suppressed while every active congruence is delivered by e-graph closure.
 
-/// Axis A — the `rewrites { }` block exactly as written. Derived by `grep -cE` over
-/// `languages/src/rholang.rs` (the block spans `:3747-4049`): 133 rules, of which 130 carry a
-/// `| S ~> T |-` premise. Of those 130: **128 name a scalar child position, `ParCong` names a
-/// `HashBag` AC member, `NewCong` names a binder body, and ZERO name a `Vec`/`HashSet`/`HashMap`
-/// position** — which is what refutes #140's item-1 prediction of "~31 `Vec`-payload positions".
-const DECLARED_IN_SOURCE: (usize, usize, usize) = (133, 3, 130);
-
-/// Axis B — what the generator actually walks, measured from the emitted metadata.
-const AUGMENTED: (usize, usize, usize) = (157, 15, 142);
+const BEFORE_METHOD_CONVERGENCE: RewriteCensus = RewriteCensus {
+    total: 133,
+    kernels: 3,
+    withheld: 0,
+    congruences: 130,
+};
+const REMOVED_METHOD_CONGRUENCES: RewriteCensus = RewriteCensus {
+    total: 70,
+    kernels: 0,
+    withheld: 0,
+    congruences: 70,
+};
+const GENERIC_METHOD_REPLACEMENT: RewriteCensus = RewriteCensus {
+    total: 1,
+    kernels: 0,
+    withheld: 1,
+    congruences: 0,
+};
+const DECLARED_AFTER_METHOD_CONVERGENCE: RewriteCensus = BEFORE_METHOD_CONVERGENCE
+    .subtract(REMOVED_METHOD_CONGRUENCES)
+    .add(GENERIC_METHOD_REPLACEMENT);
+const AUTO_INJECTED: RewriteCensus = RewriteCensus {
+    total: 24,
+    kernels: 12,
+    withheld: 0,
+    congruences: 12,
+};
+const AUGMENTED: RewriteCensus = DECLARED_AFTER_METHOD_CONVERGENCE.add(AUTO_INJECTED);
 
 #[test]
 fn the_congruence_count_on_every_axis() {
-    let (kernels, congruences) = declared_split();
-    let augmented = (kernels.len() + congruences.len(), kernels.len(), congruences.len());
+    let definition = augmented_definition();
+    let declared = census(definition.rewrites.iter().filter(|rw| !rw.is_auto_injected));
+    let auto_injected = census(definition.rewrites.iter().filter(|rw| rw.is_auto_injected));
+    let augmented_ast = census(&definition.rewrites);
+    let withheld_names = definition
+        .rewrites
+        .iter()
+        .filter(|rw| rw.withholds_congruence())
+        .map(|rw| rw.name.to_string())
+        .collect::<Vec<_>>();
+
+    let (non_congruences, congruences) = metadata_split();
+    let metadata_withheld = RholangLanguage
+        .metadata()
+        .rewrites()
+        .iter()
+        .filter(|rw| {
+            rw.name
+                .is_some_and(|name| withheld_names.iter().any(|withheld| withheld == name))
+        })
+        .count();
+    let augmented_metadata = RewriteCensus {
+        total: non_congruences.len() + congruences.len(),
+        kernels: non_congruences
+            .len()
+            .checked_sub(metadata_withheld)
+            .expect("withheld rewrites are a subset of metadata non-congruences"),
+        withheld: metadata_withheld,
+        congruences: congruences.len(),
+    };
 
     let dispositions = RholangLanguage.metadata().lowering_dispositions();
     let rewrite_dispositions: Vec<_> = dispositions
         .iter()
-        .filter(|d| d.construct_kind == mettail_runtime::LoweredConstructKind::Rewrite)
+        .filter(|d| d.construct_kind == LoweredConstructKind::Rewrite)
         .collect();
     let elsewhere_cong = rewrite_dispositions
         .iter()
-        .filter(|d| d.lane == Some(mettail_runtime::LoweringLane::EGraphCongruenceClosure))
+        .filter(|d| d.lane == Some(LoweringLane::EGraphCongruenceClosure))
         .count();
-    let auto_injected = rewrite_dispositions
+    let auto_injected_dispositions = rewrite_dispositions
         .iter()
-        .filter(|d| d.origin == mettail_runtime::LoweredConstructOrigin::AutoInjected)
+        .filter(|d| d.origin == LoweredConstructOrigin::AutoInjected)
         .count();
+    let withheld_dispositions = rewrite_dispositions
+        .iter()
+        .filter(|d| {
+            withheld_names
+                .iter()
+                .any(|withheld| withheld == d.construct)
+        })
+        .collect::<Vec<_>>();
 
     let report = format!(
-        "\n  AXIS A (as declared, textual over languages/src/rholang.rs:3747-4049)\n\
-         \x20   total {:>4}  kernels {:>3}  congruences {:>4}  ({:.1}% cong)\n\
+        "\n  AXIS A (as declared, reconstructed from the language definition source)\n\
+         \x20   total {:>4}  kernels {:>3}  withheld {:>2}  congruences {:>3}  ({:.1}% cong)\n\
+         \x20 AUTO-INJECTED DELTA (reconstructed by the same augmentation pass as the macro)\n\
+         \x20   total {:>4}  kernels {:>3}  withheld {:>2}  congruences {:>3}\n\
          \x20 AXIS B (as augmented, from the emitted `rewrites()` metadata — WHAT lower_rewrite WALKS)\n\
-         \x20   total {:>4}  kernels {:>3}  congruences {:>4}  ({:.1}% cong)   auto-injected {auto_injected}\n\
+         \x20   total {:>4}  kernels {:>3}  withheld {:>2}  congruences {:>3}  ({:.1}% cong)\n\
          \x20 AXIS C (disposition entries the lowering recorded for a Rewrite)\n\
-         \x20   total {:>4}  of which lane == EGraphCongruenceClosure: {elsewhere_cong}\n\
-         \x20 #140 AS FILED: total 99  kernels 3  congruences 96  (97.0% cong) — matches NO axis\n",
-        DECLARED_IN_SOURCE.0,
-        DECLARED_IN_SOURCE.1,
-        DECLARED_IN_SOURCE.2,
-        100.0 * DECLARED_IN_SOURCE.2 as f64 / DECLARED_IN_SOURCE.0 as f64,
-        augmented.0,
-        augmented.1,
-        augmented.2,
-        100.0 * augmented.2 as f64 / augmented.0 as f64,
+         \x20   total {:>4}  suppressed withholdings {:>2}  e-graph congruences {elsewhere_cong}\n\
+         \x20 #140 AS FILED: total 99  kernels 3  withheld 0  congruences 96 (97.0% cong) — matches NO axis\n",
+        declared.total,
+        declared.kernels,
+        declared.withheld,
+        declared.congruences,
+        100.0 * declared.congruences as f64 / declared.total as f64,
+        auto_injected.total,
+        auto_injected.kernels,
+        auto_injected.withheld,
+        auto_injected.congruences,
+        augmented_metadata.total,
+        augmented_metadata.kernels,
+        augmented_metadata.withheld,
+        augmented_metadata.congruences,
+        100.0 * augmented_metadata.congruences as f64 / augmented_metadata.total as f64,
         rewrite_dispositions.len(),
+        withheld_dispositions.len(),
     );
     println!("{report}");
 
     assert_eq!(
-        augmented, AUGMENTED,
-        "axis B moved. #140 quotes a RATIO over this count, so re-derive the ratio rather than \
-         bumping the constant.{report}"
+        declared, DECLARED_AFTER_METHOD_CONVERGENCE,
+        "axis A moved. Re-derive the semantic rewrite delta instead of changing a total.{report}",
+    );
+    assert_eq!(
+        auto_injected, AUTO_INJECTED,
+        "the auto-injection rewrite population moved independently of the source grammar.{report}",
+    );
+    assert_eq!(
+        augmented_ast, AUGMENTED,
+        "the reconstructed augmented AST no longer equals declared + auto-injected.{report}",
+    );
+    assert_eq!(
+        augmented_metadata, AUGMENTED,
+        "emitted metadata disagrees with the reconstructed augmented AST.{report}",
+    );
+    assert_eq!(
+        rewrite_dispositions.len(),
+        AUGMENTED.total,
+        "the lowering must record exactly one disposition per augmented rewrite.{report}",
+    );
+    assert_eq!(
+        auto_injected_dispositions, AUTO_INJECTED.total,
+        "disposition provenance disagrees with reconstructed auto-injection.{report}",
+    );
+    assert_eq!(
+        withheld_dispositions.len(),
+        AUGMENTED.withheld,
+        "every source withholding needs exactly one disposition.{report}",
+    );
+    assert!(
+        withheld_dispositions.iter().all(|d| {
+            d.origin == LoweredConstructOrigin::Declared
+                && d.outcome == LoweringOutcomeKind::Suppressed
+                && d.lane.is_none()
+        }),
+        "a withholding must be a declared, suppressed, lane-less disposition: \
+         {withheld_dispositions:#?}{report}",
     );
 
     // ★ THE LOAD-BEARING IDENTITY: every axis-B congruence has a disposition attributing it to
     // the e-graph lane, and nothing else does. This is what makes "the lane reads them and emits
     // nothing for them" a FACT rather than a reading of a comment.
     assert_eq!(
-        elsewhere_cong, augmented.2,
+        elsewhere_cong, AUGMENTED.congruences,
         "every congruence must carry a `DeliveredElsewhere {{ EGraphCongruenceClosure }}` \
          disposition. {elsewhere_cong} do, but axis B holds {} congruences — so the two \
          mechanisms disagree about what a congruence is.{report}",
-        augmented.2
+        AUGMENTED.congruences
     );
 }
 
 #[test]
 fn the_witness_table() {
-    let (kernels, congruences) = declared_split();
+    let (non_congruences, congruences) = metadata_split();
+    let augmented = census(&augmented_definition().rewrites);
     assert!(
         !a_congruence_reaches_a_send_payload(&congruences),
         "the CONTROL probe below assumes `POutput` declares NO congruence, and a declared \
@@ -282,12 +472,14 @@ fn the_witness_table() {
     ];
     let table = format!(
         "{}\n  DERIVED (axis B — what `lower_rewrite` walks): {} rewrites = {} kernel(s) + {} \
-         congruence(s) ({:.1}% congruence). Kernel LHSs: {kernels:?}\n",
+         withholding(s) + {} congruence(s) ({:.1}% congruence). Non-congruence LHSs: \
+         {non_congruences:?}\n",
         render(&rows),
-        kernels.len() + congruences.len(),
-        kernels.len(),
+        non_congruences.len() + congruences.len(),
+        augmented.kernels,
+        augmented.withheld,
         congruences.len(),
-        100.0 * congruences.len() as f64 / (kernels.len() + congruences.len()) as f64,
+        100.0 * congruences.len() as f64 / (non_congruences.len() + congruences.len()) as f64,
     );
     let reduced = |name: &str| -> bool {
         let r = rows

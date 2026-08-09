@@ -55,10 +55,10 @@
 //! # ★★ The anti-vacuity control on the whole file
 //!
 //! [`congruence_rewrites_are_delivered_elsewhere_not_declined`] proves the mechanism does not
-//! reach its small declination numbers by classifying everything as fine. Rholang declares 461
-//! rewrites; **139 of its disposition entries attribute a rewrite to another lane**, and 216 of
-//! Calculator's do. Had those been called declinations, this table would carry four hundred
-//! false positives and be worthless.
+//! reach its small declination numbers by classifying everything as fine. It cross-checks the
+//! full corpus and, for Rholang, requires the disposition ledger's e-graph population to equal
+//! the independently reflected active-congruence population exactly. Had those been called
+//! declinations, this table would carry hundreds of false positives and be worthless.
 
 #![cfg(all(
     feature = "ambient",
@@ -94,6 +94,48 @@ fn production_languages() -> Vec<(&'static str, &'static dyn LanguageMetadata)> 
         ("Rholang", &mettail_languages::rholang::RholangMetadata),
         ("Turing", &mettail_languages::turing::TuringMetadata),
     ]
+}
+
+/// Derive the corpus size from the eight production metadata objects and prove that the
+/// inventory covers every reflected rewrite plus at least one orientation of every reflected
+/// equation. The macro's own completeness gate accounts for folds from the source AST; runtime
+/// [`TermDef`](mettail_runtime::TermDef) deliberately does not expose whether a term carried a
+/// fold body, so inventing a second fold classifier here would be weaker than that source gate.
+fn production_inventory_size() -> usize {
+    let languages = production_languages();
+    assert_eq!(
+        languages.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        ["Ambient", "Calculator", "Json", "Lambda", "Monoid", "Pi", "Rholang", "Turing"],
+        "the production-language corpus changed; update the explicit ownership list",
+    );
+
+    languages
+        .into_iter()
+        .map(|(name, metadata)| {
+            let inventory = metadata.lowering_dispositions();
+            assert!(!inventory.is_empty(), "{name} publishes an empty disposition inventory",);
+
+            let rewrite_dispositions = inventory
+                .iter()
+                .filter(|d| d.construct_kind == LoweredConstructKind::Rewrite)
+                .count();
+            assert_eq!(
+                rewrite_dispositions,
+                metadata.rewrites().len(),
+                "{name}: every reflected rewrite must have exactly one disposition",
+            );
+
+            let equation_dispositions = inventory
+                .iter()
+                .filter(|d| d.construct_kind == LoweredConstructKind::Equation)
+                .count();
+            assert!(
+                equation_dispositions >= metadata.equations().len(),
+                "{name}: every reflected equation needs at least one orientation disposition",
+            );
+            inventory.len()
+        })
+        .sum()
 }
 
 /// `(kind noun, construct name, origin)` for each declination, in inventory order.
@@ -419,10 +461,10 @@ fn production_declination_totals_are_pinned() {
         "ONE is accepted debt (Rholang's `Extrude` equation); fifteen are generator bugs",
     );
     assert_eq!(equations + rewrites + folds, 16);
-    assert!(
-        inspected > 500,
-        "the inventory must cover the whole corpus, not a handful of constructs \
-         (inspected {inspected})",
+    assert_eq!(
+        inspected,
+        production_inventory_size(),
+        "the declination census did not visit the complete structurally checked corpus",
     );
 }
 
@@ -441,8 +483,14 @@ fn production_declination_totals_are_pinned() {
 fn congruence_rewrites_are_delivered_elsewhere_not_declined() {
     let mut attributed_to_congruence = 0usize;
     let mut attributed_anywhere = 0usize;
+    let mut reflected_congruence = 0usize;
 
     for (name, metadata) in production_languages() {
+        reflected_congruence += metadata
+            .rewrites()
+            .iter()
+            .filter(|rewrite| rewrite.is_congruence())
+            .count();
         for disposition in metadata.lowering_dispositions() {
             if disposition.outcome != LoweringOutcomeKind::DeliveredElsewhere {
                 continue;
@@ -457,10 +505,14 @@ fn congruence_rewrites_are_delivered_elsewhere_not_declined() {
         }
     }
 
+    assert_eq!(
+        attributed_to_congruence, reflected_congruence,
+        "every reflected active congruence in the production corpus must be attributed to the \
+         e-graph closure exactly once",
+    );
     assert!(
-        attributed_to_congruence >= 300,
-        "the congruence lane must carry the bulk of the corpus's rewrites; counted \
-         {attributed_to_congruence}",
+        attributed_to_congruence > 0,
+        "the production congruence attribution cannot pass over an empty corpus",
     );
     assert!(
         attributed_anywhere > attributed_to_congruence,
@@ -469,17 +521,29 @@ fn congruence_rewrites_are_delivered_elsewhere_not_declined() {
          congruence",
     );
 
-    // Rholang's congruence population is the concrete instance of the 400-false-positive
-    // hazard: this many rewrites produce no structural rule and are nevertheless correct.
-    let rholang = mettail_languages::rholang::RholangMetadata.lowering_dispositions();
-    let rholang_congruence = rholang
+    // Rholang's congruence population is the concrete instance of the false-positive hazard:
+    // these rewrites produce no structural rule and are nevertheless correct. Derive the
+    // expected population from reflected rewrite premises rather than retaining a floor that
+    // became stale when one-evaluator convergence removed 70 method-specific congruences.
+    let rholang_metadata = mettail_languages::rholang::RholangMetadata;
+    let rholang_congruence = rholang_metadata
+        .lowering_dispositions()
         .iter()
         .filter(|d| d.lane == Some(LoweringLane::EGraphCongruenceClosure))
         .count();
+    let reflected_congruence = rholang_metadata
+        .rewrites()
+        .iter()
+        .filter(|rewrite| rewrite.is_congruence())
+        .count();
+    assert_eq!(
+        rholang_congruence, reflected_congruence,
+        "Rholang attributes {rholang_congruence} rewrites to congruence closure, but reflected \
+         metadata declares {reflected_congruence} active congruences",
+    );
     assert!(
-        rholang_congruence >= 130,
-        "Rholang attributes {rholang_congruence} rewrites to congruence closure; calling \
-         them declinations would bury its six real ones",
+        rholang_congruence > 0,
+        "Rholang's active-congruence cross-check cannot pass vacuously",
     );
 }
 
@@ -682,7 +746,11 @@ fn lane_is_present_exactly_for_delivered_elsewhere() {
             );
         }
     }
-    assert!(checked > 500, "the invariant must be checked against the whole corpus");
+    assert_eq!(
+        checked,
+        production_inventory_size(),
+        "the lane invariant must be checked against the complete structurally checked corpus",
+    );
 }
 
 /// Every `Delivered` disposition carries the label of the rule it emitted, and every
@@ -711,7 +779,11 @@ fn every_disposition_carries_a_non_empty_detail() {
             }
         }
     }
-    assert!(checked > 500);
+    assert_eq!(
+        checked,
+        production_inventory_size(),
+        "the detail invariant must be checked against the complete structurally checked corpus",
+    );
 }
 
 /// The defaulted trait method keeps hand-written `LanguageMetadata` impls valid.

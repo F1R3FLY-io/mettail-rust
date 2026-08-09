@@ -15,8 +15,9 @@
 //!
 //! The last two rows are byte-identical. That is why 36 constructs across six production
 //! languages stopped being lowered without a single test noticing, and — symmetrically — why
-//! the obvious fix of "treat silence as an error" was unavailable: for the bundled Rholang,
-//! 400 of 461 declared rewrites are silent *and correct*.
+//! the obvious fix of "treat silence as an error" was unavailable: hundreds of active
+//! congruences in the production corpus are silent *and correct*. The exact population is
+//! derived by `lowering_disposition_inventory.rs`, not transcribed here.
 //!
 //! # The three REDs
 //!
@@ -28,7 +29,7 @@
 //! |---|---|---|
 //! | **A** | D4 — recorded, then discarded by the consumer | a `Lambda`-carrying equation on the `EGraph<String>` + binder-float path is `Declined`, naming the equation **and** the refusal |
 //! | **B** | D1–D3 — the typed path, which discarded its record three times | a `Lambda` equation, a freshness-premised equation, and (until Task #101 repaired it) a `Vec(T)`-parameter fold each carry a RECORD, on a language where none of the three produced any diagnostic before |
-//! | **C** | ★ the anti-vacuity check on the fix | a congruence rewrite is `DeliveredElsewhere { EGraphCongruenceClosure }` and **not** `Declined` — the property that stops 400 correctly-elsewhere-handled rewrites becoming false positives |
+//! | **C** | ★ the anti-vacuity check on the fix | a congruence rewrite is `DeliveredElsewhere { EGraphCongruenceClosure }` and **not** `Declined` — the property that stops correctly-elsewhere-handled rewrites becoming false positives |
 //!
 //! Every RED carries a **positive control**: a construct on the same language, produced by the
 //! same walk, with the opposite disposition. Without one, an assertion that something is

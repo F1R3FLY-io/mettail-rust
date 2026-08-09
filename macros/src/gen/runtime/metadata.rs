@@ -2163,8 +2163,21 @@ mod tests {
         let mut rules_checked = 0usize;
         let mut exempt = 0usize;
         let mut vacuous: Vec<String> = Vec::new();
+        let languages = crate::gen::capture::bundled_corpus::bundled_languages();
+        assert!(
+            !languages.is_empty(),
+            "the manifest-derived bundled-language corpus cannot be empty",
+        );
+        let expected_rules = languages
+            .iter()
+            .map(|language| language.def.equations.len() + language.def.rewrites.len())
+            .sum::<usize>();
+        assert!(
+            expected_rules > 0,
+            "the bundled-language corpus contains no reflected equations or rewrites",
+        );
 
-        for language in crate::gen::capture::bundled_corpus::bundled_languages() {
+        for language in languages {
             let def = &language.def;
             let bp = build_reflection_bp(def).unwrap_or_else(|rejection| {
                 panic!(
@@ -2204,13 +2217,12 @@ mod tests {
             }
         }
 
-        // Non-vacuity floor: "for every reflected rule, P" is satisfied by no
-        // rules at all.
-        assert!(
-            rules_checked >= 300,
-            "only {rules_checked} reflected rule(s) reached the gate; the corpus reflects \
-             several hundred across its equations and rewrites, so the subject has \
-             collapsed and this assertion would be reporting success over almost nothing",
+        // Structural non-vacuity: the walk must visit exactly the rule population derived from
+        // the manifest-owned definitions. A transcribed numeric floor became stale when
+        // Rholang's one-evaluator convergence removed 70 method-specific congruences.
+        assert_eq!(
+            rules_checked, expected_rules,
+            "the reflection gate did not visit every equation and rewrite in its derived corpus",
         );
         // And the exemption is REACHED: if it were not, the structural predicate
         // would be untested and could silently stop matching the class it exists
