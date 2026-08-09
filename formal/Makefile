@@ -314,15 +314,15 @@ tla-prattail-wpda-binder-broadcast-expected-fail: require-capped
 	$(MAKE) -C tla/prattail_wpda binder-broadcast-expected-fail
 
 rust-prattail-wpda: require-capped
-	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p mettail-prattail --features walker-stats wpda_walker --lib
+	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p prattail --features walker-stats wpda_walker --lib
 
 rust-wpda-codegen: require-capped
-	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p mettail-macros wpda_codegen --lib
+	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p macros wpda_codegen --lib
 
 rust-wpda-generated-smoke: require-capped
-	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p mettail-languages --test wpda_via_str_smoke calculator_bool_eq_int_cross_cat_infix_via_wpds -- --exact
-	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p mettail-languages --test class2_opt_collection_smoke choosemaybe_parse_some_via_wpda -- --exact
-	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p mettail-languages --test wpda_lattice_backend
+	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p languages --test wpda_via_str_smoke calculator_bool_eq_int_cross_cat_infix_via_wpds -- --exact
+	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p languages --test class2_opt_collection_smoke choosemaybe_parse_some_via_wpda -- --exact
+	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p languages --test wpda_lattice_backend
 
 clean:
 	$(MAKE) -C rocq/prattail_wpda_runtime clean
