@@ -18,7 +18,7 @@ remain build-checked but are not covered by that stronger syntactic policy unles
 | Tool | Location | Count | Primary concern (Dovetail / WPDA / RhoNet / wrappers) |
 |---|---|---|---|
 | Rocq — rho_bridge | `formal/rocq/rho_bridge/theories` | 42 | **RhoNet + wrappers**: install-boundary (`RhoLoweringTotalOrRejects`), host-obligation boundary (`RhoHostObligationBoundary`), COMM correspondence (`LinearCommCorrespondence`, `CommReductionCorrespondence`, `EndToEndCommCorrespondence`), flip gate, backend wrappers, artifact boundary, escrow/purse settlement |
-| Rocq — prattail_wpda_runtime | `formal/rocq/prattail_wpda_runtime/theories` | 33 | **WPDA**: walker/recovery/dispatch models, lex-fork, cohort quotient, EOI delimiter windows |
+| Rocq — prattail_wpda_runtime | `formal/rocq/prattail_wpda_runtime/theories` | 77 | **WPDA**: walker/recovery/dispatch models, lex-fork, cohort quotient, EOI delimiter windows |
 | Rocq — symbolic_algebra | `formal/rocq/symbolic_algebra/theories` | 15 | predicate substrate: Heyting / effective-Boolean-algebra / guard-tier classification |
 | Rocq — codegen_optimizations | `formal/rocq/codegen_optimizations/theories` | 13 | generated-codegen soundness, disjoint-first |
 | Rocq — advanced_automata | `formal/rocq/advanced_automata/theories` | 12 | **positional set automaton** (`PositionalSetAutomatonSound`), MSO / register / PATA equivalence |
@@ -114,7 +114,12 @@ The capped entry point runs:
   `formal/rocq/symbolic_algebra/theories`,
   `formal/rocq/sft/theories`,
   `formal/rocq/advanced_automata/theories`, and
-  `formal/rocq/trampoline/theories`
+  `formal/rocq/trampoline/theories`, plus every source registered by
+  `formal/rocq/prattail_wpda_runtime/_CoqProject`. The manifest-based Prattail
+  census deliberately excludes two ignored, unregistered Stage-B/Stage-1
+  provenance drafts whose obligations were superseded and discharged by
+  `PureDescriptorSpaceBound.v` and `PurePackingPreservation.v` in commit
+  `275b0b23`.
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests
