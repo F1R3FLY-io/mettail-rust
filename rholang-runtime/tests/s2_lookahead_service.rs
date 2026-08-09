@@ -148,9 +148,10 @@ async fn the_reply_carries_one_bare_term_per_success_branch() {
     );
 }
 
-/// The provenance datum is `[trace, term]` — an `EList` whose head is the trace
-/// (itself an `EList` of 32-byte step digests) and whose tail is the branch's
-/// term. Two branches carry two DIFFERENT traces.
+/// The provenance datum is `[trace, [term…]]` — an `EList` whose head is the complete
+/// process/configuration trace and whose tail is the branch's projected terms. The trace
+/// contains the submitted process, the administratively saturated root, and one successor per
+/// fired COMM. Two branches carry two DIFFERENT traces.
 #[tokio::test]
 async fn the_provenance_datum_is_a_trace_and_a_term() {
     let host = host_budget(1_000_000);
@@ -164,7 +165,12 @@ async fn the_provenance_datum_is_a_trace_and_a_term() {
     .expect("serve");
 
     use models::rhoapi::expr::ExprInstance;
-    for report in response.success.iter() {
+    let subject = racing_subject();
+    for (report, leaf) in response
+        .success
+        .iter()
+        .zip(response.exploration.success.iter())
+    {
         let Some(ExprInstance::EListBody(entry)) = report
             .datum
             .exprs
@@ -179,15 +185,16 @@ async fn the_provenance_datum_is_a_trace_and_a_term() {
             .first()
             .and_then(|expr| expr.expr_instance.as_ref())
         else {
-            panic!("the trace must be an EList of step digests");
+            panic!("the trace must be an EList of process/configuration nodes");
         };
-        assert_eq!(trace.ps.len(), 1, "each branch fired exactly one step");
-        assert!(
-            matches!(
-                trace.ps[0].exprs.first().and_then(|e| e.expr_instance.as_ref()),
-                Some(ExprInstance::GByteArray(bytes)) if bytes.len() == 32
-            ),
-            "a step is a 32-byte content digest"
+        assert_eq!(leaf.trace.len(), 1, "each branch fired exactly one COMM");
+        assert_eq!(trace.ps.len(), 3, "input, saturated root, and one successor");
+        assert_eq!(trace.ps[0], subject, "the trace starts with the submitted process");
+        assert_eq!(
+            trace.ps[2],
+            mettail_rholang_runtime::speculation::delivery::reify(&leaf.state)
+                .expect("the terminal configuration reifies"),
+            "the trace ends with the branch's terminal configuration"
         );
     }
     let mut handles: Vec<[u8; 32]> = response

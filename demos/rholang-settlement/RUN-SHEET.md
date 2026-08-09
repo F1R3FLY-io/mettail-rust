@@ -354,28 +354,28 @@ deterministic seed); guard evaluation emitted no COMM.
 Rholang> exec {1 : 10}.values()
 ```
 
-Expected — a typed error naming the construct, verbatim:
+Expected — the reducer's typed error naming the method, verbatim:
 
 ```
-Error: RhoMachine backend for language Rholang could not build an AST invocation from the
-checked Dovetail report: Rholang term could not be lowered to the Rho machine (A-S4
-fail-closed lowering; no host fold-normalization fallback): UnsupportedProc("m.values() map
-method (no Rholang analog; C3 residue)")
+Running RhoMachine backend... exit
+
+Error: inj: ReduceError("Unimplemented method: values")
 ```
 
 > **⚠ Changed 2026-07-26 (C1).** This beat used to run `exec [1, 2].length()`. That is no longer
 > a refusal: **C1** routes the collection methods to the Rholang interpreter's own method table,
 > so `[1, 2].length()` now answers `2` **on the reducer** — which is the mandate working, not
 > failing. The beat needs an operation the machine genuinely cannot perform, and `.values()` is
-> the nearest one: `reduce.rs::method_table` provides `keys` but not `values`, so there is nothing
-> to route it to. If you want to show BOTH halves, run `exec [1, 2].length()` first (it answers
-> `OUT: [2]`) and then `exec {1 : 10}.values()` — the contrast is the point of the beat.
+> the nearest one: structural lowering emits `EMethod`, then `reduce.rs::method_table` rejects it
+> because the table provides `keys` but not `values`. If you want to show BOTH halves, run
+> `exec [1, 2].length()` first (it answers `OUT: [2]`) and then
+> `exec {1 : 10}.values()` — the contrast is the point of the beat.
 
 (One line on the terminal; wrapped here. It is printed on stderr, so a piped recording shows it
 interleaved with the trailing `Running RhoMachine backend...` from stdout — harmless.)
 
-> "No silent host fallback exists anymore. Either it runs on the machine, or you get a typed
-> refusal naming the construct."
+> "No silent host fallback exists anymore. The machine either computes the method or returns its
+> typed refusal naming it."
 
 ## Optional cameo A — where `step` routes (1 min)
 
