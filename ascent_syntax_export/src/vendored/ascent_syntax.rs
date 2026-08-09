@@ -197,7 +197,7 @@ impl Parse for CallSchemaNode {
     }
 }
 
-#[derive(Parse, Clone)]
+#[derive(Parse)]
 pub enum BodyItemNode {
     #[peek(Token![for], name = "generative clause")]
     Generator(GeneratorNode),
@@ -235,10 +235,156 @@ enum DisjunctionToken {
     Or(Token![|]),
 }
 
-#[derive(Clone)]
 pub struct DisjunctionNode {
     paren: syn::token::Paren,
     disjuncts: Punctuated<Punctuated<BodyItemNode, Token![,]>, DisjunctionToken>,
+}
+
+struct ConjunctionCloneShape {
+    punctuation: Vec<Option<Token![,]>>,
+}
+
+struct DisjunctionCloneShape {
+    paren: syn::token::Paren,
+    conjunctions: Vec<ConjunctionCloneShape>,
+    punctuation: Vec<Option<DisjunctionToken>>,
+}
+
+enum BodyItemCloneTask<'item> {
+    Visit(&'item BodyItemNode),
+    FinishDisjunction {
+        base: usize,
+        shape: DisjunctionCloneShape,
+    },
+}
+
+fn push_disjunction_clone<'item>(
+    disjunction: &'item DisjunctionNode,
+    tasks: &mut Vec<BodyItemCloneTask<'item>>,
+    base: usize,
+) {
+    let conjunctions = disjunction
+        .disjuncts
+        .iter()
+        .map(|conjunction| ConjunctionCloneShape {
+            punctuation: conjunction
+                .pairs()
+                .map(|pair| pair.punct().map(|punctuation| (*punctuation).clone()))
+                .collect(),
+        })
+        .collect();
+    let punctuation = disjunction
+        .disjuncts
+        .pairs()
+        .map(|pair| pair.punct().map(|punctuation| (*punctuation).clone()))
+        .collect();
+    tasks.push(BodyItemCloneTask::FinishDisjunction {
+        base,
+        shape: DisjunctionCloneShape {
+            paren: disjunction.paren,
+            conjunctions,
+            punctuation,
+        },
+    });
+    for conjunction in disjunction.disjuncts.iter().rev() {
+        tasks.extend(conjunction.iter().rev().map(BodyItemCloneTask::Visit));
+    }
+}
+
+fn clone_body_item_with_tasks(mut tasks: Vec<BodyItemCloneTask<'_>>) -> BodyItemNode {
+    let mut values = Vec::<BodyItemNode>::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            BodyItemCloneTask::Visit(item) => match item {
+                BodyItemNode::Generator(value) => {
+                    values.push(BodyItemNode::Generator(value.clone()))
+                },
+                BodyItemNode::Agg(value) => values.push(BodyItemNode::Agg(value.clone())),
+                BodyItemNode::MacroInvocation(value) => {
+                    values.push(BodyItemNode::MacroInvocation(value.clone()))
+                },
+                BodyItemNode::Call(value) => values.push(BodyItemNode::Call(value.clone())),
+                BodyItemNode::Clause(value) => values.push(BodyItemNode::Clause(value.clone())),
+                BodyItemNode::Negation(value) => values.push(BodyItemNode::Negation(value.clone())),
+                BodyItemNode::Disjunction(disjunction) => {
+                    push_disjunction_clone(disjunction, &mut tasks, values.len());
+                },
+                BodyItemNode::Cond(value) => values.push(BodyItemNode::Cond(value.clone())),
+            },
+            BodyItemCloneTask::FinishDisjunction { base, shape } => {
+                let mut children = values.split_off(base).into_iter();
+                let mut disjuncts = Punctuated::new();
+                for (conjunction_shape, separator) in
+                    shape.conjunctions.into_iter().zip(shape.punctuation)
+                {
+                    let mut conjunction = Punctuated::new();
+                    for punctuation in conjunction_shape.punctuation {
+                        conjunction.push_value(
+                            children
+                                .next()
+                                .expect("body-item clone PDA lost a conjunction member"),
+                        );
+                        if let Some(punctuation) = punctuation {
+                            conjunction.push_punct(punctuation);
+                        }
+                    }
+                    disjuncts.push_value(conjunction);
+                    if let Some(separator) = separator {
+                        disjuncts.push_punct(separator);
+                    }
+                }
+                debug_assert!(children.next().is_none());
+                values.push(BodyItemNode::Disjunction(DisjunctionNode {
+                    paren: shape.paren,
+                    disjuncts,
+                }));
+            },
+        }
+    }
+    assert_eq!(values.len(), 1, "body-item clone PDA must produce one root");
+    values.pop().expect("body-item clone PDA lost its root")
+}
+
+impl Clone for BodyItemNode {
+    fn clone(&self) -> Self {
+        clone_body_item_with_tasks(vec![BodyItemCloneTask::Visit(self)])
+    }
+}
+
+impl Clone for DisjunctionNode {
+    fn clone(&self) -> Self {
+        let mut tasks = Vec::new();
+        push_disjunction_clone(self, &mut tasks, 0);
+        let mut cloned = clone_body_item_with_tasks(tasks);
+        match &mut cloned {
+            BodyItemNode::Disjunction(disjunction) => std::mem::replace(
+                disjunction,
+                DisjunctionNode {
+                    paren: syn::token::Paren::default(),
+                    disjuncts: Punctuated::new(),
+                },
+            ),
+            _ => unreachable!("disjunction clone PDA produced a non-disjunction"),
+        }
+    }
+}
+
+fn take_body_item_children(item: &mut BodyItemNode, work: &mut Vec<BodyItemNode>) {
+    if let BodyItemNode::Disjunction(disjunction) = item {
+        for conjunction in std::mem::take(&mut disjunction.disjuncts) {
+            work.extend(conjunction);
+        }
+    }
+}
+
+impl Drop for BodyItemNode {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        take_body_item_children(self, &mut work);
+        while let Some(mut item) = work.pop() {
+            take_body_item_children(&mut item, &mut work);
+        }
+    }
 }
 
 impl Parse for DisjunctionNode {
@@ -658,28 +804,66 @@ impl Parse for RuleNode {
 #[allow(dead_code)]
 pub fn rule_node_summary(rule: &RuleNode) -> String {
     fn bitem_to_str(bitem: &BodyItemNode) -> String {
-        match bitem {
-            BodyItemNode::Generator(gen) => format!(
-                "for_{}",
-                pat_to_ident(&gen.pattern)
-                    .map(|x| x.to_string())
-                    .unwrap_or_default()
-            ),
-            BodyItemNode::Clause(bcl) => format!("{}", bcl.rel),
-            BodyItemNode::Call(cl) => format!("call(..) with {}", cl.schema_name),
-            BodyItemNode::Disjunction(disj) => {
-                let parts: Vec<String> = disj
-                    .disjuncts
-                    .iter()
-                    .map(|conj| conj.iter().map(bitem_to_str).collect::<Vec<_>>().join(","))
-                    .collect();
-                format!("({})", parts.join("|"))
-            },
-            BodyItemNode::Cond(_cl) => format!("if_"),
-            BodyItemNode::Agg(agg) => format!("agg {}", agg_in_goal_summary(&agg.in_goal)),
-            BodyItemNode::Negation(neg) => format!("! {}", negation_goal_summary(&neg.goal)),
-            BodyItemNode::MacroInvocation(m) => format!("{:?}!(..)", m.mac.path),
+        enum SummaryTask<'item> {
+            Item(&'item BodyItemNode),
+            FinishDisjunction { base: usize, arities: Vec<usize> },
         }
+
+        let mut tasks = vec![SummaryTask::Item(bitem)];
+        let mut values = Vec::<String>::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                SummaryTask::Item(item) => match item {
+                    BodyItemNode::Generator(generator) => values.push(format!(
+                        "for_{}",
+                        pat_to_ident(&generator.pattern)
+                            .map(|ident| ident.to_string())
+                            .unwrap_or_default()
+                    )),
+                    BodyItemNode::Clause(clause) => values.push(clause.rel.to_string()),
+                    BodyItemNode::Call(call) => {
+                        values.push(format!("call(..) with {}", call.schema_name))
+                    },
+                    BodyItemNode::Disjunction(disjunction) => {
+                        let base = values.len();
+                        let arities = disjunction
+                            .disjuncts
+                            .iter()
+                            .map(Punctuated::len)
+                            .collect::<Vec<_>>();
+                        tasks.push(SummaryTask::FinishDisjunction { base, arities });
+                        for conjunction in disjunction.disjuncts.iter().rev() {
+                            tasks.extend(conjunction.iter().rev().map(SummaryTask::Item));
+                        }
+                    },
+                    BodyItemNode::Cond(_) => values.push("if_".to_string()),
+                    BodyItemNode::Agg(aggregate) => {
+                        values.push(format!("agg {}", agg_in_goal_summary(&aggregate.in_goal)))
+                    },
+                    BodyItemNode::Negation(negation) => {
+                        values.push(format!("! {}", negation_goal_summary(&negation.goal)))
+                    },
+                    BodyItemNode::MacroInvocation(invocation) => {
+                        values.push(format!("{:?}!(..)", invocation.mac.path))
+                    },
+                },
+                SummaryTask::FinishDisjunction { base, arities } => {
+                    let rendered = values.split_off(base);
+                    let mut offset = 0usize;
+                    let mut branches = Vec::with_capacity(arities.len());
+                    for arity in arities {
+                        let end = offset + arity;
+                        branches.push(rendered[offset..end].join(","));
+                        offset = end;
+                    }
+                    debug_assert_eq!(offset, rendered.len());
+                    values.push(format!("({})", branches.join("|")));
+                },
+            }
+        }
+
+        assert_eq!(values.len(), 1, "rule-summary PDA must produce one item");
+        values.pop().expect("rule-summary PDA lost its item")
     }
     fn hitem_to_str(hitem: &HeadItemNode) -> String {
         match hitem {
@@ -897,49 +1081,94 @@ impl Parse for DsAttributeContents {
 }
 
 fn rule_desugar_disjunction_nodes(rule: RuleNode) -> Vec<RuleNode> {
-    fn bitem_desugar(bitem: &BodyItemNode) -> Vec<Vec<BodyItemNode>> {
-        match bitem {
-            BodyItemNode::Generator(_) => vec![vec![bitem.clone()]],
-            BodyItemNode::Clause(_) => vec![vec![bitem.clone()]],
-            BodyItemNode::Call(_) => vec![vec![bitem.clone()]],
-            BodyItemNode::Cond(_) => vec![vec![bitem.clone()]],
-            BodyItemNode::Agg(_) => vec![vec![bitem.clone()]],
-            BodyItemNode::Negation(_) => vec![vec![bitem.clone()]],
-            BodyItemNode::Disjunction(d) => {
-                let mut res = vec![];
-                for disjunt in d.disjuncts.iter() {
-                    for conjunction in bitems_desugar(&disjunt.iter().cloned().collect_vec()) {
-                        res.push(conjunction);
-                    }
-                }
-                res
-            },
-            BodyItemNode::MacroInvocation(m) => {
-                panic!("unexpected macro invocation: {:?}", m.mac.path)
-            },
-        }
+    enum DesugarJob<'item> {
+        Item(&'item BodyItemNode),
+        Sequence(&'item [BodyItemNode]),
+        PunctuatedSequence(&'item Punctuated<BodyItemNode, Token![,]>),
+        CombineSequence(usize),
+        CombineDisjunction(usize),
     }
-    fn bitems_desugar(bitems: &[BodyItemNode]) -> Vec<Vec<BodyItemNode>> {
-        let mut res = vec![];
-        if !bitems.is_empty() {
-            let sub_res = bitems_desugar(&bitems[0..bitems.len() - 1]);
-            let last_desugared = bitem_desugar(&bitems[bitems.len() - 1]);
-            for sub_res_item in sub_res.into_iter() {
-                for last_item in last_desugared.iter() {
-                    let mut res_item = sub_res_item.clone();
-                    res_item.extend(last_item.clone());
-                    res.push(res_item);
-                }
+
+    fn desugar_body_items(items: &[BodyItemNode]) -> Vec<Vec<BodyItemNode>> {
+        let mut jobs = vec![DesugarJob::Sequence(items)];
+        let mut values = Vec::<Vec<Vec<BodyItemNode>>>::new();
+
+        while let Some(job) = jobs.pop() {
+            match job {
+                DesugarJob::Item(item) => match item {
+                    BodyItemNode::Generator(_)
+                    | BodyItemNode::Clause(_)
+                    | BodyItemNode::Call(_)
+                    | BodyItemNode::Cond(_)
+                    | BodyItemNode::Agg(_)
+                    | BodyItemNode::Negation(_) => values.push(vec![vec![item.clone()]]),
+                    BodyItemNode::Disjunction(disjunction) => {
+                        jobs.push(DesugarJob::CombineDisjunction(disjunction.disjuncts.len()));
+                        jobs.extend(
+                            disjunction
+                                .disjuncts
+                                .iter()
+                                .rev()
+                                .map(DesugarJob::PunctuatedSequence),
+                        );
+                    },
+                    BodyItemNode::MacroInvocation(invocation) => {
+                        panic!("unexpected macro invocation: {:?}", invocation.mac.path)
+                    },
+                },
+                DesugarJob::Sequence(sequence) => {
+                    if sequence.is_empty() {
+                        values.push(vec![Vec::new()]);
+                    } else {
+                        jobs.push(DesugarJob::CombineSequence(sequence.len()));
+                        jobs.extend(sequence.iter().rev().map(DesugarJob::Item));
+                    }
+                },
+                DesugarJob::PunctuatedSequence(sequence) => {
+                    if sequence.is_empty() {
+                        values.push(vec![Vec::new()]);
+                    } else {
+                        jobs.push(DesugarJob::CombineSequence(sequence.len()));
+                        jobs.extend(sequence.iter().rev().map(DesugarJob::Item));
+                    }
+                },
+                DesugarJob::CombineSequence(arity) => {
+                    let split = values
+                        .len()
+                        .checked_sub(arity)
+                        .expect("disjunction PDA sequence underflow");
+                    let item_alternatives = values.split_off(split);
+                    let mut combinations = vec![Vec::new()];
+                    for alternatives in item_alternatives {
+                        let mut next = Vec::new();
+                        for prefix in combinations {
+                            for alternative in &alternatives {
+                                let mut combination = prefix.clone();
+                                combination.extend(alternative.iter().cloned());
+                                next.push(combination);
+                            }
+                        }
+                        combinations = next;
+                    }
+                    values.push(combinations);
+                },
+                DesugarJob::CombineDisjunction(arity) => {
+                    let split = values
+                        .len()
+                        .checked_sub(arity)
+                        .expect("disjunction PDA branch underflow");
+                    let branches = values.split_off(split);
+                    values.push(branches.into_iter().flatten().collect());
+                },
             }
-        } else {
-            res.push(vec![]);
         }
 
-        res
+        assert_eq!(values.len(), 1, "disjunction PDA must produce one root value");
+        values.pop().expect("disjunction PDA lost its root value")
     }
 
     let mut res = vec![];
-    for conjunction in bitems_desugar(&rule.body_items) {
+    for conjunction in desugar_body_items(&rule.body_items) {
         res.push(RuleNode {
             body_items: conjunction,
             head_clauses: rule.head_clauses.clone(),
@@ -949,64 +1178,84 @@ fn rule_desugar_disjunction_nodes(rule: RuleNode) -> Vec<RuleNode> {
 }
 
 fn body_item_get_bound_vars(bi: &BodyItemNode) -> Vec<Ident> {
-    match bi {
-        BodyItemNode::Generator(gen) => pattern_get_vars(&gen.pattern),
-        BodyItemNode::Agg(agg) => pattern_get_vars(&agg.pat),
-        BodyItemNode::Clause(cl) => cl.args.iter().flat_map(|arg| arg.get_vars()).collect(),
-        BodyItemNode::Call(cl) => cl.args.iter().flat_map(|arg| arg.get_vars()).collect(),
-        BodyItemNode::Negation(_cl) => vec![],
-        BodyItemNode::Disjunction(disj) => disj
-            .disjuncts
-            .iter()
-            .flat_map(|conj| conj.iter().flat_map(body_item_get_bound_vars))
-            .collect(),
-        BodyItemNode::Cond(cl) => cl.bound_vars(),
-        BodyItemNode::MacroInvocation(_) => vec![],
+    let mut bound = Vec::new();
+    let mut work = vec![bi];
+    while let Some(item) = work.pop() {
+        match item {
+            BodyItemNode::Generator(generator) => {
+                bound.extend(pattern_get_vars(&generator.pattern));
+            },
+            BodyItemNode::Agg(aggregate) => bound.extend(pattern_get_vars(&aggregate.pat)),
+            BodyItemNode::Clause(clause) => {
+                for argument in &clause.args {
+                    bound.extend(argument.get_vars());
+                }
+            },
+            BodyItemNode::Call(call) => {
+                for argument in &call.args {
+                    bound.extend(argument.get_vars());
+                }
+            },
+            BodyItemNode::Negation(_) | BodyItemNode::MacroInvocation(_) => {},
+            BodyItemNode::Disjunction(disjunction) => {
+                for conjunction in disjunction.disjuncts.iter().rev() {
+                    work.extend(conjunction.iter().rev());
+                }
+            },
+            BodyItemNode::Cond(clause) => bound.extend(clause.bound_vars()),
+        }
     }
+    bound
 }
 
 fn body_item_visit_bound_vars_mut(bi: &mut BodyItemNode, visitor: &mut dyn FnMut(&mut Ident)) {
-    match bi {
-        BodyItemNode::Generator(gen) => pattern_visit_vars_mut(&mut gen.pattern, visitor),
-        BodyItemNode::Agg(agg) => pattern_visit_vars_mut(&mut agg.pat, visitor),
-        BodyItemNode::Clause(cl) => {
-            for arg in cl.args.iter_mut() {
-                match arg {
-                    BodyClauseArg::Pat(p) => pattern_visit_vars_mut(&mut p.pattern, visitor),
-                    BodyClauseArg::Expr(e) => {
-                        if let Some(ident) = expr_to_ident_mut(e) {
-                            visitor(ident)
-                        }
-                    },
+    let mut work = vec![bi];
+    while let Some(item) = work.pop() {
+        match item {
+            BodyItemNode::Generator(generator) => {
+                pattern_visit_vars_mut(&mut generator.pattern, visitor)
+            },
+            BodyItemNode::Agg(aggregate) => pattern_visit_vars_mut(&mut aggregate.pat, visitor),
+            BodyItemNode::Clause(clause) => {
+                for argument in &mut clause.args {
+                    match argument {
+                        BodyClauseArg::Pat(pattern) => {
+                            pattern_visit_vars_mut(&mut pattern.pattern, visitor)
+                        },
+                        BodyClauseArg::Expr(expression) => {
+                            if let Some(ident) = expr_to_ident_mut(expression) {
+                                visitor(ident)
+                            }
+                        },
+                    }
                 }
-            }
-        },
-        BodyItemNode::Call(cl) => {
-            for arg in cl.args.iter_mut() {
-                match arg {
-                    BodyClauseArg::Pat(p) => pattern_visit_vars_mut(&mut p.pattern, visitor),
-                    BodyClauseArg::Expr(e) => {
-                        if let Some(ident) = expr_to_ident_mut(e) {
-                            visitor(ident)
-                        }
-                    },
+            },
+            BodyItemNode::Call(call) => {
+                for argument in &mut call.args {
+                    match argument {
+                        BodyClauseArg::Pat(pattern) => {
+                            pattern_visit_vars_mut(&mut pattern.pattern, visitor)
+                        },
+                        BodyClauseArg::Expr(expression) => {
+                            if let Some(ident) = expr_to_ident_mut(expression) {
+                                visitor(ident)
+                            }
+                        },
+                    }
                 }
-            }
-        },
-        BodyItemNode::Negation(_cl) => (),
-        BodyItemNode::Disjunction(disj) => {
-            for conj in disj.disjuncts.iter_mut() {
-                for bi in conj.iter_mut() {
-                    body_item_visit_bound_vars_mut(bi, visitor)
+            },
+            BodyItemNode::Negation(_) | BodyItemNode::MacroInvocation(_) => {},
+            BodyItemNode::Disjunction(disjunction) => {
+                for conjunction in disjunction.disjuncts.iter_mut().rev() {
+                    work.extend(conjunction.iter_mut().rev());
                 }
-            }
-        },
-        BodyItemNode::Cond(cl) => match cl {
-            CondClause::IfLet(cl) => pattern_visit_vars_mut(&mut cl.pattern, visitor),
-            CondClause::If(_cl) => (),
-            CondClause::Let(cl) => pattern_visit_vars_mut(&mut cl.pattern, visitor),
-        },
-        BodyItemNode::MacroInvocation(_) => (),
+            },
+            BodyItemNode::Cond(clause) => match clause {
+                CondClause::IfLet(clause) => pattern_visit_vars_mut(&mut clause.pattern, visitor),
+                CondClause::If(_) => {},
+                CondClause::Let(clause) => pattern_visit_vars_mut(&mut clause.pattern, visitor),
+            },
+        }
     }
 }
 
@@ -1015,51 +1264,73 @@ fn body_item_visit_exprs_free_vars_mut(
     visitor: &mut dyn FnMut(&mut Ident),
     visit_macro_idents: bool,
 ) {
-    let mut visit = |expr: &mut Expr| {
+    fn visit_expression(
+        expr: &mut Expr,
+        visitor: &mut dyn FnMut(&mut Ident),
+        visit_macro_idents: bool,
+    ) {
         expr_visit_free_vars_mut(expr, visitor);
         if visit_macro_idents {
             expr_visit_idents_in_macros_mut(expr, visitor);
         }
-    };
-    match bi {
-        BodyItemNode::Generator(gen) => visit(&mut gen.expr),
-        BodyItemNode::Agg(agg) => {
-            agg_in_goal_visit_exprs_mut(&mut agg.in_goal, &mut visit);
-            if let AggregatorNode::Expr(e) = &mut agg.aggregator {
-                visit(e)
-            }
-        },
-        BodyItemNode::Clause(cl) => {
-            for arg in cl.args.iter_mut() {
-                if let BodyClauseArg::Expr(e) = arg {
-                    visit(e);
+    }
+
+    let mut work = vec![bi];
+    while let Some(item) = work.pop() {
+        match item {
+            BodyItemNode::Generator(generator) => {
+                visit_expression(&mut generator.expr, visitor, visit_macro_idents)
+            },
+            BodyItemNode::Agg(aggregate) => {
+                let mut visit =
+                    |expr: &mut Expr| visit_expression(expr, visitor, visit_macro_idents);
+                agg_in_goal_visit_exprs_mut(&mut aggregate.in_goal, &mut visit);
+                if let AggregatorNode::Expr(expression) = &mut aggregate.aggregator {
+                    visit(expression)
                 }
-            }
-        },
-        BodyItemNode::Negation(neg) => negation_goal_visit_exprs_mut(&mut neg.goal, &mut visit),
-        BodyItemNode::Disjunction(disj) => {
-            for conj in disj.disjuncts.iter_mut() {
-                for bi in conj.iter_mut() {
-                    body_item_visit_exprs_free_vars_mut(bi, visitor, visit_macro_idents);
+            },
+            BodyItemNode::Clause(clause) => {
+                for argument in &mut clause.args {
+                    if let BodyClauseArg::Expr(expression) = argument {
+                        visit_expression(expression, visitor, visit_macro_idents);
+                    }
                 }
-            }
-        },
-        BodyItemNode::Cond(cl) => match cl {
-            CondClause::IfLet(cl) => visit(&mut cl.exp),
-            CondClause::If(cl) => visit(&mut cl.cond),
-            CondClause::Let(cl) => visit(&mut cl.exp),
-        },
-        BodyItemNode::Call(cl) => {
-            visit(&mut cl.rel_expr);
-            for arg in cl.args.iter_mut() {
-                if let BodyClauseArg::Expr(e) = arg {
-                    visit(e);
+            },
+            BodyItemNode::Negation(negation) => {
+                let mut visit =
+                    |expr: &mut Expr| visit_expression(expr, visitor, visit_macro_idents);
+                negation_goal_visit_exprs_mut(&mut negation.goal, &mut visit);
+            },
+            BodyItemNode::Disjunction(disjunction) => {
+                for conjunction in disjunction.disjuncts.iter_mut().rev() {
+                    work.extend(conjunction.iter_mut().rev());
                 }
-            }
-        },
-        BodyItemNode::MacroInvocation(m) => {
-            update(&mut m.mac.tokens, |ts| token_stream_replace_ident(ts, visitor));
-        },
+            },
+            BodyItemNode::Cond(clause) => match clause {
+                CondClause::IfLet(clause) => {
+                    visit_expression(&mut clause.exp, visitor, visit_macro_idents)
+                },
+                CondClause::If(clause) => {
+                    visit_expression(&mut clause.cond, visitor, visit_macro_idents)
+                },
+                CondClause::Let(clause) => {
+                    visit_expression(&mut clause.exp, visitor, visit_macro_idents)
+                },
+            },
+            BodyItemNode::Call(call) => {
+                visit_expression(&mut call.rel_expr, visitor, visit_macro_idents);
+                for argument in &mut call.args {
+                    if let BodyClauseArg::Expr(expression) = argument {
+                        visit_expression(expression, visitor, visit_macro_idents);
+                    }
+                }
+            },
+            BodyItemNode::MacroInvocation(invocation) => {
+                update(&mut invocation.mac.tokens, |tokens| {
+                    token_stream_replace_ident(tokens, visitor)
+                });
+            },
+        }
     }
 }
 
@@ -1202,12 +1473,12 @@ fn rule_desugar_pattern_args(rule: RuleNode) -> RuleNode {
         body_items: rule
             .body_items
             .into_iter()
-            .map(|bi| match bi {
-                BodyItemNode::Clause(cl) => {
-                    BodyItemNode::Clause(clause_desugar_pattern_args(cl, &mut gensym))
+            .map(|bi| match &bi {
+                BodyItemNode::Clause(clause) => {
+                    BodyItemNode::Clause(clause_desugar_pattern_args(clause.clone(), &mut gensym))
                 },
-                BodyItemNode::Call(cl) => {
-                    BodyItemNode::Call(call_desugar_pattern_args(cl, &mut gensym))
+                BodyItemNode::Call(call) => {
+                    BodyItemNode::Call(call_desugar_pattern_args(call.clone(), &mut gensym))
                 },
                 _ => bi,
             })
@@ -1468,89 +1739,226 @@ fn rule_expand_macro_invocations(
     macros: &HashMap<Ident, &MacroDefNode>,
 ) -> Result<RuleNode> {
     const RECURSIVE_MACRO_ERROR: &'static str = "recursively defined Ascent macro";
-    fn body_item_expand_macros(
-        bi: BodyItemNode,
-        macros: &HashMap<Ident, &MacroDefNode>,
-        gensym: &mut GenSym,
-        depth: i16,
-        span: Option<Span>,
-    ) -> Result<Punctuated<BodyItemNode, Token![,]>> {
-        if depth <= 0 {
-            return Err(Error::new(span.unwrap_or_else(Span::call_site), RECURSIVE_MACRO_ERROR));
-        }
-        match bi {
-            BodyItemNode::MacroInvocation(m) => {
-                let mac_def = macros
-                    .get(m.mac.path.get_ident().unwrap())
-                    .ok_or_else(|| Error::new(m.span(), "undefined macro"))?;
-                let macro_invoked = invoke_macro(&m, mac_def)?;
-                let expanded_bis = Parser::parse2(
-                    Punctuated::<BodyItemNode, Token![,]>::parse_terminated,
-                    macro_invoked,
-                )?;
-                let mut recursively_expanded = punctuated_try_map(expanded_bis, |ebi| {
-                    body_item_expand_macros(ebi, macros, gensym, depth - 1, Some(m.span()))
-                })?
-                .pipe(flatten_punctuated);
-                body_items_rename_macro_originated_vars(
-                    &mut recursively_expanded.iter_mut().collect_vec(),
-                    mac_def,
-                    gensym,
-                );
-                Ok(recursively_expanded)
-            },
-            BodyItemNode::Disjunction(disj) => {
-                let new_disj: Punctuated<Result<_>, _> = punctuated_map(disj.disjuncts, |bis| {
-                    let new_bis = punctuated_map(bis, |bi| {
-                        body_item_expand_macros(
-                            bi,
-                            macros,
-                            gensym,
-                            depth - 1,
-                            Some(disj.paren.span.join()),
-                        )
-                    });
-                    Ok(flatten_punctuated(punctuated_try_unwrap(new_bis)?))
-                });
-
-                Ok(punctuated_singleton(BodyItemNode::Disjunction(DisjunctionNode {
-                    disjuncts: punctuated_try_unwrap(new_disj)?,
-                    ..disj
-                })))
-            },
-            BodyItemNode::Call(_) => Ok(punctuated_singleton(bi)),
-            _ => Ok(punctuated_singleton(bi)),
-        }
+    struct BodySequenceShape {
+        punctuation: Vec<Option<Token![,]>>,
     }
 
-    fn head_item_expand_macros(
-        hi: HeadItemNode,
-        macros: &HashMap<Ident, &MacroDefNode>,
-        depth: i16,
-        span: Option<Span>,
-    ) -> Result<Punctuated<HeadItemNode, Token![,]>> {
-        if depth <= 0 {
-            return Err(Error::new(span.unwrap_or_else(Span::call_site), RECURSIVE_MACRO_ERROR));
-        }
-        match hi {
-            HeadItemNode::MacroInvocation(m) => {
-                let mac_def = macros
-                    .get(m.mac.path.get_ident().unwrap())
-                    .ok_or_else(|| Error::new(m.span(), "undefined macro"))?;
-                let macro_invoked = invoke_macro(&m, mac_def)?;
-                let expanded_his = Parser::parse2(
-                    Punctuated::<HeadItemNode, Token![,]>::parse_terminated,
-                    macro_invoked,
-                )?;
+    enum BodyExpansionTask<'definition> {
+        Item(BodyItemNode),
+        Sequence(Punctuated<BodyItemNode, Token![,]>),
+        FinishSequence {
+            base: usize,
+            shape: BodySequenceShape,
+        },
+        FinishMacro {
+            name: String,
+            definition: &'definition MacroDefNode,
+        },
+        FinishDisjunction {
+            base: usize,
+            paren: syn::token::Paren,
+            punctuation: Vec<Option<DisjunctionToken>>,
+        },
+    }
 
-                Ok(punctuated_map(expanded_his, |ehi| {
-                    head_item_expand_macros(ehi, macros, depth - 1, Some(m.span()))
-                })
-                .pipe(punctuated_try_unwrap)?
-                .pipe(flatten_punctuated))
-            },
-            HeadItemNode::HeadClause(_) => Ok(punctuated_singleton(hi)),
+    fn expand_body_item(
+        item: BodyItemNode,
+        macros: &HashMap<Ident, &MacroDefNode>,
+        gensym: &mut GenSym,
+    ) -> Result<Punctuated<BodyItemNode, Token![,]>> {
+        let mut tasks = vec![BodyExpansionTask::Item(item)];
+        let mut values = Vec::<Punctuated<BodyItemNode, Token![,]>>::new();
+        let mut active_macros = HashSet::<String>::new();
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                BodyExpansionTask::Item(mut item) => match &mut item {
+                    BodyItemNode::MacroInvocation(invocation) => {
+                        let name = invocation
+                            .mac
+                            .path
+                            .get_ident()
+                            .expect("Ascent macro invocations have identifier paths");
+                        let definition = macros
+                            .get(name)
+                            .ok_or_else(|| Error::new(invocation.span(), "undefined macro"))?;
+                        let name = name.to_string();
+                        if !active_macros.insert(name.clone()) {
+                            return Err(Error::new(invocation.span(), RECURSIVE_MACRO_ERROR));
+                        }
+                        let expanded = Parser::parse2(
+                            Punctuated::<BodyItemNode, Token![,]>::parse_terminated,
+                            invoke_macro(invocation, definition)?,
+                        )?;
+                        tasks.push(BodyExpansionTask::FinishMacro { name, definition });
+                        tasks.push(BodyExpansionTask::Sequence(expanded));
+                    },
+                    BodyItemNode::Disjunction(disjunction) => {
+                        let disjuncts = std::mem::take(&mut disjunction.disjuncts);
+                        let paren = disjunction.paren;
+                        let punctuation = disjuncts
+                            .pairs()
+                            .map(|pair| pair.punct().map(|punctuation| (*punctuation).clone()))
+                            .collect::<Vec<_>>();
+                        let branches = disjuncts.into_iter().collect::<Vec<_>>();
+                        let base = values.len();
+                        tasks.push(BodyExpansionTask::FinishDisjunction {
+                            base,
+                            paren,
+                            punctuation,
+                        });
+                        tasks.extend(branches.into_iter().rev().map(BodyExpansionTask::Sequence));
+                    },
+                    _ => values.push(punctuated_singleton(item)),
+                },
+                BodyExpansionTask::Sequence(sequence) => {
+                    let punctuation = sequence
+                        .pairs()
+                        .map(|pair| pair.punct().map(|punctuation| (*punctuation).clone()))
+                        .collect();
+                    let items = sequence.into_iter().collect::<Vec<_>>();
+                    let base = values.len();
+                    tasks.push(BodyExpansionTask::FinishSequence {
+                        base,
+                        shape: BodySequenceShape { punctuation },
+                    });
+                    tasks.extend(items.into_iter().rev().map(BodyExpansionTask::Item));
+                },
+                BodyExpansionTask::FinishSequence { base, shape } => {
+                    let expanded = values.split_off(base);
+                    debug_assert_eq!(expanded.len(), shape.punctuation.len());
+                    let mut nested = Punctuated::new();
+                    for (items, punctuation) in expanded.into_iter().zip(shape.punctuation) {
+                        nested.push_value(items);
+                        if let Some(punctuation) = punctuation {
+                            nested.push_punct(punctuation);
+                        }
+                    }
+                    values.push(flatten_punctuated(nested));
+                },
+                BodyExpansionTask::FinishMacro { name, definition } => {
+                    let mut expanded = values
+                        .pop()
+                        .expect("body macro-expansion PDA lost an expanded body");
+                    body_items_rename_macro_originated_vars(
+                        &mut expanded.iter_mut().collect_vec(),
+                        definition,
+                        gensym,
+                    );
+                    assert!(
+                        active_macros.remove(&name),
+                        "body macro-expansion PDA lost its active macro"
+                    );
+                    values.push(expanded);
+                },
+                BodyExpansionTask::FinishDisjunction { base, paren, punctuation } => {
+                    let branches = values.split_off(base);
+                    debug_assert_eq!(branches.len(), punctuation.len());
+                    let mut disjuncts = Punctuated::new();
+                    for (branch, punctuation) in branches.into_iter().zip(punctuation) {
+                        disjuncts.push_value(branch);
+                        if let Some(punctuation) = punctuation {
+                            disjuncts.push_punct(punctuation);
+                        }
+                    }
+                    values.push(punctuated_singleton(BodyItemNode::Disjunction(DisjunctionNode {
+                        paren,
+                        disjuncts,
+                    })));
+                },
+            }
         }
+
+        assert!(active_macros.is_empty(), "body macro-expansion PDA left an active macro");
+        assert_eq!(values.len(), 1, "body macro-expansion PDA must produce one root");
+        Ok(values
+            .pop()
+            .expect("body macro-expansion PDA lost its root"))
+    }
+
+    struct HeadSequenceShape {
+        punctuation: Vec<Option<Token![,]>>,
+    }
+
+    enum HeadExpansionTask {
+        Item(HeadItemNode),
+        Sequence(Punctuated<HeadItemNode, Token![,]>),
+        FinishSequence { base: usize, shape: HeadSequenceShape },
+        FinishMacro { name: String },
+    }
+
+    fn expand_head_items(
+        items: Punctuated<HeadItemNode, Token![,]>,
+        macros: &HashMap<Ident, &MacroDefNode>,
+    ) -> Result<Punctuated<HeadItemNode, Token![,]>> {
+        let mut tasks = vec![HeadExpansionTask::Sequence(items)];
+        let mut values = Vec::<Punctuated<HeadItemNode, Token![,]>>::new();
+        let mut active_macros = HashSet::<String>::new();
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                HeadExpansionTask::Item(item) => match item {
+                    HeadItemNode::MacroInvocation(invocation) => {
+                        let name = invocation
+                            .mac
+                            .path
+                            .get_ident()
+                            .expect("Ascent macro invocations have identifier paths");
+                        let definition = macros
+                            .get(name)
+                            .ok_or_else(|| Error::new(invocation.span(), "undefined macro"))?;
+                        let name = name.to_string();
+                        if !active_macros.insert(name.clone()) {
+                            return Err(Error::new(invocation.span(), RECURSIVE_MACRO_ERROR));
+                        }
+                        let expanded = Parser::parse2(
+                            Punctuated::<HeadItemNode, Token![,]>::parse_terminated,
+                            invoke_macro(&invocation, definition)?,
+                        )?;
+                        tasks.push(HeadExpansionTask::FinishMacro { name });
+                        tasks.push(HeadExpansionTask::Sequence(expanded));
+                    },
+                    HeadItemNode::HeadClause(_) => values.push(punctuated_singleton(item)),
+                },
+                HeadExpansionTask::Sequence(sequence) => {
+                    let punctuation = sequence
+                        .pairs()
+                        .map(|pair| pair.punct().map(|punctuation| (*punctuation).clone()))
+                        .collect();
+                    let items = sequence.into_iter().collect::<Vec<_>>();
+                    let base = values.len();
+                    tasks.push(HeadExpansionTask::FinishSequence {
+                        base,
+                        shape: HeadSequenceShape { punctuation },
+                    });
+                    tasks.extend(items.into_iter().rev().map(HeadExpansionTask::Item));
+                },
+                HeadExpansionTask::FinishSequence { base, shape } => {
+                    let expanded = values.split_off(base);
+                    debug_assert_eq!(expanded.len(), shape.punctuation.len());
+                    let mut nested = Punctuated::new();
+                    for (items, punctuation) in expanded.into_iter().zip(shape.punctuation) {
+                        nested.push_value(items);
+                        if let Some(punctuation) = punctuation {
+                            nested.push_punct(punctuation);
+                        }
+                    }
+                    values.push(flatten_punctuated(nested));
+                },
+                HeadExpansionTask::FinishMacro { name } => {
+                    assert!(
+                        active_macros.remove(&name),
+                        "head macro-expansion PDA lost its active macro"
+                    );
+                },
+            }
+        }
+
+        assert!(active_macros.is_empty(), "head macro-expansion PDA left an active macro");
+        assert_eq!(values.len(), 1, "head macro-expansion PDA must produce one root");
+        Ok(values
+            .pop()
+            .expect("head macro-expansion PDA lost its root"))
     }
 
     let mut gensym = GenSym::new(|s| format!("__{}_", s));
@@ -1558,16 +1966,13 @@ fn rule_expand_macro_invocations(
     let new_body_items = rule
         .body_items
         .into_iter()
-        .map(|bi| body_item_expand_macros(bi, macros, &mut gensym, 100, None))
+        .map(|item| expand_body_item(item, macros, &mut gensym))
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .flatten()
         .collect_vec();
 
-    let new_head_items =
-        punctuated_map(rule.head_clauses, |hi| head_item_expand_macros(hi, macros, 100, None))
-            .pipe(punctuated_try_unwrap)?
-            .pipe(flatten_punctuated);
+    let new_head_items = expand_head_items(rule.head_clauses, macros)?;
 
     Ok(RuleNode {
         body_items: new_body_items,
@@ -1602,6 +2007,11 @@ pub fn desugar_ascent_program(mut prog: AscentProgram) -> Result<AscentProgram> 
 lazy_static::lazy_static! {
    static ref IDENT_COUNTERS: Mutex<HashMap<String, u32>> = Mutex::new(HashMap::default());
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/ascent_recursive_oracle.rs"]
+mod recursive_oracle;
+
 fn fresh_ident(prefix: &str, span: Span) -> Ident {
     let mut ident_counters_lock = IDENT_COUNTERS.lock().unwrap();
     let counter = if let Some(entry) = ident_counters_lock.get_mut(prefix) {

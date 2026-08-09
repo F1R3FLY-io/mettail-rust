@@ -8,6 +8,7 @@
 #   2. TrampolineEquivalence   — CEK.1: parse_rec = parse_tramp
 #   2a. EvaluatorSccPdaEquivalence — native evaluator SCC simulation
 #   2b. LifecyclePdaEquivalence — recursive lifecycle traversal = explicit PDA
+#   2c. WorklistFoldEquivalence — structural folds = explicit work/value PDA
 #   3. WpdsSimulation          — CEK.2: forward simulation by WPDS,
 #                                CEK.3: dead rule soundness corollary
 #   4. TailCallCorrectness     — CEK.4: tail_wrap = full push/pop
@@ -18,6 +19,7 @@
 #   TrampolineEquivalence.v    — (standalone)
 #   EvaluatorSccPdaEquivalence.v — (standalone)
 #   LifecyclePdaEquivalence.v — (standalone)
+#   WorklistFoldEquivalence.v — (standalone)
 #   WpdsSimulation.v           — (standalone)
 #   TailCallCorrectness.v      — (standalone)
 #   Defunctionalization.v       — (standalone)
@@ -37,3 +39,4 @@ theories/CeskStoreCorrectness.v
 theories/CeskMutation.v
 theories/FormulaPdaEquivalence.v
 theories/LifecyclePdaEquivalence.v
+theories/WorklistFoldEquivalence.v

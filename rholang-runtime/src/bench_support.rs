@@ -111,11 +111,10 @@ use mettail_rholang_codegen::{
     RhoGuardCoverageEvidence, RhoLowering, CMP_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
     PRED_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
 };
-use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
-use models::rhoapi::{BindPattern, EPathMap, Expr, ListParWithRandom, Par, TaggedContinuation};
-use models::rust::epathmap_trie_codec::EPathMapMode;
+use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
+use models::rust::rholang::par_children::visit_canonical_par_tree;
 use prost::Message;
 use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
@@ -1017,215 +1016,19 @@ pub async fn bench_inj_and_read<R: RhoRuntime>(
 // Receive-node visitor
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Count every `Receive` node in `par`, recursively — the installed-network
+/// Count every `Receive` node in the complete `par` structure — the installed-network
 /// volume metric (the naive Appendix-A scheme's per-rule/per-site duplication
 /// shows up directly here). The walk is STRUCTURAL and total over every
 /// `Par`-carrying field: sends (channel + data), receives (self + bind
-/// patterns/sources + condition + body), news, matches (target + case
+/// patterns/sources + condition + body), news (body + injection values), matches (target + case
 /// pattern/source/guard), bundles, conditionals, `ConnAnd`/`ConnOr`/`ConnNot`
 /// connective bodies, and every expression that carries `Par` operands
 /// (collections, method calls, unary/binary operators).
 pub fn count_receive_nodes(par: &Par) -> usize {
     let mut count = 0usize;
-    visit_par(par, &mut count);
+    visit_canonical_par_tree(par, |node| count += node.receives.len())
+        .expect("EPathMap keys in a model Par must use the canonical path encoding");
     count
-}
-
-fn visit_opt_par(par: &Option<Par>, count: &mut usize) {
-    if let Some(par) = par {
-        visit_par(par, count);
-    }
-}
-
-fn visit_par(par: &Par, count: &mut usize) {
-    for send in &par.sends {
-        visit_opt_par(&send.chan, count);
-        for datum in &send.data {
-            visit_par(datum, count);
-        }
-    }
-    for receive in &par.receives {
-        *count += 1;
-        for bind in &receive.binds {
-            for pattern in &bind.patterns {
-                visit_par(pattern, count);
-            }
-            visit_opt_par(&bind.source, count);
-        }
-        visit_opt_par(&receive.body, count);
-        visit_opt_par(&receive.condition, count);
-    }
-    for new in &par.news {
-        visit_opt_par(&new.p, count);
-    }
-    for expr in &par.exprs {
-        visit_expr(expr, count);
-    }
-    for match_node in &par.matches {
-        visit_opt_par(&match_node.target, count);
-        for case in &match_node.cases {
-            visit_opt_par(&case.pattern, count);
-            visit_opt_par(&case.source, count);
-            visit_opt_par(&case.guard, count);
-        }
-    }
-    for bundle in &par.bundles {
-        visit_opt_par(&bundle.body, count);
-    }
-    for connective in &par.connectives {
-        match connective.connective_instance.as_ref() {
-            Some(ConnectiveInstance::ConnAndBody(body))
-            | Some(ConnectiveInstance::ConnOrBody(body)) => {
-                for p in &body.ps {
-                    visit_par(p, count);
-                }
-            },
-            Some(ConnectiveInstance::ConnNotBody(p)) => visit_par(p, count),
-            _ => {},
-        }
-    }
-    for conditional in &par.conditionals {
-        visit_opt_par(&conditional.condition, count);
-        visit_opt_par(&conditional.if_true, count);
-        visit_opt_par(&conditional.if_false, count);
-    }
-}
-
-fn visit_expr(expr: &Expr, count: &mut usize) {
-    let Some(instance) = expr.expr_instance.as_ref() else {
-        return;
-    };
-    match instance {
-        ExprInstance::EListBody(list) => {
-            for p in &list.ps {
-                visit_par(p, count);
-            }
-        },
-        ExprInstance::ETupleBody(tuple) => {
-            for p in &tuple.ps {
-                visit_par(p, count);
-            }
-        },
-        ExprInstance::ESetBody(set) => {
-            for p in &set.ps {
-                visit_par(p, count);
-            }
-        },
-        ExprInstance::EPathmapBody(pathmap) => visit_epathmap(pathmap, count),
-        ExprInstance::EZipperBody(zipper) => {
-            if let Some(pathmap) = &zipper.pathmap {
-                visit_epathmap(pathmap, count);
-            }
-        },
-        ExprInstance::EMapBody(map) => {
-            for pair in &map.kvs {
-                visit_opt_par(&pair.key, count);
-                visit_opt_par(&pair.value, count);
-            }
-        },
-        ExprInstance::EMethodBody(method) => {
-            visit_opt_par(&method.target, count);
-            for argument in &method.arguments {
-                visit_par(argument, count);
-            }
-        },
-        ExprInstance::ENotBody(inner) => visit_opt_par(&inner.p, count),
-        ExprInstance::ENegBody(inner) => visit_opt_par(&inner.p, count),
-        ExprInstance::EMultBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EDivBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EModBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EPlusBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EMinusBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::ELtBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::ELteBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EGtBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EGteBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EEqBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::ENeqBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EAndBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EOrBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EPercentPercentBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EPlusPlusBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EMinusMinusBody(inner) => {
-            visit_opt_par(&inner.p1, count);
-            visit_opt_par(&inner.p2, count);
-        },
-        ExprInstance::EMatchesBody(inner) => {
-            visit_opt_par(&inner.target, count);
-            visit_opt_par(&inner.pattern, count);
-        },
-        // Scalar grounds and bare variables carry no Par operands.
-        ExprInstance::GBool(_)
-        | ExprInstance::GInt(_)
-        | ExprInstance::GString(_)
-        | ExprInstance::GUri(_)
-        | ExprInstance::GByteArray(_)
-        | ExprInstance::GDouble(_)
-        | ExprInstance::GBigInt(_)
-        | ExprInstance::GBigRat(_)
-        | ExprInstance::GFixedPoint(_)
-        | ExprInstance::EVarBody(_) => {},
-    }
-}
-
-fn visit_epathmap(pathmap: &EPathMap, count: &mut usize) {
-    match pathmap.mode() {
-        EPathMapMode::Empty => {},
-        EPathMapMode::Set => pathmap.entry_trie().for_each_entry(|entry| {
-            visit_par(entry, count);
-        }),
-        EPathMapMode::Map => pathmap
-            .for_each_map_entry(|key, value| {
-                visit_par(key, count);
-                visit_par(value, count);
-            })
-            .expect("map-mode EPathMap rejected its own map visitor"),
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1257,7 +1060,7 @@ pub struct CompiledBenchLanguage {
 /// `definition_source()`: reconstruct the `LanguageDef`, lower it, plan the
 /// Rho-default backend (the same requirements construction as the B2
 /// equivalence suite: `CoveredRejectedRules(suggest_rejected_rule_dispositions)`
-/// + `NoGuardObligations` — a language WITH guard obligations fails closed
+/// together with `NoGuardObligations` — a language WITH guard obligations fails closed
 /// here, which the v1 bench corpus never hits), compile the in-Rho matching
 /// ruleset, verify the ruleset and the plan share ONE fingerprint (the
 /// interface-coherence anchor), and extract the installed σ-receiver program.

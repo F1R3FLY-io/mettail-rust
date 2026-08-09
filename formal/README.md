@@ -10,9 +10,10 @@ make -C formal check-capped
 ## Verification Artifact Inventory
 
 Every mechanized artifact relevant to Dovetail, the WPDA parser generator, the
-RhoNet lowering, and the runtime wrappers, by tool and concern. All Rocq suites are
-zero-admission (enforced by `rocq-critical-zero-admission`; ~154 `.v` across the 16
-`formal/rocq` categories plus the relocated Dovetail Rocq tree).
+RhoNet lowering, and the runtime wrappers, by tool and concern. The files in the
+consensus-, runtime-, automata-, algebra-, transducer-, and PDA-critical Rocq suites listed
+below are zero-admission, enforced by `rocq-critical-zero-admission`. Other proof directories
+remain build-checked but are not covered by that stronger syntactic policy unless listed below.
 
 | Tool | Location | Count | Primary concern (Dovetail / WPDA / RhoNet / wrappers) |
 |---|---|---|---|
@@ -22,7 +23,7 @@ zero-admission (enforced by `rocq-critical-zero-admission`; ~154 `.v` across the
 | Rocq — codegen_optimizations | `formal/rocq/codegen_optimizations/theories` | 13 | generated-codegen soundness, disjoint-first |
 | Rocq — advanced_automata | `formal/rocq/advanced_automata/theories` | 12 | **positional set automaton** (`PositionalSetAutomatonSound`), MSO / register / PATA equivalence |
 | Rocq — ascent_optimizations | `formal/rocq/ascent_optimizations/theories` | 7 | retired-Ascent-era optimization proofs |
-| Rocq — trampoline | `formal/rocq/trampoline/theories` | 10 | Tier-3 held-fold trampoline soundness, evaluator SCC simulation, formula and lifecycle PDA equivalence |
+| Rocq — trampoline | `formal/rocq/trampoline/theories` | 11 | Tier-3 held-fold trampoline soundness, evaluator SCC simulation, formula/lifecycle PDA equivalence, and continuation-parametric structural-fold/worklist equivalence |
 | Rocq — sft | `formal/rocq/sft/theories` | 6 | symbolic finite transducers |
 | Rocq — mathematical_analyses | `formal/rocq/mathematical_analyses/theories` | 9 | KAT, exact VPA decisions/delimiters, and analysis soundness |
 | Rocq — rule_consolidation | `formal/rocq/rule_consolidation/theories` | 5 | **Dovetail** disjoint-pattern consolidation |
@@ -104,12 +105,16 @@ The capped entry point runs:
   `rocq-rho-bridge-escrow-settlement`, `rocq-rho-bridge-purse-determinism`,
   and `rocq-rho-bridge-flip-gate`. `rocq-rho-bridge-delta1-matching`
   remains as a compatibility alias for the full Δ1 target.
-- the critical Dovetail/Rho Rocq zero-admission gate:
+- the critical Dovetail/Rho/PDA Rocq zero-admission gate:
   `rocq-critical-zero-admission`, which first runs the scanner self-test, then
   strips Rocq comments and rejects real `Admitted`, `admit.`, `Axiom`,
   `Conjecture`, `Parameter`, or `Parameters` commands under
-  `dovetail/formal/rocq/theories` and
-  `formal/rocq/rho_bridge/theories`
+  `dovetail/formal/rocq/theories`,
+  `formal/rocq/rho_bridge/theories`,
+  `formal/rocq/symbolic_algebra/theories`,
+  `formal/rocq/sft/theories`,
+  `formal/rocq/advanced_automata/theories`, and
+  `formal/rocq/trampoline/theories`
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests

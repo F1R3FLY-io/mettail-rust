@@ -127,6 +127,10 @@ pub enum FieldSpec {
 
 mod lifecycle;
 
+#[cfg(test)]
+#[path = "../tests/support/ctor_recursive_oracle.rs"]
+mod recursive_oracle;
+
 /// One constructor of one category.
 #[derive(Debug, Clone)]
 pub struct Variant {
@@ -391,7 +395,7 @@ pub fn parse_shrinks_to(text: &str) -> Result<Vec<Binding>, String> {
         return Err(format!(
             "trailing text after the last binding at byte {}: {:?}",
             parser.pos,
-            &parser.src[parser.pos..].iter().collect::<String>()
+            parser.src[parser.pos..].iter().collect::<String>()
         ));
     }
     if bindings.is_empty() {
@@ -814,12 +818,6 @@ impl Parser {
      * explicit frame machine above. Keeping recursive twins in production would
      * defeat the source census; bounded oracle twins belong under `tests/`.
      */
-    /*
-    fn retired_recursive_helpers(&mut self) {
-        let _ = self;
-    }
-    */
-
     fn parse_string(&mut self) -> Result<String, String> {
         self.expect('"')?;
         let mut out = String::new();
@@ -985,176 +983,496 @@ impl fmt::Display for EmitError {
 /// The produced source assumes `mettail_runtime` is in scope by that path and that the
 /// language's category enums are in scope unqualified — the shape every hand-written test
 /// in `languages/tests/` already uses.
+///
+/// The emitter is a streaming pushdown automaton: every output fragment is appended exactly
+/// once, while the explicit task stack retains only the active traversal frontier. This keeps
+/// both traversal and rendering stack-safe and avoids the quadratic whole-child `String`
+/// copying incurred by bottom-up rendering of deeply nested constructors.
 pub fn emit_category(
     schema: &Schema,
     category: &str,
     node: &DebugNode,
 ) -> Result<String, EmitError> {
-    let (head, args): (&str, &[DebugNode]) = match node {
-        DebugNode::Call { head, args } => (head.as_str(), args.as_slice()),
-        DebugNode::Ident(head) => (head.as_str(), &[]),
-        other => {
-            return Err(EmitError::ShapeMismatch {
-                expected: format!("a constructor of `{category}`"),
-                found: describe(other),
-            })
+    enum EmitTask<'schema, 'node> {
+        Category {
+            category: &'schema str,
+            node: &'node DebugNode,
         },
-    };
-
-    let variant = match schema
-        .variants
-        .get(&(category.to_string(), head.to_string()))
-    {
-        Some(v) => v,
-        None => {
-            let elsewhere = schema.categories_declaring(head);
-            return Err(if elsewhere.is_empty() {
-                EmitError::UnknownConstructor { label: head.to_string() }
-            } else {
-                EmitError::WrongCategory {
-                    label: head.to_string(),
-                    expected: category.to_string(),
-                    found_in: elsewhere.into_iter().map(str::to_string).collect(),
-                }
-            });
+        Field {
+            spec: &'schema FieldSpec,
+            node: &'node DebugNode,
         },
-    };
-
-    // A `literal` variant carries its CATEGORY's native type, which is what disambiguates
-    // `NumLit` across the three Calculator enums that declare it.
-    if variant.kind == "literal" || variant.kind == "collit" {
-        let native = schema
-            .natives
-            .get(category)
-            .cloned()
-            .flatten()
-            .unwrap_or_else(|| "-".to_string());
-        let payload = args.first().ok_or_else(|| EmitError::ShapeMismatch {
-            expected: format!("`{head}(<{native}>)`"),
-            found: "a nullary constructor".to_string(),
-        })?;
-        let inner = if variant.kind == "collit" {
-            match variant.fields.first() {
-                Some(FieldSpec::CollLit { kind, elem }) => {
-                    emit_collection(schema, kind, elem, payload, true)?
-                },
-                _ => emit_native(&native, payload)?,
-            }
-        } else {
-            emit_native(&native, payload)?
-        };
-        return Ok(format!("{category}::{head}({inner})"));
+        Collection {
+            kind: &'schema str,
+            elem: &'schema str,
+            node: &'node DebugNode,
+            is_literal: bool,
+        },
+        Fields {
+            specs: &'schema [FieldSpec],
+            args: &'node [DebugNode],
+            index: usize,
+        },
+        Categories {
+            category: &'schema str,
+            nodes: &'node [DebugNode],
+            index: usize,
+        },
+        MapEntries {
+            category: &'schema str,
+            entries: &'node [(DebugNode, DebugNode)],
+            index: usize,
+        },
+        PathSetEntries {
+            category: &'schema str,
+            entries: &'node [(DebugNode, DebugNode)],
+            index: usize,
+        },
+        HashBagEntries {
+            category: &'schema str,
+            entries: &'node [(DebugNode, DebugNode)],
+            index: usize,
+            repeats_left: usize,
+            wrote_value: bool,
+        },
+        Text(&'static str),
     }
 
-    if variant.fields.is_empty() {
-        if !args.is_empty() {
-            return Err(EmitError::ShapeMismatch {
-                expected: format!("`{head}` with no arguments"),
-                found: format!("{} argument(s)", args.len()),
-            });
-        }
-        return Ok(format!("{category}::{head}"));
-    }
+    let mut tasks = vec![EmitTask::Category { category, node }];
+    let mut output = String::new();
 
-    if args.len() != variant.fields.len() {
-        return Err(EmitError::ShapeMismatch {
-            expected: format!("`{head}` with {} argument(s)", variant.fields.len()),
-            found: format!("{} argument(s)", args.len()),
-        });
-    }
-
-    let mut rendered = Vec::with_capacity(variant.fields.len());
-    for (spec, arg) in variant.fields.iter().zip(args.iter()) {
-        rendered.push(emit_field(schema, spec, arg)?);
-    }
-    Ok(format!("{category}::{head}({})", rendered.join(", ")))
-}
-
-fn emit_field(schema: &Schema, spec: &FieldSpec, node: &DebugNode) -> Result<String, EmitError> {
-    match spec {
-        FieldSpec::Opt(inner) => match node {
-            DebugNode::Ident(name) if name == "None" => Ok("None".to_string()),
-            DebugNode::Call { head, args } if head == "Some" && args.len() == 1 => {
-                Ok(format!("Some({})", emit_field(schema, inner, &args[0])?))
-            },
-            other => Err(EmitError::ShapeMismatch {
-                expected: "`Some(..)` or `None`".to_string(),
-                found: describe(other),
-            }),
-        },
-
-        // A nested category field is `Arc<C>` in the generated enum, and `Debug` erased the
-        // wrapper. `Arc::new` is restored here — it is objection 1 of five.
-        FieldSpec::Cat(cat) => {
-            Ok(format!("std::sync::Arc::new({})", emit_category(schema, cat, node)?))
-        },
-
-        FieldSpec::Var => emit_ordvar(node),
-
-        FieldSpec::Native(ty) => emit_native(ty, node),
-
-        FieldSpec::Coll { kind, elem } => emit_collection(schema, kind, elem, node, false),
-        FieldSpec::CollLit { kind, elem } => emit_collection(schema, kind, elem, node, true),
-
-        FieldSpec::Scope1 { body, .. } => match node {
-            DebugNode::Struct { head, fields } if head == "Scope" => {
-                let pattern = field_named(fields, "pattern")?;
-                let body_node = field_named(fields, "body")?;
-                Ok(format!(
-                    "mettail_runtime::Scope::from_parts_unsafe({}, std::sync::Arc::new({}))",
-                    emit_binder(pattern)?,
-                    emit_category(schema, body, body_node)?
-                ))
-            },
-            other => Err(EmitError::ShapeMismatch {
-                expected: "`Scope { pattern: .., body: .. }`".to_string(),
-                found: describe(other),
-            }),
-        },
-
-        FieldSpec::ScopeN { body, .. } => match node {
-            DebugNode::Struct { head, fields } if head == "Scope" => {
-                let pattern = field_named(fields, "pattern")?;
-                let body_node = field_named(fields, "body")?;
-                let binders = match pattern {
-                    DebugNode::List(items) => items
-                        .iter()
-                        .map(emit_binder)
-                        .collect::<Result<Vec<_>, _>>()?,
+    while let Some(task) = tasks.pop() {
+        match task {
+            EmitTask::Text(text) => output.push_str(text),
+            EmitTask::Category { category, node } => {
+                let (head, args): (&str, &[DebugNode]) = match node {
+                    DebugNode::Call { head, args } => (head.as_str(), args.as_slice()),
+                    DebugNode::Ident(head) => (head.as_str(), &[]),
                     other => {
                         return Err(EmitError::ShapeMismatch {
-                            expected: "a `[Binder(..), ..]` multi-binder pattern".to_string(),
+                            expected: format!("a constructor of `{category}`"),
                             found: describe(other),
                         })
                     },
                 };
-                Ok(format!(
-                    "mettail_runtime::Scope::from_parts_unsafe(vec![{}], std::sync::Arc::new({}))",
-                    binders.join(", "),
-                    emit_category(schema, body, body_node)?
-                ))
+
+                let variant = match schema
+                    .variants
+                    .get(&(category.to_string(), head.to_string()))
+                {
+                    Some(variant) => variant,
+                    None => {
+                        let elsewhere = schema.categories_declaring(head);
+                        return Err(if elsewhere.is_empty() {
+                            EmitError::UnknownConstructor { label: head.to_string() }
+                        } else {
+                            EmitError::WrongCategory {
+                                label: head.to_string(),
+                                expected: category.to_string(),
+                                found_in: elsewhere.into_iter().map(str::to_string).collect(),
+                            }
+                        });
+                    },
+                };
+
+                if variant.kind == "literal" || variant.kind == "collit" {
+                    let native = schema
+                        .natives
+                        .get(category)
+                        .cloned()
+                        .flatten()
+                        .unwrap_or_else(|| "-".to_string());
+                    let payload = args.first().ok_or_else(|| EmitError::ShapeMismatch {
+                        expected: format!("`{head}(<{native}>)`"),
+                        found: "a nullary constructor".to_string(),
+                    })?;
+                    if variant.kind == "collit" {
+                        if let Some(FieldSpec::CollLit { kind, elem }) = variant.fields.first() {
+                            output.push_str(category);
+                            output.push_str("::");
+                            output.push_str(head);
+                            output.push('(');
+                            tasks.push(EmitTask::Text(")"));
+                            tasks.push(EmitTask::Collection {
+                                kind,
+                                elem,
+                                node: payload,
+                                is_literal: true,
+                            });
+                            continue;
+                        }
+                    }
+                    output.push_str(category);
+                    output.push_str("::");
+                    output.push_str(head);
+                    output.push('(');
+                    output.push_str(&emit_native(&native, payload)?);
+                    output.push(')');
+                    continue;
+                }
+
+                if variant.fields.is_empty() {
+                    if !args.is_empty() {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: format!("`{head}` with no arguments"),
+                            found: format!("{} argument(s)", args.len()),
+                        });
+                    }
+                    output.push_str(category);
+                    output.push_str("::");
+                    output.push_str(head);
+                    continue;
+                }
+
+                if args.len() != variant.fields.len() {
+                    return Err(EmitError::ShapeMismatch {
+                        expected: format!("`{head}` with {} argument(s)", variant.fields.len()),
+                        found: format!("{} argument(s)", args.len()),
+                    });
+                }
+
+                output.push_str(category);
+                output.push_str("::");
+                output.push_str(head);
+                output.push('(');
+                tasks.push(EmitTask::Text(")"));
+                tasks.push(EmitTask::Fields { specs: &variant.fields, args, index: 0 });
             },
-            other => Err(EmitError::ShapeMismatch {
-                expected: "`Scope { pattern: [..], body: .. }`".to_string(),
-                found: describe(other),
-            }),
-        },
 
-        FieldSpec::OpaqueToken => match node {
-            DebugNode::Str(s) => Ok(format!("std::string::String::from({})", quote_rust(s))),
-            other => Err(EmitError::ShapeMismatch {
-                expected: "a token-text string literal".to_string(),
-                found: describe(other),
-            }),
-        },
+            EmitTask::Field { spec, node } => match spec {
+                FieldSpec::Opt(inner) => match node {
+                    DebugNode::Ident(name) if name == "None" => {
+                        output.push_str("None");
+                    },
+                    DebugNode::Call { head, args } if head == "Some" && args.len() == 1 => {
+                        output.push_str("Some(");
+                        tasks.push(EmitTask::Text(")"));
+                        tasks.push(EmitTask::Field { spec: inner, node: &args[0] });
+                    },
+                    other => {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: "`Some(..)` or `None`".to_string(),
+                            found: describe(other),
+                        })
+                    },
+                },
+                FieldSpec::Cat(category) => {
+                    output.push_str("std::sync::Arc::new(");
+                    tasks.push(EmitTask::Text(")"));
+                    tasks.push(EmitTask::Category { category, node });
+                },
+                FieldSpec::Var => output.push_str(&emit_ordvar(node)?),
+                FieldSpec::Native(native) => output.push_str(&emit_native(native, node)?),
+                FieldSpec::Coll { kind, elem } => {
+                    tasks.push(EmitTask::Collection { kind, elem, node, is_literal: false })
+                },
+                FieldSpec::CollLit { kind, elem } => {
+                    tasks.push(EmitTask::Collection { kind, elem, node, is_literal: true })
+                },
+                FieldSpec::Scope1 { body, .. } => match node {
+                    DebugNode::Struct { head, fields } if head == "Scope" => {
+                        let pattern = field_named(fields, "pattern")?;
+                        let body_node = field_named(fields, "body")?;
+                        output.push_str("mettail_runtime::Scope::from_parts_unsafe(");
+                        output.push_str(&emit_binder(pattern)?);
+                        output.push_str(", std::sync::Arc::new(");
+                        tasks.push(EmitTask::Text("))"));
+                        tasks.push(EmitTask::Category { category: body, node: body_node });
+                    },
+                    other => {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: "`Scope { pattern: .., body: .. }`".to_string(),
+                            found: describe(other),
+                        })
+                    },
+                },
+                FieldSpec::ScopeN { body, .. } => match node {
+                    DebugNode::Struct { head, fields } if head == "Scope" => {
+                        let pattern = field_named(fields, "pattern")?;
+                        let body_node = field_named(fields, "body")?;
+                        let binders = match pattern {
+                            DebugNode::List(items) => items
+                                .iter()
+                                .map(emit_binder)
+                                .collect::<Result<Vec<_>, _>>()?,
+                            other => {
+                                return Err(EmitError::ShapeMismatch {
+                                    expected: "a `[Binder(..), ..]` multi-binder pattern"
+                                        .to_string(),
+                                    found: describe(other),
+                                })
+                            },
+                        };
+                        output.push_str("mettail_runtime::Scope::from_parts_unsafe(vec![");
+                        output.push_str(&binders.join(", "));
+                        output.push_str("], std::sync::Arc::new(");
+                        tasks.push(EmitTask::Text("))"));
+                        tasks.push(EmitTask::Category { category: body, node: body_node });
+                    },
+                    other => {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: "`Scope { pattern: [..], body: .. }`".to_string(),
+                            found: describe(other),
+                        })
+                    },
+                },
+                FieldSpec::OpaqueToken => match node {
+                    DebugNode::Str(text) => {
+                        output.push_str("std::string::String::from(");
+                        output.push_str(&quote_rust(text));
+                        output.push(')');
+                    },
+                    other => {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: "a token-text string literal".to_string(),
+                            found: describe(other),
+                        })
+                    },
+                },
+                FieldSpec::Pred => {
+                    return Err(EmitError::UnsupportedFieldType {
+                        descriptor: "pred (BehavioralPred)".to_string(),
+                    })
+                },
+                FieldSpec::OpaqueGuest => {
+                    return Err(EmitError::UnsupportedFieldType {
+                        descriptor: "opaque:guest (Arc<FltNode>)".to_string(),
+                    })
+                },
+            },
 
-        FieldSpec::Pred => Err(EmitError::UnsupportedFieldType {
-            descriptor: "pred (BehavioralPred)".to_string(),
-        }),
-        FieldSpec::OpaqueGuest => Err(EmitError::UnsupportedFieldType {
-            descriptor: "opaque:guest (Arc<FltNode>)".to_string(),
-        }),
+            EmitTask::Fields { specs, args, index } => {
+                if index < specs.len() {
+                    if index != 0 {
+                        output.push_str(", ");
+                    }
+                    tasks.push(EmitTask::Fields { specs, args, index: index + 1 });
+                    tasks.push(EmitTask::Field { spec: &specs[index], node: &args[index] });
+                }
+            },
+
+            EmitTask::Collection { kind, elem, node, is_literal } => match kind {
+                "HashBag" => match node {
+                    DebugNode::Struct { head, fields } if head == "HashBag" => {
+                        let counts = field_named(fields, "counts")?;
+                        let entries = match counts {
+                            DebugNode::Map(entries) => entries.as_slice(),
+                            DebugNode::Set(items) if items.is_empty() => &[],
+                            other => {
+                                return Err(EmitError::ShapeMismatch {
+                                    expected: "`counts: {elem: n, ..}`".to_string(),
+                                    found: describe(other),
+                                })
+                            },
+                        };
+                        output.push_str("mettail_runtime::HashBag::from_iter(vec![");
+                        tasks.push(EmitTask::Text("])"));
+                        tasks.push(EmitTask::HashBagEntries {
+                            category: elem,
+                            entries,
+                            index: 0,
+                            repeats_left: 0,
+                            wrote_value: false,
+                        });
+                    },
+                    other => {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: "`HashBag { counts: .., total_count: .. }`".to_string(),
+                            found: describe(other),
+                        })
+                    },
+                },
+                "Vec" => match node {
+                    DebugNode::List(items) => {
+                        output.push_str("vec![");
+                        tasks.push(EmitTask::Text("]"));
+                        tasks.push(EmitTask::Categories { category: elem, nodes: items, index: 0 });
+                    },
+                    other => {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: "a `[..]` list".to_string(),
+                            found: describe(other),
+                        })
+                    },
+                },
+                "HashSet" => {
+                    let inner = unwrap_lit_container(node, "HashSetLit");
+                    let items = match inner {
+                        DebugNode::Set(items) | DebugNode::List(items) => items.as_slice(),
+                        DebugNode::Map(entries) if entries.is_empty() => &[],
+                        other => {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "a `{..}` set".to_string(),
+                                found: describe(other),
+                            })
+                        },
+                    };
+                    let constructor = if is_literal {
+                        "mettail_runtime::HashSetLit::from_iter"
+                    } else {
+                        "std::collections::HashSet::from_iter"
+                    };
+                    output.push_str(constructor);
+                    output.push_str("(vec![");
+                    tasks.push(EmitTask::Text("])"));
+                    tasks.push(EmitTask::Categories { category: elem, nodes: items, index: 0 });
+                },
+                "HashMap" => {
+                    let inner = unwrap_lit_container(node, "HashMapLit");
+                    let entries = match inner {
+                        DebugNode::Map(entries) => entries.as_slice(),
+                        DebugNode::Set(items) if items.is_empty() => &[],
+                        other => {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "a `{k: v, ..}` map".to_string(),
+                                found: describe(other),
+                            })
+                        },
+                    };
+                    output.push_str("mettail_runtime::HashMapLit::from_iter");
+                    output.push_str("(vec![");
+                    tasks.push(EmitTask::Text("])"));
+                    tasks.push(EmitTask::MapEntries { category: elem, entries, index: 0 });
+                },
+                "PathMap" => match node {
+                    DebugNode::Ident(mode) if mode == "Empty" => {
+                        output.push_str("mettail_runtime::PathMapLit::new()");
+                    },
+                    DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Set" => {
+                        let inner = unwrap_lit_container(&args[0], "HashMapLit");
+                        let entries = match inner {
+                            DebugNode::Map(entries) => entries.as_slice(),
+                            DebugNode::Set(items) if items.is_empty() => &[],
+                            other => {
+                                return Err(EmitError::ShapeMismatch {
+                                    expected: "`Set(HashMapLit({key: (), ..}))`".to_string(),
+                                    found: describe(other),
+                                })
+                            },
+                        };
+                        for (_, unit) in entries {
+                            if !matches!(unit, DebugNode::Tuple(items) if items.is_empty()) {
+                                return Err(EmitError::ShapeMismatch {
+                                    expected: "the unit marker `()` for set-mode path membership"
+                                        .to_string(),
+                                    found: describe(unit),
+                                });
+                            }
+                        }
+                        output.push_str("mettail_runtime::PathMapLit::from_set_iter(vec![");
+                        tasks.push(EmitTask::Text("])"));
+                        tasks.push(EmitTask::PathSetEntries { category: elem, entries, index: 0 });
+                    },
+                    DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Map" => {
+                        let inner = unwrap_lit_container(&args[0], "HashMapLit");
+                        let entries = match inner {
+                            DebugNode::Map(entries) => entries.as_slice(),
+                            DebugNode::Set(items) if items.is_empty() => &[],
+                            other => {
+                                return Err(EmitError::ShapeMismatch {
+                                    expected: "`Map(HashMapLit({key: value, ..}))`".to_string(),
+                                    found: describe(other),
+                                })
+                            },
+                        };
+                        output.push_str("mettail_runtime::PathMapLit::from_map_iter(vec![");
+                        tasks.push(EmitTask::Text("])"));
+                        tasks.push(EmitTask::MapEntries { category: elem, entries, index: 0 });
+                    },
+                    other => {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: "`Empty`, `Set(HashMapLit(..))`, or `Map(HashMapLit(..))`"
+                                .to_string(),
+                            found: describe(other),
+                        })
+                    },
+                },
+                other => {
+                    return Err(EmitError::UnsupportedFieldType {
+                        descriptor: format!("collection kind `{other}`"),
+                    })
+                },
+            },
+
+            EmitTask::Categories { category, nodes, index } => {
+                if let Some(node) = nodes.get(index) {
+                    if index != 0 {
+                        output.push_str(", ");
+                    }
+                    tasks.push(EmitTask::Categories { category, nodes, index: index + 1 });
+                    tasks.push(EmitTask::Category { category, node });
+                }
+            },
+            EmitTask::MapEntries { category, entries, index } => {
+                if let Some((key, value)) = entries.get(index) {
+                    if index != 0 {
+                        output.push_str(", ");
+                    }
+                    output.push('(');
+                    tasks.push(EmitTask::MapEntries { category, entries, index: index + 1 });
+                    tasks.push(EmitTask::Text(")"));
+                    tasks.push(EmitTask::Category { category, node: value });
+                    tasks.push(EmitTask::Text(", "));
+                    tasks.push(EmitTask::Category { category, node: key });
+                }
+            },
+            EmitTask::PathSetEntries { category, entries, index } => {
+                if let Some((key, _)) = entries.get(index) {
+                    if index != 0 {
+                        output.push_str(", ");
+                    }
+                    tasks.push(EmitTask::PathSetEntries { category, entries, index: index + 1 });
+                    tasks.push(EmitTask::Category { category, node: key });
+                }
+            },
+            EmitTask::HashBagEntries {
+                category,
+                entries,
+                index,
+                repeats_left,
+                wrote_value,
+            } => {
+                if repeats_left != 0 {
+                    if wrote_value {
+                        output.push_str(", ");
+                    }
+                    tasks.push(EmitTask::HashBagEntries {
+                        category,
+                        entries,
+                        index,
+                        repeats_left: repeats_left - 1,
+                        wrote_value: true,
+                    });
+                    tasks.push(EmitTask::Category { category, node: &entries[index - 1].0 });
+                } else if let Some((_, count)) = entries.get(index) {
+                    let repeats = match count {
+                        DebugNode::Int(count) if *count >= 0 => {
+                            usize::try_from(*count).map_err(|_| EmitError::ShapeMismatch {
+                                expected: "a non-negative multiplicity that fits `usize`"
+                                    .to_string(),
+                                found: format!("the integer {count}"),
+                            })?
+                        },
+                        other => {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "a non-negative multiplicity".to_string(),
+                                found: describe(other),
+                            })
+                        },
+                    };
+                    tasks.push(EmitTask::HashBagEntries {
+                        category,
+                        entries,
+                        index: index + 1,
+                        repeats_left: repeats,
+                        wrote_value,
+                    });
+                }
+            },
+        }
     }
+
+    Ok(output)
 }
 
 /// `OrdVar(Free(FreeVar { unique_id: UniqueId(n), pretty_name: Some("x") }))`.
@@ -1234,147 +1552,6 @@ fn free_var_name(node: &DebugNode) -> Result<String, EmitError> {
     }
 }
 
-/// A collection field. `is_literal` selects the native LITERAL wrapper type
-/// (`HashSetLit`, `HashMapLit`, `PathMapLit`) over the plain container.
-fn emit_collection(
-    schema: &Schema,
-    kind: &str,
-    elem: &str,
-    node: &DebugNode,
-    is_literal: bool,
-) -> Result<String, EmitError> {
-    match kind {
-        "HashBag" => match node {
-            // `HashBag`'s `Debug` is `HashBag { counts: {elem: n, ..}, total_count: t }`. The
-            // multiplicities are expanded back into a flat iterator, because `from_iter`
-            // counts repeats — reconstructing `total_count` by hand would be a second source
-            // of truth for a number the bag derives itself.
-            DebugNode::Struct { head, fields } if head == "HashBag" => {
-                let counts = field_named(fields, "counts")?;
-                let entries = match counts {
-                    DebugNode::Map(entries) => entries.as_slice(),
-                    DebugNode::Set(items) if items.is_empty() => &[],
-                    other => {
-                        return Err(EmitError::ShapeMismatch {
-                            expected: "`counts: {elem: n, ..}`".to_string(),
-                            found: describe(other),
-                        })
-                    },
-                };
-                let mut parts: Vec<String> = Vec::with_capacity(entries.len());
-                for (key, count) in entries {
-                    let repeats = match count {
-                        DebugNode::Int(n) if *n >= 0 => *n as usize,
-                        other => {
-                            return Err(EmitError::ShapeMismatch {
-                                expected: "a non-negative multiplicity".to_string(),
-                                found: describe(other),
-                            })
-                        },
-                    };
-                    // ⚠ Elements are BARE, not `Arc`-wrapped: the generated enums declare
-                    // `PPar(HashBag<Proc>)`, not `HashBag<Arc<Proc>>`. Only a category FIELD
-                    // is `Arc`-wrapped. Getting this backwards produces source that reads
-                    // plausibly and does not compile.
-                    let rendered = emit_category(schema, elem, key)?;
-                    for _ in 0..repeats {
-                        parts.push(rendered.clone());
-                    }
-                }
-                Ok(format!("mettail_runtime::HashBag::from_iter(vec![{}])", parts.join(", ")))
-            },
-            other => Err(EmitError::ShapeMismatch {
-                expected: "`HashBag { counts: .., total_count: .. }`".to_string(),
-                found: describe(other),
-            }),
-        },
-
-        "Vec" => match node {
-            DebugNode::List(items) => {
-                let mut parts = Vec::with_capacity(items.len());
-                for item in items {
-                    parts.push(emit_category(schema, elem, item)?);
-                }
-                Ok(format!("vec![{}]", parts.join(", ")))
-            },
-            other => Err(EmitError::ShapeMismatch {
-                expected: "a `[..]` list".to_string(),
-                found: describe(other),
-            }),
-        },
-
-        // ⚠ `HashSetLit`, `HashMapLit` and `PathMapLit` are NEWTYPES with a DERIVED `Debug`,
-        // so their text is `HashSetLit({..})` — the type name wrapping the inner container.
-        // `HashBag` above is different: it has a hand-written `Debug` that prints its FIELDS
-        // (`HashBag { counts: .., total_count: .. }`) and no wrapping call. The two shapes
-        // are not interchangeable, and a reader that assumed one would reject the other with
-        // a message about the wrong thing.
-        "HashSet" => {
-            let inner = unwrap_lit_container(node, "HashSetLit")?;
-            let items = match inner {
-                DebugNode::Set(items) => items.as_slice(),
-                // An empty brace group is reported as an empty map by the parser, because
-                // `{}` is genuinely ambiguous between the two.
-                DebugNode::Map(entries) if entries.is_empty() => &[],
-                DebugNode::List(items) => items.as_slice(),
-                other => {
-                    return Err(EmitError::ShapeMismatch {
-                        expected: "a `{..}` set".to_string(),
-                        found: describe(other),
-                    })
-                },
-            };
-            let mut parts = Vec::with_capacity(items.len());
-            for item in items {
-                parts.push(emit_category(schema, elem, item)?);
-            }
-            let ctor = if is_literal {
-                "mettail_runtime::HashSetLit::from_iter"
-            } else {
-                "std::collections::HashSet::from_iter"
-            };
-            Ok(format!("{ctor}(vec![{}])", parts.join(", ")))
-        },
-
-        "HashMap" | "PathMap" => {
-            let wrapper = if kind == "HashMap" {
-                "HashMapLit"
-            } else {
-                "PathMapLit"
-            };
-            let inner = unwrap_lit_container(node, wrapper)?;
-            let entries = match inner {
-                DebugNode::Map(entries) => entries.as_slice(),
-                DebugNode::Set(items) if items.is_empty() => &[],
-                other => {
-                    return Err(EmitError::ShapeMismatch {
-                        expected: "a `{k: v, ..}` map".to_string(),
-                        found: describe(other),
-                    })
-                },
-            };
-            let mut parts = Vec::with_capacity(entries.len());
-            for (key, value) in entries {
-                parts.push(format!(
-                    "({}, {})",
-                    emit_category(schema, elem, key)?,
-                    emit_category(schema, elem, value)?
-                ));
-            }
-            let ctor = if kind == "HashMap" {
-                "mettail_runtime::HashMapLit::from_iter"
-            } else {
-                "mettail_runtime::PathMapLit::from_iter"
-            };
-            Ok(format!("{ctor}(vec![{}])", parts.join(", ")))
-        },
-
-        other => Err(EmitError::UnsupportedFieldType {
-            descriptor: format!("collection kind `{other}`"),
-        }),
-    }
-}
-
 /// A bare native payload.
 ///
 /// The DECLARED type is what the schema records, and it is not always the EMITTED field
@@ -1384,6 +1561,35 @@ fn emit_collection(
 fn emit_native(declared: &str, node: &DebugNode) -> Result<String, EmitError> {
     let last = declared.rsplit("::").next().unwrap_or(declared);
     match last {
+        "Vec<u8>" => match node {
+            DebugNode::List(items) => {
+                let mut bytes = Vec::with_capacity(items.len());
+                for item in items {
+                    match item {
+                        DebugNode::Int(value) => {
+                            let byte = u8::try_from(*value).map_err(|_| {
+                                EmitError::ShapeMismatch {
+                                    expected: "a byte-array element in `0..=255`".to_string(),
+                                    found: describe(item),
+                                }
+                            })?;
+                            bytes.push(format!("{byte}u8"));
+                        },
+                        other => {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "a byte-array integer element".to_string(),
+                                found: describe(other),
+                            })
+                        },
+                    }
+                }
+                Ok(format!("vec![{}]", bytes.join(", ")))
+            },
+            other => Err(EmitError::ShapeMismatch {
+                expected: "a byte-array `[..]` list".to_string(),
+                found: describe(other),
+            }),
+        },
         "str" | "String" => match node {
             DebugNode::Str(s) => Ok(format!("std::string::String::from({})", quote_rust(s))),
             other => Err(EmitError::ShapeMismatch {
@@ -1496,31 +1702,19 @@ fn emit_native(declared: &str, node: &DebugNode) -> Result<String, EmitError> {
 /// `CollectionLiteral` variant, `emit_category` peels `MapLit(..)` and hands on what is
 /// inside, which is the wrapper; for a plain collection FIELD the node is the wrapper
 /// itself. Accepting both keeps one code path for the two.
-fn unwrap_lit_container<'a>(
-    node: &'a DebugNode,
-    _wrapper: &str,
-) -> Result<&'a DebugNode, EmitError> {
-    // Peeling is a LOOP, not a single step, because the wrappers NEST:
-    // `PathMapLit<K, V>(HashMapLit<K, V>)` is a newtype over a newtype and both derive
-    // `Debug`, so a Rholang path map prints `PathMapLit(HashMapLit({}))`. Measured on
-    // corpus entries 0 and 22 of `gen_rholang_prop`, which are the only two that reach two
-    // levels — a single-step peel left them looking like a shape mismatch rather than a
-    // wrapper still in the way.
-    //
-    // Only these three names are peeled, and they are runtime CONTAINER types rather than
-    // grammar constructors, so peeling cannot swallow a language variant: a
-    // collection-literal variant is spelled `MapLit`/`SetLit`/`PathmapLit` and is consumed
-    // by `emit_category` before the container is ever reached.
-    const CONTAINER_WRAPPERS: &[&str] = &["PathMapLit", "HashMapLit", "HashSetLit"];
+fn unwrap_lit_container<'a>(node: &'a DebugNode, wrapper: &str) -> &'a DebugNode {
+    // Peel only the field's declared runtime container. In particular,
+    // `PathMapLit` is not an interchangeable wrapper: it is now
+    // `Empty | Set | Map`, and discarding that mode would recreate mixed
+    // membership. A loop tolerates repeated derives of the same newtype while
+    // refusing every differently named carrier.
     let mut current = node;
     loop {
         match current {
-            DebugNode::Call { head, args }
-                if args.len() == 1 && CONTAINER_WRAPPERS.contains(&head.as_str()) =>
-            {
+            DebugNode::Call { head, args } if args.len() == 1 && head == wrapper => {
                 current = &args[0];
             },
-            other => return Ok(other),
+            other => return other,
         }
     }
 }

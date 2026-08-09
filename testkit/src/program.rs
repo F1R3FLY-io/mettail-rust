@@ -372,7 +372,8 @@ impl<'a> ProgramTestSuite<'a> {
         let places: Vec<(String, u64)> = channels.iter().map(|ch| (ch.clone(), 0u64)).collect();
 
         // Build transitions from detected send/receive patterns.
-        let mut transitions: Vec<(String, Vec<(usize, u64)>, Vec<(usize, u64)>)> = Vec::new();
+        type PetriTransition = (String, Vec<(usize, u64)>, Vec<(usize, u64)>);
+        let mut transitions: Vec<PetriTransition> = Vec::new();
 
         for (i, ch) in channels.iter().enumerate() {
             // Check if this channel has sends.

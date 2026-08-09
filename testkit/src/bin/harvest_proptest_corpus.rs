@@ -44,7 +44,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::process::ExitCode;
 
-use mettail_testkit::ctor::{canonicalize_debug, emit_category, parse_shrinks_to, Schema};
+use mettail_testkit::corpus_migration::{migrate_rholang_corpus, RholangCorpusMigration};
+use mettail_testkit::ctor::{
+    canonicalize_debug, emit_category, parse_shrinks_to, render_debug, Schema,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -146,7 +149,27 @@ fn main() -> ExitCode {
             ));
             continue;
         }
-        let node = &bindings[0].value;
+        let mut node = bindings[0].value.clone();
+        let migration = if schema.language == "Rholang" {
+            match migrate_rholang_corpus(&mut node) {
+                Ok(count) => count,
+                Err(error) => {
+                    unresolved.push((
+                        index,
+                        seed,
+                        vec![format!("cannot migrate the historical constructor tree: {error}")],
+                    ));
+                    continue;
+                },
+            }
+        } else {
+            RholangCorpusMigration::default()
+        };
+        let current_text = if migration == RholangCorpusMigration::default() {
+            (*text).to_string()
+        } else {
+            format!("term = {}", render_debug(&node))
+        };
 
         let candidates: Vec<String> = match &forced_category {
             Some(c) => vec![c.clone()],
@@ -160,7 +183,7 @@ fn main() -> ExitCode {
         let mut hits: Vec<(String, String)> = Vec::new();
         let mut misses: Vec<String> = Vec::new();
         for category in &candidates {
-            match emit_category(&schema, category, node) {
+            match emit_category(&schema, category, &node) {
                 Ok(source) => hits.push((category.clone(), source)),
                 Err(e) => {
                     if let mettail_testkit::ctor::EmitError::UnknownConstructor { label } = &e {
@@ -175,7 +198,7 @@ fn main() -> ExitCode {
             0 => unresolved.push((index, seed, misses)),
             _ => {
                 resolved += 1;
-                emit_test(index, seed, text, &hits);
+                emit_test(index, seed, text, &current_text, migration, &hits);
             },
         }
     }
@@ -208,59 +231,91 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn emit_test(index: usize, seed: &str, recorded: &str, hits: &[(String, String)]) {
-    let (category, source) = &hits[0];
+fn emit_test(
+    index: usize,
+    seed: &str,
+    recorded: &str,
+    current_text: &str,
+    migration: RholangCorpusMigration,
+    hits: &[(String, String)],
+) {
     // `term = ` is the proptest binding prefix; the ORACLE is the value text alone.
-    let value_text = recorded.strip_prefix("term = ").unwrap_or(recorded);
+    let value_text = current_text.strip_prefix("term = ").unwrap_or(current_text);
     let oracle = canonicalize_debug(value_text);
 
-    println!("/// Corpus entry {index} — seed `cc {seed}`.");
-    println!("///");
-    if hits.len() > 1 {
-        println!(
-            "/// ⚠ The term emits under {} categories: {}. `{category}` is used; the \
-             others are listed so the choice is visible rather than silent.",
-            hits.len(),
-            hits.iter()
-                .map(|(c, _)| c.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+    for (category, source) in hits {
+        println!("/// Corpus entry {index} — seed `cc {seed}`.");
         println!("///");
+        if hits.len() > 1 {
+            println!(
+                "/// The erased root type admits {} exact interpretations: {}. This test \
+                 promotes the `{category}` interpretation; every other type-correct \
+                 interpretation is promoted by its own sibling test.",
+                hits.len(),
+                hits.iter()
+                    .map(|(candidate, _)| candidate.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!("///");
+        }
+        println!("/// Recorded counterexample, verbatim from the corpus:");
+        println!("/// ```text");
+        for chunk in wrap(recorded, 92) {
+            println!("/// {chunk}");
+        }
+        println!("/// ```");
+        if migration != RholangCorpusMigration::default() {
+            println!("///");
+            println!(
+                "/// Migrated to the current schema ({} method call(s), {} byte carrier(s), \
+                 {} neutral path-map carrier(s)):",
+                migration.method_calls, migration.byte_carriers, migration.pathmap_empty_carriers,
+            );
+            println!("/// ```text");
+            for chunk in wrap(current_text, 92) {
+                println!("/// {chunk}");
+            }
+            println!("/// ```");
+        }
+        println!("#[test]");
+        println!("fn corpus_{index}_{}() {{", category.to_lowercase());
+        println!("    mettail_runtime::clear_var_cache();");
+        println!("    // 1 — the term CONSTRUCTS.");
+        println!("    let term: {category} = {source};");
+        println!();
+        println!(
+            "    // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the"
+        );
+        println!(
+            "    //     text the corpus recorded, character for character. This is what makes"
+        );
+        println!("    //     \"passes because it built the wrong term\" impossible. Only");
+        println!("    //     `UniqueId(n)` and the ORDER of hash-container entries are quotiented");
+        println!("    //     out, and both are properties of the PROCESS rather than of the term:");
+        println!("    //     `UniqueId` comes from a global counter (and `FreeVar` equality is by");
+        println!("    //     unique_id alone, with the name fixing the identity through the var");
+        println!(
+            "    //     cache), and a `HashBag` is a multiset whose `PartialEq` ignores order."
+        );
+        println!("    let recorded = {};", rust_str_literal(&oracle));
+        println!("    assert_eq!(");
+        println!("        canonicalize_debug(&format!(\"{{:?}}\", term)),");
+        println!("        recorded,");
+        println!("        \"the reconstructed term is not the recorded counterexample\"");
+        println!("    );");
+        println!();
+        println!(
+            "    // 3 — the properties the corpus's generated suite checks for this category."
+        );
+        println!("    let _ = format!(\"{{:?}}\", term);            // <cat>_debug_does_not_panic");
+        println!(
+            "    let _ = format!(\"{{}}\", term);              // <cat>_display_does_not_panic"
+        );
+        println!("    assert_eq!(term.clone(), term);           // <cat>_clone_eq");
+        println!("}}");
+        println!();
     }
-    println!("/// Recorded counterexample, verbatim from the corpus:");
-    println!("/// ```text");
-    for chunk in wrap(recorded, 92) {
-        println!("/// {chunk}");
-    }
-    println!("/// ```");
-    println!("#[test]");
-    println!("fn corpus_{index}_{}() {{", category.to_lowercase());
-    println!("    mettail_runtime::clear_var_cache();");
-    println!("    // 1 — the term CONSTRUCTS.");
-    println!("    let term: {category} = {source};");
-    println!();
-    println!("    // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the");
-    println!("    //     text the corpus recorded, character for character. This is what makes");
-    println!("    //     \"passes because it built the wrong term\" impossible. Only");
-    println!("    //     `UniqueId(n)` and the ORDER of hash-container entries are quotiented");
-    println!("    //     out, and both are properties of the PROCESS rather than of the term:");
-    println!("    //     `UniqueId` comes from a global counter (and `FreeVar` equality is by");
-    println!("    //     unique_id alone, with the name fixing the identity through the var");
-    println!("    //     cache), and a `HashBag` is a multiset whose `PartialEq` ignores order.");
-    println!("    let recorded = {};", rust_str_literal(&oracle));
-    println!("    assert_eq!(");
-    println!("        canonicalize_debug(&format!(\"{{:?}}\", term)),");
-    println!("        recorded,");
-    println!("        \"the reconstructed term is not the recorded counterexample\"");
-    println!("    );");
-    println!();
-    println!("    // 3 — the properties the corpus's generated suite checks for this category.");
-    println!("    let _ = format!(\"{{:?}}\", term);            // <cat>_debug_does_not_panic");
-    println!("    let _ = format!(\"{{}}\", term);              // <cat>_display_does_not_panic");
-    println!("    assert_eq!(term.clone(), term);           // <cat>_clone_eq");
-    println!("}}");
-    println!();
 }
 
 /// A Rust string literal for `s`, escaped explicitly.

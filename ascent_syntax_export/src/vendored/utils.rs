@@ -158,54 +158,78 @@ pub fn token_stream_replace_macro_idents(
     input: TokenStream,
     ident_replacements: &HashMap<Ident, TokenStream>,
 ) -> TokenStream {
-    fn ts_replace(
-        ts: TokenStream,
-        ident_replacements: &HashMap<Ident, TokenStream>,
-        res: &mut Vec<TokenTree>,
-    ) {
-        let mut last_dollar = None;
-        for tt in ts {
-            if let Some(dollar) = last_dollar.take() {
-                let is_match = match &tt {
-                    TokenTree::Ident(after_dollar_ident) => {
-                        ident_replacements.get(after_dollar_ident)
-                    },
-                    _ => None,
-                };
-                if let Some(replacement) = is_match {
-                    res.extend(replacement.clone());
-                    continue;
-                } else {
-                    res.push(dollar);
-                }
-            }
-            let is_dollar = match &tt {
-                TokenTree::Punct(punct) => punct.as_char() == '$',
-                _ => false,
-            };
-            if is_dollar {
-                last_dollar = Some(tt);
-            } else {
-                match tt {
-                    TokenTree::Group(grp) => {
-                        let replaced =
-                            token_stream_replace_macro_idents(grp.stream(), ident_replacements);
-                        let updated_group = Group::new(grp.delimiter(), replaced);
-                        res.push(TokenTree::Group(updated_group));
-                    },
-                    _ => res.push(tt),
-                }
+    struct StreamFrame {
+        tokens: proc_macro2::token_stream::IntoIter,
+        output: Vec<TokenTree>,
+        pending_dollar: Option<TokenTree>,
+        enclosing_delimiter: Option<proc_macro2::Delimiter>,
+    }
+
+    impl StreamFrame {
+        fn root(tokens: TokenStream) -> Self {
+            Self {
+                tokens: tokens.into_iter(),
+                output: Vec::new(),
+                pending_dollar: None,
+                enclosing_delimiter: None,
             }
         }
-        if let Some(dollar) = last_dollar {
-            res.push(dollar);
+
+        fn group(group: Group) -> Self {
+            Self {
+                tokens: group.stream().into_iter(),
+                output: Vec::new(),
+                pending_dollar: None,
+                enclosing_delimiter: Some(group.delimiter()),
+            }
         }
     }
 
-    let mut res = vec![];
-    ts_replace(input, ident_replacements, &mut res);
+    let mut frames = vec![StreamFrame::root(input)];
+    loop {
+        let Some(frame) = frames.last_mut() else {
+            unreachable!("the token replacement PDA always retains its root frame")
+        };
 
-    res.into_iter().collect()
+        if let Some(token) = frame.tokens.next() {
+            if let Some(dollar) = frame.pending_dollar.take() {
+                if let TokenTree::Ident(ident) = &token {
+                    if let Some(replacement) = ident_replacements.get(ident) {
+                        frame.output.extend(replacement.clone());
+                        continue;
+                    }
+                }
+                frame.output.push(dollar);
+            }
+
+            match token {
+                TokenTree::Punct(ref punct) if punct.as_char() == '$' => {
+                    frame.pending_dollar = Some(token);
+                },
+                TokenTree::Group(group) => frames.push(StreamFrame::group(group)),
+                token => frame.output.push(token),
+            }
+            continue;
+        }
+
+        let mut completed = frames
+            .pop()
+            .expect("the token replacement PDA must finish one live frame");
+        if let Some(dollar) = completed.pending_dollar.take() {
+            completed.output.push(dollar);
+        }
+        let stream = completed.output.into_iter().collect::<TokenStream>();
+        match completed.enclosing_delimiter {
+            Some(delimiter) => {
+                frames
+                    .last_mut()
+                    .expect("a group frame must have an enclosing stream")
+                    .output
+                    .push(TokenTree::Group(Group::new(delimiter, stream)));
+            },
+            None => return stream,
+        }
+    }
 }
 
 pub fn spans_eq(span1: &Span, span2: &Span) -> bool {
