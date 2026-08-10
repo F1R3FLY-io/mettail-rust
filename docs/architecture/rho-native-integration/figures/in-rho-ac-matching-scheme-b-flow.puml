@@ -23,7 +23,7 @@ participant "match driver\n<size:11>ac_match_call_par</size>" as DRV #E8F0FE
 participant "site-keyed carrier\n<b>ac:ρ/ℓ/PPar</b>\n<size:10>ac_carrier_channel</size>" as CAR #E6DBF2
 participant "co-installed AC receiver\n<size:11>ac_sigma_receiver_par</size>" as RCV #F7D9D5
 box "ONE atomic RSpace consume  (locked; check_commit; all-or-nothing)" #E6F4EA
-participant "f1r3node spatial matcher\n<size:10>sub_pars · MaximumBipartiteMatch · remainder</size>" as MAT #C9E7D4
+participant "f1r3node spatial matcher\n<size:10>ListMachine · sub_pars · remainder</size>" as MAT #C9E7D4
 end box
 participant "@OUT" as OUT #FEF7E0
 
@@ -38,7 +38,7 @@ RCV -> MAT : match  ⟨ ac_bag_pattern(PPar, k=1) , out ⟩\nagainst the carrier
 activate MAT #C9E7D4
 group ONE atomic consume — internal, unobservable (τ-free)
   MAT -> MAT : sub_pars enumerates a size-k\nsub-multiset (the selection)
-  MAT -> MAT : MaximumBipartiteMatch assigns\nk send-patterns ↔ k soup sends\n(ANY order — order-independent)
+  MAT -> MAT : ListMachine assigns\nk send-patterns ↔ k soup sends\n(ANY order — order-independent)
   MAT -> MAT : bind  rest = par remainder\n(bag ⊖ selection)
   MAT -> MAT : Receive.condition guard\n(non-linear: EEq(slotᵢ, slotⱼ)) —\ncommit ⟺ present ∧ guard
 end

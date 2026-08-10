@@ -1,9 +1,11 @@
 (*
  * LazyRelationalAcEdges: D-E4 relational-edge reuse for native AC matching.
  *
- * MaximumBipartiteMatch observes a pure edge predicate after matcher-state
- * isolation. A cacheable row retains the successful edges in an evaluated
- * target prefix and later evaluates only the suffix. This file proves that
+ * The production spatial_matcher_pda::ListMachine observes a pure edge
+ * predicate after matcher-state isolation; the compatibility
+ * MaximumBipartiteMatch surface shares the same relation utility. A cacheable
+ * row retains the successful edges in an evaluated target prefix and later
+ * evaluates only the suffix. This file proves that
  * joining the cached prefix relation with the suffix delta is exactly a full
  * rescan, that no target pair is evaluated twice when the two regions form a
  * NoDup partition, and that replacing the nominal relation by the incremental

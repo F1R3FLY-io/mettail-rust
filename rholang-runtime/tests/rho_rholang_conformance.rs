@@ -2434,7 +2434,7 @@ async fn divergence_k_target_guard_lane_normal_form_agrees_with_the_machine() {
 /// A formula is never EVALUATED. `t matches φ` lowers to one `EMatches{target, pattern}`
 /// (`rholang_ast.rs`'s `Matches` arm): the target is evaluated, the pattern is handed verbatim to
 /// the reducer's spatial matcher, and `ConnOrBody` there is a `find_map` over the disjuncts
-/// (f1r3node `rholang/src/rust/interpreter/matcher/spatial_matcher.rs`) — a disjunct that does not
+/// (f1r3node `rholang/src/rust/interpreter/matcher/spatial_matcher_pda.rs`) — a disjunct that does not
 /// match simply yields `None` from the closure and the search moves on. **There is no error
 /// channel**, so the failure mode that blocks stage B2 — f1r3node evaluating BOTH operands of
 /// `EOr` and `guard_passes` mapping any `Err` or non-boolean to `false` — has nothing to act on.

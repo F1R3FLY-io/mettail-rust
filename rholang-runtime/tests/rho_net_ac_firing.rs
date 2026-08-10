@@ -14,7 +14,8 @@
 //!     process-soup carrier, and assembles `c_ac!(⟦bag⟧, @out)` via `ac_contract_call`;
 //!  3. the runtime bridge runs `installed_rho_net_program_par() ∥ call` on the f1r3node RhoRuntime,
 //!     where the installed AC receiver (`ac_sigma_receiver_par`) matches the soup ORDER-
-//!     INDEPENDENTLY (native `sub_pars` / `MaximumBipartiteMatch`) inside one atomic `consume` and
+//!     INDEPENDENTLY (native `spatial_matcher_pda::ListMachine`, with `sub_pars` for remainders)
+//!     inside one atomic `consume` and
 //!     fires `Wrap(element)` on `@out`.
 //!
 //! The AC matcher picks ONE element of the bag, so `OUT = Wrap(e)` for some `e` in the operand bag

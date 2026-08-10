@@ -621,8 +621,9 @@ for ( <ac_collection_pattern> , out <- source ) where(cond?) { out!( ⟦R⟧σ )
 
 `ac_collection_pattern` dispatches on the `CollectionType`: `ac_bag_pattern(op, k)` = a connective
 process-`Par` with $`k`$ send-patterns `@"ac:{op}"!(FreeVar(i))` plus a process remainder
-`EVar(FreeVar(k))` (order-independent multiset match via the native `sub_pars` /
-`MaximumBipartiteMatch`); `ac_set_pattern` = a connective `ESet` with $`k`$ free-var elements plus
+`EVar(FreeVar(k))` (order-independent multiset match via the production
+`spatial_matcher_pda::ListMachine`, with `sub_pars` supplying remainders);
+`ac_set_pattern` = a connective `ESet` with $`k`$ free-var elements plus
 remainder; `ac_map_pattern` = a connective `EMap` with $`k`$ `(FreeVar(2i),FreeVar(2i+1))` entries
 plus remainder (slot count $`2k`$ for HashMap else $`k`$). A repeated variable adds an
 $`\mathrm{EEq}`$ `condition` (`ac_nonlinear_condition`); `...rest` is the connective remainder free

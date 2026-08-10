@@ -326,7 +326,8 @@ fn the_papers_ppar_parses_verbatim() {
 async fn the_separating_conjunction_splits_the_term() {
     // The target `{ @"a"!(1) | @"b"!(2) }` splits into two parallel parts. A
     // separating formula is satisfied iff SOME split satisfies both sides — which
-    // is the reducer's `list_match_single_` + `sub_pars` + `MaximumBipartiteMatch`,
+    // is the reducer's `spatial_matcher_pda::ListMachine`, with `sub_pars`
+    // supplying connective remainder candidates,
     // not anything MeTTaIL computes.
     let target = r#"{ @"a"!(1) | @"b"!(2) }"#;
 

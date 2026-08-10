@@ -130,11 +130,14 @@ CLTS, and $`\tau`$ — is summarized only briefly.
   reflects to a **process soup** (below); a `HashSet` to an `ESet`; a `HashMap` to an `EMap`.
 - **Soup**: the process-`Par` reflection of a bag — a parallel composition
   $`\big\Vert_{i} \mathtt{@"ac:}\mathrm{op}\mathtt{"}!([\![ e_i ]\!])`$ of one
-  ground send per element on the operand's shared element channel `ac:op`. Order-independence
+  ground send per element on the operand's shared element channel
+  `ac:{fingerprint}/{op}`. Order-independence
   is inherited from parallel composition (a `Par` is a multiset of processes).
-- **`ac:op` (element channel)**: the quoted name each bag element is sent on inside the soup.
-  Scoped **inside** the carried message, so it never appears free in the tuplespace and needs
-  no language fingerprint.
+- **`ac:{fingerprint}/{op}` (element channel)**: the quoted name each bag element is sent on
+  inside the soup. It is scoped **inside** the carried message, so it never appears free in the
+  tuplespace; the language fingerprint is nevertheless required as a structural discriminator,
+  preventing like-named constructors in co-installed languages from matching each other's bags
+  (INV-S6).
 - **`ESet` / `EMap`**: the f1r3node process types for a native Rholang set and map. **`ParSet`
   / `ParMap`**: their normalized backing stores. `ParSet::new` **sorts and deduplicates** its
   elements (so an `ESet` is a genuine set); `ParMap::new` sorts by key and deduplicates on key
@@ -143,15 +146,19 @@ CLTS, and $`\tau`$ — is summarized only briefly.
   $`\mathit{key} \Rightarrow \mathit{value}`$ reflects to as a `GroundTerm` node — the label applied
   to the reflected key and value, written `^kv(⟦key⟧, ⟦value⟧)`. It cannot collide with any user
   constructor (a Rust identifier never contains `^`). Defined as `AC_MAP_ENTRY_LABEL`.
-- **Connective pattern**: a Rholang pattern that matches **order-independently** with a
-  remainder — the `sub_pars` path over a process-`Par`, or the `list_match_single_` path over
-  an `ESet` / `EMap`. Contrast a positional `EList` pattern (`fold_match`), which matches
+- **Connective pattern**: a Rholang pattern that the production
+  `spatial_matcher_pda::ListMachine` matches **order-independently** with a remainder;
+  `sub_pars` supplies process-`Par` remainder candidates, while the same list PDA handles
+  `ESet` / `EMap` carriers. Contrast a positional `EList` pattern
+  (`fold_match`), which matches
   element $`i`$ against pattern $`i`$ and would silently impose an order.
-- **`sub_pars` / `MaximumBipartiteMatch` / `remainder`**: f1r3node's spatial matcher
-  (`f1r3node/rholang/src/rust/interpreter/matcher/`). `sub_pars` enumerates selections
-  (subset / complement); `MaximumBipartiteMatch` (`maximum_bipartite_match.rs`) assigns the
-  $`k`$ element patterns to $`k`$ carrier elements in any order; the `remainder` binds the
-  leftover — the residual `rest`. All inside one `consume`.
+- **`ListMachine` / `sub_pars` / `remainder`**: f1r3node's production spatial
+  matcher (`f1r3node/rholang/src/rust/interpreter/matcher/`).
+  `sub_pars` enumerates subset/complement candidates; the explicit-frame
+  `spatial_matcher_pda::ListMachine` assigns the $`k`$ element patterns to
+  $`k`$ carrier elements in any order; the `remainder` binds the leftover
+  `rest`. `MaximumBipartiteMatch` remains a compatibility surface sharing the same
+  sparse relation utility, not the production driver. All work occurs inside one `consume`.
 - **`Receive.condition`**: an optional guard on a Rholang `for`-receive that the reducer
   evaluates **before committing** the `consume`. AC uses it for the non-linear consistency
   guard ($`\mathtt{EEq}`$ over repeated occurrences) and the `Zip` correlation.
@@ -190,7 +197,7 @@ family-agnostic: whole-term reflection, the spread, and the locate-all site walk
 *is* an AC system: parallel composition `P | Q` is associative and commutative, and a `Par` is
 a **multiset** of processes. f1r3node's spatial matcher matches a *connective* process pattern
 against a process soup by enumerating sub-multisets (`sub_pars`), assigning pattern slots to
-elements with a maximum bipartite matching (`MaximumBipartiteMatch`), and binding the leftover
+elements with the production explicit-frame `ListMachine`, and binding the leftover
 to a par-level `remainder` — this *is* order-independent multiset matching, already implemented
 and already atomic. Reflecting the operand bag as a soup and matching it with one connective
 receive therefore inherits AC matching from the host calculus rather than re-deriving a
@@ -234,7 +241,8 @@ one indivisible transaction. This is **Scheme B**: the AC decision resolves *ins
 [\![ \mathrm{op}\{e_1,\dots,e_m\} ]\!] \;=\; \big\Vert_{i=1}^{m}\ \mathtt{@"ac:}\mathrm{op}\mathtt{"}!\bigl([\![ e_i ]\!]\bigr),
 ```
 
-one ground send per element on the shared element channel `ac:op`. Order-independence is
+one ground send per element on the fingerprinted shared element channel
+`ac:{fingerprint}/{op}`. Order-independence is
 inherited from parallel composition; multiplicity is preserved because the soup is a `Vec` of
 sends (duplicates disambiguated by the reducer's `Indexed` bookkeeping). The native `ESet` /
 `EMap` carriers ([section 7](#7-the-carrier-taxonomy-hashbag-set-map-zip)) are the analogous
@@ -245,10 +253,10 @@ process-`Par` with $`k`$ send-patterns and a process remainder:
 
 | Piece | Rho shape | Binds |
 |---|---|---|
-| element slot $`i`$ ($`i < k`$) | `@"ac:op"!(FreeVar(i))` send-pattern | one bag element, $`\sigma_i`$ |
+| element slot $`i`$ ($`i < k`$) | `@"ac:{fingerprint}/{op}"!(FreeVar(i))` send-pattern | one bag element, $`\sigma_i`$ |
 | `rest` | top-level `EVar(FreeVar(k))` process remainder | the residual soup (the complement) |
 
-The native `MaximumBipartiteMatch` assigns the $`k`$ send-patterns to $`k`$ carrier sends in **any**
+The production `ListMachine` assigns the $`k`$ send-patterns to $`k`$ carrier sends in **any**
 order and binds the residual to the remainder — the order-independent multiset match, all inside
 one `consume`.
 
@@ -258,8 +266,9 @@ pattern $`i`$); only the connective / `sub_pars` path over a process-`Par` (or a
 matches order-independently and binds a par-level remainder. Matching a bag against a positional
 `EList` pattern would silently impose an order — the shuffle-invariance goal would be violated.
 
-**All-or-nothing.** The reducer runs the whole match inside one locked `consume`: `sub_pars`
-proposes a size-$`k`$ selection, `MaximumBipartiteMatch` assigns the slots, the remainder binds the
+**All-or-nothing.** The reducer runs the whole match inside one locked `consume`:
+`sub_pars` proposes a size-$`k`$ selection, the production `ListMachine` assigns
+the slots, the remainder binds the
 complement, and the `Receive.condition` guard (if any) is evaluated. Then `check_commit` either
 **commits** the whole thing — removing exactly the selection, binding `rest` to the complement,
 and running the body — or **vetoes**, leaving the bag untouched. No reachable state has consumed
@@ -426,16 +435,17 @@ routes the matching pattern symmetrically. The four kinds:
 
 | Kind | Carrier (subject side) | Backing / invariant | Connective pattern | Matcher arm |
 |---|---|---|---|---|
-| **HashBag** | soup $`\Vert_i`$ `@"ac:op"!(⟦eᵢ⟧)` | `Vec` of sends — multiplicity preserved | `ac_bag_pattern`: $`k`$ sends + `EVar` remainder | `sub_pars` · `MaximumBipartiteMatch` |
-| **HashSet** | `ESet[⟦e₀⟧, …]` | `ParSet` — sorted + **deduped** (uniqueness) | `ac_set_pattern`: $`k`$ `FreeVar` + remainder | `list_match_single_` · `ESetBody` |
-| **HashMap** | `EMap` over `^kv(⟦k⟧,⟦v⟧)` | `ParMap` — key-sorted + **key-deduped** | `ac_map_pattern`: $`k`$ `(FreeVar,FreeVar)` + remainder | `list_match_single_` · `EMapBody` |
-| **Zip** | `ESet` of `Pair` elements | `ParSet` | `ac_set_element_pattern` ×2 + `EEq` guard | `list_match_single_` + `Receive.condition` |
+| **HashBag** | soup $`\Vert_i`$ `@"ac:{fingerprint}/{op}"!(⟦eᵢ⟧)` | `Vec` of sends — multiplicity preserved | `ac_bag_pattern`: $`k`$ sends + `EVar` remainder | `ListMachine` · `sub_pars` |
+| **HashSet** | `ESet[⟦e₀⟧, …]` | `ParSet` — sorted + **deduped** (uniqueness) | `ac_set_pattern`: $`k`$ `FreeVar` + remainder | `ListMachine` · `ESetBody` |
+| **HashMap** | `EMap` over `^kv(⟦k⟧,⟦v⟧)` | `ParMap` — key-sorted + **key-deduped** | `ac_map_pattern`: $`k`$ `(FreeVar,FreeVar)` + remainder | `ListMachine` · `EMapBody` |
+| **Zip** | `ESet` of `Pair` elements | `ParSet` | `ac_set_element_pattern` ×2 + `EEq` guard | `ListMachine` + `Receive.condition` |
 
 **HashSet ($`\to`$ `ESet`).** `reflect_ac_set_par` reflects each element and builds a ground
 `ESet`; because it rides `ParSet` (sorted, deduplicated) the carrier is a genuine
 order-independent, uniqueness-preserving set. `ac_set_pattern(k)` is a connective `ESet` whose $`k`$
-elements are `FreeVar(0..k−1)` plus a `FreeVar(k)` remainder; the native `list_match_single_`
-(`ESetBody` arm) assigns the $`k`$ free-var patterns to $`k`$ set elements in any order and binds the
+elements are `FreeVar(0..k−1)` plus a `FreeVar(k)` remainder; the production
+`ListMachine` (`ESetBody`) assigns the $`k`$ free-var patterns to
+$`k`$ set elements in any order and binds the
 residual **set** to the remainder.
 
 **HashMap ($`\to`$ `EMap`).** `reflect_ac_map_par` reads each `^kv(key, value)` entry back into a
@@ -443,7 +453,8 @@ residual **set** to the remainder.
 **key-uniqueness is enforced natively** — the sorted-dedup `ParMap` invariant survives the reflect.
 `ac_map_pattern(k)` is a connective `EMap` whose $`k`$ entries are free-var pairs
 $`(\mathtt{FreeVar}(2i), \mathtt{FreeVar}(2i{+}1))`$ (key slot $`2i`$, value slot $`2i{+}1`$) plus a
-`FreeVar(2k)` remainder; the native `list_match_single_` (`EMapBody` arm) assigns the $`k`$ entry
+`FreeVar(2k)` remainder; the production `ListMachine` (`EMapBody`) assigns the
+$`k`$ entry
 patterns to $`k`$ map entries (matched key-first over the key-sorted list) and binds the residual
 **map** to the remainder. Key-uniqueness holds because the target rides `ParMap` and each residual
 is re-wrapped as an `EMap`.
@@ -811,9 +822,11 @@ the entries this document depends on:
   ([section 13](#13-the-ambient-fragment-cardelligordon-alignment)).*
 
 **f1r3node spatial matcher** (the native par-bag AC engine this design reuses):
-`f1r3node/rholang/src/rust/interpreter/matcher/` — `sub_pars.rs` (selection / complement),
-`maximum_bipartite_match.rs` (`MaximumBipartiteMatch`), `list_match.rs` (`ESetBody` / `EMapBody` /
-remainder), and `spatial_matcher.rs` (the connective / `var_level` remainder).
+`f1r3node/rholang/src/rust/interpreter/matcher/` —
+`spatial_matcher_pda.rs` (the production explicit-frame matcher and `ListMachine`),
+`lazy_relation.rs` (sparse prefix-plus-delta rows), and `sub_pars.rs`
+(selection/complement candidates). `maximum_bipartite_match.rs` and `list_match.rs`
+remain compatibility surfaces covered by equivalence tests.
 
 **Formal-verification theories referenced** (all zero-admission, under `formal/rocq/`):
 `advanced_automata/theories/InRhoAcMatchMultiset.v`,

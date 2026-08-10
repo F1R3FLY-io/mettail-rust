@@ -39,7 +39,7 @@ package "STRUCTURAL base family  —  matching is a CHAIN of internal COMMs" #EA
 }
 
 package "AC family  —  matching is INTERNAL to ONE consume" #E6F4EA {
-  rectangle "sub_pars pick-k  ·  MaximumBipartiteMatch\n·  bind rest  ·  Receive.condition guard\n<b>all INSIDE one locked consume (check_commit)</b>\n— NOT a sequence of observable COMMs —" as A1 #C9E7D4
+  rectangle "sub_pars pick-k  ·  production ListMachine\n·  bind rest  ·  Receive.condition guard\n<b>all INSIDE one locked consume (check_commit)</b>\n— NOT a sequence of observable COMMs —" as A1 #C9E7D4
   rectangle "AC adds ZERO new τ transitions to the CLTS\nmatching-locus independence is IMMEDIATE\n⇒  NO (iii)-style weak bisimulation needed" as ANEED #FCF3D0
   A1 -[#2E8B57,thickness=2]-> ANEED
 }

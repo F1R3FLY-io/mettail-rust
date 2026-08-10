@@ -88,7 +88,7 @@ terms {
 
 **Generated:** Category relations, `eq_list_*`, `rw_list_*` (and bag equivalents); congruence for all positions (Option A). Collection categories get **ListLit** / **BagLit** enum variants and fold/step rules that pass payloads. Projection relations (e.g. list_nth, bag_count) can be added later if needed.
 
-**Rholang (f1r3node):** List/Set/Tuple/Map/PathMap = collections of Par; element-wise normalization. Touchpoints: `reduce.rs`, `spatial_matcher.rs`, `list_match.rs`, `collection_normalize_matcher.rs`, `pretty_printer.rs`.
+**Rholang (f1r3node):** List/Set/Tuple/Map/PathMap = collections of Par; element-wise normalization. Touchpoints: `reduce.rs`, production `spatial_matcher_pda.rs`, `lazy_relation.rs`, `collection_normalize_matcher.rs`, and `pretty_printer.rs`; `list_match.rs` is retained as a compatibility surface.
 
 **Reconciliation:** List → List(Proc); Set → Bag(Proc) or Set(Proc); Tuple → List(Proc); Map/PathMap/arbitrary Par to be detailed in proposal.
 
@@ -101,4 +101,3 @@ terms {
 3. **Parser (PraTTaIL):** One parameterised rule per collection kind (open, close, sep from types). **ElemParse** frame and **pending_elem** when element category ≠ collection category (e.g. Proc inside List/Bag). Empty collection handling (close immediately after open). Trampoline config **has_var** = false for List/Bag.
 4. **Languages:** Calculator and rholang have List/Bag types, literals, and operations (concat, length/len, at, delete, union, remove, diff, count). rholang uses Bag delimiters `#{`, `}#`, `|` and extends **len** to lists; **concat** for strings preserved.
 5. **Tests:** `exec_empty_collection.rs` (parse/exec empty list and bag, round-trip); calculator and rholang tests updated.
-

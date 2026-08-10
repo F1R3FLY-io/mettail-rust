@@ -11,7 +11,7 @@ skinparam noteBorderColor #38A169
 
 participant "Dovetail firing\n(host AC match)" as DV
 participant "ac_contract_call\n(codegen injection)" as INJ
-participant "RSpace consume\n(native sub_pars /\nMaximumBipartiteMatch)" as RS
+participant "RSpace consume\n(production ListMachine;\nsub_pars remainders)" as RS
 participant "ac_sigma_receiver_par\n(installed AC receiver)" as RCV
 participant "OUT\n(observed rewrite)" as OUT
 

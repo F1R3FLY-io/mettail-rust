@@ -21,10 +21,11 @@ INVARIANT under the bag's shuffle order and cannot PARTIALLY fire (bind only som
 the `k` elements and leave the residual unbound).
 
 **Scheme B** meets both by reflecting the whole operand bag as ONE process-`Par`
-"soup" value and matching it with ONE connective receive. f1r3node's spatial matcher
-does par-bag AC natively — `sub_pars` (selection / complement enumeration) plus
-`MaximumBipartiteMatch` (element $`\leftrightarrow`$ pattern assignment) plus the
-`remainder` binding — so the entire AC decision (pick-`k`, bind `rest`, check the
+"soup" value and matching it with ONE connective receive. f1r3node's production
+`spatial_matcher_pda::ListMachine` does par-bag AC natively; `sub_pars` supplies
+selection/complement candidates and the list PDA performs element
+$`\leftrightarrow`$ pattern assignment plus `remainder` binding. The entire AC
+decision (pick-`k`, bind `rest`, check the
 non-linear guard) resolves INSIDE the single locked `consume` (`check_commit`,
 all-or-nothing, reject-safe). No reserve/commit protocol, no partial-fire hazard.
 
@@ -80,9 +81,10 @@ element slot $`\sigma_i`$) plus a process remainder `EVar(FreeVar(k))` (binding
 | element slot `i` ($`i < k`$) | `@"ac:{op}"!(FreeVar(i))` send-pattern | one bag element, $`\sigma_i`$ |
 | `rest` | top-level `EVar(FreeVar(k))` | the residual soup (par remainder) |
 
-The native `MaximumBipartiteMatch` assigns the `k` send-patterns to `k` carrier sends
-in ANY order and binds the residual to the remainder — the order-independent multiset
-match, all inside one `consume`.
+The production `ListMachine` assigns the `k` send-patterns to `k` carrier sends
+in any order and binds the residual to the remainder. Its sparse prefix-plus-delta relation
+evaluates each pattern/target pair at most once while preserving the same order-independent
+multiset match inside one `consume`.
 
 ## 4. The receiver and firing — `ac_sigma_receiver_par`
 

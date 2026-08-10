@@ -4,7 +4,7 @@
 //!
 //!  1. a `Match` case list with a ground `GInt(0)` pattern FIRST and a wildcard SECOND
 //!     dispatches correctly (the ground case matches via the connective-free equality
-//!     shortcut, `spatial_matcher.rs:178-181`);
+//!     shortcut in the production `spatial_matcher_pda.rs` driver);
 //!  2. an `EMinus` expression in SEND DATA is evaluated by `eval_send`
 //!     (`reduce.rs:1108-1115`, EMinus `:2105-2113`), so `probe!(fuel - 1)` re-sends the
 //!     DECREMENTED ground integer, not the unevaluated expression;

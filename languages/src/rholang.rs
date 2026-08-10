@@ -1504,7 +1504,8 @@ language! {
         // `![…]` host constant-folding body; `matches` carries none, because there
         // is no host constant fold for a SPATIAL match: deciding it means running
         // AC/separating matching with a remainder, which is the reducer's
-        // `list_match_single_` + `sub_pars` + `MaximumBipartiteMatch`, and
+        // `spatial_matcher_pda::ListMachine` (with `sub_pars` supplying
+        // connective remainder candidates), and
         // re-implementing that host-side would be exactly the second, divergent
         // matcher this design exists to avoid. The node therefore stays inert
         // under host normalization; it is decided in guard position by
@@ -1518,9 +1519,9 @@ language! {
         // the separating conjunction: `t ⊨ PPar(φ,ψ)` iff `t` splits into two
         // parallel parts, one satisfying `φ` and the other `ψ`. The lowering
         // compiles it to the Rholang par-pattern `⟦φ⟧ | ⟦ψ⟧`, whose separating
-        // semantics is the reducer's own (`spatial_matcher.rs`'s
-        // `list_match_single_` + `sub_pars` + `MaximumBipartiteMatch`) — again, no
-        // second matcher.
+        // semantics is the reducer's own (`spatial_matcher_pda::ListMachine`,
+        // with `sub_pars` supplying connective remainder candidates) — again,
+        // no second matcher.
         //
         // A self-delimiting parenthesized mixfix in the shape of `int(a, w)`, so
         // it takes a PREFIX binding power (`max_infix_bp + PREFIX_BP_OFFSET`) and

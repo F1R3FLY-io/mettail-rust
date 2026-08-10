@@ -5,8 +5,8 @@
 //! the SPREAD side of M-reflect) and matched ON the live f1r3node reducer by a co-installed
 //! `ac_sigma_receiver_par` whose native connective pattern (`ac_set_pattern` / `ac_map_pattern` /
 //! a structured `ESet` pattern) picks k-of-n + binds the residual collection to the remainder —
-//! inside ONE atomic `consume`, the whole match on the interpreter (`list_match_single_` over
-//! `ParSet`/`ParMap`).
+//! inside ONE atomic `consume`, the whole match on the interpreter (production
+//! `spatial_matcher_pda::ListMachine` over `ParSet`/`ParMap`).
 //!
 //! These are DIRECT-construction firing tests (the established `rho_net_equivalence` pattern —
 //! `ac_sigma_receiver_par_builds_a_working_receiver` / `ac_contract_call_fires_the_ac_receiver`):

@@ -150,7 +150,8 @@ pub enum RhoNetLoweredRule {
     BaseRewrite { rule_id: String, par: Par },
     /// A linear with-rest HashBag AC base rewrite un-skipped to an in-Rho AC receiver
     /// (`ac_rule_receiver`): the connective process-soup pattern matches the bag ORDER-
-    /// INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`) and fires `⟦R⟧σ` on the
+    /// INDEPENDENTLY (native `spatial_matcher_pda::ListMachine`, with `sub_pars` for remainders)
+    /// and fires `⟦R⟧σ` on the
     /// dynamic out. Materialized exactly like [`Self::BaseRewrite`] — installed into the
     /// program and given a real AC injection site — so AC firing rides the same install∥call
     /// seam (Stage AC). Nested/non-linear/no-rest / Map-Zip AC rules stay `Unsupported`.
@@ -3136,7 +3137,8 @@ pub(crate) const AC_MAP_ENTRY_LABEL: &str = "^kv";
 /// carriers ride
 /// `ParSet`/`ParMap`, whose construction SORTS + DEDUPES (so `ESet` is a genuine set and `EMap`'s
 /// keys are unique — the key-uniqueness invariant survives reflection), and the native spatial
-/// matcher AC-matches each carrier order-independently with a remainder.
+/// production `spatial_matcher_pda::ListMachine` AC-matches each carrier
+/// order-independently with a remainder.
 fn reflect_ac_collection_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
     reflect_ground_term_marked(term, language_fingerprint).0
 }
@@ -3144,8 +3146,9 @@ fn reflect_ac_collection_par(term: &GroundTerm, language_fingerprint: &str) -> P
 /// Reflect a `HashSet` AC operand set as a native `ESet` matching CARRIER: each element reflects to
 /// its ground `Par` and the set rides `ParSet` (sorted + deduplicated), so the carrier is a genuine
 /// order-independent, uniqueness-preserving set. The AC receiver's `ESet` connective pattern
-/// ([`ac_set_pattern`]) matches this carrier inside one atomic `consume` (native `list_match_single_`
-/// over `sorted_pars`), binding `k` element slots + the residual set to the remainder.
+/// ([`ac_set_pattern`]) matches this carrier inside one atomic `consume` (native
+/// `spatial_matcher_pda::ListMachine` over `sorted_pars`), binding `k` element slots + the residual
+/// set to the remainder.
 fn assemble_ac_set_par(children: Vec<(Par, bool)>) -> Par {
     let mut elements = Vec::with_capacity(children.len());
     let mut locally_free = Vec::new();
@@ -3161,8 +3164,9 @@ fn assemble_ac_set_par(children: Vec<(Par, bool)>) -> Par {
 /// entry ([`AC_MAP_ENTRY_LABEL`]) reflects to a `KeyValuePair`, and the map rides `ParMap` (sorted by
 /// key + deduplicated on key), so KEY-UNIQUENESS is enforced natively — the sorted-dedup `ParMap`
 /// invariant survives the reflect. The AC receiver's `EMap` connective pattern ([`ac_map_pattern`])
-/// matches this carrier inside one atomic `consume` (native `list_match_single_` over the
-/// key-sorted kv list), binding `k` `(key, value)` slots + the residual map to the remainder.
+/// matches this carrier inside one atomic `consume` (native
+/// `spatial_matcher_pda::ListMachine` over the key-sorted kv list), binding `k` `(key, value)`
+/// slots + the residual map to the remainder.
 fn assemble_ac_map_par(children: Vec<(Par, bool)>) -> Par {
     debug_assert_eq!(children.len() % 2, 0);
     let mut kvs = Vec::with_capacity(children.len() / 2);
@@ -3209,7 +3213,7 @@ pub fn ac_collection_pattern(
 /// The AC receiver's `ESet` connective PATTERN for a `HashSet` operand with `k` fixed element slots:
 /// a connective `ESet` whose `k` elements are free vars `FreeVar(0..k-1)` (each binding element σ
 /// slot `i`) plus a remainder free var `FreeVar(k)` (binding `rest`, the residual set). The native
-/// `list_match_single_` (spatial matcher's `ESetBody` arm) assigns the `k` free-var patterns to `k`
+/// production `spatial_matcher_pda::ListMachine` (`ESetBody`) assigns the `k` free-var patterns to `k`
 /// set elements in ANY order and binds the residual SET to the remainder — the order-independent set
 /// match — inside one atomic `consume`. The remainder is a `FreeVar(k)` `Var` (exactly the
 /// `remainder_var_opt` level the matcher reads); element `i` binds `FreeVar(i)`.
@@ -3226,7 +3230,7 @@ pub fn ac_set_pattern(k: usize) -> Par {
 /// The AC receiver's `EMap` connective PATTERN for a `HashMap` operand with `k` fixed `(key, value)`
 /// slots: a connective `EMap` whose `k` entries are free-var pairs `(FreeVar(2i), FreeVar(2i+1))`
 /// (key σ slot `2i`, value σ slot `2i+1`) plus a remainder free var `FreeVar(2k)` (binding `rest`,
-/// the residual map). The native `list_match_single_` (spatial matcher's `EMapBody` arm) assigns the
+/// the residual map). The production `spatial_matcher_pda::ListMachine` (`EMapBody`) assigns the
 /// `k` entry patterns to `k` map entries (matched key-first over the key-sorted kv list) and binds
 /// the residual MAP to the remainder — inside one atomic `consume`. KEY-UNIQUENESS holds because the
 /// target rides `ParMap` (key-sorted, deduped) and each residual is re-wrapped as an `EMap`.
@@ -3246,12 +3250,13 @@ pub fn ac_map_pattern(k: usize) -> Par {
 /// The AC receiver's collection PATTERN for a HashBag operand `op` with `k` fixed element
 /// slots: a connective process-`Par` with `k` send-patterns `@"ac:{op}"!(FreeVar(i))` (each
 /// binding element σ slot `i`) plus a process remainder `EVar(FreeVar(k))` (binding `rest`,
-/// the residual soup). The native connective / `sub_pars` matcher assigns the `k` send-
-/// patterns to `k` carrier sends in ANY order (`MaximumBipartiteMatch`) and binds the residual
+/// the residual soup). The production `spatial_matcher_pda::ListMachine`, after `sub_pars`
+/// supplies connective remainder candidates, assigns the `k` send-patterns to `k` carrier sends
+/// in ANY order and binds the residual
 /// to the remainder — the order-independent multiset match — inside one atomic `consume`.
 ///
 /// The remainder is `new_freevar_par(k)`, whose `EVar(FreeVar(k))` in `exprs` is exactly the
-/// `var_level` the spatial matcher reads (`spatial_matcher.rs`); element `i` binds `FreeVar(i)`.
+/// `var_level` the spatial matcher reads (`spatial_matcher_pda.rs`); element `i` binds `FreeVar(i)`.
 pub fn ac_bag_pattern(language_fingerprint: &str, op: &str, k: usize) -> Par {
     let element_channel = ac_soup_channel(language_fingerprint, op);
     // Start from the process remainder (a top-level free var at level k; connective_used).
@@ -3307,7 +3312,7 @@ pub fn ac_set_element_pattern(op: &str, arity: usize, base: usize, fingerprint: 
 /// ```
 ///
 /// The `ESet` connective pattern matches `k` STRUCTURED set elements ([`ac_set_element_pattern`])
-/// ORDER-INDEPENDENTLY (native `list_match_single_` over `ParSet`) + binds the residual set to the
+/// ORDER-INDEPENDENTLY (native `spatial_matcher_pda::ListMachine` over `ParSet`) + binds the residual set to the
 /// remainder, inside ONE atomic `consume`. The `element_patterns` bind `element_slots` free-var σ
 /// slots in total (their argument positions, `FreeVar(0..element_slots-1)`); the remainder is
 /// `FreeVar(element_slots)` and `out` is `FreeVar(element_slots + 1)`, so `free_count = element_slots
@@ -4798,7 +4803,8 @@ pub fn contextual_join_receiver_par(context_rhs: Par, premise_channels: &[Par]) 
 /// Build the AC receiver for a HashBag base rewrite `op{L_1..L_k, ...rest} ~> R`: a persistent
 /// `for( <ac_bag_pattern(op,k)> , out <- source ){ out!(rhs_par) }` over the AC channel. The
 /// connective collection pattern matches the reflected bag carrier ORDER-INDEPENDENTLY (the
-/// native `sub_pars` / `MaximumBipartiteMatch`), binding the `k` element σ slots (`FreeVar(0..k-1)`),
+/// native `spatial_matcher_pda::ListMachine`, with `sub_pars` for remainders), binding the `k`
+/// element σ slots (`FreeVar(0..k-1)`),
 /// the residual `rest` (`FreeVar(k)`), and `out` (`FreeVar(k+1)`); the body fires `rhs_par` on
 /// `out` (`BoundVar(0)`). `rhs_par` = `⟦R⟧σ` must reference element `i` as `BoundVar(k+1-i)` and
 /// `rest` as `BoundVar(1)` (the reverse De Bruijn over the `k+2` bind free vars). Verified end to
@@ -5615,7 +5621,8 @@ fn expr_par_with(instance: Expr, free: &[usize]) -> Par {
 /// ```
 ///
 /// The connective process-soup pattern (element 0) matches the reflected operand bag carrier
-/// ORDER-INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`), binding the two elements' channel
+/// ORDER-INDEPENDENTLY (native `spatial_matcher_pda::ListMachine`, with `sub_pars` for remainders),
+/// binding the two elements' channel
 /// σ slots (`FreeVar(0)`/`FreeVar(1)`) — via the structured [`comm_element_pattern`]s, whose tags
 /// route each pattern to its like-tagged send — and the residual soup to the remainder `rest`
 /// (`FreeVar(2)`). The `m` reduct slots (`FreeVar(3 .. 3+m)`) carry the RHS elements in order; `out`
@@ -6010,7 +6017,8 @@ pub(crate) fn structural_ac_rule_shape(
 /// ```
 ///
 /// The connective process-soup pattern (element 0) matches the reflected operand bag carrier
-/// ORDER-INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`), binding each structured element's
+/// ORDER-INDEPENDENTLY (native `spatial_matcher_pda::ListMachine`, with `sub_pars` for remainders),
+/// binding each structured element's
 /// channel σ slot (`FreeVar(i)`) — via the tag-routed [`comm_element_pattern`], whose every
 /// non-channel arg is a wildcard (the reduct elements are delivered host-side, exactly as the Comm
 /// receiver) — and the residual soup to the remainder `rest` (`FreeVar(k)`). The `m` reduct slots
@@ -6521,7 +6529,7 @@ fn structural_ac_match_element_pattern(
 /// MATCH receiver binds EVERYTHING from the operand bag — exactly like the linear
 /// [`ac_sigma_receiver_par_with_condition`] — so its message is the 2-value `carrier!(⟦bag⟧, @out)`
 /// the spread delivers (NO host σ). The connective process-soup pattern (element 0) binds, ORDER-
-/// INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`), from the bag:
+/// INDEPENDENTLY (native `spatial_matcher_pda::ListMachine`, with `sub_pars` for remainders), from the bag:
 ///   * each element's non-linear channel occurrence `FreeVar(i)` (element `i`, for the `N ≡ N` guard);
 ///   * each DISTINCT structural reduct var's argument `FreeVar(k+1+j)` (bound WHERE it occurs as an
 ///     element argument — the RHS element `r_j`), a reduct that IS the channel var riding slot `0`;
@@ -7838,7 +7846,8 @@ pub(crate) fn nested_match_pattern_for(
 /// ```
 ///
 /// The connective operand pattern (element 0) matches the reflected operand ORDER-INDEPENDENTLY at
-/// every depth (native `sub_pars`/`MaximumBipartiteMatch` per level), binding the two cross-level `M`
+/// every depth (native `spatial_matcher_pda::ListMachine`, with `sub_pars` per level), binding the
+/// two cross-level `M`
 /// occurrences (the guard slots) + the outer bag's remainder (the spliced-rest slot), and WILDCARDING
 /// everything the host-computed reduct carries. The `m` reduct slots (`FreeVar(g+1..g+1+m)`) carry
 /// the host-σ-delivered NESTED reduct elements; `out` is the dynamic out channel. The `condition`
@@ -9315,7 +9324,8 @@ fn reflect_ac_template_bound_par(
 /// The 2-value spread message `carrier!(⟦operand⟧, @out)` (NO host σ) — the DEPTH-2 generalization of
 /// the flat [`structural_ac_match_receiver_par`]. The connective operand pattern (element 0,
 /// [`nested_match_bind_pattern_for`]) matches the reflected operand ORDER-INDEPENDENTLY at every depth
-/// (native `sub_pars`/`MaximumBipartiteMatch` per level), BINDING every σ slot the reducts need — the
+/// (native `spatial_matcher_pda::ListMachine`, with `sub_pars` per level), BINDING every σ slot the
+/// reducts need — the
 /// two cross-level `M` occurrences (the guard slots), the outer spliced rest, the inner bag rest, and
 /// each reduct var — and wildcarding the rest. The `condition` fires the COMM only when the two `M`
 /// slots are name-equal ([`nonlinear_consistency_condition`], DEPTH-AGNOSTIC — it indexes the flat

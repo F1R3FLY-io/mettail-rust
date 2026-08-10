@@ -29,26 +29,26 @@ endlegend
 rectangle "AC operand collection\n<b>GroundTerm { coll_type, op, children }</b>\n<size:10>reflect_ac_collection_par · ac_collection_pattern</size>" as ROOT #DCE7F7
 
 package "HashBag  →  process soup" #EEF4FB {
-  rectangle "reflect_ac_bag_par\n<b>∏ᵢ @\"ac:op\"!(⟦eᵢ⟧)</b>\nPar multiset of sends" as BAGC #E6DBF2
-  rectangle "ac_bag_pattern(op, k)\nk send-patterns @\"ac:op\"!(FreeVar i)\n+ EVar(FreeVar k) remainder\n<size:10>sub_pars · MaximumBipartiteMatch</size>" as BAGP #C9E7D4
+  rectangle "reflect_ac_bag_par\n<b>∏ᵢ @\"ac:{fp}/{op}\"!(⟦eᵢ⟧)</b>\nPar multiset of sends" as BAGC #E6DBF2
+  rectangle "ac_bag_pattern(op, k)\nk send-patterns @\"ac:{fp}/{op}\"!(FreeVar i)\n+ EVar(FreeVar k) remainder\n<size:10>ListMachine · sub_pars</size>" as BAGP #C9E7D4
   rectangle "multiplicity-preserving\n(a Vec of sends; duplicates kept)" as BAGI #FCF3D0
 }
 
 package "HashSet  →  native ESet" #EEF4FB {
   rectangle "reflect_ac_set_par\n<b>ESet[ ⟦e₀⟧, … ]</b>\nrides ParSet (SORTED + DEDUPED)" as SETC #E6DBF2
-  rectangle "ac_set_pattern(k)\nk FreeVar(0..k-1) elements\n+ FreeVar(k) remainder\n<size:10>list_match_single_ · ESetBody</size>" as SETP #C9E7D4
+  rectangle "ac_set_pattern(k)\nk FreeVar(0..k-1) elements\n+ FreeVar(k) remainder\n<size:10>ListMachine · ESetBody</size>" as SETP #C9E7D4
   rectangle "SET UNIQUENESS (NoDup)\n<size:10>located_set_nodup</size>" as SETI #FCF3D0
 }
 
 package "HashMap  →  native EMap" #EEF4FB {
   rectangle "reflect_ac_map_par\n<b>EMap over ^kv(⟦k⟧,⟦v⟧) entries</b>\nrides ParMap (KEY-sorted + deduped)" as MAPC #E6DBF2
-  rectangle "ac_map_pattern(k)\nk (FreeVar 2i, FreeVar 2i+1) pairs\n+ FreeVar(2k) remainder\n<size:10>list_match_single_ · EMapBody</size>" as MAPP #C9E7D4
+  rectangle "ac_map_pattern(k)\nk (FreeVar 2i, FreeVar 2i+1) pairs\n+ FreeVar(2k) remainder\n<size:10>ListMachine · EMapBody</size>" as MAPP #C9E7D4
   rectangle "KEY-UNIQUENESS (NoDup keys)\nsurvives reflect→match→RHS\n<size:10>map_split_preserves_uniqueness</size>" as MAPI #FCF3D0
 }
 
 package "Zip  →  paired ESet + guard" #EEF4FB {
   rectangle "reflect_ac_set_par (of Pairs)\n<b>ESet[ ⟦Pair(a,b)⟧, … ]</b>\nrides ParSet" as ZIPC #E6DBF2
-  rectangle "2× ac_set_element_pattern(Pair)\n+ ac_set_correlation_condition\nEEq(a₀, a₁) Receive.condition\n<size:10>list_match_single_ + guard</size>" as ZIPP #C9E7D4
+  rectangle "2× ac_set_element_pattern(Pair)\n+ ac_set_correlation_condition\nEEq(a₀, a₁) Receive.condition\n<size:10>ListMachine + guard</size>" as ZIPP #C9E7D4
   rectangle "CORRELATION (fst e₁ = fst e₂)\n<size:10>correlation_perm_invariant</size>" as ZIPI #FCF3D0
 }
 

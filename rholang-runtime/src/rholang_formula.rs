@@ -9,9 +9,9 @@
 //! grammar is a **pattern algebra**, not a formula evaluator. Rholang already has
 //! pattern-level conjunction, disjunction and negation (`ConnAndBody` /
 //! `ConnOrBody` / `ConnNotBody`, decided by
-//! `rholang/src/rust/interpreter/matcher/spatial_matcher.rs`), and it already has
-//! the separating conjunction (a par-pattern `P | Q`, decided by
-//! `list_match_single_` + `sub_pars` + `MaximumBipartiteMatch`). So MeTTaIL needs
+//! `rholang/src/rust/interpreter/matcher/spatial_matcher_pda.rs`), and it already has
+//! the separating conjunction (a par-pattern `P | Q`, decided by the production
+//! `ListMachine`, with `sub_pars` supplying connective remainder candidates). So MeTTaIL needs
 //! to contribute a **pattern compiler** and nothing else — in particular **no
 //! second matcher**, which is what would create the dual runtime path this design
 //! exists to avoid.
@@ -120,7 +120,7 @@ pub(crate) fn verum_pattern() -> Par {
 /// `⊥` — the pattern satisfied by no term: `ConnNot Wildcard`.
 ///
 /// `ConnNotBody(b)` matches a target iff the target does NOT match `b`
-/// (`spatial_matcher.rs`); with `b = Wildcard`, which every target matches, the
+/// (`spatial_matcher_pda.rs`); with `b = Wildcard`, which every target matches, the
 /// negation is satisfied by nothing. So this really is the bottom of the pattern
 /// lattice, not an approximation of it.
 pub(crate) fn falsum_pattern() -> Par {

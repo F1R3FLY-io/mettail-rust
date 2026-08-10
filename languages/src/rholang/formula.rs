@@ -124,7 +124,7 @@ pub fn is_statically_false(formula: &Proc) -> bool {
 ///
 /// ⚠ [`FormulaShape::Separation`] answers "not decided" even when every part is
 /// valid. `⊤ ∗ ⊤` very likely IS valid (any `P` splits as `P | Nil`), but that
-/// depends on how the reducer's `list_match_single_` treats an empty remainder —
+/// depends on how the reducer's production `ListMachine` treats an empty remainder —
 /// a matcher detail this crate does not own. Declining costs nothing; guessing
 /// could unsoundly fold a guard.
 pub fn is_statically_true(formula: &Proc) -> bool {
@@ -211,8 +211,9 @@ fn analyze_formula(root: &Proc, target: Option<&Proc>) -> FormulaFacts {
 ///
 /// ## Why the separating conjunction is declined
 ///
-/// Its semantics is AC matching with a remainder — `list_match_single_` +
-/// `sub_pars` + `MaximumBipartiteMatch`. A host re-implementation would be
+/// Its semantics is AC matching with a remainder — the production
+/// `spatial_matcher_pda::ListMachine`, with `sub_pars` supplying connective
+/// remainder candidates. A host re-implementation would be
 /// exactly the second, divergent matcher this design exists to avoid.
 ///
 /// ## What `None` costs, and what it does not
