@@ -55,12 +55,13 @@ fn extend_entry_matches<L: Clone + Eq + Hash>(
 ) {
     let entry = &automaton.entries[entry_idx];
     let matches = eval_state(automaton, eg, entry.root_state, root, cache, &mut run.stats);
-    run.matches
-        .extend(matches.iter().cloned().map(|subst| SetAutomatonMatch {
-            pattern: entry.id,
-            root,
-            subst,
-        }));
+    run.matches.extend(matches.iter().map(|slots| {
+        let mut subst = Subst::default();
+        for (name, &class) in entry.slot_names.iter().zip(slots.iter()) {
+            subst.insert(name.clone(), class);
+        }
+        SetAutomatonMatch { pattern: entry.id, root, subst }
+    }));
 }
 
 fn eval_state<L: Clone + Eq + Hash>(
@@ -80,13 +81,9 @@ fn eval_state<L: Clone + Eq + Hash>(
 
     stats.state_evaluations += 1;
     let matches = match &automaton.compiler.states[state_id.0] {
-        PatternState::Var(name) => {
-            let mut subst = Subst::default();
-            subst.insert(name.clone(), class);
-            cached_substs(vec![subst])
-        },
-        PatternState::App { op, args } => {
-            eval_app_state(automaton, eg, op, args, class, cache, stats)
+        PatternState::Var => cached_substs(vec![vec![class].into_boxed_slice()]),
+        PatternState::App { op, args, slot_count } => {
+            eval_app_state(automaton, eg, op, args, *slot_count, class, cache, stats)
         },
     };
     cache.insert(key, Rc::clone(&matches));
@@ -97,7 +94,8 @@ fn eval_app_state<L: Clone + Eq + Hash>(
     automaton: &SetAutomaton<L>,
     eg: &EGraph<L>,
     op: &L,
-    args: &[StateId],
+    args: &[StateInvocation],
+    slot_count: usize,
     class: EClassId,
     cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
     stats: &mut SetAutomatonStats,
@@ -108,9 +106,9 @@ fn eval_app_state<L: Clone + Eq + Hash>(
         .iter()
         .filter(|node| node.op == *op && node.children.len() == args.len())
     {
-        let mut partial = vec![Subst::default()];
-        for (&arg_state, &child) in args.iter().zip(&node.children) {
-            let child_matches = eval_state(automaton, eg, arg_state, child, cache, stats);
+        let mut partial = vec![vec![None; slot_count].into_boxed_slice()];
+        for (invocation, &child) in args.iter().zip(&node.children) {
+            let child_matches = eval_state(automaton, eg, invocation.state(), child, cache, stats);
             if child_matches.is_empty() {
                 partial.clear();
                 break;
@@ -119,7 +117,7 @@ fn eval_app_state<L: Clone + Eq + Hash>(
             let mut next = Vec::new();
             for left in &partial {
                 for right in child_matches.iter() {
-                    if let Some(merged) = merge_substs(eg, left, right) {
+                    if let Some(merged) = merge_slot_substs(eg, left, invocation, right) {
                         next.push(merged);
                     }
                 }
@@ -129,7 +127,7 @@ fn eval_app_state<L: Clone + Eq + Hash>(
                 break;
             }
         }
-        out.extend(partial);
+        finish_slot_substs(&mut partial, &mut out);
     }
     cached_substs(out)
 }

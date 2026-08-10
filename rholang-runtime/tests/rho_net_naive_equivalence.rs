@@ -405,6 +405,7 @@ fn naive_root_beta_call(
     let receiver = naive_kt_entry_receiver_par(
         &view,
         0,
+        subject,
         SITE,
         &accept_channel,
         "OUT",
@@ -661,6 +662,7 @@ async fn naive_sigma_is_derived_from_the_spread_not_the_host() {
     let receiver_only = naive_kt_entry_receiver_par(
         &view,
         0,
+        &subject,
         SITE,
         &accept_channel,
         "OUT",

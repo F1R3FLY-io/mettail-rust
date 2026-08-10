@@ -156,7 +156,7 @@ use ctxdemo::CtxDemoLanguage;
 use lambdademo::LambdaDemoLanguage;
 use mettail_rholang_codegen::{
     contextual_match_call_par, in_rho_match_all_sites_call_par, in_rho_match_call_par,
-    multi_pattern_receiver_network_par, naive_kt_contextual_match_call_par,
+    multi_pattern_receiver_networks_at_rule_roots_par, naive_kt_contextual_match_call_par,
     naive_kt_entry_receiver_par, naive_kt_match_call_par, naive_kt_selfdriving_call_par,
     reflect_ground_term_par, spread_child_location, spread_term_par, AutomatonAcceptTarget,
     GroundTerm, InRhoMatchingRuleset, NaiveGuardEncoding, BOUND_VAR_REFLECT_LABEL,
@@ -290,7 +290,7 @@ pub enum MatcherKind {
     Replay,
     /// R3 — the SELF-DRIVING naive variant (EXPLORATORY, pre-registered,
     /// USER-approved 2026-07-19; `lambda_chain` only, PatternGuard only). ONE
-    /// session installs the persistent R3 receivers + ONE spread; each firing's
+    /// session installs the persistent R3 receivers + one fixed-route seed; each firing's
     /// reduct is delivered to the in-session `^respread` walker family
     /// (`naive_kt_selfdriving_call_par`), so the chain normalizes in ONE
     /// injection — the first probe of the PERSISTENT-fire regime, DEVIATING
@@ -719,13 +719,11 @@ pub fn multi_rule_shared_ruleset(r: usize, s: usize) -> InRhoMatchingRuleset {
     }
 }
 
-/// The per-position SITE strings of every `subject` node whose head is one of
-/// `ruleset`'s compiled entry root ops — the SAME walk + `spread_child_location`
-/// derivation as the optimized driver's `collect_redex_sites` (re-stated here
-/// because that function is private to `rho_net_ruleset`; the derivation is
-/// shared through [`spread_child_location`], so a network built at a returned
-/// site reads exactly the channels the ONE spread publishes there). This is
-/// the site enumeration of the `multi_rule_shared` sa column's per-rule drive;
+/// The structural E-6a PathMap keys of every `subject` node whose head is one of
+/// `ruleset`'s compiled entry root ops. This quarantined comparison treatment
+/// deliberately keeps its component-wise trie keys; the optimized positional
+/// spread uses a private fixed-width subject index instead. This is the site
+/// enumeration of the `multi_rule_shared` E-6a treatment's per-rule drive;
 /// for that family it returns exactly r pairwise NON-ANCESTRAL comb-leaf
 /// positions, one per rule (pinned by the driver-bin unit tests).
 pub fn multi_rule_shared_sites(
@@ -737,7 +735,7 @@ pub fn multi_rule_shared_sites(
     let roots: BTreeSet<String> = (0..view.entry_count())
         .filter_map(|entry| match view.node(view.entry_root_state(entry)) {
             AutomatonNode::App { op, .. } => Some(op.to_string()),
-            AutomatonNode::Var(_) => None,
+            AutomatonNode::Var => None,
         })
         .collect();
     fn walk(node: &GroundTerm, location: &str, roots: &BTreeSet<String>, sites: &mut Vec<String>) {
@@ -1171,8 +1169,8 @@ pub fn emit_call(
         },
         (WorkloadKind::LambdaChain, MatcherKind::NaiveR3) => {
             // R3 (EXPLORATORY, pre-registered): the SELF-DRIVING single-session
-            // call — persistent R3 root receiver + `^respread` dispatcher/walker
-            // family + ONE spread of the whole chain; the session normalizes
+            // call — persistent R3 root receiver + finite `^respread` route
+            // PDA + one reflected-chain seed; the session normalizes
             // in-runtime (see `naive_kt_selfdriving_call_par`'s rustdoc).
             // PatternGuard-only by construction (the encoding parameter is
             // rejected as ConsumeTest before any drive reaches this arm).
@@ -1190,6 +1188,7 @@ pub fn emit_call(
             let receiver = naive_kt_entry_receiver_par(
                 &view,
                 0,
+                subject,
                 ROOT_SITE,
                 &accept_channel,
                 OUT_CHANNEL,
@@ -1248,23 +1247,19 @@ pub fn emit_call(
                     out_channel: OUT_CHANNEL.to_string(),
                 })
                 .collect();
-            let sites = multi_rule_shared_sites(ruleset, subject, ROOT_SITE);
-            let mut call = Par::default();
-            for site in &sites {
-                let network = multi_pattern_receiver_network_par(
-                    &view,
-                    site,
-                    &targets,
-                    &ruleset.language_fingerprint,
-                )
-                .map_err(|e| {
-                    WorkloadFailure::new(format!("optimized per-site network emitter: {e:?}"))
-                })?;
-                call = call.append(network);
-            }
+            let (call, site_count) = multi_pattern_receiver_networks_at_rule_roots_par(
+                &view,
+                subject,
+                ROOT_SITE,
+                &targets,
+                &ruleset.language_fingerprint,
+            )
+            .map_err(|e| {
+                WorkloadFailure::new(format!("optimized per-site network emitter: {e:?}"))
+            })?;
             let call =
                 call.append(spread_term_par(subject, &ruleset.language_fingerprint, ROOT_SITE));
-            Ok((call, Some(sites.len())))
+            Ok((call, Some(site_count)))
         },
         (WorkloadKind::WrapSwapCtx, MatcherKind::Sa) => {
             let call = contextual_match_call_par(ruleset, subject, ROOT_SITE, OUT_CHANNEL)

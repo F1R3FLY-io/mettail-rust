@@ -34,7 +34,7 @@
 //! |---|---|---|
 //! | `sa:` | firing-visible | `RhoNetChannel::set_automaton_trace` |
 //! | `ac:` | AC carrier | `ac_soup_channel` (bare) / `ac_carrier_channel` (site-keyed, inherits) |
-//! | `loc:` `col:` `cap:` | matching-τ | `spread_root_location` / `collapse_chain_location` / `collapse_capture_location` |
+//! | `loc:` `col:` `cap:` | matching-τ | shared compact subject-position channel ABI |
 //! | `ph:` | contextual plumbing | inherits from its `loc:` premise channel |
 //! | `e6a:` | PathMap index | `e6a_index_channel` / `e6a_sites_channel` |
 //! | `eq:` `obs:` | plan-level | `RhoNetChannel::consistency` / `::observation` |
@@ -404,9 +404,9 @@ fn locating_subject(
     ) -> GroundTerm {
         match view.node(state) {
             AutomatonNode::App { op, args } => {
-                GroundTerm::new(op.clone(), args.iter().map(|&a| walk(view, a)).collect())
+                GroundTerm::new(op.clone(), args.iter().map(|a| walk(view, a.state())).collect())
             },
-            AutomatonNode::Var(_) => GroundTerm::nullary("__s6_probe"),
+            AutomatonNode::Var => GroundTerm::nullary("__s6_probe"),
         }
     }
     walk(view, view.entry_root_state(entry))

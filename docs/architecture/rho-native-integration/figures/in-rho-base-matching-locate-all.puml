@@ -43,13 +43,13 @@ S1 --> LD
 
 ' ---- one spread, co-installed networks, shared firing ----
 rectangle "ONE spread of the WHOLE subject at ρ\n<size:11>spread_term_par</size> — loc:/col:/cap:, ν-free (INV-7)" as SPREAD #D7ECFB
-rectangle "network @ site ρ/Pair.0\n<size:11>multi_pattern_receiver_network_par</size>\nreads loc:ρ/Pair.0 + cap:ρ/Pair.0/Swap.·" as N0 #C9E7D4
-rectangle "network @ site ρ/Pair.1\n<size:11>multi_pattern_receiver_network_par</size>\nreads loc:ρ/Pair.1 + cap:ρ/Pair.1/Swap.·" as N1 #C9E7D4
+rectangle "network @ indexed site 1\n<size:11>multi_pattern_receiver_network_indexed_par</size>\nreads loc:i₂(ρ,1) + cap:i₂(ρ,3..4)" as N0 #C9E7D4
+rectangle "network @ indexed site 2\n<size:11>multi_pattern_receiver_network_indexed_par</size>\nreads loc:i₂(ρ,2) + cap:i₂(ρ,5..6)" as N1 #C9E7D4
 rectangle "shared persistent σ-receiver\n<size:11>sigma_receiver_par</size>" as SIG #F7D9D5
 rectangle "@OUT  =  { Pair(B,A),  Pair(D,C) }\n(multiset — either accept order)" as OUT #FEF7E0
 
-SPREAD -[#2E6DB4,thickness=2]-> N0 : disjoint-prefix\nchannels
-SPREAD -[#2E6DB4,thickness=2]-> N1 : disjoint-prefix\nchannels
+SPREAD -[#2E6DB4,thickness=2]-> N0 : distinct fixed-width\nchannels
+SPREAD -[#2E6DB4,thickness=2]-> N1 : distinct fixed-width\nchannels
 S0 .[#2E8B57,thickness=2].> N0 : located ⇒\nco-install
 S1 .[#2E8B57,thickness=2].> N1 : located ⇒\nco-install
 N0 -[#C0392B,thickness=2]-> SIG : sa:tc(K)!(σ, @OUT)
@@ -57,7 +57,7 @@ N1 -[#C0392B,thickness=2]-> SIG : sa:tc(K)!(σ, @OUT)
 SIG -[#C0392B,thickness=2]-> OUT
 
 note bottom of OUT #EFEFEF
-  Disjoint-prefix loc:/cap: channels ⇒ the two networks never contend
+  Distinct indexed loc:/cap: channels ⇒ the two networks never contend
   (AtomicFiringNoPartialMatch: no-disable, no cross-talk, both commit, commute).
   Fail-closed boundary: a NESTED-App-entry ruleset with ≥2 located sites would
   race for a descent head-tag send ⇒ routed to the σ-replay driver instead.

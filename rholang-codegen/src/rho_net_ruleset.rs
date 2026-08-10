@@ -26,15 +26,16 @@ use mettail_ast::pattern::{Pattern, PatternTerm};
 use models::rhoapi::Par;
 
 use crate::rho_net_automaton::{
-    multi_pattern_receiver_network_par, AutomatonAcceptTarget, AutomatonUnsupported,
+    multi_pattern_receiver_network_indexed_par, AutomatonAcceptTarget, AutomatonUnsupported,
 };
+use crate::rho_net_location::{SubjectLocationIndex, SubjectPosition};
 use crate::rho_net_lower::{
     ac_match_call_par, congruence_only_premises, contextual_hole_bridge_par,
     contextual_premise_hole_channel, instantiate_structural_ground_pattern,
-    nested_structural_ac_match_call_par, spread_child_location, spread_term_par,
-    structural_ac_match_call_par, walk_ground_term_locations, GroundTerm, RhoNetAcMatchEntry,
-    RhoNetContextualMatchEntry, RhoNetNestedStructuralAcMatchEntry, RhoNetStructuralAcMatchEntry,
-    StructuralGroundImage, LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
+    nested_structural_ac_match_call_par, spread_term_par_indexed, structural_ac_match_call_par,
+    GroundTerm, RhoNetAcMatchEntry, RhoNetContextualMatchEntry, RhoNetNestedStructuralAcMatchEntry,
+    RhoNetStructuralAcMatchEntry, StructuralGroundImage, LAMBDA_REFLECT_LABEL,
+    MULTILAMBDA_REFLECT_LABEL,
 };
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -611,13 +612,16 @@ pub fn in_rho_match_call_par(
             out_channel: out_channel.to_string(),
         })
         .collect();
-    let network = multi_pattern_receiver_network_par(
+    let locations = SubjectLocationIndex::new(subject);
+    let network = multi_pattern_receiver_network_indexed_par(
         &ruleset.automaton.view(),
+        &locations,
+        SubjectPosition::ROOT,
         site,
         &targets,
         &ruleset.language_fingerprint,
     )?;
-    let spread = spread_term_par(subject, &ruleset.language_fingerprint, site);
+    let spread = spread_term_par_indexed(&locations, &ruleset.language_fingerprint, site);
     Ok(network.append(spread))
 }
 
@@ -631,7 +635,7 @@ pub fn rule_lhs_root_constructors(ruleset: &InRhoMatchingRuleset) -> BTreeSet<St
     (0..view.entry_count())
         .filter_map(|entry| match view.node(view.entry_root_state(entry)) {
             AutomatonNode::App { op, .. } => Some(op.to_string()),
-            AutomatonNode::Var(_) => None,
+            AutomatonNode::Var => None,
         })
         .collect()
 }
@@ -639,8 +643,8 @@ pub fn rule_lhs_root_constructors(ruleset: &InRhoMatchingRuleset) -> BTreeSet<St
 /// Whether every compiled entry is FLAT — an App root over Var-leaf arguments only. This is the
 /// soundness precondition for the Stage-4 locate-all multi-site install
 /// ([`in_rho_match_all_sites_call_par`]): a flat entry's network reads only its own root `loc:`
-/// head-tag channel and its direct-child `cap:` COLLAPSE channels, which are DISJOINT across
-/// distinct positions (`loc:ρ/ℓ₁ ≠ loc:ρ/ℓ₂`, `cap:ρ/ℓ₁/op.i ≠ cap:ρ/ℓ₂/op.j`), so co-installing
+/// head-tag channel and its direct-child `cap:` COLLAPSE channels, which have exact, distinct
+/// subject-index identities across distinct positions, so co-installing
 /// one network per redex position over ONE spread never contends for a channel. A NESTED entry
 /// would DESCEND `loc:` head tags into its arguments; a co-installed root attempt at a descent
 /// position would then race for that one linear head-tag send. Such a ruleset fails closed to the
@@ -650,26 +654,25 @@ pub fn ruleset_all_entries_flat(ruleset: &InRhoMatchingRuleset) -> bool {
     (0..view.entry_count()).all(|entry| match view.node(view.entry_root_state(entry)) {
         AutomatonNode::App { args, .. } => args
             .iter()
-            .all(|&arg| matches!(view.node(arg), AutomatonNode::Var(_))),
-        AutomatonNode::Var(_) => false,
+            .all(|arg| matches!(view.node(arg.state()), AutomatonNode::Var)),
+        AutomatonNode::Var => false,
     })
 }
 
-/// Collect the per-position SITE strings of `node` at which the automaton attempts a match: every
-/// position (pre-order, DFS) whose head constructor is a rule LHS root (`roots`). The site string
-/// is the ν-free location path `⌜(ρ,ℓ)⌝` (root nonce ρ = `root_location`, position ℓ derived via
-/// [`spread_child_location`] — the SAME derivation the spread uses for its `loc:`/`cap:` channels),
-/// so the network built at each site reads the channels the ONE spread of the whole subject
-/// published there. Distinct positions get distinct (disjoint-prefix) site strings.
+/// Collect the indexed subject positions at which the automaton attempts a match: every position
+/// (pre-order, DFS) whose head constructor is a rule LHS root (`roots`). The shared
+/// [`SubjectLocationIndex`] is the sole numbering authority for both the network and the spread,
+/// so the network built at each position reads exactly the channels the one spread published
+/// there. Distinct positions have distinct, fixed-width identities.
 fn collect_redex_sites(
-    node: &GroundTerm,
-    location: &str,
+    locations: &SubjectLocationIndex<'_>,
+    start: SubjectPosition,
     roots: &BTreeSet<String>,
-    sites: &mut Vec<String>,
+    sites: &mut Vec<SubjectPosition>,
 ) {
-    walk_ground_term_locations(node, location, |node, location| {
+    locations.walk(start, |position, node| {
         if roots.contains(&node.constructor) {
-            sites.push(location.to_string());
+            sites.push(position);
         }
         true
     });
@@ -679,7 +682,7 @@ fn collect_redex_sites(
 /// `subject`, at ANY position and multiple simultaneously (P1 Thm 6.12 / P2 Thm 2). The whole
 /// reflected subject is spread ONCE at root nonce `root_site`; for every position whose head is a
 /// rule LHS root ([`rule_lhs_root_constructors`]) a positional receiver network is built at that
-/// position's ν-free site path (`⌜(ρ,ℓ)⌝`), and all networks are composed with the one spread. Each
+/// position's exact subject-index identity, and all networks are composed with the one spread. Each
 /// site's accept fires the matched rule's σ-receiver on `out_channel`, so a single isolated run
 /// observes every located redex's contractum on that channel (the shared persistent σ-receiver
 /// serves every site's accept — the accept send carries its σ + `@out` atomically, so distinct
@@ -714,8 +717,9 @@ pub fn in_rho_match_all_sites_call_par(
         .collect();
 
     let roots = rule_lhs_root_constructors(ruleset);
-    let mut sites: Vec<String> = Vec::new();
-    collect_redex_sites(subject, root_site, &roots, &mut sites);
+    let locations = SubjectLocationIndex::new(subject);
+    let mut sites: Vec<SubjectPosition> = Vec::new();
+    collect_redex_sites(&locations, SubjectPosition::ROOT, &roots, &mut sites);
 
     // Co-installing ≥2 per-position networks is contention-free only for a flat-only ruleset; a
     // nested ruleset admits at most one site (no co-installation). Fail closed otherwise.
@@ -723,13 +727,15 @@ pub fn in_rho_match_all_sites_call_par(
         return Err(AutomatonUnsupported::NestedEntryMultiSite);
     }
 
-    // One positional network per located site (disjoint-prefix channels), then ONE spread of the
+    // One positional network per located site (exact indexed channels), then ONE spread of the
     // whole subject. A normal form (no located site) is the bare spread — a valid no-op.
     let mut call = Par::default();
-    for site in &sites {
-        let network = multi_pattern_receiver_network_par(
+    for &site in &sites {
+        let network = multi_pattern_receiver_network_indexed_par(
             &ruleset.automaton.view(),
+            &locations,
             site,
+            root_site,
             &targets,
             &ruleset.language_fingerprint,
         )?;
@@ -799,7 +805,7 @@ pub fn in_rho_match_all_sites_call_par(
     );
     call = call.append(nested_structural_ac_call);
 
-    let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
+    let spread = spread_term_par_indexed(&locations, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), sites.len()))
 }
 
@@ -811,8 +817,9 @@ pub fn in_rho_match_all_sites_call_par(
 ///
 /// The outer context spine `K` is the reflected subject with `n` distinguished hole positions
 /// ℓ_0..ℓ_{n-1} (the premise subjects). Each hole position is derived from the contextual rule's LHS
-/// (the `(op, index)` path to premise `i`'s source variable, folded through [`spread_child_location`]
-/// — the SAME derivation `collect_redex_sites` uses). At each hole site the automaton LOCATES the
+/// (the `(op, index)` path to premise `i`'s source variable, resolved once through the shared
+/// [`SubjectLocationIndex`], exactly as `collect_redex_sites` does). At each hole site the
+/// automaton LOCATES the
 /// premise redex (its head `Match` + `cap:` capture in Rho) and fires its σ-receiver with the
 /// intermediate [`contextual_premise_hole_channel`] `ph:c(ℓ_i)` as its dynamic out; the
 /// [`contextual_hole_bridge_par`] then re-delivers the reduced hole `T_i` on the join's premise
@@ -821,7 +828,7 @@ pub fn in_rho_match_all_sites_call_par(
 /// ⟦K'⟧ = ⟦K(T_0..T_{n-1})⟧ on `@out`. The hole↔channel correspondence (premise `i`'s located firing
 /// routes to premise channel `i`) is what places each reduced hole at its context position in `K'`.
 ///
-/// The `n` hole sites are DISJOINT-PREFIX locations, so their co-installed networks read disjoint
+/// The `n` hole sites have distinct indexed locations, so their co-installed networks read disjoint
 /// `loc:`/`cap:` channels (like the locate-all multi-site install), and the `ph:` intermediates +
 /// the join's `c(ℓ_i)` are all disjoint — so the single-shot bridges and the persistent join never
 /// race. `n > 1` co-installed networks require a flat-only ruleset (a nested-App entry would descend
@@ -850,27 +857,24 @@ pub fn contextual_match_call_par(
         return Err(AutomatonUnsupported::ContextualHoleMismatch);
     }
 
-    // The `n` expected hole sites: fold `spread_child_location` over each premise's `(op, index)`
-    // path from the spread root (the SAME derivation `collect_redex_sites` publishes `loc:`/`cap:`
-    // at, so the network built at a hole site reads exactly what the spread published there).
-    let expected_sites: Vec<String> = entry
+    // Resolve the `n` expected hole paths through the SAME subject index used by
+    // `collect_redex_sites` and the spread, so a network built at a hole reads exactly what the
+    // spread published there without materializing any absolute location path.
+    let locations = SubjectLocationIndex::new(subject);
+    let expected_sites: Vec<SubjectPosition> = entry
         .hole_positions
         .iter()
-        .map(|path| {
-            path.iter()
-                .fold(root_site.to_string(), |site, (op, index)| {
-                    spread_child_location(&site, op, *index)
-                })
-        })
-        .collect();
+        .map(|path| locations.resolve_path(SubjectPosition::ROOT, path))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(AutomatonUnsupported::ContextualHoleMismatch)?;
 
     // LOAD-BEARING bijection check: the subject's located rule-root redexes must be EXACTLY the `n`
     // expected hole positions (as a multiset). This rejects a normal form (0 hole redexes), a deeper
     // nested redex inside a hole, and an extra redex outside the holes — so the reused join binds
     // exactly the `n` located firings the context expects, never a wrong reassembly.
     let roots = rule_lhs_root_constructors(ruleset);
-    let mut located: Vec<String> = Vec::new();
-    collect_redex_sites(subject, root_site, &roots, &mut located);
+    let mut located: Vec<SubjectPosition> = Vec::new();
+    collect_redex_sites(&locations, SubjectPosition::ROOT, &roots, &mut located);
     let mut located_sorted = located;
     located_sorted.sort();
     let mut expected_sorted = expected_sites.clone();
@@ -890,7 +894,7 @@ pub fn contextual_match_call_par(
     // intermediate `ph:c(ℓ_i)` channel — plus a per-hole bridge re-delivering the reduced hole on
     // the join's premise channel `c(ℓ_i)` in the join's bind ABI (the LAST hole carries `@out`).
     let mut call = Par::default();
-    for (index, expected_site) in expected_sites.iter().enumerate() {
+    for (index, &expected_site) in expected_sites.iter().enumerate() {
         let premise_channel = &entry.premise_channels[index];
         let hole_channel = contextual_premise_hole_channel(premise_channel);
         let targets: Vec<AutomatonAcceptTarget> = ruleset
@@ -902,9 +906,11 @@ pub fn contextual_match_call_par(
                 out_channel: hole_channel.clone(),
             })
             .collect();
-        let network = multi_pattern_receiver_network_par(
+        let network = multi_pattern_receiver_network_indexed_par(
             &ruleset.automaton.view(),
+            &locations,
             expected_site,
+            root_site,
             &targets,
             &ruleset.language_fingerprint,
         )?;
@@ -920,7 +926,7 @@ pub fn contextual_match_call_par(
     }
 
     // ONE spread of the whole subject — every hole network reads its site's channels from it.
-    let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
+    let spread = spread_term_par_indexed(&locations, &ruleset.language_fingerprint, root_site);
     Ok(call.append(spread))
 }
 
@@ -1023,8 +1029,9 @@ pub fn located_native_site_count(ruleset: &InRhoMatchingRuleset, subject: &Groun
         .iter()
         .map(|dispatch| dispatch.bare_label.clone())
         .collect();
-    let mut sites: Vec<String> = Vec::new();
-    collect_redex_sites(subject, "site0", &native_roots, &mut sites);
+    let locations = SubjectLocationIndex::new(subject);
+    let mut sites: Vec<SubjectPosition> = Vec::new();
+    collect_redex_sites(&locations, SubjectPosition::ROOT, &native_roots, &mut sites);
     sites.len()
 }
 
@@ -1051,8 +1058,9 @@ pub fn located_native_site_count_for(
         return 0;
     }
     let roots: BTreeSet<String> = std::iter::once(bare_label.to_string()).collect();
-    let mut sites: Vec<String> = Vec::new();
-    collect_redex_sites(subject, "site0", &roots, &mut sites);
+    let locations = SubjectLocationIndex::new(subject);
+    let mut sites: Vec<SubjectPosition> = Vec::new();
+    collect_redex_sites(&locations, SubjectPosition::ROOT, &roots, &mut sites);
     sites.len()
 }
 

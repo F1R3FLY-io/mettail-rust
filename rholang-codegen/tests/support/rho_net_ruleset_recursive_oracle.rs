@@ -102,21 +102,17 @@ fn recursive_instantiate(
 }
 
 fn recursive_collect_sites(
-    node: &GroundTerm,
-    location: &str,
+    locations: &SubjectLocationIndex<'_>,
+    position: SubjectPosition,
     roots: &BTreeSet<String>,
-    sites: &mut Vec<String>,
+    sites: &mut Vec<SubjectPosition>,
 ) {
+    let node = locations.term(position);
     if roots.contains(&node.constructor) {
-        sites.push(location.to_string());
+        sites.push(position);
     }
-    for (index, child) in node.children.iter().enumerate() {
-        recursive_collect_sites(
-            child,
-            &spread_child_location(location, &node.constructor, index),
-            roots,
-            sites,
-        );
+    for child in locations.children(position) {
+        recursive_collect_sites(locations, child, roots, sites);
     }
 }
 
@@ -171,10 +167,11 @@ fn iterative_ruleset_walkers_match_recursive_oracles() {
         ],
     );
     let roots = BTreeSet::from(["Hit".to_string()]);
+    let locations = SubjectLocationIndex::new(&subject);
     let mut actual = Vec::new();
     let mut expected = Vec::new();
-    collect_redex_sites(&subject, "site0", &roots, &mut actual);
-    recursive_collect_sites(&subject, "site0", &roots, &mut expected);
+    collect_redex_sites(&locations, SubjectPosition::ROOT, &roots, &mut actual);
+    recursive_collect_sites(&locations, SubjectPosition::ROOT, &roots, &mut expected);
     assert_eq!(actual, expected);
 }
 
@@ -200,10 +197,11 @@ fn ground_reconstruction_and_location_walk_are_stack_safe_at_depth_20k() {
             .expect("the iterative instantiator handles a deeply nested pattern");
 
             let roots = BTreeSet::from(["Leaf".to_string()]);
+            let locations = SubjectLocationIndex::new(&ground);
             let mut sites = Vec::new();
-            collect_redex_sites(&ground, "site0", &roots, &mut sites);
+            collect_redex_sites(&locations, SubjectPosition::ROOT, &roots, &mut sites);
             assert_eq!(sites.len(), 1);
-            assert!(sites[0].ends_with("/N.0"));
+            assert_eq!(sites[0].index(), DEPTH);
         })
         .expect("small-stack thread starts")
         .join()

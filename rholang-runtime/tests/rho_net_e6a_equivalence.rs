@@ -5,7 +5,7 @@
 //! closed with `NestedEntryMultiSite`) the treatment is pinned against the
 //! DIRECTLY-COMPUTED expected redex sets. The machine-enumerated candidate
 //! sites are additionally pinned against the directly-computed host walk (the
-//! same `collect_redex_sites` derivation restated in `multi_rule_shared_sites`).
+//! same structural E-6a trie-key derivation restated in `multi_rule_shared_sites`).
 //!
 //! Mirrors `rho_net_naive_equivalence.rs`'s discipline: fresh counting
 //! runtimes, sorted-multiset comparison, `clear_var_cache` before language

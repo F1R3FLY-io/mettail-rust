@@ -494,14 +494,15 @@ frame descends `loc:site0` (`f`) → `loc:site0/f.0` (`g`) → captures `cap:sit
 
 *Figure 27-7. The NESTED (M2) frame: the root `Match` dispatches the head, `wrap_descent` consumes
 each nested App head tag on its `loc:` channel and dispatches on the ground op, and the innermost
-variable leaves are captured on their `cap:` collapse channels — the M2 depth is recursion in
-`collect_nested_schedule`. Source: [figures/27-nested-frame.puml](figures/27-nested-frame.puml).*
+variable leaves are captured on their `cap:` collapse channels — the M2 depth is represented by
+the explicit heap-backed worklist in `collect_nested_schedule`, not the host call stack. Source:
+[figures/27-nested-frame.puml](figures/27-nested-frame.puml).*
 
 ### 6.4 Fail-closed cases
 
 The serializer never emits an incorrect network; it fails closed to a later slice with an
 `AutomatonUnsupported` variant (`:42`): `MultiPattern` (a multi-entry view at a single-pattern
-entrypoint), `NonLinearVariable` (a deep-position repeat), `NonLinearSharedOp` (two entries share an
+entrypoint), `NonLinearSharedOp` (two entries share an
 op but partition their variables differently — e.g. `f(x,y)` and `f(x,x)`), `ConflictingArityForOp`
 (same op, different arity, or a flat/nested clash on one op), `VariableRootPattern` (a bare-`Var`
 root), `MissingAcceptTarget` (an entry with no accept target), `NestedEntryMultiSite`, and

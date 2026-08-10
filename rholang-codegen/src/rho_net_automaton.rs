@@ -15,15 +15,17 @@
 //! identical to the message the host σ-injection builds — so the persistent
 //! `sigma_receiver_par` contract fires and lands `⟦R⟧σ` (INV-3/4/10/13 by construction).
 //!
-//! Scope: App-rooted patterns, LINEAR (distinct vars) at any depth via
-//! descend-then-collapse ([`build_nested_case_body`]), plus FLAT non-linear repeats
-//! via the `eq:` consistency join over the collapsed values. A bare-variable root, a
-//! nested NON-linear repeat, or a same-op arity/partition clash fails closed to a
-//! later slice ([`AutomatonUnsupported`]) rather than emitting an incorrect network.
+//! Scope: App-rooted patterns at any depth via descend-then-collapse
+//! ([`build_nested_case_body`]), including non-linear repeats through an atomic `eq:`
+//! consistency join over the collapsed values. A bare-variable root or a same-op
+//! arity/partition clash fails closed ([`AutomatonUnsupported`]) rather than emitting
+//! an incorrect network.
 //! The De Bruijn / `locally_free` frame is validated end-to-end by the runtime match
 //! tests (the RSpace reducer is the true `locally_free` oracle).
 
-use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView, StateId};
+use std::collections::BTreeSet;
+
+use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView, SlotId, StateId};
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EAnd, EEq, Expr, MatchCase, Par, Receive, ReceiveBind};
@@ -33,32 +35,21 @@ use models::rust::utils::{
     new_send_par,
 };
 
-use crate::rho_net_lower::{
-    collapse_capture_location, reflect_tag, spread_child_location, spread_root_location,
-};
+use crate::rho_net_location::{MatcherPosition, SubjectLocationIndex, SubjectPosition};
+use crate::rho_net_lower::{reflect_tag, GroundTerm};
 
-/// The pattern shapes the M1 automaton serializer does not yet handle — each
-/// fails closed to a later slice rather than emitting an incorrect network.
+/// Shapes that cannot share one sound M1 automaton network. Each fails closed
+/// rather than emitting an incorrect network.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutomatonUnsupported {
     /// Not exactly one compiled pattern entry at the SINGLE-pattern
     /// [`automaton_receiver_network_par`] entry point — use
     /// [`multi_pattern_receiver_network_par`] for ≥2 patterns.
     MultiPattern,
-    /// A repeated LHS variable in a shape Stage 2's `eq:` join cannot yet host (reserved
-    /// for the deep-position non-linear path; nullary-leaf repeats ARE handled — a guarded
-    /// polyadic join with an `EEq`/`EAnd` consistency `condition`).
-    NonLinearVariable,
     /// Two entries share a root op but induce different variable-repetition partitions —
     /// one guarded `eq:` join cannot host both (one would gate the shared consume the other
     /// must not); fail closed (a per-accept `If`-gate is the follow-up).
     NonLinearSharedOp,
-    /// RESERVED (no longer emitted): a nested-App pattern child. Stage 4 M-collapse serializes
-    /// these by descending `loc:` head tags to the nested App(s) and collapsing the Var leaves on
-    /// their `cap:` channels (`build_nested_case_body`), so a non-nullary matched subterm binds
-    /// its full `⟦subtree⟧`. Kept as a public variant for API stability; a nested NON-linear
-    /// pattern (a deep-position repeat) now fails closed with [`NonLinearVariable`] instead.
-    NonNullaryVarSubtree,
     /// A bare-variable root pattern — not an App-rooted rewrite the σ-receiver fires.
     VariableRootPattern,
     /// Two entries share a root op but differ in arity — one `Match` case cannot host
@@ -202,10 +193,40 @@ fn parallel_accept(accepts: &[(String, String)], arity: usize, first_occ: &[usiz
 /// the FULLY COLLAPSED subterm `⟦subtree⟧` (M-collapse), the positional σ for a subject of
 /// arbitrary depth. The FLAT special case of [`wrap_capture_chain`] (the `k = arity` direct-child
 /// captures at positions `0..arity`).
-fn wrap_children(capture_root: &str, op: &str, arity: usize, accept: Par) -> Par {
-    let channels: Vec<String> = (0..arity)
-        .map(|i| spread_child_location(capture_root, op, i))
-        .collect();
+fn direct_child_channels(
+    locations: &SubjectLocationIndex<'_>,
+    root_position: SubjectPosition,
+    family: &str,
+    language_fingerprint: &str,
+    root_site: &str,
+    arity: usize,
+) -> Vec<String> {
+    (0..arity)
+        .map(|index| {
+            let position = locations
+                .child(root_position, index)
+                .map_or(MatcherPosition::Dead, MatcherPosition::Live);
+            locations.channel(family, language_fingerprint, root_site, position)
+        })
+        .collect()
+}
+
+fn wrap_children(
+    locations: &SubjectLocationIndex<'_>,
+    root_position: SubjectPosition,
+    language_fingerprint: &str,
+    root_site: &str,
+    arity: usize,
+    accept: Par,
+) -> Par {
+    let channels = direct_child_channels(
+        locations,
+        root_position,
+        "cap",
+        language_fingerprint,
+        root_site,
+        arity,
+    );
     wrap_capture_chain(&channels, accept)
 }
 
@@ -241,41 +262,54 @@ pub(crate) struct Descent {
     pub(crate) op: String,
 }
 
-/// DFS a nested pattern subtree rooted at `state` — whose head tag is published on `loc_channel`
+/// Iterate over a nested pattern subtree rooted at `state` — whose head tag is published on `loc_channel`
 /// and whose collapse value is published on `cap_channel` — collecting the DESCENTS (nested App
-/// nodes, `loc:`, pre-order) and CAPTURES (Var leaves, `cap:`, DFS order) plus each leaf's var
-/// NAME (for the linearity check). A Var leaf contributes a capture; an App node contributes a
-/// descent and recurses left-to-right, so the capture order is the pattern's first-occurrence
-/// (left-to-right) variable order — the σ-receiver's formal order.
+/// nodes, `loc:`, pre-order) and CAPTURES (Var leaves, `cap:`, DFS order) plus each leaf's
+/// canonical root slot. A Var leaf contributes a capture; an App node contributes a descent and
+/// schedules children left-to-right, so the capture order is the pattern's first-occurrence
+/// slot order — the σ-receiver's formal order.
 /// `pub(crate)`: the Track-B naive baseline emitter (`rho_net_naive_kt`, feature
 /// `bench-naive-baseline`) collects its per-entry schedule through THIS function, so
 /// its descent/capture order is the automaton's by construction.
 pub(crate) fn collect_nested_schedule(
     view: &SetAutomatonView<'_, String>,
     state: StateId,
-    loc_channel: &str,
-    cap_channel: &str,
+    root_slots: Vec<SlotId>,
+    locations: &SubjectLocationIndex<'_>,
+    root_site: &str,
+    language_fingerprint: &str,
+    position: MatcherPosition,
     descents: &mut Vec<Descent>,
     captures: &mut Vec<String>,
-    names: &mut Vec<String>,
+    capture_slots: &mut Vec<SlotId>,
 ) {
-    let mut work = vec![(state, loc_channel.to_owned(), cap_channel.to_owned())];
-    while let Some((state, loc_channel, cap_channel)) = work.pop() {
+    debug_assert_eq!(root_slots.len(), view.state_slot_count(state));
+    let mut work = vec![(state, root_slots, position)];
+    while let Some((state, root_slots, position)) = work.pop() {
         match view.node(state) {
-            AutomatonNode::Var(name) => {
-                captures.push(cap_channel);
-                names.push(name.to_string());
+            AutomatonNode::Var => {
+                captures.push(locations.channel("cap", language_fingerprint, root_site, position));
+                capture_slots.push(root_slots[0]);
             },
             AutomatonNode::App { op, args } => {
                 descents.push(Descent {
-                    loc_channel: loc_channel.clone(),
+                    loc_channel: locations.channel(
+                        "loc",
+                        language_fingerprint,
+                        root_site,
+                        position,
+                    ),
                     op: op.to_string(),
                 });
-                for (index, &arg) in args.iter().enumerate().rev() {
+                for (index, arg) in args.iter().enumerate().rev() {
+                    let child_root_slots = arg
+                        .parent_slots()
+                        .map(|parent| root_slots[parent.index()])
+                        .collect();
                     work.push((
-                        arg,
-                        spread_child_location(&loc_channel, op, index),
-                        spread_child_location(&cap_channel, op, index),
+                        arg.state(),
+                        child_root_slots,
+                        locations.matcher_child(position, index),
                     ));
                 }
             },
@@ -302,18 +336,29 @@ fn wrap_descent(loc_channel: &str, op_tag: Par, closed_body: Par) -> Par {
     for_receive(loc_channel, match_par, &[0])
 }
 
-/// The `Match` case body for a NESTED, LINEAR entry (`descend-then-collapse`): wrap the DFS Var
-/// leaves' `cap:` captures around `accept` (the innermost closed σ frame), then wrap the nested
-/// App descents in DFS-REVERSE order (the deepest App innermost, the root's direct App children
-/// outermost). The root op's own `Match` is the shared per-op case that hosts this body, so the
-/// schedule is collected over the root's ARGS, never the root itself.
+/// The `Match` case body for a NESTED entry (`descend-then-collapse`). Linear captures use the
+/// sequential capture chain; repeated slots use one guarded polyadic join so equality is tested
+/// atomically. The nested App descents wrap that closed capture body in DFS-REVERSE order (the
+/// deepest App innermost, the root's direct App children outermost). The root op's own `Match` is
+/// the shared per-op case, so the schedule is collected over the root's ARGS, never the root.
 fn build_nested_case_body(
     capture_channels: &[String],
+    capture_partition: &[usize],
     descents: &[Descent],
     accept: Par,
     language_fingerprint: &str,
 ) -> Par {
-    let mut body = wrap_capture_chain(capture_channels, accept);
+    let distinct = capture_partition
+        .iter()
+        .copied()
+        .max()
+        .map(|slot| slot + 1)
+        .unwrap_or(0);
+    let mut body = if distinct == capture_channels.len() {
+        wrap_capture_chain(capture_channels, accept)
+    } else {
+        join_capture_receiver(capture_channels, capture_partition, accept)
+    };
     for descent in descents.iter().rev() {
         let op_tag =
             GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &descent.op));
@@ -383,31 +428,43 @@ fn consistency_guard(arity: usize, partition: &[usize]) -> Par {
 /// order), so the guard and `accept` share the reverse De Bruijn frame; the receive binds all
 /// `arity` indices, closing the case body (`locally_free = {}`).
 fn join_children_receiver(
-    capture_root: &str,
-    op: &str,
+    locations: &SubjectLocationIndex<'_>,
+    root_position: SubjectPosition,
+    language_fingerprint: &str,
+    root_site: &str,
     arity: usize,
     partition: &[usize],
     accept: Par,
 ) -> Par {
-    let binds: Vec<ReceiveBind> = (0..arity)
-        .map(|i| ReceiveBind {
+    let channels = direct_child_channels(
+        locations,
+        root_position,
+        "cap",
+        language_fingerprint,
+        root_site,
+        arity,
+    );
+    join_capture_receiver(&channels, partition, accept)
+}
+
+fn join_capture_receiver(capture_channels: &[String], partition: &[usize], accept: Par) -> Par {
+    debug_assert_eq!(capture_channels.len(), partition.len());
+    let binds: Vec<ReceiveBind> = capture_channels
+        .iter()
+        .map(|channel| ReceiveBind {
             patterns: vec![new_freevar_par(0, Vec::new())],
-            source: Some(new_gstring_par(
-                spread_child_location(capture_root, op, i),
-                Vec::new(),
-                false,
-            )),
+            source: Some(new_gstring_par(channel.clone(), Vec::new(), false)),
             remainder: None,
             free_count: 1,
         })
         .collect();
-    let guard = consistency_guard(arity, partition);
+    let guard = consistency_guard(capture_channels.len(), partition);
     let receive = Receive {
         binds,
         body: Some(accept),
         persistent: false,
         peek: false,
-        bind_count: arity as i32,
+        bind_count: capture_channels.len() as i32,
         locally_free: Vec::new(),
         connective_used: false,
         condition: Some(guard),
@@ -439,6 +496,74 @@ pub struct AutomatonAcceptTarget {
 /// `language_fingerprint`, or the accept sends and σ-receivers would not rendezvous.
 pub fn multi_pattern_receiver_network_par(
     view: &SetAutomatonView<'_, String>,
+    subject: &GroundTerm,
+    root_location: &str,
+    accept_targets: &[AutomatonAcceptTarget],
+    language_fingerprint: &str,
+) -> Result<Par, AutomatonUnsupported> {
+    let locations = SubjectLocationIndex::new(subject);
+    multi_pattern_receiver_network_indexed_par(
+        view,
+        &locations,
+        SubjectPosition::ROOT,
+        root_location,
+        accept_targets,
+        language_fingerprint,
+    )
+}
+
+/// Serialize the same compiled pattern set at every concrete subject position
+/// whose constructor is one of its entry-root operators.  The compact subject
+/// index is constructed exactly once, and every returned network shares the
+/// exact identities used by one [`spread_term_par`](crate::spread_term_par)
+/// call over `subject` and `root_location`.  The count is the number of
+/// candidate positions serialized.
+///
+/// This lower-level surface is for callers that have independently proved the
+/// requested networks can be co-installed without competing for a linear
+/// `loc:` publication.  General locate-all execution should use
+/// [`in_rho_match_all_sites_call_par`](crate::in_rho_match_all_sites_call_par),
+/// which enforces that admission condition.
+pub fn multi_pattern_receiver_networks_at_rule_roots_par(
+    view: &SetAutomatonView<'_, String>,
+    subject: &GroundTerm,
+    root_location: &str,
+    accept_targets: &[AutomatonAcceptTarget],
+    language_fingerprint: &str,
+) -> Result<(Par, usize), AutomatonUnsupported> {
+    let locations = SubjectLocationIndex::new(subject);
+    let root_ops: BTreeSet<&str> = (0..view.entry_count())
+        .filter_map(|entry| match view.node(view.entry_root_state(entry)) {
+            AutomatonNode::App { op, .. } => Some(op.as_str()),
+            AutomatonNode::Var => None,
+        })
+        .collect();
+    let mut positions = Vec::new();
+    locations.walk(SubjectPosition::ROOT, |position, term| {
+        if root_ops.contains(term.constructor.as_str()) {
+            positions.push(position);
+        }
+        true
+    });
+
+    let mut networks = Par::default();
+    for &position in &positions {
+        networks = networks.append(multi_pattern_receiver_network_indexed_par(
+            view,
+            &locations,
+            position,
+            root_location,
+            accept_targets,
+            language_fingerprint,
+        )?);
+    }
+    Ok((networks, positions.len()))
+}
+
+pub(crate) fn multi_pattern_receiver_network_indexed_par(
+    view: &SetAutomatonView<'_, String>,
+    locations: &SubjectLocationIndex<'_>,
+    root_position: SubjectPosition,
     root_location: &str,
     accept_targets: &[AutomatonAcceptTarget],
     language_fingerprint: &str,
@@ -450,16 +575,11 @@ pub fn multi_pattern_receiver_network_par(
         return Err(AutomatonUnsupported::VariableRootPattern);
     }
 
-    let root_channel = spread_root_location(language_fingerprint, root_location);
-    // Var-leaf states read the `cap:` COLLAPSE channels (fully collapsed subterms); the root
-    // Match and every nested App descent read `loc:` head-tag channels.
-    let capture_root = collapse_capture_location(language_fingerprint, root_location);
+    let root_channel = locations.channel("loc", language_fingerprint, root_location, root_position);
 
-    // Group entries by root op (first-seen order). A FLAT entry (all direct children are Var
-    // leaves) joins the O1/O3 partition grouping; a NESTED entry (some direct child is an App)
-    // takes the recursive descend-then-collapse path (single-entry, LINEAR). A root op is EITHER
-    // flat or nested — a shared op across the two, or two nested entries, fails closed (one `Match`
-    // hosts ONE case per op).
+    // Group entries by root op (first-seen order). Flat entries share by their
+    // slot partition; nested entries share when their canonical root StateId is
+    // equal, which is precisely equality modulo entry-local alpha names.
     struct OpGroup {
         op: String,
         arity: usize,
@@ -470,13 +590,22 @@ pub fn multi_pattern_receiver_network_par(
         first_occ: Vec<usize>,
         accepts: Vec<(String, String)>,
     }
+    struct NestedGroup {
+        op: String,
+        root: StateId,
+        descents: Vec<Descent>,
+        captures: Vec<String>,
+        partition: Vec<usize>,
+        first_occ: Vec<usize>,
+        accepts: Vec<(String, String)>,
+    }
     let mut groups: Vec<OpGroup> = Vec::new();
-    let mut nested_cases: Vec<(String, MatchCase)> = Vec::new();
+    let mut nested_groups: Vec<NestedGroup> = Vec::new();
     for entry in 0..view.entry_count() {
         let root = view.entry_root_state(entry);
         let (op, args) = match view.node(root) {
             AutomatonNode::App { op, args } => (op.to_string(), args.to_vec()),
-            AutomatonNode::Var(_) => return Err(AutomatonUnsupported::VariableRootPattern),
+            AutomatonNode::Var => return Err(AutomatonUnsupported::VariableRootPattern),
         };
         let arity = args.len();
         let pid = view.entry_id(entry);
@@ -484,81 +613,87 @@ pub fn multi_pattern_receiver_network_par(
             .iter()
             .find(|t| t.pattern == pid)
             .ok_or(AutomatonUnsupported::MissingAcceptTarget)?;
+        let accept = (target.accept_channel.clone(), target.out_channel.clone());
 
         // NESTED: some direct child is an App — the automaton descends `loc:` head tags to the
         // nested App(s) and collapses `cap:` at the Var leaves (removing the M1 rejection).
         let is_nested = args
             .iter()
-            .any(|&arg| matches!(view.node(arg), AutomatonNode::App { .. }));
+            .any(|arg| matches!(view.node(arg.state()), AutomatonNode::App { .. }));
         if is_nested {
-            if groups.iter().any(|group| group.op == op)
-                || nested_cases.iter().any(|(nested_op, _)| *nested_op == op)
-            {
+            if groups.iter().any(|group| group.op == op) {
                 return Err(AutomatonUnsupported::ConflictingArityForOp);
+            }
+            if let Some(group) = nested_groups.iter_mut().find(|group| group.op == op) {
+                if group.root != root {
+                    return Err(AutomatonUnsupported::NonLinearSharedOp);
+                }
+                group.accepts.push(accept);
+                continue;
             }
             // DFS the root's ARGS (the root op is this case's Match) → descents + captures.
             let mut descents: Vec<Descent> = Vec::new();
             let mut captures: Vec<String> = Vec::new();
-            let mut names: Vec<String> = Vec::new();
-            for (index, &arg) in args.iter().enumerate() {
-                let child_loc = spread_child_location(&root_channel, &op, index);
-                let child_cap = spread_child_location(&capture_root, &op, index);
+            let mut capture_slots: Vec<SlotId> = Vec::new();
+            for (index, arg) in args.iter().enumerate() {
+                let child_position = locations
+                    .child(root_position, index)
+                    .map_or(MatcherPosition::Dead, MatcherPosition::Live);
                 collect_nested_schedule(
                     view,
-                    arg,
-                    &child_loc,
-                    &child_cap,
+                    arg.state(),
+                    arg.parent_slots().collect(),
+                    locations,
+                    root_location,
+                    language_fingerprint,
+                    child_position,
                     &mut descents,
                     &mut captures,
-                    &mut names,
+                    &mut capture_slots,
                 );
             }
-            // LINEAR only: a repeated var across nested positions needs a deep-position
-            // consistency guard (a later slice) — fail closed.
-            let is_linear = names
+            let mut first_occ = vec![usize::MAX; view.state_slot_count(root)];
+            let partition: Vec<usize> = capture_slots
                 .iter()
                 .enumerate()
-                .all(|(i, name)| !names[..i].contains(name));
-            if !is_linear {
-                return Err(AutomatonUnsupported::NonLinearVariable);
-            }
-            let k = names.len();
-            let first_occ: Vec<usize> = (0..k).collect();
-            let accept = parallel_accept(
-                &[(target.accept_channel.clone(), target.out_channel.clone())],
-                k,
-                &first_occ,
-            );
-            let body = build_nested_case_body(&captures, &descents, accept, language_fingerprint);
-            let head_tag =
-                GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &op));
-            nested_cases.push((
+                .map(|(position, slot)| {
+                    let slot = slot.index();
+                    if first_occ[slot] == usize::MAX {
+                        first_occ[slot] = position;
+                    }
+                    slot
+                })
+                .collect();
+            debug_assert!(first_occ.iter().all(|&position| position != usize::MAX));
+            nested_groups.push(NestedGroup {
                 op,
-                MatchCase {
-                    pattern: Some(head_tag),
-                    source: Some(body),
-                    free_count: 0,
-                    guard: None,
-                },
-            ));
+                root,
+                descents,
+                captures,
+                partition,
+                first_occ,
+                accepts: vec![accept],
+            });
             continue;
+        }
+
+        if nested_groups.iter().any(|group| group.op == op) {
+            return Err(AutomatonUnsupported::ConflictingArityForOp);
         }
 
         // FLAT: partition the direct-child positions by which distinct variable each binds
         // (first-occurrence order). A repeated variable (`k = first_occ.len() < arity`) is matched
         // by the `eq:` consistency join.
-        let mut names: Vec<String> = Vec::new();
         let mut partition: Vec<usize> = Vec::with_capacity(arity);
-        let mut first_occ: Vec<usize> = Vec::new();
-        for (pos, &arg) in args.iter().enumerate() {
-            match view.node(arg) {
-                AutomatonNode::Var(name) => match names.iter().position(|v| v == name) {
-                    Some(d) => partition.push(d),
-                    None => {
-                        partition.push(names.len());
-                        first_occ.push(pos);
-                        names.push(name.to_string());
-                    },
+        let mut first_occ = vec![usize::MAX; view.state_slot_count(root)];
+        for (pos, arg) in args.iter().enumerate() {
+            match view.node(arg.state()) {
+                AutomatonNode::Var => {
+                    let slot = arg.parent_slot(SlotId::from_index(0)).index();
+                    partition.push(slot);
+                    if first_occ[slot] == usize::MAX {
+                        first_occ[slot] = pos;
+                    }
                 },
                 // An App child means the entry is nested — routed to the descend path above.
                 AutomatonNode::App { .. } => {
@@ -566,7 +701,7 @@ pub fn multi_pattern_receiver_network_par(
                 },
             }
         }
-        let accept = (target.accept_channel.clone(), target.out_channel.clone());
+        debug_assert!(first_occ.iter().all(|&position| position != usize::MAX));
         match groups.iter_mut().find(|g| g.op == op) {
             Some(group) => {
                 if group.arity != arity {
@@ -580,9 +715,6 @@ pub fn multi_pattern_receiver_network_par(
                 group.accepts.push(accept);
             },
             None => {
-                if nested_cases.iter().any(|(nested_op, _)| *nested_op == op) {
-                    return Err(AutomatonUnsupported::ConflictingArityForOp);
-                }
                 groups.push(OpGroup {
                     op,
                     arity,
@@ -596,13 +728,28 @@ pub fn multi_pattern_receiver_network_par(
 
     // One `Match` case per distinct root op: the flat partition cases (linear child chain OR the
     // `eq:`-guarded join) plus the nested descend-then-collapse cases.
-    let mut cases = Vec::with_capacity(groups.len() + nested_cases.len());
+    let mut cases = Vec::with_capacity(groups.len() + nested_groups.len());
     for group in &groups {
         let accept = parallel_accept(&group.accepts, group.arity, &group.first_occ);
         let body = if group.first_occ.len() == group.arity {
-            wrap_children(&capture_root, &group.op, group.arity, accept)
+            wrap_children(
+                locations,
+                root_position,
+                language_fingerprint,
+                root_location,
+                group.arity,
+                accept,
+            )
         } else {
-            join_children_receiver(&capture_root, &group.op, group.arity, &group.partition, accept)
+            join_children_receiver(
+                locations,
+                root_position,
+                language_fingerprint,
+                root_location,
+                group.arity,
+                &group.partition,
+                accept,
+            )
         };
         let head_tag =
             GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &group.op));
@@ -613,8 +760,23 @@ pub fn multi_pattern_receiver_network_par(
             guard: None,
         });
     }
-    for (_op, case) in nested_cases {
-        cases.push(case);
+    for group in nested_groups {
+        let accept = parallel_accept(&group.accepts, group.captures.len(), &group.first_occ);
+        let body = build_nested_case_body(
+            &group.captures,
+            &group.partition,
+            &group.descents,
+            accept,
+            language_fingerprint,
+        );
+        let head_tag =
+            GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &group.op));
+        cases.push(MatchCase {
+            pattern: Some(head_tag),
+            source: Some(body),
+            free_count: 0,
+            guard: None,
+        });
     }
 
     // The root head tag (BoundVar(0)) is Match-dispatched; the Match is free in {0}, the
@@ -636,6 +798,7 @@ pub fn multi_pattern_receiver_network_par(
 /// or the accept send and the σ-receiver would not rendezvous.
 pub fn automaton_receiver_network_par(
     view: &SetAutomatonView<'_, String>,
+    subject: &GroundTerm,
     root_location: &str,
     accept_channel: &str,
     out_channel: &str,
@@ -649,7 +812,13 @@ pub fn automaton_receiver_network_par(
         accept_channel: accept_channel.to_string(),
         out_channel: out_channel.to_string(),
     };
-    multi_pattern_receiver_network_par(view, root_location, &[target], language_fingerprint)
+    multi_pattern_receiver_network_par(
+        view,
+        subject,
+        root_location,
+        &[target],
+        language_fingerprint,
+    )
 }
 
 #[cfg(test)]
@@ -664,15 +833,31 @@ mod tests {
     use models::rhoapi::expr::ExprInstance;
 
     /// The INV-S6 scope these automaton wiring tests derive their channel names under.
-    ///
-    /// The expectations below deliberately call the PRODUCTION derivations
-    /// (`spread_root_location` / `spread_child_location` / `collapse_capture_location`)
-    /// rather than spelling scoped literals. These are AGREEMENT tests — the automaton
-    /// must read on exactly the channels the spread publishes on — so deriving both sides
-    /// through the one helper is what the assertion is actually about, and it keeps the
-    /// path SHAPE (`site0/Swap.1`, `site0/f.0/g.0`) pinned, which is the part a wiring
-    /// regression would break.
+    /// Expectations use the production subject-position index shared by spread and
+    /// matcher construction.  That is the agreement invariant: both sides rendezvous
+    /// on the same exact, fixed-width positional identity without retaining full paths.
     const FP: &str = "mettail-langdef-v1:0000000000000000";
+
+    fn positional_subject() -> GroundTerm {
+        let branch = |name| {
+            GroundTerm::new(
+                name,
+                vec![GroundTerm::nullary("a"), GroundTerm::nullary("b"), GroundTerm::nullary("c")],
+            )
+        };
+        GroundTerm::new("root", vec![branch("left"), branch("middle"), branch("right")])
+    }
+
+    fn indexed_channel(subject: &GroundTerm, family: &str, child_path: &[usize]) -> String {
+        let locations = SubjectLocationIndex::new(subject);
+        let mut position = SubjectPosition::ROOT;
+        for &child in child_path {
+            position = locations
+                .child(position, child)
+                .expect("test subject contains position");
+        }
+        locations.channel(family, FP, "site0", position)
+    }
 
     fn swap_automaton() -> SetAutomaton<String> {
         SetAutomaton::compile_structural([(
@@ -702,6 +887,7 @@ mod tests {
 
     #[test]
     fn rejects_out_of_scope_patterns() {
+        let subject = positional_subject();
         // Multi-pattern.
         let multi = SetAutomaton::compile_structural([
             (PatternId(0), Pattern::app("f".to_string(), vec![Pattern::var("x")])),
@@ -709,7 +895,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            automaton_receiver_network_par(&multi.view(), "s", "acc", "OUT", FP),
+            automaton_receiver_network_par(&multi.view(), &subject, "s", "acc", "OUT", FP),
             Err(AutomatonUnsupported::MultiPattern)
         );
 
@@ -717,7 +903,7 @@ mod tests {
         let var_root =
             SetAutomaton::compile_structural([(PatternId(0), Pattern::var("x"))]).unwrap();
         assert_eq!(
-            automaton_receiver_network_par(&var_root.view(), "s", "acc", "OUT", FP),
+            automaton_receiver_network_par(&var_root.view(), &subject, "s", "acc", "OUT", FP),
             Err(AutomatonUnsupported::VariableRootPattern)
         );
     }
@@ -735,36 +921,31 @@ mod tests {
             ),
         )])
         .unwrap();
-        let network = automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
-            .expect("a nested-App pattern now descends-then-collapses");
+        let subject = positional_subject();
+        let network =
+            automaton_receiver_network_par(&nested.view(), &subject, "site0", "sa:acc", "OUT", FP)
+                .expect("a nested-App pattern now descends-then-collapses");
         assert!(network.locally_free.is_empty(), "the nested network is a closed contract");
 
         // Root: for(h <- loc:site0){ match h { f => <descent> } }.
         let root = &network.receives[0];
         assert_eq!(
             gstring(root.binds[0].source.as_ref().unwrap()),
-            Some(spread_root_location(FP, "site0").as_str())
+            Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
         let f_case = &root.body.as_ref().unwrap().matches[0].cases[0];
         // Descent: for(h1 <- loc:site0/f.0){ match h1 { g => <capture> } }.
         let descent = &f_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(descent.binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&spread_root_location(FP, "site0"), "f", 0).as_str())
+            Some(indexed_channel(&subject, "loc", &[0]).as_str())
         );
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
         // Capture: for(v <- cap:site0/f.0/g.0){ accept }.
         let capture = &g_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().unwrap()),
-            Some(
-                spread_child_location(
-                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
-                    "g",
-                    0
-                )
-                .as_str()
-            ),
+            Some(indexed_channel(&subject, "cap", &[0, 0]).as_str()),
             "the Var leaf captures the COLLAPSED subterm at its deep cap: channel"
         );
         // Accept: sa:acc!( BoundVar(0), @"OUT" ) — the single σ slot ⟦subtree at f.0/g.0⟧.
@@ -788,8 +969,10 @@ mod tests {
             ),
         )])
         .unwrap();
-        let network = automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
-            .expect("a nested pattern with a flat sibling serializes");
+        let subject = positional_subject();
+        let network =
+            automaton_receiver_network_par(&nested.view(), &subject, "site0", "sa:acc", "OUT", FP)
+                .expect("a nested pattern with a flat sibling serializes");
         let f_case = &network.receives[0].body.as_ref().unwrap().matches[0].cases[0];
         let descent = &f_case.source.as_ref().unwrap().receives[0];
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
@@ -797,19 +980,12 @@ mod tests {
         let cap_x = &g_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().unwrap()),
-            Some(
-                spread_child_location(
-                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
-                    "g",
-                    0
-                )
-                .as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[0, 0]).as_str())
         );
         let cap_y = &cap_x.body.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(cap_y.binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str())
+            Some(indexed_channel(&subject, "cap", &[1]).as_str())
         );
         let accept = &cap_y.body.as_ref().unwrap().sends[0];
         assert_eq!(accept.data.len(), 3, "σ[x], σ[y], @out");
@@ -819,7 +995,83 @@ mod tests {
     }
 
     #[test]
+    fn serializes_nested_nonlinear_slots_with_one_atomic_capture_join() {
+        let subject = positional_subject();
+        let automaton = SetAutomaton::compile_structural([(
+            PatternId(0),
+            Pattern::app(
+                "f".to_string(),
+                vec![
+                    Pattern::app("g".to_string(), vec![Pattern::var("x")]),
+                    Pattern::app("h".to_string(), vec![Pattern::var("x")]),
+                ],
+            ),
+        )])
+        .expect("the nested nonlinear pattern compiles");
+        let network = automaton_receiver_network_par(
+            &automaton.view(),
+            &subject,
+            "site0",
+            "sa:acc",
+            "OUT",
+            FP,
+        )
+        .expect("the repeated canonical slot uses a guarded deep capture join");
+
+        let f_case = &network.receives[0].body.as_ref().unwrap().matches[0].cases[0];
+        let g_recv = &f_case.source.as_ref().unwrap().receives[0];
+        let g_case = &g_recv.body.as_ref().unwrap().matches[0].cases[0];
+        let h_recv = &g_case.source.as_ref().unwrap().receives[0];
+        let h_case = &h_recv.body.as_ref().unwrap().matches[0].cases[0];
+        let join = &h_case.source.as_ref().unwrap().receives[0];
+
+        assert_eq!(join.bind_count, 2);
+        assert!(join.condition.is_some(), "the two occurrences of slot 0 are compared");
+        assert_eq!(join.body.as_ref().unwrap().sends[0].data.len(), 2, "one σ slot plus out");
+    }
+
+    #[test]
+    fn alpha_renamed_nested_entries_share_one_network_and_fan_out_accepts() {
+        let subject = positional_subject();
+        let shape = |name: &str| {
+            Pattern::app(
+                "f".to_string(),
+                vec![Pattern::app("g".to_string(), vec![Pattern::var(name)])],
+            )
+        };
+        let automaton = SetAutomaton::compile_structural([
+            (PatternId(0), shape("x")),
+            (PatternId(1), shape("renamed")),
+        ])
+        .expect("alpha-renamed nested entries compile");
+        let view = automaton.view();
+        assert_eq!(view.entry_root_state(0), view.entry_root_state(1));
+        let targets = [
+            AutomatonAcceptTarget {
+                pattern: PatternId(0),
+                accept_channel: "sa:left".to_string(),
+                out_channel: "OUT".to_string(),
+            },
+            AutomatonAcceptTarget {
+                pattern: PatternId(1),
+                accept_channel: "sa:right".to_string(),
+                out_channel: "OUT".to_string(),
+            },
+        ];
+        let network = multi_pattern_receiver_network_par(&view, &subject, "site0", &targets, FP)
+            .expect("one canonical nested state fans out to both rules");
+
+        let root_match = &network.receives[0].body.as_ref().unwrap().matches[0];
+        assert_eq!(root_match.cases.len(), 1, "one root case is shared");
+        let descent = &root_match.cases[0].source.as_ref().unwrap().receives[0];
+        let nested_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
+        let capture = &nested_case.source.as_ref().unwrap().receives[0];
+        assert_eq!(capture.body.as_ref().unwrap().sends.len(), 2, "both accepts fan out");
+    }
+
+    #[test]
     fn serializes_a_nonlinear_pattern_with_the_eq_guard() {
+        let subject = positional_subject();
         // f(x, x): the two positions share variable x, so the case body is ONE guarded join
         // (not the nested chain), carrying an EEq(BoundVar(1), BoundVar(0)) consistency
         // condition, and the accept sends ONE distinct-var σ slot — matching the σ-receiver's
@@ -829,9 +1081,15 @@ mod tests {
             Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
         )])
         .expect("f(x, x) compiles");
-        let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
-                .expect("f(x, x) serializes with the eq: guard");
+        let network = automaton_receiver_network_par(
+            &automaton.view(),
+            &subject,
+            "site0",
+            "sa:acc",
+            "OUT",
+            FP,
+        )
+        .expect("f(x, x) serializes with the eq: guard");
         assert!(network.locally_free.is_empty(), "the network is still a closed contract");
 
         let root_recv = &network.receives[0];
@@ -844,11 +1102,11 @@ mod tests {
         assert_eq!(join.bind_count, 2, "the join binds both children in one receive");
         assert_eq!(
             gstring(join.binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0).as_str())
+            Some(indexed_channel(&subject, "cap", &[0]).as_str())
         );
         assert_eq!(
             gstring(join.binds[1].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str())
+            Some(indexed_channel(&subject, "cap", &[1]).as_str())
         );
 
         // The consistency condition: EEq(BoundVar(1), BoundVar(0)) (occurrence 0 == occurrence 1).
@@ -878,6 +1136,7 @@ mod tests {
 
     #[test]
     fn serializes_partial_nonlinear_f_x_x_y() {
+        let subject = positional_subject();
         // f(x, x, y): x repeats at positions 0,1 (distinct 0); y at position 2 (distinct 1).
         // Guard EEq(BoundVar(2), BoundVar(1)); accept σ = [ EList[BoundVar(2)] (x),
         // EList[BoundVar(0)] (y) ] — two distinct-var slots for a ternary pattern.
@@ -889,9 +1148,15 @@ mod tests {
             ),
         )])
         .expect("f(x, x, y) compiles");
-        let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
-                .expect("f(x, x, y) serializes");
+        let network = automaton_receiver_network_par(
+            &automaton.view(),
+            &subject,
+            "site0",
+            "sa:acc",
+            "OUT",
+            FP,
+        )
+        .expect("f(x, x, y) serializes");
         let root_recv = &network.receives[0];
         let m = &root_recv.body.as_ref().unwrap().matches[0];
         let join = &m.cases[0].source.as_ref().unwrap().receives[0];
@@ -914,6 +1179,7 @@ mod tests {
 
     #[test]
     fn rejects_mixed_linearity_shared_op() {
+        let subject = positional_subject();
         // f(x, y) is linear, f(x, x) is non-linear — a shared op with differing repetition
         // partitions cannot share one guarded join; fail closed.
         let automaton = SetAutomaton::compile_structural([
@@ -940,17 +1206,24 @@ mod tests {
             },
         ];
         assert_eq!(
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP),
+            multi_pattern_receiver_network_par(&automaton.view(), &subject, "site0", &targets, FP,),
             Err(AutomatonUnsupported::NonLinearSharedOp)
         );
     }
 
     #[test]
     fn serializes_swap_to_the_worked_out_frame() {
+        let subject = positional_subject();
         let automaton = swap_automaton();
-        let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
-                .expect("Swap(x, y) serializes");
+        let network = automaton_receiver_network_par(
+            &automaton.view(),
+            &subject,
+            "site0",
+            "sa:acc",
+            "OUT",
+            FP,
+        )
+        .expect("Swap(x, y) serializes");
 
         // Root: exactly one receive on loc:site0, closed (locally_free empty).
         assert_eq!(network.receives.len(), 1);
@@ -959,7 +1232,7 @@ mod tests {
         assert_eq!(root_recv.bind_count, 1);
         assert_eq!(
             gstring(root_recv.binds[0].source.as_ref().unwrap()),
-            Some(spread_root_location(FP, "site0").as_str())
+            Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
 
         // Root body: match BoundVar(0) { GPrivate(⌜Swap⌝) => <Var fors> }.
@@ -979,16 +1252,12 @@ mod tests {
         let r1 = m.cases[0].source.as_ref().unwrap();
         assert_eq!(
             gstring(r1.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(
-                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[0]).as_str())
         );
         let r1_body = r1.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r1_body.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(
-                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[1]).as_str())
         );
 
         // Accept send: sa:acc!( BoundVar(1), BoundVar(0), @"OUT" ) — each σ slot is the bound
@@ -1010,6 +1279,7 @@ mod tests {
 
     #[test]
     fn serializes_a_ternary_pattern_with_the_arity_general_frame() {
+        let subject = positional_subject();
         // Triple(x, y, z): three nested Var fors; the accept's σ slots follow the
         // general frame σ_i = EList[BoundVar(arity-1-i)] = EList[BoundVar(2-i)].
         let automaton = SetAutomaton::compile_structural([(
@@ -1020,9 +1290,15 @@ mod tests {
             ),
         )])
         .expect("Triple(x, y, z) compiles");
-        let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
-                .expect("the ternary automaton serializes");
+        let network = automaton_receiver_network_par(
+            &automaton.view(),
+            &subject,
+            "site0",
+            "sa:acc",
+            "OUT",
+            FP,
+        )
+        .expect("the ternary automaton serializes");
 
         // Descend root for → Match → for x → for y → for z → accept.
         let r_x = network.receives[0].body.as_ref().unwrap().matches[0].cases[0]
@@ -1031,26 +1307,17 @@ mod tests {
             .unwrap();
         assert_eq!(
             gstring(r_x.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(
-                spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 0)
-                    .as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[0]).as_str())
         );
         let r_y = r_x.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r_y.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(
-                spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 1)
-                    .as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[1]).as_str())
         );
         let r_z = r_y.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r_z.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(
-                spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 2)
-                    .as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[2]).as_str())
         );
         let accept = r_z.receives[0].body.as_ref().unwrap();
 
@@ -1081,6 +1348,7 @@ mod tests {
 
     #[test]
     fn multi_pattern_dispatch_router_shares_one_root_receive() {
+        let subject = positional_subject();
         // Two distinct-op patterns share ONE root loc: receive + a Match router with one
         // case per op; each op-case is its own children chain ending in its own accept.
         let automaton = SetAutomaton::compile_structural([
@@ -1095,14 +1363,15 @@ mod tests {
         ])
         .expect("two distinct-op patterns compile");
         let targets = [target(PatternId(0), "sa:swap"), target(PatternId(1), "sa:pair")];
-        let network = multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
-            .expect("two distinct-op patterns serialize");
+        let network =
+            multi_pattern_receiver_network_par(&automaton.view(), &subject, "site0", &targets, FP)
+                .expect("two distinct-op patterns serialize");
 
         assert_eq!(network.receives.len(), 1, "one shared root receive");
         let root = &network.receives[0];
         assert_eq!(
             gstring(root.binds[0].source.as_ref().unwrap()),
-            Some(spread_root_location(FP, "site0").as_str())
+            Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
         let m = &root.body.as_ref().unwrap().matches[0];
         assert_eq!(m.cases.len(), 2, "one Match case per distinct root op");
@@ -1122,6 +1391,7 @@ mod tests {
 
     #[test]
     fn same_op_entries_share_the_subtree_and_fan_out_the_accept() {
+        let subject = positional_subject();
         // Two rules with the SAME LHS op+arity share ONE children subtree; the accept is
         // the PARALLEL composition of both rules' sends (O3 announce-to-every-rule).
         let automaton = SetAutomaton::compile_structural([
@@ -1136,8 +1406,9 @@ mod tests {
         ])
         .expect("two same-op rules compile");
         let targets = [target(PatternId(0), "sa:one"), target(PatternId(1), "sa:two")];
-        let network = multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
-            .expect("two same-op rules serialize");
+        let network =
+            multi_pattern_receiver_network_par(&automaton.view(), &subject, "site0", &targets, FP)
+                .expect("two same-op rules serialize");
 
         let m = &network.receives[0].body.as_ref().unwrap().matches[0];
         assert_eq!(m.cases.len(), 1, "one Match case for the shared op");
@@ -1153,6 +1424,7 @@ mod tests {
 
     #[test]
     fn rejects_conflicting_arity_for_the_same_op() {
+        let subject = positional_subject();
         let automaton = SetAutomaton::compile_structural([
             (PatternId(0), Pattern::app("f".to_string(), vec![Pattern::var("x")])),
             (
@@ -1163,13 +1435,14 @@ mod tests {
         .expect("patterns compile");
         let targets = [target(PatternId(0), "a"), target(PatternId(1), "b")];
         assert_eq!(
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP),
+            multi_pattern_receiver_network_par(&automaton.view(), &subject, "site0", &targets, FP,),
             Err(AutomatonUnsupported::ConflictingArityForOp)
         );
     }
 
     #[test]
     fn rejects_an_entry_without_an_accept_target() {
+        let subject = positional_subject();
         let automaton = SetAutomaton::compile_structural([(
             PatternId(5),
             Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
@@ -1177,7 +1450,7 @@ mod tests {
         .expect("pattern compiles");
         let targets = [target(PatternId(0), "sa:swap")]; // wrong id — no target for PatternId(5)
         assert_eq!(
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP),
+            multi_pattern_receiver_network_par(&automaton.view(), &subject, "site0", &targets, FP,),
             Err(AutomatonUnsupported::MissingAcceptTarget)
         );
     }

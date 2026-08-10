@@ -54,9 +54,11 @@ impl SetAutomatonRun {
     }
 }
 
-type CachedSubsts = Rc<[Subst]>;
+type SlotSubst = Box<[EClassId]>;
+type PartialSlotSubst = Box<[Option<EClassId>]>;
+type CachedSubsts = Rc<[SlotSubst]>;
 
-fn cached_substs(substs: Vec<Subst>) -> CachedSubsts {
+fn cached_substs(substs: Vec<SlotSubst>) -> CachedSubsts {
     Rc::from(substs.into_boxed_slice())
 }
 
@@ -82,6 +84,7 @@ struct RootKey<L> {
 struct PatternEntry<L> {
     id: PatternId,
     root_state: StateId,
+    slot_names: Vec<String>,
     _marker: std::marker::PhantomData<L>,
 }
 
@@ -98,16 +101,119 @@ impl StateId {
     }
 }
 
+/// A dense variable-interface position local to one canonical automaton state.
+///
+/// Slot identities are assigned in first-occurrence order. They deliberately do
+/// not contain source variable names: alpha-renamed patterns therefore share the
+/// same state while each pattern entry retains its own slot-to-name boundary map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SlotId(usize);
+
+impl SlotId {
+    pub fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum SlotMap {
+    Identity(usize),
+    Explicit(Box<[SlotId]>),
+}
+
+impl SlotMap {
+    fn from_slots(slots: Vec<SlotId>) -> Self {
+        if slots
+            .iter()
+            .enumerate()
+            .all(|(index, slot)| slot.0 == index)
+        {
+            SlotMap::Identity(slots.len())
+        } else {
+            SlotMap::Explicit(slots.into_boxed_slice())
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            SlotMap::Identity(len) => *len,
+            SlotMap::Explicit(slots) => slots.len(),
+        }
+    }
+
+    fn get(&self, local: SlotId) -> SlotId {
+        match self {
+            SlotMap::Identity(len) => {
+                assert!(local.0 < *len, "local slot lies outside the identity map");
+                local
+            },
+            SlotMap::Explicit(slots) => slots[local.0],
+        }
+    }
+}
+
+/// One child-state invocation and the renaming from its local slot interface to
+/// its parent state's local slot interface.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StateInvocation {
+    state: StateId,
+    slots: SlotMap,
+}
+
+impl StateInvocation {
+    fn new(state: StateId, slots: Vec<SlotId>) -> Self {
+        Self { state, slots: SlotMap::from_slots(slots) }
+    }
+
+    pub fn state(&self) -> StateId {
+        self.state
+    }
+
+    pub fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn parent_slot(&self, local: SlotId) -> SlotId {
+        self.slots.get(local)
+    }
+
+    pub fn parent_slots(&self) -> impl ExactSizeIterator<Item = SlotId> + '_ {
+        (0..self.slot_count()).map(|local| self.parent_slot(SlotId(local)))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum StateKey<L> {
-    Var(String),
-    App { op: L, args: Vec<StateId> },
+    Var,
+    App { op: L, args: Vec<StateInvocation> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PatternState<L> {
-    Var(String),
-    App { op: L, args: Vec<StateId> },
+    Var,
+    App {
+        op: L,
+        args: Vec<StateInvocation>,
+        slot_count: usize,
+    },
+}
+
+impl<L> PatternState<L> {
+    fn slot_count(&self) -> usize {
+        match self {
+            PatternState::Var => 1,
+            PatternState::App { slot_count, .. } => *slot_count,
+        }
+    }
+}
+
+struct CompiledSubpattern {
+    state: StateId,
+    slot_names: Vec<Rc<str>>,
 }
 
 /// The append-only state interner. E-3 T-INCR: retained INSIDE the compiled
@@ -143,18 +249,30 @@ impl<L> Default for PatternCompiler<L> {
 }
 
 impl<L: Clone + Eq + Hash> PatternCompiler<L> {
-    fn compile(&mut self, pattern: &Pattern<L>) -> StateId {
+    fn compile(&mut self, pattern: &Pattern<L>) -> (StateId, Vec<String>) {
         enum Task<'a, L> {
             Visit(&'a Pattern<L>),
             Assemble { op: L, child_count: usize },
         }
 
         let mut tasks = vec![Task::Visit(pattern)];
-        let mut states = Vec::new();
+        let mut states: Vec<CompiledSubpattern> = Vec::new();
+        let mut names: HashMap<&str, Rc<str>> = HashMap::default();
         while let Some(task) = tasks.pop() {
             match task {
                 Task::Visit(Pattern::Var(name)) => {
-                    states.push(self.intern(StateKey::Var(name.clone())));
+                    let slot_name = match names.get(name.as_str()) {
+                        Some(name) => Rc::clone(name),
+                        None => {
+                            let shared: Rc<str> = Rc::from(name.as_str());
+                            names.insert(name.as_str(), Rc::clone(&shared));
+                            shared
+                        },
+                    };
+                    states.push(CompiledSubpattern {
+                        state: self.intern(StateKey::Var, 1),
+                        slot_names: vec![slot_name],
+                    });
                 },
                 Task::Visit(Pattern::App { op, args }) => {
                     tasks.push(Task::Assemble { op: op.clone(), child_count: args.len() });
@@ -168,26 +286,70 @@ impl<L: Clone + Eq + Hash> PatternCompiler<L> {
                         .len()
                         .checked_sub(child_count)
                         .expect("pattern-compiler PDA lost a child state");
-                    let args = states.split_off(first_child);
-                    states.push(self.intern(StateKey::App { op, args }));
+                    let mut children = states.split_off(first_child);
+                    let (args, parent_names) = if children.len() == 1 {
+                        let child = children.pop().expect("the unary child exists");
+                        let slots = (0..child.slot_names.len()).map(SlotId).collect();
+                        (vec![StateInvocation::new(child.state, slots)], child.slot_names)
+                    } else {
+                        let mut args = Vec::with_capacity(child_count);
+                        let mut parent_names: Vec<Rc<str>> = Vec::new();
+                        let mut parent_slots: HashMap<Rc<str>, SlotId> = HashMap::default();
+
+                        for child in children {
+                            let mut slots = Vec::with_capacity(child.slot_names.len());
+                            for name in child.slot_names {
+                                let slot = match parent_slots.get(&name).copied() {
+                                    Some(slot) => slot,
+                                    None => {
+                                        let slot = SlotId(parent_names.len());
+                                        parent_names.push(Rc::clone(&name));
+                                        parent_slots.insert(name, slot);
+                                        slot
+                                    },
+                                };
+                                slots.push(slot);
+                            }
+                            args.push(StateInvocation::new(child.state, slots));
+                        }
+                        (args, parent_names)
+                    };
+
+                    let slot_count = parent_names.len();
+                    states.push(CompiledSubpattern {
+                        state: self.intern(StateKey::App { op, args }, slot_count),
+                        slot_names: parent_names,
+                    });
                 },
             }
         }
         debug_assert_eq!(states.len(), 1);
-        states
+        let root = states
             .pop()
-            .expect("pattern-compiler PDA produced no root state")
+            .expect("pattern-compiler PDA produced no root state");
+        (
+            root.state,
+            root.slot_names
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect(),
+        )
     }
 
-    fn intern(&mut self, key: StateKey<L>) -> StateId {
+    fn intern(&mut self, key: StateKey<L>, slot_count: usize) -> StateId {
         if let Some(&id) = self.interned.get(&key) {
+            debug_assert_eq!(self.states[id.0].slot_count(), slot_count);
             return id;
         }
 
         let id = StateId(self.states.len());
         let state = match &key {
-            StateKey::Var(name) => PatternState::Var(name.clone()),
-            StateKey::App { op, args } => PatternState::App { op: op.clone(), args: args.clone() },
+            StateKey::Var => PatternState::Var,
+            StateKey::App { op, args } => PatternState::App {
+                op: op.clone(),
+                args: args.clone(),
+                slot_count,
+            },
         };
         self.states.push(state);
         self.interned.insert(key, id);
@@ -235,8 +397,8 @@ pub struct SetAutomatonView<'a, L> {
 /// variable (an accept/bind leaf) or a constructor application that dispatches on
 /// `op`/arity into its argument states.
 pub enum AutomatonNode<'a, L> {
-    Var(&'a str),
-    App { op: &'a L, args: &'a [StateId] },
+    Var,
+    App { op: &'a L, args: &'a [StateInvocation] },
 }
 
 impl<L> SetAutomaton<L> {
@@ -258,13 +420,25 @@ impl<'a, L> SetAutomatonView<'a, L> {
         self.automaton.entries[entry].root_state
     }
 
+    /// Original source variable names for an entry's canonical root slots, in
+    /// dense [`SlotId`] order. Names live only at this entry boundary and never
+    /// participate in state identity or evaluator-cache keys.
+    pub fn entry_slot_names(&self, entry: usize) -> &'a [String] {
+        self.automaton.entries[entry].slot_names.as_slice()
+    }
+
     /// The interned node at `state` — the `Var`/`App` shape the serializer walks.
     pub fn node(&self, state: StateId) -> AutomatonNode<'a, L> {
         let automaton = self.automaton;
         match &automaton.compiler.states[state.0] {
-            PatternState::Var(name) => AutomatonNode::Var(name.as_str()),
-            PatternState::App { op, args } => AutomatonNode::App { op, args: args.as_slice() },
+            PatternState::Var => AutomatonNode::Var,
+            PatternState::App { op, args, .. } => AutomatonNode::App { op, args: args.as_slice() },
         }
+    }
+
+    /// Number of canonical slots in `state`'s local variable interface.
+    pub fn state_slot_count(&self, state: StateId) -> usize {
+        self.automaton.compiler.states[state.0].slot_count()
     }
 
     /// The entry indices whose root pattern is a bare variable (match-anything).
@@ -309,7 +483,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
             }
 
             let entry_idx = entries.len();
-            let root_state = compiler.compile(&pattern);
+            let (root_state, slot_names) = compiler.compile(&pattern);
             match &pattern {
                 Pattern::Var(_) => variable_roots.push(entry_idx),
                 Pattern::App { op, args } => {
@@ -321,6 +495,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
             entries.push(PatternEntry {
                 id,
                 root_state,
+                slot_names,
                 _marker: std::marker::PhantomData,
             });
         }
@@ -377,7 +552,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
 
         for (id, pattern) in patterns {
             let entry_idx = self.entries.len();
-            let root_state = self.compiler.compile(&pattern);
+            let (root_state, slot_names) = self.compiler.compile(&pattern);
             match &pattern {
                 Pattern::Var(_) => self.variable_roots.push(entry_idx),
                 Pattern::App { op, args } => {
@@ -389,6 +564,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
             self.entries.push(PatternEntry {
                 id,
                 root_state,
+                slot_names,
                 _marker: std::marker::PhantomData,
             });
         }
@@ -443,12 +619,14 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
     ) {
         let entry = &self.entries[entry_idx];
         let matches = self.eval_state(eg, entry.root_state, root, cache, &mut run.stats);
-        run.matches
-            .extend(matches.iter().cloned().map(|subst| SetAutomatonMatch {
-                pattern: entry.id,
-                root,
-                subst,
-            }));
+        run.matches.extend(matches.iter().map(|slots| {
+            debug_assert_eq!(slots.len(), entry.slot_names.len());
+            let mut subst = Subst::default();
+            for (name, &class) in entry.slot_names.iter().zip(slots.iter()) {
+                subst.insert(name.clone(), class);
+            }
+            SetAutomatonMatch { pattern: entry.id, root, subst }
+        }));
     }
 
     fn eval_state(
@@ -465,8 +643,8 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
             next_node: usize,
             active_node: Option<usize>,
             next_arg: usize,
-            partial: Vec<Subst>,
-            out: Vec<Subst>,
+            partial: Vec<PartialSlotSubst>,
+            out: Vec<SlotSubst>,
         }
 
         enum Job {
@@ -490,10 +668,8 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
 
                     stats.state_evaluations += 1;
                     match &self.compiler.states[state_id.0] {
-                        PatternState::Var(name) => {
-                            let mut subst = Subst::default();
-                            subst.insert(name.clone(), class);
-                            let matches = cached_substs(vec![subst]);
+                        PatternState::Var => {
+                            let matches = cached_substs(vec![vec![class].into_boxed_slice()]);
                             cache.insert(key, Rc::clone(&matches));
                             values.push(matches);
                         },
@@ -509,7 +685,8 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                     }
                 },
                 Job::ContinueApp(mut frame) => {
-                    let PatternState::App { op, args } = &self.compiler.states[frame.state_id.0]
+                    let PatternState::App { op, args, slot_count } =
+                        &self.compiler.states[frame.state_id.0]
                     else {
                         unreachable!("only App states create application evaluation frames")
                     };
@@ -527,10 +704,12 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                         frame.next_node = node_index + 1;
                         frame.active_node = Some(node_index);
                         frame.next_arg = 0;
-                        frame.partial.push(Subst::default());
+                        frame
+                            .partial
+                            .push(vec![None; *slot_count].into_boxed_slice());
 
                         if args.is_empty() {
-                            frame.out.append(&mut frame.partial);
+                            finish_slot_substs(&mut frame.partial, &mut frame.out);
                             frame.active_node = None;
                             jobs.push(Job::ContinueApp(frame));
                             continue;
@@ -540,7 +719,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                     let node_index = frame
                         .active_node
                         .expect("an active application node was just selected");
-                    let arg_state = args[frame.next_arg];
+                    let arg_state = args[frame.next_arg].state();
                     let child = eg.nodes(frame.class)[node_index].children[frame.next_arg];
                     jobs.push(Job::MergeArg(frame));
                     jobs.push(Job::Evaluate { state_id: arg_state, class: child });
@@ -557,9 +736,14 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                     }
 
                     let mut next = Vec::new();
+                    let PatternState::App { args, .. } = &self.compiler.states[frame.state_id.0]
+                    else {
+                        unreachable!("only App states create application evaluation frames")
+                    };
+                    let invocation = &args[frame.next_arg];
                     for left in &frame.partial {
                         for right in child_matches.iter() {
-                            if let Some(merged) = merge_substs(eg, left, right) {
+                            if let Some(merged) = merge_slot_substs(eg, left, invocation, right) {
                                 next.push(merged);
                             }
                         }
@@ -569,13 +753,8 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                         frame.active_node = None;
                     } else {
                         frame.next_arg += 1;
-                        let PatternState::App { args, .. } =
-                            &self.compiler.states[frame.state_id.0]
-                        else {
-                            unreachable!("only App states create application evaluation frames")
-                        };
                         if frame.next_arg == args.len() {
-                            frame.out.append(&mut frame.partial);
+                            finish_slot_substs(&mut frame.partial, &mut frame.out);
                             frame.active_node = None;
                         }
                     }
@@ -603,23 +782,35 @@ fn contains_ac<L>(pattern: &Pattern<L>) -> bool {
     false
 }
 
-fn merge_substs<L: Clone + Eq + Hash>(
+fn merge_slot_substs<L: Clone + Eq + Hash>(
     eg: &EGraph<L>,
-    left: &Subst,
-    right: &Subst,
-) -> Option<Subst> {
+    left: &PartialSlotSubst,
+    invocation: &StateInvocation,
+    right: &SlotSubst,
+) -> Option<PartialSlotSubst> {
+    debug_assert_eq!(invocation.slot_count(), right.len());
     let mut merged = left.clone();
-    for (name, &right_class) in right {
+    for (local_index, &right_class) in right.iter().enumerate() {
         let right_class = eg.find(right_class);
-        match merged.get(name).copied() {
+        let parent = invocation.parent_slot(SlotId(local_index)).0;
+        match merged[parent] {
             Some(left_class) if eg.find(left_class) == right_class => {},
             Some(_) => return None,
-            None => {
-                merged.insert(name.clone(), right_class);
-            },
+            None => merged[parent] = Some(right_class),
         }
     }
     Some(merged)
+}
+
+fn finish_slot_substs(partial: &mut Vec<PartialSlotSubst>, out: &mut Vec<SlotSubst>) {
+    out.extend(partial.drain(..).map(|slots| {
+        slots
+            .into_vec()
+            .into_iter()
+            .map(|slot| slot.expect("every canonical state slot is bound by an occurrence"))
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }));
 }
 
 #[cfg(test)]
@@ -629,6 +820,10 @@ mod compile_recursive_oracle;
 #[cfg(test)]
 #[path = "../tests/support/set_automaton_eval_recursive_oracle.rs"]
 mod eval_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/set_automaton_nominal_recursive_oracle.rs"]
+mod nominal_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
@@ -652,7 +847,8 @@ mod tests {
 
     #[test]
     fn view_exposes_the_interned_pattern_dag() {
-        // Swap(x, y): one App-rooted entry over two distinct Var leaves.
+        // Swap(x, y): one App-rooted entry with two source occurrences sharing
+        // the universal Var state; their invocation slot maps remain distinct.
         let automaton = SetAutomaton::compile_structural([(
             PatternId(0),
             Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
@@ -671,11 +867,14 @@ mod tests {
             AutomatonNode::App { op, args } => {
                 assert_eq!(op, "Swap");
                 assert_eq!(args.len(), 2, "Swap is binary");
-                assert!(matches!(view.node(args[0]), AutomatonNode::Var("x")));
-                assert!(matches!(view.node(args[1]), AutomatonNode::Var("y")));
+                assert!(matches!(view.node(args[0].state()), AutomatonNode::Var));
+                assert!(matches!(view.node(args[1].state()), AutomatonNode::Var));
+                assert_eq!(args[0].parent_slot(SlotId(0)), SlotId(0));
+                assert_eq!(args[1].parent_slot(SlotId(0)), SlotId(1));
             },
-            AutomatonNode::Var(_) => panic!("Swap(x, y) root must be an App state"),
+            AutomatonNode::Var => panic!("Swap(x, y) root must be an App state"),
         }
+        assert_eq!(view.entry_slot_names(0), ["x", "y"]);
     }
 
     #[test]
@@ -707,9 +906,9 @@ mod tests {
         let entry0_child = match view.node(view.entry_root_state(0)) {
             AutomatonNode::App { op, args } => {
                 assert_eq!(op, "wrap");
-                args[0]
+                args[0].state()
             },
-            AutomatonNode::Var(_) => panic!("wrap(...) root must be an App state"),
+            AutomatonNode::Var => panic!("wrap(...) root must be an App state"),
         };
         assert_eq!(
             entry0_child, entry1_root,
@@ -721,9 +920,8 @@ mod tests {
     fn view_exposes_entry_ids_and_state_count() {
         // entry_id round-trips the PatternId (which rewrite rule an entry is), so a
         // multi-pattern serializer can route each accept to the right rule; state_count
-        // reports the interned-DAG size it walks. Swap(x, y) and Pair(a, b) share no
-        // sub-structure (distinct ops AND distinct var names), so each contributes one
-        // App + two Var states = 6.
+        // reports the interned-DAG size it walks. Variable leaves share one universal
+        // state, while the two distinct constructors retain distinct App states.
         let automaton = SetAutomaton::compile_structural([
             (
                 PatternId(7),
@@ -739,7 +937,155 @@ mod tests {
         assert_eq!(view.entry_count(), 2);
         assert_eq!(view.entry_id(0), PatternId(7), "entry_id returns the id, not the index");
         assert_eq!(view.entry_id(1), PatternId(3));
-        assert_eq!(view.state_count(), 6, "2 App roots + 4 distinct Var leaves");
+        assert_eq!(view.state_count(), 3, "2 App roots + 1 universal Var state");
+    }
+
+    #[test]
+    fn alpha_renamed_patterns_share_slot_shaped_states_without_merging_specificity() {
+        let mut automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(0),
+                Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (
+                PatternId(1),
+                Pattern::app("pair".to_string(), vec![Pattern::var("a"), Pattern::var("b")]),
+            ),
+        ])
+        .expect("alpha and specificity corpus compiles");
+        assert_eq!(
+            automaton.view().state_count(),
+            2,
+            "the frozen alpha-pair treatment has one Var and one pair state"
+        );
+        automaton
+            .extend([(
+                PatternId(2),
+                Pattern::app("pair".to_string(), vec![Pattern::var("same"), Pattern::var("same")]),
+            )])
+            .expect("the specificity control extends atomically");
+        let view = automaton.view();
+
+        assert_eq!(view.entry_root_state(0), view.entry_root_state(1));
+        assert_ne!(view.entry_root_state(0), view.entry_root_state(2));
+        assert_eq!(view.entry_slot_names(0), ["x", "y"]);
+        assert_eq!(view.entry_slot_names(1), ["a", "b"]);
+        assert_eq!(view.entry_slot_names(2), ["same"]);
+        assert_eq!(view.state_slot_count(view.entry_root_state(0)), 2);
+        assert_eq!(view.state_slot_count(view.entry_root_state(2)), 1);
+        assert_eq!(view.state_count(), 3, "one Var plus linear and diagonal pair states");
+    }
+
+    #[test]
+    fn alpha_shared_cache_restores_each_entrys_exact_substitution_names() {
+        let mut eg = EGraph::new();
+        let left = leaf(&mut eg, "left");
+        let right = leaf(&mut eg, "right");
+        let pair = eg.add(ENode::new("pair".to_string(), vec![left, right]));
+        let automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(0),
+                Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (
+                PatternId(1),
+                Pattern::app("pair".to_string(), vec![Pattern::var("a"), Pattern::var("b")]),
+            ),
+            (
+                PatternId(2),
+                Pattern::app("pair".to_string(), vec![Pattern::var("same"), Pattern::var("same")]),
+            ),
+        ])
+        .expect("the alpha-sharing match corpus compiles");
+
+        let run = automaton.search_egraph(&eg);
+        let at_pair: Vec<&SetAutomatonMatch> = run
+            .matches
+            .iter()
+            .filter(|matched| matched.root == pair)
+            .collect();
+        assert_eq!(at_pair.len(), 2, "the nonlinear specificity control must reject");
+        assert_eq!(at_pair[0].pattern, PatternId(0));
+        assert_eq!(at_pair[0].subst.get("x"), Some(&left));
+        assert_eq!(at_pair[0].subst.get("y"), Some(&right));
+        assert_eq!(at_pair[1].pattern, PatternId(1));
+        assert_eq!(at_pair[1].subst.get("a"), Some(&left));
+        assert_eq!(at_pair[1].subst.get("b"), Some(&right));
+        assert_eq!(run.stats.state_evaluations, 4, "linear root + two Var classes + diagonal root");
+        assert!(run.stats.state_cache_hits >= 1, "the second alpha entry reuses the root result");
+    }
+
+    #[test]
+    fn nominal_name_bearing_control_has_six_states_while_slot_quotient_has_two() {
+        let patterns = vec![
+            (
+                PatternId(0),
+                Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (
+                PatternId(1),
+                Pattern::app("pair".to_string(), vec![Pattern::var("a"), Pattern::var("b")]),
+            ),
+        ];
+        assert_eq!(
+            nominal_recursive_oracle::state_count(&patterns),
+            6,
+            "the independent pre-D-E5 name-bearing model allocates four Vars and two Apps"
+        );
+        assert_eq!(
+            SetAutomaton::compile_structural(patterns)
+                .expect("the frozen alpha corpus compiles")
+                .view()
+                .state_count(),
+            2,
+            "the slot quotient allocates one Var interface and one pair state"
+        );
+    }
+
+    #[test]
+    fn slot_quotient_matches_independent_nominal_equations_exactly() {
+        let patterns = vec![
+            (PatternId(0), Pattern::var("whole")),
+            (
+                PatternId(1),
+                Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (
+                PatternId(2),
+                Pattern::app("pair".to_string(), vec![Pattern::var("a"), Pattern::var("b")]),
+            ),
+            (
+                PatternId(3),
+                Pattern::app("pair".to_string(), vec![Pattern::var("same"), Pattern::var("same")]),
+            ),
+            (
+                PatternId(4),
+                Pattern::app(
+                    "wrap".to_string(),
+                    vec![Pattern::app(
+                        "pair".to_string(),
+                        vec![Pattern::var("deep"), Pattern::var("deep")],
+                    )],
+                ),
+            ),
+        ];
+        let mut eg = EGraph::new();
+        let a = leaf(&mut eg, "a");
+        let b = leaf(&mut eg, "b");
+        let pair_aa = eg.add(ENode::new("pair".to_string(), vec![a, a]));
+        let pair_ab = eg.add(ENode::new("pair".to_string(), vec![a, b]));
+        let _wrap_aa = eg.add(ENode::new("wrap".to_string(), vec![pair_aa]));
+        let _wrap_ab = eg.add(ENode::new("wrap".to_string(), vec![pair_ab]));
+
+        let actual = SetAutomaton::compile_structural(patterns.clone())
+            .expect("the bounded nominal-equivalence corpus compiles")
+            .search_egraph(&eg)
+            .matches;
+        let expected = nominal_recursive_oracle::search_egraph(&patterns, &eg);
+        assert_eq!(
+            actual, expected,
+            "slot caching, nonlinear partitions, alpha sharing, output names, and match order"
+        );
     }
 
     #[test]
@@ -1146,6 +1492,61 @@ mod tests {
             let batch = SetAutomaton::compile_structural(patterns)
                 .expect("the full sequence compiles");
             proptest::prop_assert_eq!(incremental, batch);
+        }
+
+        /// Bounded independent differential: the slot quotient must return the
+        /// exact ordered name-bearing substitutions of the pre-quotient equations.
+        #[test]
+        fn prop_slot_quotient_matches_nominal_equations(
+            names in proptest::collection::vec(0usize..4, 1..18),
+            shapes in proptest::collection::vec(0usize..5, 1..18),
+        ) {
+            let count = names.len().min(shapes.len());
+            let patterns: Vec<(PatternId, Pattern<String>)> = (0..count)
+                .map(|index| {
+                    let left = format!("v{}", names[index]);
+                    let right = format!("v{}", (names[index] + 1) % 4);
+                    let pattern = match shapes[index] {
+                        0 => Pattern::var(left),
+                        1 => Pattern::app(
+                            "pair".to_string(),
+                            vec![Pattern::var(left.clone()), Pattern::var(left)],
+                        ),
+                        2 => Pattern::app(
+                            "pair".to_string(),
+                            vec![Pattern::var(left), Pattern::var(right)],
+                        ),
+                        3 => Pattern::app(
+                            "wrap".to_string(),
+                            vec![Pattern::app(
+                                "pair".to_string(),
+                                vec![Pattern::var(left), Pattern::var(right)],
+                            )],
+                        ),
+                        _ => Pattern::app("unary".to_string(), vec![Pattern::var(left)]),
+                    };
+                    (PatternId(index), pattern)
+                })
+                .collect();
+
+            let mut eg = EGraph::new();
+            let leaves: Vec<EClassId> = (0..4)
+                .map(|index| leaf(&mut eg, &format!("leaf{index}")))
+                .collect();
+            for &left in &leaves {
+                for &right in &leaves {
+                    let pair = eg.add(ENode::new("pair".to_string(), vec![left, right]));
+                    let _ = eg.add(ENode::new("wrap".to_string(), vec![pair]));
+                }
+                let _ = eg.add(ENode::new("unary".to_string(), vec![left]));
+            }
+
+            let actual = SetAutomaton::compile_structural(patterns.clone())
+                .expect("the generated corpus is positional")
+                .search_egraph(&eg)
+                .matches;
+            let expected = nominal_recursive_oracle::search_egraph(&patterns, &eg);
+            proptest::prop_assert_eq!(actual, expected);
         }
     }
 

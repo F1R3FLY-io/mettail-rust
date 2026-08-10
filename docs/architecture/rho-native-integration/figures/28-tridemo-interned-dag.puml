@@ -1,12 +1,11 @@
 @startuml
 ' Figure 28-3: TriDemo's three left-hand sides interned into ONE DAG. Compile order
 ' is rule order (SwapRule, WrapRule, FlipRule); children are interned before parents
-' (PatternCompiler::compile, dovetail/src/set_automaton.rs:129). Eleven intern()
-' calls produce EIGHT states: FlipRule's Var(x), Var(y), and Pair[s3,s4] all HIT the
-' table and return WrapRule's states — s5 is the shared sub-pattern state. SwapRule's
-' Var(a)/Var(b) share nothing (the quotient is variable-name-aware). The full trace
-' is the table in 28 §6.2; the count is pinned by tridemo_interns_three_rules_into_
-' eight_states_sharing_pair (rholang-codegen/tests/doc28_golden_listing.rs).
+' (PatternCompiler::compile). Eleven intern() calls produce FIVE canonical states:
+' every variable shares one name-free state s0; Swap and Pair share the same two-slot
+' invocation shape but remain distinct by constructor; Pair is shared by Wrap and Flip.
+' Entry-local boundary maps restore source names. The full trace is 28 §6.2; the count
+' is pinned by tridemo_interns_three_rules_into_five_slot_shaped_states_sharing_pair.
 skinparam backgroundColor #FEFEFE
 skinparam defaultFontName monospaced
 skinparam shadowing false
@@ -17,38 +16,35 @@ skinparam rectangle {
 skinparam ArrowColor #4A5568
 top to bottom direction
 
-title Figure 28-3 — TriDemo's interned pattern DAG: 3 rules, 11 raw nodes, 8 states\none shared state s5 = Pair(x,y); RootKey dispatch {Swap,2} {Wrap,1} {Flip,1}
+title Figure 28-3 — TriDemo's alpha-quotiented pattern DAG: 3 rules, 11 raw nodes, 5 states\nshared Var s0 and Pair s2; slot maps preserve linearity and entry names
 
-rectangle "entry 0  PatternId(0)\nSwapRule: <latex>\mathrm{Swap}(a,b)</latex>\nFLAT (M1)" as E0 #EDE7F6
-rectangle "entry 1  PatternId(1)\nWrapRule: <latex>\mathrm{Wrap}(\mathrm{Pair}(x,y))</latex>\nNESTED (M2)" as E1 #EDE7F6
-rectangle "entry 2  PatternId(2)\nFlipRule: <latex>\mathrm{Flip}(\mathrm{Pair}(x,y))</latex>\nNESTED (M2)" as E2 #EDE7F6
+rectangle "entry 0  PatternId(0)\nSwapRule: <latex>\mathrm{Swap}(a,b)</latex>\nslot_names = [a,b]\nFLAT (M1)" as E0 #EDE7F6
+rectangle "entry 1  PatternId(1)\nWrapRule: <latex>\mathrm{Wrap}(\mathrm{Pair}(x,y))</latex>\nslot_names = [x,y]\nNESTED (M2)" as E1 #EDE7F6
+rectangle "entry 2  PatternId(2)\nFlipRule: <latex>\mathrm{Flip}(\mathrm{Pair}(x,y))</latex>\nslot_names = [x,y]\nNESTED (M2)" as E2 #EDE7F6
 
-rectangle "<latex>s_2 : \mathrm{App}\{\,\mathrm{Swap},[s_0,s_1]\,\}</latex>" as S2 #C3DAF7
-rectangle "<latex>s_6 : \mathrm{App}\{\,\mathrm{Wrap},[s_5]\,\}</latex>" as S6 #C3DAF7
-rectangle "<latex>s_7 : \mathrm{App}\{\,\mathrm{Flip},[s_5]\,\}</latex>" as S7 #C3DAF7
-rectangle "<latex>s_5 : \mathrm{App}\{\,\mathrm{Pair},[s_3,s_4]\,\}</latex>\nSHARED — interned once, hit once" as S5 #9FD3B4
-rectangle "<latex>s_0 : \mathrm{Var}(a)</latex>" as S0 #C6E0F5
-rectangle "<latex>s_1 : \mathrm{Var}(b)</latex>" as S1 #C6E0F5
-rectangle "<latex>s_3 : \mathrm{Var}(x)</latex>\nhit once" as S3 #C6E0F5
-rectangle "<latex>s_4 : \mathrm{Var}(y)</latex>\nhit once" as S4 #C6E0F5
+rectangle "<latex>s_1 : \mathrm{App}\{\,\mathrm{Swap},[s_0[0\mapsto0],s_0[0\mapsto1]]\,\}</latex>" as S1 #C3DAF7
+rectangle "<latex>s_3 : \mathrm{App}\{\,\mathrm{Wrap},[s_2[0\mapsto0,1\mapsto1]]\,\}</latex>" as S3 #C3DAF7
+rectangle "<latex>s_4 : \mathrm{App}\{\,\mathrm{Flip},[s_2[0\mapsto0,1\mapsto1]]\,\}</latex>" as S4 #C3DAF7
+rectangle "<latex>s_2 : \mathrm{App}\{\,\mathrm{Pair},[s_0[0\mapsto0],s_0[0\mapsto1]]\,\}</latex>\nSHARED — interned once, hit once" as S2 #9FD3B4
+rectangle "<latex>s_0 : \mathrm{Var}</latex>\none canonical slot; name-free" as S0 #C6E0F5
 
-E0 -[#805AD5]-> S2 : root_state
-E1 -[#805AD5]-> S6 : root_state
-E2 -[#805AD5]-> S7 : root_state
-S2 -[#2B6CB0]-> S0 : arg 0
-S2 -[#2B6CB0]-> S1 : arg 1
-S6 -[#2F855A]-> S5 : arg 0
-S7 -[#2F855A]-> S5 : arg 0
-S5 -[#2B6CB0]-> S3 : arg 0
-S5 -[#2B6CB0]-> S4 : arg 1
+E0 -[#805AD5]-> S1 : root_state
+E1 -[#805AD5]-> S3 : root_state
+E2 -[#805AD5]-> S4 : root_state
+S1 -[#2B6CB0]-> S0 : arg 0 [0->0]
+S1 -[#2B6CB0]-> S0 : arg 1 [0->1]
+S3 -[#2F855A]-> S2 : arg 0 identity[2]
+S4 -[#2F855A]-> S2 : arg 0 identity[2]
+S2 -[#2B6CB0]-> S0 : arg 0 [0->0]
+S2 -[#2B6CB0]-> S0 : arg 1 [0->1]
 
-note right of S5 #FCF3D0
-  WrapRule interned Pair(x,y) as s5 (miss);
+note right of S2 #FCF3D0
+  WrapRule interns Pair(x,y) as s2 (miss);
   FlipRule's compile of the same sub-pattern
-  HIT the table and returned s5 — one node,
-  two parents. state_count = 8 = 11 − 3 hits.
-  Var(a)/Var(b) stay distinct from Var(x)/Var(y):
-  the quotient is variable-name-aware (21 §7.1).
+  hits s2 — one node, two parents. Every Var
+  hits name-free s0. state_count = 5 = 11 − 6 hits.
+  Slot maps distinguish Pair(x,y) from Pair(x,x),
+  while entry maps preserve [a,b] and [x,y].
 end note
 
 legend bottom

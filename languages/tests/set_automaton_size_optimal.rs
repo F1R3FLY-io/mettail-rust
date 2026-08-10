@@ -14,12 +14,14 @@
 //! worst-case quadratic and adaptive-`L` is what recovers linear size.
 //!
 //! This campaign's `dovetail::set_automaton::SetAutomaton` is NOT that object. Its
-//! states are *interned sub-patterns* (`PatternState::Var | App { op, [StateId] }`,
-//! built by `PatternCompiler::intern`): the O1/O3 channel-naming quotient `tc(K)`
+//! states are *interned slot-shaped sub-patterns* (`PatternState::Var | App {
+//! op, [StateInvocation] }`, built by `PatternCompiler::intern`). Source variable
+//! names live only at entry boundaries; dense slot maps preserve repeated-variable
+//! specificity while alpha-renamed states share. The O1/O3 channel-naming quotient `tc(K)`
 //! that the FV theorem `TcChannelNamingQuotient` proves is the UNIQUE coarsest-sound
 //! naming (`tc_sound` = O3, `tc_injective`, `tc_is_the_op_quotient`; obligation viii,
 //! `formal/rocq/advanced_automata/theories/TcChannelNamingQuotient.v`). Hence
-//! `state_count` equals the number of DISTINCT SUBTERMS in the LHS set — bounded by
+//! `state_count` equals the number of DISTINCT SLOT-SHAPED SUBTERMS in the LHS set — bounded by
 //! the raw pattern-node count and INDEPENDENT of the inspection order `L`. There are
 //! no partial-match configuration-states for any `L` to multiply, so the
 //! "size-optimal automaton" that task #17 targets is ALREADY achieved by the
@@ -42,7 +44,7 @@
 //! 2. `diagonal_discrimination_set_is_linear_not_quadratic` — the textbook Θ(n²)
 //!    discrimination worst case (the "diagonal": `n` patterns over an `n`-ary `g`, a
 //!    nullary sentinel walking the `n` positions; Sekar–Ramesh–Ramakrishnan 1995)
-//!    interns to EXACTLY `2n+1` states (`2` at the degenerate `n=1`) — LINEAR, no
+//!    interns to EXACTLY `n+2` states (`2` at the degenerate `n=1`) — LINEAR, no
 //!    quadratic term, with the plain host inspection order and no adaptive-`L`.
 //! 3. `spine_wide_and_multipattern_state_count_is_linear` — spines, wide arities, and
 //!    multi-pattern sets are each exactly linear in size.
@@ -50,9 +52,11 @@
 //! Any regression to a match-goal-set representation, or a broken interner that loses
 //! structural sharing, breaks (2)/(3) and inflates (1) past its pins.
 //!
-//! Measured baselines (2026-07, branch `codex/rho-native-set-automata`), pinned below:
-//! Rholang 124 states / 117 entries / 314 raw nodes; Calculator 72 / 70 / 188; every
-//! demo language ≤ 4 states.
+//! Historical nominal-name baselines (2026-07, branch
+//! `codex/rho-native-set-automata`) were Rholang 124 states / 117 entries / 314 raw
+//! nodes and Calculator 72 / 70 / 188. The D-E5 slot quotient (2026-08-10), pinned
+//! below, reduces the generated inventory to Rholang 77 / 77 / 209 and Calculator
+//! 69 / 70 / 188; every non-empty demo language has at most 3 states.
 
 // Task #11 (extended 2026-07-26): the DEMONSTRATION / fixture languages are test-hosted
 // (`options { hosted_in: "tests/definitions/<lang>.rs" }`) — their definitions left the
@@ -99,12 +103,15 @@ use mettail_runtime::Language;
 /// Raw (structurally UNFOLDED) node count of one compiled entry's pattern tree —
 /// the pre-interning size the interned `state_count` is measured against.
 fn state_nodes(view: &SetAutomatonView<'_, String>, state: StateId) -> usize {
-    match view.node(state) {
-        AutomatonNode::Var(_) => 1,
-        AutomatonNode::App { args, .. } => {
-            1 + args.iter().map(|&a| state_nodes(view, a)).sum::<usize>()
-        },
+    let mut nodes = 0;
+    let mut pending = vec![state];
+    while let Some(state) = pending.pop() {
+        nodes += 1;
+        if let AutomatonNode::App { args, .. } = view.node(state) {
+            pending.extend(args.iter().rev().map(|arg| arg.state()));
+        }
     }
+    nodes
 }
 
 /// `(entry_count, state_count, summed_raw_nodes)` for a language's definition source.
@@ -178,8 +185,7 @@ fn per_language_in_rho_automaton_is_size_optimal() {
     println!("\n=== per-language in-Rho set-automaton size (size-optimality lock) ===");
 
     // `pin` = the measured `state_count` used as an upper bound. Demo languages are
-    // pinned to their exact measured size; the two large languages carry a small
-    // margin (Rholang 124→130, Calculator 72→78). AC / contextual / binder-only
+    // pinned to their exact measured post-D-E5 size. AC / contextual / binder-only
     // languages have NO positional entries (their redexes ride the AC / contextual /
     // nested-structural dispatch paths), so their automaton is empty — pin 0.
     macro_rules! check {
@@ -189,24 +195,24 @@ fn per_language_in_rho_automaton_is_size_optimal() {
         }};
     }
 
-    check!("SwapDemo", crate::swapdemo::SwapDemoLanguage, 3);
-    check!("CtxDemo", crate::ctxdemo::CtxDemoLanguage, 3);
-    check!("BiCongDemo", crate::bicongdemo::BiCongDemoLanguage, 3);
+    check!("SwapDemo", crate::swapdemo::SwapDemoLanguage, 2);
+    check!("CtxDemo", crate::ctxdemo::CtxDemoLanguage, 2);
+    check!("BiCongDemo", crate::bicongdemo::BiCongDemoLanguage, 2);
     check!("AcDemo", crate::acdemo::AcDemoLanguage, 0);
     check!("AcBagDemo", crate::acbagdemo::AcBagDemoLanguage, 0);
     check!("NlAcDemo", crate::nlacdemo::NlAcDemoLanguage, 0);
     check!("CommDemo", crate::commdemo::CommDemoLanguage, 0);
-    check!("LambdaDemo", crate::lambdademo::LambdaDemoLanguage, 4);
-    check!("NativeDemo", crate::nativedemo::NativeDemoLanguage, 3);
-    check!("NativeFoldDemo", crate::nativefolddemo::NativeFoldDemoLanguage, 3);
+    check!("LambdaDemo", crate::lambdademo::LambdaDemoLanguage, 3);
+    check!("NativeDemo", crate::nativedemo::NativeDemoLanguage, 2);
+    check!("NativeFoldDemo", crate::nativefolddemo::NativeFoldDemoLanguage, 2);
     check!("AmbDemo", crate::ambdemo::AmbDemoLanguage, 0);
     check!("AmbNewDemo", crate::ambnewdemo::AmbNewDemoLanguage, 0);
     check!("InOutDemo", crate::inoutdemo::InOutDemoLanguage, 0);
-    check!("Rholang", mettail_languages::rholang::RholangLanguage, 130);
-    check!("Calculator", mettail_languages::calculator::CalculatorLanguage, 78);
+    check!("Rholang", mettail_languages::rholang::RholangLanguage, 77);
+    check!("Calculator", mettail_languages::calculator::CalculatorLanguage, 69);
     check!("Ambient", mettail_languages::ambient::AmbientLanguage, 0);
-    check!("AppSubst", crate::appsubst::AppSubstLanguage, 4);
-    check!("Lambda", mettail_languages::lambda::LambdaLanguage, 4);
+    check!("AppSubst", crate::appsubst::AppSubstLanguage, 3);
+    check!("Lambda", mettail_languages::lambda::LambdaLanguage, 3);
     check!("GuardedRho", crate::guardedrho::GuardedRhoLanguage, 0);
 }
 
@@ -217,8 +223,8 @@ fn diagonal_discrimination_set_is_linear_not_quadratic() {
     // where pattern `i` places a nullary sentinel constant at position `i` and a fresh
     // variable (named by position) at every other position. A left-to-right MATCH-GOAL-SET
     // automaton must branch on each position to find the sentinel → Θ(n²) states, and an
-    // adaptive `L` is what recovers Θ(n). The interned-subterm representation here is
-    // EXACTLY `2n+1` (n distinct `g`-apps + 1 sentinel + n distinct vars), with the plain
+    // adaptive `L` is what recovers Θ(n). The slot-shaped representation here is
+    // EXACTLY `n+2` (n distinct `g`-apps + 1 sentinel + 1 universal Var), with the plain
     // host inspection order and NO adaptive-`L`. The `n=1` case is degenerate (a single
     // pattern with no sibling variable positions) → `2`.
     println!("\n=== diagonal n-of-n interned states (linear, not quadratic) ===");
@@ -238,13 +244,13 @@ fn diagonal_discrimination_set_is_linear_not_quadratic() {
             })
             .collect();
         let states = multi_pattern_states(patterns);
-        let expected = if n == 1 { 2 } else { 2 * n + 1 };
+        let expected = if n == 1 { 2 } else { n + 2 };
         assert_eq!(
             states, expected,
-            "diagonal n={n}: interned state_count {states} != {expected} (linear 2n+1) — a \
+            "diagonal n={n}: interned state_count {states} != {expected} (linear n+2) — a \
              super-linear regression to a match-goal-set / discrimination-net representation"
         );
-        println!("n={n:<4} states={states:<5} expected={expected} (2n+1 linear)");
+        println!("n={n:<4} states={states:<5} expected={expected} (n+2 linear)");
     }
 }
 
@@ -260,12 +266,13 @@ fn spine_wide_and_multipattern_state_count_is_linear() {
         }
         assert_eq!(single_pattern_states(spine), n + 1, "spine depth {n} must intern to n+1");
 
-        // Wide `f(x0, ..., x_{n-1})` → 1 App + n distinct Vars = n+1.
+        // Wide `f(x0, ..., x_{n-1})` → 1 App + 1 universal Var = 2; the
+        // invocation maps retain the n distinct parent slots.
         let wide =
             Pattern::app("f".to_string(), (0..n).map(|i| Pattern::var(format!("x{i}"))).collect());
-        assert_eq!(single_pattern_states(wide), n + 1, "wide arity {n} must intern to n+1");
+        assert_eq!(single_pattern_states(wide), 2, "wide arity {n} must intern to 2");
 
-        // n distinct flat binary patterns f_i(x, y) sharing var names → n Apps + 2 Vars = n+2.
+        // n distinct flat binary patterns f_i(x, y) → n Apps + 1 universal Var = n+1.
         let flat: Vec<(PatternId, Pattern<String>)> = (0..n)
             .map(|i| {
                 (
@@ -276,8 +283,8 @@ fn spine_wide_and_multipattern_state_count_is_linear() {
             .collect();
         assert_eq!(
             multi_pattern_states(flat),
-            n + 2,
-            "n={n} distinct flat patterns must intern to n+2"
+            n + 1,
+            "n={n} distinct flat patterns must intern to n+1"
         );
     }
 }

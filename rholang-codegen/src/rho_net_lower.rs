@@ -28,7 +28,6 @@
 //! that lands in a later slice.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
 use mettail_ast::language::{
@@ -53,6 +52,7 @@ use crate::rho_net::{
     rule_id_rewrite, rule_id_scalar, rule_id_term, term_requires_native_system_process,
     RhoNetProgram, RhoNetRule, RhoNetRuleKind,
 };
+use crate::rho_net_location::{SubjectLocationIndex, SubjectPosition};
 
 /// Source-construct family that is out of scope for σ-receiver lowering this
 /// slice. Every variant is a genuine, fail-closed classification reached by
@@ -2747,8 +2747,8 @@ pub struct RhoNetContextualMatchEntry {
     /// per premise, locating that premise's SOURCE variable `S_i` in the contextual rule's LHS
     /// (`K(S_0..S_{n-1})`). The match driver
     /// ([`contextual_match_call_par`](crate::contextual_match_call_par)) derives each hole's location
-    /// site `ℓ_i` by folding [`spread_child_location`] over its path from the spread root (the SAME
-    /// derivation `collect_redex_sites` uses), so a premise-`i` located firing routes to premise
+    /// site `ℓ_i` by resolving its path through the shared subject-location index (the SAME
+    /// index `collect_redex_sites` uses), so a premise-`i` located firing routes to premise
     /// channel `i` — the hole↔channel correspondence that makes the n-ary reassembly `K'(T_0..T_{n-1})`
     /// place each reduced hole at its context position. Aligned index-for-index with
     /// [`premise_channels`](Self::premise_channels).
@@ -2804,8 +2804,9 @@ pub fn rho_net_contextual_match_entries(def: &LanguageDef) -> Vec<RhoNetContextu
 /// The `(op, index)` path to the SOURCE variable `source` in a contextual rule's LHS context `K`
 /// (`pattern`) — the hole position the automaton descends `K`'s spine to. A DFS returning the first
 /// occurrence's path (empty when `pattern` IS the source var — a degenerate hole-only context — and
-/// `None` when `source` does not occur). The path is folded through [`spread_child_location`] by the
-/// match driver into the hole's location site, so the derivation matches `collect_redex_sites`.
+/// `None` when `source` does not occur). The match driver resolves the path through its
+/// [`SubjectLocationIndex`], so the derivation matches `collect_redex_sites` without constructing
+/// an ancestor-copying channel path.
 fn contextual_source_path(pattern: &Pattern, source: &str) -> Option<Vec<(String, usize)>> {
     enum Task<'pattern> {
         Visit(&'pattern Pattern),
@@ -3536,8 +3537,9 @@ pub fn contextual_hole_bridge_par(
     Par::default().with_receives(vec![receive])
 }
 
-/// The location channel of a spread term's ROOT — a `loc:`-kind quoted name derived from
-/// the LANGUAGE FINGERPRINT and the site-root string `root_location`.
+/// Legacy structural-path location helper retained for the quarantined E-6a comparison
+/// treatment and external compatibility. Production [`spread_term_par`] and the positional
+/// automata use the shared fixed-width [`SubjectLocationIndex`] channel ABI instead.
 ///
 /// Per INV-7 / `rem:fresh` ("freshness is supplied as rho supplies all freshness,
 /// by quoting … no ν, no central allocator") the whole location scheme is ν-free:
@@ -3566,25 +3568,22 @@ pub fn contextual_hole_bridge_par(
 /// Language B's capture receiver therefore consumed language A's collapsed subterm and
 /// instantiated B's RHS with A's operand.
 ///
-/// Hence INV-S6: the fingerprint scopes the KEY, and every derived child path inherits it
-/// because [`spread_child_location`] COMPOSES from the parent. See
+/// Hence INV-S6: the fingerprint scopes this compatibility key, and every derived child path
+/// inherits it because [`spread_child_location`] composes from the parent. See
 /// [`crate::rho_net::scoped_channel_name`].
 pub fn spread_root_location(language_fingerprint: &str, root_location: &str) -> String {
     crate::rho_net::scoped_channel_name("loc", language_fingerprint, root_location)
 }
 
-/// The location channel of the `index`-th child (under constructor `op`) of the
-/// node at `parent` — the derived location `ℓ·(op,index)` of `knotted-topoi`
-/// Appendix A. The spread emitter and the in-Rho automaton MUST derive every
-/// child channel through THIS one helper so they agree on the channel a subterm
-/// is published on and matched at.
+/// Legacy structural child-path helper. It remains the one component spelling used by the
+/// E-6a PathMap comparison treatment, but production spread/matcher rendezvous is keyed by
+/// [`SubjectPosition`] and does not copy ancestor paths.
 pub fn spread_child_location(parent: &str, op: &str, index: usize) -> String {
     format!("{parent}/{op}.{index}")
 }
 
-/// The CHAIN collapse channel of the node at `root_location`'s spread — the `col:`-kind
-/// quoted name that carries `⟦subtree⟧` UP to the parent's collapse receiver. It is read
-/// exactly once (by the parent), so the bottom-up fold never contends with the automaton.
+/// Legacy structural-path CHAIN collapse helper retained for compatibility. Production spread
+/// derives `col:` directly from its shared [`SubjectPosition`].
 ///
 /// Fingerprint-scoped per INV-S6 ([`crate::rho_net::scoped_channel_name`]), from the SAME
 /// `(language_fingerprint, root_location)` pair as [`spread_root_location`] — the three
@@ -3593,11 +3592,10 @@ pub fn collapse_chain_location(language_fingerprint: &str, root_location: &str) 
     crate::rho_net::scoped_channel_name("col", language_fingerprint, root_location)
 }
 
-/// The CAPTURE collapse channel of the node at `root_location`'s spread — the `cap:`-kind
-/// quoted name the in-Rho automaton reads at a Var-leaf state to bind the positional σ for
-/// an ARBITRARY-depth matched subterm (the M-collapse fix). It carries the SAME `⟦subtree⟧`
-/// value as the chain channel but on a DISJOINT name, so the parent's chain read and the
-/// automaton's capture read never race for one value (each is consumed at most once — O1).
+/// Legacy structural-path CAPTURE collapse helper retained for compatibility. Production spread
+/// derives `cap:` directly from its shared [`SubjectPosition`]. A capture carries the same
+/// `⟦subtree⟧` value as the chain channel but on a disjoint name, so the parent's chain read and
+/// the automaton's capture read never race for one value (each is consumed at most once — O1).
 ///
 /// ★ THIS is the channel the S6 cross-fingerprint wrong firing rode on, and it is the one
 /// family that cannot defend itself: the value it carries is a fully collapsed subterm bound
@@ -3630,18 +3628,16 @@ pub fn ac_soup_channel(language_fingerprint: &str, op: &str) -> String {
 /// match driver ([`ac_match_call_par`]) publishes the bag's process-soup on and the co-installed
 /// [`ac_sigma_receiver_par`] reads from.
 ///
-/// The site key `⌜(ρ,ℓ)⌝` is inherited from `loc_channel` (the ν-free location path the spread and
-/// automaton already agree on via [`spread_root_location`] / [`spread_child_location`]), so two
-/// same-`op` bags at DISTINCT positions (`loc:ρ/ℓ₁ ≠ loc:ρ/ℓ₂`) get DISJOINT carriers
-/// (`ac:loc:ρ/ℓ₁/op ≠ ac:loc:ρ/ℓ₂/op`) — Red-team #5: without the site key two same-`op` bags'
+/// The site key is inherited from `loc_channel` (the exact indexed identity the spread and
+/// automaton already share), so two same-`op` bags at distinct positions get disjoint carriers —
+/// Red-team #5: without the site key two same-`op` bags'
 /// soups would intermingle on one `ac:op` channel and the native matcher could pick cross-bag
 /// elements, a latent soundness bug. Both the carrier delivery and the co-installed receiver derive
 /// the channel through THIS one helper, so they rendezvous on exactly one bag's soup.
 ///
 /// INV-S6: this family takes NO fingerprint argument because it already inherits one —
-/// `loc_channel` is a [`spread_root_location`] / [`spread_child_location`] path, which is
-/// fingerprint-scoped at its root, so the carrier reads
-/// `ac:loc:{fingerprint}/{site}/…/{op}`. The bare (non-site-keyed) sibling has no such
+/// `loc_channel` is already fingerprint-scoped, so the carrier inherits that scope. The bare
+/// (non-site-keyed) sibling has no such
 /// parent and scopes itself via [`ac_soup_channel`].
 pub fn ac_carrier_channel(loc_channel: &str, op: &str) -> String {
     format!("ac:{loc_channel}/{op}")
@@ -3656,11 +3652,11 @@ pub fn ac_carrier_channel(loc_channel: &str, op: &str) -> String {
 ///
 /// Each node publishes its head tag `f̲` (byte-identical to
 /// [`reflect_ground_term_par`]'s tag — the SHARED [`reflect_tag`] ABI) on its
-/// deterministic `loc:` location channel ([`spread_root_location`] /
-/// [`spread_child_location`]), which the automaton reads to DISPATCH / DESCEND; the
-/// child subterms are spread on the derived child channels, which the automaton knows
-/// statically. This is the ν-free scheme (INV-7): a flat parallel composition of ground
-/// sends — no `New` — and the head-tag message carries the tag ALONE, never child channels.
+/// deterministic fixed-width `loc:` channel from the shared [`SubjectLocationIndex`], which the
+/// automaton reads to DISPATCH / DESCEND. Child positions are exact integer identities assigned
+/// once by the same prefix-compressed topology; no absolute ancestor path is materialized. This
+/// is the ν-free scheme (INV-7): a flat parallel composition of ground sends — no `New` — and the
+/// head-tag message carries the tag alone, never child channels.
 ///
 /// It ALSO emits the M-collapse machinery: a bottom-up `collapse` fold that publishes the
 /// FULLY COLLAPSED subterm value `⟦subtree⟧` on two DISJOINT channels — `col:` (read once by
@@ -3674,13 +3670,8 @@ pub fn ac_carrier_channel(loc_channel: &str, op: &str) -> String {
 /// published at a node's collapse channels is byte-identical to `reflect_ground_term_par`
 /// over that subtree, assembled bottom-up rather than in one host-side nest.
 pub fn spread_term_par(term: &GroundTerm, language_fingerprint: &str, root_location: &str) -> Par {
-    spread_term_par_at(
-        term,
-        language_fingerprint,
-        &spread_root_location(language_fingerprint, root_location),
-        &collapse_chain_location(language_fingerprint, root_location),
-        &collapse_capture_location(language_fingerprint, root_location),
-    )
+    let locations = SubjectLocationIndex::new(term);
+    spread_term_par_indexed(&locations, language_fingerprint, root_location)
 }
 
 /// Stage 4 (S-AC) — build the co-install `Par` that LOCATES every HashBag AC redex of `subject` and
@@ -3720,9 +3711,11 @@ pub fn ac_match_call_par(
         .iter()
         .map(|entry| (entry.op.as_str(), entry))
         .collect();
+    let locations = SubjectLocationIndex::new(subject);
     ac_match_install_at(
-        subject,
-        &spread_root_location(language_fingerprint, root_site),
+        &locations,
+        SubjectPosition::ROOT,
+        root_site,
         &by_op,
         out_channel,
         language_fingerprint,
@@ -3733,20 +3726,22 @@ pub fn ac_match_call_par(
 /// channel is `loc_channel` (the SAME location derivation the spread uses). See
 /// [`ac_match_call_par`].
 fn ac_match_install_at(
-    node: &GroundTerm,
-    loc_channel: &str,
+    locations: &SubjectLocationIndex<'_>,
+    start: SubjectPosition,
+    root_site: &str,
     by_op: &HashMap<&str, &RhoNetAcMatchEntry>,
     out_channel: &str,
     language_fingerprint: &str,
 ) -> Par {
     let mut par = Par::default();
-    walk_ground_term_locations(node, loc_channel, |node, loc_channel| {
+    locations.walk(start, |position, node| {
         // A HashBag has no positional child descent, whether or not its op is admitted.
         if !matches!(node.coll_type, Some(CollectionType::HashBag)) {
             return true;
         }
         if let Some(entry) = by_op.get(node.constructor.as_str()) {
-            let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+            let loc_channel = locations.channel("loc", language_fingerprint, root_site, position);
+            let carrier = ac_carrier_channel(&loc_channel, &node.constructor);
             let receiver = ac_sigma_receiver_par_with_condition(
                 entry.kind.clone(),
                 language_fingerprint,
@@ -3774,97 +3769,34 @@ fn ac_match_install_at(
     par
 }
 
-struct GroundLocationFrame<'a> {
-    node: &'a GroundTerm,
-    next_child: usize,
-    parent_location_len: usize,
-    descend: bool,
-}
-
-/// Visit a ground subject in recursive pre-order without using the native call stack.
-///
-/// `visit` decides whether the current node's children are part of the traversal. The driver
-/// retains one frame per active ancestor and mutates one location buffer in place, preserving the
-/// recursive walkers' child order without retaining a location string per pending sibling.
-pub(crate) fn walk_ground_term_locations<'a>(
-    root: &'a GroundTerm,
-    root_location: &str,
-    mut visit: impl FnMut(&'a GroundTerm, &str) -> bool,
-) {
-    let mut location = root_location.to_owned();
-    let descend = visit(root, &location);
-    let mut stack = vec![GroundLocationFrame {
-        node: root,
-        next_child: 0,
-        parent_location_len: 0,
-        descend,
-    }];
-
-    while let Some(frame) = stack.last_mut() {
-        if frame.descend && frame.next_child < frame.node.children.len() {
-            let index = frame.next_child;
-            frame.next_child += 1;
-            let child = &frame.node.children[index];
-            let parent_location_len = location.len();
-            location.push('/');
-            location.push_str(&frame.node.constructor);
-            location.push('.');
-            write!(&mut location, "{index}").expect("writing an index to String cannot fail");
-            let descend = visit(child, &location);
-            stack.push(GroundLocationFrame {
-                node: child,
-                next_child: 0,
-                parent_location_len,
-                descend,
-            });
-        } else {
-            let parent_location_len = frame.parent_location_len;
-            stack.pop();
-            location.truncate(parent_location_len);
-        }
-    }
-}
-
-fn spread_term_par_at(
-    term: &GroundTerm,
+pub(crate) fn spread_term_par_indexed(
+    locations: &SubjectLocationIndex<'_>,
     language_fingerprint: &str,
-    location: &str,
-    chain_location: &str,
-    capture_location: &str,
+    root_location: &str,
 ) -> Par {
-    enum SpreadTask<'a> {
-        Visit {
-            term: &'a GroundTerm,
-            location: String,
-            chain_location: String,
-            capture_location: String,
-        },
-        Collapse {
-            term: &'a GroundTerm,
-            head_tag: Par,
-            chain_location: String,
-            capture_location: String,
-            child_chain_channels: Vec<String>,
-        },
+    enum SpreadTask {
+        Visit { position: SubjectPosition },
+        Collapse { position: SubjectPosition, head_tag: Par },
     }
 
-    let mut tasks = vec![SpreadTask::Visit {
-        term,
-        location: location.to_string(),
-        chain_location: chain_location.to_string(),
-        capture_location: capture_location.to_string(),
-    }];
+    let mut tasks = vec![SpreadTask::Visit { position: SubjectPosition::ROOT }];
+    // This is an evaluation stack, not a per-node table.  Its live length is
+    // bounded by pending sibling results (maximum active frontier), and is
+    // constant on a unary spine.  Reserving `locations.len()` here would add
+    // an artificial linear RSS slope to deep subjects.
     let mut ground_values = Vec::new();
     let mut output = Par::default();
 
     while let Some(task) = tasks.pop() {
         match task {
-            SpreadTask::Visit {
-                term,
-                location,
-                chain_location,
-                capture_location,
-            } => {
+            SpreadTask::Visit { position } => {
+                let term = locations.term(position);
+                let location =
+                    locations.channel("loc", language_fingerprint, root_location, position);
+                let chain_location =
+                    locations.channel("col", language_fingerprint, root_location, position);
+                let capture_location =
+                    locations.channel("cap", language_fingerprint, root_location, position);
                 // Stage 4 (S-AC): an AC operand collection has no positional child structure.
                 // Publish only its native carrier on `col:`/`cap:` and treat it as one completed,
                 // conservatively non-ground child result for its positional parent.
@@ -3909,7 +3841,7 @@ fn spread_term_par_at(
                 extend_parallel_par(
                     &mut output,
                     new_send_par(
-                        new_gstring_par(location.clone(), Vec::new(), false),
+                        new_gstring_par(location, Vec::new(), false),
                         vec![head_tag.clone()],
                         false,
                         Vec::new(),
@@ -3919,40 +3851,13 @@ fn spread_term_par_at(
                     ),
                 );
 
-                let child_chain_channels: Vec<String> = (0..term.children.len())
-                    .map(|index| spread_child_location(&chain_location, &term.constructor, index))
-                    .collect();
-                tasks.push(SpreadTask::Collapse {
-                    term,
-                    head_tag,
-                    chain_location: chain_location.clone(),
-                    capture_location: capture_location.clone(),
-                    child_chain_channels,
-                });
-                for (index, child) in term.children.iter().enumerate().rev() {
-                    tasks.push(SpreadTask::Visit {
-                        term: child,
-                        location: spread_child_location(&location, &term.constructor, index),
-                        chain_location: spread_child_location(
-                            &chain_location,
-                            &term.constructor,
-                            index,
-                        ),
-                        capture_location: spread_child_location(
-                            &capture_location,
-                            &term.constructor,
-                            index,
-                        ),
-                    });
+                tasks.push(SpreadTask::Collapse { position, head_tag });
+                for child in locations.children(position).rev() {
+                    tasks.push(SpreadTask::Visit { position: child });
                 }
             },
-            SpreadTask::Collapse {
-                term,
-                head_tag,
-                chain_location,
-                capture_location,
-                child_chain_channels,
-            } => {
+            SpreadTask::Collapse { position, head_tag } => {
+                let term = locations.term(position);
                 let first_child = ground_values
                     .len()
                     .checked_sub(term.children.len())
@@ -3966,6 +3871,16 @@ fn spread_term_par_at(
                 };
                 let marker = is_marked_object_label(&term.constructor)
                     .then(|| ground_marker_tag_par(language_fingerprint, ground));
+                let chain_location =
+                    locations.channel("col", language_fingerprint, root_location, position);
+                let capture_location =
+                    locations.channel("cap", language_fingerprint, root_location, position);
+                let child_chain_channels: Vec<String> = locations
+                    .children(position)
+                    .map(|child| {
+                        locations.channel("col", language_fingerprint, root_location, child)
+                    })
+                    .collect();
                 extend_parallel_par(
                     &mut output,
                     collapse_publish(
@@ -6422,9 +6337,11 @@ pub fn structural_ac_match_call_par(
         .iter()
         .map(|entry| (entry.shape.op.as_str(), entry))
         .collect();
+    let locations = SubjectLocationIndex::new(subject);
     structural_ac_match_install_at(
-        subject,
-        &spread_root_location(language_fingerprint, root_site),
+        &locations,
+        SubjectPosition::ROOT,
+        root_site,
         &by_op,
         out_channel,
         language_fingerprint,
@@ -6438,19 +6355,21 @@ pub fn structural_ac_match_call_par(
 /// bag under a `^lambda` binder image is located), only the co-installed receiver differs
 /// ([`structural_ac_match_receiver_par`] instead of the linear [`ac_sigma_receiver_par_with_condition`]).
 fn structural_ac_match_install_at(
-    node: &GroundTerm,
-    loc_channel: &str,
+    locations: &SubjectLocationIndex<'_>,
+    start: SubjectPosition,
+    root_site: &str,
     by_op: &HashMap<&str, &RhoNetStructuralAcMatchEntry>,
     out_channel: &str,
     language_fingerprint: &str,
 ) -> Par {
     let mut par = Par::default();
-    walk_ground_term_locations(node, loc_channel, |node, loc_channel| {
+    locations.walk(start, |position, node| {
         if !matches!(node.coll_type, Some(CollectionType::HashBag)) {
             return true;
         }
         if let Some(entry) = by_op.get(node.constructor.as_str()) {
-            let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+            let loc_channel = locations.channel("loc", language_fingerprint, root_site, position);
+            let carrier = ac_carrier_channel(&loc_channel, &node.constructor);
             let receiver = structural_ac_match_receiver_par(
                 &entry.shape,
                 new_gstring_par(carrier.clone(), Vec::new(), false),
@@ -9508,16 +9427,18 @@ pub fn rho_net_nested_structural_ac_match_entries(
 /// receiver whose full nested pattern + cross-level guard does not match the delivered operand simply
 /// never consumes (single-shot, isolated run) — never a false firing.
 fn nested_structural_ac_match_install_at(
-    node: &GroundTerm,
-    loc_channel: &str,
+    locations: &SubjectLocationIndex<'_>,
+    start: SubjectPosition,
+    root_site: &str,
     by_root: &HashMap<String, &RhoNetNestedStructuralAcMatchEntry>,
     out_channel: &str,
     language_fingerprint: &str,
 ) -> Par {
     let mut par = Par::default();
-    walk_ground_term_locations(node, loc_channel, |node, loc_channel| {
+    locations.walk(start, |position, node| {
         if let Some(entry) = by_root.get(&node.constructor) {
-            let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+            let loc_channel = locations.channel("loc", language_fingerprint, root_site, position);
+            let carrier = ac_carrier_channel(&loc_channel, &node.constructor);
             let receiver = nested_structural_ac_match_receiver_par(
                 &entry.shape,
                 new_gstring_par(carrier.clone(), Vec::new(), false),
@@ -9575,9 +9496,11 @@ pub fn nested_structural_ac_match_call_par(
             by_root.insert(root_ctor, entry);
         }
     }
+    let locations = SubjectLocationIndex::new(subject);
     nested_structural_ac_match_install_at(
-        subject,
-        &spread_root_location(language_fingerprint, root_site),
+        &locations,
+        SubjectPosition::ROOT,
+        root_site,
         &by_root,
         out_channel,
         language_fingerprint,
@@ -9846,14 +9769,24 @@ mod tests {
         }
     }
 
-    /// The (location channel, constructor) nodes the spread must publish, in
-    /// pre-order — the forward image of `spread_term_par` over a ground term.
-    fn expected_spread_nodes(term: &GroundTerm, location: &str, out: &mut Vec<(String, String)>) {
-        out.push((location.to_string(), term.constructor.clone()));
-        for (index, child) in term.children.iter().enumerate() {
-            let child_location = spread_child_location(location, &term.constructor, index);
-            expected_spread_nodes(child, &child_location, out);
-        }
+    /// The (compact location channel, constructor) nodes the spread must
+    /// publish, in pre-order — the forward image of `spread_term_par` over a
+    /// ground term, derived through the same exact index as the implementation.
+    fn expected_spread_nodes(
+        term: &GroundTerm,
+        fingerprint: &str,
+        root: &str,
+    ) -> Vec<(String, String)> {
+        let locations = SubjectLocationIndex::new(term);
+        let mut out = Vec::new();
+        locations.walk(SubjectPosition::ROOT, |position, term| {
+            out.push((
+                locations.channel("loc", fingerprint, root, position),
+                term.constructor.clone(),
+            ));
+            true
+        });
+        out
     }
 
     /// The `loc:` head-tag sends of a spread (one per node) — the tag-dispatch surface the
@@ -9879,8 +9812,7 @@ mod tests {
     /// receivers), so it is no longer sends-only — but it stays Match/Bundle-free.
     fn assert_spread_encodes(term: &GroundTerm, fingerprint: &str, root: &str) {
         let spread = spread_term_par(term, fingerprint, root);
-        let mut expected = Vec::new();
-        expected_spread_nodes(term, &spread_root_location(fingerprint, root), &mut expected);
+        let expected = expected_spread_nodes(term, fingerprint, root);
 
         assert_eq!(loc_head_tag_sends(&spread), expected.len(), "one loc: head-tag send per node");
         assert!(spread.news.is_empty(), "ν-free spread: no New (INV-7)");
@@ -9909,9 +9841,12 @@ mod tests {
     /// ground `EList[tag]`; an internal node's `cap:` value is assembled by a collapse receiver,
     /// so we assert the leaf sends directly and that every internal node carries a fold.
     fn assert_spread_collapses(term: &GroundTerm, fingerprint: &str, root: &str) {
-        fn walk(term: &GroundTerm, fingerprint: &str, capture: &str, spread: &Par) {
-            let capture_channel = new_gstring_par(capture.to_string(), Vec::new(), false);
+        let spread = spread_term_par(term, fingerprint, root);
+        let locations = SubjectLocationIndex::new(term);
+        locations.walk(SubjectPosition::ROOT, |position, term| {
             if term.children.is_empty() {
+                let capture = locations.channel("cap", fingerprint, root, position);
+                let capture_channel = new_gstring_par(capture.clone(), Vec::new(), false);
                 // Leaf: a ground `cap:ℓ!(⟦leaf⟧)` send equals reflect_ground_term_par(leaf).
                 let collapsed = reflect_ground_term_par(term, fingerprint);
                 assert!(
@@ -9923,13 +9858,8 @@ mod tests {
                     term.constructor,
                 );
             }
-            for (index, child) in term.children.iter().enumerate() {
-                let child_capture = spread_child_location(capture, &term.constructor, index);
-                walk(child, fingerprint, &child_capture, spread);
-            }
-        }
-        let spread = spread_term_par(term, fingerprint, root);
-        walk(term, fingerprint, &collapse_capture_location(fingerprint, root), &spread);
+            true
+        });
     }
 
     #[test]
@@ -9946,11 +9876,26 @@ mod tests {
             .filter_map(gstring_value)
             .filter(|c| c.starts_with("loc:"))
             .collect();
-        let root = spread_root_location("testfp", "site0");
+        let locations = SubjectLocationIndex::new(&term);
+        let root = locations.channel("loc", "testfp", "site0", SubjectPosition::ROOT);
         let want: std::collections::BTreeSet<String> = [
             root.clone(),
-            spread_child_location(&root, "Swap", 0),
-            spread_child_location(&root, "Swap", 1),
+            locations.channel(
+                "loc",
+                "testfp",
+                "site0",
+                locations
+                    .child(SubjectPosition::ROOT, 0)
+                    .expect("left child"),
+            ),
+            locations.channel(
+                "loc",
+                "testfp",
+                "site0",
+                locations
+                    .child(SubjectPosition::ROOT, 1)
+                    .expect("right child"),
+            ),
         ]
         .into_iter()
         .collect();
@@ -9963,10 +9908,23 @@ mod tests {
             .filter_map(gstring_value)
             .filter(|c| c.starts_with("cap:"))
             .collect();
-        let cap_root = collapse_capture_location("testfp", "site0");
         let want_cap: std::collections::BTreeSet<String> = [
-            spread_child_location(&cap_root, "Swap", 0),
-            spread_child_location(&cap_root, "Swap", 1),
+            locations.channel(
+                "cap",
+                "testfp",
+                "site0",
+                locations
+                    .child(SubjectPosition::ROOT, 0)
+                    .expect("left child"),
+            ),
+            locations.channel(
+                "cap",
+                "testfp",
+                "site0",
+                locations
+                    .child(SubjectPosition::ROOT, 1)
+                    .expect("right child"),
+            ),
         ]
         .into_iter()
         .collect();
@@ -9995,8 +9953,12 @@ mod tests {
         let spread = spread_term_par(&leaf, "testfp", "site0");
         let expected_tag = GPrivateBuilder::new_par_from_string(reflect_tag("testfp", "A"));
         // The `loc:` head-tag send carries the tag ALONE.
-        let loc_channel =
-            new_gstring_par(spread_root_location("testfp", "site0"), Vec::new(), false);
+        let locations = SubjectLocationIndex::new(&leaf);
+        let loc_channel = new_gstring_par(
+            locations.channel("loc", "testfp", "site0", SubjectPosition::ROOT),
+            Vec::new(),
+            false,
+        );
         let loc_send = spread
             .sends
             .iter()
@@ -10008,8 +9970,11 @@ mod tests {
             "loc: head tag is the shared-ABI tag"
         );
         // The `cap:` collapse send carries ⟦leaf⟧ = EList[tag] = reflect_ground_term_par(leaf).
-        let cap_channel =
-            new_gstring_par(collapse_capture_location("testfp", "site0"), Vec::new(), false);
+        let cap_channel = new_gstring_par(
+            locations.channel("cap", "testfp", "site0", SubjectPosition::ROOT),
+            Vec::new(),
+            false,
+        );
         let cap_send = spread
             .sends
             .iter()

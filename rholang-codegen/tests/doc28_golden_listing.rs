@@ -5,8 +5,8 @@
 //!
 //! - **TriDemo (28 §6)** — three base rewrites whose second and third LHSs share
 //!   the whole `Pair(x, y)` sub-pattern. The tests here pin the §6.2 interning
-//!   trace's outcome (8 states from 11 raw nodes, the shared state with two
-//!   parents) and BOTH admission gates: the AC-free automaton compile (gate 1,
+//!   trace's outcome (5 canonical slot-shaped states from 11 raw nodes, shared
+//!   variable and `Pair` states) and BOTH admission gates: the AC-free automaton compile (gate 1,
 //!   inside `compile_in_rho_matching_ruleset`) and the serializer admission
 //!   (gate 2, `multi_pattern_receiver_network_par` returns `Ok`).
 //! - **TwoRuleLambda (28 §7)** — lambdademo's grammar with `Beta` plus one plain
@@ -27,12 +27,12 @@
 //! as `priv(tag)`. Everything else is rendered verbatim, in prost field order,
 //! with no hashing and no reordering — deterministic by construction.
 
-use dovetail::set_automaton::{AutomatonNode, StateId};
+use dovetail::set_automaton::{AutomatonNode, StateId, StateInvocation};
 use mettail_ast::language::LanguageDef;
 use mettail_rholang_codegen::{
     compile_in_rho_matching_ruleset, lower_language_def, multi_pattern_receiver_network_par,
     plan_rho_default_backend, suggest_rejected_rule_dispositions, AutomatonAcceptTarget,
-    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
@@ -95,7 +95,7 @@ fn parse_language(source: &str) -> LanguageDef {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn tridemo_interns_three_rules_into_eight_states_sharing_pair() {
+fn tridemo_interns_three_rules_into_five_slot_shaped_states_sharing_pair() {
     let def = parse_language(TRI_DEMO);
     let ruleset = compile_in_rho_matching_ruleset(&def);
 
@@ -109,16 +109,17 @@ fn tridemo_interns_three_rules_into_eight_states_sharing_pair() {
 
     let view = ruleset.automaton.view();
     assert_eq!(view.entry_count(), 3, "one entry per rewrite");
-    // The §6.2 interning trace: 11 intern() calls, 3 table hits, 8 states.
+    // The slot-shaped quotient has one universal Var state plus Pair, Swap,
+    // Wrap, and Flip application states.
     assert_eq!(
         view.state_count(),
-        8,
-        "TriDemo interns 8 distinct sub-patterns from 11 raw pattern nodes"
+        5,
+        "TriDemo interns five canonical slot-shaped states from 11 raw nodes"
     );
 
     // The shared state s5 = App{Pair, [s3, s4]}: the Wrap and Flip entries'
     // argument states are THE SAME StateId (doc 28 §6.2, figure 28-3).
-    let mut swap_args: Option<Vec<StateId>> = None;
+    let mut swap_args: Option<Vec<StateInvocation>> = None;
     let mut wrap_arg: Option<StateId> = None;
     let mut flip_arg: Option<StateId> = None;
     for entry in 0..view.entry_count() {
@@ -130,15 +131,15 @@ fn tridemo_interns_three_rules_into_eight_states_sharing_pair() {
                 },
                 "Wrap" => {
                     assert_eq!(args.len(), 1, "Wrap root arity");
-                    wrap_arg = Some(args[0]);
+                    wrap_arg = Some(args[0].state());
                 },
                 "Flip" => {
                     assert_eq!(args.len(), 1, "Flip root arity");
-                    flip_arg = Some(args[0]);
+                    flip_arg = Some(args[0].state());
                 },
                 other => panic!("unexpected TriDemo root op {other}"),
             },
-            AutomatonNode::Var(name) => panic!("unexpected bare-Var root {name}"),
+            AutomatonNode::Var => panic!("unexpected bare-Var root"),
         }
     }
     let wrap_arg = wrap_arg.expect("a Wrap-rooted entry must exist");
@@ -151,17 +152,13 @@ fn tridemo_interns_three_rules_into_eight_states_sharing_pair() {
         AutomatonNode::App { op, args } => {
             assert_eq!(op.as_str(), "Pair", "the shared state is the Pair application");
             assert_eq!(args.len(), 2, "Pair arity");
-            // Variable-name-awareness (21 §7.1): SwapRule's Var(a)/Var(b) states
-            // are DISJOINT from the shared Pair's Var(x)/Var(y) states.
+            // Alpha-renamed leaves share the universal Var state and the same
+            // dense [0,1] slot invocations; the constructor op keeps Swap and
+            // Pair as distinct application states.
             let swap_args = swap_args.expect("a Swap-rooted entry must exist");
-            for shared_child in args {
-                assert!(
-                    !swap_args.contains(shared_child),
-                    "Var(a)/Var(b) must not alias Var(x)/Var(y): the quotient is name-aware"
-                );
-            }
+            assert_eq!(swap_args, args);
         },
-        AutomatonNode::Var(name) => panic!("the shared state must be an App, got Var({name})"),
+        AutomatonNode::Var => panic!("the shared state must be an App, got Var"),
     }
 
     // Gate 2 (the serializer admission): the multi-pattern network serializes —
@@ -176,8 +173,24 @@ fn tridemo_interns_three_rules_into_eight_states_sharing_pair() {
         })
         .collect();
     assert_eq!(targets.len(), 3, "one accept target per entry");
-    multi_pattern_receiver_network_par(&view, "site0", &targets, &ruleset.language_fingerprint)
-        .expect("TriDemo passes the serializer admission gate (gate 2)");
+    let subject = GroundTerm::new(
+        "fixture",
+        vec![
+            GroundTerm::new(
+                "nested",
+                vec![GroundTerm::nullary("left"), GroundTerm::nullary("right")],
+            ),
+            GroundTerm::nullary("flat"),
+        ],
+    );
+    multi_pattern_receiver_network_par(
+        &view,
+        &subject,
+        "site0",
+        &targets,
+        &ruleset.language_fingerprint,
+    )
+    .expect("TriDemo passes the serializer admission gate (gate 2)");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -185,7 +198,7 @@ fn tridemo_interns_three_rules_into_eight_states_sharing_pair() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn two_rule_lambda_interns_six_states() {
+fn two_rule_lambda_interns_four_slot_shaped_states() {
     let def = parse_language(TWO_RULE_LAMBDA);
     let ruleset = compile_in_rho_matching_ruleset(&def);
     assert!(
@@ -195,7 +208,11 @@ fn two_rule_lambda_interns_six_states() {
     );
     let view = ruleset.automaton.view();
     assert_eq!(view.entry_count(), 2, "one entry per rewrite");
-    assert_eq!(view.state_count(), 6, "doc 28 §7.1: the six states s0..s5");
+    assert_eq!(
+        view.state_count(),
+        4,
+        "doc 28 §7.1: Var, lambda, App, and F are the four canonical states"
+    );
 }
 
 #[test]

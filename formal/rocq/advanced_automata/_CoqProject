@@ -65,6 +65,9 @@ theories/PrunePreservesWork.v
 # and trace/tc_sound (viii, TcChannelNamingQuotient); mirrors RhoCommScheduleFamily's
 # erase/τ backbone.
 theories/InRhoSameCLTSWeakBisim.v
+# Compact exact subject-position channel ABI: length-delimited root identity,
+# fixed-width position identity, family/language isolation, and linear size.
+theories/IndexedSubjectChannels.v
 # FV (AC-rest) — Stage AC in-Rho AC matching: rest = bag - selection (the partition,
 # selection_rest_partition) + the RHS flatten byte-identity to add_flattened_bag (a same-op
 # sub-bag splices; flatten distributes over append). Self-contained multiset theory (Stdlib
@@ -87,6 +90,10 @@ theories/InRhoAcMatchMultiset.v
 # D-E4 — lazy relational AC edge reuse: cached-prefix union suffix-delta is
 # exactly the nominal edge relation; injective assignments and termination.
 theories/LazyRelationalAcEdges.v
+# D-E5 — canonical slot-shaped state identity: alpha/de-Bruijn-shift
+# invariance, nonlinear specificity, remap composition, entry-name restoration,
+# cross-language channel isolation, injectivity, and termination.
+theories/SlottedStateIdentity.v
 # FV (AC-bag) — Stage AC2b bag-VALUED AC RHS: the AC receiver's RHS process-SOUP carrier
 # (reflect_hashbag_soup_par) is a multiset homomorphism (faithful, multiplicity-preserving,
 # order-independent), and the RHS soup `fixed sends ∥ residual soup` is BYTE-IDENTICAL to the

@@ -609,10 +609,10 @@ channel sharing. When several rules share a left-hand side, the accept announces
 *every* rule's channel in parallel (`parallel_accept`) — the $`O3`$ fan-out.
 
 **Fail-closed shapes.** Rather than emit an incorrect network, the serializer returns a
-typed `AutomatonUnsupported` for: `MultiPattern` (wrong entry point), `NonLinearVariable`
-(a deep-position repeat), `NonLinearSharedOp` (two entries share a root op with different
-repetition partitions), `VariableRootPattern` (a bare-var root), `ConflictingArityForOp`,
-`MissingAcceptTarget`, and `NestedEntryMultiSite`
+typed `AutomatonUnsupported` for: `MultiPattern` (wrong entry point),
+`NonLinearSharedOp` (two entries share a root op with different repetition partitions),
+`VariableRootPattern` (a bare-var root), `ConflictingArityForOp`, `MissingAcceptTarget`,
+and `NestedEntryMultiSite`
 ([section 8](#8-layer-1d-locate-all-and-multi-firing)). Each routes the firing to the
 replay driver — still correct, just off the in-Rho path.
 
@@ -632,12 +632,12 @@ is a rule left-hand-side root.
 1. `rule_lhs_root_constructors` reads the compiled automaton for the set of
    left-hand-side root ops (the dispatch candidates) — reading **only** the automaton,
    never the report.
-2. `collect_redex_sites` walks the reflected `GroundTerm` (pre-order DFS), recording a
-   **site path** $`\ulcorner(\rho,\ell)\urcorner`$ at every position whose head is in that
-   set. The path is derived with the *same* `spread_child_location` derivation the
-   spread uses, so a site's network reads exactly the channels the one spread published
-   there. Distinct positions get **disjoint-prefix** site strings.
-3. For each site, `multi_pattern_receiver_network_par` builds a network rooted at that
+2. `collect_redex_sites` walks the shared `SubjectLocationIndex` (pre-order DFS), recording
+   the exact **subject position** at every node whose head is in that set. The spread and
+   every network consume that same index, so there is no independently reconstructed path
+   to drift. Distinct positions receive collision-free, fixed-width channel identities;
+   ancestor text is never copied into descendants.
+3. For each site, `multi_pattern_receiver_network_indexed_par` builds a network rooted at that
    position; all networks are composed with the **one** spread of the whole subject.
 
 ```math

@@ -575,9 +575,9 @@ fn entry_facts(artifacts: &CompiledInRhoArtifacts) -> Result<Vec<EntryFact>, Str
         }
         let root_op = match view.node(view.entry_root_state(entry)) {
             AutomatonNode::App { op, .. } => op.clone(),
-            AutomatonNode::Var(name) => {
+            AutomatonNode::Var => {
                 return Err(format!(
-                    "automaton entry {entry} has variable root `{name}` — no root-op group"
+                    "automaton entry {entry} has a variable root — no root-op group"
                 ));
             },
         };

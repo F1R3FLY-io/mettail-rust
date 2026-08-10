@@ -1,7 +1,6 @@
 use mettail_rholang_codegen::{
     ac_carrier_channel, ac_match_call_par, ac_sigma_receiver_par_with_condition,
-    reflect_ground_term_par, spread_child_location, spread_root_location, CollectionType,
-    GroundTerm, RhoNetAcMatchEntry,
+    reflect_ground_term_par, scoped_channel_name, CollectionType, GroundTerm, RhoNetAcMatchEntry,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{new_gstring_par, new_send_par};
@@ -23,12 +22,23 @@ fn entry() -> RhoNetAcMatchEntry {
     }
 }
 
-fn recursive_oracle(node: &GroundTerm, location: &str, entry: &RhoNetAcMatchEntry) -> Par {
+fn compact_location(position: u64) -> String {
+    let path = format!("@i2:{:016x}:{}:{position:016x}", ROOT_SITE.len(), ROOT_SITE);
+    scoped_channel_name("loc", FINGERPRINT, path)
+}
+
+fn recursive_oracle(
+    node: &GroundTerm,
+    position: u64,
+    next_position: &mut u64,
+    entry: &RhoNetAcMatchEntry,
+) -> Par {
     if matches!(node.coll_type, Some(CollectionType::HashBag)) {
         if node.constructor != entry.op {
             return Par::default();
         }
-        let carrier = ac_carrier_channel(location, &node.constructor);
+        let location = compact_location(position);
+        let carrier = ac_carrier_channel(&location, &node.constructor);
         let receiver = ac_sigma_receiver_par_with_condition(
             entry.kind.clone(),
             FINGERPRINT,
@@ -54,9 +64,15 @@ fn recursive_oracle(node: &GroundTerm, location: &str, entry: &RhoNetAcMatchEntr
     }
 
     let mut result = Par::default();
+    let first_child = *next_position;
+    *next_position += node.children.len() as u64;
     for (index, child) in node.children.iter().enumerate() {
-        let child_location = spread_child_location(location, &node.constructor, index);
-        result = result.append(recursive_oracle(child, &child_location, entry));
+        result = result.append(recursive_oracle(
+            child,
+            first_child + index as u64,
+            next_position,
+            entry,
+        ));
     }
     result
 }
@@ -89,8 +105,8 @@ fn iterative_locator_is_identical_to_the_recursive_semantics() {
     let entry = entry();
     let actual =
         ac_match_call_par(&subject, std::slice::from_ref(&entry), ROOT_SITE, OUT, FINGERPRINT);
-    let root = spread_root_location(FINGERPRINT, ROOT_SITE);
-    let expected = recursive_oracle(&subject, &root, &entry);
+    let mut next_position = 1;
+    let expected = recursive_oracle(&subject, 0, &mut next_position, &entry);
     assert_eq!(actual, expected);
 }
 

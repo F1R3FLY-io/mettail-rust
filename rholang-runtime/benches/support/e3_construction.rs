@@ -1194,46 +1194,63 @@ fn instantiate_state(
     eg: &mut EGraph<String>,
 ) -> EClassId {
     enum Task {
-        Visit(StateId),
-        Assemble { state: StateId, op: String, arity: usize },
+        Visit {
+            state: StateId,
+            bindings: Box<[EClassId]>,
+        },
+        Assemble {
+            key: (StateId, Box<[EClassId]>),
+            op: String,
+            arity: usize,
+        },
     }
 
-    let mut tasks = vec![Task::Visit(state)];
+    let root_bindings: Box<[EClassId]> = (0..view.state_slot_count(state))
+        .map(|slot| eg.add(ENode::leaf(format!("cvar:{slot}"))))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let mut tasks = vec![Task::Visit { state, bindings: root_bindings }];
     let mut values = Vec::new();
-    let mut memo = HashMap::new();
+    let mut memo: HashMap<(StateId, Box<[EClassId]>), EClassId> = HashMap::new();
     while let Some(task) = tasks.pop() {
         match task {
-            Task::Visit(current) => {
-                if let Some(&class) = memo.get(&current) {
+            Task::Visit { state: current, bindings } => {
+                let key = (current, bindings);
+                if let Some(&class) = memo.get(&key) {
                     values.push(class);
                     continue;
                 }
                 match view.node(current) {
-                    AutomatonNode::Var(name) => {
-                        let class = eg.add(ENode::leaf(format!("cvar:{name}")));
-                        memo.insert(current, class);
+                    AutomatonNode::Var => {
+                        let class = key.1[0];
+                        memo.insert(key, class);
                         values.push(class);
                     },
                     AutomatonNode::App { op, args } => {
-                        tasks.push(Task::Assemble {
-                            state: current,
-                            op: op.clone(),
-                            arity: args.len(),
-                        });
-                        for &arg in args.iter().rev() {
-                            tasks.push(Task::Visit(arg));
-                        }
+                        let child_tasks: Vec<Task> = args
+                            .iter()
+                            .map(|arg| {
+                                let bindings = arg
+                                    .parent_slots()
+                                    .map(|slot| key.1[slot.index()])
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice();
+                                Task::Visit { state: arg.state(), bindings }
+                            })
+                            .collect();
+                        tasks.push(Task::Assemble { key, op: op.clone(), arity: args.len() });
+                        tasks.extend(child_tasks.into_iter().rev());
                     },
                 }
             },
-            Task::Assemble { state, op, arity } => {
+            Task::Assemble { key, op, arity } => {
                 let first_child = values
                     .len()
                     .checked_sub(arity)
                     .expect("E-3 instantiate PDA lost a child result");
                 let children = values.split_off(first_child);
                 let class = eg.add(ENode::new(op, children));
-                memo.insert(state, class);
+                memo.insert(key, class);
                 values.push(class);
             },
         }

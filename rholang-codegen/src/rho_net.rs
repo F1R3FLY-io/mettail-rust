@@ -112,16 +112,17 @@ impl RhoNetChannel {
 /// fingerprint_invariant.rs`) rather than by review of that list. Two prior enumerations of
 /// the affected sites were both short — `RhoNetChannel::location` alone has nineteen
 /// production callers — which is precisely why the scoping lives at the KEY DERIVATION
-/// POINTS and every derived child name inherits it by composition:
+/// POINTS. Production positional channels encode the shared subject-index position
+/// directly; derived plumbing inherits that already-scoped name:
 ///
 /// ```text
-///   spread_child_location(parent, op, i) = "{parent}/{op}.{i}"      ← inherits from parent
+///   compact_position_channel(family, fp, root, position)            ← scopes each exact position
 ///   ac_carrier_channel(loc_channel, op)  = "ac:{loc_channel}/{op}"  ← inherits from loc:
 ///   contextual_premise_hole_channel(c)   = "ph:{c}"                 ← inherits from loc:
 ///   "{dispatch_channel}/sa-locate"                                  ← inherits from sa:
 /// ```
 ///
-/// so scoping the roots scopes the whole tree, and a new emission site cannot opt out
+/// so each base name is scoped before derived names are formed, and a new emission site cannot opt out
 /// without constructing a raw `format!` that the sweep test then fails on.
 ///
 /// # Why the fingerprint, and why verbatim

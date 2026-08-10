@@ -28,9 +28,8 @@
 //!
 //! The naive emitter consumes the SAME [`InRhoMatchingRuleset`] the optimized
 //! drivers consume (same compiled entries, same accept channels, same
-//! fingerprint), reads the SAME spread ABI (every channel derived through
-//! [`spread_root_location`] / [`spread_child_location`] /
-//! [`collapse_capture_location`] — the one shared derivation), and emits its
+//! fingerprint), reads the SAME compact spread ABI (every production channel
+//! derives through the shared fixed-width position encoder), and emits its
 //! innermost accept through the SAME [`build_accept_send`] function with the
 //! SAME arguments — so the accept send is byte-identical to the optimized
 //! network's and the downstream σ-receivers / firing contracts are shared
@@ -80,10 +79,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView};
-use models::rhoapi::expr::ExprInstance;
+use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView, SlotId};
 use models::rhoapi::var::{VarInstance, WildcardMsg};
-use models::rhoapi::{EPlusPlus, Expr, MatchCase, Par, Receive, ReceiveBind, Var};
+use models::rhoapi::{MatchCase, Par, Receive, ReceiveBind, Var};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_match_par, new_send_par,
@@ -94,10 +92,12 @@ use crate::rho_net_automaton::{
     bits, build_accept_send, collect_nested_schedule, wrap_capture_chain, AutomatonUnsupported,
     Descent,
 };
+use crate::rho_net_location::{
+    compact_position_channel, MatcherPosition, SubjectLocationIndex, SubjectPosition,
+};
 use crate::rho_net_lower::{
-    collapse_capture_location, contextual_hole_bridge_par, contextual_premise_hole_channel,
-    reflect_tag, spread_child_location, spread_root_location, spread_term_par,
-    walk_ground_term_locations, GroundTerm,
+    contextual_hole_bridge_par, contextual_premise_hole_channel, reflect_ground_term_par,
+    reflect_tag, spread_term_par, GroundTerm,
 };
 use crate::rho_net_ruleset::InRhoMatchingRuleset;
 use crate::rho_net_subst_trs as trs;
@@ -172,18 +172,6 @@ pub enum NaiveKtUnsupported {
         /// The entry whose ROOT op owns the first demand at that head.
         root_entry: PatternId,
     },
-    /// R3 (self-driving) only: the subject uses one constructor label at two
-    /// DIFFERENT arities, so the `^respread` walker cannot carry one exact-arity
-    /// dispatch arm per label — the emitter fails closed rather than emit a
-    /// walker whose wildcard arm would swallow a live constructor shape.
-    SelfDrivingArityConflict {
-        /// The conflicting constructor label.
-        op: String,
-        /// The first arity observed for `op` (subject pre-order).
-        arity_a: usize,
-        /// The conflicting arity observed later.
-        arity_b: usize,
-    },
     /// R3 (self-driving) only: a subject constructor label collides with one of
     /// the reserved `^respread` rendezvous labels (`^respread` /
     /// `^respread-root` / `^respread-err`) — a walker arm for it would alias the
@@ -220,12 +208,6 @@ impl fmt::Display for NaiveKtUnsupported {
                 "naive Knotted-Topoi baseline: entry {demanding_entry:?} demands head tag `{op}` \
                  also demanded by root entry {root_entry:?} — two readers for one location \
                  message would drop a match"
-            ),
-            Self::SelfDrivingArityConflict { op, arity_a, arity_b } => write!(
-                f,
-                "naive Knotted-Topoi R3 (self-driving): subject constructor `{op}` occurs at \
-                 arity {arity_a} AND arity {arity_b} — the ^respread walker needs one exact-arity \
-                 arm per label"
             ),
             Self::SelfDrivingReservedLabel { op } => write!(
                 f,
@@ -278,6 +260,7 @@ impl fmt::Display for NaiveKtContextualUnsupported {
 /// construction.
 struct NaiveEntrySchedule {
     root_op: String,
+    root_channel: String,
     descents: Vec<Descent>,
     captures: Vec<String>,
 }
@@ -288,42 +271,78 @@ struct NaiveEntrySchedule {
 fn collect_entry_schedule(
     view: &SetAutomatonView<'_, String>,
     entry: usize,
+    locations: &SubjectLocationIndex<'_>,
+    root_position: SubjectPosition,
     language_fingerprint: &str,
-    site: &str,
+    root_site: &str,
 ) -> Result<NaiveEntrySchedule, NaiveKtUnsupported> {
     let root = view.entry_root_state(entry);
     match view.node(root) {
-        AutomatonNode::Var(_) => Err(NaiveKtUnsupported::VariableRootPattern),
+        AutomatonNode::Var => Err(NaiveKtUnsupported::VariableRootPattern),
         AutomatonNode::App { op, args } => {
             let root_op = op.to_string();
-            let root_loc = spread_root_location(language_fingerprint, site);
-            let cap_root = collapse_capture_location(language_fingerprint, site);
+            let root_channel =
+                locations.channel("loc", language_fingerprint, root_site, root_position);
             let mut descents: Vec<Descent> = Vec::new();
             let mut captures: Vec<String> = Vec::new();
-            let mut names: Vec<String> = Vec::new();
-            for (index, &arg) in args.iter().enumerate() {
-                let child_loc = spread_child_location(&root_loc, &root_op, index);
-                let child_cap = spread_child_location(&cap_root, &root_op, index);
+            let mut capture_slots: Vec<SlotId> = Vec::new();
+            for (index, arg) in args.iter().enumerate() {
                 collect_nested_schedule(
                     view,
-                    arg,
-                    &child_loc,
-                    &child_cap,
+                    arg.state(),
+                    arg.parent_slots().collect(),
+                    locations,
+                    root_site,
+                    language_fingerprint,
+                    locations.matcher_child(MatcherPosition::Live(root_position), index),
                     &mut descents,
                     &mut captures,
-                    &mut names,
+                    &mut capture_slots,
                 );
             }
-            let is_linear = names
+            let is_linear = capture_slots
                 .iter()
                 .enumerate()
-                .all(|(i, name)| !names[..i].contains(name));
+                .all(|(i, slot)| !capture_slots[..i].contains(slot));
             if !is_linear {
                 return Err(NaiveKtUnsupported::NonLinearEntry);
             }
-            Ok(NaiveEntrySchedule { root_op, descents, captures })
+            Ok(NaiveEntrySchedule {
+                root_op,
+                root_channel,
+                descents,
+                captures,
+            })
         },
     }
+}
+
+/// Validate one entry's root and linearity without materializing subject
+/// channels.  The explicit worklist counts positional Var occurrences; a
+/// linear entry has exactly one occurrence per canonical root slot.
+fn validate_naive_entry(
+    view: &SetAutomatonView<'_, String>,
+    entry: usize,
+) -> Result<String, NaiveKtUnsupported> {
+    let root = view.entry_root_state(entry);
+    let root_op = match view.node(root) {
+        AutomatonNode::Var => return Err(NaiveKtUnsupported::VariableRootPattern),
+        AutomatonNode::App { op, .. } => op.to_string(),
+    };
+    let mut work = vec![root];
+    let mut occurrences = 0usize;
+    while let Some(state) = work.pop() {
+        match view.node(state) {
+            AutomatonNode::Var => occurrences += 1,
+            AutomatonNode::App { args, .. } => {
+                work.extend(args.iter().rev().map(|arg| arg.state()));
+            },
+        }
+    }
+    if occurrences != view.state_slot_count(root) {
+        return Err(NaiveKtUnsupported::NonLinearEntry);
+    }
+    Ok(root_op)
 }
 
 /// Collect every op of the non-root App nodes of `state`'s subtree (the tags an
@@ -338,10 +357,10 @@ fn collect_non_root_ops(
     let mut work = vec![state];
     while let Some(state) = work.pop() {
         match view.node(state) {
-            AutomatonNode::Var(_) => {},
+            AutomatonNode::Var => {},
             AutomatonNode::App { op, args } => {
                 ops.push(op.to_string());
-                work.extend(args.iter().rev().copied());
+                work.extend(args.iter().rev().map(|arg| arg.state()));
             },
         }
     }
@@ -349,28 +368,18 @@ fn collect_non_root_ops(
 
 /// The RULESET-level admission gates, run BEFORE any emission:
 ///
-/// 1. per-entry: Var root / non-linear entry (via [`collect_entry_schedule`]
-///    at a probe site AND a probe INV-S6 scope — only names and node kinds
-///    matter, so neither the site string nor the fingerprint scope can change
-///    the verdict);
+/// 1. per-entry: Var root / non-linear entry via a channel-free structural
+///    worklist;
 /// 2. [`NaiveKtUnsupported::OverlappingTagDemand`]: no entry's NON-ROOT op may
 ///    equal any entry's ROOT op (nested-vs-root demand), and no two DISTINCT
 ///    entries may share a ROOT op (duplicate-root demand). See the variant's
 ///    rustdoc for why each shape drops a match under the once-published spread.
 fn validate_naive_ruleset(view: &SetAutomatonView<'_, String>) -> Result<(), NaiveKtUnsupported> {
-    /// The INV-S6 scope the admission PROBE derives its throwaway channel names under.
-    /// `validate_naive_ruleset` inspects only `schedule.root_op` and the linearity of the
-    /// capture names, never a channel string, so the scope cannot reach the verdict — the
-    /// same reason the probe passes a fixed `"gate-probe"` site. Using a fixed probe value
-    /// keeps the gate callable where no language fingerprint is in scope.
-    const GATE_PROBE_FINGERPRINT: &str = "mettail-langdef-v1:0000000000000000";
-
     let entry_count = view.entry_count();
     // Per-entry root op (also runs the Var-root + linearity gates).
     let mut root_ops: Vec<(PatternId, String)> = Vec::with_capacity(entry_count);
     for entry in 0..entry_count {
-        let schedule = collect_entry_schedule(view, entry, GATE_PROBE_FINGERPRINT, "gate-probe")?;
-        root_ops.push((view.entry_id(entry), schedule.root_op));
+        root_ops.push((view.entry_id(entry), validate_naive_entry(view, entry)?));
     }
     // Duplicate roots: two DISTINCT entries sharing a root op.
     for (i, (pid_i, op_i)) in root_ops.iter().enumerate() {
@@ -390,8 +399,8 @@ fn validate_naive_ruleset(view: &SetAutomatonView<'_, String>) -> Result<(), Nai
         let root = view.entry_root_state(entry);
         let mut non_root_ops: Vec<String> = Vec::new();
         if let AutomatonNode::App { args, .. } = view.node(root) {
-            for &arg in args {
-                collect_non_root_ops(view, arg, &mut non_root_ops);
+            for arg in args {
+                collect_non_root_ops(view, arg.state(), &mut non_root_ops);
             }
         }
         for op in &non_root_ops {
@@ -529,13 +538,46 @@ fn naive_tag_receive(
 pub fn naive_kt_entry_receiver_par(
     view: &SetAutomatonView<'_, String>,
     entry: usize,
+    subject: &GroundTerm,
     site: &str,
     accept_channel: &str,
     out_channel: &str,
     language_fingerprint: &str,
     encoding: NaiveGuardEncoding,
 ) -> Result<Par, NaiveKtUnsupported> {
-    let schedule = collect_entry_schedule(view, entry, language_fingerprint, site)?;
+    let locations = SubjectLocationIndex::new(subject);
+    naive_kt_entry_receiver_indexed_par(
+        view,
+        entry,
+        &locations,
+        SubjectPosition::ROOT,
+        site,
+        accept_channel,
+        out_channel,
+        language_fingerprint,
+        encoding,
+    )
+}
+
+fn naive_kt_entry_receiver_indexed_par(
+    view: &SetAutomatonView<'_, String>,
+    entry: usize,
+    locations: &SubjectLocationIndex<'_>,
+    root_position: SubjectPosition,
+    root_site: &str,
+    accept_channel: &str,
+    out_channel: &str,
+    language_fingerprint: &str,
+    encoding: NaiveGuardEncoding,
+) -> Result<Par, NaiveKtUnsupported> {
+    let schedule = collect_entry_schedule(
+        view,
+        entry,
+        locations,
+        root_position,
+        language_fingerprint,
+        root_site,
+    )?;
     // Linear entry: k distinct vars in DFS (first-occurrence) order, so
     // `first_occ = [0,…,k-1]` — the SAME arguments the optimized emitter passes
     // for a linear entry, making the accept send byte-identical by construction.
@@ -550,24 +592,18 @@ pub fn naive_kt_entry_receiver_par(
     }
     let root_tag =
         GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &schedule.root_op));
-    Ok(naive_tag_receive(
-        &spread_root_location(language_fingerprint, site),
-        root_tag,
-        body,
-        true,
-        encoding,
-    ))
+    Ok(naive_tag_receive(&schedule.root_channel, root_tag, body, true, encoding))
 }
 
-/// Collect the per-position SITE strings of `node` whose head constructor is
-/// `root_op` — the single-rule specialization of the optimized driver's
-/// `collect_redex_sites` walk, with the SAME site-string derivation
-/// ([`spread_child_location`] folded from `location`), so a receiver built at a
-/// collected site reads exactly the channels the ONE spread publishes there.
-fn collect_entry_sites(node: &GroundTerm, location: &str, root_op: &str, sites: &mut Vec<String>) {
-    walk_ground_term_locations(node, location, |node, location| {
+/// Collect the exact subject positions whose head constructor is `root_op`.
+fn collect_entry_sites(
+    locations: &SubjectLocationIndex<'_>,
+    root_op: &str,
+    sites: &mut Vec<SubjectPosition>,
+) {
+    locations.walk(SubjectPosition::ROOT, |position, node| {
         if node.constructor == root_op {
-            sites.push(location.to_string());
+            sites.push(position);
         }
         true
     });
@@ -614,6 +650,7 @@ pub fn naive_kt_match_call_par(
 ) -> Result<(Par, usize), NaiveKtUnsupported> {
     let view = ruleset.automaton.view();
     validate_naive_ruleset(&view)?;
+    let locations = SubjectLocationIndex::new(subject);
 
     let mut call = Par::default();
     let mut installed = 0usize;
@@ -621,16 +658,18 @@ pub fn naive_kt_match_call_par(
         let root_op = match view.node(view.entry_root_state(entry)) {
             AutomatonNode::App { op, .. } => op.to_string(),
             // Unreachable past `validate_naive_ruleset`, kept total + typed.
-            AutomatonNode::Var(_) => return Err(NaiveKtUnsupported::VariableRootPattern),
+            AutomatonNode::Var => return Err(NaiveKtUnsupported::VariableRootPattern),
         };
         let accept_channel = entry_accept_channel(ruleset, view.entry_id(entry));
-        let mut sites: Vec<String> = Vec::new();
-        collect_entry_sites(subject, root_site, &root_op, &mut sites);
-        for site in &sites {
-            let receiver = naive_kt_entry_receiver_par(
+        let mut sites: Vec<SubjectPosition> = Vec::new();
+        collect_entry_sites(&locations, &root_op, &mut sites);
+        for &site in &sites {
+            let receiver = naive_kt_entry_receiver_indexed_par(
                 &view,
                 entry,
+                &locations,
                 site,
+                root_site,
                 accept_channel,
                 out_channel,
                 &ruleset.language_fingerprint,
@@ -643,26 +682,6 @@ pub fn naive_kt_match_call_par(
 
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), installed))
-}
-
-/// The subject subterm at a contextual HOLE path (each `(op, index)` step must
-/// match the subject's constructor at that level — the same shape the expected
-/// site string encodes), or `None` on a drift. The bijection check has already
-/// verified the located/expected correspondence, so a `None` here is defensive
-/// (it fails closed as a hole mismatch, mirroring the optimized driver's
-/// defensive arms).
-fn subject_subterm_at<'t>(
-    subject: &'t GroundTerm,
-    path: &[(String, usize)],
-) -> Option<&'t GroundTerm> {
-    let mut node = subject;
-    for (op, index) in path {
-        if node.constructor != *op {
-            return None;
-        }
-        node = node.children.get(*index)?;
-    }
-    Some(node)
 }
 
 /// Track B — the naive CONTEXTUAL match call: the VERBATIM mirror of
@@ -683,7 +702,7 @@ fn subject_subterm_at<'t>(
 /// duplicate-root gate at most one entry matches any head). The optimized
 /// driver's flat-only co-install check (`NestedEntryMultiSite` for `n > 1`) is
 /// REPLACED by the naive [`NaiveKtUnsupported::OverlappingTagDemand`] gate:
-/// hole sites are disjoint-prefix sibling positions, so two per-hole naive
+/// hole sites are distinct indexed sibling positions, so two per-hole naive
 /// receivers can contend for a channel only through a nested-vs-root or
 /// duplicate-root demand — exactly what the gate excludes statically.
 pub fn naive_kt_contextual_match_call_par(
@@ -707,23 +726,23 @@ pub fn naive_kt_contextual_match_call_par(
         ));
     }
 
-    // The `n` expected hole sites — the SAME `spread_child_location` fold.
-    let expected_sites: Vec<String> = entry
+    let locations = SubjectLocationIndex::new(subject);
+
+    // The `n` expected hole sites in the SAME compact index used by spread.
+    let expected_sites: Vec<SubjectPosition> = entry
         .hole_positions
         .iter()
-        .map(|path| {
-            path.iter()
-                .fold(root_site.to_string(), |site, (op, index)| {
-                    spread_child_location(&site, op, *index)
-                })
-        })
-        .collect();
+        .map(|path| locations.resolve_path(SubjectPosition::ROOT, path))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(NaiveKtContextualUnsupported::Context(
+            AutomatonUnsupported::ContextualHoleMismatch,
+        ))?;
 
     // LOAD-BEARING bijection check: the subject's located rule-root redexes must
     // be EXACTLY the `n` expected hole positions (as a multiset).
     let roots = crate::rule_lhs_root_constructors(ruleset);
-    let mut located: Vec<String> = Vec::new();
-    collect_ruleset_sites(subject, root_site, &roots, &mut located);
+    let mut located: Vec<SubjectPosition> = Vec::new();
+    collect_ruleset_sites(&locations, &roots, &mut located);
     let mut located_sorted = located;
     located_sorted.sort();
     let mut expected_sorted = expected_sites.clone();
@@ -740,14 +759,12 @@ pub fn naive_kt_contextual_match_call_par(
 
     // ── Per-hole: naive locator network + verbatim hole bridge ───────────────
     let mut call = Par::default();
-    for (index, expected_site) in expected_sites.iter().enumerate() {
+    for (index, &expected_site) in expected_sites.iter().enumerate() {
         let premise_channel = &entry.premise_channels[index];
         let hole_channel = contextual_premise_hole_channel(premise_channel);
 
         // The subject's head at the hole (defensive: a drift fails closed).
-        let hole_subterm = subject_subterm_at(subject, &entry.hole_positions[index]).ok_or(
-            NaiveKtContextualUnsupported::Context(AutomatonUnsupported::ContextualHoleMismatch),
-        )?;
+        let hole_subterm = locations.term(expected_site);
         // Install the head-matching entry's receiver AT the hole site, its
         // accept routed to the hole's intermediate `ph:` channel (the join's
         // premise ABI is completed by the bridge below). After the
@@ -756,7 +773,7 @@ pub fn naive_kt_contextual_match_call_par(
         for automaton_entry in 0..view.entry_count() {
             let root_op = match view.node(view.entry_root_state(automaton_entry)) {
                 AutomatonNode::App { op, .. } => op.to_string(),
-                AutomatonNode::Var(_) => {
+                AutomatonNode::Var => {
                     return Err(NaiveKtContextualUnsupported::Naive(
                         NaiveKtUnsupported::VariableRootPattern,
                     ))
@@ -766,10 +783,12 @@ pub fn naive_kt_contextual_match_call_par(
                 continue;
             }
             let accept_channel = entry_accept_channel(ruleset, view.entry_id(automaton_entry));
-            let receiver = naive_kt_entry_receiver_par(
+            let receiver = naive_kt_entry_receiver_indexed_par(
                 &view,
                 automaton_entry,
+                &locations,
                 expected_site,
+                root_site,
                 accept_channel,
                 &hole_channel,
                 &ruleset.language_fingerprint,
@@ -798,17 +817,16 @@ pub fn naive_kt_contextual_match_call_par(
 /// The multi-root site walk (every position whose head is one of `roots`) —
 /// the same derivation as the optimized driver's `collect_redex_sites`,
 /// re-stated here for the contextual bijection check (that function is private
-/// to `rho_net_ruleset`; the walk is four lines and derivation-shared via
-/// [`spread_child_location`]).
+/// to `rho_net_ruleset`; both walks consume [`SubjectLocationIndex`]'s exact
+/// compact topology).
 fn collect_ruleset_sites(
-    node: &GroundTerm,
-    location: &str,
+    locations: &SubjectLocationIndex<'_>,
     roots: &std::collections::BTreeSet<String>,
-    sites: &mut Vec<String>,
+    sites: &mut Vec<SubjectPosition>,
 ) {
-    walk_ground_term_locations(node, location, |node, location| {
+    locations.walk(SubjectPosition::ROOT, |position, node| {
         if roots.contains(&node.constructor) {
-            sites.push(location.to_string());
+            sites.push(position);
         }
         true
     });
@@ -862,27 +880,151 @@ pub fn respread_reserved_labels() -> [&'static str; 3] {
     ]
 }
 
-/// GString `++` concatenation `a ++ b` as a TRS [`trs::Node`] — the ONE
-/// combinator the walker needs beyond the subst-TRS set: a child's `loc:`/`cap:`
-/// channel NAME is computed IN RHOLANG from the parent's name plus the constant
-/// suffix `"/{op}.{index}"`, exactly [`spread_child_location`]'s derivation
-/// (`format!("{parent}/{op}.{index}")`), so the walker's re-spread rendezvouses
-/// with the SAME channels the matcher's static schedule reads. The reducer
-/// evaluates `EPlusPlus` over two `GString`s to their concatenation (reduce.rs
-/// `ExprInstance::EPlusPlusBody`, the string arm) both in channel and in data
-/// position, so the computed name is materialized before every produce.
-fn concat_str(a: trs::Node, b: trs::Node) -> trs::Node {
-    let free = trs::union_free(&[a.free.as_slice(), b.free.as_slice()]);
-    let free_bits = trs::free_bits(&free);
-    let mut par = Par::default();
-    par.exprs = vec![Expr {
-        expr_instance: Some(ExprInstance::EPlusPlusBody(EPlusPlus {
-            p1: Some(a.par),
-            p2: Some(b.par),
-        })),
-    }];
-    par.locally_free = free_bits;
-    trs::Node { par, free }
+/// Fixed-width identity carried by the R3 walker for one pattern constructor
+/// state.  It is control data, not a channel name; the selected route owns the
+/// exact compact `loc:`/`cap:` channels to publish.
+fn selfdriving_route_key(position: u64) -> String {
+    format!("@r2:{position:016x}")
+}
+
+fn allocate_selfdriving_position(next: &mut u64) -> u64 {
+    assert!(
+        *next < u64::MAX,
+        "the R3 pattern-position index exhausted its u64 identity space"
+    );
+    let position = *next;
+    *next += 1;
+    position
+}
+
+enum SelfDrivingChild {
+    /// The child is another constructor demanded by the pattern PDA.
+    Descend { route_key: String },
+    /// The child is a pattern variable: publish its already-reflected value
+    /// directly, without traversing the captured subtree.
+    Capture { channel: String },
+}
+
+struct SelfDrivingRoute {
+    route_key: String,
+    op: String,
+    loc_channel: String,
+    children: Vec<SelfDrivingChild>,
+}
+
+struct SelfDrivingEntry {
+    schedule: NaiveEntrySchedule,
+}
+
+struct SelfDrivingPlan {
+    entries: Vec<SelfDrivingEntry>,
+    routes: Vec<SelfDrivingRoute>,
+    root_routes: BTreeMap<String, String>,
+}
+
+/// Compile the admitted rule patterns to a finite route PDA.  Every pattern
+/// node receives one exact fixed-width identity; constructor nodes become
+/// walker states and variable nodes become direct capture actions on their
+/// parent transition.  The worklist is stack-safe and the retained plan is
+/// linear in the pattern forest, independent of subject depth.
+fn build_selfdriving_plan(
+    view: &SetAutomatonView<'_, String>,
+    language_fingerprint: &str,
+    root_site: &str,
+) -> Result<SelfDrivingPlan, NaiveKtUnsupported> {
+    let mut next_position = 0u64;
+    let mut entries = Vec::with_capacity(view.entry_count());
+    let mut routes = Vec::new();
+    let mut root_routes = BTreeMap::new();
+
+    for entry in 0..view.entry_count() {
+        let root_state = view.entry_root_state(entry);
+        if matches!(view.node(root_state), AutomatonNode::Var) {
+            return Err(NaiveKtUnsupported::VariableRootPattern);
+        }
+
+        let root_position = allocate_selfdriving_position(&mut next_position);
+        let root_route_key = selfdriving_route_key(root_position);
+        let mut schedule = NaiveEntrySchedule {
+            root_op: String::new(),
+            root_channel: compact_position_channel(
+                "loc",
+                language_fingerprint,
+                root_site,
+                root_position,
+            ),
+            descents: Vec::new(),
+            captures: Vec::new(),
+        };
+        let mut pending = vec![(root_state, root_position, true)];
+
+        while let Some((state, position, is_root)) = pending.pop() {
+            match view.node(state) {
+                AutomatonNode::Var => {
+                    schedule.captures.push(compact_position_channel(
+                        "cap",
+                        language_fingerprint,
+                        root_site,
+                        position,
+                    ));
+                },
+                AutomatonNode::App { op, args } => {
+                    if is_root {
+                        schedule.root_op = op.to_string();
+                    } else {
+                        schedule.descents.push(Descent {
+                            loc_channel: compact_position_channel(
+                                "loc",
+                                language_fingerprint,
+                                root_site,
+                                position,
+                            ),
+                            op: op.to_string(),
+                        });
+                    }
+
+                    let mut child_states = Vec::with_capacity(args.len());
+                    let mut children = Vec::with_capacity(args.len());
+                    for arg in args {
+                        let child_position = allocate_selfdriving_position(&mut next_position);
+                        let child_state = arg.state();
+                        child_states.push((child_state, child_position, false));
+                        children.push(match view.node(child_state) {
+                            AutomatonNode::Var => SelfDrivingChild::Capture {
+                                channel: compact_position_channel(
+                                    "cap",
+                                    language_fingerprint,
+                                    root_site,
+                                    child_position,
+                                ),
+                            },
+                            AutomatonNode::App { .. } => SelfDrivingChild::Descend {
+                                route_key: selfdriving_route_key(child_position),
+                            },
+                        });
+                    }
+                    pending.extend(child_states.into_iter().rev());
+                    routes.push(SelfDrivingRoute {
+                        route_key: selfdriving_route_key(position),
+                        op: op.to_string(),
+                        loc_channel: compact_position_channel(
+                            "loc",
+                            language_fingerprint,
+                            root_site,
+                            position,
+                        ),
+                        children,
+                    });
+                },
+            }
+        }
+
+        let previous = root_routes.insert(schedule.root_op.clone(), root_route_key.clone());
+        debug_assert!(previous.is_none(), "duplicate roots are rejected before route planning");
+        entries.push(SelfDrivingEntry { schedule });
+    }
+
+    Ok(SelfDrivingPlan { entries, routes, root_routes })
 }
 
 /// A HEAD-tag dispatch pattern `[⌜label⌝ ...]` — a tagged `EList` whose single
@@ -949,13 +1091,10 @@ fn build_accept_send_to_name(
 /// (its byte-shape is pinned by the pre-registered protocol's tests); the
 /// ~15 duplicated lines are annotated against it.
 fn selfdriving_entry_receiver_par(
-    view: &SetAutomatonView<'_, String>,
-    entry: usize,
-    site: &str,
+    schedule: &NaiveEntrySchedule,
     accept_channel: &str,
     language_fingerprint: &str,
-) -> Result<Par, NaiveKtUnsupported> {
-    let schedule = collect_entry_schedule(view, entry, language_fingerprint, site)?;
+) -> Par {
     // Linear entry ⇒ first_occ = [0,…,k-1] (see `naive_kt_entry_receiver_par`).
     let k = schedule.captures.len();
     let first_occ: Vec<usize> = (0..k).collect();
@@ -975,29 +1114,23 @@ fn selfdriving_entry_receiver_par(
     }
     let root_tag =
         GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &schedule.root_op));
-    Ok(naive_tag_receive(
-        &spread_root_location(language_fingerprint, site),
+    naive_tag_receive(
+        &schedule.root_channel,
         root_tag,
         body,
         true,
         NaiveGuardEncoding::PatternGuard,
-    ))
+    )
 }
 
-/// Collect the subject's constructor → arity map (pre-order), running the R3
-/// admission gates: an AC collection node fails closed
-/// ([`NaiveKtUnsupported::SelfDrivingCollectionSubject`]), a label colliding
-/// with a `^respread`-family rendezvous label fails closed
-/// ([`NaiveKtUnsupported::SelfDrivingReservedLabel`]), and one label at two
-/// arities fails closed ([`NaiveKtUnsupported::SelfDrivingArityConflict`]).
-/// This map IS the walker's admitted dispatch set: β (the subst TRS) can only
-/// rearrange/duplicate subject subtrees and rebuild `^bound`/Peano leaves that
-/// already occur in the subject, so for the λ-chain family every reduct's
-/// constructors are covered; anything else hits the walker's fail-closed
-/// wildcard arm at runtime (a typed `^respread-err` send).
-fn collect_selfdriving_arity_map(
+/// Collect the subject's constructor labels (pre-order), running the R3
+/// admission gates for AC carriers and reserved control labels. The set
+/// classifies known non-redex roots for dispatcher termination; walker shapes
+/// come exclusively from the pattern route PDA, so one label may safely occur
+/// at multiple subject arities.
+fn collect_selfdriving_labels(
     term: &GroundTerm,
-    map: &mut BTreeMap<String, usize>,
+    labels: &mut BTreeSet<String>,
 ) -> Result<(), NaiveKtUnsupported> {
     let mut work = vec![term];
     while let Some(term) = work.pop() {
@@ -1011,19 +1144,7 @@ fn collect_selfdriving_arity_map(
                 op: term.constructor.clone(),
             });
         }
-        match map.get(&term.constructor) {
-            Some(&arity) if arity != term.children.len() => {
-                return Err(NaiveKtUnsupported::SelfDrivingArityConflict {
-                    op: term.constructor.clone(),
-                    arity_a: arity,
-                    arity_b: term.children.len(),
-                });
-            },
-            Some(_) => {},
-            None => {
-                map.insert(term.constructor.clone(), term.children.len());
-            },
-        }
+        labels.insert(term.constructor.clone());
         work.extend(term.children.iter().rev());
     }
     Ok(())
@@ -1034,11 +1155,10 @@ fn collect_selfdriving_arity_map(
 /// the accept's dynamic `out`; the installed σ-receiver / β-cascade sends
 /// `out!(⟦reduct⟧)` and that send IS this contract's COMM):
 ///
-/// * head tag ∈ `redex_root_ops` (the ruleset's entry root ops) → the reduct
-///   can match again at the root: seed the walker
-///   `^respread!(t, "loc:{root_site}", "cap:{root_site}")` so its spread
-///   re-materializes at the SAME site prefix the persistent matcher reads —
-///   matching continues in-session;
+/// * head tag ∈ `redex_root_routes` (the ruleset's entry root ops) → the reduct
+///   can match again at the root: seed the walker with that entry's fixed route
+///   identity, so it re-materializes exactly the compact channels demanded by
+///   the persistent matcher — matching continues in-session;
 /// * head tag ∈ `nf_labels` (subject constructors that are NOT rule roots) →
 ///   the session normal form: `@out_channel!(t)` lands the reflected NF ONCE
 ///   on the observation channel (the R3 analogue of the per-step drive's final
@@ -1050,18 +1170,18 @@ fn collect_selfdriving_arity_map(
 /// erased); arms are emitted in sorted label order (deterministic bytes), and
 /// all arms' patterns are pairwise-disjoint ground tags, so arm order never
 /// affects which arm fires.
-pub fn respread_root_receiver_par(
+fn respread_root_receiver_par(
     language_fingerprint: &str,
-    root_site: &str,
     out_channel: &str,
-    redex_root_ops: &BTreeSet<String>,
+    redex_root_routes: &BTreeMap<String, String>,
     nf_labels: &BTreeSet<String>,
 ) -> Par {
     let fp = language_fingerprint;
     let chan = trs::tag_par(fp, RESPREAD_ROOT_RESERVED_LABEL);
     let env = trs::Env::root(&["t"]);
-    let mut cases: Vec<trs::Case> = Vec::with_capacity(redex_root_ops.len() + nf_labels.len() + 1);
-    for op in redex_root_ops {
+    let mut cases: Vec<trs::Case> =
+        Vec::with_capacity(redex_root_routes.len() + nf_labels.len() + 1);
+    for (op, route_key) in redex_root_routes {
         cases.push(trs::Case {
             pattern: head_tag_remainder_pattern(fp, op),
             free_count: 0,
@@ -1069,16 +1189,7 @@ pub fn respread_root_receiver_par(
                 trs::ground(trs::tag_par(fp, RESPREAD_RESERVED_LABEL)),
                 vec![
                     env.var("t"),
-                    trs::ground(new_gstring_par(
-                        spread_root_location(fp, root_site),
-                        Vec::new(),
-                        false,
-                    )),
-                    trs::ground(new_gstring_par(
-                        collapse_capture_location(fp, root_site),
-                        Vec::new(),
-                        false,
-                    )),
+                    trs::ground(new_gstring_par(route_key.clone(), Vec::new(), false)),
                 ],
             ),
         });
@@ -1105,77 +1216,83 @@ pub fn respread_root_receiver_par(
     trs::persistent_contract(chan, 1, body).par
 }
 
-/// The R3 WALKER `for(t, loc, cap <= ⌜^respread⌝){ match t { … } }` — the
-/// persistent 3-ary reflected-term walker that re-emits one subtree's SPREAD at
-/// a site prefix, fully in Rho (the `^subst`/`^shift` cascade's Match-dispatch
-/// pattern over the reflected-term ABI, specialized from term REWRITING to term
-/// RE-SPREADING). One exact-arity arm per admitted `(label, arity)`:
+/// The R3 WALKER `for(t, route <= ⌜^respread⌝){ match t { … } }` — a
+/// persistent reflected-term pushdown automaton specialized from term
+/// rewriting to demand-directed re-spreading.  Each outer arm destructures one
+/// pattern-required `(label, arity)`; its inner route dispatch selects one
+/// exact pattern state and publishes directly to its compact channel:
 ///
 /// ```text
-/// [⌜L⌝, c₀, …, c_{m-1}] =>
-///     @loc!(⌜L⌝)                                  ← the head tag at loc:π
-///   | @cap!(t)                                    ← ⟦subtree⟧ at cap:π (M-collapse)
-///   | ^respread!(cᵢ, loc ++ "/L.i", cap ++ "/L.i")  per child  ← recurse
+/// [⌜L⌝, c₀, …, c_{m-1}] ; route = r =>
+///     @loc(r)!(⌜L⌝)
+///   | @cap(r,i)!(cᵢ)             when child i is a pattern variable
+///   | ^respread!(cᵢ, child(r,i)) when child i is a constructor state
 /// ```
 ///
-/// so after a walk of `⟦t⟧` seeded at `(loc:π, cap:π)`, every node of `t` has
-/// its head tag on its `loc:` channel and its reflected subtree on its `cap:`
-/// channel — exactly the channels [`spread_term_par`]'s spread publishes at π
-/// and the matcher's static schedule reads (child names derived by the SAME
-/// `"{parent}/{op}.{index}"` rule, computed in-Rho by [`concat_str`]).
+/// A captured child is already the byte-identical reflected subtree the
+/// matcher needs, so it is never traversed.  Consequently retained route data
+/// is linear in the pattern forest, every route/channel token has fixed width,
+/// and a deep captured reduct does not create a quadratic ladder of growing
+/// path strings or dead per-node publications.
 ///
-/// DELIBERATE difference from the host spread: NO `col:` publication. The
-/// spread's `col:` channels exist only as the bottom-up collapse fold's
-/// internal rendezvous (each consumed exactly once by the parent's fold); the
-/// walker already HOLDS every node's collapsed value (`t` itself — a reflected
-/// node IS its collapse, byte-identical per the `spread_term_par` rustdoc), so
-/// it publishes `cap:` directly, installs no fold, and emitting `col:` values
-/// would only rest as dead messages no receiver ever reads. Consequence for
-/// the B4 counters: a re-spread contributes NO `col:`-join `matching_tau`
-/// COMMs — its volume is measured by the NEW `respread_tau` class (one COMM
-/// per walked node) instead.
-///
-/// Fail-closed: a head tag outside `arity_map` hits the wildcard arm — a typed
-/// `⌜^respread-err⌝!(t)` send (resting; no receiver) — never a silent spread.
-pub fn respread_walker_receiver_par(
-    language_fingerprint: &str,
-    arity_map: &BTreeMap<String, usize>,
-) -> Par {
+/// Fail-closed: a head tag outside the compiled pattern constructors hits the
+/// wildcard arm and emits on `⌜^respread-err⌝`.  A known constructor at a route
+/// that expects another constructor produces no route case, which is exactly a
+/// failed pattern demand: no accept can fire.
+fn respread_walker_receiver_par(language_fingerprint: &str, routes: &[SelfDrivingRoute]) -> Par {
     let fp = language_fingerprint;
     let chan = trs::tag_par(fp, RESPREAD_RESERVED_LABEL);
-    let env = trs::Env::root(&["t", "loc", "cap"]);
-    let mut cases: Vec<trs::Case> = Vec::with_capacity(arity_map.len() + 1);
-    for (label, &arity) in arity_map {
+    let env = trs::Env::root(&["t", "route"]);
+    let mut grouped: BTreeMap<(String, usize), Vec<&SelfDrivingRoute>> = BTreeMap::new();
+    for route in routes {
+        grouped
+            .entry((route.op.clone(), route.children.len()))
+            .or_default()
+            .push(route);
+    }
+    let mut cases: Vec<trs::Case> = Vec::with_capacity(grouped.len() + 1);
+    for ((label, arity), group) in grouped {
         let child_pats: Vec<Par> = (0..arity).map(trs::pat_free).collect();
         cases.push(trs::Case {
-            pattern: trs::pat_tagged(fp, label, child_pats),
+            pattern: trs::pat_tagged(fp, &label, child_pats),
             free_count: arity,
             body: {
-                // The `arity` captured children bind innermost (`FreeVar(i)` ⟹
-                // `BoundVar(arity-1-i)`) — the subst-TRS congruence-arm frame.
                 let child_names: Vec<String> = (0..arity).map(|i| format!("c{i}")).collect();
                 let child_refs: Vec<&str> = child_names.iter().map(String::as_str).collect();
                 let env = env.push(&child_refs);
-                // @loc!(⌜L⌝) — this node's head tag on its location channel.
-                let mut composed =
-                    trs::send(env.var("loc"), vec![trs::ground(trs::tag_par(fp, label))]);
-                // @cap!(t) — the reflected node IS its own collapse value.
-                composed = trs::par2(composed, trs::send(env.var("cap"), vec![env.var("t")]));
-                for (i, child) in child_refs.iter().enumerate() {
-                    // The `spread_child_location` suffix "/{op}.{index}",
-                    // appended in-Rho to BOTH prefixes.
-                    let suffix = new_gstring_par(format!("/{label}.{i}"), Vec::new(), false);
-                    let recurse = trs::send(
-                        trs::ground(trs::tag_par(fp, RESPREAD_RESERVED_LABEL)),
-                        vec![
-                            env.var(child),
-                            concat_str(env.var("loc"), trs::ground(suffix.clone())),
-                            concat_str(env.var("cap"), trs::ground(suffix)),
-                        ],
+                let mut route_cases = Vec::with_capacity(group.len());
+                for route in group {
+                    let mut composed = trs::send(
+                        trs::ground(new_gstring_par(route.loc_channel.clone(), Vec::new(), false)),
+                        vec![trs::ground(trs::tag_par(fp, &label))],
                     );
-                    composed = trs::par2(composed, recurse);
+                    for (child, action) in child_refs.iter().zip(&route.children) {
+                        let next = match action {
+                            SelfDrivingChild::Descend { route_key } => trs::send(
+                                trs::ground(trs::tag_par(fp, RESPREAD_RESERVED_LABEL)),
+                                vec![
+                                    env.var(child),
+                                    trs::ground(new_gstring_par(
+                                        route_key.clone(),
+                                        Vec::new(),
+                                        false,
+                                    )),
+                                ],
+                            ),
+                            SelfDrivingChild::Capture { channel } => trs::send(
+                                trs::ground(new_gstring_par(channel.clone(), Vec::new(), false)),
+                                vec![env.var(child)],
+                            ),
+                        };
+                        composed = trs::par2(composed, next);
+                    }
+                    route_cases.push(trs::Case {
+                        pattern: new_gstring_par(route.route_key.clone(), Vec::new(), false),
+                        free_count: 0,
+                        body: composed,
+                    });
                 }
-                composed
+                trs::match_(env.var("route"), route_cases)
             },
         });
     }
@@ -1188,7 +1305,7 @@ pub fn respread_walker_receiver_par(
         ),
     });
     let body = trs::match_(env.var("t"), cases);
-    trs::persistent_contract(chan, 3, body).par
+    trs::persistent_contract(chan, 2, body).par
 }
 
 /// Track B — R3, the SELF-DRIVING naive call (EXPLORATORY; PRE-REGISTERED
@@ -1198,11 +1315,10 @@ pub fn respread_walker_receiver_par(
 /// 1. every entry's R3 receiver ([`selfdriving_entry_receiver_par`]) — the
 ///    Appendix-A persistent per-site receiver whose accept's OUT slot is the
 ///    `^respread-root` dispatcher instead of the observation channel;
-/// 2. the `^respread-root` dispatcher + `^respread` walker family
-///    ([`respread_root_receiver_par`] / [`respread_walker_receiver_par`]),
-///    whose admitted constructor set is the SUBJECT's own constructor → arity
-///    map ([`collect_selfdriving_arity_map`], fail-closed);
-/// 3. ONE [`spread_term_par`] of the whole subject.
+/// 2. the `^respread-root` dispatcher + finite `^respread` route PDA, compiled
+///    from the admitted pattern forest by [`build_selfdriving_plan`];
+/// 3. one reflected subject sent to the root route (or directly to OUT when it
+///    is already a known normal form).
 ///
 /// # The self-driving loop (why one injection normalizes a chain)
 ///
@@ -1214,8 +1330,8 @@ pub fn respread_walker_receiver_par(
 /// `SubstRewrite` β entry: the reserved `^subst` cascade — `subst_tau`,
 /// identical work to the per-step column) and delivers it on the accept's
 /// dynamic `out` = the `^respread-root` dispatcher (`respread_tau`), which
-/// re-spreads a redex-rooted reduct at `root_site` (walker COMMs —
-/// `respread_tau`, one per node) — re-arming the SAME persistent receiver —
+/// re-spreads a redex-rooted reduct through the pattern route PDA (walker COMMs
+/// — `respread_tau`, one per demanded constructor state) — re-arming the SAME persistent receiver —
 /// or lands a normal-form reduct ONCE on `out_channel`. NOTE the reduct is
 /// COMPUTED by the installed firing contract, never assumed: R3 does not
 /// special-case the identity-λ chain (re-spreading the captured argument
@@ -1224,12 +1340,10 @@ pub fn respread_walker_receiver_par(
 /// # Determinism (per-channel single-liveness)
 ///
 /// Rounds are causally ordered (walk k's sends exist only after firing k's
-/// captures were consumed), and per round each channel the matcher reads
-/// carries exactly ONE live message: the round's own re-spread value. Stale
-/// deep messages accumulate on channels no receiver demands (exactly as the
-/// per-step architecture's unconsumed spread rests, but in ONE runtime) — they
-/// are dead by construction, so scheduling nondeterminism never becomes value
-/// nondeterminism.
+/// captures were consumed), and per round each demanded channel carries
+/// exactly one live message. Variable children are published directly and not
+/// traversed, so the persistent session retains neither stale deep-path sends
+/// nor growing path strings.
 ///
 /// Returns the call and the installed ENTRY-receiver count (the matcher
 /// installs; the dispatcher/walker contracts are firing-side infrastructure,
@@ -1242,55 +1356,59 @@ pub fn naive_kt_selfdriving_call_par(
 ) -> Result<(Par, usize), NaiveKtUnsupported> {
     let view = ruleset.automaton.view();
     validate_naive_ruleset(&view)?;
-    let mut arity_map: BTreeMap<String, usize> = BTreeMap::new();
-    collect_selfdriving_arity_map(subject, &mut arity_map)?;
+    let mut subject_labels = BTreeSet::new();
+    collect_selfdriving_labels(subject, &mut subject_labels)?;
+    let plan = build_selfdriving_plan(&view, &ruleset.language_fingerprint, root_site)?;
 
     // The dispatcher's redex set: the ruleset's entry ROOT ops (a reduct with
     // such a head can fire again at the root). NF labels: every OTHER subject
-    // constructor. A redex-rooted reduct whose deeper nodes leave the admitted
-    // map fails closed in the walker (wildcard → ^respread-err), and a reduct
-    // whose ROOT leaves both sets fails closed in the dispatcher.
-    let mut redex_root_ops: BTreeSet<String> = BTreeSet::new();
-    for entry in 0..view.entry_count() {
-        match view.node(view.entry_root_state(entry)) {
-            AutomatonNode::App { op, .. } => {
-                redex_root_ops.insert(op.to_string());
-            },
-            // Unreachable past `validate_naive_ruleset`, kept total + typed.
-            AutomatonNode::Var(_) => return Err(NaiveKtUnsupported::VariableRootPattern),
-        }
-    }
-    let nf_labels: BTreeSet<String> = arity_map
-        .keys()
-        .filter(|label| !redex_root_ops.contains(*label))
+    // constructor. A redex-rooted reduct whose demanded nested constructor
+    // differs from its pattern route cannot produce an accept; a reduct whose
+    // ROOT leaves both sets fails closed in the dispatcher.
+    let nf_labels: BTreeSet<String> = subject_labels
+        .iter()
+        .filter(|label| !plan.root_routes.contains_key(*label))
         .cloned()
         .collect();
 
     let mut call = Par::default();
     let mut installed = 0usize;
-    for entry in 0..view.entry_count() {
+    for (entry, planned) in plan.entries.iter().enumerate() {
         let accept_channel = entry_accept_channel(ruleset, view.entry_id(entry));
         let receiver = selfdriving_entry_receiver_par(
-            &view,
-            entry,
-            root_site,
+            &planned.schedule,
             accept_channel,
             &ruleset.language_fingerprint,
-        )?;
+        );
         call = call.append(receiver);
         installed += 1;
     }
     call = call.append(respread_root_receiver_par(
         &ruleset.language_fingerprint,
-        root_site,
         out_channel,
-        &redex_root_ops,
+        &plan.root_routes,
         &nf_labels,
     ));
-    call = call.append(respread_walker_receiver_par(&ruleset.language_fingerprint, &arity_map));
+    call = call.append(respread_walker_receiver_par(&ruleset.language_fingerprint, &plan.routes));
 
-    let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
-    Ok((call.append(spread), installed))
+    let reflected = trs::ground(reflect_ground_term_par(subject, &ruleset.language_fingerprint));
+    let initial = if let Some(route_key) = plan.root_routes.get(&subject.constructor) {
+        trs::send(
+            trs::ground(trs::tag_par(&ruleset.language_fingerprint, RESPREAD_RESERVED_LABEL)),
+            vec![reflected, trs::ground(new_gstring_par(route_key.clone(), Vec::new(), false))],
+        )
+    } else if nf_labels.contains(&subject.constructor) {
+        trs::send(
+            trs::ground(new_gstring_par(out_channel.to_string(), Vec::new(), false)),
+            vec![reflected],
+        )
+    } else {
+        trs::send(
+            trs::ground(trs::tag_par(&ruleset.language_fingerprint, RESPREAD_ERR_RESERVED_LABEL)),
+            vec![reflected],
+        )
+    };
+    Ok((call.append(initial.par), installed))
 }
 
 #[cfg(test)]
@@ -1308,6 +1426,57 @@ mod tests {
     use crate::rho_net_lower::RhoNetContextualMatchEntry;
 
     const FP: &str = "fp";
+
+    fn positional_subject() -> GroundTerm {
+        let branch = |name| {
+            GroundTerm::new(
+                name,
+                vec![
+                    GroundTerm::nullary("a"),
+                    GroundTerm::nullary("b"),
+                    GroundTerm::nullary("c"),
+                    GroundTerm::nullary("d"),
+                ],
+            )
+        };
+        GroundTerm::new("root", vec![branch("p0"), branch("p1"), branch("p2"), branch("p3")])
+    }
+
+    fn subject_for_pattern(pattern: &Pattern<String>) -> GroundTerm {
+        enum Task<'a> {
+            Visit(&'a Pattern<String>),
+            Assemble { op: &'a str, arity: usize },
+        }
+        let mut tasks = vec![Task::Visit(pattern)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(_)) => values.push(GroundTerm::nullary("value")),
+                Task::Visit(Pattern::App { op, args }) => {
+                    tasks.push(Task::Assemble { op, arity: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Visit(other) => panic!("test expected positional pattern, got {other:?}"),
+                Task::Assemble { op, arity } => {
+                    let first_child = values.len() - arity;
+                    let children = values.split_off(first_child);
+                    values.push(GroundTerm::new(op, children));
+                },
+            }
+        }
+        values.pop().expect("pattern produces one subject")
+    }
+
+    fn indexed_channel(subject: &GroundTerm, family: &str, child_path: &[usize]) -> String {
+        let locations = SubjectLocationIndex::new(subject);
+        let mut position = SubjectPosition::ROOT;
+        for &child in child_path {
+            position = locations
+                .child(position, child)
+                .expect("test subject contains position");
+        }
+        locations.channel(family, FP, "site0", position)
+    }
 
     fn gstring(par: &Par) -> Option<&str> {
         match par.exprs.first()?.expr_instance.as_ref()? {
@@ -1372,9 +1541,11 @@ mod tests {
     #[test]
     fn pattern_guard_swap_emits_a_persistent_root_receive_and_the_shared_accept() {
         let automaton = swap_automaton();
+        let subject = positional_subject();
         let network = naive_kt_entry_receiver_par(
             &automaton.view(),
             0,
+            &subject,
             "site0",
             "sa:acc",
             "OUT",
@@ -1392,7 +1563,7 @@ mod tests {
         assert_eq!(root.binds[0].free_count, 0);
         assert_eq!(
             gstring(root.binds[0].source.as_ref().expect("source")),
-            Some(spread_root_location(FP, "site0").as_str())
+            Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
         assert_eq!(
             root.binds[0].patterns[0],
@@ -1405,16 +1576,12 @@ mod tests {
         assert!(!cap_x.persistent, "captures are one-shot");
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().expect("source")),
-            Some(
-                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[0]).as_str())
         );
         let cap_y = &cap_x.body.as_ref().expect("x body").receives[0];
         assert_eq!(
             gstring(cap_y.binds[0].source.as_ref().expect("source")),
-            Some(
-                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[1]).as_str())
         );
 
         // Accept: sa:acc!(BoundVar(1), BoundVar(0), @"OUT") — the SHARED
@@ -1430,6 +1597,7 @@ mod tests {
 
     #[test]
     fn nested_f_g_x_emits_two_level_tag_receives_then_the_deep_capture() {
+        let subject = positional_subject();
         let automaton = SetAutomaton::compile_structural([(
             PatternId(0),
             Pattern::app(
@@ -1441,6 +1609,7 @@ mod tests {
         let network = naive_kt_entry_receiver_par(
             &automaton.view(),
             0,
+            &subject,
             "site0",
             "sa:acc",
             "OUT",
@@ -1455,7 +1624,7 @@ mod tests {
         assert!(root.persistent);
         assert_eq!(
             gstring(root.binds[0].source.as_ref().expect("source")),
-            Some(spread_root_location(FP, "site0").as_str())
+            Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
         assert_eq!(root.binds[0].patterns[0], tag_par("f"));
         // Level 2: one-shot for(⌜g⌝ <- loc:site0/f.0).
@@ -1463,21 +1632,14 @@ mod tests {
         assert!(!descent.persistent, "descent tag receives are one-shot");
         assert_eq!(
             gstring(descent.binds[0].source.as_ref().expect("source")),
-            Some(spread_child_location(&spread_root_location(FP, "site0"), "f", 0).as_str())
+            Some(indexed_channel(&subject, "loc", &[0]).as_str())
         );
         assert_eq!(descent.binds[0].patterns[0], tag_par("g"));
         // Capture: for(v <- cap:site0/f.0/g.0){ accept } — the deep collapse value.
         let capture = &descent.body.as_ref().expect("descent body").receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().expect("source")),
-            Some(
-                spread_child_location(
-                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
-                    "g",
-                    0
-                )
-                .as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[0, 0]).as_str())
         );
         let accept = &capture.body.as_ref().expect("capture body").sends[0];
         assert_eq!(gstring(accept.chan.as_ref().expect("chan")), Some("sa:acc"));
@@ -1488,6 +1650,7 @@ mod tests {
 
     #[test]
     fn ternary_pattern_captures_in_dfs_order_with_the_general_frame() {
+        let subject = positional_subject();
         let automaton = SetAutomaton::compile_structural([(
             PatternId(0),
             Pattern::app(
@@ -1499,6 +1662,7 @@ mod tests {
         let network = naive_kt_entry_receiver_par(
             &automaton.view(),
             0,
+            &subject,
             "site0",
             "sa:acc",
             "OUT",
@@ -1510,9 +1674,9 @@ mod tests {
 
         let mut body = network.receives[0].body.as_ref().expect("root body");
         for expected in [
-            spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 0),
-            spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 1),
-            spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 2),
+            indexed_channel(&subject, "cap", &[0]),
+            indexed_channel(&subject, "cap", &[1]),
+            indexed_channel(&subject, "cap", &[2]),
         ] {
             let receive = &body.receives[0];
             assert_eq!(
@@ -1530,6 +1694,7 @@ mod tests {
 
     #[test]
     fn var_capture_wiring_matches_the_automaton_cap_abi_with_a_flat_sibling() {
+        let subject = positional_subject();
         // f(g(x), y): x is captured DEEP (cap:site0/f.0/g.0), y at the direct
         // child (cap:site0/f.1); DFS order [x, y] ⇒ σ[x] = BoundVar(1),
         // σ[y] = BoundVar(0) — the automaton's exact capture ABI.
@@ -1544,6 +1709,7 @@ mod tests {
         let network = naive_kt_entry_receiver_par(
             &automaton.view(),
             0,
+            &subject,
             "site0",
             "sa:acc",
             "OUT",
@@ -1562,19 +1728,12 @@ mod tests {
         let cap_x = &descent.body.as_ref().expect("descent body").receives[0];
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().expect("source")),
-            Some(
-                spread_child_location(
-                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
-                    "g",
-                    0
-                )
-                .as_str()
-            )
+            Some(indexed_channel(&subject, "cap", &[0, 0]).as_str())
         );
         let cap_y = &cap_x.body.as_ref().expect("x body").receives[0];
         assert_eq!(
             gstring(cap_y.binds[0].source.as_ref().expect("source")),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str())
+            Some(indexed_channel(&subject, "cap", &[1]).as_str())
         );
         let send = &cap_y.body.as_ref().expect("y body").sends[0];
         assert_eq!(boundvar_index(&send.data[0]), Some(1), "σ[x] = BoundVar(1) (DFS-first)");
@@ -1584,9 +1743,11 @@ mod tests {
     #[test]
     fn consume_test_binds_the_tag_and_republishes_on_mismatch() {
         let automaton = swap_automaton();
+        let subject = positional_subject();
         let network = naive_kt_entry_receiver_par(
             &automaton.view(),
             0,
+            &subject,
             "site0",
             "sa:acc",
             "OUT",
@@ -1614,7 +1775,7 @@ mod tests {
         let republish = &m.cases[1].source.as_ref().expect("else body").sends[0];
         assert_eq!(
             gstring(republish.chan.as_ref().expect("chan")),
-            Some(spread_root_location(FP, "site0").as_str())
+            Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
         assert_eq!(boundvar_index(&republish.data[0]), Some(0), "republishes the consumed tag");
 
@@ -1639,6 +1800,7 @@ mod tests {
             naive_kt_entry_receiver_par(
                 &automaton.view(),
                 0,
+                &positional_subject(),
                 "site0",
                 "sa:acc",
                 "OUT",
@@ -1675,6 +1837,7 @@ mod tests {
             naive_kt_entry_receiver_par(
                 &automaton.view(),
                 0,
+                &positional_subject(),
                 "site0",
                 "sa:acc",
                 "OUT",
@@ -1696,6 +1859,7 @@ mod tests {
             naive_kt_entry_receiver_par(
                 &deep.view(),
                 0,
+                &positional_subject(),
                 "site0",
                 "sa:acc",
                 "OUT",
@@ -1890,17 +2054,9 @@ mod tests {
             .map(|receive| gstring(receive.binds[0].source.as_ref().expect("source")))
             .collect();
         for expected in [
-            spread_child_location(&spread_root_location(FP, "site0"), "Pair", 0),
-            spread_child_location(
-                &spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1),
-                "Pair",
-                0,
-            ),
-            spread_child_location(
-                &spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1),
-                "Pair",
-                1,
-            ),
+            indexed_channel(&subject, "loc", &[0]),
+            indexed_channel(&subject, "loc", &[1, 0]),
+            indexed_channel(&subject, "loc", &[1, 1]),
         ] {
             assert!(
                 persistent_sources.contains(&Some(expected.as_str())),
@@ -1914,7 +2070,7 @@ mod tests {
             .iter()
             .filter(|send| {
                 gstring(send.chan.as_ref().expect("chan"))
-                    == Some(spread_root_location(FP, "site0").as_str())
+                    == Some(indexed_channel(&subject, "loc", &[]).as_str())
             })
             .count();
         assert_eq!(root_tag_sends, 1, "exactly ONE spread is appended");
@@ -2015,10 +2171,7 @@ mod tests {
             .find(|receive| {
                 receive.persistent
                     && gstring(receive.binds[0].source.as_ref().expect("source"))
-                        == Some(
-                            spread_child_location(&spread_root_location(FP, "site0"), "Wrap", 0)
-                                .as_str(),
-                        )
+                        == Some(indexed_channel(&subject, "loc", &[0]).as_str())
             })
             .expect("the naive locator is installed at the hole site");
         let cap_x = &locator.body.as_ref().expect("locator body").receives[0];
@@ -2162,9 +2315,9 @@ mod tests {
 
     /// R3 emission shape: one installed entry receiver whose innermost accept
     /// targets the `^respread-root` dispatcher; the dispatcher (1 formal) and
-    /// the walker (3 formals) are persistent contracts on their reserved
-    /// `GPrivate` channels; exactly ONE spread is appended; the whole call is
-    /// a closed contract.
+    /// route walker (2 formals) are persistent contracts on their reserved
+    /// `GPrivate` channels; exactly one reflected-subject route seed is
+    /// appended; the whole call is closed.
     #[test]
     fn selfdriving_call_emits_dispatcher_walker_and_the_rerouted_accept() {
         let (ruleset, chain) = beta_ruleset_and_chain();
@@ -2173,8 +2326,8 @@ mod tests {
         assert_eq!(installed, 1, "one entry ⇒ one installed R3 root receiver");
         assert_closed(&call, "the R3 self-driving call");
 
-        // The matcher: persistent on loc:site0, tag-as-pattern ⌜App⌝.
-        let loc_root = new_gstring_par(spread_root_location(FP, "site0"), Vec::new(), false);
+        // The matcher: persistent on the compact root location, tag-as-pattern ⌜App⌝.
+        let loc_root = new_gstring_par(indexed_channel(&chain, "loc", &[]), Vec::new(), false);
         let matcher = persistent_receive_on(&call, &loc_root, "R3 matcher");
         assert_eq!(matcher.binds[0].patterns[0], tag_par("App"));
         assert_eq!(matcher.bind_count, 0, "PatternGuard binds nothing at the tag");
@@ -2208,25 +2361,24 @@ mod tests {
         );
         assert_eq!(dispatcher.bind_count, 1, "dispatcher binds the delivered reduct");
 
-        // The walker: persistent 3-formal contract on ⌜^respread⌝.
+        // The walker: persistent 2-formal contract on ⌜^respread⌝.
         let walker =
             persistent_receive_on(&call, &trs::tag_par(FP, RESPREAD_RESERVED_LABEL), "R3 walker");
-        assert_eq!(walker.bind_count, 3, "walker binds (t, loc, cap)");
+        assert_eq!(walker.bind_count, 2, "walker binds (t, route)");
 
-        // Exactly ONE spread: one head-tag send rests on loc:site0.
-        let root_tag_sends = call
+        // Exactly one initial route seed carries the whole reflected subject.
+        let seeds: Vec<_> = call
             .sends
             .iter()
-            .filter(|send| {
-                gstring(send.chan.as_ref().expect("chan"))
-                    == Some(spread_root_location(FP, "site0").as_str())
-            })
-            .count();
-        assert_eq!(root_tag_sends, 1, "exactly ONE spread is appended");
+            .filter(|send| send.chan.as_ref() == Some(&trs::tag_par(FP, RESPREAD_RESERVED_LABEL)))
+            .collect();
+        assert_eq!(seeds.len(), 1, "exactly one initial route seed is appended");
+        assert_eq!(seeds[0].data.len(), 2, "^respread!(reflected-subject, route)");
+        assert_eq!(gstring(&seeds[0].data[1]), Some("@r2:0000000000000000"));
     }
 
     /// The dispatcher routes a REDEX-rooted reduct to the walker seeded with
-    /// the root-site prefixes, an admitted NF-rooted reduct to OUT, and any
+    /// the entry's fixed route, an admitted NF-rooted reduct to OUT, and any
     /// alien head to the typed `^respread-err` channel (fail-closed).
     #[test]
     fn selfdriving_dispatcher_routes_redex_nf_and_alien_heads() {
@@ -2243,7 +2395,7 @@ mod tests {
         // wildcard = 6, sorted-label deterministic.
         assert_eq!(dispatch.cases.len(), 6, "1 redex + 4 NF + wildcard arms");
 
-        // The App arm seeds the walker with (t, loc-root, cap-root) — both INV-S6 scoped.
+        // The App arm seeds the walker with (t, root-route).
         let app_arm = dispatch
             .cases
             .iter()
@@ -2261,10 +2413,9 @@ mod tests {
             Some(&trs::tag_par(FP, RESPREAD_RESERVED_LABEL)),
             "a redex-rooted reduct is sent to the walker"
         );
-        assert_eq!(seed.data.len(), 3, "^respread!(t, loc, cap)");
+        assert_eq!(seed.data.len(), 2, "^respread!(t, route)");
         assert_eq!(boundvar_index(&seed.data[0]), Some(0), "t is the bound reduct");
-        assert_eq!(gstring(&seed.data[1]), Some(spread_root_location(FP, "site0").as_str()));
-        assert_eq!(gstring(&seed.data[2]), Some(collapse_capture_location(FP, "site0").as_str()));
+        assert_eq!(gstring(&seed.data[1]), Some("@r2:0000000000000000"));
 
         // An NF arm (the terminal atom A) sends the reduct to OUT.
         let a_arm = dispatch
@@ -2290,22 +2441,23 @@ mod tests {
         );
     }
 
-    /// The walker carries one exact-arity arm per subject constructor plus the
-    /// fail-closed wildcard, and each arm re-emits the head tag on @loc, the
-    /// whole node on @cap, and one recursion per child whose channel names are
-    /// computed with the `spread_child_location` suffix.
+    /// The walker carries one exact-arity arm per pattern constructor shape
+    /// plus the fail-closed wildcard. Each route publishes one compact head
+    /// tag, captures variable children directly, and descends only into child
+    /// constructor states.
     #[test]
-    fn selfdriving_walker_arms_cover_the_subject_map_and_fail_closed() {
+    fn selfdriving_walker_arms_cover_pattern_routes_and_fail_closed() {
         let (ruleset, chain) = beta_ruleset_and_chain();
         let (call, _) = naive_kt_selfdriving_call_par(&ruleset, &chain, "site0", "OUT")
             .expect("the β chain admits");
         let walker =
             persistent_receive_on(&call, &trs::tag_par(FP, RESPREAD_RESERVED_LABEL), "R3 walker");
         let dispatch = &walker.body.as_ref().expect("walker body").matches[0];
-        // Subject map {App:2, ^lambda:1, ^bound:1, Z:0, A:0} + wildcard = 6.
-        assert_eq!(dispatch.cases.len(), 6, "5 constructor arms + the wildcard");
+        // Pattern constructor map {(App,2), (^lambda,1)} + wildcard = 3.
+        assert_eq!(dispatch.cases.len(), 3, "2 pattern constructor arms + wildcard");
 
-        // The App arm: free_count 2, body = @loc!(⌜App⌝) | @cap!(t) | 2 recursions.
+        // The App route: @loc!(⌜App⌝), one descent into ^lambda, and one
+        // direct capture of arg. The captured argument's subtree is not walked.
         let app_arm = dispatch
             .cases
             .iter()
@@ -2315,23 +2467,25 @@ mod tests {
                         .contains(&format!("{:?}", tag_par("App").unforgeables[0]))
             })
             .expect("the binary App arm exists");
-        let body = app_arm.source.as_ref().expect("App arm body");
-        assert_eq!(body.sends.len(), 4, "tag + cap + one recursion per child");
+        let route_dispatch = &app_arm.source.as_ref().expect("App arm body").matches[0];
+        assert_eq!(route_dispatch.cases.len(), 1, "one App route in the β pattern");
+        let body = route_dispatch.cases[0]
+            .source
+            .as_ref()
+            .expect("App route body");
+        assert_eq!(body.sends.len(), 3, "tag + one descent + one direct capture");
         let recursions: Vec<_> = body
             .sends
             .iter()
             .filter(|send| send.chan.as_ref() == Some(&trs::tag_par(FP, RESPREAD_RESERVED_LABEL)))
             .collect();
-        assert_eq!(recursions.len(), 2, "one ^respread recursion per App child");
-        for recursion in &recursions {
-            assert_eq!(recursion.data.len(), 3, "^respread!(child, loc', cap')");
-            // The child channel names are ++-computed with the shared suffix.
-            let rendered = format!("{:?}", recursion.data[1]);
-            assert!(
-                rendered.contains("EPlusPlusBody"),
-                "the child loc name is a ++ concat, got {rendered}"
-            );
-        }
+        assert_eq!(recursions.len(), 1, "only the constructor child is traversed");
+        assert_eq!(recursions[0].data.len(), 2, "^respread!(child, fixed-route)");
+        assert_eq!(gstring(&recursions[0].data[1]), Some("@r2:0000000000000001"));
+        assert!(
+            !format!("{call:?}").contains("EPlusPlusBody"),
+            "R3 must not rebuild channel paths with runtime string concatenation"
+        );
 
         // The wildcard arm fails closed to ^respread-err.
         let last = dispatch.cases.last().expect("wildcard arm");
@@ -2340,37 +2494,44 @@ mod tests {
         assert_eq!(err_send.chan.as_ref(), Some(&trs::tag_par(FP, RESPREAD_ERR_RESERVED_LABEL)));
     }
 
-    /// The walker's in-Rho child-suffix rule IS `spread_child_location`'s:
-    /// `parent ++ "/{op}.{i}"` (pinned so the derivations can never drift).
+    /// Route and compact-channel identities stay fixed width as a pattern
+    /// grows; no identity contains its ancestors' constructor text.
     #[test]
-    fn selfdriving_child_suffix_matches_spread_child_location() {
-        for (op, index) in [("App", 0usize), ("App", 1), ("^lambda", 0), ("^bound", 0)] {
+    fn selfdriving_route_and_channel_tokens_are_fixed_width() {
+        let route_width = selfdriving_route_key(0).len();
+        for position in [0, 1, 17, 65_535, u64::MAX - 1] {
+            assert_eq!(selfdriving_route_key(position).len(), route_width);
             assert_eq!(
-                spread_child_location("", op, index),
-                format!("/{op}.{index}"),
-                "the walker's baked suffix must equal the shared derivation"
+                compact_position_channel("loc", FP, "site0", position).len(),
+                compact_position_channel("loc", FP, "site0", 0).len()
             );
         }
     }
 
-    /// R3 admission fail-closed matrix: an arity-conflicted subject, a subject
-    /// label colliding with a reserved `^respread` rendezvous label, and an AC
-    /// collection subject each reject BEFORE any emission.
+    /// R3 admission matrix: repeated labels at different subject arities are
+    /// safe under route dispatch, while a reserved control label and an AC
+    /// carrier still reject before emission.
     #[test]
-    fn selfdriving_rejects_conflicting_reserved_and_collection_subjects() {
+    fn selfdriving_admits_mixed_arities_and_rejects_reserved_or_collection_subjects() {
         let (ruleset, _) = beta_ruleset_and_chain();
-        // One label at two arities: f(A, f(B)) uses f at arity 2 and arity 1.
-        let conflicted = GroundTerm::new(
-            "f",
-            vec![GroundTerm::nullary("A"), GroundTerm::new("f", vec![GroundTerm::nullary("B")])],
+        // A occurs at arity 1 and arity 0 below a valid App root. The route PDA
+        // does not dispatch on subject-wide arity metadata, so this is safe.
+        let mixed_arity = GroundTerm::new(
+            "App",
+            vec![
+                GroundTerm::new(
+                    crate::rho_net_lower::LAMBDA_REFLECT_LABEL,
+                    vec![GroundTerm::new(
+                        crate::rho_net_lower::BOUND_VAR_REFLECT_LABEL,
+                        vec![GroundTerm::nullary(crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL)],
+                    )],
+                ),
+                GroundTerm::new("A", vec![GroundTerm::nullary("A")]),
+            ],
         );
-        assert_eq!(
-            naive_kt_selfdriving_call_par(&ruleset, &conflicted, "site0", "OUT"),
-            Err(NaiveKtUnsupported::SelfDrivingArityConflict {
-                op: "f".to_string(),
-                arity_a: 2,
-                arity_b: 1,
-            })
+        assert!(
+            naive_kt_selfdriving_call_par(&ruleset, &mixed_arity, "site0", "OUT").is_ok(),
+            "fixed pattern routes make subject-wide arity conflicts irrelevant"
         );
         // A reserved rendezvous label as a subject constructor.
         let reserved = GroundTerm::new(RESPREAD_RESERVED_LABEL, vec![GroundTerm::nullary("A")]);
@@ -2392,11 +2553,6 @@ mod tests {
         );
         // The new variants render (fail-closed Display surface).
         for variant in [
-            NaiveKtUnsupported::SelfDrivingArityConflict {
-                op: "f".to_string(),
-                arity_a: 2,
-                arity_b: 1,
-            },
             NaiveKtUnsupported::SelfDrivingReservedLabel { op: "^respread".to_string() },
             NaiveKtUnsupported::SelfDrivingCollectionSubject { op: "PPar".to_string() },
         ] {
@@ -2481,25 +2637,31 @@ mod tests {
             pattern in linear_pattern_strategy(),
             consume_test in proptest::bool::ANY,
         ) {
+            let subject = subject_for_pattern(&pattern);
             let automaton = SetAutomaton::compile_structural([(PatternId(0), pattern)])
                 .expect("a linear structural pattern compiles");
             let view = automaton.view();
             // k = the number of Var leaves (DFS) — recount independently.
             let mut descents = Vec::new();
             let mut captures = Vec::new();
-            let mut names = Vec::new();
-            if let AutomatonNode::App { op, args } = view.node(view.entry_root_state(0)) {
-                let root_loc = spread_root_location(FP, "site0");
-                let cap_root = collapse_capture_location(FP, "site0");
-                for (index, &arg) in args.iter().enumerate() {
+            let mut capture_slots = Vec::new();
+            let locations = SubjectLocationIndex::new(&subject);
+            if let AutomatonNode::App { args, .. } = view.node(view.entry_root_state(0)) {
+                for (index, arg) in args.iter().enumerate() {
                     collect_nested_schedule(
                         &view,
-                        arg,
-                        &spread_child_location(&root_loc, op, index),
-                        &spread_child_location(&cap_root, op, index),
+                        arg.state(),
+                        arg.parent_slots().collect(),
+                        &locations,
+                        "site0",
+                        FP,
+                        locations.matcher_child(
+                            MatcherPosition::Live(SubjectPosition::ROOT),
+                            index,
+                        ),
                         &mut descents,
                         &mut captures,
-                        &mut names,
+                        &mut capture_slots,
                     );
                 }
             }
@@ -2513,7 +2675,7 @@ mod tests {
                 NaiveGuardEncoding::PatternGuard
             };
             let network = naive_kt_entry_receiver_par(
-                &view, 0, "site0", "sa:acc", "OUT", FP, encoding,
+                &view, 0, &subject, "site0", "sa:acc", "OUT", FP, encoding,
             )
             .expect("a linear entry emits");
             prop_assert!(network.locally_free.is_empty(), "the receiver is closed");

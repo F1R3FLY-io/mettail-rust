@@ -139,9 +139,14 @@ actual-eval spot check proving the zone evaluates; per-step chain width is
 | `swap_comb/{sa,naive}/16` | 175 |
 | `nested_spine/naive/16` | 174 |
 
-All other cells — including every smoke cell and the n = 32/64 single-
-injection cells (width > 256, always the `split_short` branch) — stay clear
-of the zone. Measurable `lambda_chain` coverage is therefore the FULL ladder
+All other cells stay clear of the zone. In particular, the current R3
+pattern-route PDA has maximum evaluator width 10 at every $`n \in
+\{4,8,16,32,64\}`$ ladder point: it captures the chain argument directly
+instead of constructing a full-subject spread. The historical R3 emitter's
+n = 16 full-chain injection was in the zone, while its n = 32/64 injections
+were above it; those widths are retained only in the archived run record.
+Every smoke cell also remains clear. Measurable `lambda_chain` coverage is
+therefore the FULL ladder
 n ∈ {4, 8, 16, 32, 64} (plus the smoke n = 2). The upstream fix is
 consensus-relevant (the split id feeds unforgeable-name derivation) and lives
 only on that f1r3node branch — review before upstreaming further.

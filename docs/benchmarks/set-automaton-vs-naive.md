@@ -328,6 +328,18 @@ construction — replay does *zero* in-Rho matching ($`\tau = 0`$ identically)
 
 ### 5.6 R3 — the persistent-fire probe (pre-approved exploratory)
 
+> **Historical implementation boundary.** Every number and fitted equation in
+> this subsection describes the archived `64e6783c` R3 emitter. The D-E5
+> compact-channel repair later replaced its full-reduct, growing-path walker
+> with a finite pattern-route PDA. The live n = 2 deterministic gate now
+> measures `matching_tau = 8`, `respread_tau = 6`, and
+> `join_arity_gt1 = 0`, versus the archived 14, 7, and 2. The new mechanism
+> derives $`\tau_{\mathrm{respread}}(n)=3n`$ for the identity-chain family
+> because it visits only the two constructor states demanded by the β pattern
+> and captures the argument directly. This annotation does not rewrite the
+> historical dataset or claim a new wall-time verdict; the post-A-S5 rematch
+> must establish that separately.
+
 R3 deviates from the same-firing contract **by design**: a fired naive
 receiver routes its reduct (computed by the real in-Rho subst TRS) to a
 `^respread` reserved-receiver family that re-walks and re-emits the spread

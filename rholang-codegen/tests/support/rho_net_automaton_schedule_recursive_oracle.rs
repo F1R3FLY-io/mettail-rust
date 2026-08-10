@@ -5,28 +5,35 @@ use dovetail::set_automaton::{PatternId, SetAutomaton};
 fn collect_recursive(
     view: &SetAutomatonView<'_, String>,
     state: StateId,
-    loc_channel: &str,
-    cap_channel: &str,
+    root_slots: Vec<SlotId>,
+    locations: &SubjectLocationIndex<'_>,
+    position: MatcherPosition,
     descents: &mut Vec<(String, String)>,
     captures: &mut Vec<String>,
-    names: &mut Vec<String>,
+    capture_slots: &mut Vec<SlotId>,
 ) {
     match view.node(state) {
-        AutomatonNode::Var(name) => {
-            captures.push(cap_channel.to_owned());
-            names.push(name.to_owned());
+        AutomatonNode::Var => {
+            captures.push(locations.channel("cap", "fixture-fp", "site0", position));
+            capture_slots.push(root_slots[0]);
         },
         AutomatonNode::App { op, args } => {
-            descents.push((loc_channel.to_owned(), op.to_owned()));
-            for (index, &arg) in args.iter().enumerate() {
+            descents
+                .push((locations.channel("loc", "fixture-fp", "site0", position), op.to_owned()));
+            for (index, arg) in args.iter().enumerate() {
+                let child_root_slots = arg
+                    .parent_slots()
+                    .map(|parent| root_slots[parent.index()])
+                    .collect();
                 collect_recursive(
                     view,
-                    arg,
-                    &spread_child_location(loc_channel, op, index),
-                    &spread_child_location(cap_channel, op, index),
+                    arg.state(),
+                    child_root_slots,
+                    locations,
+                    locations.matcher_child(position, index),
                     descents,
                     captures,
-                    names,
+                    capture_slots,
                 );
             }
         },
@@ -35,18 +42,26 @@ fn collect_recursive(
 
 fn run_iterative(
     view: &SetAutomatonView<'_, String>,
-) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
+    subject: &GroundTerm,
+) -> (Vec<(String, String)>, Vec<String>, Vec<SlotId>) {
     let mut descents = Vec::new();
     let mut captures = Vec::new();
-    let mut names = Vec::new();
+    let mut capture_slots = Vec::new();
+    let root = view.entry_root_state(0);
+    let locations = SubjectLocationIndex::new(subject);
     collect_nested_schedule(
         view,
-        view.entry_root_state(0),
-        "loc",
-        "cap",
+        root,
+        (0..view.state_slot_count(root))
+            .map(SlotId::from_index)
+            .collect(),
+        &locations,
+        "site0",
+        "fixture-fp",
+        MatcherPosition::Live(SubjectPosition::ROOT),
         &mut descents,
         &mut captures,
-        &mut names,
+        &mut capture_slots,
     );
     (
         descents
@@ -54,7 +69,7 @@ fn run_iterative(
             .map(|descent| (descent.loc_channel, descent.op))
             .collect(),
         captures,
-        names,
+        capture_slots,
     )
 }
 
@@ -67,40 +82,55 @@ fn nested_schedule_matches_recursive_preorder() {
             Pattern::app("h".to_owned(), vec![Pattern::var("z")]),
         ],
     );
+    let subject = GroundTerm::new(
+        "f",
+        vec![
+            GroundTerm::new("g", vec![GroundTerm::nullary("a"), GroundTerm::nullary("b")]),
+            GroundTerm::new("h", vec![GroundTerm::nullary("c")]),
+        ],
+    );
     let automaton = SetAutomaton::compile_structural([(PatternId(0), pattern)])
         .expect("schedule oracle pattern compiles");
     let view = automaton.view();
     let mut descents = Vec::new();
     let mut captures = Vec::new();
-    let mut names = Vec::new();
+    let mut capture_slots = Vec::new();
+    let root = view.entry_root_state(0);
+    let locations = SubjectLocationIndex::new(&subject);
     collect_recursive(
         &view,
-        view.entry_root_state(0),
-        "loc",
-        "cap",
+        root,
+        (0..view.state_slot_count(root))
+            .map(SlotId::from_index)
+            .collect(),
+        &locations,
+        MatcherPosition::Live(SubjectPosition::ROOT),
         &mut descents,
         &mut captures,
-        &mut names,
+        &mut capture_slots,
     );
-    assert_eq!(run_iterative(&view), (descents, captures, names));
+    assert_eq!(run_iterative(&view, &subject), (descents, captures, capture_slots));
 }
 
 #[test]
-fn nested_schedule_is_stack_safe_at_four_thousand_levels() {
+fn nested_schedule_is_stack_safe_at_twenty_thousand_levels() {
     std::thread::Builder::new()
         .name("nested-schedule-stack-gate".to_owned())
         .stack_size(256 * 1024)
         .spawn(|| {
+            const DEPTH: usize = 20_000;
             let mut pattern = Pattern::var("x");
-            for _ in 0..4_096 {
+            let mut subject = GroundTerm::nullary("leaf");
+            for _ in 0..DEPTH {
                 pattern = Pattern::app("f".to_owned(), vec![pattern]);
+                subject = GroundTerm::new("f", vec![subject]);
             }
             let automaton = SetAutomaton::compile_structural([(PatternId(0), pattern)])
                 .expect("deep schedule pattern compiles");
-            let (descents, captures, names) = run_iterative(&automaton.view());
-            assert_eq!(descents.len(), 4_096);
+            let (descents, captures, capture_slots) = run_iterative(&automaton.view(), &subject);
+            assert_eq!(descents.len(), DEPTH);
             assert_eq!(captures.len(), 1);
-            assert_eq!(names, ["x"]);
+            assert_eq!(capture_slots, [SlotId::from_index(0)]);
         })
         .expect("spawn nested-schedule stack-gate thread")
         .join()

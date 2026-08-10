@@ -452,8 +452,13 @@ async fn m1_matches_swap_in_rho_and_fires_the_rewrite() {
         Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
     )])
     .expect("Swap(x, y) compiles to a positional automaton");
+    let subject_term = GroundTerm::new(
+        "Swap",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+    );
     let network = automaton_receiver_network_par(
         &automaton.view(),
+        &subject_term,
         "site0",
         &site.channel,
         "OUT",
@@ -462,14 +467,7 @@ async fn m1_matches_swap_in_rho_and_fires_the_rewrite() {
     .expect("the automaton serializes to a receiver network");
 
     // The subject `Swap(A, B)` spread across per-location channels (M0).
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "Swap",
-            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
-        ),
-        &fingerprint,
-        "site0",
-    );
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
 
     // σ-receiver ∥ (automaton ∥ subject): the automaton matches the spread IN RHO
     // and on accept fires the σ-receiver. run_rho_net_with_call composes the
@@ -507,7 +505,7 @@ async fn m1_matches_swap_in_rho_and_fires_the_rewrite() {
 
 /// Compile the SwapStep LHS `Swap(x, y)` into its in-Rho `sa:`-receiver network,
 /// wired to the SwapStep σ-receiver's own source channel (coherence).
-fn swap_step_network(fingerprint: &str) -> models::rhoapi::Par {
+fn swap_step_network(fingerprint: &str, subject: &GroundTerm) -> models::rhoapi::Par {
     let source = SwapDemoLanguage.metadata().definition_source().unwrap();
     let def = reconstruct_language_def(source).unwrap();
     let site = rho_net_injection_sites(&def)
@@ -519,8 +517,15 @@ fn swap_step_network(fingerprint: &str) -> models::rhoapi::Par {
         Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
     )])
     .expect("Swap(x, y) compiles");
-    automaton_receiver_network_par(&automaton.view(), "site0", &site.channel, "OUT", fingerprint)
-        .expect("the automaton serializes")
+    automaton_receiver_network_par(
+        &automaton.view(),
+        subject,
+        "site0",
+        &site.channel,
+        "OUT",
+        fingerprint,
+    )
+    .expect("the automaton serializes")
 }
 
 /// A test observer for the automaton's accept:
@@ -593,22 +598,24 @@ async fn m1_matches_a_ternary_pattern_in_rho() {
         ),
     )])
     .expect("Triple(x, y, z) compiles");
-    let network =
-        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
-            .expect("the ternary automaton serializes");
-
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "Triple",
-            vec![
-                GroundTerm::new("A", Vec::new()),
-                GroundTerm::new("B", Vec::new()),
-                GroundTerm::new("C", Vec::new()),
-            ],
-        ),
-        &fingerprint,
-        "site0",
+    let subject_term = GroundTerm::new(
+        "Triple",
+        vec![
+            GroundTerm::new("A", Vec::new()),
+            GroundTerm::new("B", Vec::new()),
+            GroundTerm::new("C", Vec::new()),
+        ],
     );
+    let network = automaton_receiver_network_par(
+        &automaton.view(),
+        &subject_term,
+        "site0",
+        "MATCH",
+        "OUT",
+        &fingerprint,
+    )
+    .expect("the ternary automaton serializes");
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
 
     let echo = sigma_echo_receiver("MATCH", 3);
     let program = echo.append(network).append(subject);
@@ -640,7 +647,7 @@ async fn m1_matches_a_ternary_pattern_in_rho() {
 }
 
 /// Stage 4 M-collapse (nested + deep non-nullary): the NESTED-App pattern `f(g(x))` matched
-/// against `f(g(Pair(A, B)))` ON the interpreter — the removed `NonNullaryVarSubtree` rejection.
+/// against `f(g(Pair(A, B)))` ON the interpreter — the legacy nested-subtree rejection.
 /// The automaton DESCENDS `loc:` head tags to the nested `g`, then COLLAPSES the DEEP Var leaf x
 /// on `cap:site0/f.0/g.0`, binding the full ⟦Pair(A, B)⟧ (an arbitrary-depth subterm at a nested
 /// hole). The σ-echo forwards σ[x] to OUT, decoded back to Pair(A, B).
@@ -654,25 +661,27 @@ async fn nested_pattern_collapses_a_deep_non_nullary_leaf_in_rho() {
         Pattern::app("f".to_string(), vec![Pattern::app("g".to_string(), vec![Pattern::var("x")])]),
     )])
     .expect("f(g(x)) compiles");
-    let network =
-        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
-            .expect("the nested automaton serializes");
-
     // Subject f(g(Pair(A, B))): x is bound DEEP to the non-nullary Pair(A, B).
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "f",
+    let subject_term = GroundTerm::new(
+        "f",
+        vec![GroundTerm::new(
+            "g",
             vec![GroundTerm::new(
-                "g",
-                vec![GroundTerm::new(
-                    "Pair",
-                    vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
-                )],
+                "Pair",
+                vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
             )],
-        ),
-        &fingerprint,
-        "site0",
+        )],
     );
+    let network = automaton_receiver_network_par(
+        &automaton.view(),
+        &subject_term,
+        "site0",
+        "MATCH",
+        "OUT",
+        &fingerprint,
+    )
+    .expect("the nested automaton serializes");
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
 
     let echo = sigma_echo_receiver("MATCH", 1);
     let program = echo.append(network).append(subject);
@@ -714,18 +723,20 @@ async fn nonlinear_matches_equal_args_in_rho() {
         Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
     )])
     .expect("f(x, x) compiles");
-    let network =
-        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
-            .expect("f(x, x) serializes with the eq: guard");
-
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "f",
-            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("A", Vec::new())],
-        ),
-        &fingerprint,
-        "site0",
+    let subject_term = GroundTerm::new(
+        "f",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("A", Vec::new())],
     );
+    let network = automaton_receiver_network_par(
+        &automaton.view(),
+        &subject_term,
+        "site0",
+        "MATCH",
+        "OUT",
+        &fingerprint,
+    )
+    .expect("f(x, x) serializes with the eq: guard");
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
     // k = 1 distinct variable (x), so the accept sends one σ slot.
     let program = sigma_echo_receiver("MATCH", 1)
         .append(network)
@@ -755,18 +766,20 @@ async fn nonlinear_rejects_unequal_args_in_rho() {
         Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
     )])
     .expect("f(x, x) compiles");
-    let network =
-        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
-            .expect("f(x, x) serializes with the eq: guard");
-
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "f",
-            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
-        ),
-        &fingerprint,
-        "site0",
+    let subject_term = GroundTerm::new(
+        "f",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
     );
+    let network = automaton_receiver_network_par(
+        &automaton.view(),
+        &subject_term,
+        "site0",
+        "MATCH",
+        "OUT",
+        &fingerprint,
+    )
+    .expect("f(x, x) serializes with the eq: guard");
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
     let program = sigma_echo_receiver("MATCH", 1)
         .append(network)
         .append(subject);
@@ -778,6 +791,86 @@ async fn nonlinear_rejects_unequal_args_in_rho() {
         observed.is_empty(),
         "f(A, B) does NOT match — the eq: guard vetoes reject-safely (got {observed:?})"
     );
+}
+
+fn nested_nonlinear_automaton() -> SetAutomaton<String> {
+    SetAutomaton::compile_structural([(
+        PatternId(0),
+        Pattern::app(
+            "f".to_string(),
+            vec![
+                Pattern::app("g".to_string(), vec![Pattern::var("x")]),
+                Pattern::app("h".to_string(), vec![Pattern::var("x")]),
+            ],
+        ),
+    )])
+    .expect("f(g(x), h(x)) compiles")
+}
+
+#[tokio::test]
+async fn nested_nonlinear_slot_join_matches_equal_deep_values_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+    let subject_term = GroundTerm::new(
+        "f",
+        vec![
+            GroundTerm::new("g", vec![GroundTerm::nullary("A")]),
+            GroundTerm::new("h", vec![GroundTerm::nullary("A")]),
+        ],
+    );
+    let network = automaton_receiver_network_par(
+        &nested_nonlinear_automaton().view(),
+        &subject_term,
+        "site0",
+        "MATCH",
+        "OUT",
+        &fingerprint,
+    )
+    .expect("the nested nonlinear state serializes");
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
+    let program = sigma_echo_receiver("MATCH", 1)
+        .append(network)
+        .append(subject);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the nested nonlinear equal case executes");
+    assert_eq!(
+        observed,
+        [RuntimeObservationValue::Term {
+            constructor: "A".to_string(),
+            children: Vec::new()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn nested_nonlinear_slot_join_rejects_unequal_deep_values_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+    let subject_term = GroundTerm::new(
+        "f",
+        vec![
+            GroundTerm::new("g", vec![GroundTerm::nullary("A")]),
+            GroundTerm::new("h", vec![GroundTerm::nullary("B")]),
+        ],
+    );
+    let network = automaton_receiver_network_par(
+        &nested_nonlinear_automaton().view(),
+        &subject_term,
+        "site0",
+        "MATCH",
+        "OUT",
+        &fingerprint,
+    )
+    .expect("the nested nonlinear state serializes");
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
+    let program = sigma_echo_receiver("MATCH", 1)
+        .append(network)
+        .append(subject);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the nested nonlinear unequal case executes");
+    assert!(observed.is_empty(), "the repeated slot must reject unequal deep values");
 }
 
 /// Stage AC1: the AC connective bag pattern MATCHES the process-`Par` carrier soup ON the
@@ -1041,7 +1134,7 @@ fn observation_constructor(value: &RuntimeObservationValue) -> String {
 }
 
 /// The [Swap, Pair] multi-pattern automaton, accepting to `MATCH_SWAP` / `MATCH_PAIR`.
-fn swap_pair_network(fingerprint: &str) -> models::rhoapi::Par {
+fn swap_pair_network(fingerprint: &str, subject: &GroundTerm) -> models::rhoapi::Par {
     let automaton = SetAutomaton::compile_structural([
         (
             PatternId(0),
@@ -1065,7 +1158,7 @@ fn swap_pair_network(fingerprint: &str) -> models::rhoapi::Par {
             out_channel: "OUT".to_string(),
         },
     ];
-    multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, fingerprint)
+    multi_pattern_receiver_network_par(&automaton.view(), subject, "site0", &targets, fingerprint)
         .expect("the multi-pattern network serializes")
 }
 
@@ -1078,16 +1171,13 @@ async fn m2_dispatches_to_the_matching_pattern_in_rho() {
     mettail_runtime::clear_var_cache();
     let (_backend, fingerprint) = swap_demo_backend();
 
-    let network = swap_pair_network(&fingerprint);
-    let echoes = sigma_echo_receiver("MATCH_SWAP", 2).append(sigma_echo_receiver("MATCH_PAIR", 2));
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "Swap",
-            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
-        ),
-        &fingerprint,
-        "site0",
+    let subject_term = GroundTerm::new(
+        "Swap",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
     );
+    let network = swap_pair_network(&fingerprint, &subject_term);
+    let echoes = sigma_echo_receiver("MATCH_SWAP", 2).append(sigma_echo_receiver("MATCH_PAIR", 2));
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
     let program = echoes.append(network).append(subject);
     let mut observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
         .await
@@ -1141,18 +1231,20 @@ async fn m2_o3_fan_out_fires_both_same_op_rules_in_rho() {
             out_channel: "OUT".to_string(),
         },
     ];
-    let network =
-        multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, &fingerprint)
-            .expect("the O3 fan-out network serializes");
-    let echoes = sigma_echo_receiver("MATCH1", 2).append(sigma_echo_receiver("MATCH2", 2));
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "Swap",
-            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
-        ),
-        &fingerprint,
-        "site0",
+    let subject_term = GroundTerm::new(
+        "Swap",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
     );
+    let network = multi_pattern_receiver_network_par(
+        &automaton.view(),
+        &subject_term,
+        "site0",
+        &targets,
+        &fingerprint,
+    )
+    .expect("the O3 fan-out network serializes");
+    let echoes = sigma_echo_receiver("MATCH1", 2).append(sigma_echo_receiver("MATCH2", 2));
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
     let program = echoes.append(network).append(subject);
     let mut observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
         .await
@@ -1180,6 +1272,62 @@ async fn m2_o3_fan_out_fires_both_same_op_rules_in_rho() {
     assert_eq!(observed, expected, "both same-op rules fire (σ=[A, B] announced twice)");
 }
 
+#[tokio::test]
+async fn alpha_renamed_nested_states_share_one_rho_network_and_fire_both_rules() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+    let shape = |name: &str| {
+        Pattern::app("f".to_string(), vec![Pattern::app("g".to_string(), vec![Pattern::var(name)])])
+    };
+    let automaton = SetAutomaton::compile_structural([
+        (PatternId(0), shape("x")),
+        (PatternId(1), shape("alpha")),
+    ])
+    .expect("alpha-renamed nested states compile");
+    assert_eq!(automaton.view().entry_root_state(0), automaton.view().entry_root_state(1));
+    let targets = [
+        AutomatonAcceptTarget {
+            pattern: PatternId(0),
+            accept_channel: "MATCH1".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+        AutomatonAcceptTarget {
+            pattern: PatternId(1),
+            accept_channel: "MATCH2".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+    ];
+    let subject_term =
+        GroundTerm::new("f", vec![GroundTerm::new("g", vec![GroundTerm::nullary("A")])]);
+    let network = multi_pattern_receiver_network_par(
+        &automaton.view(),
+        &subject_term,
+        "site0",
+        &targets,
+        &fingerprint,
+    )
+    .expect("the shared nested network serializes");
+    let echoes = sigma_echo_receiver("MATCH1", 1).append(sigma_echo_receiver("MATCH2", 1));
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
+    let program = echoes.append(network).append(subject);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the shared nested alpha network executes");
+    assert_eq!(
+        observed,
+        [
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new()
+            },
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new()
+            },
+        ]
+    );
+}
+
 /// Stage 1 M1: no false-positive matches. The Swap automaton over a `Pair(A, B)`
 /// subject must NOT accept — the root `Match` dispatches on the head tag, and
 /// `Pair` ≠ `Swap`, so no accept send is emitted, the σ-receiver never fires, and
@@ -1189,16 +1337,13 @@ async fn m1_does_not_match_a_non_matching_head_in_rho() {
     mettail_runtime::clear_var_cache();
     let (backend, fingerprint) = swap_demo_backend();
 
-    let network = swap_step_network(&fingerprint);
     // The subject is Pair(A, B) — same arity as Swap(x, y), but a different head.
-    let subject = spread_term_par(
-        &GroundTerm::new(
-            "Pair",
-            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
-        ),
-        &fingerprint,
-        "site0",
+    let subject_term = GroundTerm::new(
+        "Pair",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
     );
+    let network = swap_step_network(&fingerprint, &subject_term);
+    let subject = spread_term_par(&subject_term, &fingerprint, "site0");
     let call = network.append(subject);
     let observation = backend
         .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
@@ -1245,7 +1390,7 @@ fn stage3_swapdemo_ruleset_compiles_the_base_rewrite_coherently() {
     let view = ruleset.automaton.view();
     match view.node(view.entry_root_state(0)) {
         AutomatonNode::App { op, .. } => assert_eq!(op, "Swap"),
-        AutomatonNode::Var(_) => panic!("SwapStep LHS root must be an App"),
+        AutomatonNode::Var => panic!("SwapStep LHS root must be an App"),
     }
 
     // One shared language fingerprint, coherent with the plan's.
@@ -1895,8 +2040,12 @@ mod in_rho_match_property {
                 Pattern::app(op.clone(), pattern_args),
             )])
             .expect("a linear App pattern compiles");
+            let subject_children: Vec<GroundTerm> =
+                leaves.iter().map(|l| GroundTerm::new(l, Vec::new())).collect();
+            let subject_term = GroundTerm::new(&op, subject_children);
             let network = automaton_receiver_network_par(
                 &automaton.view(),
+                &subject_term,
                 "site0",
                 "MATCH",
                 "OUT",
@@ -1905,10 +2054,7 @@ mod in_rho_match_property {
             .expect("the automaton serializes");
 
             // The subject op(l_0,…,l_{k-1}) with nullary leaves.
-            let subject_children: Vec<GroundTerm> =
-                leaves.iter().map(|l| GroundTerm::new(l, Vec::new())).collect();
-            let subject =
-                spread_term_par(&GroundTerm::new(&op, subject_children), &fingerprint, "site0");
+            let subject = spread_term_par(&subject_term, &fingerprint, "site0");
 
             let echo = sigma_echo_receiver("MATCH", arity);
             let program = echo.append(network).append(subject);

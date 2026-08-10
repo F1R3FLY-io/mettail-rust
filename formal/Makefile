@@ -29,7 +29,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: prattail-wpda rocq-support
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail tla-prattail-wpda-binder-broadcast-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
-.PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-ac-rest
+.PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-slot rocq-advanced-automata-inrho-indexed-channels rocq-advanced-automata-inrho-ac-rest
 .PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
 .PHONY: rocq-rho-bridge rocq-rho-bridge-artifact-boundary rocq-rho-bridge-rejected-coverage rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family rocq-rho-bridge-cbn-budget rocq-rho-bridge-escrow-settlement rocq-rho-bridge-purse-determinism rocq-rho-bridge-inrho-ix rocq-rho-bridge-inrho-iv rocq-rho-bridge-inrho-vi
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
@@ -130,6 +130,16 @@ rocq-advanced-automata-inrho-b: require-capped
 # rocq-critical-zero-admission also cover it via _CoqProject.
 rocq-advanced-automata-inrho-c: require-capped
 	$(MAKE) -C rocq/advanced_automata theories/InRhoSameCLTSWeakBisim.vo
+
+# Focused: D-E5 canonical slot-shaped state identity and remapping.
+rocq-advanced-automata-inrho-slot: require-capped
+	$(MAKE) -C rocq/advanced_automata theories/SlottedStateIdentity.vo
+
+# Focused: exact, fixed-width subject-position channel identities.  Proves
+# collision freedom and constant-per-position materialization for the
+# quadratic-path-removal treatment.
+rocq-advanced-automata-inrho-indexed-channels: require-capped
+	$(MAKE) -C rocq/advanced_automata theories/IndexedSubjectChannels.vo
 
 rocq-advanced-automata-inrho-ac-rest: require-capped
 	$(MAKE) -C rocq/advanced_automata theories/AcRestReconstruction.vo

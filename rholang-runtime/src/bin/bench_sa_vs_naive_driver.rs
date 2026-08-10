@@ -620,17 +620,17 @@ mod workloads_tests {
     /// counter profile is pinned from the mechanism —
     ///
     /// * `firing_visible = 2` (one accept COMM per β step — the ground truth);
-    /// * `matching_tau = 14` (the ONE initial spread's 6 collapse-fold COMMs
-    ///   for the 3n = 6 internal nodes of the 4n+1-node chain + 4 matcher
-    ///   COMMs per firing × 2 — re-spreads add NO fold COMMs: the walker
-    ///   publishes `cap:` directly);
+    /// * `matching_tau = 8` (4 matcher COMMs per firing × 2; the route PDA
+    ///   captures reflected children directly, so no collapse-fold COMM is
+    ///   constructed for the initial subject or any reduct);
     /// * `subst_tau = 6` (3 cascade COMMs per identity-β firing: ^subst,
     ///   ^cmp, ^shiftk — identical to the per-step column's per-step cost);
-    /// * `respread_tau = 2n² − 1 = 7` (2 dispatcher deliveries + the 4·1+1 = 5
-    ///   walked nodes of the ONE re-spread of the remaining chain of length 1);
+    /// * `respread_tau = 3n = 6` (one dispatcher delivery per firing plus the
+    ///   two constructor states demanded by the β pattern for the initial
+    ///   subject and each of the `n−1` redex-rooted reducts);
     /// * `other = 2` (the cascade's one fresh-name ^cmp-result COMM per
     ///   firing — the SAME per-firing `other` the per-step column records);
-    /// * `join_arity_gt1 = 2` (the initial spread's 2 binary App folds);
+    /// * `join_arity_gt1 = 0` (the route PDA has no collapse-fold joins);
     /// * `observation = 0` (the NF rests on OUT; nothing consumes it).
     ///
     /// Two reps must produce IDENTICAL counter snapshots (the fixed-seed
@@ -663,11 +663,11 @@ mod workloads_tests {
             );
             let comm = outcome.result.comm.clone();
             assert_eq!(comm.firing_visible, 2, "one accept COMM per β step; got {comm:?}");
-            assert_eq!(comm.matching_tau, 14, "6 fold + 8 matcher COMMs; got {comm:?}");
+            assert_eq!(comm.matching_tau, 8, "4 matcher COMMs per firing; got {comm:?}");
             assert_eq!(comm.subst_tau, 6, "3 cascade COMMs per firing; got {comm:?}");
-            assert_eq!(comm.respread_tau, 7, "2n² − 1 walker-family COMMs; got {comm:?}");
+            assert_eq!(comm.respread_tau, 6, "3n route-PDA COMMs; got {comm:?}");
             assert_eq!(comm.other, 2, "one fresh-name ^cmp-result COMM per firing; got {comm:?}");
-            assert_eq!(comm.join_arity_gt1, 2, "the initial spread's App folds; got {comm:?}");
+            assert_eq!(comm.join_arity_gt1, 0, "the route PDA emits no collapse-fold joins");
             assert_eq!(comm.observation, 0, "the NF rests on OUT unconsumed; got {comm:?}");
             assert_eq!(comm.ac_carrier, 0, "no AC traffic; got {comm:?}");
             assert_eq!(comm.contextual_plumbing, 0, "no contextual traffic; got {comm:?}");
@@ -1129,16 +1129,17 @@ mod workloads_tests {
     /// `fix/split-byte-width-range` (commit 31b354e6: [129, 256] routes
     /// through `split_short(i16)`; widths ≤ 128 byte-identical): the SMOKE
     /// cells are all far below the zone, and the full-ladder in-zone cells
-    /// are EXACTLY pinned — the λ-chain ladder n ∈ {16, 32, 64} (per-step
-    /// width is 10 + 9·links, so every chain n ≥ 14 passes through in-zone
-    /// steps at 14–27 links remaining, widths 136–253), `swap_comb` n = 16
+    /// are EXACTLY pinned — the λ-chain `sa` and `naive` ladders n ∈ {16, 32, 64}
+    /// (per-step width is 10 + 9·links, so every chain n ≥ 14 passes through
+    /// in-zone steps at 14–27 links remaining, widths 136–253), `swap_comb` n = 16
     /// (width 175), and `nested_spine` naive n = 16 (width 174). Those cells
     /// now RUN — the pin is the regression ASSERTION documenting exactly
     /// which ladder cells exercise (and depend on) the fixed `split_short`
     /// routing, and `interpreter_split_regression_width_129_evaluates` below
     /// proves the zone actually evaluates; every other pinned cell stays
     /// clear of the zone (n = 32/64 single-injection cells exceed 256 and
-    /// take the always-safe `split_short(i16)` branch).
+    /// take the always-safe `split_short(i16)` branch). The R3 route-PDA column
+    /// has fixed maximum width 10 and never enters the former zone.
     #[test]
     fn interpreter_split_regression_zone_cells_are_pinned_and_smoke_cells_are_clear() {
         use super::workloads::{cell_width_probe, ALL_WORKLOADS};
@@ -1204,12 +1205,9 @@ mod workloads_tests {
             [
                 "lambda_chain/sa/16",
                 "lambda_chain/naive/16",
-                // R3: ONE injection of the FULL n=16 chain (width 156). Unlike
-                // the per-step columns, R3's n ∈ {32, 64} cells are NOT in the
-                // zone: their single full-chain injection exceeds width 256
-                // (the always-safe split_short branch) and no intermediate
-                // per-step injection exists to pass through [129, 256].
-                "lambda_chain/naive-r3/16",
+                // R3's pattern-route PDA captures the full argument directly;
+                // every ladder cell now has max eval width 10 and remains
+                // outside the former [129, 256] regression zone.
                 "lambda_chain/sa/32",
                 "lambda_chain/naive/32",
                 "lambda_chain/sa/64",

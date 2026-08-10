@@ -670,42 +670,54 @@ is an automaton entry.
 
 ### 6.2 The interning trace
 
-`PatternCompiler::compile` (`set_automaton.rs:129`) interns children before parents;
-`intern` (`:140`) returns the existing `StateId` on a `StateKey` table hit. Compile order
-is rule order. The full trace — every `intern()` call the three patterns make:
+`PatternCompiler::compile` interns children before parents; `intern` returns the existing
+`StateId` on a `StateKey` table hit. Compile order is rule order. A **canonical slot** is a
+dense, state-local variable-interface position assigned by first occurrence. A child
+application is represented by a `StateInvocation`: the child `StateId` plus the map from
+the child's local slots to the parent's local slots. Source variable names are retained
+only in each entry's `slot_names` boundary map, so they can be restored in the public
+substitution without participating in shared-state identity.
+
+For compactness the table writes an invocation as $`s_i[\ell_0\mapsto p_0,\ldots]`$,
+where $`\ell_j`$ is a child-local slot and $`p_j`$ its parent-local destination. The full
+trace — every `intern()` call the three patterns make — is:
 
 | # | Rule | `intern()` key | Table | `StateId` |
 |---|---|---|---|---|
-| 1 | SwapRule | `Var("a")` | miss — allocate | $`s_0`$ |
-| 2 | SwapRule | `Var("b")` | miss — allocate | $`s_1`$ |
-| 3 | SwapRule | `App{Swap, [s0, s1]}` | miss — allocate | $`s_2`$ |
-| 4 | WrapRule | `Var("x")` | miss — allocate | $`s_3`$ |
-| 5 | WrapRule | `Var("y")` | miss — allocate | $`s_4`$ |
-| 6 | WrapRule | `App{Pair, [s3, s4]}` | miss — allocate | $`s_5`$ |
-| 7 | WrapRule | `App{Wrap, [s5]}` | miss — allocate | $`s_6`$ |
-| 8 | FlipRule | `Var("x")` | **hit** — reuse | $`s_3`$ |
-| 9 | FlipRule | `Var("y")` | **hit** — reuse | $`s_4`$ |
-| 10 | FlipRule | `App{Pair, [s3, s4]}` | **hit** — reuse | $`s_5`$ |
-| 11 | FlipRule | `App{Flip, [s5]}` | miss — allocate | $`s_7`$ |
+| 1 | SwapRule | `Var` | miss — allocate | $`s_0`$ |
+| 2 | SwapRule | `Var` | **hit** — reuse | $`s_0`$ |
+| 3 | SwapRule | $`\mathrm{App}\{\mathrm{Swap},[s_0[0\mapsto0],s_0[0\mapsto1]]\}`$ | miss — allocate | $`s_1`$ |
+| 4 | WrapRule | `Var` | **hit** — reuse | $`s_0`$ |
+| 5 | WrapRule | `Var` | **hit** — reuse | $`s_0`$ |
+| 6 | WrapRule | $`\mathrm{App}\{\mathrm{Pair},[s_0[0\mapsto0],s_0[0\mapsto1]]\}`$ | miss — allocate | $`s_2`$ |
+| 7 | WrapRule | $`\mathrm{App}\{\mathrm{Wrap},[s_2[0\mapsto0,1\mapsto1]]\}`$ | miss — allocate | $`s_3`$ |
+| 8 | FlipRule | `Var` | **hit** — reuse | $`s_0`$ |
+| 9 | FlipRule | `Var` | **hit** — reuse | $`s_0`$ |
+| 10 | FlipRule | $`\mathrm{App}\{\mathrm{Pair},[s_0[0\mapsto0],s_0[0\mapsto1]]\}`$ | **hit** — reuse | $`s_2`$ |
+| 11 | FlipRule | $`\mathrm{App}\{\mathrm{Flip},[s_2[0\mapsto0,1\mapsto1]]\}`$ | miss — allocate | $`s_4`$ |
 
-Eleven `intern()` calls, three hits, **eight states** from eleven raw pattern nodes —
-the size-optimal quotient of [21 §7](21-set-automata-optimization-theory.md#7-the-interner-as-partial-evaluator)
-in action. The shared state is $`s_5 = \mathrm{App}\{\mathrm{Pair},[s_3,s_4]\}`$: one
-node, two parents ($`s_6`$ and $`s_7`$). The hit at call 10 happens **because** calls 8
-and 9 hit first — the `App` key embeds child `StateId`s, so sharing propagates bottom-up.
-And the quotient is variable-name-aware: SwapRule's `Var("a")`/`Var("b")` share nothing
-with `Var("x")`/`Var("y")`, exactly the behavior the in-tree tests pin
-(`view_shares_one_state_for_structurally_equal_subpatterns`, `set_automaton.rs:479`;
-`view_exposes_entry_ids_and_state_count`, `:518`). The TriDemo count itself is pinned by
-`tridemo_interns_three_rules_into_eight_states_sharing_pair`
-(`rholang-codegen/tests/doc28_golden_listing.rs`): `state_count() == 8`, and the `Wrap`
-and `Flip` entries' argument states are **the same** `StateId`.
+Eleven `intern()` calls, six hits, and **five canonical states** from eleven raw pattern
+nodes form the alpha-quotiented partial-evaluation DAG of
+[21 §7](21-set-automata-optimization-theory.md#7-the-interner-as-partial-evaluator).
+The universal $`s_0 = \mathrm{Var}`$ state is name-free. The constructor and invocation
+maps preserve specificity: $`\mathrm{Pair}(x,x)`$ would use
+$`[s_0[0\mapsto0],s_0[0\mapsto0]]`$ and therefore cannot collide with the two-slot
+$`\mathrm{Pair}(x,y)`$ state. Entry boundary maps restore the intended names:
+SwapRule records `[a, b]`, while WrapRule and FlipRule record `[x, y]`.
 
-![Figure 28-3 — TriDemo's interned pattern DAG: 3 rules, 11 raw nodes, 8 states](figures/28-tridemo-interned-dag.svg)
+The shared Pair state is
+$`s_2 = \mathrm{App}\{\mathrm{Pair},[s_0[0\mapsto0],s_0[0\mapsto1]]\}`$: one node,
+two parents ($`s_3`$ and $`s_4`$), and its slot shape is also shared with Swap's two
+arguments even though the different constructor keeps $`s_1`$ distinct. The test
+`tridemo_interns_three_rules_into_five_slot_shaped_states_sharing_pair`
+(`rholang-codegen/tests/doc28_golden_listing.rs`) pins `state_count() == 5`, the Pair
+sharing, and the identical argument-invocation shapes.
 
-*Figure 28-3. The TriDemo DAG. Entries (violet) point at their root states; the shared
-$`s_5`$ (saturated green) has two parents; SwapRule's variable states stay disjoint from
-WrapRule/FlipRule's because the quotient keys variables by name. Source:
+![Figure 28-3 — TriDemo's alpha-quotiented pattern DAG: 3 rules, 11 raw nodes, 5 states](figures/28-tridemo-interned-dag.svg)
+
+*Figure 28-3. The TriDemo DAG. Entries (violet) point at their root states; shared
+$`s_0`$ (blue) and $`s_2`$ (saturated green) states carry canonical slot interfaces,
+while entry-local boundary maps preserve the three rules' source names. Source:
 [figures/28-tridemo-interned-dag.puml](figures/28-tridemo-interned-dag.puml).*
 
 ### 6.3 Dispatch, routing, and the accept fan-out
@@ -784,10 +796,14 @@ the **production path** — `plan_rho_default_backend`
 (covered rejected-rule dispositions from `suggest_rejected_rule_dispositions`, no guard
 obligations), then `RhoDefaultBackendPlan::installed_rho_net_program_par`
 (`backend.rs:1068`) — the same chain every runtime invocation and the benchmark harness
-compile through. The automaton behind it interns six states
-($`s_0 = \mathrm{Var}(\mathit{fun})`$, $`s_1 = \mathrm{\widehat{lambda}}[s_0]`$,
-$`s_2 = \mathrm{Var}(\mathit{arg})`$, $`s_3 = \mathrm{App}[s_1, s_2]`$,
-$`s_4 = \mathrm{Var}(a)`$, $`s_5 = \mathrm{F}[s_4]`$), which the same test also pins.
+compile through. The automaton behind it interns four canonical states:
+$`s_0 = \mathrm{Var}`$;
+$`s_1 = \mathrm{\widehat{lambda}}[s_0[0\mapsto0]]`$;
+$`s_2 = \mathrm{App}[s_1[0\mapsto0],s_0[0\mapsto1]]`$; and
+$`s_3 = \mathrm{F}[s_0[0\mapsto0]]`$. Beta's entry map `[fun, arg]` and Unwrap's
+entry map `[a]` restore the public names after matching. The golden test
+`two_rule_lambda_interns_four_slot_shaped_states` pins this quotient independently of
+the installed-program listing.
 
 ### 7.2 The complete installed program listing
 
@@ -1059,9 +1075,7 @@ the §4 rule each guards:
 |---|---|---|
 | `SetAutomatonError { unsupported }` (`set_automaton.rs:233`, via `contains_ac` `:406`) | §4.3/§4.9 vs §4.5–§4.8: an `AcApp` anywhere in a pattern set | the whole positional compile is refused — AC patterns never enter the automaton; the AC ladder owns them |
 | `AutomatonUnsupported::MultiPattern` (`rho_net_automaton.rs:43`) | §4.3: a multi-entry view at the single-pattern entry point | serializer refuses; caller uses the multi-pattern serializer |
-| `AutomatonUnsupported::NonLinearVariable` | §4.3: a repeated variable at a deep (nested) position | fail closed to replay — the flat `eq:` join hosts only direct-child repeats |
 | `AutomatonUnsupported::NonLinearSharedOp` | §4.3 fan-out: two entries share a root op but induce different repetition partitions | one guarded join cannot host both; fail closed |
-| `AutomatonUnsupported::NonNullaryVarSubtree` | reserved, no longer emitted (M-collapse serializes these; a deep repeat reports `NonLinearVariable` instead) | kept for API stability |
 | `AutomatonUnsupported::VariableRootPattern` | §4.3: a bare-`Var` root | no head to dispatch on; fail closed |
 | `AutomatonUnsupported::ConflictingArityForOp` | §4.3: one op with two arities, or a flat/nested clash on one op | one `Match` case per op; fail closed |
 | `AutomatonUnsupported::MissingAcceptTarget` | §4.3: an entry with no routed accept channel | fail closed — an unannounced match would be a silent drop |

@@ -9,49 +9,49 @@ fn recursive_non_root_ops(
     ops: &mut Vec<String>,
 ) {
     match view.node(state) {
-        AutomatonNode::Var(_) => {},
+        AutomatonNode::Var => {},
         AutomatonNode::App { op, args } => {
             ops.push(op.to_string());
-            for &arg in args {
-                recursive_non_root_ops(view, arg, ops);
+            for arg in args {
+                recursive_non_root_ops(view, arg.state(), ops);
             }
         },
     }
 }
 
 fn recursive_entry_sites(
-    node: &GroundTerm,
-    location: &str,
+    locations: &SubjectLocationIndex<'_>,
+    position: SubjectPosition,
     root_op: &str,
-    sites: &mut Vec<String>,
+    sites: &mut Vec<SubjectPosition>,
 ) {
+    let node = locations.term(position);
     if node.constructor == root_op {
-        sites.push(location.to_string());
+        sites.push(position);
     }
-    for (index, child) in node.children.iter().enumerate() {
-        let child_location = spread_child_location(location, &node.constructor, index);
-        recursive_entry_sites(child, &child_location, root_op, sites);
+    for child in locations.children(position) {
+        recursive_entry_sites(locations, child, root_op, sites);
     }
 }
 
 fn recursive_ruleset_sites(
-    node: &GroundTerm,
-    location: &str,
+    locations: &SubjectLocationIndex<'_>,
+    position: SubjectPosition,
     roots: &BTreeSet<String>,
-    sites: &mut Vec<String>,
+    sites: &mut Vec<SubjectPosition>,
 ) {
+    let node = locations.term(position);
     if roots.contains(&node.constructor) {
-        sites.push(location.to_string());
+        sites.push(position);
     }
-    for (index, child) in node.children.iter().enumerate() {
-        let child_location = spread_child_location(location, &node.constructor, index);
-        recursive_ruleset_sites(child, &child_location, roots, sites);
+    for child in locations.children(position) {
+        recursive_ruleset_sites(locations, child, roots, sites);
     }
 }
 
-fn recursive_selfdriving_arity_map(
+fn recursive_selfdriving_labels(
     term: &GroundTerm,
-    map: &mut BTreeMap<String, usize>,
+    labels: &mut BTreeSet<String>,
 ) -> Result<(), NaiveKtUnsupported> {
     if term.coll_type.is_some() {
         return Err(NaiveKtUnsupported::SelfDrivingCollectionSubject {
@@ -61,21 +61,9 @@ fn recursive_selfdriving_arity_map(
     if respread_reserved_labels().contains(&term.constructor.as_str()) {
         return Err(NaiveKtUnsupported::SelfDrivingReservedLabel { op: term.constructor.clone() });
     }
-    match map.get(&term.constructor) {
-        Some(&arity) if arity != term.children.len() => {
-            return Err(NaiveKtUnsupported::SelfDrivingArityConflict {
-                op: term.constructor.clone(),
-                arity_a: arity,
-                arity_b: term.children.len(),
-            });
-        },
-        Some(_) => {},
-        None => {
-            map.insert(term.constructor.clone(), term.children.len());
-        },
-    }
+    labels.insert(term.constructor.clone());
     for child in &term.children {
-        recursive_selfdriving_arity_map(child, map)?;
+        recursive_selfdriving_labels(child, labels)?;
     }
     Ok(())
 }
@@ -110,45 +98,46 @@ fn iterative_naive_walkers_match_the_recursive_equations() {
     };
     let mut actual_ops = Vec::new();
     let mut expected_ops = Vec::new();
-    for &arg in args {
-        collect_non_root_ops(&view, arg, &mut actual_ops);
-        recursive_non_root_ops(&view, arg, &mut expected_ops);
+    for arg in args {
+        collect_non_root_ops(&view, arg.state(), &mut actual_ops);
+        recursive_non_root_ops(&view, arg.state(), &mut expected_ops);
     }
     assert_eq!(actual_ops, expected_ops);
 
     let subject = shallow_subject();
+    let locations = SubjectLocationIndex::new(&subject);
     let mut actual_sites = Vec::new();
     let mut expected_sites = Vec::new();
-    collect_entry_sites(&subject, "root", "A", &mut actual_sites);
-    recursive_entry_sites(&subject, "root", "A", &mut expected_sites);
+    collect_entry_sites(&locations, "A", &mut actual_sites);
+    recursive_entry_sites(&locations, SubjectPosition::ROOT, "A", &mut expected_sites);
     assert_eq!(actual_sites, expected_sites);
 
     let roots = ["A".to_owned(), "D".to_owned()].into_iter().collect();
     actual_sites.clear();
     expected_sites.clear();
-    collect_ruleset_sites(&subject, "root", &roots, &mut actual_sites);
-    recursive_ruleset_sites(&subject, "root", &roots, &mut expected_sites);
+    collect_ruleset_sites(&locations, &roots, &mut actual_sites);
+    recursive_ruleset_sites(&locations, SubjectPosition::ROOT, &roots, &mut expected_sites);
     assert_eq!(actual_sites, expected_sites);
 
-    let mut actual_arities = BTreeMap::new();
-    let mut expected_arities = BTreeMap::new();
+    let mut actual_labels = BTreeSet::new();
+    let mut expected_labels = BTreeSet::new();
     assert_eq!(
-        collect_selfdriving_arity_map(&subject, &mut actual_arities),
-        recursive_selfdriving_arity_map(&subject, &mut expected_arities)
+        collect_selfdriving_labels(&subject, &mut actual_labels),
+        recursive_selfdriving_labels(&subject, &mut expected_labels)
     );
-    assert_eq!(actual_arities, expected_arities);
+    assert_eq!(actual_labels, expected_labels);
 
     let conflict = GroundTerm::new(
         "Root",
         vec![GroundTerm::nullary("A"), GroundTerm::new("A", vec![GroundTerm::nullary("x")])],
     );
-    actual_arities.clear();
-    expected_arities.clear();
+    actual_labels.clear();
+    expected_labels.clear();
     assert_eq!(
-        collect_selfdriving_arity_map(&conflict, &mut actual_arities),
-        recursive_selfdriving_arity_map(&conflict, &mut expected_arities)
+        collect_selfdriving_labels(&conflict, &mut actual_labels),
+        recursive_selfdriving_labels(&conflict, &mut expected_labels)
     );
-    assert_eq!(actual_arities, expected_arities);
+    assert_eq!(actual_labels, expected_labels);
 }
 
 #[test]
@@ -173,19 +162,19 @@ fn naive_walkers_handle_twenty_thousand_levels_on_a_small_stack() {
             for _ in 0..DEPTH {
                 subject = GroundTerm::new("Wrap", vec![subject]);
             }
+            let locations = SubjectLocationIndex::new(&subject);
             let mut sites = Vec::new();
-            collect_entry_sites(&subject, "root", "Leaf", &mut sites);
+            collect_entry_sites(&locations, "Leaf", &mut sites);
             assert_eq!(sites.len(), 1);
             let roots = ["Leaf".to_owned()].into_iter().collect();
             let mut ruleset_sites = Vec::new();
-            collect_ruleset_sites(&subject, "root", &roots, &mut ruleset_sites);
+            collect_ruleset_sites(&locations, &roots, &mut ruleset_sites);
             assert_eq!(ruleset_sites, sites);
 
-            let mut arities = BTreeMap::new();
-            collect_selfdriving_arity_map(&subject, &mut arities)
-                .expect("the deep unary subject has consistent arities");
-            assert_eq!(arities.get("Wrap"), Some(&1));
-            assert_eq!(arities.get("Leaf"), Some(&0));
+            let mut labels = BTreeSet::new();
+            collect_selfdriving_labels(&subject, &mut labels)
+                .expect("the deep unary subject has admissible labels");
+            assert_eq!(labels, ["Leaf".to_owned(), "Wrap".to_owned()].into_iter().collect());
         })
         .expect("small-stack naive-walker thread must spawn")
         .join()

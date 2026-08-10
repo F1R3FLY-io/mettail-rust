@@ -86,7 +86,7 @@ use models::rust::utils::{
     new_match_par, new_receive_par, new_send_par, new_wildcard_par,
 };
 
-use dovetail::set_automaton::{AutomatonNode, SetAutomatonView, StateId};
+use dovetail::set_automaton::{AutomatonNode, SetAutomatonView, SlotId, StateId};
 use mettail_rholang_codegen::{
     reflect_ground_term_par, spread_child_location, GroundTerm, InRhoMatchingRuleset,
 };
@@ -320,7 +320,7 @@ pub fn e6a_entry_root_ops(ruleset: &InRhoMatchingRuleset) -> Vec<String> {
     let mut ops: Vec<String> = (0..view.entry_count())
         .filter_map(|entry| match view.node(view.entry_root_state(entry)) {
             AutomatonNode::App { op, .. } => Some(op.to_string()),
-            AutomatonNode::Var(_) => None,
+            AutomatonNode::Var => None,
         })
         .collect();
     ops.sort();
@@ -474,8 +474,8 @@ pub fn sites_non_ancestral(sites: &[String]) -> bool {
 /// guard positions (site-relative components + op, pre-order — the root plus
 /// every nested App descent) and σ positions (Var-leaf site-relative
 /// components, DFS first-occurrence order — exactly `build_accept_send`'s
-/// slot order). LINEAR entries only (a repeated var fails closed, mirroring
-/// `AutomatonUnsupported::NonLinearVariable`; the E-6a corpus is linear).
+/// slot order). This experimental query driver accepts LINEAR entries only; its
+/// duplicate-slot check fails closed on a repeated variable. The E-6a corpus is linear.
 #[derive(Debug, Clone)]
 pub struct EntryQueryShape {
     /// `(site-relative components, op)` for the root (empty components) and
@@ -490,18 +490,25 @@ fn collect_query_shape(
     root: StateId,
     guards: &mut Vec<(Vec<String>, String)>,
     sigma_positions: &mut Vec<Vec<String>>,
-    names: &mut BTreeSet<String>,
+    slots_seen: &mut BTreeSet<SlotId>,
 ) -> Result<(), String> {
     enum Job {
         Visit {
             state: StateId,
+            root_slots: Vec<SlotId>,
             component: Option<String>,
         },
         Leave,
     }
 
     let mut relative: Vec<String> = Vec::new();
-    let mut jobs = vec![Job::Visit { state: root, component: None }];
+    let mut jobs = vec![Job::Visit {
+        state: root,
+        root_slots: (0..view.state_slot_count(root))
+            .map(SlotId::from_index)
+            .collect(),
+        component: None,
+    }];
     while let Some(job) = jobs.pop() {
         match job {
             Job::Leave => {
@@ -509,17 +516,19 @@ fn collect_query_shape(
                     .pop()
                     .expect("every leave follows a component descent");
             },
-            Job::Visit { state, component } => {
+            Job::Visit { state, root_slots, component } => {
                 let entered = component.is_some();
                 if let Some(component) = component {
                     relative.push(component);
                 }
                 match view.node(state) {
-                    AutomatonNode::Var(name) => {
-                        if !names.insert(name.to_string()) {
+                    AutomatonNode::Var => {
+                        let slot = root_slots[0];
+                        if !slots_seen.insert(slot) {
                             return Err(format!(
-                                "E-6a query codegen is LINEAR-only (repeated var `{name}`) — \
-                                 fail closed"
+                                "E-6a query codegen is LINEAR-only (repeated canonical slot {}) — \
+                                 fail closed",
+                                slot.index()
                             ));
                         }
                         sigma_positions.push(relative.clone());
@@ -533,9 +542,14 @@ fn collect_query_shape(
                         if entered {
                             jobs.push(Job::Leave);
                         }
-                        for (index, arg) in args.iter().copied().enumerate().rev() {
+                        for (index, arg) in args.iter().enumerate().rev() {
+                            let child_root_slots = arg
+                                .parent_slots()
+                                .map(|parent| root_slots[parent.index()])
+                                .collect();
                             jobs.push(Job::Visit {
-                                state: arg,
+                                state: arg.state(),
+                                root_slots: child_root_slots,
                                 component: Some(child_component(&op, index)),
                             });
                         }
@@ -554,13 +568,13 @@ pub fn entry_query_shape(
 ) -> Result<EntryQueryShape, String> {
     let mut guards: Vec<(Vec<String>, String)> = Vec::new();
     let mut sigma_positions: Vec<Vec<String>> = Vec::new();
-    let mut names: BTreeSet<String> = BTreeSet::new();
+    let mut slots_seen: BTreeSet<SlotId> = BTreeSet::new();
     collect_query_shape(
         view,
         view.entry_root_state(entry),
         &mut guards,
         &mut sigma_positions,
-        &mut names,
+        &mut slots_seen,
     )?;
     Ok(EntryQueryShape { guards, sigma_positions })
 }

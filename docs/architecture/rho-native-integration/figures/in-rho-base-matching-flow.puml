@@ -38,23 +38,23 @@ end note
 
 |#E8F0FE|Spread ⟦t⟧|
 :spread_term_par at root nonce ρ —
-  loc:ρ!(Swap̲)  │  loc:ρ/Swap.0!(Ā)  │  loc:ρ/Swap.1!(B̲)
+  loc:i₂(ρ,0)!(Swap̲)  │  loc:i₂(ρ,1)!(Ā)  │  loc:i₂(ρ,2)!(B̲)
   │  col:/cap: bottom-up collapse fold;
 
 |#D7ECFB|Locate-all|
 :collect_redex_sites walks the GroundTerm (pre-order DFS);
 if (node head ∈ rule LHS roots?) then (yes)
-  :record site ⌜(ρ,ℓ)⌝;
+  :record exact subject-index position;
 else (no)
   :skip (inert position);
 endif
 :co-install one automaton network per site
-over the ONE spread (disjoint-prefix channels);
+over the ONE spread (distinct fixed-width channels);
 
 |#C9E7D4|sa: automaton|
-:for(h ⟸ loc:ρ){ match h }  — the τ symbol inspection;
+:for(h ⟸ loc:i₂(ρ,0)){ match h }  — the τ symbol inspection;
 :Match  Swap̲  ⇒  descend to the Var leaves;
-:read cap:ρ/Swap.0, cap:ρ/Swap.1  →  bind σ = [⟦A⟧, ⟦B⟧]
+:read cap:i₂(ρ,1), cap:i₂(ρ,2)  →  bind σ = [⟦A⟧, ⟦B⟧]
 (the FULLY COLLAPSED subterms — O1: each symbol once);
 :accept  →  send  sa:tc(K)!(σ₀, σ₁, @OUT);
 

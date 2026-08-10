@@ -147,6 +147,11 @@ pub mod rho_net_fragment_store;
 /// non-admitted family. BENCH-ONLY extension surface (user decision D3): the
 /// E-3 harness + the equivalence gate are its only consumers.
 pub mod rho_net_incremental;
+/// Prefix-free, fixed-width subject-position identities shared by the spread,
+/// positional automaton, contextual locator, and AC carriers.  The compact
+/// index replaces repeated absolute `/op.index` paths while retaining a
+/// collision-free, fingerprint-scoped channel ABI.
+pub(crate) mod rho_net_location;
 pub mod rho_net_lower;
 /// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
 /// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
@@ -217,8 +222,8 @@ pub use rho_net::{
     RhoNetSemanticPredicateQuality, RhoNetValidationError,
 };
 pub use rho_net_automaton::{
-    automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
-    AutomatonUnsupported,
+    automaton_receiver_network_par, multi_pattern_receiver_network_par,
+    multi_pattern_receiver_networks_at_rule_roots_par, AutomatonAcceptTarget, AutomatonUnsupported,
 };
 pub use rho_net_cache::{cached_in_rho_artifacts, CompiledInRhoArtifacts};
 pub use rho_net_drive::{
@@ -280,10 +285,9 @@ pub use rho_net_lower::{
 #[cfg(feature = "bench-naive-baseline")]
 pub use rho_net_naive_kt::{
     naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
-    naive_kt_selfdriving_call_par, respread_reserved_labels, respread_root_receiver_par,
-    respread_walker_receiver_par, NaiveGuardEncoding, NaiveKtContextualUnsupported,
-    NaiveKtUnsupported, RESPREAD_ERR_RESERVED_LABEL, RESPREAD_RESERVED_LABEL,
-    RESPREAD_ROOT_RESERVED_LABEL,
+    naive_kt_selfdriving_call_par, respread_reserved_labels, NaiveGuardEncoding,
+    NaiveKtContextualUnsupported, NaiveKtUnsupported, RESPREAD_ERR_RESERVED_LABEL,
+    RESPREAD_RESERVED_LABEL, RESPREAD_ROOT_RESERVED_LABEL,
 };
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, convert_lhs_pattern,
