@@ -23,11 +23,9 @@
 #      same-CLTS theorem only promises a difference in erased τ STRUCTURE,
 #      not τ count), and a smoke script must report reality, not enforce a
 #      falsified hypothesis.
-#   6. the AMENDED-W1 multi_rule_shared signal (pgmcp experiment 144
-#      amendment, workload (vii)): at r = 4, s = 2 (n = 402) the naive
-#      column's matching_tau must EXCEED the sa column's — HARD assert per the
-#      amendment protocol (a failure is a REFUTATION that must surface with
-#      its numbers; never weaken this assertion to make the smoke pass).
+#   6. the measured experiment-144 multi_rule_shared counter equality remains
+#      exact at r = 4, s = 2;
+#   7. the post-D-E5 persistent R3 route has its exact n = 2 counter profile.
 # Finally prints a per-cell summary table (matching_tau, firing_visible,
 # attempts/successes, inj ms, consumed cost units).
 #
@@ -46,17 +44,18 @@ FEATURES="bench-naive-baseline swap-demo-runtime lambda-demo-runtime ctx-demo-ru
 REPS=2
 
 mkdir -p "$OUT_DIR"
-export RUST_MIN_STACK=8388608
+unset RUST_MIN_STACK || true
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$REPO_ROOT"
 
 # Build ONCE, then invoke the produced binary DIRECTLY: per-cell `cargo run`
-# would re-run the whole-workspace freshness check on every invocation
-# (minutes each on this workspace), and the [env] RUST_MIN_STACK from
-# .cargo/config.toml is exported above for the off-cargo invocation.
-cargo build --quiet --profile "$PROFILE" -p rholang-runtime \
-    --features "$FEATURES" --bin bench_sa_vs_naive_driver
+# would re-run the whole-workspace freshness check on every invocation.
+# Build and execution use ordinary stacks and explicit zero-swap RSS bounds.
+systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 \
+    env -u RUST_MIN_STACK \
+    cargo build --quiet --profile "$PROFILE" -p rholang-runtime \
+        --features "$FEATURES" --bin bench_sa_vs_naive_driver
 case "$PROFILE" in
     dev) DRIVER="$REPO_ROOT/target/debug/bench_sa_vs_naive_driver" ;;
     *)   DRIVER="$REPO_ROOT/target/$PROFILE/bench_sa_vs_naive_driver" ;;
@@ -67,7 +66,8 @@ run_cell() {
     local workload="$1" matcher="$2" n="$3"
     local out="$OUT_DIR/${workload}_${matcher}_n${n}.jsonl"
     echo "[smoke] $workload/$matcher n=$n reps=$REPS -> $out"
-    "$DRIVER" \
+    systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 \
+      env -u RUST_MIN_STACK taskset -c 0-7 "$DRIVER" \
         --workload "$workload" --matcher "$matcher" --encoding pattern-guard \
         --n "$n" --reps "$REPS" --format json-lines --out "$out"
 }
@@ -75,6 +75,7 @@ run_cell() {
 # The smoke cells (task §3): every workload family, both of its columns.
 run_cell lambda_chain sa 2
 run_cell lambda_chain naive 2
+run_cell lambda_chain naive-r3 2
 run_cell swap_comb sa 4
 run_cell swap_comb naive 4
 run_cell nested_spine naive 2
@@ -118,6 +119,7 @@ echo "[smoke] PASS: no dnf lines"
 # so equal counts here + no dnf above ⇒ equal multisets across matchers).
 declare -A EXPECTED=(
     [lambda_chain_sa_n2]=2    [lambda_chain_naive_n2]=2
+    [lambda_chain_naive-r3_n2]=1
     [swap_comb_sa_n4]=4       [swap_comb_naive_n4]=4
     [nested_spine_naive_n2]=2 [nested_spine_replay_n2]=2
     [swap_small_sa_n2]=1      [swap_small_naive_n2]=1
@@ -143,7 +145,7 @@ for cell in "${!EXPECTED[@]}"; do
     done <<<"$counts"
     [ "$reps_seen" -eq "$REPS" ] || fail "$cell: $reps_seen rep lines, expected $REPS"
 done
-echo "[smoke] PASS: observed counts equal expected firings on every cell (both columns agree)"
+echo "[smoke] PASS: observed counts equal each arm's exact ground truth"
 
 # ── Assertion 4: the STRUCTURAL discriminating signal on nested_spine ───────
 first_field() { # file jq-path grep-key -> value from the FIRST rep line
@@ -178,6 +180,7 @@ echo "[smoke] per-cell summary (rep 0):"
 printf '%-28s %12s %8s %10s %11s %10s %10s\n' \
     cell matching_tau firing attempts successes inj_ms cost_units
 for cell in lambda_chain_sa_n2 lambda_chain_naive_n2 swap_comb_sa_n4 swap_comb_naive_n4 \
+            lambda_chain_naive-r3_n2 \
             nested_spine_naive_n2 nested_spine_replay_n2 swap_small_sa_n2 swap_small_naive_n2 \
             wrap_swap_ctx_sa_n1 wrap_swap_ctx_naive_n1 \
             multi_rule_shared_sa_n402 multi_rule_shared_naive_n402; do
@@ -217,6 +220,20 @@ if [ "$MRS_NAIVE_TAU" -eq "$MRS_SA_TAU" ] && [ "$MRS_NAIVE_ATT" -eq "$MRS_SA_ATT
 else
     fail "multi_rule_shared counter equality violated at r=4, s=2 (matching_tau naive $MRS_NAIVE_TAU vs sa $MRS_SA_TAU; attempts naive $MRS_NAIVE_ATT vs sa $MRS_SA_ATT) — contradicts the recorded amended-W1 refutation mechanism (experiment 144); investigate before re-pinning"
 fi
+
+# ── Assertion 7: the repaired finite R3 route's exact n = 2 profile ─────────
+R3_FILE="$OUT_DIR/lambda_chain_naive-r3_n2.jsonl"
+R3_MATCH=$(first_field "$R3_FILE" '.comm.matching_tau' 'matching_tau')
+R3_FIRE=$(first_field "$R3_FILE" '.comm.firing_visible' 'firing_visible')
+R3_SUBST=$(first_field "$R3_FILE" '.comm.subst_tau' 'subst_tau')
+R3_RESPREAD=$(first_field "$R3_FILE" '.comm.respread_tau' 'respread_tau')
+R3_OTHER=$(first_field "$R3_FILE" '.comm.other' 'other')
+R3_JOIN=$(first_field "$R3_FILE" '.comm.join_arity_gt1' 'join_arity_gt1')
+if [ "$R3_MATCH" -ne 8 ] || [ "$R3_FIRE" -ne 2 ] || [ "$R3_SUBST" -ne 6 ] || \
+   [ "$R3_RESPREAD" -ne 6 ] || [ "$R3_OTHER" -ne 2 ] || [ "$R3_JOIN" -ne 0 ]; then
+    fail "post-D-E5 R3 profile drifted: matching=$R3_MATCH firing=$R3_FIRE subst=$R3_SUBST respread=$R3_RESPREAD other=$R3_OTHER join_gt1=$R3_JOIN"
+fi
+echo "[smoke] PASS: post-D-E5 R3 exact profile matching/firing/subst/respread/other/join = 8/2/6/6/2/0"
 
 echo
 echo "[smoke] ALL ASSERTIONS PASSED"

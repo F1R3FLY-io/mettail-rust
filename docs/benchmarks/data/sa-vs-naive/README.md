@@ -160,7 +160,7 @@ wrong run.
 
 ```bash
 cd /home/dylon/Workspace/f1r3fly.io/mettail-rust
-export RUST_MIN_STACK=8388608          # also set by .cargo/config.toml [env]
+unset RUST_MIN_STACK                   # ordinary stacks; the workspace does not inject it
 
 # Record (the driver also embeds all of this in its run-header line):
 git rev-parse HEAD
@@ -173,8 +173,9 @@ grep Cpus_allowed_list /proc/self/status
 Hardware baseline: `/home/dylon/.claude/hardware-specifications.md`.
 
 * CPU affinity: run every measurement under `taskset -c 0-7` (8 pinned cores).
-* Memory bound: run every cargo invocation under
-  `systemd-run --user --scope -q -p MemoryMax=28G` (NEVER `TasksMax`).
+* Memory bound: run builds under
+  `systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0` and measured
+  binaries under the corresponding 4 GiB bound (NEVER `TasksMax`).
 * If the recorded governor is not `performance`, RECORD that fact in the run
   notes and proceed — the protocol never modifies machine state.
 
@@ -182,14 +183,14 @@ Hardware baseline: `/home/dylon/.claude/hardware-specifications.md`.
 
 ```bash
 cd /home/dylon/Workspace/f1r3fly.io/mettail-rust
-systemd-run --user --scope -q -p MemoryMax=28G \
-  env RUST_MIN_STACK=8388608 \
+systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 \
+  env -u RUST_MIN_STACK \
   cargo build --release -p rholang-runtime \
     --features "bench-naive-baseline swap-demo-runtime lambda-demo-runtime ctx-demo-runtime" \
     --bin bench_sa_vs_naive_driver
 
-systemd-run --user --scope -q -p MemoryMax=28G \
-  env RUST_MIN_STACK=8388608 \
+systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 \
+  env -u RUST_MIN_STACK \
   cargo bench -p rholang-runtime \
     --features "bench-naive-baseline swap-demo-runtime lambda-demo-runtime ctx-demo-runtime" \
     --bench bench_sa_vs_naive -- --test        # compile + list only, no measurement
@@ -218,9 +219,15 @@ emitted-program guard producing `"dnf":true` lines instead of hangs. The first
 line of every file is the self-describing run header.
 
 Invoke the §3-built BINARY directly (a per-cell `cargo run` would re-run the
-whole-workspace freshness check — minutes per invocation on this workspace;
-`RUST_MIN_STACK` must be exported because `.cargo/config.toml [env]` does not
-apply off-cargo):
+whole-workspace freshness check — minutes per invocation on this workspace).
+Every invocation explicitly removes `RUST_MIN_STACK`; stack-safety gates, not
+an environment-sized stack, establish the supported depth:
+
+The frozen post-D-E5 production-SA versus persistent-R3 rematch is captured by
+`post-d-e5-r3.sh`. It records three warmups and 51 measured repetitions per arm
+at each of `n = 2, 4, 8, 16, 32, 64`, refuses to overwrite an existing run,
+and invokes `analyze-post-d-e5-r3.py` to apply the predeclared deterministic
+counter, resource, and wall-time decision gates.
 
 ```bash
 cd /home/dylon/Workspace/f1r3fly.io/mettail-rust
@@ -229,13 +236,13 @@ OUT=docs/benchmarks/data/sa-vs-naive/$DATE/driver
 mkdir -p "$OUT"
 REPS=30
 DRIVER=target/release/bench_sa_vs_naive_driver
-export RUST_MIN_STACK=8388608
+unset RUST_MIN_STACK
 
 run() { # workload matcher n [encoding]
   local w=$1 m=$2 n=$3 enc=${4:-pattern-guard} suffix=""
   [ "$m" = naive ] && [ "$enc" != pattern-guard ] && suffix="_${enc}"
-  systemd-run --user --scope -q -p MemoryMax=28G \
-    env RUST_MIN_STACK=8388608 \
+  systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 \
+    env -u RUST_MIN_STACK \
     taskset -c 0-7 \
     "$DRIVER" \
       --workload "$w" --matcher "$m" --encoding "$enc" \
@@ -283,8 +290,8 @@ Group naming: `warm/<workload>/<matcher>/<n>` and `cold/<workload>/<matcher>/<n>
 ```bash
 cd /home/dylon/Workspace/f1r3fly.io/mettail-rust
 DATE=$(date +%F)
-systemd-run --user --scope -q -p MemoryMax=28G \
-  env RUST_MIN_STACK=8388608 \
+systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 \
+  env -u RUST_MIN_STACK \
   taskset -c 0-7 \
   cargo bench -p rholang-runtime \
     --features "bench-naive-baseline swap-demo-runtime lambda-demo-runtime ctx-demo-runtime" \

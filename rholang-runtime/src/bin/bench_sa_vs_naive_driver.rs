@@ -69,7 +69,7 @@ fn usage() -> String {
     text.push_str(
         "bench_sa_vs_naive_driver — Track-B counter driver (JSON lines)\n\
          \n\
-         USAGE:\n  bench_sa_vs_naive_driver --workload <name> --matcher <sa|naive|replay> \\\n    \
+         USAGE:\n  bench_sa_vs_naive_driver --workload <name> --matcher <sa|naive|replay|naive-r3> \\\n    \
          [--encoding <pattern-guard|consume-test>] --n <int> --reps <int> \\\n    \
          [--out <path>] [--format json-lines]\n\
          \n\

@@ -52,8 +52,8 @@
 #
 # ── Environment discipline (README §2 — RECORD, never change) ───────────────
 # Every measured invocation runs under
-#   systemd-run --user --scope -q -p MemoryMax=28G   (never TasksMax)
-#   env RUST_MIN_STACK=8388608                        (off-cargo: [env] does not apply)
+#   systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0
+#   env -u RUST_MIN_STACK                              (ordinary stacks only)
 #   taskset -c 0-7                                    (8 pinned cores)
 # The governor/driver/boost state is RECORDED into header.json + env.txt; if
 # any of cpus 0-7 is not `performance`, that is recorded prominently in both
@@ -101,14 +101,17 @@ CRITERION_WARM_UP_TIME=5
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$REPO_ROOT"
-export RUST_MIN_STACK=8388608
+unset RUST_MIN_STACK || true
+
+RUN_MEMORY_MAX=4G
+BUILD_MEMORY_MAX=12G
 
 ROOT="docs/benchmarks/data/sa-vs-naive/$DATE"
 DRIVER_DIR="$ROOT/driver"
 CSV_DIR="$ROOT/csv"
 DRIVER_BIN="$REPO_ROOT/target/release/bench_sa_vs_naive_driver"
-WRAP=(systemd-run --user --scope -q -p MemoryMax=28G
-      env "RUST_MIN_STACK=$RUST_MIN_STACK"
+WRAP=(systemd-run --user --scope -q -p "MemoryMax=$RUN_MEMORY_MAX" -p MemorySwapMax=0
+      env -u RUST_MIN_STACK
       taskset -c 0-7)
 
 mkdir -p "$DRIVER_DIR" "$CSV_DIR"
@@ -149,7 +152,7 @@ record_env() {
         echo "cpufreq_boost: $boost"
         echo "amd_pstate_status: $pstate"
         echo "shell_cpus_allowed_list: $(grep Cpus_allowed_list /proc/self/status | awk '{print $2}')"
-        echo "measured_invocation_wrapper: systemd-run --user --scope -q -p MemoryMax=28G env RUST_MIN_STACK=$RUST_MIN_STACK taskset -c 0-7"
+        echo "measured_invocation_wrapper: systemd-run --user --scope -q -p MemoryMax=$RUN_MEMORY_MAX -p MemorySwapMax=0 env -u RUST_MIN_STACK taskset -c 0-7"
         echo "driver_binary: $DRIVER_BIN"
         echo "driver_binary_sha256: $(sha256sum "$DRIVER_BIN" 2>/dev/null | awk '{print $1}')"
         echo "recorded_at: $(date -Is)"
@@ -167,7 +170,7 @@ record_env() {
         --arg boost "$boost" \
         --arg pstate "$pstate" \
         --arg affinity "$(grep Cpus_allowed_list /proc/self/status | awk '{print $2}')" \
-        --arg wrapper "systemd-run --user --scope -q -p MemoryMax=28G env RUST_MIN_STACK=$RUST_MIN_STACK taskset -c 0-7" \
+        --arg wrapper "systemd-run --user --scope -q -p MemoryMax=$RUN_MEMORY_MAX -p MemorySwapMax=0 env -u RUST_MIN_STACK taskset -c 0-7" \
         --arg driver_sha256 "$(sha256sum "$DRIVER_BIN" 2>/dev/null | awk '{print $1}')" \
         --argjson governor_warn "$governor_warn" \
         --argjson total_reps "$TOTAL_REPS" \
@@ -297,8 +300,8 @@ criterion_invoke() { # $1 = encoding, $2 = logf (append), $3 = optional FILTER
     if [ -n "${SA_VS_NAIVE_BENCH_BIN:-}" ]; then
         [ -x "$SA_VS_NAIVE_BENCH_BIN" ] || { echo "[full] FAIL: SA_VS_NAIVE_BENCH_BIN=$SA_VS_NAIVE_BENCH_BIN is not executable" >&2; exit 1; }
         log "criterion invoke: DIRECT pinned binary $SA_VS_NAIVE_BENCH_BIN (sha256 $(sha256sum "$SA_VS_NAIVE_BENCH_BIN" | awk '{print $1}'))"
-        systemd-run --user --scope -q -p MemoryMax=28G \
-            env "RUST_MIN_STACK=$RUST_MIN_STACK" "CARGO_TARGET_DIR=$REPO_ROOT/target" "${envpair[@]}" \
+        systemd-run --user --scope -q -p "MemoryMax=$RUN_MEMORY_MAX" -p MemorySwapMax=0 \
+            env -u RUST_MIN_STACK "CARGO_TARGET_DIR=$REPO_ROOT/target" "${envpair[@]}" \
             taskset -c 0-7 \
             "$SA_VS_NAIVE_BENCH_BIN" \
                 --bench \
@@ -310,8 +313,8 @@ criterion_invoke() { # $1 = encoding, $2 = logf (append), $3 = optional FILTER
         #   unmeasured iteration per id, nothing written to target/criterion).
         rc=${PIPESTATUS[0]}
     else
-        systemd-run --user --scope -q -p MemoryMax=28G \
-            env "RUST_MIN_STACK=$RUST_MIN_STACK" "${envpair[@]}" \
+        systemd-run --user --scope -q -p "MemoryMax=$BUILD_MEMORY_MAX" -p MemorySwapMax=0 \
+            env -u RUST_MIN_STACK "${envpair[@]}" \
             taskset -c 0-7 \
             cargo bench -p rholang-runtime \
                 --features "$FEATURES" \
