@@ -73,15 +73,18 @@ use ctxdemo::CtxDemoLanguage;
 use lambdademo::LambdaDemoLanguage;
 use mettail_rholang_codegen::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, in_rho_match_all_sites_call_par,
-    in_rho_match_call_par, lower_language_def, naive_kt_contextual_match_call_par,
-    naive_kt_entry_receiver_par, naive_kt_match_call_par, plan_rho_default_backend,
-    reconstruct_language_def, spread_term_par, suggest_rejected_rule_dispositions,
-    AutomatonUnsupported, GroundTerm, InRhoMatchingRuleset, NaiveGuardEncoding,
-    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
-    BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    in_rho_match_call_par, lower_language_def, multi_pattern_receiver_network_par,
+    naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
+    plan_rho_default_backend, reconstruct_language_def, spread_term_par,
+    suggest_rejected_rule_dispositions, AutomatonAcceptTarget, AutomatonUnsupported, GroundTerm,
+    InRhoMatchingRuleset, NaiveGuardEncoding, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    RhoGuardCoverageEvidence, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
-    run_normalized_par_for_oracle_and_read_runtime_values, PlannedRhoBackend,
+    bench_inj_and_read, bench_runtime_with_counters, count_receive_nodes, count_send_nodes,
+    par_as_runtime_observation_value, run_normalized_par_for_oracle_and_read_runtime_values,
+    BenchWorkloadParams, PlannedRhoBackend,
 };
 use mettail_runtime::{Language, RuntimeObservationValue};
 use swapdemo::SwapDemoLanguage;
@@ -800,6 +803,101 @@ fn sigma_echo_receiver(accept_channel: &str, arity: usize) -> models::rhoapi::Pa
         Vec::new(),
         false,
     )
+}
+
+/// D-E5's deterministic COMM/accounting gate. Two alpha-renamed nested entries
+/// share one slotted state and one matcher network, while retaining their two
+/// independent accept continuations. The exact counter vector is the production
+/// successor receipt. D3 charges one token per evaluated send/receive prefix;
+/// the counting-space vector separately counts RSpace rendezvous that commit.
+#[tokio::test]
+async fn alpha_shared_nested_network_has_an_exact_comm_profile() {
+    mettail_runtime::clear_var_cache();
+    let shape = |name: &str| {
+        Pattern::app("f".to_string(), vec![Pattern::app("g".to_string(), vec![Pattern::var(name)])])
+    };
+    let automaton = SetAutomaton::compile_structural([
+        (PatternId(0), shape("x")),
+        (PatternId(1), shape("alpha")),
+    ])
+    .expect("alpha-renamed nested states compile");
+    assert_eq!(automaton.view().entry_root_state(0), automaton.view().entry_root_state(1));
+
+    let targets = [
+        AutomatonAcceptTarget {
+            pattern: PatternId(0),
+            accept_channel: "sa:d-e5-one".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+        AutomatonAcceptTarget {
+            pattern: PatternId(1),
+            accept_channel: "sa:d-e5-two".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+    ];
+    let subject = GroundTerm::new("f", vec![GroundTerm::new("g", vec![GroundTerm::nullary("A")])]);
+    let network = multi_pattern_receiver_network_par(
+        &automaton.view(),
+        &subject,
+        SITE,
+        &targets,
+        "d-e5-fingerprint",
+    )
+    .expect("the shared nested network serializes");
+    let program = sigma_echo_receiver("sa:d-e5-one", 1)
+        .append(sigma_echo_receiver("sa:d-e5-two", 1))
+        .append(network)
+        .append(spread_term_par(&subject, "d-e5-fingerprint", SITE));
+    let static_sends = count_send_nodes(&program);
+    let static_receives = count_receive_nodes(&program);
+    assert_eq!((static_sends, static_receives), (13, 7));
+
+    let (mut runtime, comm, matches) = bench_runtime_with_counters(Vec::new(), "OUT")
+        .await
+        .expect("counting runtime starts");
+    let result = bench_inj_and_read(
+        &mut runtime,
+        &program,
+        "OUT",
+        BenchWorkloadParams {
+            name: "d_e5_alpha_shared".to_string(),
+            matcher: "sa".to_string(),
+            encoding: "-".to_string(),
+            n: 2,
+            rep: 0,
+        },
+        &comm,
+        &matches,
+    )
+    .await
+    .expect("the shared nested alpha network executes");
+    let observed = result
+        .observed
+        .iter()
+        .map(|par| {
+            par_as_runtime_observation_value(par)
+                .expect("every shared-alpha OUT datum is a closed runtime value")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sorted_multiset(observed), vec![onullary("A"), onullary("A")]);
+    assert_eq!(result.program_encoded_len, 2_318);
+    assert_eq!(result.program_receiver_count, static_receives);
+    assert_eq!(result.consumed_cost_units, 20);
+    assert_eq!(result.consumed_cost_units as usize, static_sends + static_receives);
+    assert_eq!(result.comm.matching_tau, 5);
+    assert_eq!(result.comm.firing_visible, 2);
+    assert_eq!(result.comm.subst_tau, 0);
+    assert_eq!(result.comm.respread_tau, 0);
+    assert_eq!(result.comm.drive_tau, 0);
+    assert_eq!(result.comm.ac_carrier, 0);
+    assert_eq!(result.comm.pathmap_index, 0);
+    assert_eq!(result.comm.contextual_plumbing, 0);
+    assert_eq!(result.comm.observation, 0);
+    assert_eq!(result.comm.other, 0);
+    assert_eq!(result.comm.join_arity_gt1, 0);
+    assert!(result.comm.unknown_channel_samples.is_empty());
+    assert_eq!(result.matches.attempts, 7);
+    assert_eq!(result.matches.successes, 7);
 }
 
 /// (7) DIVERGENT-ADMISSION CAPABILITY CASE — labeled as such: this is NOT an

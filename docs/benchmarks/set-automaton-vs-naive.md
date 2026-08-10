@@ -12,6 +12,14 @@
 > (§7.3 the interner as the Erkens–Groote specialization, §8 the AC boundary,
 > §10 where the WHY-tier sits).
 
+**Counter terminology.** `matching_tau` and the other `CommCounterSnapshot`
+fields count RSpace rendezvous that actually commit. `consumed_cost_units` is a
+different D3 measure: `RuntimeBudget::total_cost()` counts every evaluated
+send/receive prefix classified as `BillableKind::Comm`, including a prefix that
+rests instead of rendezvousing. Equality of that field between columns remains
+an exact result; it must not be read as a second measurement of committed
+RSpace rendezvous.
+
 ## 1. Verdict summary
 
 The question is the USER's efficiency gate (recorded verbatim in experiment

@@ -11,9 +11,11 @@
 //! F1r3node's concern (wallet.txt). The single cost touch in this module is a
 //! bench-internal SECONDARY read of `runtime.cost().total_cost()` on the
 //! harness's OWN in-memory runtime AFTER `inj` reaches quiescence
-//! ([`bench_inj_and_read`]) — a bench-local diagnostic (the consensus unit is
-//! one source-token per committed COMM, so the value doubles as an independent
-//! COMM count), never a knob, never installed on a production path.
+//! ([`bench_inj_and_read`]) — a bench-local diagnostic. Under D3 this is one
+//! source token per evaluated send/receive prefix (`BillableKind::Comm`), not
+//! one per RSpace rendezvous that actually commits. The latter is measured
+//! independently by [`CountingSpace`]. The read is never a knob and is never
+//! installed on a production path.
 //! `run::inj_on_runtime` and every production entry point are untouched.
 //!
 //! # B4 — what is instrumented
@@ -836,9 +838,12 @@ pub struct BenchRunResult {
     pub observed: Vec<Par>,
     /// Bench-internal SECONDARY consumed-cost read:
     /// `runtime.cost().total_cost().value` after `inj` on the harness's OWN
-    /// in-memory runtime — consumed source-token units, i.e. one per committed
-    /// COMM (f1r3node DR-9), read at quiescence. Bench-local diagnostic ONLY;
-    /// budgets are F1r3node's (wallet.txt), and no production path is touched.
+    /// in-memory runtime — D3 consumed source-token units, i.e. one per
+    /// evaluated send/receive prefix classified as `BillableKind::Comm`, read
+    /// at quiescence. This is deliberately distinct from [`CommCounters`],
+    /// which counts only RSpace rendezvous that actually commit. Bench-local
+    /// diagnostic ONLY; budgets are F1r3node's (wallet.txt), and no production
+    /// path is touched.
     pub consumed_cost_units: i64,
     /// COMM classification counters at readback time (cumulative for the
     /// runtime; per-run under the fresh-runtime-per-rep discipline).
@@ -1741,11 +1746,12 @@ mod tests {
             result.matches
         );
 
-        // Bench-internal secondary cost read: ≥ 1 committed COMM ⇒ ≥ 1
-        // consumed source-token unit (DR-9, one token per COMM).
+        // Bench-internal secondary D3 cost read: the injected program evaluates
+        // at least one send/receive prefix, hence consumes at least one source
+        // token. This is not the committed-rendezvous counter asserted above.
         assert!(
             result.consumed_cost_units >= 1,
-            "the secondary cost read must see the committed COMMs; got {}",
+            "the secondary cost read must see evaluated communication prefixes; got {}",
             result.consumed_cost_units
         );
 
