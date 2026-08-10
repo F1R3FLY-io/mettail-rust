@@ -13,5 +13,6 @@ fbdc464cc7466501bbb77e1e92811eaa720790311d9324da7384098235964f93  docs/benchmark
 9689aa6fab39e457db6fcf4653461e3ce949517d79427697c431c8bb9c2cfc08  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n8.jsonl
 809134cbacca080bcac3a7ed4a9ee5fadd95affb7298dc2858e4c267a3d6c362  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/samples.tsv
 eda8141ff7dadc86de046cd585a5fbf6ba91388890f8d41e4db32e3b77d83ec0  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/summary.tsv
-269cbcaa2ef338c92c20315d73c47c6ce0c08ca287667f624d774f00709a1cdb  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/analysis.json
-3f9146a549bb9cee36df1be64dd92d43d2072bcef896f59c34faf619c2edad3e  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/comparison.md
+660d0b53c5bc0195b1d8146f09ffa0bc2120267a545478de27b53a06cbe940eb  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/analysis.json
+c89ac215944d46f82a7b13f940c0686cce11a73e36a9210a84ac65873eabffa0  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/comparison.md
+85aa5d8c066ccfb8d1f1276d7f328b434ecafd92d1026dcf50e8804bf4f01f6c  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/ANALYSIS-CORRECTION.md

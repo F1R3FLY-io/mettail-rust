@@ -21,3 +21,11 @@ only that predicate—failed. Pgmcp bug
 tracks the correction. The raw run will not be repeated or altered. The repair
 will recompute only derived analysis from these same authenticated samples, and
 git history will retain this initial result for auditability.
+
+The corrected analyzer's three arm-shape regression tests pass. Re-analysis of
+the unchanged samples produces `retarget-generated-driver-to-r3`: all five
+gates pass at all six sizes. R3 uses fewer matching COMMs, consumed cost units,
+and encoded program bytes at every size; its wall-time geometric-mean ratio
+falls from 0.7354 at `n = 2` to 0.1866 at `n = 64`, and every one-sided 95%
+upper ratio bound is below the frozen 1.05 threshold after the associated
+six-cell Benjamini-Hochberg non-inferiority gate.

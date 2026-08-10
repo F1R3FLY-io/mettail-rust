@@ -90,6 +90,16 @@ def constant(rows: list[dict[str, str]], field: str) -> int:
     return values.pop()
 
 
+def arm_specific_semantics(size: int, row: dict[str, object]) -> bool:
+    """Check each route's exact observation shape and their common firing count."""
+    return (
+        row["control_observed_count"] == size
+        and row["treatment_observed_count"] == 1
+        and row["control_firing_visible"] == size
+        and row["treatment_firing_visible"] == size
+    )
+
+
 def load(run_directory: Path) -> dict[tuple[int, str], list[dict[str, str]]]:
     samples = run_directory / "samples.tsv"
     grouped: dict[tuple[int, str], list[dict[str, str]]] = defaultdict(list)
@@ -138,12 +148,7 @@ def analyze(run_directory: Path) -> tuple[list[dict[str, object]], str]:
                 [int(sample["inj_ns"]) for sample in treatment],
             )
         )
-        row["semantic_pass"] = (
-            row["control_observed_count"] == size
-            and row["treatment_observed_count"] == size
-            and row["control_firing_visible"] == size
-            and row["treatment_firing_visible"] == size
-        )
+        row["semantic_pass"] = arm_specific_semantics(size, row)
         row["r3_route_pass"] = (
             row["treatment_matching_tau"] == 4 * size
             and row["treatment_subst_tau"] == 3 * size
@@ -210,8 +215,8 @@ def write_outputs(
         "",
         f"Decision: **{decision}**.",
         "",
-        "The primary is exact deterministic `matching_tau`. Wall time uses a one-sided ",
-        "Welch test, Benjamini-Hochberg correction over the six sizes, and a log-scale ",
+        "The primary is exact deterministic `matching_tau`. Wall time uses a one-sided",
+        "Welch test, Benjamini-Hochberg correction over the six sizes, and a log-scale",
         "one-sided 95% upper confidence bound for the treatment/control geometric-mean ratio.",
         "",
         "| n | SA match | R3 match | cost SA/R3 | bytes SA/R3 | wall ratio | upper 95% | q noninf | gates |",
