@@ -79,7 +79,7 @@ fn shallow_subject() -> GroundTerm {
 }
 
 #[test]
-fn iterative_naive_walkers_match_the_recursive_equations() {
+fn iterative_pattern_guard_walkers_match_the_recursive_equations() {
     let automaton = SetAutomaton::compile_structural([(
         PatternId(0),
         Pattern::app(
@@ -141,10 +141,10 @@ fn iterative_naive_walkers_match_the_recursive_equations() {
 }
 
 #[test]
-fn naive_walkers_handle_twenty_thousand_levels_on_a_small_stack() {
+fn pattern_guard_walkers_handle_twenty_thousand_levels_on_a_small_stack() {
     const DEPTH: usize = 20_000;
     std::thread::Builder::new()
-        .name("naive-kt-walkers-small-stack".to_owned())
+        .name("pattern-guard-walkers-small-stack".to_owned())
         .stack_size(256 * 1024)
         .spawn(|| {
             let mut pattern = Pattern::var("leaf");
@@ -176,7 +176,7 @@ fn naive_walkers_handle_twenty_thousand_levels_on_a_small_stack() {
                 .expect("the deep unary subject has admissible labels");
             assert_eq!(labels, ["Leaf".to_owned(), "Wrap".to_owned()].into_iter().collect());
         })
-        .expect("small-stack naive-walker thread must spawn")
+        .expect("small-stack pattern-guard-walker thread must spawn")
         .join()
-        .expect("naive walkers must not overflow the native stack");
+        .expect("pattern-guard walkers must not overflow the native stack");
 }

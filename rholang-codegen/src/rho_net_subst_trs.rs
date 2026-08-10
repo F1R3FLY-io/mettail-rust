@@ -215,7 +215,7 @@ pub fn reserved_subst_trs_labels() -> [&'static str; 19] {
 /// `free` so the reducer's substitution / COMM read the correct set.
 ///
 /// `pub(crate)` (fields included): the Track-B R3 self-driving emitter
-/// (`rho_net_naive_kt`, feature `bench-naive-baseline`) builds its `^respread`
+/// (`rho_net_pattern_guard`) builds its `^respread`
 /// reserved-receiver family with THESE combinators, so its De Bruijn/free-set
 /// discipline is the TRS's by construction (and its one extra combinator — a
 /// GString `++` concat — is assembled from the exposed fields).

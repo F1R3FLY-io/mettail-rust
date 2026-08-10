@@ -180,6 +180,10 @@ theories/InRhoBetaCascadeWeakBisim.v
 # chains lifting InRhoBetaCascadeWeakBisim's single-fire clauses — cascade legs SN+CR-unique),
 # and the two-firing non-vacuity witness.
 theories/InRhoQuiescenceDriver.v
+# Post-D-E5 production route — the certified persistent-root pattern-guard PDA,
+# the bounded recursive root oracle, and the general quiescence driver compute
+# exactly the same tail with the certificate's exact contraction count.
+theories/PersistentRootDriveEquivalence.v
 # E-1 — the DEMAND-DRIVEN SLOT-SCION for the driver's FiringEmission seam (ScionBundle,
 # rho_net_drive.rs) as a big-step LTS over the SAME reflected `Obj` fragment, carrying the
 # FIRED MULTISET in the result (InRhoScionGraft): ADDITIVE (no InRhoQuiescenceDriver edit);

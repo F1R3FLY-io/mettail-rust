@@ -2935,7 +2935,8 @@ pub fn ground_marker_tag_par(fp: &str, is_ground: bool) -> Par {
 }
 
 /// E-2-D: is `par` one of the two hereditary-ground marker tokens for `fp`? The DECODERS
-/// (`run::decode_reflected_term`, `native_contract::par_to_ground_term`, `rho_net_naive_kt`)
+/// (`run::decode_reflected_term`, `native_contract::par_to_ground_term`,
+/// `rho_net_pattern_guard`)
 /// SKIP it when it sits at a reflected object node's index 1, recovering the pre-D positional
 /// child sequence. A bare marker GPrivate never occurs as a genuine reflected child (children
 /// are tagged `EList`s / `GString` names / scalars), so the skip is unambiguous.
@@ -4154,7 +4155,8 @@ pub const NONGROUND_MARK_REFLECT_LABEL: &str = "^nog";
 ///
 /// The families were previously enumerated three times and never together:
 /// [`crate::rho_net_subst_trs::reserved_subst_trs_labels`] (19, the C2
-/// object-congruence exclusion set), [`crate::rho_net_naive_kt::respread_reserved_labels`]
+/// object-congruence exclusion set),
+/// [`crate::rho_net_pattern_guard::respread_reserved_labels`]
 /// (3, the R3 walker), and a scatter of loose constants (the markers, the `^cmp`
 /// results, the float family, the Peano numerals) that no list contained. Nothing
 /// ever asserted that the union satisfies the namespace rule
@@ -4174,13 +4176,8 @@ pub const NONGROUND_MARK_REFLECT_LABEL: &str = "^nog";
 pub fn all_reserved_reflect_labels() -> Vec<&'static str> {
     let mut labels: Vec<&'static str> = Vec::with_capacity(32);
     labels.extend(crate::rho_net_subst_trs::reserved_subst_trs_labels());
-    // The `^respread` family lives in the bench-quarantined Track-B module, so it
-    // is only enumerable when that feature is on. The CI gate runs
-    // `--all-features`, so the census the namespace assertion sees in CI is always
-    // the complete one; a default build simply has fewer reserved labels to check
-    // because three of them do not exist in it.
-    #[cfg(feature = "bench-naive-baseline")]
-    labels.extend(crate::rho_net_naive_kt::respread_reserved_labels());
+    // The `^respread` family is used by the production persistent-root PDA.
+    labels.extend(crate::rho_net_pattern_guard::respread_reserved_labels());
     labels.extend([
         GROUND_MARK_REFLECT_LABEL,
         NONGROUND_MARK_REFLECT_LABEL,
@@ -9594,12 +9591,8 @@ mod tests {
                 .iter()
                 .map(|l| (*l).to_string()),
         );
-        // The `^respread` family is bench-quarantined behind `bench-naive-baseline`,
-        // so it only exists to be round-tripped when that feature is on. The CI gate
-        // runs `--all-features`, so CI always covers the complete set.
-        #[cfg(feature = "bench-naive-baseline")]
         labels.extend(
-            crate::rho_net_naive_kt::respread_reserved_labels()
+            crate::rho_net_pattern_guard::respread_reserved_labels()
                 .iter()
                 .map(|l| (*l).to_string()),
         );
@@ -9673,13 +9666,10 @@ mod tests {
     #[test]
     fn the_reserved_census_covers_every_family() {
         let census = all_reserved_reflect_labels();
-        #[cfg(feature = "bench-naive-baseline")]
         let families: [&[&str]; 2] = [
             &crate::rho_net_subst_trs::reserved_subst_trs_labels()[..],
-            &crate::rho_net_naive_kt::respread_reserved_labels()[..],
+            &crate::rho_net_pattern_guard::respread_reserved_labels()[..],
         ];
-        #[cfg(not(feature = "bench-naive-baseline"))]
-        let families: [&[&str]; 1] = [&crate::rho_net_subst_trs::reserved_subst_trs_labels()[..]];
         for family in families {
             for label in family {
                 assert!(census.contains(label), "census is missing the reserved label {label:?}");

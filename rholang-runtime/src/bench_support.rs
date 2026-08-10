@@ -59,7 +59,7 @@
 //! | `@"cap:…"` (capture collapse) | `matching_tau` | `collapse_capture_location` (`rho_net_lower.rs`) |
 //! | `@"sa:…"` (accept / σ-receiver source / native trigger-dispatch, incl. `sa:pattern/…`, `sa:scalar/…`) | `firing_visible` | `RhoNetChannel::set_automaton_trace` (`rho_net.rs`) |
 //! | `GPrivate(mettail.term.{fp}.{^subst,^shift,^shiftk,^cmp,^pred})` | `subst_tau` | `tag_par(fp, label)` over the reserved TRS labels (`rho_net_subst_trs.rs`, `rho_net_lower.rs`) |
-//! | `GPrivate(mettail.term.{fp}.{^respread,^respread-root,^respread-err})` | `respread_tau` | `respread_reserved_labels()` — the R3 self-driving walker family (`rho_net_naive_kt.rs`; EXPLORATORY, pre-registered) |
+//! | `GPrivate(mettail.term.{fp}.{^respread,^respread-root,^respread-err})` | `respread_tau` | `respread_reserved_labels()` — the R3 self-driving walker family (`rho_net_pattern_guard.rs`; benchmark arm is frozen, certified root subset is production) |
 //! | `GPrivate(mettail.term.{fp}.^drive)` | `drive_tau` | `tag_par(fp, DRIVE_RESERVED_LABEL)` — the in-Rho quiescence driver's per-node `^drive!(t, fuel, ret)` rendezvous (`rho_net_drive.rs`; E-1 leg 0, the scion-grafting PRIMARY metric). The GString firing-ledger (`^fired:{fp}`) and the typed fail-close channels (`^drive-err:{fp}` / `^drive-fuel:{fp}`) are RESTING PRODUCES — nothing in-Rho consumes them, so they contribute ZERO COMMs and are read back by peek (`run::DriveObservationSet`), never classified here |
 //! | `@"ac:…"` (AC bag carrier, bare `ac:{op}` and site-keyed `ac:{loc}/…`) | `ac_carrier` | `ac_carrier_channel` + the `ac:{op}` soup channel (`rho_net_lower.rs`) |
 //! | `@"e6a:…"` (E-6a PathMap subject-index / site-enumeration) | `pathmap_index` | `e6a_index_channel` / `e6a_sites_channel` (`e6a_support.rs`; treatment arm only) |
@@ -459,7 +459,7 @@ fn is_subst_trs_channel_tag(tag: &str) -> bool {
 /// Whether a decoded `GPrivate` tag names one of the THREE reserved R3
 /// `^respread`-family rendezvous channels: `mettail.term.{fp}.{label}` with
 /// `label` ∈ {`^respread`, `^respread-root`, `^respread-err`}
-/// (`respread_reserved_labels()` in `rho_net_naive_kt.rs` — the self-driving
+/// (`respread_reserved_labels()` in `rho_net_pattern_guard.rs` — the self-driving
 /// walker family; `^respread-err` has no receiver on any sound run, so a COMM
 /// classifying through it would itself be diagnostic).
 fn is_respread_channel_tag(tag: &str) -> bool {

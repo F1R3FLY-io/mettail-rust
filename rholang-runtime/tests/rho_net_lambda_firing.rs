@@ -25,8 +25,9 @@
 use mettail_languages::lambda::LambdaLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-    reflect_ground_term_par, rho_net_drive_call_par_with_fuel, suggest_rejected_rule_dispositions,
-    GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    reflect_ground_term_par, rho_net_drive_call_par_with_fuel, rho_net_drive_invocation,
+    suggest_rejected_rule_dispositions, GroundTerm, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoNetDriveStrategy,
     BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
     PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
@@ -112,6 +113,88 @@ fn g_bound(depth: usize) -> GroundTerm {
 }
 fn g_lambda(body: GroundTerm) -> GroundTerm {
     g_node(LAMBDA_REFLECT_LABEL, vec![body])
+}
+
+fn g_identity_spine(depth: usize) -> GroundTerm {
+    let identity = || g_lambda(g_bound(0));
+    let mut term = g_lambda(g_lambda(g_bound(1)));
+    for _ in 0..depth {
+        term = g_node("App", vec![identity(), term]);
+    }
+    term
+}
+
+#[test]
+fn generated_driver_selects_only_the_certified_persistent_root_envelope() {
+    let chain = LambdaLanguage
+        .parse_term("(lam x. x, (lam y. y, lam z. z))")
+        .expect("the identity chain parses");
+    let invocation = LambdaLanguage::rho_net_drive_invocation_to(chain.as_ref(), "OUT")
+        .expect("the identity chain is drive-admitted");
+    assert_eq!(
+        invocation.strategy,
+        RhoNetDriveStrategy::PersistentRootIdentityBeta { contractions: 2 },
+        "the exact root-only identity-beta spine uses the persistent R3 PDA"
+    );
+
+    let nested = LambdaLanguage
+        .parse_term("((lam x. x, lam z. z), lam w. w)")
+        .expect("the fun-position spine parses");
+    let invocation = LambdaLanguage::rho_net_drive_invocation_to(nested.as_ref(), "OUT")
+        .expect("the general Lambda driver admits nested reduction");
+    assert_eq!(
+        invocation.strategy,
+        RhoNetDriveStrategy::GeneralQuiescence,
+        "a term requiring congruence must retain the general driver"
+    );
+}
+
+#[tokio::test]
+async fn persistent_and_general_drivers_have_identical_visible_results() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fingerprint) = lambda_backend();
+
+    for depth in 1..=8usize {
+        let mut source = "lam a. lam b. a".to_string();
+        for _ in 0..depth {
+            source = format!("(lam x. x, {source})");
+        }
+        let term = LambdaLanguage
+            .parse_term(&source)
+            .expect("the identity chain parses");
+        let persistent = LambdaLanguage::rho_net_drive_invocation_to(term.as_ref(), "OUT")
+            .expect("the generated route admits the identity chain");
+        assert_eq!(
+            persistent.strategy,
+            RhoNetDriveStrategy::PersistentRootIdentityBeta { contractions: depth }
+        );
+        assert_eq!(persistent.per_path_fuel, depth as i64);
+
+        let subject = g_identity_spine(depth);
+        let general = rho_net_drive_invocation(
+            &fingerprint,
+            reflect_ground_term_par(&subject, &fingerprint),
+            "OUT",
+        );
+        assert_eq!(general.strategy, RhoNetDriveStrategy::GeneralQuiescence);
+
+        let persistent_channels = DriveObservationChannels::from_invocation(&persistent);
+        let general_channels = DriveObservationChannels::from_invocation(&general);
+        assert_eq!(persistent_channels, general_channels);
+        let persistent_set = backend
+            .run_rho_net_with_call_and_read_observation_set(&persistent.call, &persistent_channels)
+            .await
+            .expect("the persistent route executes");
+        let general_set = backend
+            .run_rho_net_with_call_and_read_observation_set(&general.call, &general_channels)
+            .await
+            .expect("the general route executes");
+        assert_eq!(
+            persistent_set, general_set,
+            "depth {depth}: R3 and the general recursive-equation replacement must expose the \
+             same OUT value, firing multiset, and empty typed-error channels"
+        );
+    }
 }
 
 // ── the AM-5 host replay: a de-Bruijn β reducer over decoded observations ──────────────

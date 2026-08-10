@@ -735,6 +735,57 @@ capstone's FBinderBeta arm; its `cwvis` shape is the reference for `gstep`. $`\b
 (`:172`), `beta_cascade_is_nonvacuous` (`:216`); via `reduces_to_reflected_redex`,
 `cbeta_fire`, `seed_norm_is_beta`.
 
+**Theorem 19a (certified persistent-root driver equivalence).** Define the
+identity-beta spine recursively by
+
+```math
+I_0(t)=t,
+\qquad
+I_{n+1}(t)=\mathrm{App}(\lambda.\underline{0}, I_n(t)).
+```
+
+If $`t`$ is beta-normal, then the following three executions are equivalent
+and return exactly $`t`$ after exactly $`n`$ contractions:
+
+1. the production persistent-root R3 transition system;
+2. the bounded recursive root oracle retained for differential verification;
+3. the general in-Rho quiescence driver `drives` from Theorem 19's
+   iterated-driver development.
+
+Formally,
+
+```math
+\mathrm{NF}(t)\Longrightarrow
+\mathrm{R3Run}(n,I_n(t),t)
+\wedge
+\mathrm{RecursiveRoot}(n,I_n(t))=t
+\wedge
+\mathrm{drives}(n,I_n(t),\mathrm{DDone}(t)).
+```
+
+*Proof.* The identity substitution is definitional:
+$`\mathrm{odbeta}(a,\underline{0})=a`$. Induction on $`n`$ therefore removes
+one root spine cell in all three systems. The R3 induction uses one
+`persistent_identity_fire`; the recursive equation takes its matching branch;
+and the general-driver induction uses `d_redex_fire`. At $`n=0`$, a separate
+structural induction on the beta-normal derivation shows the general driver
+passes the tail through unchanged even with zero fuel. Determinism of the R3
+one-step relation lifts by induction to counted runs, so no other result is
+possible at the certified count. A two-cell spine ending in `oFree x` supplies
+a non-vacuous two-fire witness. Thus $`n`$ is an exact ranking function, not an
+artificial depth bound. $`\blacksquare`$
+
+*Mechanization and executable correspondence.*
+`PersistentRootDriveEquivalence.v` —
+`certified_persistent_recursive_general_equivalence`,
+`certified_run_has_unique_result`, and
+`persistent_two_fire_nonvacuous`. All three proof-term audits report closure
+under the global context. The production Rust companion is
+`rholang-runtime/tests/rho_net_lambda_firing.rs::persistent_and_general_drivers_have_identical_visible_results`,
+which compares the complete OUT/firing/error/fuel observation sets at depths
+1–8; `rholang-codegen/tests/persistent_root_drive.rs` additionally verifies
+20,000-level iterative admission on a 256 KiB thread stack.
+
 **Lemma 20 (binder reflection is total-or-reject and injective).**
 The reflection of a runtime term to its reserved-tagged ground image is injective and
 collision-free,
@@ -1003,8 +1054,8 @@ each implication is satisfiable rather than true by an empty antecedent.
 
 ### 9.4 The certificate corpus
 
-Across the two development libraries, **310** proof-term audits each report closure under the ambient
-context — **161** in `rho_bridge/theories` and **149** in `advanced_automata/theories` — confirming
+Across the two development libraries, **313** proof-term audits each report closure under the ambient
+context — **164** in `rho_bridge/theories` and **149** in `advanced_automata/theories` — confirming
 §9.1 over the whole corpus.
 
 ---

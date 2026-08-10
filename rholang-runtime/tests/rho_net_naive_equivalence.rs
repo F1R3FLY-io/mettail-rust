@@ -13,7 +13,8 @@
 //! ONLY in erased τ structure). Here the two schemes are the production drivers
 //! (`in_rho_match_call_par` / `in_rho_match_all_sites_call_par` /
 //! `contextual_match_call_par`) and the quarantined naive Appendix-A emitter
-//! (`naive_kt_match_call_par` / `naive_kt_contextual_match_call_par`,
+//! (`naive_kt_match_call_par` / `naive_kt_contextual_match_call_par` from the
+//! shared `rho_net_pattern_guard` engine,
 //! `bench-naive-baseline`), which share the spread + accept ABI BY FUNCTION
 //! IDENTITY (`spread_term_par`, `build_accept_send`) and differ only in the
 //! matching network between them. The bisimulation's visible agreement is

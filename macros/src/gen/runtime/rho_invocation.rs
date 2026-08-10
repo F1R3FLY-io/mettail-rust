@@ -2983,11 +2983,21 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         }
     } else {
         quote! {
-            ::mettail_rholang_codegen::rho_net_drive_invocation(
-                &__ruleset.language_fingerprint,
-                __subject_par,
+            match ::mettail_rholang_codegen::persistent_root_drive_invocation(
+                &__artifacts.def,
+                __ruleset,
+                &__subject,
                 out_channel,
-            )
+            )? {
+                ::core::option::Option::Some(__persistent) => __persistent,
+                ::core::option::Option::None => {
+                    ::mettail_rholang_codegen::rho_net_drive_invocation(
+                        &__ruleset.language_fingerprint,
+                        __subject_par,
+                        out_channel,
+                    )
+                },
+            }
         }
     };
     let drive_fn = if drive_opted_in {
@@ -3653,7 +3663,7 @@ mod tests {
 
     /// ★ F8-AM-5c (A-S5.8): the Lambda `rho_net_drive_invocation_to` fn-item BYTE PIN —
     /// the S2 seed switch edits exactly this emission for FLOAT-BEARING languages, so the
-    /// non-float branch must stay byte-identical: (a) the (length, `DefaultHasher`)
+    /// non-float branch is pinned: (a) the (length, `DefaultHasher`)
     /// fingerprint of the extracted fn item is pinned (captured pre-S2 at `3530df05` —
     /// re-capture only with an explained diff); (b) the item calls the LEGACY
     /// `rho_net_drive_invocation` assembler and carries NO float token.
@@ -3685,14 +3695,25 @@ mod tests {
     /// unchanged non-float seed route and absence of float machinery. Production-PDA token
     /// tests separately pin child ordering, collection tagging/reversal, binders, identifiers,
     /// and fail-closed fields.
+    ///
+    /// RE-CAPTURED (post-D-E5 production rematch, 2026-08-10) — explained diff:
+    /// the non-float branch now asks `persistent_root_drive_invocation` for a
+    /// term-specific root-identity-beta certificate and retains
+    /// `rho_net_drive_invocation` as the general congruence-capable fallback. The
+    /// explicit match adds 253 rendered bytes (8610 → 8863); the two path-token
+    /// assertions below pin both routes and the absence of float machinery.
     #[test]
-    fn lambda_drive_fn_item_is_byte_identical_across_the_s2_seed_switch() {
+    fn lambda_drive_fn_item_pins_certified_persistent_route_and_general_fallback() {
         use std::hash::{Hash, Hasher};
         let tokens = generate_rho_net_invocation(&lambda_shaped_fragment("Lambda")).to_string();
         let item = extract_fn_item(&tokens, "rho_net_drive_invocation_to");
         assert!(
             item.contains("rho_net_drive_invocation ("),
-            "Lambda's drive fn assembles through the LEGACY seed"
+            "Lambda retains the general quiescence-driver fallback"
+        );
+        assert!(
+            item.contains("persistent_root_drive_invocation"),
+            "Lambda probes the certified persistent-root production route"
         );
         assert!(
             !item.contains("float"),
@@ -3702,13 +3723,9 @@ mod tests {
         item.hash(&mut hasher);
         assert_eq!(
             (item.len(), hasher.finish()),
-            (8610, 0x6b3b3a697c484929),
-            "the Lambda drive fn item must be byte-identical to the E-3 T-LAZY emission \
-             (the S2 switch's non-float branch interpolates the SAME \
-             `::mettail_rholang_codegen::rho_net_drive_invocation` path tokens the \
-             pre-A-S5.8 quote! wrote literally — identical token stream by construction; \
-             captured at the A-S5.8 leg-1 tree and recaptured only for the explained \
-             changes documented above)"
+            (8863, 0x72c65e84582c89b9),
+            "the Lambda drive fn item must contain exactly the certified persistent route + \
+             general fallback token stream documented above"
         );
     }
 

@@ -414,22 +414,18 @@ driver's equality observation was pinned as a regression test
 (`multi_rule_shared_counters_are_equal_the_amended_w1_refutation`), so a
 divergence in either direction now fails the build rather than drifting.
 
-What remained **measured-open** was scheduled, not guessed at: the
-persistent-fire regime — the R3 self-driving comparison the pre-registration
-labels exploratory, to be re-run against the in-Rho automaton driver once
-enforcement stage A-S5 lands it (§4), together with the scion-grafting
-experiment E-1 ([ERKENS-THESIS-2024](references.md#erkens-thesis-2024),
-Chapter 6, whose per-state canned send bundles target exactly the re-spread
-cost the persistent regime pays). The verdict document now exists at
+The once-**measured-open** persistent-fire regime is now closed by the
+post-D-E5 rematch (experiment 174). The verdict document at
 [docs/benchmarks/set-automaton-vs-naive.md](../../benchmarks/set-automaton-vs-naive.md):
-it records the full pinned protocol run — including R3's measured split, in
-which the self-driving naive column wins every matching-work counter yet
-loses wall-clock about 1.7 times at scale — the frozen rule's mechanical
-output, and the protocol owner's decision: **keep both strategies**. The
-set-automaton network remains the production in-Rho matcher, the naive
-per-location emitter remains maintained as the measured sound-envelope
-alternative, and the retention is **experiment-contingent** on the E-6a /
-E-1 / post-A-S5 re-runs the decision record schedules.
+retains the full 2026-07-19 pinned run — including archived R3's counter win
+and 1.7-times wall loss — and appends the immutable 2026-08-10 result. The
+finite-route R3 treatment passes every semantic, counter, encoded-size, and
+wall-time gate at all six sizes; its R3/SA wall ratio falls from 0.7354 at
+$`n=2`$ to 0.1866 at $`n=64`$. The corrected decision is
+**retarget-generated-driver-to-r3**, but only inside a term-and-ruleset
+certificate proving a root-only identity-beta spine. The set-automaton
+quiescence driver remains the sound fallback, so shared-root, contextual, AC,
+and general congruence capabilities are preserved rather than traded away.
 
 One direction deserves its own paragraphs, because it reframes the machine
 rather than tuning it. Greg Meredith's framing: **the set automaton is a path
@@ -464,16 +460,27 @@ mechanism for R3's counter-win/wall-loss split above. The principled
 `EPathMap` value-handling fix (interned payloads, reference-shaped RSpace
 transport) is a tracked follow-up owned jointly with F1r3node.
 
-**The rematch the verdict scheduled is now runnable.** With A-S5 landed (§4),
-the in-Rho automaton driver exists in production form, so the post-A-S5
-R3-vs-driver re-run the keep-both decision is contingent on can proceed.
-Experiments **146** (E-3 lazy/incremental install: the cached installed `Par`
-currently has zero consumers; the incremental ceiling is the
-fingerprint-independent share) and **147** (E-1 scion grafting: per-state
-canned send bundles targeting the re-spread cost, [ERKENS-THESIS-2024](references.md#erkens-thesis-2024)
-Chapter 6) have locked pre-registration ledgers and are the next scheduled
-runs; the keep-both retention stands, experiment-contingent, until they and
-the rematch report.
+**The scheduled rematch is complete.** Experiment 174 compares production SA
+and persistent R3 at $`n\in\{2,4,8,16,32,64\}`$ using 3 warmups plus 51
+measured repetitions per arm, CPU affinity 0–7, a 12 GiB build cap, a 4 GiB
+run cap, swap disabled, and ordinary Rust stacks. Every cell observes the
+expected normal form and exactly $`n`$ firings. SA emits $`n`$ per-step
+observations; R3 emits one combined normal-form observation, a deliberate
+arm-specific contract whose initial analyzer mismatch was corrected without
+altering raw data.
+
+Production selection is an iterative proof obligation. It requires exactly
+one positional substitution entry of compiled shape
+`App(^lambda(scope), replacement)`, an arbitrary-length root spine of
+`App(^lambda(^bound(Z)), rest)`, and a terminal subtree with no remaining
+rewrite root. Rejected terms go directly to the general driver. A live
+9-test runtime suite includes complete-observation differential equivalence
+between both routes at depths 1–8; a 20,000-level admission test completes on
+a 256 KiB thread stack; and Rocq theorem
+`certified_persistent_recursive_general_equivalence` proves equality among
+the persistent transition system, bounded recursive oracle, and general
+quiescence driver. The proof compiles closed under the global context with no
+axioms or admissions.
 
 ## 6. References
 

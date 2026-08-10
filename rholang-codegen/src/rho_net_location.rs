@@ -15,7 +15,7 @@ use crate::rho_net_lower::GroundTerm;
 ///
 /// `root_site` is byte-length-prefixed and `position` is fixed-width, so the
 /// encoding is injective without a digest or delimiter-escaping convention.
-/// Subject indexes and the benchmark-only persistent matcher both use this
+/// Subject indexes and the production persistent matcher both use this
 /// function; neither may grow a channel by copying its ancestors' path.
 pub(crate) fn compact_position_channel(
     family: &str,

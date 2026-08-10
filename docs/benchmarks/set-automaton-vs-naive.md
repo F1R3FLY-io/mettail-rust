@@ -28,7 +28,7 @@ pattern matching is to make it more efficient than the pure Rholang proposal
 in the Knotted Topoi paper. If it is not more efficient then we should not
 target it."
 
-The answer, in three sentences. **First**, on matcher-attributable work the
+The evidence now has four chronological findings. **First**, on matcher-attributable work the
 two schemes are not merely close — the runtime counters (`matching_tau`,
 `attempts`, `successes`, `firing_visible`, `subst_tau`,
 `consumed_cost_units`) are **exactly equal, with zero rep-to-rep variance, at
@@ -54,14 +54,27 @@ still **loses wall-clock ~1.7× at scale** (52.36 s vs 30.87 s at $`n=64`$),
 because its $`2n^2-1`$ re-spread volume serializes through persistent-contract
 dispatches on the single session's critical path.
 
-Mechanical outcome under the pre-registered rule, and the decision record:
-§9. In one line: W1 (the counter-exponent leg) is unsatisfiable given exact
+**Fourth**, the scheduled post-D-E5 rematch (experiment 174, 2026-08-10)
+changes that result for the finite-route R3 implementation: R3 wins all six
+sizes $`n\in\{2,4,8,16,32,64\}`$ on committed matching COMMs, evaluated
+communication-prefix cost, encoded bytes, and wall time. Its wall geometric-mean
+ratio versus the production SA driver falls from 0.7354 at $`n=2`$ to 0.1866
+at $`n=64`$; every one-sided 95% upper bound is below the frozen 1.05
+non-inferiority threshold. The corrected frozen decision is
+**retarget-generated-driver-to-r3**, implemented only inside the statically
+certified root-identity-beta envelope with the general driver retained as the
+sound fallback (§5.7 and §9).
+
+Historical experiment-144 outcome under its pre-registered rule, and the
+decision record: §9. In one line: W1 (the counter-exponent leg) is unsatisfiable given exact
 counter equality, W2 (the wall-clock leg) holds on its swap/contextual family
 but the multi-rule family is sa-worse beyond the margin, so the frozen
 "naive wins or ties everywhere" clause fires and the rule outputs **retarget
 the in-Rho matcher to the naive per-location scheme within its sound
 envelope** — with the engineering decision resting with the protocol owner,
-and a keep-list that survives either way.
+and a keep-list that survives either way. Experiment 174 later evaluates the
+scheduled persistent-route contingency and selects the certified R3
+specialization without removing that keep-list.
 
 ## 2. Pre-registration and amendments
 
@@ -125,6 +138,13 @@ The provenance chain, in order:
 7. **R3** (commit `64e6783c`) ran as the pre-approved exploratory column
    after the primary dataset was frozen (`1ed4feec`), on its own dated
    directory with its own binary anchor.
+8. **Post-D-E5 rematch** (experiment 174) compared the production SA driver
+   with the finite-route persistent R3 implementation at six sizes, using 3
+   warmups and 51 measured repetitions per arm. The immutable run is
+   `data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/`; its first derived decision
+   was corrected without changing any raw sample because the analyzer had
+   confused SA's per-step observation cardinality with R3's combined-NF
+   cardinality. `ANALYSIS-CORRECTION.md` preserves that audit trail.
 
 ## 3. Environment and protocol
 
@@ -391,6 +411,53 @@ path as persistent-contract dispatches, where the per-step columns evaluate
 their (equally quadratic) spread volume as bulk sends per injection; the
 finer attribution is hypothesis-grade (§8, threat 5).
 
+### 5.7 Post-D-E5 R3 rematch — finite routes reverse the wall result
+
+The D-E5 implementation replaces the archived full-reduct, growing-path
+walker with a finite pattern-route pushdown automaton (PDA). For an
+identity-beta chain, each persistent accept removes one root cell and
+republishes only the captured argument. Thus the exact contraction count
+$`n`$ is a decreasing ranking function, not a traversal limit, and the
+current implementation has $`\tau_{\mathrm{match}}(n)=4n`$ and
+$`\tau_{\mathrm{respread}}(n)=3n`$ on this corpus.
+
+Experiment 174 re-ran the production comparison at
+$`n\in\{2,4,8,16,32,64\}`$, with 3 warmups and 51 measured repetitions per
+arm, CPU affinity 0–7, a 12 GiB build cap, a 4 GiB run cap, swap disabled, and
+ordinary Rust stacks. All twelve cells completed with zero DNF results.
+
+| $`n`$ | SA match | R3 match | cost SA / R3 | bytes SA / R3 | wall ratio R3 / SA | upper 95% |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 17 | 8 | 85 / 42 | 31,540 / 14,045 | 0.7354 | 0.7461 |
+| 4 | 46 | 16 | 230 / 74 | 74,880 / 15,005 | 0.5874 | 0.5970 |
+| 8 | 140 | 32 | 700 / 138 | 196,960 / 16,925 | 0.4766 | 0.4815 |
+| 16 | 472 | 64 | 2,360 / 266 | 582,720 / 20,765 | 0.3899 | 0.3944 |
+| 32 | 1,712 | 128 | 8,560 / 522 | 1,920,640 / 28,445 | 0.2908 | 0.2919 |
+| 64 | 6,496 | 256 | 32,480 / 1,034 | 6,862,080 / 43,899 | 0.1866 | 0.1872 |
+
+Every cell also records exactly $`n`$ visible firings and the correct terminal
+normal form. SA emits $`n`$ individual observations; persistent R3 emits one
+combined normal-form observation. The analyzer now validates these
+arm-specific contracts rather than equating their observation cardinalities.
+
+The production promotion is deliberately narrower than the benchmark
+constructor. An iterative certificate admits only a single positional
+substitution rule whose compiled shape is
+`App(^lambda(scope), replacement)`, an arbitrary-length root spine of identity
+binders, and a terminal subtree containing no further `App` rewrite root. A
+term needing congruence, a non-identity body, a value-producing native/AC
+family, or an unclassified deferred rule routes to the existing general
+quiescence driver. Live runtime differential tests compare complete observation
+sets for both routes; Rocq theorem
+`certified_persistent_recursive_general_equivalence` proves the persistent
+transition system, bounded recursive oracle, and general driver compute the
+same tail with the certificate's exact firing count.
+
+Sources: [the immutable run](data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/README.md),
+`rholang-codegen/src/rho_net_pattern_guard.rs`,
+`rholang-runtime/tests/rho_net_lambda_firing.rs`, and
+`formal/rocq/rho_bridge/theories/PersistentRootDriveEquivalence.v`.
+
 ## 6. The two refutations, with the mechanism
 
 This section is load-bearing: both pre-registered divergence predictions were
@@ -487,13 +554,15 @@ comparison:
 4. **HEAD spread during the run.** Concurrent docs-only commits moved HEAD
    under the executor; validity rests on the recorded binary sha256 anchors
    and the empty harness diff (`WARNINGS.md`), not on a frozen branch.
-5. **R3's wall-gap attribution is hypothesis-grade.** The measured facts are
-   the counter inversion and the 1.7× wall loss; the *account* — critical-path
+5. **Archived R3's wall-gap attribution is hypothesis-grade.** The measured facts for
+   the 2026-07-19 implementation are the counter inversion and the 1.7× wall loss; the *account* — critical-path
    serialization of the $`2n^2-1`$ re-spread through persistent-contract
    dispatches vs bulk-evaluated per-injection spreads, with possible
    contributions from RSpace contention on the walker family and lost
-   per-step bulk-evaluation parallelism — was not perf-profiled and remains
-   a set of hypotheses for the E-1/A-S5 follow-ups.
+   per-step bulk-evaluation parallelism — was not perf-profiled. The post-D-E5
+   finite-route rematch removes the quadratic re-spread and reverses the wall
+   result (§5.7); it does not retroactively establish which archived component
+   contributed what fraction of the old loss.
 6. **Consume-test is secondary.** The paper-literal encoding ran only on its
    admitted single-candidate cells and carried no registered statistics; its
    medians tracked pattern-guard closely, so the headline conclusions do not
@@ -549,6 +618,17 @@ states the rule's mechanical output; the decision rests with the user.
 > regime, and the post-A-S5 in-Rho-driver rematch are the paths expected to supply the
 > automaton's edge. If they do not, this decision is revisited against this same evidence pack.
 
+> **Decision update (2026-08-10, experiment 174).** The scheduled rematch has
+> now supplied the missing evidence. The corrected frozen decision is
+> `retarget-generated-driver-to-r3`: the finite-route persistent treatment
+> passes every semantic, counter, size, and wall-time gate at all six sizes.
+> Generated Lambda-family invocations therefore select R3 only after a
+> term-and-ruleset certificate proves the root-identity-beta envelope; the
+> general set-automaton quiescence driver remains the mandatory fallback for
+> every other term. This is a specialization decision, not deletion of the
+> general automaton, its shared-root capability, its AC/contextual paths, or
+> its compile-time interner.
+
 **The keep-list — regardless of the decision** (pre-registered in the same
 clause, restated by the decision record):
 
@@ -587,6 +667,11 @@ recorded as such rather than folded into the verdict:
    in-Rho quiescence driver (the pre-registration marks R3 exploratory for
    precisely this reason).
 
+The post-A-S5 rematch is complete and selects certified R3 (§5.7). The
+general automaton remains for every portion of the language surface outside
+that proof envelope; the historical list above is retained to show how the
+decision evolved rather than presenting completed work as still pending.
+
 ## 10. Reproduction
 
 - **Protocol (verbatim executor):** `data/sa-vs-naive/full.sh` — phases
@@ -610,6 +695,12 @@ recorded as such rather than folded into the verdict:
   `data/sa-vs-naive/2026-07-19/csv/b7_{welch_cells,w2_family,mrs_family}.csv`
   (Welch per cell on the 30 measured `inj_ns` samples, one-sided 5%-margin
   tests, BH per family, log-log fits).
+- **Post-D-E5 rematch:**
+  `data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/` contains the immutable 12-cell
+  experiment-174 record, corrected derived analysis, SHA-256 manifest, and
+  exact commands. It uses ordinary Rust stacks, `MemoryMax=12G` for the build,
+  `MemoryMax=4G` for execution, and `MemorySwapMax=0`; no `RUST_MIN_STACK` or
+  `stacker` setting participates.
 - **Data locations** (per `data/sa-vs-naive/2026-07-19/ARCHIVED.md`): lean
   record in git; full per-replicate samples in pgmcp experiment 144
   (`set-automaton-vs-naive-kt-appendix-a-in-rho-matching-efficiency`; arms

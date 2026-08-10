@@ -1,5 +1,5 @@
-//! Track B — B1: the NAIVE Knotted-Topoi Appendix-A baseline emitter
-//! (BENCHMARK-ONLY, quarantined behind the `bench-naive-baseline` feature).
+//! Pattern-guard matcher engines shared by the production persistent-root PDA
+//! and the benchmark-only Knotted-Topoi Appendix-A oracle.
 //!
 //! # What this is
 //!
@@ -70,16 +70,21 @@
 //!   the persistent-consume/republish livelock cannot arise from this emitter's
 //!   own installs.
 //!
-//! # Quarantine
+//! # Production boundary
 //!
-//! Behind `bench-naive-baseline` ONLY. No production entry point, driver, or
-//! macro-generated code references this module; budgets/metering remain
-//! entirely F1r3node's concern and no cost surface exists here.
+//! The unshared per-step baseline remains reachable only through the
+//! `bench-naive-baseline` crate exports.  The persistent R3 PDA is shared with
+//! generated production invocations, but only after
+//! [`persistent_root_drive_certificate`] proves its complete root-only sound
+//! envelope; all other subjects retain the general quiescence driver.
+
+#![cfg_attr(not(feature = "bench-naive-baseline"), allow(dead_code))]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView, SlotId};
+use mettail_ast::language::LanguageDef;
 use models::rhoapi::var::{VarInstance, WildcardMsg};
 use models::rhoapi::{MatchCase, Par, Receive, ReceiveBind, Var};
 use models::rust::rholang::implicits::GPrivateBuilder;
@@ -92,12 +97,17 @@ use crate::rho_net_automaton::{
     bits, build_accept_send, collect_nested_schedule, wrap_capture_chain, AutomatonUnsupported,
     Descent,
 };
+use crate::rho_net_drive::{
+    drive_err_channel, drive_fired_channel, drive_fuel_channel, RhoNetDriveInvocation,
+    RhoNetDriveStrategy,
+};
 use crate::rho_net_location::{
     compact_position_channel, MatcherPosition, SubjectLocationIndex, SubjectPosition,
 };
 use crate::rho_net_lower::{
     contextual_hole_bridge_par, contextual_premise_hole_channel, reflect_ground_term_par,
-    reflect_tag, spread_term_par, GroundTerm,
+    reflect_tag, spread_term_par, GroundTerm, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_ZERO_REFLECT_LABEL,
 };
 use crate::rho_net_ruleset::InRhoMatchingRuleset;
 use crate::rho_net_subst_trs as trs;
@@ -833,7 +843,7 @@ fn collect_ruleset_sites(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// R3 — the SELF-DRIVING exploratory variant (the PERSISTENT-fire regime probe)
+// R3 — the persistent self-driving pattern-guard engine
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // USER-approved, PRE-REGISTERED, clearly-labeled EXPLORATORY column
@@ -913,6 +923,7 @@ struct SelfDrivingRoute {
 }
 
 struct SelfDrivingEntry {
+    pattern_id: PatternId,
     schedule: NaiveEntrySchedule,
 }
 
@@ -1021,7 +1032,10 @@ fn build_selfdriving_plan(
 
         let previous = root_routes.insert(schedule.root_op.clone(), root_route_key.clone());
         debug_assert!(previous.is_none(), "duplicate roots are rejected before route planning");
-        entries.push(SelfDrivingEntry { schedule });
+        entries.push(SelfDrivingEntry {
+            pattern_id: view.entry_id(entry),
+            schedule,
+        });
     }
 
     Ok(SelfDrivingPlan { entries, routes, root_routes })
@@ -1094,12 +1108,24 @@ fn selfdriving_entry_receiver_par(
     schedule: &NaiveEntrySchedule,
     accept_channel: &str,
     language_fingerprint: &str,
+    fired_rule_label: Option<&str>,
 ) -> Par {
     // Linear entry ⇒ first_occ = [0,…,k-1] (see `naive_kt_entry_receiver_par`).
     let k = schedule.captures.len();
     let first_occ: Vec<usize> = (0..k).collect();
     let respread_root = trs::tag_par(language_fingerprint, RESPREAD_ROOT_RESERVED_LABEL);
-    let accept = build_accept_send_to_name(accept_channel, respread_root, k, &first_occ);
+    let mut accept = build_accept_send_to_name(accept_channel, respread_root, k, &first_occ);
+    if let Some(rule_label) = fired_rule_label {
+        let ledger = trs::send(
+            trs::ground(new_gstring_par(
+                drive_fired_channel(language_fingerprint),
+                Vec::new(),
+                false,
+            )),
+            vec![trs::ground(new_gstring_par(rule_label.to_string(), Vec::new(), false))],
+        );
+        accept = accept.append(ledger.par);
+    }
     let mut body = wrap_capture_chain(&schedule.captures, accept);
     for descent in schedule.descents.iter().rev() {
         let tag =
@@ -1175,6 +1201,7 @@ fn respread_root_receiver_par(
     out_channel: &str,
     redex_root_routes: &BTreeMap<String, String>,
     nf_labels: &BTreeSet<String>,
+    production_diagnostics: bool,
 ) -> Par {
     let fp = language_fingerprint;
     let chan = trs::tag_par(fp, RESPREAD_ROOT_RESERVED_LABEL);
@@ -1204,13 +1231,23 @@ fn respread_root_receiver_par(
             ),
         });
     }
+    let respread_error =
+        trs::send(trs::ground(trs::tag_par(fp, RESPREAD_ERR_RESERVED_LABEL)), vec![env.var("t")]);
+    let error_body = if production_diagnostics {
+        trs::par2(
+            respread_error,
+            trs::send(
+                trs::ground(new_gstring_par(drive_err_channel(fp), Vec::new(), false)),
+                vec![env.var("t")],
+            ),
+        )
+    } else {
+        respread_error
+    };
     cases.push(trs::Case {
         pattern: trs::pat_wildcard(),
         free_count: 0,
-        body: trs::send(
-            trs::ground(trs::tag_par(fp, RESPREAD_ERR_RESERVED_LABEL)),
-            vec![env.var("t")],
-        ),
+        body: error_body,
     });
     let body = trs::match_(env.var("t"), cases);
     trs::persistent_contract(chan, 1, body).par
@@ -1239,7 +1276,11 @@ fn respread_root_receiver_par(
 /// wildcard arm and emits on `⌜^respread-err⌝`.  A known constructor at a route
 /// that expects another constructor produces no route case, which is exactly a
 /// failed pattern demand: no accept can fire.
-fn respread_walker_receiver_par(language_fingerprint: &str, routes: &[SelfDrivingRoute]) -> Par {
+fn respread_walker_receiver_par(
+    language_fingerprint: &str,
+    routes: &[SelfDrivingRoute],
+    production_diagnostics: bool,
+) -> Par {
     let fp = language_fingerprint;
     let chan = trs::tag_par(fp, RESPREAD_RESERVED_LABEL);
     let env = trs::Env::root(&["t", "route"]);
@@ -1296,13 +1337,23 @@ fn respread_walker_receiver_par(language_fingerprint: &str, routes: &[SelfDrivin
             },
         });
     }
+    let respread_error =
+        trs::send(trs::ground(trs::tag_par(fp, RESPREAD_ERR_RESERVED_LABEL)), vec![env.var("t")]);
+    let error_body = if production_diagnostics {
+        trs::par2(
+            respread_error,
+            trs::send(
+                trs::ground(new_gstring_par(drive_err_channel(fp), Vec::new(), false)),
+                vec![env.var("t")],
+            ),
+        )
+    } else {
+        respread_error
+    };
     cases.push(trs::Case {
         pattern: trs::pat_wildcard(),
         free_count: 0,
-        body: trs::send(
-            trs::ground(trs::tag_par(fp, RESPREAD_ERR_RESERVED_LABEL)),
-            vec![env.var("t")],
-        ),
+        body: error_body,
     });
     let body = trs::match_(env.var("t"), cases);
     trs::persistent_contract(chan, 2, body).par
@@ -1354,6 +1405,17 @@ pub fn naive_kt_selfdriving_call_par(
     root_site: &str,
     out_channel: &str,
 ) -> Result<(Par, usize), NaiveKtUnsupported> {
+    selfdriving_call_par(ruleset, subject, root_site, out_channel, None, false)
+}
+
+fn selfdriving_call_par(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    root_site: &str,
+    out_channel: &str,
+    fired_rule_labels: Option<&BTreeMap<PatternId, String>>,
+    production_diagnostics: bool,
+) -> Result<(Par, usize), NaiveKtUnsupported> {
     let view = ruleset.automaton.view();
     validate_naive_ruleset(&view)?;
     let mut subject_labels = BTreeSet::new();
@@ -1375,10 +1437,14 @@ pub fn naive_kt_selfdriving_call_par(
     let mut installed = 0usize;
     for (entry, planned) in plan.entries.iter().enumerate() {
         let accept_channel = entry_accept_channel(ruleset, view.entry_id(entry));
+        let fired_rule_label = fired_rule_labels
+            .and_then(|labels| labels.get(&planned.pattern_id))
+            .map(String::as_str);
         let receiver = selfdriving_entry_receiver_par(
             &planned.schedule,
             accept_channel,
             &ruleset.language_fingerprint,
+            fired_rule_label,
         );
         call = call.append(receiver);
         installed += 1;
@@ -1388,8 +1454,13 @@ pub fn naive_kt_selfdriving_call_par(
         out_channel,
         &plan.root_routes,
         &nf_labels,
+        production_diagnostics,
     ));
-    call = call.append(respread_walker_receiver_par(&ruleset.language_fingerprint, &plan.routes));
+    call = call.append(respread_walker_receiver_par(
+        &ruleset.language_fingerprint,
+        &plan.routes,
+        production_diagnostics,
+    ));
 
     let reflected = trs::ground(reflect_ground_term_par(subject, &ruleset.language_fingerprint));
     let initial = if let Some(route_key) = plan.root_routes.get(&subject.constructor) {
@@ -1411,8 +1482,182 @@ pub fn naive_kt_selfdriving_call_par(
     Ok((call.append(initial.par), installed))
 }
 
+/// A term-and-ruleset proof that the persistent root PDA is a total
+/// quiescence driver for this invocation.
+///
+/// The admitted class is semantic rather than benchmark-sized: one linear
+/// substitution rewrite has the reflected shape
+/// `R(^lambda(scope), replacement)`, and the subject is an arbitrary-length
+/// spine of `R(^lambda(^bound(^Z)), rest)`.  Every firing therefore contracts
+/// exactly to `rest`, strictly decreases the spine length, and ends in a
+/// subtree containing no occurrence of `R`.  The proof is computed by an
+/// iterative walk and imposes no traversal-depth limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistentRootDriveCertificate {
+    pattern_id: PatternId,
+    /// The generated rewrite label emitted to the production firing ledger.
+    pub rule_label: String,
+    /// Root constructor of the certified substitution rewrite.
+    pub root_constructor: String,
+    /// Exact number of root contractions before the normal-form tail.
+    pub contractions: usize,
+}
+
+/// Prove that `subject` belongs to the persistent root PDA's total sound
+/// envelope.  `None` is an ordinary routing decision: the generated caller
+/// falls back to the general congruence-capable quiescence driver.
+pub fn persistent_root_drive_certificate(
+    def: &LanguageDef,
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+) -> Option<PersistentRootDriveCertificate> {
+    // The fast path currently proves the complete rewrite system, not one
+    // family in isolation. Value-producing dispatch families or deferred rules
+    // could introduce redexes not represented by the positional root PDA.
+    // Contextual families are allowed: the tail proof below establishes that
+    // their premise rewrite is absent at every nested position.
+    let deferred_are_congruence_closure = ruleset.deferred.iter().all(|entry| {
+        def.rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == entry.rule_label)
+            .is_some_and(|rewrite| rewrite.congruence_premise().is_some())
+    });
+    if !deferred_are_congruence_closure
+        || !ruleset.native_dispatch.is_empty()
+        || !ruleset.ac_dispatch.is_empty()
+        || !ruleset.structural_ac_dispatch.is_empty()
+        || !ruleset.nested_structural_ac_dispatch.is_empty()
+    {
+        return None;
+    }
+
+    let view = ruleset.automaton.view();
+    if view.entry_count() != 1 || validate_naive_ruleset(&view).is_err() {
+        return None;
+    }
+    let pattern_id = view.entry_id(0);
+    let rewrite = def.rewrites.get(pattern_id.0)?;
+    crate::rho_net_lower::subst_rule_shape(&rewrite.left, &rewrite.right)?;
+
+    // Prove the compiled LHS shape, independently of source spelling:
+    // R(^lambda(scope), replacement), with both leaves linear variables.
+    let AutomatonNode::App { op: root_op, args: root_args } = view.node(view.entry_root_state(0))
+    else {
+        return None;
+    };
+    let [binder_pattern, replacement_pattern] = root_args else {
+        return None;
+    };
+    if !matches!(view.node(replacement_pattern.state()), AutomatonNode::Var) {
+        return None;
+    }
+    let AutomatonNode::App { op: binder_op, args: binder_args } = view.node(binder_pattern.state())
+    else {
+        return None;
+    };
+    let [scope_pattern] = binder_args else {
+        return None;
+    };
+    if binder_op.as_str() != LAMBDA_REFLECT_LABEL
+        || !matches!(view.node(scope_pattern.state()), AutomatonNode::Var)
+    {
+        return None;
+    }
+
+    let mut contractions = 0usize;
+    let mut tail = subject;
+    while tail.coll_type.is_none()
+        && tail.constructor == root_op.as_str()
+        && tail.children.len() == 2
+    {
+        let binder = &tail.children[0];
+        let replacement = &tail.children[1];
+        let identity_body = binder.coll_type.is_none()
+            && binder.constructor == LAMBDA_REFLECT_LABEL
+            && binder.children.len() == 1
+            && binder.children[0].coll_type.is_none()
+            && binder.children[0].constructor == BOUND_VAR_REFLECT_LABEL
+            && binder.children[0].children.len() == 1
+            && binder.children[0].children[0].coll_type.is_none()
+            && binder.children[0].children[0].constructor == PEANO_ZERO_REFLECT_LABEL
+            && binder.children[0].children[0].children.is_empty();
+        if !identity_body {
+            return None;
+        }
+        contractions = contractions.checked_add(1)?;
+        tail = replacement;
+    }
+    if contractions == 0 {
+        return None;
+    }
+
+    // The terminal subtree must already be globally normal for the positional
+    // rewrite system. Contextual dispatch records merely close these same
+    // rewrites under constructors; because no rewrite root remains anywhere,
+    // none of those congruence families is applicable. Any nested occurrence
+    // of the rewrite root needs congruence and therefore routes to the general
+    // driver instead.
+    let mut work = vec![tail];
+    while let Some(term) = work.pop() {
+        if term.coll_type.is_some()
+            || term.constructor == root_op.as_str()
+            || respread_reserved_labels().contains(&term.constructor.as_str())
+        {
+            return None;
+        }
+        work.extend(term.children.iter().rev());
+    }
+
+    Some(PersistentRootDriveCertificate {
+        pattern_id,
+        rule_label: rewrite.name.to_string(),
+        root_constructor: root_op.to_string(),
+        contractions,
+    })
+}
+
+/// Assemble a production persistent-root invocation when
+/// [`persistent_root_drive_certificate`] succeeds.  The call emits the same
+/// OUT, firing-ledger, and typed-error observations as the general production
+/// driver.  It returns `Ok(None)` outside the proved envelope so generated code
+/// can preserve the general driver as a sound fallback.
+pub fn persistent_root_drive_invocation(
+    def: &LanguageDef,
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    out_channel: &str,
+) -> Result<Option<RhoNetDriveInvocation>, String> {
+    let Some(certificate) = persistent_root_drive_certificate(def, ruleset, subject) else {
+        return Ok(None);
+    };
+    let mut labels = BTreeMap::new();
+    labels.insert(certificate.pattern_id, certificate.rule_label.clone());
+    let (call, _installed) = selfdriving_call_par(
+        ruleset,
+        subject,
+        "@production-root",
+        out_channel,
+        Some(&labels),
+        true,
+    )
+    .map_err(|error| format!("persistent root drive rejected its certified subject: {error}"))?;
+    let reflected = reflect_ground_term_par(subject, &ruleset.language_fingerprint);
+    Ok(Some(RhoNetDriveInvocation {
+        call,
+        subject: reflected,
+        strategy: RhoNetDriveStrategy::PersistentRootIdentityBeta {
+            contractions: certificate.contractions,
+        },
+        per_path_fuel: i64::try_from(certificate.contractions).unwrap_or(i64::MAX),
+        out_channel: out_channel.to_string(),
+        fired_channel: drive_fired_channel(&ruleset.language_fingerprint),
+        err_channel: drive_err_channel(&ruleset.language_fingerprint),
+        fuel_channel: drive_fuel_channel(&ruleset.language_fingerprint),
+    }))
+}
+
 #[cfg(test)]
-#[path = "../tests/support/rho_net_naive_kt_recursive_oracle.rs"]
+#[path = "../tests/support/rho_net_pattern_guard_recursive_oracle.rs"]
 mod recursive_oracle;
 
 #[cfg(test)]

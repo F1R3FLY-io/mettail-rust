@@ -726,6 +726,9 @@ pub enum RhoMachineInvocation {
     RunRhoNetDriveAndReadObservationSet {
         /// The closed drive seed `Par` (`RhoNetDriveInvocation::call`).
         call: Par,
+        /// The reflected subject carried by the invocation.  Kept explicitly
+        /// because optimized drive strategies need not encode a `^drive` send.
+        subject: Par,
         /// The four observation channels (OUT + fired/err/fuel, fingerprint-derived).
         channels: DriveObservationChannels,
         /// The per-path fuel the seed threads (for the fuel-exhaustion error text).
@@ -1043,90 +1046,22 @@ pub fn build_rho_net_replay_invocation_from_contracts(
 /// contractum, and rests the quiescent term on OUT — with the four-channel
 /// readback and the always-on §4.7 cross-check run by the invocation's execute
 /// arm. `nf_scan` is the language's static redex mirror (supplied by the
-/// per-language production wrapper); the per-path fuel is read back from the
-/// seed's own fuel datum (`⌜^drive⌝!(⟦subject⟧, fuel:GInt, @out)` — the
-/// [`mettail_rholang_codegen::rho_net_drive_call_par`] ABI), so the invocation
-/// can never disagree with what the driver actually threads.
+/// per-language production wrapper).  Subject and finite rewrite bound are
+/// explicit invocation metadata, so optimized strategies do not have to mimic
+/// the general `^drive` seed's byte shape merely for readback.
 #[cfg(feature = "runtime-report")]
 pub fn build_rho_net_drive_invocation_from_contract(
     invocation: mettail_rholang_codegen::RhoNetDriveInvocation,
     nf_scan: DriveNfScan,
 ) -> RhoMachineInvocation {
     let channels = DriveObservationChannels::from_invocation(&invocation);
-    let per_path_fuel = drive_seed_fuel(&invocation.call);
     RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet {
         call: invocation.call,
+        subject: invocation.subject,
         channels,
-        per_path_fuel,
+        per_path_fuel: invocation.per_path_fuel,
         nf_scan,
     }
-}
-
-/// The BODY `Par` of the A-S5.8 FLOAT-ROUTED drive seed's `new rf { … }` scope
-/// (`mettail_rholang_codegen::rho_net_drive_float_call_par` — decision Q-SEED = S2:
-/// `new rf { ⌜^float⌝!(⟦subject⟧, rf) | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) } }`),
-/// or `None` when the call is the legacy bare-send seed shape.
-#[cfg(feature = "runtime-report")]
-fn float_routed_seed_body(call: &Par) -> Option<&Par> {
-    if !call.sends.is_empty() {
-        return None;
-    }
-    call.news.first().and_then(|new| new.p.as_ref())
-}
-
-/// The per-path fuel datum of a drive seed — the ground `GInt` of the `^drive` send, by
-/// the [`mettail_rholang_codegen::rho_net_drive_call_par`] ABI
-/// (`⌜^drive⌝!(⟦subject⟧, fuel:GInt, @out)` — the second send datum) or its A-S5.8
-/// float-routed sibling ([`float_routed_seed_body`] — the re-drive `for`'s body send,
-/// F8-AM-5a). A seed violating both ABIs is a codegen-contract defect, never valid
-/// input, so this fails loud.
-#[cfg(feature = "runtime-report")]
-fn drive_seed_fuel(call: &Par) -> i64 {
-    let drive_send_datum = match float_routed_seed_body(call) {
-        // S2: the fuel rides the redrive send inside `for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) }`.
-        Some(body) => body
-            .receives
-            .first()
-            .and_then(|receive| receive.body.as_ref())
-            .and_then(|redrive| redrive.sends.first())
-            .and_then(|send| send.data.get(1)),
-        // Legacy: the bare seed send's second datum.
-        None => call.sends.first().and_then(|send| send.data.get(1)),
-    };
-    drive_send_datum
-        .and_then(|datum| datum.exprs.first())
-        .and_then(|expr| match expr.expr_instance {
-            Some(models::rhoapi::expr::ExprInstance::GInt(fuel)) => Some(fuel),
-            _ => None,
-        })
-        .expect(
-            "the drive seed carries (subject, fuel:GInt, out) — the rho_net_drive_call_par \
-             ABI or its A-S5.8 float-routed sibling",
-        )
-}
-
-/// The reflected SUBJECT datum of a drive seed, decoded as a runtime observation value —
-/// the §4.7 ledger check's `subject had a redex` input is computed by scanning exactly
-/// what the seed delivered (the A-S5.5 test-tier `decode_seed_subject` pattern,
-/// promoted). S2-aware (F8-AM-5a): the legacy seed's subject is the first send datum;
-/// the float-routed seed's is the `⌜^float⌝` send's first datum inside the `new rf`
-/// scope. Fail-loud: an undecodable subject is a reflection-ABI defect.
-#[cfg(feature = "runtime-report")]
-fn drive_seed_subject(call: &Par) -> Result<RuntimeObservationValue, String> {
-    let seed_sends = match float_routed_seed_body(call) {
-        Some(body) => &body.sends,
-        None => &call.sends,
-    };
-    let datum = seed_sends
-        .first()
-        .and_then(|send| send.data.first())
-        .ok_or_else(|| {
-            "the drive seed carries (subject, fuel, out) — the rho_net_drive_call_par ABI \
-             or its A-S5.8 float-routed sibling"
-                .to_string()
-        })?;
-    par_as_runtime_observation_value(datum)
-        .ok_or_else(|| "the drive seed's reflected subject must decode".to_string())
 }
 
 #[cfg(feature = "runtime-report")]
@@ -1264,6 +1199,7 @@ impl RhoMachineInvocation {
             },
             RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet {
                 call,
+                subject,
                 channels,
                 per_path_fuel,
                 nf_scan,
@@ -1272,7 +1208,9 @@ impl RhoMachineInvocation {
                 // bit of the §4.7 ledger check is computed by scanning the seed's OWN
                 // reflected subject datum (no oracle, no Dovetail work), then the whole
                 // observation set is read back from one execution and cross-checked.
-                let subject = drive_seed_subject(&call)?;
+                let subject = par_as_runtime_observation_value(&subject).ok_or_else(|| {
+                    "the drive invocation's reflected subject must decode".to_string()
+                })?;
                 let subject_had_redex = nf_scan.redex_present(&subject);
                 let set = backend
                     .run_rho_net_with_call_and_read_observation_set(&call, &channels)

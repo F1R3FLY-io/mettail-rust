@@ -153,12 +153,9 @@ pub mod rho_net_incremental;
 /// collision-free, fingerprint-scoped channel ABI.
 pub(crate) mod rho_net_location;
 pub mod rho_net_lower;
-/// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
-/// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
-/// No production entry point or macro-generated code references it; a default
-/// build contains no trace of the module.
-#[cfg(feature = "bench-naive-baseline")]
-pub mod rho_net_naive_kt;
+/// Pattern-guard matcher engines. The persistent root PDA is production code;
+/// the unshared Appendix-A oracle remains exported only to benchmark builds.
+mod rho_net_pattern_guard;
 pub mod rho_net_ruleset;
 pub mod rho_net_subst_trs;
 pub mod system_process_band;
@@ -231,7 +228,8 @@ pub use rho_net_drive::{
     rho_net_drive_call_par, rho_net_drive_call_par_with_fuel, rho_net_drive_float_call_par,
     rho_net_drive_float_call_par_with_fuel, rho_net_drive_float_invocation,
     rho_net_drive_invocation, DriveAdmission, DriveCheck, DriveFrame, DriveRedexArm,
-    FiringEmission, RhoNetDriveInvocation, ScionPolicy, DRIVE_DEFAULT_FUEL, DRIVE_OPT_IN,
+    FiringEmission, RhoNetDriveInvocation, RhoNetDriveStrategy, ScionPolicy, DRIVE_DEFAULT_FUEL,
+    DRIVE_OPT_IN,
 };
 pub use rho_net_float::language_is_float_bearing;
 pub use rho_net_flt::{
@@ -283,11 +281,15 @@ pub use rho_net_lower::{
     FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL,
 };
 #[cfg(feature = "bench-naive-baseline")]
-pub use rho_net_naive_kt::{
+pub use rho_net_pattern_guard::{
     naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
     naive_kt_selfdriving_call_par, respread_reserved_labels, NaiveGuardEncoding,
-    NaiveKtContextualUnsupported, NaiveKtUnsupported, RESPREAD_ERR_RESERVED_LABEL,
-    RESPREAD_RESERVED_LABEL, RESPREAD_ROOT_RESERVED_LABEL,
+    NaiveKtContextualUnsupported, NaiveKtUnsupported,
+};
+pub use rho_net_pattern_guard::{
+    persistent_root_drive_certificate, persistent_root_drive_invocation,
+    PersistentRootDriveCertificate, RESPREAD_ERR_RESERVED_LABEL, RESPREAD_RESERVED_LABEL,
+    RESPREAD_ROOT_RESERVED_LABEL,
 };
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, convert_lhs_pattern,

@@ -422,6 +422,21 @@ pub fn drive_fuel_channel(language_fingerprint: &str) -> String {
 /// languages): the seed `call` plus the four observation-channel names the readback API
 /// (`DriveObservationChannels`) consumes. The drive analogue of
 /// [`crate::rho_net_lower::RhoNetInjectionInvocation`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhoNetDriveStrategy {
+    /// The general generated quiescence driver: a `^drive` seed traverses and
+    /// rewrites the complete subject, including congruence positions.
+    GeneralQuiescence,
+    /// The statically certified persistent-root matcher.  Each contraction
+    /// removes one identity binder from a root-only beta spine, so the
+    /// certificate supplies an exact finite firing bound and no dynamic
+    /// traversal-depth limit is required.
+    PersistentRootIdentityBeta {
+        /// Exact number of root contractions certified before emission.
+        contractions: usize,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoNetDriveInvocation {
     /// The closed seed `Par`: `⌜^drive⌝!(⟦term⟧, fuel, @out_channel)` — or, for a
@@ -432,6 +447,13 @@ pub struct RhoNetDriveInvocation {
     /// directly so harness/ledger readers survive BOTH seed shapes without navigating the
     /// call structure (under S2 the subject is no longer `call.sends[0].data[0]`).
     pub subject: Par,
+    /// Which generated execution strategy owns [`call`](Self::call).  This is
+    /// explicit provenance rather than an inference from the `Par` byte shape.
+    pub strategy: RhoNetDriveStrategy,
+    /// The execution's finite rewrite bound for diagnostic reporting.  The
+    /// general driver threads this value dynamically; the certified persistent
+    /// root strategy records its exact statically proved contraction count.
+    pub per_path_fuel: i64,
     /// The quoted channel the quiescent resting term lands on.
     pub out_channel: String,
     /// [`drive_fired_channel`] of the language fingerprint.
@@ -478,6 +500,8 @@ pub fn rho_net_drive_invocation(
     RhoNetDriveInvocation {
         call: rho_net_drive_call_par(language_fingerprint, subject.clone(), out_channel),
         subject,
+        strategy: RhoNetDriveStrategy::GeneralQuiescence,
+        per_path_fuel: DRIVE_DEFAULT_FUEL,
         out_channel: out_channel.to_string(),
         fired_channel: drive_fired_channel(language_fingerprint),
         err_channel: drive_err_channel(language_fingerprint),
@@ -560,6 +584,8 @@ pub fn rho_net_drive_float_invocation(
     RhoNetDriveInvocation {
         call: rho_net_drive_float_call_par(language_fingerprint, subject.clone(), out_channel),
         subject,
+        strategy: RhoNetDriveStrategy::GeneralQuiescence,
+        per_path_fuel: DRIVE_DEFAULT_FUEL,
         out_channel: out_channel.to_string(),
         fired_channel: drive_fired_channel(language_fingerprint),
         err_channel: drive_err_channel(language_fingerprint),
