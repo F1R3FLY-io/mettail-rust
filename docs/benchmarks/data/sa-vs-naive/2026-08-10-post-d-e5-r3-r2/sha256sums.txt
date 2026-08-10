@@ -1,0 +1,17 @@
+d958c94562376e56df5034adb53b95c886eae6d86f958555d017f38f7b748675  /home/dylon/Workspace/f1r3fly.io/mettail-rust/target/release/bench_sa_vs_naive_driver
+ec24662394a86e699b0b9b412b2660dd9629b96eac21b1ce16d41ae6888fae6f  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n16.jsonl
+2dd2cf2e0ed99f8eaf12aff34aaba5677696fe7c4b2b781862f1a543e1edafe2  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n2.jsonl
+504c0485919a9ef05a1cbf9195f916884dfa9311735762a50f71ba368ab29f67  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n32.jsonl
+f32a74b0e921142213105b3456c9fc6477801281ffc42cfb0ba8ff2468a4c3f1  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n4.jsonl
+b99c91585ab76747da5da02b0ce31eef17790d6011d86bfdd3a37649b5f9ea09  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n64.jsonl
+06882e2db6af1bd5e01b933fc3e181543d0d3b61a9f71d4d5e8596660ede653c  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n8.jsonl
+8345ffc7c270ce187dd0fd365559d0588755fc0093874dfc654acb0b23b3d319  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n16.jsonl
+44b68f81db0fe3454c86890066673007265a113470230e33cfb6bb8d992779fb  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n2.jsonl
+cce58391839006b84a86780e853edb8701096aa03aae12490fd0c7bfa10842eb  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n32.jsonl
+101352713b1a8a3cff5943e17a7fe9d4d910c98c5f2e9c46beb884b5692220df  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n4.jsonl
+fbdc464cc7466501bbb77e1e92811eaa720790311d9324da7384098235964f93  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n64.jsonl
+9689aa6fab39e457db6fcf4653461e3ce949517d79427697c431c8bb9c2cfc08  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n8.jsonl
+809134cbacca080bcac3a7ed4a9ee5fadd95affb7298dc2858e4c267a3d6c362  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/samples.tsv
+eda8141ff7dadc86de046cd585a5fbf6ba91388890f8d41e4db32e3b77d83ec0  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/summary.tsv
+269cbcaa2ef338c92c20315d73c47c6ce0c08ca287667f624d774f00709a1cdb  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/analysis.json
+3f9146a549bb9cee36df1be64dd92d43d2072bcef896f59c34faf619c2edad3e  docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/comparison.md

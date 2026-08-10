@@ -1,0 +1,19 @@
+post-D-E5 R3 sanity — pgmcp experiment 174
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n16.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n2.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n32.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n4.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n64.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_naive-r3_n8.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n16.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n2.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n32.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n4.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n64.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS docs/benchmarks/data/sa-vs-naive/2026-08-10-post-d-e5-r3-r2/driver/lambda_chain_sa_n8.jsonl warm=3 measured=51 dnf=0 deterministic_vectors=1
+PASS n=2 equal visible firings=2; R3 matching/subst/respread/other/join=8/6/6/2/0
+PASS n=4 equal visible firings=4; R3 matching/subst/respread/other/join=16/12/12/4/0
+PASS n=8 equal visible firings=8; R3 matching/subst/respread/other/join=32/24/24/8/0
+PASS n=16 equal visible firings=16; R3 matching/subst/respread/other/join=64/48/48/16/0
+PASS n=32 equal visible firings=32; R3 matching/subst/respread/other/join=128/96/96/32/0
+PASS n=64 equal visible firings=64; R3 matching/subst/respread/other/join=256/192/192/64/0
