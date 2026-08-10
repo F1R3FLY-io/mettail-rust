@@ -149,7 +149,7 @@ A partial inventory of `target/generated/lambda/`:
 | `rho_net_invocation.rs`, `rho_scalar_invocation.rs` | the in-Rho (Rholang) set-automaton lowering |
 | `metadata.rs` | reflected description of the whole specification + its fingerprint |
 | `strategies.rs`, `term_generation.rs`, `random_generation.rs` | proptest strategies and term generators |
-| `binder_congruence.rs`, `freshness.rs`, `normalize.rs`, `flatten.rs`, … | supporting passes |
+| `binder_congruence.rs`, `normalize.rs`, `flatten.rs`, … | supporting passes (`freshness.rs` was retired in #95 after it became uncalled) |
 
 plus `languages/tests/gen_lambda_{unit,rewrite,prop,analytical}.rs` — auto-generated tests, one per
 constructor and one per rewrite rule.

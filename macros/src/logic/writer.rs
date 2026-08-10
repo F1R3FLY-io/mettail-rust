@@ -107,6 +107,23 @@ pub fn write_lang_module(
     Ok(path)
 }
 
+/// Remove one generated Rust module retired by the generator.
+///
+/// Generated sources are write-if-changed and therefore survive when an
+/// emitter is deleted. Calling this migration helper from the current
+/// expansion keeps `target/generated/<lang>/` an inventory of live output
+/// without deleting the language directory or any unrelated artifact.
+/// Returns `true` when a file was removed and `false` when it was already
+/// absent.
+pub fn retire_lang_module(lang_name: &str, module_name: &str) -> std::io::Result<bool> {
+    let path = lang_generated_dir(lang_name).join(format!("{}.rs", module_name));
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// Emit an `include!("<absolute-path>")` TokenStream for a language module.
 ///
 /// The path is baked as a string literal into the macro expansion. `include!`

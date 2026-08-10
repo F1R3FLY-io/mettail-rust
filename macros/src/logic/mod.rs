@@ -7,7 +7,6 @@
 //! WPDA/Dovetail codegen path:
 //!
 //! - `common` — shared category / HOL-domain utilities (`compute_hol_domain_pairs`)
-//! - `rules` — freshness-function generation (`generate_freshness_functions`)
 //! - `stratification` — predicated-type negation-cycle analysis (`analyze`)
 //! - `writer` — generated-source spill / `include!` helpers (`spill_and_include`)
 //! - `multi_channel_analysis` — test-only channel-analysis utilities
@@ -15,6 +14,5 @@
 pub mod common;
 #[cfg(test)]
 pub mod multi_channel_analysis;
-pub mod rules;
 pub mod stratification;
 pub mod writer;

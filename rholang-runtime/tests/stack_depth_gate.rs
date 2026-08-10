@@ -1594,7 +1594,6 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
     ("ast.rs", "", Coverage::Inert),
     ("binder_congruence.rs", "", Coverage::Inert),
     ("flatten.rs", "", Coverage::Inert),
-    ("freshness.rs", "", Coverage::Inert),
     ("guard_codegen.rs", "", Coverage::Inert),
     ("language.rs", "", Coverage::Inert),
     ("numeric_cast_adapter.rs", "", Coverage::Inert),

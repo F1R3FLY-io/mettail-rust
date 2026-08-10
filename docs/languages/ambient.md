@@ -208,7 +208,6 @@ A partial inventory, chosen for the modules this page cites:
 | `display.rs` | `Display` — the inverse of the parser | 456 lines |
 | `binder_congruence.rs` | **`binder_congruence_nf`** — the restriction-float normaliser. This module is where the `equations` block actually executes | 238 lines |
 | `dovetail_report.rs` | the e-graph rule set: **exactly three** `RewriteRule` values | 3 rules |
-| `freshness.rs` | `is_fresh` — a public helper with **no caller**; see [section 7.4](#74-the-unconditional-float-and-why-it-is-sound) | 18 lines |
 | `rho_net_invocation.rs` | the in-Rho (Rholang) set-automaton lowering | 112 KB |
 | `subst.rs`, `normalize.rs`, `iterative_cmp.rs`, `semantic_hash.rs` | substitution, normalisation, stack-safe ordering, and the alpha-canonical key | — |
 | `metadata.rs` | reflected specification plus its fingerprint | 254 lines |
@@ -915,9 +914,9 @@ declaration order.
 
 #### The float is unconditional, and that is a theorem, not a shortcut
 
-**The generated code never calls `is_fresh`.** The prefix arm floats whenever the body normalises
-to a `PNew`; it does not test the premise. `freshness.rs` still emits `is_fresh` as a public
-function, and it has no caller.
+**The generated code does not need an `is_fresh` helper.** The prefix arm floats whenever the body
+normalises to a `PNew`; it does not test the premise. The formerly generated, uncalled
+`freshness.rs` module was retired in #95 rather than preserving a misleading public API.
 
 This looks alarming and is not, because of the following argument, which the source states and this
 page reproduces because a reader must be able to check it:
@@ -1363,7 +1362,7 @@ exercises both a capability rule and the contractum-creates-a-redex property.
 | the binder-congruence gate and its three conditions | `macros/src/gen/runtime/binder_congruence.rs:47-63` (`should_emit_binder_congruence`), `:67-72` (`has_no_host_disposition`), `:77-90` (`surface_single_binder_label`) |
 | the unconditional-float rationale, the flatness obligation, and the disposition gate | `macros/src/gen/runtime/binder_congruence.rs:1-40` (module header) |
 | the generated float: prefix arms, bag arm with `insert_into_ppar`, the `NewComm` canonical order, the fixpoint | `target/generated/ambient/binder_congruence.rs:1-238` |
-| `is_fresh` is generated and uncalled | `target/generated/ambient/freshness.rs:1-18` |
+| the obsolete uncalled `is_fresh` emitter and stale generated files are retired | `macros/src/lib.rs` (`retire_lang_module` call), `macros/src/logic/writer.rs` (`retire_lang_module`) |
 | capture-safety, the F1 stall subject, the AM-2 flat-bag subject, determinism, no-float-on-ground | `languages/tests/ambient_binder_handler.rs` |
 | `OutRule` firing counts at three arities; the pre-A-S5.4b observed behaviour | `languages/tests/ambient_out_rule_host_semantics.rs:1-90` |
 | the exec golden corpus and the declared C-G normal forms | `repl/tests/a_s5_6_exec_goldens.rs:66-82`, `:127-147` |
@@ -1382,9 +1381,9 @@ exercises both a capability rule and the contractum-creates-a-redex property.
    float in `binder_congruence.rs`. Looking for `Ambient::equation::…` in a Dovetail trace will
    find nothing, and that is correct, not a bug. The in-Rho lane *does* consume them — so the
    statement is lane-specific.
-2. **`is_fresh` exists and is never called.** Freshness is discharged by construction (freshen,
-   then float), not checked. Do not "fix" the float by re-adding a gate: the conditional version
-   was strictly weaker and stalled on the F1 subject.
+2. **There is deliberately no generated `is_fresh` API.** Freshness is discharged by construction
+   (freshen, then float), not checked; #95 retired the uncalled helper. Do not "fix" the float by
+   re-adding a gate: the conditional version was strictly weaker and stalled on the F1 subject.
 3. **`n[p]` and `n[{p}]` are different terms.** No equation relates them, and the capability rules
    only match bag-bodied ambients. `{ open(n, 0) | n[0] }` is a normal form.
 4. **`{}` is not `0`.** The `OutRule` singleton reduces to `m[{}]`. (Struct Zero Par) is not

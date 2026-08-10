@@ -1,8 +1,8 @@
-//! Binder and Sep(Zip(Map)) benchmarks: single binder, multi-binder, channel output.
+//! Binder and Sep(Zip(Map)) benchmarks: single binder, Rholang 1.4 receive, channel output.
 //!
 //! Languages: Ambient (single binder via `new`), Rholang (multi-input Sep(Zip(Map(...))))
 //! Features exercised: single binder (Scope creation, ident capture),
-//! multi-binder, Sep(Zip(Map)) (parallel dual-vec parsing with closing delimiter guard).
+//! multi-binder, Sep(Zip(Map)) (`for`-row parsing with a closing-delimiter guard).
 //!
 //! Run with: cargo bench -p mettail-languages --bench bench_binders
 

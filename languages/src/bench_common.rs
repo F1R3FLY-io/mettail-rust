@@ -205,13 +205,17 @@ pub fn gen_chained_new(depth: usize) -> String {
     result
 }
 
-/// Rholang multi-input Sep(Zip(Map)): "(x0?a0, x1?a1, ..., xN?aN).{0}"
+/// Rholang multi-input Sep(Zip(Map)):
+/// `for(x0 <- c0 & x1 <- c1 & ... & xN <- cN){0}`.
+///
+/// This follows the Rholang 1.4 `PForUser` surface. The obsolete
+/// `(c?x).{...}` spelling was removed with the former `PInputs` constructor.
 pub fn gen_multi_input(n: usize) -> String {
     if n == 0 {
         return "{}".to_string();
     }
-    let bindings: Vec<String> = (0..n).map(|i| format!("c{}?x{}", i, i)).collect();
-    format!("({}).{{{}}}", bindings.join(", "), "0")
+    let bindings: Vec<String> = (0..n).map(|i| format!("x{} <- c{}", i, i)).collect();
+    format!("for({}){{0}}", bindings.join(" & "))
 }
 
 /// Rholang nested output: "{c0!(0) | c1!(0) | ... | cN!(0)}"
@@ -320,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_multi_input() {
-        assert_eq!(gen_multi_input(2), "(c0?x0, c1?x1).{0}");
+        assert_eq!(gen_multi_input(2), "for(x0 <- c0 & x1 <- c1){0}");
     }
 
     #[test]

@@ -30,9 +30,10 @@ rewrite propagates. **Severance** changes such a position from a child e-class
 carrier into a payload-verbatim leaf. The payload remains reconstructable, but
 the e-graph cannot inspect, match, or rewrite inside it.
 
-The retired Ascent clause generator is not part of this pipeline. Its remaining
-module, [`logic/rules.rs`](../../src/logic/rules.rs), emits only the freshness
-helper used by the Dovetail binder path.
+The retired Ascent clause generator is not part of this pipeline. Its final
+remaining module emitted only an uncalled freshness helper after the Dovetail
+binder path moved to freshen-then-float; #95 retired that module and removes
+stale `freshness.rs` artifacts during expansion.
 
 ## 2. Representation theorem
 

@@ -4,7 +4,7 @@ This file explains the project for people who need to **change** the framework o
 Think of this project as a **language factory** + **language runner**:
 
 - **Build-time pipeline** = factory: turns your `language! { ... }` definition into Rust code (expanded at compile time).
-- **Runtime pipeline** = runner: takes user text and computes results using parser + normalization + optional direct eval + Ascent (rewrites/equations).
+- **Runtime pipeline** = runner: takes user text through the stack-safe parser and normalizer, then an explicitly planned Dovetail or Rho-machine backend.
 
 ---
 
@@ -31,7 +31,7 @@ flowchart LR
     DSL["language! { ... }"]
     AST["LanguageDef AST"]
     VAL["validate_language"]
-    GEN["generate_all + generate_ascent_source + generate_language_impl"]
+    GEN["generate_all + lowering inventory + language/WPDA facades"]
     DSL --> AST --> VAL --> GEN
   end
   subgraph rt["Runtime (REPL / library)"]
@@ -39,20 +39,25 @@ flowchart LR
     LEX["lex()"]
     PAR["parse_*()"]
     NORM["normalize_term"]
-    DEV["try_direct_eval"]
-    ASC["run_ascent → AscentResults"]
-    TXT --> LEX --> PAR --> NORM --> DEV
-    DEV -->|Some| OUT["Display"]
-    DEV -->|None| ASC --> OUT
+    PLAN["plan explicit backend"]
+    DOV["Dovetail report"]
+    RHO["Rho machine / RSpace"]
+    TXT --> LEX --> PAR --> NORM --> PLAN
+    PLAN --> DOV --> OUT["typed output / trace"]
+    PLAN --> RHO --> OUT
   end
   GEN -.->|expands into| LEX
   GEN -.->|expands into| PAR
-  GEN -.->|expands into| ASC
+  GEN -.->|expands into| DOV
+  GEN -.->|expands into| RHO
 ```
 
 
 
-The macro crate (`mettail-macros`) parses and validates the DSL, then **quotes** large chunks of Rust (AST types, `Display`, substitution, parser functions, and an `ascent!` program). The `languages` crate contains modules that invoke `language!`; compiling that crate is what runs the factory.
+The macro crate (`mettail-macros`) parses and validates the DSL, then emits Rust AST types,
+stack-safe term operations, parser/display code, lowering-disposition evidence, and Dovetail/Rho
+contracts. The `languages` crate contains modules that invoke `language!`; compiling that crate is
+what runs the factory. The legacy Ascent backend is retired and its trait hook fails closed.
 
 **Deeper:** Expanding `language!` happens while compiling the crate that contains it (e.g. `mettail-languages`). `cargo expand` (or `rustc` with the right flags) can show the expanded Rust for debugging. Generated names follow predictable patterns (`{Name}Language`, `parse_{Category}`, relations from `macros/src/logic/relations.rs`), so you can search the expansion for a substring from your theory when something fails late in codegen.
 
@@ -76,39 +81,35 @@ You never “run” the macro at runtime; you **compile** a crate that uses it, 
 
 ---
 
-### Ascent (Datalog-in-Rust)
+### Dovetail and Rho-machine backends
 
-**[Ascent](https://github.com/s-arash/ascent)** is a library for writing **logic programs** in Rust. You declare **relations** (like database tables) and **rules** (Horn clauses) that say when new rows should exist. The engine repeatedly applies rules until **no new tuples** appear—a **least fixpoint** (in the standard stratified / safe fragment).
+**Dovetail** is the checked term-rewrite/e-graph lane. Generated reports carry exact term keys,
+derivation edges, rule-firing justifications, and an explicit completeness status. Typed lowering and
+reconstruction preserve AST structure instead of round-tripping through display strings.
 
-**Conceptual vocabulary:**
+The **Rho-machine** lane lowers supported language constructs to normalized `rhoapi::Par` and
+executes communication on RSpace. Its reactive stepper reports committed COMM events and the native
+fold/substitution steps interleaved with them. Backend planning is explicit: a language cannot
+silently fall back from a required Rho artifact to an unrelated evaluator.
 
-
-| Idea         | Meaning                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------ |
-| Relation     | Named predicate, e.g. `rw_proc(Proc, Proc)` — “second `Proc` is a one-step rewrite of the first” |
-| Fact / tuple | One row in that relation                                                                         |
-| Rule body    | Conditions (joins, negation as supported) that must hold                                         |
-| Rule head    | New facts derived when the body holds                                                            |
-| Fixpoint     | Saturation: run rules to closure                                                                 |
-
-
-MeTTaIL **generates** an Ascent program from your `equations`, `rewrites`, and optional `logic { }` block. Category exploration, equality, and rewrite relations are all expressed in the same fixpoint so rewrites and equations can interact under congruence.
-
-**Why Ascent here?** Rewriting and equality closure are **relational**: “find all pairs `(t, t')` such that…” matches Datalog’s sweet spot (joins on subterms, indexed matching). The alternative would be hand-written graph exploration in Rust; Ascent gives a declarative layer and a mature incremental engine.
-
-**Inspection:** when you build `mettail-languages`, see `languages/src/generated/<language>-datalog.rs` for a readable dump of the generated theory (not used for compilation).
-
-**Deeper:** Stratified negation means “not” is only allowed in layers where the engine can prove the program has a unique least fixpoint. MeTTaIL-generated theories are usually positive recursions over term structure plus user rewrites; if you add negation in `logic { }`, stay within patterns Ascent accepts. Performance is dominated by join size—large languages produce many `proc(t)`/`rw_*(…)` tuples. The “core” Ascent split (when enabled) trims rules for inputs that only use a subset of categories to shorten fixpoint time.
+**Ascent is legacy context only.** `RuntimeBackend::Ascent`, `AscentResults`, and `run_ascent` remain
+for compatibility/reference surfaces, but generated production languages do not embed an Ascent
+program and the default `run_ascent` hook fails closed. Old `*-datalog.rs` files and Ascent-oriented
+documents are historical evidence, not generated runtime inputs.
 
 ---
 
 ### Datalog-style queries (`mettail-query`)
 
-The **`query/`** crate is a **small query layer on top of materialized `AscentResults`**, not a second Ascent instance. After `run_ascent`, relations and tuples are copied into `AscentResults` (including **custom relations** from your `logic { }`). A rule string is parsed, planned, and executed as joins/filters over that snapshot.
+The **`query/`** crate is a compatibility query layer over an explicitly supplied
+`AscentResults`-shaped snapshot; it is not a production rewrite backend. A rule string is parsed,
+planned, and executed as joins/filters over that snapshot.
 
-If you know SQL: think “read-only analytics on tables populated by Ascent.” If you know Datalog: same spirit, with a schema inferred from `custom_relations` (`query/src/run.rs`, `query/src/data_source.rs`).
+If you know SQL, think “read-only analytics over a materialized compatibility snapshot.”
 
-**Deeper:** Queries see **stringified** term representations in relation rows (what was extracted for the REPL), not raw Rust AST pointers. That keeps the query engine language-agnostic but means you reason about **display** equality, not pointer identity. Custom relations you want to query must be listed for extraction (see relation declarations in `logic { }` and `list_all_relations_for_extraction` in `macros/src/logic/relations.rs`).
+**Deeper:** Queries see **stringified** term representations, not raw Rust AST pointers. That keeps
+the query engine language-agnostic but means it reasons about display equality. Do not route new
+runtime semantics through this legacy snapshot format.
 
 ---
 
@@ -120,7 +121,9 @@ If you know SQL: think “read-only analytics on tables populated by Ascent.” 
 
 **LanguageSpec:** The macro AST (`LanguageDef`) is **lowered** in `prattail_bridge.rs` to a flatter `LanguageSpec`: categories, syntax items, and rule inputs. PraTTaIL classifies rules (infix, cast, etc.) and runs the **pipeline** in `prattail/src/pipeline.rs` (lexer bundle → parser bundle → Rust source strings → `TokenStream`).
 
-**What PraTTaIL does *not* do:** It does not implement your rewriting semantics; it only produces **lex**, **parse_<Category>**, and helpers. Equations and `~>` are entirely in Ascent codegen (`macros/src/logic/`).
+**What PraTTaIL does *not* do:** It does not implement rewriting semantics; it produces lexing,
+stack-safe `parse_<Category>` entry points, and recovery helpers. Equations and `~>` are classified
+by the lowering-disposition/Dovetail/Rho codegen paths.
 
 **Deeper:** The bridge injects **synthetic** rules (bare identifiers as variables, collection literals, etc.) so user-written `terms { }` do not have to repeat boilerplate. Changing **only** PraTTaIL cannot add a new `language!` keyword—the DSL is defined in `macros/src/ast/`. Conversely, changing **only** `terms { }` often suffices to fix parse errors because it reshapes `LanguageSpec` and thus the whole lexer/parser product.
 
@@ -172,28 +175,32 @@ If you have only used `String` for variable names in interpreters, think of moni
 
 ---
 
-### Runtime glue: `Term`, `Language`, and `AscentResults`
+### Runtime glue: `Term`, `Language`, and backend reports
 
 **Runtime glue** is the **interface layer** between:
 
 - **User-facing code** (REPL, tests, binaries) that wants to treat languages uniformly, and  
-- **Generated per-language code** (concrete AST enums, Ascent structs, parse functions).
+- **Generated per-language code** (concrete AST enums, stack-safe operations, parser functions, and backend contracts).
 
 The shared **`runtime/`** crate defines:
 
 - **Term:** `dyn`-compatible trait (`clone_box`, `term_id`, `Display`, …) so the REPL can hold `Box<dyn Term>` without knowing `Rholang` vs `Calculator`.
-- **Language:** parse, normalize, `try_direct_eval`, `run_ascent`, environment APIs, type inference hooks—all implemented by **generated** `{Name}Language` in `macros/src/gen/runtime/language.rs`.
-- **AscentResults:** a **portable snapshot** (terms as display strings + IDs, rewrite edges, equivalence classes, custom relation tables) so Ascent internals do not leak into the REPL.
+- **Language:** parse, normalize, environment APIs, type inference hooks, backend requirements, and substrate-neutral execution reports—all implemented by generated `{Name}Language` code and runtime bridges.
+- **RuntimeBackendReport:** identifies the selected backend/artifact and carries either a checked Dovetail report, Rho observations, or a live Rho reduction trace.
+- **AscentResults:** retained only as a compatibility/reference snapshot; production backend selection must not depend on it.
 
 **Why glue?** Without it, every tool would depend on every `languages::rholang::*` type. The traits make **one** REPL and **one** query engine possible; new languages register behind `Box<dyn Language>` (`repl/src/registry.rs`).
 
-**Deeper:** `term_id` is typically a hash of the term’s structure (see generated `impl Term`), so logically equal terms might get different IDs across runs if hashing includes allocation details—treat IDs as **session-local** handles into `AscentResults`. Multi-category languages wrap values in `{Name}TermInner` enums; `parse_term` picks the primary category or uses the language’s entry points as implemented in `generate_language_impl`.
+**Deeper:** compatibility `term_id` values are session-local handles. Consensus-sensitive identity
+uses generated semantic/exact keys, not allocation identity or display text. Multi-category
+languages wrap values in `{Name}TermInner` enums; `parse_term` selects the configured primary
+category or its generated entry point.
 
 ---
 
 ### Blockly and visual blocks
 
-**Blockly** output (`macros/src/gen/blockly/*`) generates **TypeScript** block definitions for a visual editor. It is independent of Ascent and parsing semantics: it mirrors the language surface for another UI.
+**Blockly** output (`macros/src/gen/blockly/*`) generates **TypeScript** block definitions for a visual editor. It is independent of runtime-backend semantics: it mirrors the language surface for another UI.
 
 **Deeper:** Blockly generation walks the same `LanguageDef` as the rest of codegen but emits `.ts` for a different consumer. Failures to write block files are usually non-fatal (`eprintln!` in `macros/src/lib.rs`). If blocks drift from real parseable syntax, fix the block generator templates in `macros/src/gen/blockly/`, not the PraTTaIL grammar, unless the surface form itself changed.
 
@@ -204,10 +211,10 @@ The shared **`runtime/`** crate defines:
 
 | Name                              | What it is                                                                                                                                       |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Stratification**                | Datalog concept: negation layered so fixpoint is well-defined; Ascent enforces sensible fragments.                                               |
+| **Stratification**                | Logical negation layered so guard/rule semantics remain well-defined; invalid cycles are compile-time errors.                                   |
 | **Congruence**                    | Rules that lift rewrites/equalities **under** constructors (if inner changes, outer does too).                                                   |
 | **WFST**                          | Weighted finite-state transducer; optional feature in PraTTaIL for weighted lexing / disambiguation (`wfst` feature).                            |
-| `ascent_source!` vs `ascent!` | MeTTaIL uses both shapes: string/source forms for debugging/export; the generated language embeds a compiled `ascent!` program for `run_ascent`. |
+| `AscentResults` / `run_ascent` | Compatibility/reference surfaces from the retired backend; generated production languages fail closed here.                                    |
 
 
 ---
@@ -219,17 +226,16 @@ The shared **`runtime/`** crate defines:
 The procedural macro entry point is `macros/src/lib.rs`. For each `language!` invocation it does, in order:
 
 1. **Parse** the token stream into `LanguageDef` (`syn` custom parser in `macros/src/ast/language.rs`).
-2. **Validate** (`macros/src/ast/validation/validator.rs` and related) — well-formedness of types, terms, patterns, binding, etc.
-3. **`generate_all`** (`macros/src/gen/mod.rs`) — AST enums, term ops, display, env, eval, **inline PraTTaIL parser** (see below).
-4. **`generate_freshness_functions`** (`macros/src/logic/rules.rs` and friends) — helpers used by generated Ascent clauses.
-5. **`generate_ascent_source`** (`macros/src/logic/mod.rs`) — relations + category + equation + rewrite rules + optional `logic { ... }` body; also writes a debug `.rs` file (see [Generated artifacts](#generated-artifacts-on-disk)).
-6. **`generate_metadata`** (`macros/src/gen/runtime/metadata.rs`) — static descriptions for REPL/help.
-7. **`generate_language_impl`** (`macros/src/gen/runtime/language.rs`) — `{Name}Term`, `{Name}Language`, `impl Language for ...`, wiring Ascent run + extraction into `AscentResults`.
-8. **Blockly** (`macros/src/gen/blockly/`) — optional TS emit to `languages/src/generated/`.
+2. **Compose and validate** (`ast/src/merge.rs`, `ast/src/validation/`) — apply fragments/includes/mixins, enforce grammar and binding invariants, auto-inject required rules, and reject non-stratified logical guards.
+3. **`generate_all`** (`macros/src/gen/mod.rs`) — AST enums, stack-safe term operations, display, environments, Dovetail/Rho lowering support, and the **inline PraTTaIL/WPDA parser**.
+4. **Build the lowering-disposition inventory** (`macros/src/gen/runtime/dovetail_report.rs`) — every equation orientation, rewrite, and fold is delivered, delegated, suppressed by a named decision, or rejected at compile time.
+5. **Generate metadata, the language facade, and the WPDA engine** (`macros/src/gen/runtime/{metadata,language,wpda_codegen}.rs`). The legacy Ascent backend is retired; its trait entry point fails closed.
+6. **Generate opt-in tests, simulators, strategies, and Blockly output** (`macros/src/gen/test_gen/`, `macros/src/gen/blockly/`).
+7. **Spill large modules** to `target/generated/<language>/` and return compact `include!` wrappers. The migration step also removes known retired artifacts such as the former uncalled `freshness.rs` module (#95).
 
 Everything is concatenated into one `TokenStream` returned from the macro (except Blockly files, which are written explicitly).
 
-**Deeper:** Failures in step 3 often look like Rust type errors in generated parsers (PraTTaIL). Failures in step 5–7 often look like Ascent compile errors (“stratification”, missing relation) or mismatches between extracted relations and the `AscentResults` packer—use `*-datalog.rs` to read the actual rules the engine sees.
+**Deeper:** Failures in step 3 often look like Rust type errors in generated parser or term-operation modules. Lowering failures should instead surface as named compile-time disposition diagnostics; inspect `target/generated/<language>/dovetail_report.rs`, `rho_net_invocation.rs`, and `metadata.rs` to see the materialized runtime contract.
 
 ---
 
@@ -251,11 +257,13 @@ language! {
   terms { ... },
   equations { ... },
   rewrites { ... },
-  logic { ... }   // optional: extra Ascent relations/rules (verbatim)
+  logic { ... }   // optional: reflected logical relations and guarded rules
 }
 ```
 
-**Mental model:** you declare algebraic sorts (`types`), constructors and concrete syntax (`terms`), when two terms are equal (`equations`), and directed rewrite steps (`rewrites`). Optional `logic { }` injects raw Ascent into the same fixpoint program.
+**Mental model:** you declare algebraic sorts (`types`), constructors and concrete syntax (`terms`),
+when two terms are equal (`equations`), and directed rewrite steps (`rewrites`). Optional `logic { }`
+adds reflected logical vocabulary and guarded rules; it does not install a separate evaluator.
 
 Section-by-section syntax and semantics are in [Guide: defining a language theory](#guide-defining-a-language-theory).
 
@@ -328,32 +336,29 @@ The bridge adds **synthetic** rules (variable rules, collection literals, etc.) 
 
 ---
 
-### 6) Rewrite / equation engine codegen (Ascent)
+### 6) Rewrite / equation lowering (Dovetail and in-Rho)
 
 
-| Concern                                                           | Location                                                         |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Orchestrator                                                      | `macros/src/logic/mod.rs` — `generate_ascent_source`             |
-| Relation declarations (`proc`, `eq_proc`, `rw_proc`, `fold_`*, …) | `macros/src/logic/relations.rs`                                  |
-| “Explore” category facts, deconstruct terms                       | `macros/src/logic/categories.rs`                                 |
-| Equations + congruence for `=`                                    | `macros/src/logic/equations.rs`, `macros/src/logic/congruence/*` |
-| Rewrites `~>` + congruence                                        | `macros/src/logic/rules.rs`, `macros/src/logic/congruence/*`     |
-| Shared naming / filters                                           | `macros/src/logic/common.rs`                                     |
-| Debug file writer                                                 | `macros/src/logic/writer.rs`                                     |
+| Concern | Location |
+| --- | --- |
+| Lowering census and Dovetail report | `macros/src/gen/runtime/dovetail_report.rs` and its submodules |
+| Typed reconstruction and withholding | `macros/src/gen/runtime/dovetail_report/{typed_lowering,typed_report,withholding,reconstruct}.rs` |
+| Binder structural congruence | `macros/src/gen/runtime/binder_congruence.rs` |
+| In-Rho net/scalar contracts | `macros/src/gen/runtime/{rho_invocation,rho_dataflow}.rs`, `rholang-codegen/` |
+| Predicated-type stratification | `macros/src/logic/stratification.rs` |
+| Generated-module writer and retirement migrations | `macros/src/logic/writer.rs` |
 
 
-**Generated model (per category, roughly):**
+**Generated model (per language):** typed AST constructors and operations feed a lowering-disposition
+inventory, Dovetail rewrite descriptions, and Rho set-automaton/native-invocation contracts. Structural
+equations may be absorbed by the carrier, discharged by a generated pass (for example binder
+freshen-then-float), or lowered into the in-Rho lane. Unsupported shapes fail closed by name instead
+of silently disappearing. The old generated Ascent relation graph (`eq_*`, `rw_*`, `fold_*`) is not a
+runtime backend.
 
-- **Membership:** relation `proc(Proc)`, `name(Name)`, …
-- **Equality:** `eq_proc(Proc, Proc)` (equivalence closure from equations + congruence)
-- **Rewrites:** `rw_proc(Proc, Proc)` (directed edges; user rewrites + congruence)
-- **Custom:** anything you declare in `logic { relation r(...); ... }` plus rules using those predicates
-
-Ascent runs to **fixpoint**: new tuples until saturation (subject to Ascent’s stratification/semantics).
-
-**Multi-category / SCC:** for some languages, `macros/src/logic/mod.rs` also builds a **core** rule set (`core_raw_content`) for a smaller `ascent!` struct to optimize cases where only “core” categories appear (`macros/src/logic/common.rs` — `compute_core_categories`). The runtime language impl chooses how to run this (see generated `{Name}Language`).
-
-**To change rewrite behavior:** edit `rewrites { }` / `equations { }` in the language `.rs` file. If the generator cannot express what you need, use `logic { ... }` for hand-written Ascent, or extend the codegen in `macros/src/logic/`*.
+**To change rewrite behavior:** edit `rewrites { }` / `equations { }` in the language `.rs` file,
+then verify its lowering disposition. Extend the typed Dovetail or Rho lowering when a shape is not
+representable; do not bypass the inventory through a second evaluator.
 
 ---
 
@@ -371,7 +376,7 @@ Ascent runs to **fixpoint**: new tuples until saturation (subject to Ascent’s 
 | “Ground” checks                            | `macros/src/gen/term_ops/ground.rs`                       |
 | Native eval (`try_eval`, constant folding) | `macros/src/gen/native/eval.rs`                           |
 | Environments (`name = term` in REPL)       | `macros/src/gen/runtime/environment.rs`                   |
-| `Language` + `Term` impls, Ascent runner   | `macros/src/gen/runtime/language.rs`                      |
+| `Language` + `Term` impls, fail-closed legacy hook | `macros/src/gen/runtime/language.rs`                |
 | Metadata                                   | `macros/src/gen/runtime/metadata.rs`                      |
 | Random/exhaustive term generation (tests)  | `macros/src/gen/term_gen/*`                               |
 
@@ -389,8 +394,8 @@ Ascent runs to **fixpoint**: new tuples until saturation (subject to Ascent’s 
 
 | Artifact                                           | When                                              | Path pattern                                                                                                      |
 | -------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Rust code (types, parser, Ascent, `Language` impl) | Every build                                       | **TokenStream expansion** — not a standalone `.rs` you edit; it lives inside the expanded `language!` module.     |
-| Ascent source (debug / inspection)                 | When compiling the crate that invokes `language!` | `languages/src/generated/<languagename>-datalog.rs` (from `CARGO_MANIFEST_DIR`; see `macros/src/logic/writer.rs`) |
+| Rust modules (types, parser, operations, backend contracts, `Language` impl) | Every build | `target/generated/<language>/*.rs`, included by compact macro-expansion wrappers; generated files are inspection artifacts, not edit targets. |
+| Retired generated module cleanup                   | During expansion                                  | `retire_lang_module` removes exact known stale outputs such as `freshness.rs`; it never deletes a language directory. |
 | Blockly                                            | If Blockly codegen runs                           | `languages/src/generated/<language>-blocks.ts`, `...-categories.ts` (`macros/src/gen/blockly/writer.rs`)          |
 
 
@@ -409,7 +414,7 @@ The factory tends to produce (conceptually):
 - Lexer acceptance for `+`
 - A Pratt rule for infix `Add` with correct binding power
 - An AST variant `Proc::Add(...)` (names depend on your rule label)
-- Fold/eval wiring and Ascent relations so ground arithmetic can reduce
+- Fold/eval wiring and typed lowering metadata so ground arithmetic can reduce on its declared lane
 
 Exact names are determined by your `terms` declaration and type names.
 
@@ -417,125 +422,52 @@ Exact names are determined by your `terms` declaration and type names.
 
 ## Part 2: Runtime pipeline (user input → parse / evaluate / rewrite → results)
 
-### 1) Runtime entry point
+### 1) Entry points and shared interfaces
 
+| Item | Location |
+| --- | --- |
+| Interactive shell and registry | `repl/src/repl.rs`, `repl/src/registry.rs` |
+| Substrate-neutral traits/reports | `runtime/src/language.rs` |
+| Production Rho/RSpace bridge | `rholang-runtime/` |
+| Dovetail engine and reports | `dovetail/` |
 
-| Item                       | Location                                                                           |
-| -------------------------- | ---------------------------------------------------------------------------------- |
-| CLI / binary               | Workspace root `Cargo.toml` — `default-run = "mettail"`, binary `repl/src/main.rs` |
-| Interactive loop, commands | `repl/src/repl.rs`                                                                 |
-| Which languages exist      | `repl/src/registry.rs` — `build_registry()`                                        |
-| Language modules           | `languages/src/lib.rs` exports `ambient`, `calculator`, `lambda`, `rholang`        |
+Generated `{Name}Language` implements `Language`: parsing and normalization stay language-local,
+while backend requirements and outputs use runtime-neutral types. A production execution result is a
+`RuntimeBackendReport`, not an implicit evaluator fallback.
 
+### 2) Production execution order
 
-Run from workspace root:
+1. Resolve the language and parse with its generated WPDA/trampoline entry point.
+2. Apply environment substitution and generated stack-safe normalization.
+3. Validate the language's lowering-disposition inventory and backend requirements.
+4. Plan an explicit backend/artifact pair:
+   - Dovetail produces a checked `RuntimeDovetailRunReport`; or
+   - the Rho path injects normalized `rhoapi::Par` and executes on RSpace.
+5. Return a typed report: Dovetail derivation/firing evidence, resting Rho observations, or a live
+   Rho reduction trace whose principled reduction unit is a committed COMM.
 
-```bash
-cargo run
-# equivalent: cargo run --bin mettail
-```
+The legacy `run_ascent` hook is deliberately not step 4: generated implementations inherit a
+fail-closed default. Likewise, production Rho integration does not serialize a term to display text
+and parse it again.
 
-The package `mettail-repl` also declares the `mettail` binary (`repl/Cargo.toml`); the root crate delegates to it.
+### 3) Arithmetic and native folds
 
-In the REPL:
+A ground fold such as `3 + 4` is represented by its typed constructor and lowering disposition.
+The generated native dispatcher may reduce it in the Dovetail pre-phase or the declared Rho-native
+lane. Its contractum and justification remain typed; neither path requires an Ascent relation or a
+display-string identity.
 
-```text
-lang rholang
-exec 3 + 4
-```
+### 4) Process communication
 
----
+A Rholang process parses to generated constructors and lowers to normalized `rhoapi::Par`.
+Communication is performed by the Rho machine against RSpace. The reactive stepper exposes committed
+COMM events and associated native/substitution steps so callers can stop, inspect, or continue
+without inventing a traversal-depth limit.
 
-### 2) Core runtime interfaces
+### 5) Compatibility query snapshots
 
-
-| Item                                                   | Location                  |
-| ------------------------------------------------------ | ------------------------- |
-| `Term`, `Language`, `AscentResults`, `RelationData`, … | `runtime/src/language.rs` |
-
-
-Generated `{Name}Language` implements `Language`. Key methods:
-
-- `parse_term` / `parse_term_for_env` — parse string to `Box<dyn Term>` (env variant avoids clearing the var cache; used when building environments).
-- `normalize_term` — generated normalization (beta / structure).
-- `try_direct_eval` — fast path for ground native evaluation when implemented.
-- `run_ascent` — runs the generated Ascent program and packs results into `AscentResults`.
-- Environment APIs — backing store for `name = term` and substitution.
-
----
-
-### 3) Runtime stages (`exec` / `step`) — concrete order
-
-The implementation lives in `repl/src/repl.rs`, `exec_or_step_term`. Order:
-
-1. **Resolve language** from `ReplState` via `LanguageRegistry`.
-2. **Obtain AST**
-  - If input is a single identifier-like token and `get_env_term` finds a binding, use that term (avoids misparsing env names as variables).
-  - Else **`parse_term_for_env`** (still runs lexer + parser inside the generated code).
-3. **Environment substitution** — if an environment is active: `substitute_env` or `substitute_env_preserve_structure` (step mode preserves shape for interactive rewriting).
-4. **`normalize_term`** — generated beta / flatten behavior.
-5. **Direct eval (exec only)** — if `try_direct_eval` returns `Some`, the REPL short-circuits: builds `AscentResults::from_single_term` and **does not** run Ascent.
-6. **`run_ascent`** — full rewrite/equation closure; builds `AscentResults` (terms, rewrites, equivalences, `custom_relations`).
-7. **Display / state**
-  - **Exec:** prefers a **normal form** reachable from the start term via BFS on the rewrite graph (`AscentResults::normal_form_reachable_from`); may reparse displayed normal form back to `Box<dyn Term>` for state.
-  - **Step:** keeps the **initial** term as “current” and exposes `rewrites_from` for `apply N`.
-
-Auxiliary REPL behavior:
-
-- **`pre_substitute_env`** — before parse, can substitute env binding **display strings** for whole identifiers so surface syntax matches grammar (e.g. boolean literals).
-
-**Deeper:** Direct eval is a **staged** optimization: it only applies when `Language::try_direct_eval` returns `Some`, which requires native/fold support in your theory. Step mode **never** uses it so you always get a rewrite graph from the post-substitution term. Normal-form selection in exec mode is **breadth-first on rewrite IDs**, not “shortest rewrite count” or semantic cost—see `AscentResults::normal_form_reachable_from` in `runtime/src/language.rs`.
-
----
-
-### 4) Runtime sample A: arithmetic
-
-Input:
-
-```text
-exec 3 + 4
-```
-
-Typical path:
-
-- Lexer emits literal / operator tokens.
-- Parser builds an `Add(...)`-style AST (exact variant names depend on the language).
-- If the language defines native fold/eval, **`try_direct_eval`** may return `7` immediately.
-- Otherwise Ascent applies fold/rewrite rules until fixpoint.
-
----
-
-### 5) Runtime sample B: process rewrite
-
-Input (rho-style):
-
-```text
-{ @({}) ! ({}) | *(@({})) }
-```
-
-Typical path:
-
-- Parse to process constructors (`PPar`, `POutput`, …).
-- Normalization may simplify functional structure.
-- Ascent applies `rw_*` / `eq_*` rules; congruence rules allow rewriting **inside** contexts.
-- REPL reports counts from `AscentResults` and (in exec mode) picks a displayed normal form when reachable.
-
----
-
-### 6) Query layer
-
-
-| Item                                  | Location           |
-| ------------------------------------- | ------------------ |
-| Public API                            | `query/src/lib.rs` |
-| `run_query(rule_str, &AscentResults)` | `query/src/run.rs` |
-
-
-**Pipeline:** parse rule → plan → execute against a **data source** built from `AscentResults`, including `custom_relations` (see `query/src/data_source.rs`). The schema for queries is derived from relation signatures in those results.
-
-**Use case:** after a big `run_ascent`, ask questions like “all terms reachable with property X” in a Datalog-like syntax (see REPL handling for lines containing `<--` in `repl/src/repl.rs`).
-
-**Deeper:** The query engine does not re-execute your language’s Ascent rules; it only reads **what was already materialized** into `custom_relations` and the standard rewrite/equality views exposed in `AscentResults`. If a relation is missing from results, fix extraction in `generate_language_impl` / relation listing, or ensure your `logic { }` rules actually populate those tuples.
+`query/` can still analyze an explicitly materialized `AscentResults`-shaped snapshot. This is a
+read-only compatibility facility, not a route for new language execution or backend integration.
 
 ---
 
@@ -560,7 +492,10 @@ language! {
 
 Comma separation between major clauses follows normal Rust macro parsing (trailing commas are fine where Rust allows). If you omit optional blocks, the parser still expects `types` and typically `terms`; empty `equations { }` / `rewrites { }` are valid when you only need parsing.
 
-**How it fits together:** `types` fixes the sorting discipline (what kinds of AST nodes exist). `terms` determines **concrete syntax** and **constructors** (and injects native/code blocks for evaluation). `literals` customizes lexer tokens for those types. `equations` and `rewrites` define **Ascent’s** equality and directed steps on those ASTs. `logic` extends Ascent with your own relations when codegen is not enough.
+**How it fits together:** `types` fixes the sorting discipline (what kinds of AST nodes exist).
+`terms` determines concrete syntax and constructors (plus native fold bodies). `literals` customizes
+lexer tokens. `equations` and `rewrites` declare semantics that must receive an explicit lowering
+disposition. `logic` contributes reflected logical relations and guarded rules.
 
 ---
 
@@ -572,7 +507,8 @@ Comma separation between major clauses follows normal Rust macro parsing (traili
 
 **Goal:** Stable human- and machine-readable label; used in REPL prompts and metadata.
 
-**How it works:** Referenced throughout `macros/src/gen/*` and `macros/src/logic/*` for naming; Ascent debug output is written as `languages/src/generated/<lowercase>-datalog.rs`.
+**How it works:** Referenced throughout `macros/src/gen/*`, metadata, and backend lowering for stable
+generated identifiers, artifact directories, fingerprints, and diagnostics.
 
 ---
 
@@ -655,7 +591,7 @@ MeTTaIL supports two styles (see `GrammarRule` in `macros/src/ast/grammar.rs`):
 - **`: Category`** — sort of the whole form.
 - **Optional `![expr]`** — Rust expression constructing the native or algebraic value (often refers to parameters by name). Used for **constant folding** and injections.
 - **Optional `fold` or `step`** (`EvalMode` in `macros/src/ast/types.rs`)
-  - **`fold`** — eager reduction via generated `![...]` when subterms are values; also ties into Ascent **`fold_*`** relations when codegen detects fold-shaped rules.
+  - **`fold`** — a native reduction whose generated dispatcher and lowering disposition determine whether it runs in Dovetail or a supported Rho-native lane.
   - **`step`** — mark rules for **congruence / small-step** plumbing (useful when you must not collapse everything to a single big_fold).
 - **`right`** — right-associative infix for this rule.
 - **`prefix(N)`** — explicit binding power for prefix operators.
@@ -664,7 +600,9 @@ MeTTaIL supports two styles (see `GrammarRule` in `macros/src/ast/grammar.rs`):
 
 **Goal:** Single source of truth for “what the program looks like” and “what its tree is.”
 
-**How it works:** `prattail_bridge` lowers rules to `RuleSpecInput`; PraTTaIL emits parse functions; `macros/src/gen/types` + `display` + `subst` + `normalize` read the same `GrammarRule` list. Native `![...]` blocks feed **`macros/src/gen/native/eval.rs`** and Ascent fold generation.
+**How it works:** `prattail_bridge` lowers rules to `RuleSpecInput`; PraTTaIL emits parse functions;
+`macros/src/gen/types` plus display/substitution/normalization generators read the same `GrammarRule`
+list. Native `![...]` blocks feed `macros/src/gen/native/eval.rs` and the typed fold dispatchers.
 
 ---
 
@@ -679,11 +617,16 @@ RuleName . optional_type_context | optional_premises |- lhs_pattern = rhs_patter
 - **Premises** (after `|`) can include **freshness** `x # P` (“`x` not free in `P`”), **relation queries**, and **`forall`**-style iteration over collections (`Premise` in `macros/src/ast/language.rs`).
 - **Patterns** on LHS/RHS use the same pattern language as rewrites (`macros/src/ast/pattern.rs`).
 
-**Semantics:** **Equivalence** up to congruence: generated **`eq_<category>`** facts in Ascent, closed under structural rules.
+**Semantics:** **Equivalence** up to congruence. The declaration enters the lowering-disposition
+inventory; its delivered representation depends on the carrier and runtime lane rather than a
+generated `eq_<category>` relation.
 
 **Goal:** Algebraic laws, type identifications, undefined behavior collapse—anything **symmetric** in intent.
 
-**How it works:** `macros/src/logic/equations.rs` + `congruence` emit Ascent rules that populate `eq_*` and interact with category exploration (`categories.rs`). Equations do **not** add directed `rw_*` edges unless a rewrite also exists.
+**How it works:** `macros/src/gen/runtime/dovetail_report.rs` and the in-Rho lowering classify each
+orientation. Carrier-native laws are absorbed, binder laws may use generated structural passes,
+and materialized rules are emitted as typed Dovetail/Rho contracts. Any unhandled declaration is a
+named refusal.
 
 ---
 
@@ -697,17 +640,23 @@ RuleName . optional_type_context | optional_premises |- lhs_pattern ~> rhs_patte
 
 - **Congruence-style conditional rewrites:** premises may include **`S ~> T`** (if inner rewrites, outer can rewrite)—see `Premise::Congruence` and examples like `if S ~> T then (...)` in `README.md` / `rholang.rs`.
 
-**Semantics:** **Directed** edges in **`rw_<category>`**. Congruence lifts rewrites under contexts (parsing / pattern shape determines which congruence rules are generated).
+**Semantics:** **Directed** reduction rules. Dovetail congruence and in-Rho set-automaton contracts
+materialize the contexts that each lowering lane can represent.
 
 **Goal:** Operational semantics, reduction, commutations, COMM-like rules in the ρ-calculus style.
 
-**How it works:** `macros/src/logic/rules.rs` + `congruence` generate base and lifted rules. Freshness side conditions become helper calls from `generate_freshness_functions`.
+**How it works:** `macros/src/gen/runtime/dovetail_report.rs` generates typed/base/contextual
+Dovetail descriptions, while `rholang-codegen/` plans in-Rho matching and native invocations.
+Freshness-sensitive binder float is freshen-then-float and therefore needs no generated
+`is_fresh` helper (#95).
 
 ---
 
-### `logic { }` — hand-written Ascent
+### `logic { }` — reflected logical relations and guards
 
-**Syntax:** Inside the braces you write **Ascent** surface syntax (relations + rules) as the engine expects, plus optional **relation declarations** parsed by MeTTaIL for extraction metadata:
+**Syntax:** The block declares logical relations and rules that MeTTaIL reflects in metadata and
+uses for predicated-type guard analysis. Older specifications may contain Ascent-shaped rule text;
+the retired Ascent runtime no longer executes it.
 
 ```text
 logic { 
@@ -717,11 +666,15 @@ logic {
 }
 ```
 
-**Semantics:** Extends the **same** fixpoint program as generated equations/rewrites. Use when you need custom transitive closure, instrumentation, or relations that do not map cleanly to `~>` / `=`.
+**Semantics:** Relation declarations participate in validation, fingerprints, metadata, and LogicT
+guard planning. They do not splice a custom program into an Ascent runtime.
 
-**Goal:** Escape hatch without patching `macros/src/logic/*`.
+**Goal:** Declare logical vocabulary and guarded semantics without coupling the language surface to
+a retired engine.
 
-**How it works:** `RelationDecl` tuples feed `list_all_relations_for_extraction`; verbatim rule bodies are spliced into `generate_ascent_source` (`macros/src/logic/mod.rs`). Relations you query in `mettail-query` must appear in the extracted snapshot—check `macros/src/gen/runtime/language.rs` extraction if a relation is missing client-side.
+**How it works:** `RelationDecl` and rule bodies feed validation, stratification
+(`macros/src/logic/stratification.rs`), metadata generation, and the language fingerprint. Runtime
+guard evaluation is routed through LogicT/guard codegen where supported.
 
 ---
 
@@ -766,10 +719,10 @@ Grow this toward full examples: `languages/src/calculator.rs` (many sorts, `fold
 | Change pretty-printing                  | `macros/src/gen/syntax/display.rs`                 | Generated `Display` for variants.                                                               |
 | Change capture-avoiding substitution    | `macros/src/gen/term_ops/subst.rs`                 | Works with `moniker`-style binding in generated code.                                           |
 | Change normalization / beta             | `macros/src/gen/term_ops/normalize.rs`             | Wired into `Language::normalize_term`.                                                          |
-| Add equality reasoning                  | `equations { }`                                    | codegen → `macros/src/logic/equations.rs` output.                                               |
-| Add rewrite rules                       | `rewrites { }`                                     | codegen → `macros/src/logic/rules.rs` + congruence.                                             |
-| Add custom relations / rules            | `logic { ... }` in language file                   | Verbatim Ascent mixed into generated program; declare relations for extraction if needed.       |
-| Change how Ascent results are collected | `macros/src/gen/runtime/language.rs`               | Extraction from Ascent relations into `AscentResults`.                                          |
+| Add equality reasoning                  | `equations { }`                                    | Inspect the lowering-disposition inventory and Dovetail/in-Rho outputs.                          |
+| Add rewrite rules                       | `rewrites { }`                                     | Lowered by `dovetail_report` and `rholang-codegen`; unsupported shapes fail closed.              |
+| Add logical relations / guards          | `logic { ... }` in language file                   | Reflected, stratified, and routed through supported LogicT guard paths.                           |
+| Change runtime result handling          | `macros/src/gen/runtime/language.rs`               | Language facade; the legacy Ascent entry point remains fail-closed.                              |
 | REPL commands / UX                      | `repl/src/repl.rs`                                 | Orchestration only; keep language-agnostic.                                                     |
 | Register a new language in CLI          | `repl/src/registry.rs`                             | Insert `Box::new(YourLanguage)`.                                                                |
 
@@ -783,7 +736,8 @@ For what each block in `language!` does, see [Guide: defining a language theory]
 1. Create `languages/src/my_lang.rs` with `language! { name: MyLang, ... }`.
 2. Add `pub mod my_lang;` to `languages/src/lib.rs` and re-export any `*_source` or types you need (follow existing modules).
 3. Register **`MyLangLanguage`** in `repl/src/registry.rs` (`build_registry`).
-4. Run `cargo build -p mettail-languages` and inspect `languages/src/generated/my_lang-datalog.rs` if Ascent behavior is wrong.
+4. Run `cargo build -p languages` and inspect `target/generated/my_lang/`, especially metadata,
+   Dovetail reports, Rho invocation modules, and the lowering-disposition inventory.
 5. Optional: add example snippets under `repl/src/examples/` and wire them in the examples module if you use that pattern.
 
 If something fails at compile time, errors usually point at the macro span in your `language!` block; for parser issues, compare generated parse functions conceptually with `LanguageSpec` from the bridge.
@@ -792,8 +746,11 @@ If something fails at compile time, errors usually point at the macro span in yo
 
 ## Generated artifacts on disk
 
-- **`languages/src/generated/<name>-datalog.rs`** — pretty-printed Ascent program for inspection (not compiled). Regenerated when the language crate is built; **do not edit** for real fixes—change the `language!` or the codegen.
+- **`target/generated/<name>/*.rs`** — generated Rust modules included by macro wrappers. They are
+  readable evidence, but never edit them; change the specification or generator.
 - **Blockly `.ts`** — visual block exports when that path runs successfully.
+- **Legacy `*-datalog.rs`** — historical artifacts from the retired Ascent backend; they are not
+  production inputs and should not be regenerated as a substitute for a lowering disposition.
 
 ---
 
@@ -803,28 +760,33 @@ If something fails at compile time, errors usually point at the macro span in yo
 | Crate                   | Role                                                                      |
 | ----------------------- | ------------------------------------------------------------------------- |
 | `languages/`            | Concrete `language!` theories and generated artifacts folder              |
-| `macros/`               | Compiler from DSL to expanded Rust (AST, parser, Ascent, `Language` impl) |
+| `macros/`               | Compiler from DSL to generated AST/parser/operations/backend contracts    |
 | `prattail/`             | Lexer + parser generator used by `macros`                                 |
-| `runtime/`              | Shared traits and `AscentResults` shape                                   |
+| `runtime/`              | Shared traits, backend plans, and substrate-neutral reports               |
+| `dovetail/`             | Typed e-graph rewrite engine and checked derivation reports               |
+| `rholang-codegen/`      | In-Rho set-automaton and native-invocation planning                       |
+| `rholang-runtime/`      | RhoRuntime/RSpace execution bridge and reactive COMM stepping             |
 | `repl/`                 | CLI / `mettail` binary frontend                                           |
-| `query/`                | Query engine over `AscentResults`                                         |
-| `ascent_syntax_export/` | Supporting tooling for Ascent-related workflows (see crate docs)          |
+| `query/`                | Compatibility query engine over materialized legacy snapshots             |
+| `ascent_syntax_export/` | Legacy Ascent-oriented tooling retained for historical workflows           |
 
 
 ---
 
 ## Glossary (quick newbie terms)
 
-Longer treatment of Ascent, PraTTaIL, trampoline parsing, runtime traits, and related ideas: [Background technologies](#background-technologies).  
+Longer treatment of Dovetail, the Rho backend, PraTTaIL, trampoline parsing, and runtime traits:
+[Background technologies](#background-technologies).
 Syntax and semantics of each `language!` block (`types`, `terms`, `equations`, …): [Guide: defining a language theory](#guide-defining-a-language-theory).
 
 - **DSL:** the `language! { ... }` syntax you author.
 - **Token:** lexer output (`+`, integer literal, identifier, …).
 - **AST:** typed tree of language terms (generated enums).
 - **Rewrite:** directed step `~>` between terms.
-- **Equation / equivalence:** undirected equality `=` generating `eq_`* facts + congruence.
-- **Fixpoint:** repeat rule application until no new tuples.
-- **Ascent:** Rust Datalog engine; generated code uses `ascent!` / `ascent_source!`.
+- **Equation / equivalence:** undirected equality `=` with a declared, auditable lowering disposition.
+- **Dovetail:** typed e-graph/rewrite lane with checked derivation and firing evidence.
+- **Rho machine:** production process-calculus lane; committed COMM is its principled reduction unit.
+- **Ascent:** retired compatibility/reference backend; generated production languages fail closed.
 - **Congruence:** if a subterm rewrites (or equals), the whole term may rewrite (or equal) consistently.
 - **PraTTaIL:** **Pratt** + **Ta**il-recursive / **I**nline **L**exer-style pipeline — this project’s parser generator crate name.
 
@@ -832,9 +794,8 @@ Syntax and semantics of each `language!` block (`types`, `terms`, `equations`, �
 
 ## TL;DR
 
-- **Build-time:** `language!` → validate → `generate_all` (types, ops, PraTTaIL parser) + `generate_ascent_source` (Datalog) + `generate_language_impl` (runner).
-- **Runtime:** parse → env subst → normalize → optional `try_direct_eval` → else `run_ascent` → `AscentResults` → REPL picks display / stepping.
-- **Tech context:** [Background technologies](#background-technologies) explains Ascent (Datalog), PraTTaIL, trampolines, `moniker`, query layer, and runtime glue.
+- **Build-time:** `language!` → compose/validate → generate stack-safe AST/parser/operations → census every lowering disposition → emit Dovetail/Rho contracts and compact include wrappers.
+- **Runtime:** parse → environment substitution → normalize → explicit Dovetail or Rho backend plan → typed report/observations/COMM trace.
+- **Tech context:** [Background technologies](#background-technologies) explains the current backends, PraTTaIL, trampolines, `moniker`, and runtime glue.
 - **Defining a theory:** [Guide: defining a language theory](#guide-defining-a-language-theory) documents each DSL block (`types`, `terms`, `equations`, `rewrites`, `logic`, …).
-- **Navigation anchors:** `languages/src/<your_lang>.rs`, `macros/src/lib.rs`, `macros/src/gen/mod.rs`, `macros/src/logic/mod.rs`, `macros/src/gen/syntax/parser/prattail_bridge.rs`, `prattail/src/pipeline.rs`, `runtime/src/language.rs`, `repl/src/repl.rs`, `repl/src/registry.rs`.
-
+- **Navigation anchors:** `languages/src/<your_lang>.rs`, `macros/src/lib.rs`, `macros/src/gen/mod.rs`, `macros/src/gen/runtime/dovetail_report.rs`, `macros/src/gen/syntax/parser/prattail_bridge.rs`, `prattail/src/pipeline.rs`, `runtime/src/language.rs`, `rholang-codegen/`, and `rholang-runtime/`.

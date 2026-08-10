@@ -1,5 +1,9 @@
 # Equation Extraction and Optimization
 
+> **Historical Ascent-era reference.** `macros/src/logic/equations.rs` was retired with that
+> backend. Current equations receive explicit carrier, generated-pass, Dovetail, or in-Rho
+> dispositions through the lowering inventory.
+
 **Source**: [`macros/src/logic/equations.rs`](../../src/logic/equations.rs)
 
 ## 1. Overview / Purpose

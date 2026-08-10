@@ -1,5 +1,9 @@
 # Rule Classification and Generation
 
+> **Historical Ascent-era reference.** `macros/src/logic/rules.rs` was retired; #95 removed its
+> final uncalled freshness emitter and stale generated artifacts. Current rule classification and
+> lowering live in `macros/src/gen/runtime/dovetail_report*` and `rholang-codegen/`.
+
 **Source**: [`macros/src/logic/rules.rs`](../../src/logic/rules.rs)
 
 ## 1. Overview / Purpose

@@ -23,8 +23,7 @@ use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
     write_blockly_blocks, write_blockly_categories,
 };
-use logic::rules::generate_freshness_functions;
-use logic::writer::spill_and_include;
+use logic::writer::{retire_lang_module, spill_and_include};
 use mettail_ast::compose::ComposeDef;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
@@ -231,11 +230,6 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
     };
     stage!("generate_all.done");
 
-    stage!("generate_freshness_functions.start");
-    // Generate freshness functions (needed by Ascent rewrite clauses)
-    let freshness_fns = generate_freshness_functions(&language_def);
-    stage!("generate_freshness_functions.done");
-
     stage!("lowering_disposition_inventory.start");
     // Task #94: derive the LOWERING-DISPOSITION INVENTORY once, here, and hand it to the
     // metadata generator. One entry per declared equation orientation, rewrite, and fold,
@@ -342,7 +336,13 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
     // from disk during expansion, keeping the bridge tiny. It also gives
     // humans readable files to diff and inspect after compilation.
     let ast_include = spill_and_include(&lang_name, "ast", ast_code);
-    let freshness_include = spill_and_include(&lang_name, "freshness", freshness_fns);
+    // #95 — the old Ascent freshness helper had no caller after binder
+    // congruence moved to freshen-then-float. Remove any artifact emitted by an
+    // earlier build so generated-file censuses cannot mistake dead output for a
+    // live module. This is idempotent and scoped to one known retired file.
+    if let Err(e) = retire_lang_module(&lang_name, "freshness") {
+        eprintln!("  ({}) WARNING: could not retire freshness.rs ({})", lang_name, e);
+    }
     let metadata_include = spill_and_include(&lang_name, "metadata", metadata_code);
     let language_include = spill_and_include(&lang_name, "language", language_code);
     let wpda_include = spill_and_include(&lang_name, "wpda", wpda_engine_code);
@@ -353,7 +353,6 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
         // language whose declared constructs are all accounted for.
         #disposition_refusal
         #ast_include
-        #freshness_include
         #metadata_include
         #language_include
         #wpda_include

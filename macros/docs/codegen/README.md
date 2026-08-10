@@ -1,5 +1,10 @@
 # Codegen Optimization Modules
 
+> **Historical Ascent-era reference.** The modules and runtime pipeline described below were
+> retired by P6 and are not present in `macros/src/logic/`. Current equation/rewrite lowering lives
+> under `macros/src/gen/runtime/dovetail_report*` and `rholang-codegen/`; the only live logic helpers
+> are stratification, shared category utilities, generated-module writing, and test-only analysis.
+
 The `macros/src/logic/` module system implements the Ascent Datalog code generation
 pipeline for MeTTaIL grammars. This document provides an index of all module
 documentation, an architecture overview, and a recommended reading order.

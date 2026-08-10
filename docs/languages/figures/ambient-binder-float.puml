@@ -37,8 +37,8 @@ repeat
         It is discharged **by construction**: a globally
         fresh binder cannot occur free in any pre-existing
         sibling or field, so re-closing captures nothing.
-        The generated ""is_fresh"" in freshness.rs survives
-        as a live public API with no caller.
+        The former uncalled ""is_fresh"" API and freshness.rs
+        artifact were retired in #95.
       end note
       :rebuild the prefix INSIDE the scope; <<#FEF3C7>>
       :""Scope::new"" - re-close, recomputing the

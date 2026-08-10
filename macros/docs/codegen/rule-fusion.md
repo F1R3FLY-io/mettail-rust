@@ -1,5 +1,9 @@
 # BCG02: Deconstruction-Rewrite Chain Fusion
 
+> **Historical Ascent-era reference.** `macros/src/logic/fusion.rs` was retired with that backend.
+> This document preserves the old optimization argument but does not describe current production
+> codegen.
+
 **Source**: [`macros/src/logic/fusion.rs`](../../src/logic/fusion.rs)
 
 ## 1. Overview / Purpose

@@ -1,5 +1,9 @@
 # ART04: Bloom Filter Pre-Check
 
+> **Historical Ascent-era reference.** `macros/src/logic/bloom_filter.rs` and its generated relation
+> pre-check were retired with that backend. Current hot-path filtering belongs to the typed
+> Dovetail/Rho matchers and must be justified against their exact-key semantics.
+
 **Source**: [`macros/src/logic/bloom_filter.rs`](../../src/logic/bloom_filter.rs)
 
 ## 1. Overview / Purpose

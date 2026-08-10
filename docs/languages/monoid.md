@@ -179,7 +179,7 @@ uses `flatten.rs` in exactly that way.
 | `subst.rs`, `normalize.rs`, `env_subst.rs`, `env_types.rs` | substitution and normalisation work-stack engines, plus the REPL environment |
 | `strategies.rs`, `term_generation.rs`, `random_generation.rs` | proptest strategies and term generators (emitted even with `emit_tests: false`) |
 | `is_ground.rs`, `term_depth.rs`, `var_inference.rs`, `match_pattern.rs`, `parse_alt_filter.rs` | supporting analyses |
-| `language_struct.rs`, `language_trait_impl.rs`, `term_wrapper.rs`, `debug.rs`, `freshness.rs`, `guard_codegen.rs`, `flt_reflect.rs`, `rho_scalar_invocation.rs`, `rho_fold_dataflow.rs` | the runtime surface |
+| `language_struct.rs`, `language_trait_impl.rs`, `term_wrapper.rs`, `debug.rs`, `guard_codegen.rs`, `flt_reflect.rs`, `rho_scalar_invocation.rs`, `rho_fold_dataflow.rs` | the runtime surface (`freshness.rs` was retired in #95 after it became uncalled) |
 | `ast.rs`, `language.rs` | aggregators — nothing but `include!` lines |
 
 ---

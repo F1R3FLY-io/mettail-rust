@@ -1,6 +1,6 @@
 //! Parse-only benchmarks for PraTTaIL parser performance.
 //!
-//! Run with: cargo bench -p mettail-languages --bench parse_bench
+//! Run with: cargo bench -p languages --bench parse_bench
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mettail_languages::ambient::*;
@@ -79,8 +79,8 @@ fn rholang_inputs() -> Vec<(&'static str, &'static str)> {
         ("parallel", "{p | q}"),
         ("drop_quote", "*(@(p))"),
         ("nested_output", "{x!(p) | y!(q)}"),
-        ("multi_input", "(x?a, y?b).{*(a)}"),
-        ("complex", "{c!(0) | (c?x).{*(x)} | d!(1) | (d?y).{*(y)}}"),
+        ("multi_input", "for(a <- x & b <- y){*(a)}"),
+        ("complex", "{c!(0) | for(x <- c){*(x)} | d!(1) | for(y <- d){*(y)}}"),
     ]
 }
 

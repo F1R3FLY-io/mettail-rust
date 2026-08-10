@@ -20,9 +20,10 @@
 //! (`is_fresh` against the ORIGINAL binder) made the NF hint-sensitive and
 //! non-maximal (the refuted F1 stall); with the gates dropped, the outer
 //! `term_eq`-terminated fixpoint loop in `binder_congruence_nf` drives every
-//! `new` maximally outward. The generated per-language `is_fresh` fn remains an
-//! uncalled pub API (AM-6b) — freshness is now discharged by construction, not
-//! checked. FV: `formal/rocq/rho_bridge/theories/BinderFloatCanonicalization.v`
+//! `new` maximally outward. The former generated per-language `is_fresh` helper
+//! was an uncalled public API after this change and has been retired (#95):
+//! freshness is discharged by construction, not checked. FV:
+//! `formal/rocq/rho_bridge/theories/BinderFloatCanonicalization.v`
 //! (freshening totality; redex exposure over the C-G subset).
 //!
 //! FLATNESS OBLIGATION (AM-2): at the bag arm's extrusion seam, a `new` whose

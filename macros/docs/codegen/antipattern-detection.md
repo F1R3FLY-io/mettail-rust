@@ -1,5 +1,9 @@
 # Codegen Antipattern Detection
 
+> **Historical Ascent-era reference.** `macros/src/logic/antipattern.rs` was retired with that
+> backend. This document is retained only to interpret old audit/proof identifiers; it is not an
+> implementation guide for the current Dovetail/Rho lowering pipeline.
+
 **Source**: [`macros/src/logic/antipattern.rs`](../../src/logic/antipattern.rs)
 
 ## 1. Overview / Purpose
