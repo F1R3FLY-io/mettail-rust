@@ -62,8 +62,11 @@ impl RhoNetChannel {
         Self { name: name.into(), kind }
     }
 
-    /// Reflected term-location channel from the `knotted-topoi` semantics —
-    /// `loc:{fingerprint}/{path}`, fingerprint-scoped per INV-S6.
+    /// Generic path-scoped location channel from the `knotted-topoi` semantics.
+    ///
+    /// Contextual/control channels still use this constructor. Production
+    /// subject positions use `SubjectLocationIndex::channel` instead, whose
+    /// fixed-width `@i2` position field avoids copying an absolute path.
     pub fn location(language_fingerprint: &str, path: impl Into<String>) -> Self {
         Self::new(
             scoped_channel_name("loc", language_fingerprint, path),

@@ -14,8 +14,8 @@ title Figure 27-8 — spreading a term and collapsing  (loc: / col: / cap:)
 
 rectangle "spread_term_par_at (structural node f)" as SPREAD #C6E0F5
 rectangle "loc:{root}!(head_tag f)\nthe head tag ALONE (children derived)" as LOC #F6C177
-rectangle "recurse each child at\n{root}/f.i  (loc: / col: / cap:)" as CHILD #DDEBF7
-rectangle "collapse_publish (internal node)\nfor(v_i <- col:{root}/f.i){\n  col!(EList[f, v_0..]) | cap!(EList[f, v_0..]) }" as COLLAPSE #A7D8B6
+rectangle "schedule each child at\nindexed position p_i  (loc: / col: / cap:)" as CHILD #DDEBF7
+rectangle "collapse_publish (internal node)\nfor(v_i <- col⟨root,p_i⟩){\n  col⟨root,p⟩!(EList[f, v_0..]) | cap⟨root,p⟩!(EList[f, v_0..]) }" as COLLAPSE #A7D8B6
 
 SPREAD --> LOC
 SPREAD --> CHILD

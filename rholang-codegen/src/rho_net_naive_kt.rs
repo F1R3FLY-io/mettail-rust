@@ -1571,7 +1571,7 @@ mod tests {
             "the expected head tag IS the receive pattern"
         );
 
-        // Captures: for(v1 <- cap:site0/Swap.0){ for(v2 <- cap:site0/Swap.1){ accept } }.
+        // Captures: for(v1 <- cap⟨site0,p1⟩){ for(v2 <- cap⟨site0,p2⟩){ accept } }.
         let cap_x = &root.body.as_ref().expect("root body").receives[0];
         assert!(!cap_x.persistent, "captures are one-shot");
         assert_eq!(
@@ -1619,7 +1619,7 @@ mod tests {
         .expect("the nested entry emits");
         assert_closed(&network, "the naive f(g(x)) receiver");
 
-        // Level 1: persistent for(⌜f⌝ <= loc:site0).
+        // Level 1: persistent for(⌜f⌝ <= loc⟨site0,p(root)⟩).
         let root = &network.receives[0];
         assert!(root.persistent);
         assert_eq!(
@@ -1627,7 +1627,7 @@ mod tests {
             Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
         assert_eq!(root.binds[0].patterns[0], tag_par("f"));
-        // Level 2: one-shot for(⌜g⌝ <- loc:site0/f.0).
+        // Level 2: one-shot for(⌜g⌝ <- loc⟨site0,p([0])⟩).
         let descent = &root.body.as_ref().expect("root body").receives[0];
         assert!(!descent.persistent, "descent tag receives are one-shot");
         assert_eq!(
@@ -1635,7 +1635,7 @@ mod tests {
             Some(indexed_channel(&subject, "loc", &[0]).as_str())
         );
         assert_eq!(descent.binds[0].patterns[0], tag_par("g"));
-        // Capture: for(v <- cap:site0/f.0/g.0){ accept } — the deep collapse value.
+        // Capture: for(v <- cap⟨site0,p([0,0])⟩){ accept } — the deep collapse value.
         let capture = &descent.body.as_ref().expect("descent body").receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().expect("source")),
@@ -1695,8 +1695,8 @@ mod tests {
     #[test]
     fn var_capture_wiring_matches_the_automaton_cap_abi_with_a_flat_sibling() {
         let subject = positional_subject();
-        // f(g(x), y): x is captured DEEP (cap:site0/f.0/g.0), y at the direct
-        // child (cap:site0/f.1); DFS order [x, y] ⇒ σ[x] = BoundVar(1),
+        // f(g(x), y): x is captured at p([0,0]), y at direct-child p([1]);
+        // DFS order [x, y] ⇒ σ[x] = BoundVar(1),
         // σ[y] = BoundVar(0) — the automaton's exact capture ABI.
         let automaton = SetAutomaton::compile_structural([(
             PatternId(0),

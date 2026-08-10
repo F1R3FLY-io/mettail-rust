@@ -12,10 +12,10 @@ top to bottom direction
 
 title Figure 27-7 — the NESTED (M2) frame  (f(g(x)) descend-then-collapse)
 
-rectangle "for (_ <- loc:site0)\nmatch head tag => f" as ROOT #C6E0F5
-rectangle "wrap_descent\nfor (h <- loc:site0/f.0){ match h => g }\ndescend the nested App head tag" as DESC #F6C177
-rectangle "capture cap:site0/f.0/g.0\nthe collapsed subtree at the Var leaf" as CAP #D6C6EE
-rectangle "sa:acc!(BoundVar(0), @OUT)\nM2 depth = recursion in collect_nested_schedule" as ACC #A7D8B6
+rectangle "for (_ <- loc⟨site0,p0⟩)\nmatch head tag => f" as ROOT #C6E0F5
+rectangle "wrap_descent\nfor (h <- loc⟨site0,p1⟩){ match h => g }\ndescend the indexed nested App head tag" as DESC #F6C177
+rectangle "capture cap⟨site0,p2⟩\nthe collapsed subtree at the Var leaf" as CAP #D6C6EE
+rectangle "sa:acc!(BoundVar(0), @OUT)\nM2 depth = explicit collect_nested_schedule worklist" as ACC #A7D8B6
 
 ROOT --> DESC
 DESC --> CAP

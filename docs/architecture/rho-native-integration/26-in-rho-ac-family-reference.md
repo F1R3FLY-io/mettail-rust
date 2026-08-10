@@ -81,7 +81,7 @@ The design goals, in order:
 | **Shuffle invariance** | the match ignores element order | a *connective* / multiset carrier, never a positional `EList` ([section 4](#4-scheme-b-matching-as-one-atomic-consume)) |
 | **Atomic, no partial fire** | pick-$`k`$ + bind `rest` + guard is indivisible | one locked `consume` with `check_commit` ([section 4](#4-scheme-b-matching-as-one-atomic-consume)) |
 | **Replacement** | the bag comes from the subject, not the report | the corrupted-report probe ([section 5](#5-re-sourcing-from-the-spread-replacement-not-replay)) |
-| **Disjoint sites** | two same-op bags never intermingle | the site-keyed carrier `ac:ρ/ℓ/op` ([section 6](#6-the-site-keyed-carrier)) |
+| **Disjoint sites** | two same-op bags never intermingle | the site-keyed carrier `ac:loc⟨ρ,p⟩/op` ([section 6](#6-the-site-keyed-carrier)) |
 | **Native carriers** | set/map are genuine sets/maps, not soups | `ESet` / `EMap` and their sorted-dedup invariants ([section 7](#7-the-carrier-taxonomy-hashbag-set-map-zip)) |
 | **Zero-cost in the CLTS ledger** | AC adds no new internal transitions | the atomic consume is below observable granularity ([section 10](#10-the-zero-new-tau-economy)) |
 
@@ -162,8 +162,8 @@ CLTS, and $`\tau`$ — is summarized only briefly.
 - **`Receive.condition`**: an optional guard on a Rholang `for`-receive that the reducer
   evaluates **before committing** the `consume`. AC uses it for the non-linear consistency
   guard ($`\mathtt{EEq}`$ over repeated occurrences) and the `Zip` correlation.
-- **Site-keyed carrier `ac:ρ/ℓ/op`**: the per-position channel a located bag's soup is
-  published on, keyed by the ground site path $`\ulcorner(\rho,\ell)\urcorner`$ **and** the
+- **Site-keyed carrier `ac:loc⟨ρ,p⟩/op`**: the per-position channel a located bag's soup is
+  published on, keyed by the exact compact subject position $`(\rho,p)`$ **and** the
   operand `op`. Built by `ac_carrier_channel`. Distinct positions get disjoint carriers
   ([section 6](#6-the-site-keyed-carrier)).
 - **$`\tau`$ (internal step)** and **CLTS (context-labelled transition system)**: as in the base
@@ -329,7 +329,7 @@ has **no** automaton entry — its collection node has no positional image — s
 this separate walk of the subject rather than by `collect_redex_sites`. At every bag node whose
 operator is admitted, the walk:
 
-1. derives the **site-keyed** carrier `ac:ρ/ℓ/op` (`ac_carrier_channel`,
+1. derives the **site-keyed** carrier `ac:loc⟨ρ,p⟩/op` (`ac_carrier_channel`,
    [section 6](#6-the-site-keyed-carrier)), disjoint per position;
 2. co-installs an `ac_sigma_receiver_par` over that carrier — byte-identical to the installed AC
    receiver **except** its `source` is the per-site carrier — which picks $`k`$-of-$`n`$, binds `rest`,
@@ -343,10 +343,12 @@ A `HashBag` has no positional child descent, so the walk does not recurse into a
 Literate form of the locate-and-co-install walk:
 
 ```text
-⟨ac_match_install_at(node, loc, by_op, out, fp)⟩ ≡
+⟨ac_match_install_at(index, position, root, by_op, out, fp)⟩ ≡
+  node ← index.term(position)
   if node.coll_type = HashBag ∧ by_op contains node.op:
       entry    ← by_op[node.op]
-      carrier  ← ac_carrier_channel(loc, node.op)          ▷ ac:⟨loc⟩/op — disjoint per position
+      loc      ← index.channel("loc", fp, root, position)
+      carrier  ← ac_carrier_channel(loc, node.op)          ▷ ac:loc⟨root,p⟩/op
       receiver ← ac_sigma_receiver_par_with_condition(       ▷ same shape as the installed receiver;
                     entry.kind, entry.op, entry.arity,        ▷   only the source differs
                     entry.rhs_par, quote(carrier), entry.condition)
@@ -354,7 +356,7 @@ Literate form of the locate-and-co-install walk:
       delivery ← carrier!(soup, @out)
       return receiver ∥ delivery
   else:                                                      ▷ a structural node — descend
-      return ∥ over children i of  ac_match_install_at(child_i, spread_child_location(loc, node.op, i), …)
+      return ∥ over index.children(position) of ac_match_install_at(index, child, root, …)
 ```
 
 **The corrupted-report probe.** The probe `s_ac_bag_is_produced_by_the_spread_not_the_report`
@@ -381,9 +383,9 @@ selection $`\{A, D\}`$ — a latent soundness bug. The fix (the load-bearing Red
 to key each carrier by the bag's **position**.
 
 **Mechanism.** `ac_carrier_channel(loc_channel, op)` returns `format!("ac:{loc_channel}/{op}")`,
-embedding the `nu`-free location path $`\ulcorner(\rho,\ell)\urcorner`$ that the spread and the
-automaton already agree on (via `spread_root_location` / `spread_child_location`). So two same-op
-bags at distinct positions get **disjoint** carriers — `ac:ρ/ℓ₁/op` and `ac:ρ/ℓ₂/op` differ even
+embedding the `nu`-free fixed-width location identity that the spread and the automaton
+obtain from the same `SubjectLocationIndex`. So two same-op bags at distinct positions get
+**disjoint** carriers — `ac:loc⟨ρ,p₁⟩/op` and `ac:loc⟨ρ,p₂⟩/op` differ even
 though `op` is shared. Both the carrier delivery and the co-installed receiver derive the channel
 through this one helper, so they rendezvous on **exactly one** bag's soup. Figure B shows the
 disjointness and the refuted shared-channel design.
@@ -391,7 +393,7 @@ disjointness and the refuted shared-channel design.
 > **★ INV-S6 (2026-07-25).** This site-keyed carrier takes **no** fingerprint argument, and
 > deliberately so: `loc_channel` is already fingerprint-scoped at its root
 > ([25 §2.1](25-in-rho-base-family-reference.md#21-inv-s6-the-channel-name-fingerprint-invariant)),
-> so the carrier reads `ac:loc:{fingerprint}/{site}/…/{op}` and inherits cross-language
+> so the carrier reads `ac:loc:{fingerprint}/@i2:{len}:{site}:{position}/{op}` and inherits cross-language
 > disjointness from the same key that gives it cross-*position* disjointness. Red-team #5
 > keyed by position; INV-S6 keys by language; one composition delivers both. The **bare**
 > (non-site-keyed) soup carrier has no such parent and scopes itself — `ac_soup_channel`
@@ -401,8 +403,8 @@ disjointness and the refuted shared-channel design.
 
 ![The site-keyed carrier — disjoint carriers under locate-all](figures/in-rho-ac-matching-site-keyed-carrier.svg)
 
-**Figure B — the site-keyed carrier.** One spread of $`\mathrm{Node}(\mathrm{PPar}\{A,B\}, \mathrm{PPar}\{C,D\})`$ publishes the two bags on disjoint carriers `ac:ρ/Node.0/PPar` and
-`ac:ρ/Node.1/PPar`; each receiver reads only its own bag. Without the site key both soups would
+**Figure B — the site-keyed carrier.** One spread of $`\mathrm{Node}(\mathrm{PPar}\{A,B\}, \mathrm{PPar}\{C,D\})`$ publishes the two bags on disjoint carriers `ac:loc⟨ρ,p₁⟩/PPar` and
+`ac:loc⟨ρ,p₂⟩/PPar`; each receiver reads only its own bag. Without the site key both soups would
 share `ac:PPar` and the matcher could pick the cross-bag $`\{A, D\}`$ (refuted, bottom).
 
 **Why AC leaves are always co-installable.** An AC receiver reads only its own disjoint site-keyed

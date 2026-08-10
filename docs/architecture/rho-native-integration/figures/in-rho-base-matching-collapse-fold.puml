@@ -16,26 +16,26 @@ skinparam sequence {
 
 title col:/cap: Collapse Fold at a Non-Nullary Var-Leaf  (Swap(Pair(A,B), C) ▸ pattern Swap(x, y))
 
-participant "leaf A\nspread @ ρ/Swap.0/Pair.0" as A #E8F0FE
-participant "leaf B\nspread @ ρ/Swap.0/Pair.1" as B #E8F0FE
-participant "Pair collapse receiver\nspread @ ρ/Swap.0" as P #E0F7F4
+participant "leaf A\nspread @ indexed p3" as A #E8F0FE
+participant "leaf B\nspread @ indexed p4" as B #E8F0FE
+participant "Pair collapse receiver\nspread @ indexed p1" as P #E0F7F4
 participant "automaton Var-leaf  x\n(state of pattern Swap(x, y))" as X #C9E7D4
 
 == bottom-up collapse — children publish their chain (col:) values ==
-A ->> P : col:ρ/Swap.0/Pair.0 ! ( ⟦A⟧ = EList[Ā] )
-B ->> P : col:ρ/Swap.0/Pair.1 ! ( ⟦B⟧ = EList[B̲] )
+A ->> P : col⟨ρ,p3⟩ ! ( ⟦A⟧ = EList[Ā] )
+B ->> P : col⟨ρ,p4⟩ ! ( ⟦B⟧ = EList[B̲] )
 activate P #E0F7F4
 note over P #E0F7F4
   collapse_publish (internal node):
-  for( v₀ ⟸ col:…/Pair.0 ; v₁ ⟸ col:…/Pair.1 )
+  for( v₀ ⟸ col⟨ρ,p3⟩ ; v₁ ⟸ col⟨ρ,p4⟩ )
   rebuild  ⟦Pair(A,B)⟧ = EList[ Pair̲, v₀, v₁ ]
   (byte-identical to reflect_ground_term_par)
 end note
 
 == republish the collapsed subterm on TWO disjoint channels ==
-P ->> P : col:ρ/Swap.0 ! ( ⟦Pair(A,B)⟧ )
+P ->> P : col⟨ρ,p1⟩ ! ( ⟦Pair(A,B)⟧ )
 note left #E0F7F4: read ONCE by\nSwap's own parent fold\n(the chain)
-P ->> X : cap:ρ/Swap.0 ! ( ⟦Pair(A,B)⟧ )
+P ->> X : cap⟨ρ,p1⟩ ! ( ⟦Pair(A,B)⟧ )
 deactivate P
 note right #C9E7D4: read ONCE by\nthe automaton\n(the capture)
 

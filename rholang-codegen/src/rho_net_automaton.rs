@@ -417,7 +417,8 @@ fn consistency_guard(arity: usize, partition: &[usize]) -> Par {
 }
 
 /// Wrap `accept` in the `eq:`-guarded polyadic JOIN for a NON-LINEAR op partition: one atomic
-/// `for(v_0 <- cap:ρ/op.0 ; … ; v_{arity-1} <- cap:ρ/op.{arity-1}){ accept }` whose `condition`
+/// `for(v_0 <- cap⟨ρ,p_0⟩ ; … ; v_{arity-1} <- cap⟨ρ,p_{arity-1}⟩){ accept }`
+/// whose `condition`
 /// is [`consistency_guard`]. Each `v_i` is the node's `cap:` COLLAPSE value `⟦subtree_i⟧`
 /// (M-collapse), so the guard compares FULLY COLLAPSED subterms — repeated occurrences match
 /// iff their whole subtrees are equal, not merely their head tags. Unlike the nested
@@ -910,9 +911,9 @@ mod tests {
 
     #[test]
     fn serializes_a_nested_app_pattern_by_descending_then_collapsing() {
-        // f(g(x)): the M-collapse nested path. The root Match dispatches f on `loc:site0`, then
-        // DESCENDS `loc:site0/f.0` (matching g), then CAPTURES the Var leaf x on the collapse
-        // channel `cap:site0/f.0/g.0` (its ⟦subtree⟧), and the accept sends the single σ slot.
+        // f(g(x)): the M-collapse nested path. The root Match dispatches f at indexed position
+        // p(root), DESCENDS to p([0]) (matching g), then CAPTURES x at p([0,0]). The assertions
+        // below pin the exact compact `loc:`/`cap:` channel ABI for those positions.
         let nested = SetAutomaton::compile_structural([(
             PatternId(0),
             Pattern::app(
@@ -927,28 +928,28 @@ mod tests {
                 .expect("a nested-App pattern now descends-then-collapses");
         assert!(network.locally_free.is_empty(), "the nested network is a closed contract");
 
-        // Root: for(h <- loc:site0){ match h { f => <descent> } }.
+        // Root: for(h <- loc⟨site0,p(root)⟩){ match h { f => <descent> } }.
         let root = &network.receives[0];
         assert_eq!(
             gstring(root.binds[0].source.as_ref().unwrap()),
             Some(indexed_channel(&subject, "loc", &[]).as_str())
         );
         let f_case = &root.body.as_ref().unwrap().matches[0].cases[0];
-        // Descent: for(h1 <- loc:site0/f.0){ match h1 { g => <capture> } }.
+        // Descent: for(h1 <- loc⟨site0,p([0])⟩){ match h1 { g => <capture> } }.
         let descent = &f_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(descent.binds[0].source.as_ref().unwrap()),
             Some(indexed_channel(&subject, "loc", &[0]).as_str())
         );
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
-        // Capture: for(v <- cap:site0/f.0/g.0){ accept }.
+        // Capture: for(v <- cap⟨site0,p([0,0])⟩){ accept }.
         let capture = &g_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().unwrap()),
             Some(indexed_channel(&subject, "cap", &[0, 0]).as_str()),
             "the Var leaf captures the COLLAPSED subterm at its deep cap: channel"
         );
-        // Accept: sa:acc!( BoundVar(0), @"OUT" ) — the single σ slot ⟦subtree at f.0/g.0⟧.
+        // Accept: sa:acc!( BoundVar(0), @"OUT" ) — the single σ slot at p([0,0]).
         let accept = &capture.body.as_ref().unwrap().sends[0];
         assert_eq!(gstring(accept.chan.as_ref().unwrap()), Some("sa:acc"));
         assert_eq!(accept.data.len(), 2, "σ[x] + @out");
@@ -958,8 +959,8 @@ mod tests {
 
     #[test]
     fn serializes_a_nested_pattern_with_a_flat_sibling_leaf() {
-        // f(g(x), y): x is captured DEEP (cap:site0/f.0/g.0), y is captured at the direct child
-        // (cap:site0/f.1). Both σ slots are bound INSIDE the g descent's closed frame, in DFS
+        // f(g(x), y): x is captured at p([0,0]) and y at p([1]).
+        // Both σ slots are bound INSIDE the g descent's closed frame, in DFS
         // (first-occurrence) order [x, y] → σ[x] = BoundVar(1), σ[y] = BoundVar(0).
         let nested = SetAutomaton::compile_structural([(
             PatternId(0),
@@ -976,7 +977,8 @@ mod tests {
         let f_case = &network.receives[0].body.as_ref().unwrap().matches[0].cases[0];
         let descent = &f_case.source.as_ref().unwrap().receives[0];
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
-        // Inside the g descent: for(vx <- cap:site0/f.0/g.0){ for(vy <- cap:site0/f.1){ accept } }.
+        // Inside the g descent: for(vx <- cap⟨site0,p([0,0])⟩){
+        // for(vy <- cap⟨site0,p([1])⟩){ accept } }.
         let cap_x = &g_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().unwrap()),
@@ -1247,7 +1249,7 @@ mod tests {
         assert_eq!(m.cases.len(), 1);
         assert_eq!(m.cases[0].free_count, 0, "ground head-tag discriminator binds nothing");
 
-        // Case body: for(v1 <- cap:site0/Swap.0){ for(v2 <- cap:site0/Swap.1){ accept } } — the
+        // Case body: for(v1 <- cap⟨site0,p1⟩){ for(v2 <- cap⟨site0,p2⟩){ accept } } — the
         // children read the `cap:` COLLAPSE channels (the fully collapsed subterms), NOT `loc:`.
         let r1 = m.cases[0].source.as_ref().unwrap();
         assert_eq!(

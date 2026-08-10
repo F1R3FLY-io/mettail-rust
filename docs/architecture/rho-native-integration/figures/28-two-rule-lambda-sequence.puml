@@ -35,8 +35,8 @@ SPEC -[#C05621]> COMP : parse LanguageDef;\nintern both LHSs (s0..s5)
 COMP -[#C05621]> PAR : install gate Ok:\nseed ∥ σ-receiver ∥ TRS (once)
 
 PAR -[#4A5568]->> SPREAD : compose with the per-subject call\n(network_ρ ∥ spread; one located site)
-SPREAD -[#9AA5B1]->> NET : tau — loc:ρ!(⌜App⌝), loc:ρ/App.0!(⌜^lambda⌝),\nloc:ρ/App.0/^lambda.0!(⌜^bound⌝), ...
-SPREAD -[#9AA5B1]->> NET : tau — collapse: cap:ρ/App.0/^lambda.0!(⟦^bound(Z)⟧),\ncap:ρ/App.1!(⟦A⟧)
+SPREAD -[#9AA5B1]->> NET : tau — loc⟨ρ,p0⟩!(⌜App⌝), loc⟨ρ,p1⟩!(⌜^lambda⌝),\nloc⟨ρ,p3⟩!(⌜^bound⌝), ...
+SPREAD -[#9AA5B1]->> NET : tau — collapse: cap⟨ρ,p3⟩!(⟦^bound(Z)⟧),\ncap⟨ρ,p2⟩!(⟦A⟧)
 NET -[#9AA5B1]->> SIG : tau — accept: sa:...Beta...!(⟦^bound(Z)⟧, ⟦A⟧, @out)
 SIG -[#C53030]->> TRS : <b>^subst!(⟦Z⟧, ⟦A⟧, ⟦^bound(Z)⟧, out)</b>\nTHE observable beta-fire COMM
 TRS -[#9AA5B1]->> TRS : tau — cascade: ^bound arm, ^cmp(Z,Z) = Eq,\n^shiftk(Z, ⟦A⟧) returns the replacement

@@ -20,7 +20,7 @@ title Scheme B — In-Rho AC Match + Fire as ONE Atomic Consume  (AcDemo: PPar{A
 
 participant "reflected subject\n⟦PPar{A|B|C}⟧\n<size:10>reflect_category_fn</size>" as SUB #E8F0FE
 participant "match driver\n<size:11>ac_match_call_par</size>" as DRV #E8F0FE
-participant "site-keyed carrier\n<b>ac:ρ/ℓ/PPar</b>\n<size:10>ac_carrier_channel</size>" as CAR #E6DBF2
+participant "site-keyed carrier\n<b>ac:loc⟨ρ,p⟩/PPar</b>\n<size:10>ac_carrier_channel</size>" as CAR #E6DBF2
 participant "co-installed AC receiver\n<size:11>ac_sigma_receiver_par</size>" as RCV #F7D9D5
 box "ONE atomic RSpace consume  (locked; check_commit; all-or-nothing)" #E6F4EA
 participant "f1r3node spatial matcher\n<size:10>ListMachine · sub_pars · remainder</size>" as MAT #C9E7D4
@@ -29,9 +29,9 @@ participant "@OUT" as OUT #FEF7E0
 
 SUB -> DRV : M-reflect the WHOLE term\n(structural; NO host σ read)
 activate DRV
-DRV -> DRV : walk subject → locate the\nbag node at position ℓ\n(the spread's loc: derivation)
+DRV -> DRV : walk shared SubjectLocationIndex → locate\nthe bag node at exact position p
 DRV -> RCV : co-install receiver whose\n<b>source = the site-keyed carrier</b>
-DRV -> CAR : publish  <b>ac:ρ/ℓ/PPar!(⟦bag⟧, @OUT)</b>\n⟦bag⟧ = soup ∏ @"ac:PPar"!(⟦eᵢ⟧)\nfrom the SUBJECT's ground elements
+DRV -> CAR : publish  <b>ac:loc⟨ρ,p⟩/PPar!(⟦bag⟧, @OUT)</b>\n⟦bag⟧ = soup ∏ @"ac:PPar"!(⟦eᵢ⟧)\nfrom the SUBJECT's ground elements
 deactivate DRV
 
 RCV -> MAT : match  ⟨ ac_bag_pattern(PPar, k=1) , out ⟩\nagainst the carrier's  ⟨ soup , @OUT ⟩

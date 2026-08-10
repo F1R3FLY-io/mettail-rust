@@ -175,8 +175,8 @@ $`\sigma`$ so this law can fire, in Rho, at every redex.
 > **INV-S6.** Every channel name emitted by the driver network contains the emitting
 > language's fingerprint.
 
-**The ABI.** Every name in every driver-network family is minted by one primitive,
-`rho_net::scoped_channel_name` (`rholang-codegen/src/rho_net.rs`):
+**The scope ABI.** Every name in every driver-network family carries the language
+fingerprint through `rho_net::scoped_channel_name` (`rholang-codegen/src/rho_net.rs`):
 
 ```math
 \mathrm{chan}(\mathit{family}, \mathit{fp}, \mathit{path}) \;=\;
@@ -189,19 +189,34 @@ iff their $`(\mathit{family}, \mathit{fp}, \mathit{path})`$ triples are equal: t
 is collision-free *by construction*, with no probability to bound. Because $`\mathit{fp}`$
 is slash-free, the first `/` after the family prefix splits scope from path unambiguously.
 
-**Why the scoping lives at the KEY, not at the emission sites.** Only the *roots* are
-scoped; every derived name inherits by composition:
+Production subject positions add an exact compact layer (`rho_net_location.rs`):
+
+```math
+\mathrm{subject\_chan}(family,fp,\rho,p) =
+family \Vert \mathtt{":"} \Vert fp \Vert \mathtt{"/@i2:"} \Vert
+\mathrm{hex}_{16}(|\rho|_{bytes}) \Vert \mathtt{":"} \Vert \rho \Vert
+\mathtt{":"} \Vert \mathrm{hex}_{16}(p).
+```
+
+`SubjectLocationIndex` assigns $`p`$ once during an iterative traversal, stores each
+node/edge once (with every parent's children in one contiguous arena range), and supplies
+the *same* position to the spread and every receiver.
+The root-site length prefix and fixed-width position make the encoding injective without
+a digest or delimiter escape. Below, `loc⟨ρ,p⟩`, `col⟨ρ,p⟩`, and
+`cap⟨ρ,p⟩` abbreviate those literal `@i2` names; they are not growing path strings.
+
+**Why the scoping lives at the KEY, not at the emission sites.** Subject-position
+channels are minted only through the shared index. Other path-scoped families inherit
+the same fingerprint through composition:
 
 ```math
 \begin{aligned}
-\texttt{spread\_child\_location}(\mathit{parent}, f, i) &= \mathit{parent} \Vert \mathtt{"/"} \Vert f \Vert \mathtt{"."} \Vert i \\
 \texttt{ac\_carrier\_channel}(\mathit{loc}, \mathit{op}) &= \mathtt{"ac:"} \Vert \mathit{loc} \Vert \mathtt{"/"} \Vert \mathit{op} \\
 \texttt{contextual\_premise\_hole\_channel}(c) &= \mathtt{"ph:"} \Vert c
 \end{aligned}
 ```
 
-so scoping the roots scopes the whole tree. This matters practically: `RhoNetChannel::
-location` alone has **nineteen** production callers, and two separate attempts to fix the
+so scoping their roots scopes the whole tree. This matters practically: two separate attempts to fix the
 defect below by enumerating emission sites both came up short. The requirement is therefore
 stated as a property of the emitted `Par` and **checked by sweep**
 (`rholang-codegen/tests/s6_channel_fingerprint_invariant.rs`), which walks every channel
@@ -223,8 +238,8 @@ The third is the sharpest, and it is a wrong firing rather than mere starvation.
 `for(h <- loc){ match h { f̲ => … } }`, so the receive binds `h` **unconditionally** and the
 tag test is a `match` *inside* the continuation with a single ground arm and no wildcard —
 the COMM fires, the match finds no arm, and the value is consumed and lost. But `cap:` is
-**not an independent family**: `spread_root_location` and `collapse_capture_location` derive
-from the *same* `root_location`, and `rho_net_automaton` derives both roots together. And a
+**not an independent family**: the subject index mints `loc:` and `cap:` from the same
+`(fingerprint, root site, position)` tuple. And a
 σ capture **cannot discriminate by construction** — `wrap_children` / `wrap_capture_chain`
 bind the fully collapsed subterm, because a pattern variable must accept an *arbitrary*
 subterm, so there is no tag to match on and there could not be one. Language B's capture
@@ -245,11 +260,11 @@ A's operand**.
                              ↓
                      B fires ITS RHS on A's operand   ⚠ WRONG FIRING
 
-      AFTER:   cap:fp_A/ρ/Swap.0  ✗   ≠   ✗  cap:fp_B/ρ/Swap.0
+      AFTER:   cap:fp_A/@i2:<len>:ρ:<p>  ✗ ≠ ✗  cap:fp_B/@i2:<len>:ρ:<p>
                                  disjoint by construction
 ```
 
-**The site nonce was not a defence.** `spread_root_location`'s documentation described
+**The site nonce was not a defence.** The retired `spread_root_location` production path described
 `root_location` as "the quoted per-site nonce $`\rho`$ of the $`\ulcorner(\rho,\ell)\urcorner`$
 idiom", which reads as though it separated languages. It did not: `root_location` is a plain
 caller-supplied `&str`, and `spread_term_par(term, language_fingerprint, root_location)`
@@ -434,25 +449,25 @@ capture channel. This fold is the subtle, load-bearing part of the design; it is
 for a real soundness bug (below).
 
 **The spread law.** `spread_term_par` (`rholang-codegen/src/rho_net_lower.rs`) realizes,
-for a node at location $`\ell`$,
+for a node at indexed position $`p`$ under root site $`\rho`$,
 
 ```math
-[\![ f(t_1,\dots,t_n) ]\!]_\ell \;=\; \underbrace{\texttt{loc:}\ell\,!(\underline{f})}_{\text{head tag}} \;\bigm|\; \prod_{i=1}^{n} [\![ t_i ]\!]_{\ell\cdot(f,i)} \;\bigm|\; \underbrace{\mathrm{collapse}(\underline{f}; \ell)}_{\text{fold}}.
+[\![ f(t_1,\dots,t_n) ]\!]_{\rho,p} \;=\; \underbrace{\texttt{loc}\langle\rho,p\rangle\,!(\underline{f})}_{\text{head tag}} \;\bigm|\; \prod_{i=1}^{n} [\![ t_i ]\!]_{\rho,p_i} \;\bigm|\; \underbrace{\mathrm{collapse}(\underline{f}; \rho,p)}_{\text{fold}}.
 ```
 
-Each node publishes **only** its head tag $`\underline{f}`$ on its deterministic location
-channel `loc:`$`\ell`$ (`spread_root_location` gives `loc:fp/ρ`; `spread_child_location`
-gives `loc:fp/ρ/f.i`); child locations are *derived*, never carried in the message. The
+Each node publishes **only** its head tag $`\underline{f}`$ on its deterministic indexed
+channel `loc⟨ρ,p⟩`. Child positions are resolved from `SubjectLocationIndex`; no
+message carries them and no channel materializes the ancestor path. The
 scheme is **`nu`-free** (INV-7): a flat parallel composition of ground sends — no `New`,
 no bound variable.
 
 **The collapse fold.** `collapse_publish` emits, per node, its fully-collapsed subterm
 value $`[\![ \text{subtree} ]\!]`$ on **two disjoint channels**:
 
-- **`col:`** $`\ell`$ (chain, `collapse_chain_location`, i.e. `"col:" + fp + "/" + ℓ`):
+- **`col⟨ρ,p⟩`** (chain, `SubjectLocationIndex::channel("col", …)`):
   read **once** by the *parent's* fold, so a parent can rebuild *its* subtree from its
   children.
-- **`cap:`** $`\ell`$ (capture, `collapse_capture_location`, i.e. `"cap:" + fp + "/" + ℓ`):
+- **`cap⟨ρ,p⟩`** (capture, `SubjectLocationIndex::channel("cap", …)`):
   read **once** by the *automaton's* Var-leaf state, so a variable binds the subtree.
 
 Here $`\mathit{fp}`$ is the language fingerprint that scopes every channel name
@@ -461,12 +476,12 @@ discriminator available on `cap:`, because a Var-leaf capture binds an arbitrary
 and so admits no tag test.
 
 A **leaf** publishes two ground sends
-$`\texttt{col:}\ell\,!(\mathtt{EList}[\underline{f}]) \mid \texttt{cap:}\ell\,!(\mathtt{EList}[\underline{f}])`$.
+$`\texttt{col}\langle\rho,p\rangle\,!(\mathtt{EList}[\underline{f}]) \mid \texttt{cap}\langle\rho,p\rangle\,!(\mathtt{EList}[\underline{f}])`$.
 An **internal** node is a polyadic join that consumes its children's `col:` values and
 republishes its own:
 
 ```math
-\mathtt{for}\bigl(v_0 \Leftarrow \texttt{col:}\ell\!\cdot\!(f,0);\ \dots;\ v_{n-1} \Leftarrow \texttt{col:}\ell\!\cdot\!(f,n\!-\!1)\bigr)\ \bigl\{\ \texttt{col:}\ell\,!(E) \mid \texttt{cap:}\ell\,!(E)\ \bigr\},\quad E = \mathtt{EList}[\underline{f}, v_0, \dots, v_{n-1}].
+\mathtt{for}\bigl(v_0 \Leftarrow \texttt{col}\langle\rho,p_0\rangle;\ \dots;\ v_{n-1} \Leftarrow \texttt{col}\langle\rho,p_{n-1}\rangle\bigr)\ \bigl\{\ \texttt{col}\langle\rho,p\rangle\,!(E) \mid \texttt{cap}\langle\rho,p\rangle\,!(E)\ \bigr\},\quad E = \mathtt{EList}[\underline{f}, v_0, \dots, v_{n-1}].
 ```
 
 Because child $`i`$ binds $`\mathtt{BoundVar}(n-1-i)`$ (the join flattens in bind order), the
@@ -479,18 +494,24 @@ $`[\![ \text{subtree} ]\!]`$ — the fold is the Rho realization of
 Literate form:
 
 ```text
-⟨spread_term_par_at(node, loc, chainLoc, capLoc)⟩ ≡
-  emit  loc!(head_tag(node.constructor))                 ▷ the τ dispatch symbol
-  childChains ← []
-  for (i, child) in node.children:
-      cLoc   ← loc      · (node.constructor, i)          ▷ derived loc: child channel
-      cChain ← chainLoc · (node.constructor, i)
-      cCap   ← capLoc   · (node.constructor, i)
-      childChains.push(cChain)
-      ⟨spread_term_par_at(child, cLoc, cChain, cCap)⟩     ▷ recurse (left→right, L order)
-  ⟨collapse_publish(chainLoc, capLoc, head_tag, childChains)⟩
+⟨spread_term_par_indexed(index, root)⟩ ≡
+  work ← [Visit(root_position)]
+  while work not empty:
+    task ← work.pop()
+    if task = Visit(position):
+      node ← index.term(position)
+      (loc, chainLoc, capLoc) ← index.channels(root, position)
+      emit loc!(head_tag(node.constructor))              ▷ the τ dispatch symbol
+      children ← index.children(position)
+      work.push(Collapse(position, head_tag, children))
+      work.push(Visit(child) for child in reverse(children))
+    else if task = Collapse(position, tag, children):
+      ⟨collapse_publish(index, root, position, tag, children)⟩
 
-⟨collapse_publish(chainLoc, capLoc, tag, childChains)⟩ ≡
+⟨collapse_publish(index, root, position, tag, children)⟩ ≡
+  chainLoc ← index.channel("col", root, position)
+  capLoc   ← index.channel("cap", root, position)
+  childChains ← [index.channel("col", root, child) for child in children]
   if childChains = []:                                    ▷ leaf
       E ← EList[tag]
       emit  chainLoc!(E)  |  capLoc!(E)
@@ -573,15 +594,15 @@ positional send. The message is byte-identical to the host injection, so
 Literate form (flat linear case):
 
 ```text
-⟨network_for(view, ρ, targets, fingerprint)⟩ ≡
-  rootCh  ← loc:ρ ;  capRoot ← cap:ρ
+⟨network_for(view, index, ρ, rootPos, targets, fingerprint)⟩ ≡
+  rootCh  ← loc⟨ρ,rootPos⟩
   cases ← []
   for entry in view.entries:
       (op, args) ← view.root(entry)                       ▷ App root
       target     ← targets.find(entry)                    ▷ the entry's sa: channel
       accept     ← build_accept_send(target.sa, out, arity, first_occ)
-      body       ← wrap_capture_chain(                    ▷ read cap:ρ/op.i, innermost first
-                       [ capRoot·(op,i) for i in 0..arity ], accept)
+      body       ← wrap_capture_chain(                    ▷ read cap⟨ρ,p_i⟩, innermost first
+                       [ index.cap(index.child(rootPos, i)) for i in 0..arity ], accept)
       cases.push( MatchCase(head_tag(op) ⇒ body) )
   return  for(h ⟸ rootCh){ match h { cases } }
 
@@ -656,7 +677,8 @@ co-installed networks; both accepts fire the shared $`\sigma`$-receiver.
 
 **Why co-installation is contention-free.** A **flat** entry's network reads only its own
 root `loc:` and its direct-child `cap:` channels, which are **disjoint across distinct
-positions** (`loc:ρ/ℓ₁` and `loc:ρ/ℓ₂` differ, and likewise the `cap:` prefixes). So
+positions** (`loc⟨ρ,p₁⟩` and `loc⟨ρ,p₂⟩` differ, and likewise the `cap:`
+families). So
 co-installing one network per position over one spread never contends for a channel
 (`ruleset_all_entries_flat`). This disjointness is the $`O1`$ symbol-once property in
 channel form (`SymbolOnceInjective`: position-to-channel is injective).

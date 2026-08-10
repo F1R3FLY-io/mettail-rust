@@ -266,7 +266,8 @@ JOIN over the entry's children.
 
 **The join, not the nested chain.** The linear frame nests one `for`-receive per child
 (`wrap_children`). A non-linear entry instead binds ALL children in ONE receive
-(`join_children_receiver`): `for(h_0 <- loc:ρ/op.0 ; … ; h_k <- loc:ρ/op.k){ accept }`. The
+(`join_children_receiver`): `for(h_0 <- loc⟨ρ,p_0⟩ ; … ; h_k <- loc⟨ρ,p_k⟩){ accept }`,
+where each $`p_i`$ is an exact `SubjectLocationIndex` position. The
 join is REQUIRED — the f1r3node reducer substitutes a receive's guard at binder depth 1, so
 the guard sees only THIS receive's binds; a nested chain's guard could not compare children
 bound by outer `for`s.

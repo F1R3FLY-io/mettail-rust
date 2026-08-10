@@ -113,14 +113,18 @@ variants are `Comm`, `NativeSystemProcess`, and `Unsupported` (§10).
 
 | Channel | Constructor | Meaning |
 |---|---|---|
-| `loc:{root}` | `spread_root_location` (`:2761`) | the head-tag channel for the positional walk |
-| `{parent}/{op}.{i}` | `spread_child_location` (`:2770`) | the derived child location $`\ell\cdot(op,i)`$ |
-| `col:{root}` | `collapse_chain_location` (`:2777`) | the bottom-up chain-collapse value $`[\![ \text{subtree} ]\!]`$, read once by a parent fold |
-| `cap:{root}` | `collapse_capture_location` (`:2786`) | the capture-collapse value, read once at a variable leaf |
+| `loc:{fp}/@i2:{len}:{root}:{position}` | `SubjectLocationIndex::channel("loc", …)` | exact fixed-width head-tag channel for the positional walk |
+| `(parent position, child ordinal) → child position` | `SubjectLocationIndex::child` | one stored topology edge; no derived absolute path string |
+| `col:{fp}/@i2:{len}:{root}:{position}` | `SubjectLocationIndex::channel("col", …)` | the bottom-up chain-collapse value $`[\![ \text{subtree} ]\!]`$, read once by a parent fold |
+| `cap:{fp}/@i2:{len}:{root}:{position}` | `SubjectLocationIndex::channel("cap", …)` | the capture-collapse value, read once at a variable leaf |
 | `ac:{loc}/{op}` | `ac_carrier_channel` (`:2802`) | the site-keyed associative-commutative operand-bag carrier |
 | `sa:{t}` | `RhoNetChannel::set_automaton_trace` (`rho_net.rs:69`) | the $`\sigma`$-receiver source, keyed by `StateId` |
 | `eq:{name}` | `RhoNetChannel::consistency` (`rho_net.rs:74`) | the non-linear / premise name-equality guard |
 | `obs:{name}` | `RhoNetChannel::observation` (`rho_net.rs:79`) | a user/runtime observation channel |
+
+Here `{len}` and `{position}` are sixteen-hex-digit fields; the root-site byte length
+makes the tuple boundary unambiguous. Later `loc⟨root,p⟩`/`col⟨root,p⟩`/`cap⟨root,p⟩`
+forms are readable abbreviations for these literal `@i2` names, not ancestor-path strings.
 
 ## 3. The source: a `language!` specification, clause by clause
 
@@ -436,7 +440,7 @@ positions by first occurrence of each distinct variable (`:534`), then, for a gr
 sharing op and arity, builds the case body:
 
 - `wrap_children` (`:197`) → `wrap_capture_chain` (`:210`): wraps $`k`$ variable-leaf `for`-receives,
-  each reading its child's `cap:` collapse channel `spread_child_location(capture_root, op, i)`; the
+  each reading its child's compact `cap:` channel from `SubjectLocationIndex::child`; the
   DFS-first leaf binds the highest De Bruijn index.
 - `build_accept_send` (`:146`): emits `accept_channel!(σ_0, …, σ_{k-1}, @out)` with one $`\sigma`$
   slot per **distinct** variable, $`\sigma_d = \mathrm{BoundVar}(\mathit{arity}-1-p)`$ where
@@ -450,9 +454,9 @@ The single-pattern M1 special case `automaton_receiver_network_par` (`:618`) del
 multi-pattern serializer with one target. The worked `Swap(x,y)` frame (`:884`) is:
 
 ```text
-for (_ <- loc:site0) {
+for (_ <- loc⟨site0,p0⟩) {
   match BoundVar(0) {
-    GPrivate(⌜Swap⌝) => for (v1 <- cap:site0/Swap.0) { for (v2 <- cap:site0/Swap.1) {
+    GPrivate(⌜Swap⌝) => for (v1 <- cap⟨site0,p1⟩) { for (v2 <- cap⟨site0,p2⟩) {
       sa:acc!(BoundVar(1), BoundVar(0), @OUT)
     }}
   }
@@ -481,14 +485,15 @@ occurrence).
 ### 6.3 NESTED entries (M2)
 
 For a nested entry (some direct child is an `App`), `collect_nested_schedule` (`:236`) DFS-walks the
-subtree: a `Var` leaf pushes its `cap:` capture channel; an `App` node pushes a `Descent{loc_channel,
-op}` and recurses over its args, deriving `child_loc = spread_child_location(loc, op, i)` and
-`child_cap = spread_child_location(cap, op, i)`. `build_nested_case_body` (`:290`) then builds the
+subtree: a `Var` leaf pushes its indexed `cap:` capture channel; an `App` node pushes a
+`Descent{loc_channel, op}` and the worklist schedules its children through
+`SubjectLocationIndex::child`. `build_nested_case_body` then builds the
 innermost closed $`\sigma`$ frame with `wrap_capture_chain`, and wraps the descents in DFS-reverse
 (deepest `App` innermost) via `wrap_descent` (`:271`), which consumes each nested head tag on its
 `loc:` channel and `Match`-dispatches on the ground `op` tag. Capture order = the pattern's
 left-to-right first-occurrence order = the $`\sigma`$-receiver's formal order. The worked `f(g(x))`
-frame descends `loc:site0` (`f`) → `loc:site0/f.0` (`g`) → captures `cap:site0/f.0/g.0`.
+frame descends `loc⟨site0,p0⟩` (`f`) → `loc⟨site0,p1⟩` (`g`) → captures
+`cap⟨site0,p2⟩`.
 
 ![Figure 27-7 — the NESTED (M2) descend-then-collapse frame for f(g(x))](figures/27-nested-frame.svg)
 
@@ -515,14 +520,15 @@ At run time the subject term is **spread** onto the automaton's channels; the co
 spread. `spread_term_par` (`rho_net_lower.rs:2832`) delegates to `spread_term_par_at` (`:2945`),
 which for a structural node (`:2992`):
 
-1. sends the head tag **alone** on `loc:`: `location!(GPrivate(reflect_tag(fp, constructor)))` —
-   child locations are derived, never carried;
-2. recurses over children left-to-right, deriving each child's `loc:`/`col:`/`cap:` channels;
-3. appends `collapse_publish` (`:3044`).
+1. builds one `SubjectLocationIndex` iteratively and sends each head tag **alone** on the
+   exact `loc⟨root,position⟩` channel;
+2. schedules children left-to-right through stored parent/child edges, deriving no path string;
+3. resumes a `Collapse` task that publishes the indexed `col:`/`cap:` result.
 
 `collapse_publish` rebuilds the reflected subtree on `col:` and `cap:`: a leaf ($`n=0`$) sends
 `EList[head_tag]` on both; an internal node emits one polyadic join
-`for(v_0 <- col:…/f.0 ; … ; v_{n-1} <- col:…/f.{n-1}){ col!(EList[f̲,v_0,…]) | cap!(EList[f̲,v_0,…]) }`
+`for(v_0 <- col⟨root,p_0⟩ ; … ; v_{n-1} <- col⟨root,p_{n-1}⟩){
+col⟨root,p⟩!(EList[f̲,v_0,…]) | cap⟨root,p⟩!(EList[f̲,v_0,…]) }`
 consuming each child's chain value once and reproducing `reflect_ground_term_par`'s shape. **This is
 why a variable leaf reading `cap:ℓ` binds the full positional $`\sigma`$ for an arbitrary-depth
 subterm**: the head tags land on `loc:`, the children on child `loc:` locations, and `col:`/`cap:`

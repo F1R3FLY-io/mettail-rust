@@ -722,8 +722,10 @@ fn family_partition_matches_the_runtime_taxonomy() {
     );
 }
 
-/// The scoping primitive itself, pinned: the fingerprint rides VERBATIM and is separated
-/// from the path by a single `/`, so a reader can recover either half.
+/// The generic scoping primitive itself, pinned for contextual/control and compatibility
+/// callers: the fingerprint rides VERBATIM and is separated from the payload by one `/`.
+/// Production subject-position channels exercise the `@i2` ABI in
+/// `rho_net_location`; this test deliberately supplies an arbitrary path payload.
 #[test]
 fn the_scope_is_a_verbatim_fingerprint_and_a_slash() {
     use mettail_rholang_codegen::scoped_channel_name;

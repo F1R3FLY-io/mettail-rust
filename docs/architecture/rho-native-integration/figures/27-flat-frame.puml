@@ -12,10 +12,10 @@ top to bottom direction
 
 title Figure 27-6 — the FLAT (M1) receiver frame  (Swap(x, y))
 
-rectangle "for (_ <- loc:site0)\nthe root loc: receive" as ROOT #C6E0F5
+rectangle "for (_ <- loc⟨site0,p0⟩)\nthe indexed root loc: receive" as ROOT #C6E0F5
 rectangle "match head tag\none case per root op" as MATCH #F6C177
 rectangle "case GPrivate(Swap-tag)\nwrap_capture_chain" as CASE #D6C6EE
-rectangle "for (v1 <- cap:site0/Swap.0)\nfor (v2 <- cap:site0/Swap.1)\nbind children on cap: collapse" as CAP #D6C6EE
+rectangle "for (v1 <- cap⟨site0,p1⟩)\nfor (v2 <- cap⟨site0,p2⟩)\nbind indexed children on cap: collapse" as CAP #D6C6EE
 rectangle "sa:acc!(v1, v2, @OUT)\nbuild_accept_send: sigma = bound cap: values\n(no EList re-wrap) ; parallel_accept fans out" as ACC #A7D8B6
 
 ROOT --> MATCH

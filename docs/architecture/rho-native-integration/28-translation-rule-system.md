@@ -173,9 +173,10 @@ Supporting notation:
   (`^bound(n)`, `^lambda(b)`, `^free(x)`, Peano `^Z`/`^S`), so a captured lambda body flows
   from the automaton into a `^subst` seed with no re-encoding.
 - **Channels.** The nine concrete channel forms, all $`\nu`$-free deterministic quoted
-  names: `loc:{site}` and the derived child `{parent}/{op}.{i}`
-  (`spread_root_location` / `spread_child_location`, `rho_net_lower.rs:2761`, `:2770`);
-  `col:{site}` and `cap:{site}` (`:2777`, `:2786`); `ac:{loc}/{op}` (`:2802`);
+  names: production positional `loc:`/`col:`/`cap:` channels encode the exact tuple
+  `(fingerprint, byte-length-prefixed root site, fixed-width arena position)` through
+  `SubjectLocationIndex::channel` (`rho_net_location.rs`); `ac:{loc}/{op}` inherits that
+  indexed site key;
   `sa:{trace}` and `eq:{name}` and `obs:{name}` (`RhoNetChannel`, `rho_net.rs:55`);
   and the contextual premise-hole `ph:{premise}` (`:2690`).
 - $`\bot`$ — fail-closed rejection. The translation is a **partial function by design**:
@@ -239,21 +240,21 @@ predicates emit no receiver and no COMM. Stars mark the Appendix-A core. Source:
 wherever the term appears as data.
 
 ```math
-[\![ f(t_1,\dots,t_n) ]\!]_{\ell} \;=\; \mathtt{loc:}\ell\,!\,(\underline{f}) \;\parallel\; \prod_{i=1}^{n} [\![ t_i ]\!]_{\ell\cdot(f,i)} \;\parallel\; \mathrm{collapse}(f,\ell)
+[\![ f(t_1,\dots,t_n) ]\!]_{\rho,p} \;=\; \mathtt{loc}\langle\rho,p\rangle\,!\,(\underline{f}) \;\parallel\; \prod_{i=1}^{n} [\![ t_i ]\!]_{\rho,p_i} \;\parallel\; \mathrm{collapse}(f,\rho,p)
 ```
 
-The head tag travels **alone**; child locations are derived, never carried. The collapse
+The head tag travels **alone**; `SubjectLocationIndex` resolves each child position once,
+and no message or channel carries a copied ancestor path. The collapse
 member rebuilds $`[\![ \text{subtree} ]\!]`$ bottom-up on the two disjoint channels `col:`
 (read once by the parent's fold) and `cap:` (read once by an automaton variable leaf), so
 a variable leaf binds a full arbitrary-depth subterm — the emitted template
-(`spread_term_par` / `spread_term_par_at` / `collapse_publish`, `rho_net_lower.rs:2832`,
-`:2945`, `:3044`):
+(`spread_term_par` / `spread_term_par_indexed` / `collapse_publish`):
 
 ```text
-loc:ℓ!(GPrivate(⌜f⌝))
-| ⟦t_1⟧ at ℓ/f.0  | … |  ⟦t_n⟧ at ℓ/f.{n-1}
-| for (v_0 <- col:ℓ/f.0 ; … ; v_{n-1} <- col:ℓ/f.{n-1}) {
-    col:ℓ!(EList[⌜f⌝, v_0, …, v_{n-1}])  |  cap:ℓ!(EList[⌜f⌝, v_0, …, v_{n-1}])
+loc⟨ρ,p⟩!(GPrivate(⌜f⌝))
+| ⟦t_1⟧ at ⟨ρ,p_0⟩  | … |  ⟦t_n⟧ at ⟨ρ,p_{n-1}⟩
+| for (v_0 <- col⟨ρ,p_0⟩ ; … ; v_{n-1} <- col⟨ρ,p_{n-1}⟩) {
+    col⟨ρ,p⟩!(EList[⌜f⌝, v_0, …, v_{n-1}])  |  cap⟨ρ,p⟩!(EList[⌜f⌝, v_0, …, v_{n-1}])
   }
 ```
 
@@ -354,7 +355,7 @@ where $`\pi_{\mathit{op}}^{k}`$ is the kind-dispatched connective pattern
 for ( <@"ac:{op}"!(x_0) | … | @"ac:{op}"!(x_{k-1}) | rest> , out <= sa:{trace} )
   where(x_i == x_j ∧ …)?              -- only when an element variable repeats
   { out!( ⟦R⟧σ ) }
--- the subject side publishes the bag on the SITE-KEYED carrier  ac:{loc:ρ/ℓ}/{op}
+-- the subject side publishes the bag on the SITE-KEYED carrier  ac:{loc⟨ρ,p⟩}/{op}
 ```
 
 A `HashSet` operand swaps the soup for a connective `ESet` (`ac_set_pattern`, `:2445`); a
@@ -729,7 +730,7 @@ serializer's route for each entry (`multi_pattern_receiver_network_par`,
 | Entry | `RootKey` | `app_roots` bucket | Serializer route | Frame |
 |---|---|---|---|---|
 | 0 (SwapRule) | `{Swap, arity 2}` | `[0]` | FLAT (all children are `Var` leaves) | `Match` case `⌜Swap⌝`: two `cap:` child receives, then the accept send (partition `[0, 1]`, $`k = 2`$) |
-| 1 (WrapRule) | `{Wrap, arity 1}` | `[1]` | NESTED (child 0 is an `App`) | `Match` case `⌜Wrap⌝`: descend `loc:ρ/Wrap.0`, `Match` `⌜Pair⌝`, capture `cap:ρ/Wrap.0/Pair.0` and `…/Pair.1` |
+| 1 (WrapRule) | `{Wrap, arity 1}` | `[1]` | NESTED (child 0 is an `App`) | `Match` case `⌜Wrap⌝`: descend `loc⟨ρ,p₁⟩`, `Match` `⌜Pair⌝`, capture `cap⟨ρ,p₂⟩` and `cap⟨ρ,p₃⟩` |
 | 2 (FlipRule) | `{Flip, arity 1}` | `[2]` | NESTED (child 0 is an `App`) | as entry 1 under `Flip` — same `collect_nested_schedule` walk (`rho_net_automaton.rs:253`) |
 
 One `loc:`-rooted receive hosts the whole network; its `Match` has three cases — one per
@@ -1012,19 +1013,21 @@ MATCH invocation at the fresh site root $`\rho`$. The reflected subject is
 $`\mathrm{App}(\mathrm{\widehat{lambda}}(\mathrm{\widehat{bound}}(\mathrm{\widehat{Z}})),\ \mathrm{A})`$,
 and its only located site is the root — `collect_redex_sites` pre-filters by the rule
 roots $`\{\mathrm{App}, \mathrm{F}\}`$ and finds one — so the nested `Beta` entry is
-admitted (§5). The complete event sequence, with real channel names and the
+admitted (§5). The complete event sequence uses `family⟨ρ,p⟩` as a readable
+abbreviation for the literal fixed-width
+`family:{fp}/@i2:{root_byte_len:016x}:{root}:{position:016x}` channel name and the
 $`\tau`$/visible split of [13 §5](13-knotted-topoi-operational-invariants.md) (INV-3):
 
 1. **Spread** (§4.1): the injector publishes the head tags
-   `loc:ρ!(⌜App⌝)`, `loc:ρ/App.0!(⌜^lambda⌝)`, `loc:ρ/App.0/^lambda.0!(⌜^bound⌝)`,
-   `loc:ρ/App.0/^lambda.0/^bound.0!(⌜^Z⌝)`, `loc:ρ/App.1!(⌜A⌝)`, and the collapse folds
+   `loc⟨ρ,p₀⟩!(⌜App⌝)`, `loc⟨ρ,p₁⟩!(⌜^lambda⌝)`, `loc⟨ρ,p₃⟩!(⌜^bound⌝)`,
+   `loc⟨ρ,p₄⟩!(⌜^Z⌝)`, `loc⟨ρ,p₂⟩!(⌜A⌝)`, and the collapse folds
    publish $`[\![ \text{subtree} ]\!]`$ bottom-up on the `col:`/`cap:` mirrors — all
    $`\tau`$.
 2. **Match** (§4.3 machinery): the network's root receive consumes `loc:ρ`'s head tag,
    `Match`-dispatches on `⌜App⌝` into the `Beta` NESTED case, descends
-   `loc:ρ/App.0` to match `⌜^lambda⌝`, and captures
-   `cap:ρ/App.0/^lambda.0` as $`\sigma_{\mathit{fun}} = [\![ \mathrm{\widehat{bound}}(\mathrm{\widehat{Z}}) ]\!]`$
-   and `cap:ρ/App.1` as $`\sigma_{\mathit{arg}} = [\![ \mathrm{A} ]\!]`$ — `sa:` $`\tau`$
+   `loc⟨ρ,p₁⟩` to match `⌜^lambda⌝`, and captures
+   `cap⟨ρ,p₃⟩` as $`\sigma_{\mathit{fun}} = [\![ \mathrm{\widehat{bound}}(\mathrm{\widehat{Z}}) ]\!]`$
+   and `cap⟨ρ,p₂⟩` as $`\sigma_{\mathit{arg}} = [\![ \mathrm{A} ]\!]`$ — `sa:` $`\tau`$
    COMMs, each spread message consumed exactly once (O1).
 3. **Accept** ($`\tau`$): the case body sends
    `sa:pattern/lhs:0ecc8282fec9495d!(⟦^bound(^Z)⟧, ⟦A⟧, @out)` — the accept triad's
@@ -1043,7 +1046,7 @@ $`\tau`$/visible split of [13 §5](13-knotted-topoi-operational-invariants.md) (
 
 The second rule fires through the same installed program: injecting the subject
 $`\mathrm{F}(\mathrm{A})`$ locates one flat site, the `⌜F⌝` `Match` case captures
-`cap:ρ'/F.0` as $`\sigma_a = [\![ \mathrm{A} ]\!]`$, the accept fires
+`cap⟨ρ',p₁⟩` as $`\sigma_a = [\![ \mathrm{A} ]\!]`$, the accept fires
 `sa:pattern/lhs:cfd391d0e3aae3c9!(⟦A⟧, @out)`, and the `Unwrap` $`\sigma`$-receiver
 (§4.3, the second receiver of the §7.2 listing) publishes `out!(⟦A⟧)` — its slot
 forwarded directly, no TRS involved. And one honest boundary completes the account: a subject that contains an

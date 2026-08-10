@@ -649,7 +649,8 @@ async fn m1_matches_a_ternary_pattern_in_rho() {
 /// Stage 4 M-collapse (nested + deep non-nullary): the NESTED-App pattern `f(g(x))` matched
 /// against `f(g(Pair(A, B)))` ON the interpreter — the legacy nested-subtree rejection.
 /// The automaton DESCENDS `loc:` head tags to the nested `g`, then COLLAPSES the DEEP Var leaf x
-/// on `cap:site0/f.0/g.0`, binding the full ⟦Pair(A, B)⟧ (an arbitrary-depth subterm at a nested
+/// on the nested position's compact `cap⟨site0,p⟩` channel, binding the full
+/// ⟦Pair(A, B)⟧ (an arbitrary-depth subterm at a nested
 /// hole). The σ-echo forwards σ[x] to OUT, decoded back to Pair(A, B).
 #[tokio::test]
 async fn nested_pattern_collapses_a_deep_non_nullary_leaf_in_rho() {
