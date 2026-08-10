@@ -1,0 +1,31 @@
+{
+  "experiment_id": 174,
+  "hypothesis_id": 174,
+  "run_id": "2026-08-10-post-d-e5-r3",
+  "git_sha": "1a16828b4e098265001e432cc1cc7d357bba0050",
+  "driver_sha256": "d958c94562376e56df5034adb53b95c886eae6d86f958555d017f38f7b748675",
+  "workload": "lambda_chain",
+  "sizes": [
+    2,
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "arms": {
+    "control": "sa",
+    "treatment": "naive-r3"
+  },
+  "encoding": "pattern-guard",
+  "affinity": "0-7",
+  "memory": {
+    "build_max": "12G",
+    "run_max": "4G",
+    "swap_max": 0
+  },
+  "stack_policy": "ordinary; RUST_MIN_STACK removed",
+  "warmup_reps": 3,
+  "measured_reps": 51,
+  "recorded_at": "2026-08-10T21:05:42Z"
+}

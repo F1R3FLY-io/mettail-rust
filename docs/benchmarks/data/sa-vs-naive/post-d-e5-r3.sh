@@ -76,7 +76,8 @@ jq -n \
       measured_reps:$measured,recorded_at:(now|todate)}' > "$ROOT/header.json"
 
 run_cell() {
-    local matcher=$1 n=$2 out="$DRIVER_DIR/lambda_chain_${matcher}_n${n}.jsonl"
+    local matcher=$1 n=$2
+    local out="$DRIVER_DIR/lambda_chain_${matcher}_n${n}.jsonl"
     local raw="${out}.raw" cell_log="$DRIVER_DIR/lambda_chain_${matcher}_n${n}.log"
     log "START lambda_chain/$matcher n=$n reps=$TOTAL_REPS"
     systemd-run --user --scope -q \

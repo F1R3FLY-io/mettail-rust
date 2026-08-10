@@ -100,7 +100,7 @@ CRITERION_SAMPLE_SIZE=30
 CRITERION_WARM_UP_TIME=5
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 unset RUST_MIN_STACK || true
 
 RUN_MEMORY_MAX=4G
@@ -119,8 +119,10 @@ mkdir -p "$DRIVER_DIR" "$CSV_DIR"
 log() { echo "[full] $(date -Is) $*" | tee -a "$ROOT/driver-run.log" >&2; }
 warn() {  # append to WARNINGS.md (created on first warning only) + the log
     log "WARNING: $*"
-    { [ -s "$ROOT/WARNINGS.md" ] || echo "# WARNINGS — sa-vs-naive full run $DATE"; \
-      echo; echo "- $(date -Is) $*"; } >> "$ROOT/WARNINGS.md"
+    if [ ! -s "$ROOT/WARNINGS.md" ]; then
+        echo "# WARNINGS — sa-vs-naive full run $DATE" > "$ROOT/WARNINGS.md"
+    fi
+    { echo; echo "- $(date -Is) $*"; } >> "$ROOT/WARNINGS.md"
 }
 
 command -v jq >/dev/null 2>&1 || { echo "[full] FAIL: jq is required" >&2; exit 1; }
@@ -267,7 +269,7 @@ driver_phase() {
     run_cell wrap_swap_ctx naive 1 consume-test
     run_cell swap_comb     naive 1 consume-test
 
-    log "driver phase done: $(ls "$DRIVER_DIR"/*.jsonl 2>/dev/null | wc -l) cell files"
+    log "driver phase done: $(find "$DRIVER_DIR" -maxdepth 1 -type f -name '*.jsonl' | wc -l) cell files"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -275,7 +277,8 @@ driver_phase() {
 # ─────────────────────────────────────────────────────────────────────────────
 set_aside_previous_criterion() {
     if [ -d target/criterion ]; then
-        local aside="target/criterion.pre-trackb-$DATE-$(date +%s)"
+        local aside
+        aside="target/criterion.pre-trackb-$DATE-$(date +%s)"
         log "pre-existing target/criterion set aside (NOT deleted) -> $aside"
         mv target/criterion "$aside"
     fi
@@ -494,7 +497,10 @@ post_phase() {
                    | "rep \(.workload.rep): observed \(.observed_count) != expected \($want)"]
                 | .[]' "$f")
             if [ -n "$bad" ]; then
-                echo "GROUND-TRUTH FAIL: $f"; echo "$bad" | sed 's/^/    /'
+                echo "GROUND-TRUTH FAIL: $f"
+                while IFS= read -r line; do
+                    printf '    %s\n' "$line"
+                done <<< "$bad"
                 truth_fail=1
             fi
         done
