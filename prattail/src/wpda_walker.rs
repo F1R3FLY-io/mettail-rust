@@ -3907,6 +3907,13 @@ struct CgllPureStats {
     xcat4_stamps: u64,
     /// R-A: boundary walks attempted (fast-bit-gated InfixLoop-on-CE sites).
     boundary_walks: u64,
+    /// Boundary walks skipped because the incrementally maintained category
+    /// lattice proved that no reachable target recognizes the lookahead.
+    boundary_summary_rejects: u64,
+    /// Node summaries whose reachable-target lattice grew during propagation.
+    boundary_summary_updates: u64,
+    /// GSS nodes examined by actual (non-memoized) boundary walks.
+    boundary_nodes_visited: u64,
     /// R-A: yield twins enqueued (the classic fork-add half).
     boundary_yields: u64,
     /// R-A: source actions suppressed (classic's Advance(Unwinding)
@@ -4083,6 +4090,15 @@ struct CgllPureRun {
     /// splitting `w` and multiplying U entries per converging lineage
     /// (plan §3.2/F5 — the lossy-dedup failure the S2 thesis forbids).
     pred_memo: rustc_hash::FxHashMap<usize, Option<(crate::sppf::SppfId, usize)>>,
+    /// Per-node monotone boundary-target lattice and its reverse dependency
+    /// graph (`caller → nodes that inherit it`). New GSS edges are incorporated
+    /// synchronously at descent; each category bit can flow across an edge at
+    /// most once.
+    boundary_summaries: rustc_hash::FxHashMap<
+        crate::gss::GssNodeId,
+        crate::crosscat_boundary::BoundaryTargetSummary,
+    >,
+    boundary_dependents: rustc_hash::FxHashMap<crate::gss::GssNodeId, Vec<crate::gss::GssNodeId>>,
     /// Debug slot-collision side-map: `slot_id(L)` hash → first-seen
     /// `(cur_sym, state-discriminant)`; a differing re-entry increments
     /// `stats.slot_collisions` (31-bit hash risk accepted into the gate;
@@ -9093,6 +9109,7 @@ where
                     ActionArg::Predicate(_) => "Predicate",
                     ActionArg::Optional(_) => "Optional",
                     ActionArg::GuestBody(_) => "GuestBody",
+                    ActionArg::UnsetCollectionValue => "UnsetCollectionValue",
                 })
                 .collect();
             (action_fn)(&mut sb, popped);
@@ -14473,6 +14490,125 @@ where
         }
     }
 
+    /// Token-independent local transfer for the boundary reachability lattice.
+    /// It is the projection of `cgll_pure_crosscat_boundaries` that retains all
+    /// possible target categories and whether an unrecognized target may
+    /// continue into caller nodes.
+    fn cgll_pure_boundary_local_summary(
+        run: &CgllPureRun,
+        u: crate::gss::GssNodeId,
+    ) -> crate::crosscat_boundary::BoundaryTargetSummary {
+        let Some(slot) = run.v_slot.get(&u).copied() else {
+            return crate::crosscat_boundary::BoundaryTargetSummary::default();
+        };
+        let caller = run.v_parent.get(&u).copied();
+        let hop = crate::crosscat_boundary::HopFacts {
+            xcat: slot.xcat,
+            xcat_bp: slot.xcat_bp,
+            xcat_wrap: slot.xcat_wrap,
+            pushed_cat: slot.pushed_cat,
+            caller_kind: caller.map(|ctx| ctx.caller_sym.kind),
+            caller_cat: caller
+                .map(|ctx| ctx.caller_sym.category_src_idx)
+                .unwrap_or(u16::MAX),
+        };
+        crate::crosscat_boundary::BoundaryTargetSummary::from_hop(&hop)
+    }
+
+    fn cgll_pure_boundary_add_dependent(
+        run: &mut CgllPureRun,
+        caller: crate::gss::GssNodeId,
+        dependent: crate::gss::GssNodeId,
+    ) {
+        let dependents = run.boundary_dependents.entry(caller).or_default();
+        if !dependents.contains(&dependent) {
+            dependents.push(dependent);
+        }
+    }
+
+    /// Semi-naive monotone propagation. Every category bit changes only from
+    /// absent to present, so GSS cycles terminate without host recursion or an
+    /// artificial iteration limit.
+    fn cgll_pure_boundary_propagate(run: &mut CgllPureRun, seed: crate::gss::GssNodeId) {
+        let mut work = std::collections::VecDeque::from([seed]);
+        let mut queued = rustc_hash::FxHashSet::from_iter([seed]);
+        while let Some(caller) = work.pop_front() {
+            queued.remove(&caller);
+            let Some(caller_summary) = run.boundary_summaries.get(&caller).cloned() else {
+                continue;
+            };
+            let dependents = run
+                .boundary_dependents
+                .get(&caller)
+                .cloned()
+                .unwrap_or_default();
+            for dependent in dependents {
+                let Some(summary) = run.boundary_summaries.get_mut(&dependent) else {
+                    continue;
+                };
+                if !summary.inherits_callers() || !summary.union_targets_from(&caller_summary) {
+                    continue;
+                }
+                run.stats.boundary_summary_updates += 1;
+                if queued.insert(dependent) {
+                    work.push_back(dependent);
+                }
+            }
+        }
+    }
+
+    /// Initialize or refresh one node after `gll_create`. Current caller edges
+    /// become reverse lattice dependencies; any new target-category delta is
+    /// propagated synchronously before another descriptor can query it.
+    fn cgll_pure_boundary_refresh_summary(&self, run: &mut CgllPureRun, u: crate::gss::GssNodeId) {
+        let mut changed = false;
+        if !run.boundary_summaries.contains_key(&u) {
+            let local = Self::cgll_pure_boundary_local_summary(run, u);
+            changed = local.has_targets();
+            run.boundary_summaries.insert(u, local);
+        }
+        if !run
+            .boundary_summaries
+            .get(&u)
+            .map(|summary| summary.inherits_callers())
+            .unwrap_or(false)
+        {
+            if changed {
+                run.stats.boundary_summary_updates += 1;
+                Self::cgll_pure_boundary_propagate(run, u);
+            }
+            return;
+        }
+
+        let mut callers: Vec<crate::gss::GssNodeId> = self
+            .gss
+            .gll_edges(u)
+            .iter()
+            .map(|edge| edge.target)
+            .collect();
+        if callers.is_empty() {
+            if let Some(caller) = run.v_parent.get(&u).map(|ctx| ctx.parent_u) {
+                callers.push(caller);
+            }
+        }
+        callers.sort_unstable();
+        callers.dedup();
+
+        for caller in callers {
+            Self::cgll_pure_boundary_add_dependent(run, caller, u);
+            let Some(caller_summary) = run.boundary_summaries.get(&caller).cloned() else {
+                continue;
+            };
+            if let Some(summary) = run.boundary_summaries.get_mut(&u) {
+                changed |= summary.union_targets_from(&caller_summary);
+            }
+        }
+        if changed {
+            run.stats.boundary_summary_updates += 1;
+            Self::cgll_pure_boundary_propagate(run, u);
+        }
+    }
+
     /// DESCENT (pure form of Push / ConsumeAndPush / ReplaceAndPush / the
     /// Fork push family / LexAlt*): synthesize the structured ret-slot from
     /// the descent-LOCAL action data + the caller symbol AFTER any
@@ -14678,6 +14814,7 @@ where
                 );
             }
         }
+        self.cgll_pure_boundary_refresh_summary(run, v);
         run.worklist.push_back(CgllPureDescriptor {
             state: new_state,
             cur_sym: pushed,
@@ -17512,7 +17649,7 @@ where
                  unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
                  accept_action_hits={} prefix_seed_pops={} xcat4_stamps={} \
-                 boundary_walks={} boundary_yields={} boundary_suppressed={} \
+                 boundary_walks={} boundary_summary_rejects={} boundary_summary_updates={} boundary_nodes={} boundary_yields={} boundary_suppressed={} \
                  boundary_mixed={} boundary_rescope_stops={} xcat_stop_conflicts={} rc_operand_yields={} \
                  pred_parses={} \
                  pred_memo_hits={} pred_refutes={} repair_parked={} \
@@ -17586,6 +17723,9 @@ where
                 s.prefix_seed_pops,
                 s.xcat4_stamps,
                 s.boundary_walks,
+                s.boundary_summary_rejects,
+                s.boundary_summary_updates,
+                s.boundary_nodes_visited,
                 s.boundary_yields,
                 s.boundary_suppressed,
                 s.boundary_mixed_verdicts,
@@ -17924,21 +18064,17 @@ where
         })
     }
 
-    /// R-A (2026-07-11): the pure CROSSCAT PROJECTION BOUNDARY walk — the
-    /// port of classic `crosscat_projection_target_boundary` onto the
-    /// u-chain. Cycle-safe exhaustive DFS over `gll_edges` callers (A3 —
-    /// `cgll_pure_enclosing_receiver` is first-edge-only and cannot
-    /// implement ANY-yield/ALL-suppress). Per node, in classic's edge
-    /// semantics (A2(c)-revised): a hop STOPS iff its push carried NO
-    /// crosscat kind (`xcat == 0`) AND its caller symbol is a stop kind
-    /// (RuleAt(k>0) / MixfixMarker / CollectionMarker — classic's AUTO
-    /// edge kinds); an explicit CrossCat edge is never a stop. Boundary
-    /// mapping per hop: xcat=4 → (pushed_cat, xcat_bp); xcat∈{1,2} (A1 —
-    /// NOT transparent under the default EpP1Mode::On config) →
-    /// (caller frame's category, xcat_bp); xcat=3 → wrap only when
-    /// recorded (pure descents carry no origin payload ⇒ continue);
-    /// xcat=5 → continue. A target must RECOGNIZE the lookahead or the
-    /// walk continues (classic's closure-None-and-pop).
+    /// R-A (2026-07-11): the pure CROSSCAT PROJECTION BOUNDARY walk, porting classic
+    /// `crosscat_projection_target_boundary` onto the u-chain. The exact fallback is a cycle-safe
+    /// exhaustive DFS over every `gll_edges` caller, which is required for
+    /// ANY-yield/ALL-suppress. Per-hop stop, evidence, and target mapping semantics live solely in
+    /// `crosscat_boundary::classify_hop` and are checked by the independent executable oracle.
+    ///
+    /// Before the DFS, a synchronously maintained monotone target-category summary proves the
+    /// common negative case in O(number of summarized categories), independent of ancestry
+    /// depth. It is an exact existential projection of the boundary walk, formally modeled in
+    /// `CrossCatBoundarySummary.v`; a positive result deliberately falls through to this exact DFS
+    /// so ordering, floor, and aggregation semantics remain unchanged.
     fn cgll_pure_crosscat_boundaries(
         &self,
         run: &mut CgllPureRun,
@@ -17968,8 +18104,20 @@ where
         if token.is_empty() {
             return out;
         }
-        run.stats.boundary_walks += 1;
         let source_cat = d.cur_sym.category_src_idx;
+        // Incremental lattice fast-reject: the summary is a token-independent
+        // over-approximation of every target the exact DFS can encounter before
+        // a dead/re-scoping hop. If none recognizes this token (respecting the
+        // inferred-target same-category exclusion), the exact result is empty.
+        if let Some(summary) = run.boundary_summaries.get(&d.u) {
+            if !summary.may_recognize(source_cat, |target_cat| {
+                self.engine.category_recognizes_operator(target_cat, token)
+            }) {
+                run.stats.boundary_summary_rejects += 1;
+                return out;
+            }
+        }
+        run.stats.boundary_walks += 1;
         let source_accepts = self
             .engine
             .category_accepts_operator_at_floor(source_cat, token, cur_bp);
@@ -17980,6 +18128,7 @@ where
             if !visited.insert(u) {
                 continue;
             }
+            run.stats.boundary_nodes_visited += 1;
             let Some(slot) = run.v_slot.get(&u).copied() else {
                 continue; // seed frame — no push edge, chain ends
             };

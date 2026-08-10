@@ -33,6 +33,14 @@
 //! transcription of the model above. There is no second implementation: the walker's behaviour
 //! IS what the oracle checks.
 //!
+//! [`BoundaryTargetSummary`] is the incremental, token-independent projection of the same walk.
+//! It forms a monotone lattice over reachable target categories and lets the walker reject a
+//! lookahead without revisiting ancestry when no reachable category recognizes that token. It
+//! never decides a positive result: positives still execute the exact cycle-safe DFS, preserving
+//! first-target and ANY-yield/ALL-suppress behavior. Its independent property oracle is
+//! `prattail/tests/crosscat_boundary_summary_oracle.rs`; its admission-free equivalence proof is
+//! `formal/rocq/prattail_wpda_runtime/theories/CrossCatBoundarySummary.v`.
+//!
 //! # The correspondence, stated once
 //!
 //! A hop is one caller-chain edge, carrying: the pushed frame's cross-category stamp `xcat`, its
@@ -160,4 +168,129 @@ pub fn classify_hop(hop: &HopFacts) -> HopVerdict {
 #[inline]
 pub fn boundary_admits_same_category(xcat: u8, xcat_wrap: u16) -> bool {
     hop_has_explicit_target(xcat, xcat_wrap)
+}
+
+/// Sparse-overflow category bitset used by [`BoundaryTargetSummary`]. The first 256 source
+/// indices are allocation-free; the sorted overflow preserves full `u16` generality without
+/// attaching an 8 KiB dense set to every GSS node.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct BoundaryCategorySet {
+    low: [u64; 4],
+    high: Vec<u16>,
+}
+
+impl BoundaryCategorySet {
+    fn is_empty(&self) -> bool {
+        self.low.iter().all(|&word| word == 0) && self.high.is_empty()
+    }
+
+    fn insert(&mut self, cat: u16) -> bool {
+        let word = usize::from(cat) / u64::BITS as usize;
+        if word < self.low.len() {
+            let mask = 1_u64 << (usize::from(cat) % u64::BITS as usize);
+            let changed = self.low[word] & mask == 0;
+            self.low[word] |= mask;
+            return changed;
+        }
+        match self.high.binary_search(&cat) {
+            Ok(_) => false,
+            Err(at) => {
+                self.high.insert(at, cat);
+                true
+            },
+        }
+    }
+
+    fn union_from(&mut self, other: &Self) -> bool {
+        let mut changed = false;
+        for (dst, src) in self.low.iter_mut().zip(other.low) {
+            let merged = *dst | src;
+            changed |= merged != *dst;
+            *dst = merged;
+        }
+        for &cat in &other.high {
+            changed |= self.insert(cat);
+        }
+        changed
+    }
+
+    fn any(&self, mut predicate: impl FnMut(u16) -> bool) -> bool {
+        for (word_idx, &word) in self.low.iter().enumerate() {
+            let mut remaining = word;
+            while remaining != 0 {
+                let bit = remaining.trailing_zeros() as usize;
+                let cat = (word_idx * u64::BITS as usize + bit) as u16;
+                if predicate(cat) {
+                    return true;
+                }
+                remaining &= remaining - 1;
+            }
+        }
+        self.high.iter().copied().any(predicate)
+    }
+}
+
+/// Monotone lattice summary of every boundary target reachable from one GSS node before a
+/// scope-resetting/dead hop.
+///
+/// Explicit wrap evidence admits the source category itself. Inferred targets occupy a separate
+/// component because they require `target != source`. The summary deliberately forgets target
+/// order: it is used only to prove that the exact walk's result is empty. A positive result still
+/// runs the exhaustive walk, preserving first-target and ANY-yield/ALL-suppress semantics.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BoundaryTargetSummary {
+    same_category_admissible: BoundaryCategorySet,
+    cross_category_only: BoundaryCategorySet,
+    inherits_callers: bool,
+}
+
+impl BoundaryTargetSummary {
+    /// Token-independent transfer for one caller-chain hop.
+    pub fn from_hop(hop: &HopFacts) -> Self {
+        let verdict = classify_hop(hop);
+        if verdict.dies_before_mapping {
+            return Self::default();
+        }
+        let mut summary = Self {
+            inherits_callers: !verdict.stops_after_mapping,
+            ..Self::default()
+        };
+        if let Some((target_cat, _)) = verdict.target {
+            if boundary_admits_same_category(hop.xcat, hop.xcat_wrap) {
+                summary.same_category_admissible.insert(target_cat);
+            } else {
+                summary.cross_category_only.insert(target_cat);
+            }
+        }
+        summary
+    }
+
+    /// Whether a lookahead rejected by this hop may continue to caller nodes.
+    pub fn inherits_callers(&self) -> bool {
+        self.inherits_callers
+    }
+
+    /// Whether either lattice component contains a reachable target.
+    pub fn has_targets(&self) -> bool {
+        !self.same_category_admissible.is_empty() || !self.cross_category_only.is_empty()
+    }
+
+    /// Join reachable targets from a caller summary. Returns whether this
+    /// summary grew; repeated joins reach an idempotent fixed point.
+    pub fn union_targets_from(&mut self, other: &Self) -> bool {
+        self.same_category_admissible
+            .union_from(&other.same_category_admissible)
+            | self
+                .cross_category_only
+                .union_from(&other.cross_category_only)
+    }
+
+    /// Does any summarized target recognize the lookahead while satisfying the
+    /// explicit/inferred same-category rule?
+    pub fn may_recognize(&self, source_cat: u16, mut recognizes: impl FnMut(u16) -> bool) -> bool {
+        self.same_category_admissible.any(&mut recognizes)
+            || self
+                .cross_category_only
+                .any(|cat| cat != source_cat && recognizes(cat))
+    }
 }

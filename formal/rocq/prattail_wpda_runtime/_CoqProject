@@ -44,6 +44,7 @@ theories/TriggerOwnershipLeadGate.v
 theories/CrossCatProjectionFrameDedup.v
 
 theories/CollectionElementProjectionBoundary.v
+theories/CrossCatBoundarySummary.v
 theories/ForRowPersistentRuleRedundancy.v
 theories/CollectionElementInfixCategory.v
 theories/ProjCohortPosQuotientSoundness.v
