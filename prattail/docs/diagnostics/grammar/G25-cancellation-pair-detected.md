@@ -1,8 +1,11 @@
 # G25: cancellation-pair-detected
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline has
+> no production G25 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Note
 **Category:** Grammar Structure (macro phase)
-**Feature Gate:** (none -- always active)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 

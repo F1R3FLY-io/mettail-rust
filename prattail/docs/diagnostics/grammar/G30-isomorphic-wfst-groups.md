@@ -1,8 +1,11 @@
 # G30: isomorphic-wfst-groups
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline has
+> no production G30 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Note
 **Category:** Grammar Structure (macro phase)
-**Feature Gate:** (none -- always active)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 

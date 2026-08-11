@@ -112,5 +112,5 @@ transformation for removing FIRST set conflicts.
   the theoretical minimum lookahead required per category.
 - [D05](D05-decision-tree-summary.md) -- Decision tree summary statistics.
   Provides the full depth distribution that D10 summarizes.
-- [D13](D13-sync-depth-ranking.md) -- Parsed-but-unrewritten constructors.
+- [D13](D13-parsed-but-unrewritten.md) -- Parsed-but-unrewritten constructors.
   Orphan rules may contribute unnecessary depth to the decision tree.

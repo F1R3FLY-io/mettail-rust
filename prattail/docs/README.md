@@ -144,7 +144,8 @@ Diagnostic categories:
 - **Dispatch (DIS01--DIS05)** -- hot-path alignment, cold arms, backtracking, NFA set size
 - **Lexer (LEX01--LEX05)** -- token overlap, DFA state explosion, float/integer ambiguity
 - **Parser (PAR01--PAR05)** -- RD chain depth, BP gaps, postfix/prefix collision, mixfix delimiters
-- **Codegen Antipattern (C-AP01--C-AP05)** -- transitivity blowup, extension along equality, congruence chains
+- **Historical codegen-antipattern IDs (C-AP01--C-AP05)** -- retired
+  Ascent-era diagnostics retained only as an architecture record
 - **Infrastructure (I01--I19)** -- pipeline progress, cache hits, hybrid lexer activation
 - **Analysis (T, V, S, N, L, E, M, K)** -- TRS, automata, safety, concurrency, temporal, extension, morphism, KAT
 

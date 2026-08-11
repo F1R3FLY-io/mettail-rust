@@ -1,20 +1,20 @@
 # A04: large-equivalence-class
 
 **Severity:** Warning
-**Category:** Ascent / Equivalence Class Analysis
+**Category:** Dovetail/Rho equation and rewrite network (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
 
 Detects constructors that appear in **three or more** equation/rewrite
-dependency groups, indicating a risk of **equivalence class explosion** during
-Ascent fixpoint evaluation.  Each dependency group represents a set of
+dependency groups, indicating a risk of **equivalence class explosion** in the
+generated Dovetail/Rho matching and rewrite network. Each dependency group represents a set of
 constructor labels connected by shared equations or rewrites.  A constructor
 appearing in many groups acts as a hub, causing its equivalence class to merge
 with other classes through transitive closure.
 
-In Ascent's fixpoint semantics, an equivalence class records all terms that
-are provably equal via the grammar's equations.  When constructor `C` appears
+The generated equation/rewrite closure records terms related by the grammar's
+equations. When constructor `C` appears
 in groups `G1`, `G2`, and `G3`, the classes of all terms involving `C` must
 be unified across all three groups.  This can trigger **exponential growth**
 in the number of derived equalities:
@@ -36,9 +36,9 @@ in the number of derived equalities:
 
 The explosion manifests as:
 
-- Rapidly growing Ascent relation sizes (memory).
-- Increasing iteration counts per fixpoint round (time).
-- Potentially non-terminating fixpoint if the equivalence classes keep
+- Rapidly growing matcher/rewrite relation state (memory).
+- Increasing dependency-propagation work (time).
+- Potentially non-terminating closure if the equivalence classes keep
   growing without reaching a stable state.
 
 ## Trigger Conditions
@@ -76,8 +76,8 @@ language! {
 ### Output
 
 ```
-warning[A04] (RichArith): constructor `Add` appears in 3 equation/rewrite groups (3 equation group(s)) — potential equivalence class explosion during Ascent fixpoint evaluation
-  = hint: this constructor is referenced by many equations/rewrites, which can cause equivalence class explosion during Ascent fixpoint evaluation; consider reducing the number of equations involving this constructor, or simplifying equational axioms (e.g., removing redundant commutativity/associativity declarations)
+warning[A04] (RichArith): constructor `Add` appears in 3 equation/rewrite groups (3 equation group(s)) — potential equivalence class explosion in the generated Dovetail/Rho equation and rewrite network
+  = hint: this constructor is referenced by many equations/rewrites, which can cause equivalence class explosion in generated matching and rewrite closure; consider reducing the number of equations involving this constructor, or simplifying equational axioms (e.g., removing redundant commutativity/associativity declarations)
 ```
 
 When multiple constructors are flagged, the grouper consolidates them:
@@ -99,12 +99,12 @@ warning[A04] (Rholang): 3 constructors appear in 3+ equation/rewrite groups (ris
    associativity already imply a distributivity axiom, the latter is redundant.
 
 3. **Partition into strata.**  Split the equational reasoning into independent
-   phases (strata) that run sequentially rather than simultaneously.  This
-   prevents cross-group class merging during any single fixpoint phase.
+   strata whose dependencies are compiled and measured independently. This
+   prevents unrelated cross-group propagation in one generated network.
 
 4. **Accept the warning.**  For inherently rich algebraic structures (rings,
    lattices, etc.), constructors like `+` and `*` will naturally appear in
-   many axiom groups.  Verify that the fixpoint converges in acceptable time
+   many axiom groups. Verify that closure converges in acceptable time
    and suppress with `PRATTAIL_LINT_LEVEL=error`.
 
 ## Hint Explanation

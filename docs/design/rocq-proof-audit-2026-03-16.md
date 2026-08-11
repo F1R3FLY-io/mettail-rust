@@ -166,7 +166,7 @@ All 6 files PASS. Minor line drift in `VpaClosureProperties.v` and `BuchiWpdsPro
 | Proof File | Optimization | Traceability | Type Match | Algo Match | Gaps Documented | Line Drift | Verdict |
 |---|---|---|---|---|---|---|---|
 | `ART01_HashConsing.v` | Hash-consing ≡ alpha-eq | Yes | Yes | Yes | Yes | ±0 | **PASS** |
-| `ART05_DepthBound.v` | Depth-bounded termination | Yes | Yes | Yes | Yes | ±0 | **PASS** |
+| `ART05_DepthBound.v` | Historical depth-nonincreasing theorem; ART05 cutoff rejected | Historical | N/A | N/A | Yes | N/A | **ARCHIVED** |
 | `ART06_DemandAnalysis.v` | Demand analysis soundness | Yes | Yes | Yes | Yes | ±0 | **PASS** |
 | `BCG02_RuleFusion.v` | Rule fusion semantics | Yes | Yes | Yes | Yes | ±0 | **PASS** |
 | `BCG03_EqCongruencePrune.v` | Eq-congruence pruning | Yes | Yes | Yes | Yes | ±0 | **PASS** |
@@ -176,7 +176,14 @@ All 6 files PASS. Minor line drift in `VpaClosureProperties.v` and `BuchiWpdsPro
 | `CD02_DisjointFirst.v` | Disjoint FIRST set | Yes | Yes | Yes | Yes | ±0 | **PASS** |
 | `CD05_PrefixParse.v` | Prefix parse opt | Yes | Yes | Yes | Yes | ±0 | **PASS** |
 
-All 10 files PASS. Each has well-structured "Abstraction Gaps" sections documenting modeling simplifications. Dead CoqHammer imports removed from all 10 codegen files (see Phase 3.2). `BCG02_RuleFusion.v` has a trivially-true core theorem (`fused_eq_sequential`) — the interesting work is in the IntermediateElimination section (documented with explanatory note).
+Nine current files pass. `ART05_DepthBound.v` remains compilable as a historical
+mathematical theorem, but it is not counted as implementation evidence: the
+ART05 selector and gate were removed because an artificial accepted-term depth
+cutoff narrows semantics. Each current proof has well-structured "Abstraction
+Gaps" sections documenting modeling simplifications. Dead CoqHammer imports
+were removed from the codegen files (see Phase 3.2). `BCG02_RuleFusion.v` has a
+trivially-true core theorem (`fused_eq_sequential`) — the interesting work is in
+the IntermediateElimination section (documented with explanatory note).
 
 ### Group 5: Rule Consolidation (5 files)
 

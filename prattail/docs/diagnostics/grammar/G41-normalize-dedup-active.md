@@ -1,8 +1,11 @@
 # G41: normalize-dedup-active
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline has
+> no production G41 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Note
 **Category:** grammar
-**Feature Gate:** None (always enabled)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 

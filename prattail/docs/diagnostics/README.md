@@ -55,7 +55,7 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 
 ## Quick Reference
 
-### Grammar Structure (G01–G10, G24–G32)
+### Grammar Structure (G01–G10, G24, G32)
 
 | ID                                            | Name                          | Severity | Description                                             |
 |-----------------------------------------------|-------------------------------|----------|---------------------------------------------------------|
@@ -70,13 +70,6 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 | [G09](grammar/G09-unbalanced-delimiters.md)   | unbalanced-delimiters         | Warning  | Mismatched open/close brackets in rule syntax           |
 | [G10](grammar/G10-ambiguous-associativity.md) | ambiguous-associativity       | Warning  | Same-precedence operators with mixed associativity      |
 | G24                                           | alpha-equivalent-rules        | Note     | Rules with identical De Bruijn structure                |
-| G25                                           | cancellation-pair-detected    | Note     | Equation `Outer(Inner(X)) = X` suppressed from eqrel   |
-| G26                                           | equation-subsumed             | Note     | Equation eliminated by subsumption                      |
-| G27                                           | rule-subsumption-candidate    | Warning  | Rule may be subsumed by more general rule               |
-| G28                                           | alpha-equivalent-groups       | Note     | Alpha-equivalent LHS pattern groups                     |
-| G29                                           | dependency-groups             | Note     | Fine-grained dependency groups                          |
-| G30                                           | isomorphic-wfst-groups        | Note     | Isomorphic WFST dispatch topology                       |
-| G31                                           | subsumed-equations-eliminated | Note     | N equations eliminated from codegen                     |
 | G32                                           | prefix-isomorphism            | Note     | Categories with structurally identical dispatch tries   |
 
 ### WFST-Specific (W01–W16)
@@ -90,7 +83,6 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 | W05                                                       | composed-dispatch-ambiguity      | Warning  | N-way ambiguity in composed dispatch table                |
 | [W06](wfst/W06-weight-inversion.md)                      | weight-inversion                 | Note     | Less-specific rule has better weight than more-specific   |
 | W07                                                       | nearly-dead-path                 | Note     | Rule nearly dead -- high weight but still reachable       |
-| W09                                                       | cancellation-pair-missing-rewrite| Warning  | Suppressed equation has no corresponding rewrite          |
 | W12                                                       | forward-backward-recovery        | Note     | Forward-backward analysis improved recovery weights       |
 | [W13](wfst/W13-wpds-unreachable.md)                      | wpds-unreachable                 | Warning  | Rule unreachable via WPDS stack-aware analysis            |
 | [W14](wfst/W14-walker-fork-tight-margin.md)              | walker-fork-tight-margin         | Note     | Top-2 prediction weights within ε; Walker lex-min Fork resolution will be src_idx/rule_idx-dependent |
@@ -139,7 +131,7 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 | [D08](decision-tree/D08-optimization-suggestion.md)   | optimization-suggestion   | Note     | Grammar modifications to resolve PathMap ambiguity        |
 | [D09](decision-tree/D09-conflict-resolution-guide.md) | conflict-resolution-guide | Note     | Strategies for genuine conflicts in PathMap trie          |
 | D10                                                     | lookahead-waste           | Note     | Generated lookahead deeper than necessary                 |
-| D13                                                     | ascent-trie-correlation   | Note     | Parsed-but-never-rewritten constructors                   |
+| [D13](decision-tree/D13-parsed-but-unrewritten.md)      | parsed-but-unrewritten    | Note     | Parsed-but-never-rewritten constructors                   |
 
 ### WPDS (D14–D15, COMP-08)
 
@@ -372,19 +364,19 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 | [P05](performance/P05-wpds-pipeline-cost.md) | wpds-pipeline-cost | Info     | WPDS analysis wall-clock time and sizes       |
 | [P06](analysis/P06-analysis-pipeline-cost.md) | analysis-pipeline-cost | Note | Mathematical analysis phase wall-clock time   |
 
-### Ascent (A01–A10)
+### Equation/rewrite network (historical A01–A10 IDs)
 
 | ID                                                       | Name                           | Severity | Description                                                      |
 |----------------------------------------------------------|--------------------------------|----------|------------------------------------------------------------------|
-| [A01](ascent/A01-fixpoint-non-convergence.md)            | fixpoint-non-convergence       | Warning  | Potential unbounded term growth in fixpoint computation           |
+| [A01](ascent/A01-fixpoint-non-convergence.md)            | fixpoint-non-convergence       | Warning  | Potential unbounded term growth under repeated rewriting          |
 | [A02](ascent/A02-redundant-congruence.md)                | redundant-congruence           | Note     | Congruence declared for category with no rewrites                |
 | [A03](ascent/A03-eq-rw-category-mismatch.md)             | eq-rw-category-mismatch        | Note     | Category has parsing rules but no equations/rewrites             |
-| A04                                                       | large-equivalence-class        | Warning  | Constructor in many dependency groups -- equivalence explosion   |
+| [A04](ascent/A04-large-equivalence-class.md)              | large-equivalence-class        | Warning  | Constructor in many dependency groups -- equivalence explosion   |
 | A05                                                       | self-referential-equation      | Warning  | Trivial identity rule (single self-referential nonterminal)      |
 | A06                                                       | missing-equation-congruence    | Note     | Equation constructor field category lacks equation participants  |
-| A07                                                       | fixpoint-iteration-anomaly     | Warning  | Grammar complexity suggests slow fixpoint convergence            |
+| [A07](ascent/A07-fixpoint-iteration-anomaly.md)           | fixpoint-iteration-anomaly     | Warning  | Dependency topology suggests excessive rewrite propagation       |
 | A08                                                       | equation-subsumes-rewrite      | Note     | Constructor in multiple dependency groups -- equation may subsume|
-| A09                                                       | ascent-struct-size             | Warning  | Large Ascent struct may slow compilation                         |
+| [A09](ascent/A09-generated-rewrite-network-size.md)       | generated-rewrite-network-size | Warning  | Large generated Dovetail/Rho network may slow compilation        |
 | A10                                                       | unreachable-equation-variable  | Note     | Variable captured but may not be referenced in RHS               |
 
 ### Dispatch (DIS01–DIS05)
@@ -417,15 +409,18 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 | PAR04 | mixfix-ambiguous-delimiter       | Warning  | Mixfix middle delimiter also used as infix operator              |
 | PAR05 | trampoline-frame-variant-count   | Note     | Category has many trampoline frame variants (large frame size)   |
 
-### Codegen Antipattern (C-AP01–C-AP05)
+### Historical Codegen Antipattern IDs (C-AP01–C-AP05)
+
+These Ascent-era diagnostics have no production emitter in the current
+Dovetail/Rho pipeline. Their pages remain an explicitly historical record.
 
 | ID     | Name                                | Severity | Description                                                |
 |--------|-------------------------------------|----------|------------------------------------------------------------|
-| C-AP01 | cubic-transitivity-blowup           | Warning  | Cubic term growth from transitive equation chains          |
-| C-AP02 | quadratic-extension-along-equality  | Warning  | Quadratic blowup from extension along equality             |
-| C-AP03 | deep-congruence-chain               | Note     | Deep congruence propagation chain                          |
-| C-AP04 | unbounded-rewrite-growth            | Warning  | Rewrite rules may cause unbounded term growth              |
-| C-AP05 | clone-storm-collection-field        | Note     | Collection field cloning in generated congruence rules     |
+| C-AP01 | cubic-transitivity-blowup           | Retired  | Cubic term growth from transitive equation chains          |
+| C-AP02 | quadratic-extension-along-equality  | Retired  | Quadratic blowup from extension along equality             |
+| C-AP03 | deep-congruence-chain               | Retired  | Deep congruence propagation chain                          |
+| C-AP04 | unbounded-rewrite-growth            | Retired  | Rewrite rules may cause unbounded term growth              |
+| C-AP05 | clone-storm-collection-field        | Retired  | Collection field cloning in generated congruence rules     |
 
 ### Infrastructure (I01–I19)
 
@@ -440,7 +435,7 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 | I07 | ambiguity-targeting          | Info     | A5 ambiguity analysis             |
 | I08 | env-override-active          | Warning  | PRATTAIL_AUTO_OPTIMIZE active     |
 | I09 | env-override-parse-error     | Error    | PRATTAIL_AUTO_OPTIMIZE parse fail |
-| I10 | ascent-file-write-failed     | Warning  | Ascent Datalog file I/O error     |
+| I10 | ascent-file-write-failed     | Retired  | Historical Ascent artifact; no production emitter |
 | I11 | ebnf-dump-failed             | Warning  | EBNF dump I/O failure             |
 | I12 | ebnf-dump-success            | Info     | EBNF dump written                 |
 | I13 | lazy-analysis-skip           | Info     | Lazy analysis skipped (unchanged) |
@@ -697,11 +692,14 @@ in [`prattail/src/lint/`](../../src/lint/). The public API includes:
 - `ansi` module — ANSI color constants
 
 Grammar-level lints (G/W/R/C/D/P) run during the Generate phase via `run_lints()`.
-Ascent lints (A01--A10), dispatch lints (DIS01--DIS05), lexer lints (LEX01--LEX05),
+Equation/rewrite-network lints with historical A01--A10 identifiers, dispatch
+lints (DIS01--DIS05), lexer lints (LEX01--LEX05),
 and parser lints (PAR01--PAR05) also run in `run_lints()`. Composition lints
 (X01--X06) run during `compose_languages!` via `run_composition_lints()`. Pipeline
-info messages (I01--I19) are emitted inline. Macro-phase lints (G25--G31, W09, I10,
-C-AP01--C-AP05) are emitted by the macros crate via `emit_diagnostic()`.
+info messages are emitted inline. Historical Ascent macro-phase identifiers
+G25--G31, G35, G38, G41--G42, W09, C-AP01--C-AP05, and I10 have no production
+emitter in the current Dovetail/Rho pipeline; their pages are retained only as
+an architecture record.
 Mathematical analysis lints (T/V/S/N/L/E/M/K) run in the same phase, with results
 provided by the 6-phase analysis pipeline. Advanced automata lints
 (SYM/O/N06-07/V05-06/PT/RA/PR/MT/MS/MSO/TW), predicated type lints (PB/UN/SL/LT),

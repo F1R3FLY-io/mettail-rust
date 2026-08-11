@@ -1,21 +1,21 @@
 # A07: fixpoint-iteration-anomaly
 
 **Severity:** Warning
-**Category:** Ascent / Fixpoint Performance
+**Category:** Equation/rewrite dependency performance (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
 
-Detects grammars whose **dependency group structure** suggests that Ascent's
-fixpoint iteration may require an unusually large number of rounds to
-converge.  The lint uses a dual-threshold heuristic: if the grammar has more
+Detects grammars whose **dependency group structure** suggests that generated
+rewrite closure may require excessive cross-group propagation. The lint uses
+a dual-threshold heuristic: if the grammar has more
 than 10 dependency groups AND the largest group contains more than 5
 constructor labels, the combination of breadth (many groups) and depth
 (large groups) creates conditions for slow convergence.
 
-Each fixpoint iteration must propagate new equalities and rewrites through all
-dependency groups.  When groups are both numerous and large, the amount of
-cross-group interaction grows super-linearly:
+Generated matching and rewrite closure must propagate consequences through
+the dependency graph. When groups are both numerous and large, more
+cross-group interactions are possible:
 
 ```
   Dependency Groups (>10):
@@ -31,14 +31,12 @@ cross-group interaction grows super-linearly:
   │ create O(n^2) pairwise interactions  │
   └──────────────────────────────────────┘
 
-  Combined effect: O(groups * max_group_size^2) work per iteration
-  With >10 groups and >5 labels: risk of 50+ iterations
+  Heuristic signal: many groups and a large maximum group
+  (measure actual work before assigning a complexity class)
 ```
 
-The 50-iteration threshold is empirically calibrated.  Grammars below the
-dual threshold typically converge in under 20 iterations; those above it
-may require 50 or more, with each iteration becoming progressively more
-expensive as equivalence classes grow.
+The thresholds classify a review candidate; they are not a theorem about
+runtime complexity or a substitute for measured work/RSS evidence.
 
 ## Trigger Conditions
 
@@ -71,21 +69,20 @@ language! {
 ### Output
 
 ```
-warning[A07] (ComplexLang): 11 dependency groups with max size 8 — fixpoint may require many iterations
-  = hint: consider partitioning equations into independent strata or adding a depth bound
+warning[A07] (ComplexLang): 11 dependency groups with max size 8 — generated rewrite closure may require excessive cross-group propagation
+  = hint: partition independent equations into strata, remove redundant cross-group dependencies, and profile the measured work/RSS of the remaining closure
 ```
 
 ## Resolution
 
 1. **Partition equations into strata.**  Independent sets of equations can be
-   evaluated in separate Ascent phases.  If groups G1-G3 concern arithmetic
+   compiled into separate closure strata. If groups G1-G3 concern arithmetic
    and G7-G11 concern memory operations, running them as independent strata
-   eliminates cross-group interference and reduces per-iteration work.
+   eliminates irrelevant cross-group interference.
 
-2. **Add a depth bound.**  The `ART05_DepthBound` optimization limits term
-   depth during fixpoint evaluation.  This does not reduce iteration count
-   directly but caps the cost of each iteration by preventing deep terms from
-   entering the equivalence classes.
+2. **Remove redundant dependencies.** Delete derivationally redundant axioms
+   or factor shared lemmas so the same constructor is not a hub in unrelated
+   groups.
 
 3. **Simplify dependency groups.**  Review whether large groups can be
    decomposed.  A group with 8 labels may contain independent subsets that
@@ -93,22 +90,23 @@ warning[A07] (ComplexLang): 11 dependency groups with max size 8 — fixpoint ma
 
 4. **Accept the warning.**  Complex languages (e.g., process calculi with
    structural equivalence) inherently have many interacting axioms.  If the
-   fixpoint converges in acceptable time, suppress with
+   closure converges within a measured resource service-level objective,
+   suppress with
    `PRATTAIL_LINT_LEVEL=error`.
 
 ## Hint Explanation
 
-The hint **"consider partitioning equations into independent strata or adding
-a depth bound"** offers two orthogonal strategies:
+The hint offers three complementary, semantics-preserving strategies:
 
 - **Stratification** reduces the breadth (number of simultaneously active
   groups) by sequencing independent equation sets into phases.  Each phase
-  reaches its fixpoint independently, and downstream phases build on the
+  reaches closure independently, and downstream phases build on the
   results.
 
-- A **depth bound** reduces the height (maximum term depth) that the fixpoint
-  must process.  This prevents the worst-case exponential growth in
-  equivalence class sizes, trading completeness for guaranteed termination.
+- **Dependency reduction** removes unnecessary propagation edges.
+- **Measurement** establishes whether remaining work and RSS meet the intended
+  service-level objective. An artificial term-depth or iteration ceiling is
+  not recommended because it would trade away completeness.
 
 ## Related Lints
 

@@ -47,7 +47,6 @@ pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic
                 DiagnosticId::W07 => group_w07(items),
                 DiagnosticId::G03 => group_g03(items),
                 DiagnosticId::G08 => group_g08(items),
-                DiagnosticId::G27 => group_g27(items),
                 DiagnosticId::D01 => group_ambiguity_by_category(
                     DiagnosticId::D01,
                     "precision-ambiguity",
@@ -81,8 +80,6 @@ pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic
                 DiagnosticId::A01 => group_a01(items),
                 DiagnosticId::A04 => group_a04(items),
                 DiagnosticId::A08 => group_a08(items),
-                DiagnosticId::CAP03 => group_cap03(items),
-                DiagnosticId::CAP05 => group_cap05(items),
                 DiagnosticId::DIS01 => group_dis01(items),
                 // Stage 10c (2026-05-04): W10 + W14 dispatch arms removed.
                 DiagnosticId::W12 => group_w12(items),
@@ -369,70 +366,6 @@ pub(crate) fn group_g08(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic>
     }]
 }
 
-/// Group G27 (rule-subsumption-candidate) by general rule name (from the `rule` field).
-///
-/// Output: `"N rules may be subsumed by more general rule `General`\n  candidates: R1, R2"`
-pub(crate) fn group_g27(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    use std::collections::BTreeMap;
-
-    // Group by general rule name (extracted from message)
-    let mut by_general: BTreeMap<String, Vec<LintDiagnostic>> = BTreeMap::new();
-    for diag in diagnostics {
-        // Extract general rule name: "... subsumed by more general rule `GENERAL` ..."
-        let general = diag
-            .message
-            .split("more general rule `")
-            .nth(1)
-            .and_then(|s| s.split('`').next())
-            .unwrap_or("?")
-            .to_string();
-        by_general.entry(general).or_default().push(diag);
-    }
-
-    let mut result = Vec::new();
-    for (general_name, items) in by_general {
-        if items.len() == 1 {
-            result.extend(items);
-            continue;
-        }
-
-        // Collect specific rule names from messages
-        let specific_names: Vec<String> = items
-            .iter()
-            .filter_map(|d| {
-                // "rule `SPECIFIC` may be subsumed..."
-                d.message
-                    .split("rule `")
-                    .nth(1)
-                    .and_then(|s| s.split('`').next())
-                    .map(|s| s.to_string())
-            })
-            .collect();
-
-        let first = &items[0];
-        result.push(LintDiagnostic {
-            id: first.id,
-            name: first.name,
-            severity: first.severity,
-            category: None,
-            rule: None,
-            message: format!(
-                "{} rules may be subsumed by more general rule `{}`\n  candidates: {}",
-                items.len(),
-                general_name,
-                specific_names.join(", "),
-            ),
-            hint: Some(format!(
-                "review whether these rules can be removed or merged with `{}`",
-                general_name,
-            )),
-            grammar_name: first.grammar_name.clone(),
-            source_location: None,
-        });
-    }
-    result
-}
-
 /// Shared helper for grouping ambiguity-style diagnostics (W02, W03, G03) by category.
 ///
 /// Each diagnostic's message is preserved as a sub-item under its category.
@@ -602,7 +535,7 @@ pub(crate) fn group_a04(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic>
         ),
         hint: Some(
             "these constructors are referenced by many equations/rewrites, which can cause \
-             equivalence class explosion during Ascent fixpoint evaluation; consider \
+             equivalence class explosion in generated matching and rewrite closure; consider \
              reducing the number of equations involving them, or simplifying \
              equational axioms (e.g., removing redundant commutativity/associativity declarations)"
                 .to_string(),
@@ -658,92 +591,6 @@ pub(crate) fn group_a08(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic>
             "{} constructors may have equation-subsumed rewrites: {}",
             total,
             cat_parts.join(", "),
-        ),
-        hint,
-        grammar_name,
-        source_location: None,
-    }]
-}
-
-/// Group C-AP03 (deep congruence chains) by category.
-///
-/// Extracts category names from the message text (backtick-quoted after "category").
-///
-/// Output: `"N categories have unbounded congruence chain depth: Cat1, Cat2"`
-pub(crate) fn group_cap03(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
-    let hint = diagnostics.first().and_then(|d| d.hint.clone());
-
-    let mut cats: Vec<String> = Vec::new();
-    for diag in &diagnostics {
-        // Extract category from message: "deep congruence chain: category `Proc` has ..."
-        let cat = diag
-            .message
-            .split("category `")
-            .nth(1)
-            .and_then(|s| s.split('`').next())
-            .unwrap_or("?")
-            .to_string();
-        if !cats.contains(&cat) {
-            cats.push(cat);
-        }
-    }
-
-    vec![LintDiagnostic {
-        id: DiagnosticId::CAP03,
-        name: "deep-congruence-chains",
-        severity: LintSeverity::Warning,
-        category: None,
-        rule: None,
-        message: format!(
-            "{} categories have unbounded congruence chain depth: {}",
-            cats.len(),
-            cats.join(", "),
-        ),
-        hint,
-        grammar_name,
-        source_location: None,
-    }]
-}
-
-/// Group C-AP05 (clone storm risk) by constructor/category.
-///
-/// Extracts constructor and category from the message text.
-///
-/// Output: `"N constructors have collection fields (clone storm risk): Ctor1(Cat1), Ctor2(Cat2)"`
-pub(crate) fn group_cap05(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
-    let hint = diagnostics.first().and_then(|d| d.hint.clone());
-
-    let mut entries: Vec<String> = Vec::new();
-    for diag in &diagnostics {
-        // Extract constructor: "clone storm: constructor `PPar` (category `Proc`) has ..."
-        let ctor = diag
-            .message
-            .split("constructor `")
-            .nth(1)
-            .and_then(|s| s.split('`').next())
-            .unwrap_or("?");
-        let cat = diag
-            .message
-            .split("category `")
-            .nth(1)
-            .and_then(|s| s.split('`').next())
-            .unwrap_or("?");
-        entries.push(format!("{}({})", ctor, cat));
-    }
-
-    let total = entries.len();
-    vec![LintDiagnostic {
-        id: DiagnosticId::CAP05,
-        name: "clone-storm-risk",
-        severity: LintSeverity::Warning,
-        category: None,
-        rule: None,
-        message: format!(
-            "{} constructors have collection fields (clone storm risk): {}",
-            total,
-            entries.join(", "),
         ),
         hint,
         grammar_name,

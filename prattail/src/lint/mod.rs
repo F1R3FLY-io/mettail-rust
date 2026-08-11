@@ -25,27 +25,21 @@
 //! | `Warning` | Bold yellow | Possible issue — review recommended |
 //! | `Error` | Bold red | Correctness bug — compilation may fail |
 //!
-//! ## Macro-Phase Lints
+//! ## Diagnostics Emitted Outside `run_lints`
 //!
-//! The following lints are emitted by the macros crate via [`emit_diagnostic()`]
-//! because they require access to equation/rewrite data unavailable in the
-//! PraTTaIL pipeline:
+//! Specialized pipeline stages emit the following diagnostics via
+//! [`emit_diagnostic()`]:
 //!
 //! | ID | Severity | Name | Description |
 //! |----|----------|------|-------------|
-//! | G25 | note | cancellation-pair-detected | Equation `Outer(Inner(X)) = X` suppressed from eqrel |
-//! | G26 | note | equation-subsumed | Equation eliminated by subsumption |
-//! | G27 | warning | rule-subsumption-candidate | Rule may be subsumed by more general rule |
-//! | G28 | note | alpha-equivalent-groups | Alpha-equivalent LHS pattern groups |
-//! | G29 | note | dependency-groups | Fine-grained dependency groups |
-//! | G30 | note | isomorphic-wfst-groups | Isomorphic WFST dispatch topology |
-//! | G31 | note | subsumed-equations-eliminated | N equations eliminated from codegen |
-//! | W09 | warning | cancellation-pair-missing-rewrite | Suppressed equation has no corresponding rewrite |
-//! | G41 | note | normalize-dedup-active | BCG05: hash guards emitted for normalize dedup |
-//! | I10 | warning | ascent-file-write-failed | Ascent Datalog file I/O error |
-//! | I17 | info | computed-goto-dispatch | CD03: function pointer table dispatch activated |
+//! | I17 | info | cd06-shared-suffix-measure | Shared decision-tree suffix measurement |
 //! | I18 | info | lint-cache-hit | DB04: lint results cached, skipping lint passes |
 //! | I22 | error | analysis-thread-panicked | DB03: a scoped analysis thread panicked; carries the recovered payload |
+//!
+//! Historical identifiers G25–G31, G35, G38, G41–G42, W09, C-AP01–C-AP05,
+//! and I10 belonged to the retired Ascent macro phase. They have no production
+//! emitter in the Dovetail/Rho pipeline and must not be presented as current
+//! diagnostics.
 //!
 //! ## Display Format
 //!

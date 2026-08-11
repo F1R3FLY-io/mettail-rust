@@ -7,10 +7,10 @@ manipulating MeTTaIL terms at the AST level. These methods are emitted as
 `impl Cat { ... }` blocks during proc-macro expansion and become part of the
 generated language crate.
 
-Term operations sit between the AST type generation (`gen/types/`) and the
-Ascent logic generation (`logic/`). The Ascent rewrite rules call the generated
-methods (substitution, normalization, ground-checking, depth measurement) as
-part of their rule bodies.
+Term operations sit between AST type generation (`gen/types/`) and generated
+Dovetail/Rho runtime lowering. Generated matching, rewriting, reporting, and
+normal-form reconstruction call these methods for substitution, normalization,
+ground checks, and depth measurement.
 
 ## Module Index
 
@@ -19,7 +19,7 @@ part of their rule bodies.
 | [`subst.rs`](substitution.md) | -- | Capture-avoiding substitution with binder-aware shadowing |
 | [`normalize.rs`](normalization.md) | BCG05 | Collection flattening, beta-reduction, cancellation pair collapse |
 | [`ground.rs`](ground-detection.md) | BCG04 | Deep recursive free-variable detection |
-| [`depth.rs`](depth-analysis.md) | ART05 | Maximum nesting depth measurement |
+| [`depth.rs`](depth-analysis.md) | — | Stack-safe maximum host-term nesting measurement |
 | [`hash_consing_analysis.rs`](hash-consing-analysis.md) | ART01 | Recursive field detection for hash-consing applicability |
 
 ## Architecture
@@ -83,12 +83,13 @@ coverage of the generated enum.
 
 ## Cross-References
 
-- **Codegen modules**: [Codegen Module Index](../codegen/README.md) -- Ascent Datalog code generation pipeline
+- **Codegen modules**: [Codegen Module Index](../codegen/README.md) -- historical
+  backend index and current Dovetail/Rho routing notice
 - **Runtime types**: [Runtime Module Index](../../../runtime/docs/README.md) -- `OrdVar`, `Scope`, `FreeVar`, `HashBag`, `InternTable`
 - ART01 hash-consing analysis connects to
   [`runtime/src/hash_consing.rs`](../../../runtime/docs/hash-consing.md)
-- ART05 depth analysis is consumed by the cost-benefit gate in
-  `prattail/src/cost_benefit.rs`
+- `term_depth()` supplies a measured input to generated Dovetail saturation-work
+  derivation; it is not an accepted-term cutoff or traversal limit
 - BCG04 ground detection is used by the ground-LHS rewrite optimization
 - BCG05 normalization works with the epoch mechanism in
   [`runtime/src/binding.rs`](../../../runtime/docs/binding-infrastructure.md)

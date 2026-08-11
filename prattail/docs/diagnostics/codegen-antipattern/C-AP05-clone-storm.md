@@ -1,13 +1,16 @@
 # C-AP05: clone-storm
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline has
+> no production C-AP05 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Warning
 **Category:** codegen-antipattern
-**Feature Gate:** None (always enabled)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 
 Detects constructors that contain collection fields (`Vec<T>`, `HashBag<T>`,
-`HashSet<T>`) where the generated Ascent congruence rules will clone the entire
+`HashSet<T>`) where generated Dovetail/Rho congruence rules will clone the entire
 collection on every rule firing. This is a significant performance antipattern
 for large ASTs because each congruence iteration produces a deep copy of every
 collection field in every matching constructor.
@@ -94,8 +97,8 @@ warning[C-AP05] (Rholang): 2 constructors have collection fields (clone storm ri
 
 1. **Wrap collections in `Rc<T>` or `Arc<T>`.** Reference-counted wrappers
    reduce clone cost from O(k) to O(1) by sharing the underlying allocation.
-   Use `Rc` for single-threaded evaluation, `Arc` for concurrent/parallel
-   Ascent runs.
+   Use `Rc` for single-threaded evaluation and `Arc` where generated evaluation
+   genuinely crosses threads.
 
 2. **Use persistent data structures.** Replace `Vec<T>` with an immutable
    vector (e.g., `im::Vector<T>`) that supports O(log n) structural sharing.
@@ -117,7 +120,7 @@ The hint **"consider wrapping the collection field in `Rc<Coll<T>>` or
 most direct mitigation: wrapping the collection in a reference-counted pointer
 so that congruence rule firings share the collection's memory rather than
 duplicating it. The choice between `Rc` (single-threaded, no atomic overhead)
-and `Arc` (thread-safe, required for parallel Ascent) depends on the evaluation
+and `Arc` (thread-safe, required for parallel evaluation) depends on the evaluation
 context.
 
 ## Related Lints

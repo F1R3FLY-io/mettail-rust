@@ -1,8 +1,11 @@
 # W09: cancellation-pair-missing-rewrite
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline has
+> no production W09 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Warning
 **Category:** WFST-Specific / Macro-Phase
-**Feature Gate:** none (always active)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 

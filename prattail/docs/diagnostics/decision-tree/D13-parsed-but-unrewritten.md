@@ -7,8 +7,8 @@
 ## Description
 
 Detects constructor rules that are reachable in the decision tree's dispatch
-trie (they can be parsed) but never appear in any Ascent equation or rewrite
-rule's semantic dependency group. These "orphan" rules produce parse nodes that
+trie (they can be parsed) but never appear in any equation/rewrite semantic
+dependency group. These "orphan" rules produce parse nodes that
 the semantic evaluation layer never consumes or transforms.
 
 This diagnostic correlates two independent analysis layers:
@@ -21,8 +21,9 @@ This diagnostic correlates two independent analysis layers:
    they reference. A rule not in any group is semantically disconnected.
 
 When a constructor is trie-reachable but semantically disconnected, it means
-the parser will successfully recognize the construct, but the Ascent fixpoint
-engine will never process the resulting term. This is often (but not always) a
+the parser will successfully recognize the construct, but the generated
+Dovetail/Rho semantic network will never process the resulting term. This is
+often (but not always) a
 sign of a missing equation or rewrite rule.
 
 ```
@@ -75,9 +76,9 @@ language! {
 ### Output
 
 ```
-note[D13] (CalcLang): rule `Lit` is reachable in trie dispatch but appears in zero Ascent equations
+note[D13] (CalcLang): rule `Lit` is reachable in trie dispatch but appears in zero semantic equation/rewrite groups
   = in category `Expr`, rule `Lit`
-  = hint: this constructor is parsed but never semantically consumed; verify it's needed or add an Ascent equation referencing it
+  = hint: this constructor is parsed but never semantically consumed; verify it is needed or add an equation/rewrite referencing it
 ```
 
 ## Resolution
@@ -93,20 +94,21 @@ note[D13] (CalcLang): rule `Lit` is reachable in trie dispatch but appears in ze
 
 3. **Accept the orphan.** Some constructors exist solely for pattern matching
    in user-defined `logic {}` blocks that bypass the standard dependency
-   analysis. If the constructor is consumed by custom Ascent rules, this
+   analysis. If the constructor is consumed by a separately registered native
+   or logic dispatch family, this
    diagnostic is a false positive and can be safely ignored.
 
 ## Hint Explanation
 
 The hint **"this constructor is parsed but never semantically consumed; verify
-it's needed or add an Ascent equation referencing it"** highlights the
+it is needed or add an equation/rewrite referencing it"** highlights the
 disconnect between the parse layer and the semantic layer. The parser
-successfully builds AST nodes for this constructor, but no Ascent rule ever
+successfully builds AST nodes for this constructor, but no registered semantic rule
 inspects or transforms them. The two actions are:
 
 - **Verify it's needed**: check whether the constructor should participate in
   evaluation. If it is consumed by custom `logic {}` rules, no change is needed.
-- **Add an Ascent equation referencing it**: connect the constructor to the
+- **Add an equation/rewrite referencing it**: connect the constructor to the
   semantic layer by defining how it should be evaluated or transformed.
 
 ## Related Lints

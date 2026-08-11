@@ -1,9 +1,11 @@
-//! Term-depth measurement generation for MeTTaIL terms (A-RT05)
+//! Stack-safe term-depth measurement generation for MeTTaIL terms
 //!
 //! Generates a per-category `term_depth()` that computes the maximum nesting
-//! depth of a term. Used by the post-fixpoint convergence check to detect
-//! unbounded term growth during Ascent evaluation, and by the Dovetail e-graph
-//! build (`dovetail_report.rs`, 40 call sites) to bound its report.
+//! depth of a term. The Dovetail e-graph build consumes the measurement when it
+//! derives a saturation-work allowance (`dovetail_report.rs`, 40 generated call
+//! sites). It never truncates the AST walk, silently accepts partial saturation,
+//! or acts as an accepted-term depth limit: a non-converged saturation is an
+//! explicit error.
 //!
 //! ## Depth semantics — UNCHANGED by the #162 conversion
 //!
@@ -251,8 +253,8 @@ fn generate_depth_wrapper(category: &Ident) -> TokenStream {
             /// nesting depth. The pre-#162 form was bare host recursion and measured
             /// 3,408 B/level (debug) / 207 (release).
             ///
-            /// Used by the A-RT05 post-fixpoint convergence check and by the Dovetail
-            /// e-graph build.
+            /// Used by the Dovetail e-graph build to derive its saturation-work
+            /// allowance. It does not limit the depth of this traversal.
             pub fn term_depth(&self) -> u32 {
                 let mut stack = DEPTH_TASK_POOL.with(|pool| pool.take());
                 stack.clear();
@@ -385,7 +387,7 @@ fn collection_element_pushes(
 ///
 /// Returns an empty stream for a field that contributes nothing: a `BehavioralPred`
 /// or a token-text/guest-body capture is a constant-size payload and is NOT part of
-/// host term nesting (A-RT05 counts host-term nesting only).
+/// host term nesting (`term_depth` counts host-term nesting only).
 fn field_depth_pushes(
     field: &FieldInfo,
     name: &Ident,

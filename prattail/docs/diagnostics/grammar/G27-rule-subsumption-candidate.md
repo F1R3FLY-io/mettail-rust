@@ -1,8 +1,11 @@
 # G27: rule-subsumption-candidate
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline has
+> no production G27 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Warning
 **Category:** Grammar Structure (macro phase)
-**Feature Gate:** (none -- always active)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 

@@ -1,7 +1,7 @@
 # A08: equation-subsumes-rewrite
 
 **Severity:** Note
-**Category:** Ascent / Equation-Rewrite Interaction
+**Category:** Equation/rewrite network / Equation-Rewrite Interaction (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
@@ -29,8 +29,8 @@ transformation.
 
 If the equation `Normalize(X) = X` is declared, the rewrite `Normalize(X) ~> X`
 is redundant because the equation already provides the same reduction (plus
-the reverse direction).  Keeping both wastes Ascent computation cycles and
-inflates the generated struct with duplicate rules.
+the reverse direction). Keeping both wastes generated rewrite work and
+inflates the generated network with duplicate rules.
 
 The lint detects this by counting how many distinct dependency groups contain
 a given constructor label.  Two or more groups suggest dual participation.
@@ -87,8 +87,8 @@ note[A08] (Rholang): 3 constructors may have equation-subsumed rewrites: Name(NQ
 ## Resolution
 
 1. **Remove the redundant rewrite.**  If the equation already provides the
-   needed reduction direction, delete the rewrite.  This reduces the Ascent
-   struct size and avoids duplicate computation during fixpoint evaluation.
+   needed reduction direction, delete the rewrite. This reduces the generated
+   network size and avoids duplicate computation during rewrite closure.
 
 2. **Verify the rewrite is not oriented differently.**  If the equation is
    symmetric (`a = b`) but the rewrite provides a specific reduction direction

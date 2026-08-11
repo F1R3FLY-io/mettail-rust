@@ -1,8 +1,11 @@
 # G42: eq-strata-analysis / rule-fusion-analysis / rule-fusion-codegen
 
+> **Historical Ascent-era identifiers.** The current Dovetail/Rho pipeline has
+> no production G42 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Note
 **Category:** grammar
-**Feature Gate:** None (always enabled)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 

@@ -1,17 +1,19 @@
 # C-AP03: deep-congruence-chains
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline has
+> no production C-AP03 emitter. This page records the retired diagnostic contract.
+
 **Severity:** Warning
 **Category:** codegen-antipattern
-**Feature Gate:** None (always enabled)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 
 Detects categories whose constructor field graph contains self-recursive or
-mutually-recursive references, causing the generated Ascent congruence rules to
-form chains of unbounded depth. For every nesting level of the recursive
-constructor, the congruence engine must fire an additional rule iteration,
-leading to fixpoint iteration counts proportional to the deepest AST nesting
-encountered at runtime.
+mutually-recursive references, causing the generated Dovetail/Rho congruence
+network to traverse chains of unbounded semantic depth. The generated
+traversal must remain an explicit pushdown automaton (PDA), so term depth
+affects heap-backed work rather than native-stack depth.
 
 The detector builds a directed graph from each grammar category to the set of
 categories referenced by its constructor fields. A self-loop (category A has a
@@ -77,26 +79,25 @@ language! {
 
 ```
 warning[C-AP03] (DeepNest): deep congruence chain: category `Expr` has a self-recursive constructor field -- congruence chain depth is unbounded
-  = hint: congruence rules for `Expr` will apply recursively at every nesting level; consider bounding the rewrite depth or using explicit recursion control
+  = hint: retain stack-safe iterative congruence traversal, remove semantically redundant cycles, and measure work/RSS for the unbounded family
 ```
 
 When multiple categories are affected, grouping consolidates:
 
 ```
 warning[C-AP03] (RhoPi): 3 categories have unbounded congruence chain depth: Expr, Proc, Name
-  = hint: congruence rules for `Expr` will apply recursively at every nesting level; consider bounding the rewrite depth or using explicit recursion control
+  = hint: retain stack-safe iterative congruence traversal, remove semantically redundant cycles, and measure work/RSS for the unbounded family
 ```
 
 ## Resolution
 
-1. **Add explicit depth bounds.** Use the ART05 compile-time depth bound
-   analysis (feature `depth-bounds`) to cap congruence propagation at a
-   fixed depth. This trades completeness for predictable fixpoint iteration.
+1. **Keep traversal stack-safe.** Generate an explicit PDA/worklist whose
+   native-stack usage is constant in term depth. Do not impose an artificial
+   semantic-depth ceiling.
 
-2. **Break the recursion with an indirection.** Wrap the recursive field in
-   `Rc<T>` or `Arc<T>` so the congruence rule operates on a reference rather
-   than the structural term. This does not eliminate the logical recursion but
-   reduces the per-iteration work.
+2. **Share persistent structure.** Reuse immutable subterms or trie/arena
+   identities where ownership permits. `Rc<T>` or `Arc<T>` alone is not a
+   traversal algorithm; the consumer must still use an explicit work machine.
 
 3. **Factor out recursive constructors.** Move deeply nested constructors
    into a separate category that is processed by a dedicated rewrite pass,
@@ -104,23 +105,20 @@ warning[C-AP03] (RhoPi): 3 categories have unbounded congruence chain depth: Exp
 
 4. **Accept unbounded depth.** If the grammar inherently requires unbounded
    congruence propagation (e.g., a full lambda calculus), suppress this
-   warning by acknowledging that fixpoint iteration count is proportional to
-   AST depth.
+   warning only after the iterative path and measured resource behavior are
+   established for the intended depth distribution.
 
 ## Hint Explanation
 
-The hint **"congruence rules for `<Cat>` will apply recursively at every
-nesting level; consider bounding the rewrite depth or using explicit recursion
-control"** warns that the generated Ascent congruence rules form a chain where
-each nesting level of the recursive constructor triggers an additional
-iteration. For an AST of depth d, the congruence fixpoint requires at least d
-iterations before convergence. The two remediation strategies are:
+The hint warns that an unbounded semantic chain is expected and separates
+that property from native-stack use. The remediation strategies are:
 
-- **Bounding the rewrite depth**: limiting how many levels of congruence are
-  propagated per evaluation, trading completeness for bounded runtime.
-- **Explicit recursion control**: restructuring the grammar so that deep
-  nesting is handled by a separate recursive pass rather than implicit
-  congruence rule chaining.
+- **Explicit PDA traversal**: put continuations on typed heap frames and drive
+  them iteratively.
+- **Cycle reduction and structural sharing**: remove semantically redundant
+  work while preserving unbounded inputs.
+- **Measurement**: govern time and RSS with workload/service-level evidence,
+  not a completeness-losing depth cutoff.
 
 ## Related Lints
 

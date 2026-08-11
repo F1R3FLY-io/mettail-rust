@@ -1,16 +1,16 @@
 # A01: fixpoint-non-convergence
 
 **Severity:** Warning
-**Category:** Ascent / Fixpoint Analysis
+**Category:** Equation/rewrite termination analysis (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
 
 Detects grammar rules whose syntactic structure suggests **unbounded term
-growth** during Ascent Datalog fixpoint computation.  When a rule has two or
+growth** under repeated rewriting. When a rule has two or
 more self-referential nonterminals (nonterminals whose category matches the
 rule's own category) and at most one terminal token, the rule can generate
-progressively deeper terms on every fixpoint iteration without a corresponding
+progressively deeper terms on every rewrite cycle without a corresponding
 structural reduction to bound the growth.
 
 Consider a category `Proc` with a rule:
@@ -20,11 +20,10 @@ Wrap . p:Proc, q:Proc |- p : Proc;
 ```
 
 The rule's RHS syntax contains two `Proc`-typed nonterminals and zero
-terminals.  During Ascent's fixpoint evaluation, if `Wrap` is used in a
-rewrite context, each iteration may replace a `Proc` sub-term with
+terminals. If `Wrap` is used in a rewrite context, each cycle may replace a `Proc` sub-term with
 `Wrap(p', q')`, producing a term one level deeper.  Without a complementary
 depth-reducing rule (e.g., `Unwrap . p:Proc |- p : Proc;`), this growth is
-unbounded and the fixpoint iteration may not converge within practical time
+unbounded and rewrite closure may not converge within practical time
 or memory limits.
 
 ```
@@ -73,8 +72,8 @@ language! {
 ### Output
 
 ```
-warning[A01] (TreeLang): rule `Wrap` has 2 self-referential nonterminals with 0 terminal(s) — potential unbounded term growth in fixpoint computation
-  = hint: ensure complementary depth-reducing rules exist, or add a depth bound
+warning[A01] (TreeLang): rule `Wrap` has 2 self-referential nonterminals with 0 terminal(s) — potential unbounded term growth under repeated rewriting
+  = hint: orient the rules around a well-founded decreasing measure, remove redundant growth rules, or isolate the recursive family into an independently measured rewrite stratum
 ```
 
 ## Resolution
@@ -82,36 +81,34 @@ warning[A01] (TreeLang): rule `Wrap` has 2 self-referential nonterminals with 0 
 1. **Add a depth-reducing rule.**  Introduce a rewrite that collapses nested
    applications of the flagged constructor.  For instance, adding
    `|- Wrap(Wrap(x, y), z) ~> Wrap(x, z) ;` ensures that double-nesting is
-   reduced, bounding the maximum depth growth per iteration.
+   reduced, giving the rewrite family a decreasing structural measure.
 
-2. **Add a depth bound.**  Use the `ART05_DepthBound` optimization to set a
-   compile-time limit on term depth during fixpoint evaluation.  Terms
-   exceeding the bound are discarded or approximated, guaranteeing
-   termination at the cost of completeness.
+2. **Prove a well-founded orientation.** Choose a size, precedence, or
+   dependency rank that strictly decreases on every cycle. This preserves
+   completeness instead of discarding terms at an arbitrary depth.
 
-3. **Increase terminal coverage.**  Adding terminals to the rule's syntax
-   (e.g., a delimiting keyword or punctuation) increases the structural
-   entropy per iteration, naturally limiting how quickly terms can grow.
+3. **Factor independent recursive families.** Isolate rules that do not need
+   simultaneous closure, then measure the work and resident-set size of each
+   stratum independently.
 
 4. **Accept the warning.**  If the grammar intentionally builds deep recursive
-   structures (e.g., for tree languages), the fixpoint may still converge if
-   other rules act as reducers.  Verify convergence empirically and suppress
+   structures (e.g., for tree languages), rewrite closure may still converge
+   if other rules act as reducers. Verify convergence empirically and suppress
    this warning via `PRATTAIL_LINT_LEVEL=error`.
 
 ## Hint Explanation
 
-The hint **"ensure complementary depth-reducing rules exist, or add a depth
-bound"** directs the author to two strategies:
+The hint names three semantics-preserving strategies:
 
 - **Depth-reducing rules** are rewrites whose LHS pattern has greater depth
   than their RHS.  If every depth-increasing rule has a corresponding
-  depth-reducing counterpart, the fixpoint may reach a stable state where
+  depth-reducing counterpart, closure may reach a stable state where
   growth and reduction balance out.
 
-- A **depth bound** is a hard ceiling on the term depth maintained during
-  fixpoint evaluation.  The `ART05_DepthBound` codegen optimization prunes
-  terms that exceed the bound, converting potential non-termination into a
-  bounded (but possibly approximate) analysis.
+- A **well-founded measure** proves that no cycle can grow forever.
+- An **independent stratum** removes irrelevant cross-family propagation and
+  gives the remaining resource cost a measurable service-level policy. None
+  of these repairs imposes an artificial traversal-depth ceiling.
 
 ## Related Lints
 

@@ -63,12 +63,14 @@ predicate terminates:
 
 - The decidability classification in `symbolic.rs` assigns tiers:
   - T1 (compile-time decidable): structural patterns, finite-domain quantifiers
-  - T2 (runtime decidable): Ascent relation queries, finite-state checks
+  - T2 (runtime decidable): generated semantic-relation queries, finite-state checks
   - T3 (semi-decidable): bounded reachability, bounded halting
   - T4 (undecidable): general halting, unbounded `forall` over infinite domains
 - The restricted MSO theorem (Theorem 4.5) guarantees that `forall x. phi` preserves recognizability only when `[[phi]]_V` is a recognizable step function. A step function takes finitely many values as the variable `x` ranges over all positions.
 - When `phi` references unbounded computations (e.g., transitive closure `->*`), it takes infinitely many distinct values, violating the step function requirement.
-- T3/T4 formulas require special handling: bounded verification with configurable depth limits (T3), or user-provided proofs and runtime monitors (T4).
+- T3/T4 formulas require an explicit incomplete-result boundary (T3), or
+  user-provided proofs and runtime monitors (T4). Resource exhaustion must be
+  represented as `Unknown`; it must never be reported as a proof result.
 - The first-order fragment (Section 7, Theorem 7.11) provides a safe alternative: for weakly bi-aperiodic semirings, all FO-definable series are recognizable.
 
 ## Related Lints

@@ -1,13 +1,13 @@
 # A02: redundant-congruence
 
 **Severity:** Note
-**Category:** Ascent / Congruence Analysis
+**Category:** Equation/rewrite network / Congruence Analysis (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
 
 Detects categories whose generated **congruence rules** may be redundant.  In
-PraTTaIL's Ascent-based equational reasoning, every category that participates
+PraTTaIL's generated Dovetail/Rho equational reasoning, every category that participates
 in equations or rewrites gets congruence rules: if `a = b`, then
 `C(a) = C(b)` for every constructor `C` whose syntax references the
 category.  These congruence rules ensure that equalities propagate through
@@ -34,8 +34,8 @@ satisfied or structurally impossible.
 ```
 
 This lint is purely informational.  The generated congruence rules are not
-incorrect -- they simply contribute nothing to the fixpoint computation,
-adding relations and Ascent rules that slow compilation without changing
+incorrect -- they simply contribute nothing to generated rewrite closure,
+adding relations and machine rules that slow compilation without changing
 the result.
 
 ## Trigger Conditions
@@ -78,7 +78,7 @@ note[A02] (SimpleMath): category `Atom` has only 1 rule(s) but is referenced as 
 
 1. **Suppress the congruence.**  If the category genuinely needs no equational
    reasoning, annotate it to skip congruence generation.  This reduces the
-   generated Ascent struct size (fewer relations and rules).
+   generated rewrite-network size (fewer relations and rules).
 
 2. **Add equations or rewrites.**  If the category *should* participate in
    equational reasoning but currently lacks equations, adding them will make
@@ -104,7 +104,7 @@ Congruence rules are valuable when:
   categories.
 
 If neither condition applies, the congruence rules are dead weight in the
-Ascent computation.
+generated equation/rewrite network.
 
 ## Related Lints
 
@@ -114,5 +114,5 @@ Ascent computation.
 - [A06](A06-missing-equation-congruence.md) -- The complementary case:
   detects constructors in equations whose field categories lack
   equation-participating constructors, meaning congruence will not propagate.
-- [A09](A09-ascent-struct-size.md) -- Redundant congruence contributes to
-  large Ascent struct size, which A09 tracks at a higher level.
+- [A09](A09-generated-rewrite-network-size.md) -- Redundant congruence contributes to
+  generated rewrite-network size, which A09 tracks at a higher level.

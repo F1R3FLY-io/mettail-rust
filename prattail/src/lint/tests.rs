@@ -17,6 +17,95 @@ fn cat_info(name: &str, native_type: Option<&str>, is_primary: bool) -> Category
     }
 }
 
+/// Current diagnostics must describe the generated Dovetail/Rho architecture
+/// and propose semantics-preserving repairs. Artificial traversal/fixpoint
+/// ceilings lose completeness and are not acceptable remediation advice.
+fn assert_current_diagnostic_avoids_stale_backend_and_limit_advice(diag: &LintDiagnostic) {
+    let rendered = format!("{} {}", diag.message, diag.hint.as_deref().unwrap_or_default())
+        .to_ascii_lowercase();
+    for forbidden in ["ascent fixpoint", "depth bound", "depth limit", "iteration limit"] {
+        assert!(
+            !rendered.contains(forbidden),
+            "{} reintroduced forbidden diagnostic advice `{forbidden}`: {rendered}",
+            diag.id
+        );
+    }
+}
+
+#[test]
+fn current_diagnostic_contracts_exclude_retired_backend_and_limit_advice() {
+    const CURRENT_CONTRACTS: &[(&str, &str)] = &[
+        ("lints.rs", include_str!("lints.rs")),
+        ("grouping.rs", include_str!("grouping.rs")),
+        ("cost_benefit.rs", include_str!("../cost_benefit.rs")),
+        ("diagnostics/README.md", include_str!("../../docs/diagnostics/README.md")),
+        (
+            "A01",
+            include_str!("../../docs/diagnostics/ascent/A01-fixpoint-non-convergence.md"),
+        ),
+        ("A02", include_str!("../../docs/diagnostics/ascent/A02-redundant-congruence.md")),
+        (
+            "A03",
+            include_str!("../../docs/diagnostics/ascent/A03-eq-rw-category-mismatch.md"),
+        ),
+        (
+            "A04",
+            include_str!("../../docs/diagnostics/ascent/A04-large-equivalence-class.md"),
+        ),
+        (
+            "A05",
+            include_str!("../../docs/diagnostics/ascent/A05-self-referential-equation.md"),
+        ),
+        (
+            "A06",
+            include_str!("../../docs/diagnostics/ascent/A06-missing-equation-congruence.md"),
+        ),
+        (
+            "A07",
+            include_str!("../../docs/diagnostics/ascent/A07-fixpoint-iteration-anomaly.md"),
+        ),
+        (
+            "A08",
+            include_str!("../../docs/diagnostics/ascent/A08-equation-subsumes-rewrite.md"),
+        ),
+        (
+            "A09",
+            include_str!("../../docs/diagnostics/ascent/A09-generated-rewrite-network-size.md"),
+        ),
+        (
+            "A10",
+            include_str!("../../docs/diagnostics/ascent/A10-unreachable-equation-variable.md"),
+        ),
+        (
+            "D13",
+            include_str!("../../docs/diagnostics/decision-tree/D13-parsed-but-unrewritten.md"),
+        ),
+        ("N06", include_str!("../../docs/diagnostics/alternating/N06.md")),
+        ("TW03", include_str!("../../docs/diagnostics/two-way/TW03.md")),
+    ];
+    const FORBIDDEN: &[&str] = &[
+        "ascent fixpoint evaluation",
+        "ascent struct size",
+        "ascent-trie-correlation",
+        "add a depth bound",
+        "adding a depth bound",
+        "fixpoint iteration limit",
+        "propagation depth limit",
+        "optimization::depthbound",
+        "art05:depthbound",
+    ];
+
+    for (name, contract) in CURRENT_CONTRACTS {
+        let normalized = contract.to_ascii_lowercase();
+        for forbidden in FORBIDDEN {
+            assert!(
+                !normalized.contains(forbidden),
+                "current diagnostic contract {name} contains retired wording `{forbidden}`"
+            );
+        }
+    }
+}
+
 fn make_rule_info(
     label: &str,
     category: &str,
@@ -2753,83 +2842,6 @@ fn group_mixed_ids_preserves_order() {
 }
 
 #[test]
-fn group_g27_by_general_rule() {
-    let diags = vec![
-        make_diag(
-            DiagnosticId::G27,
-            "rule-subsumption-candidate",
-            LintSeverity::Warning,
-            None,
-            None,
-            "rule `AmbNew` may be subsumed by more general rule `AmbCong`",
-            Some("review"),
-        ),
-        make_diag(
-            DiagnosticId::G27,
-            "rule-subsumption-candidate",
-            LintSeverity::Warning,
-            None,
-            None,
-            "rule `OutRule` may be subsumed by more general rule `AmbCong`",
-            Some("review"),
-        ),
-        make_diag(
-            DiagnosticId::G27,
-            "rule-subsumption-candidate",
-            LintSeverity::Warning,
-            None,
-            None,
-            "rule `FooRule` may be subsumed by more general rule `AmbCong`",
-            Some("review"),
-        ),
-    ];
-    let result = group_diagnostics(diags);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].id, DiagnosticId::G27);
-    assert!(
-        result[0].message.contains("3 rules may be subsumed"),
-        "message: {}",
-        result[0].message
-    );
-    assert!(
-        result[0]
-            .message
-            .contains("candidates: AmbNew, OutRule, FooRule"),
-        "message: {}",
-        result[0].message
-    );
-}
-
-#[test]
-fn group_g27_different_generals() {
-    let diags = vec![
-        make_diag(
-            DiagnosticId::G27,
-            "rule-subsumption-candidate",
-            LintSeverity::Warning,
-            None,
-            None,
-            "rule `A` may be subsumed by more general rule `Gen1`",
-            Some("review"),
-        ),
-        make_diag(
-            DiagnosticId::G27,
-            "rule-subsumption-candidate",
-            LintSeverity::Warning,
-            None,
-            None,
-            "rule `B` may be subsumed by more general rule `Gen2`",
-            Some("review"),
-        ),
-    ];
-    let result = group_diagnostics(diags);
-    // Two different general rules → each passes through individually (single-item groups)
-    assert_eq!(result.len(), 2);
-    assert_eq!(result[0].id, DiagnosticId::G27);
-    assert_eq!(result[1].id, DiagnosticId::G27);
-}
-
-#[test]
 fn group_w05_by_category() {
     let diags: Vec<LintDiagnostic> = (0..5)
             .map(|i| make_diag(DiagnosticId::W05, "composed-dispatch-ambiguity", LintSeverity::Warning,
@@ -3538,6 +3550,25 @@ fn n05_silent_when_bisimilar() {
     assert!(diags.is_empty());
 }
 
+#[test]
+fn n06_recommends_semantics_preserving_worklist_repairs() {
+    let mut b = CtxBuilder::new();
+    b.alternating_result_data = Some(crate::alternating::AlternatingAnalysis {
+        non_bisimilar_pairs: vec![
+            ("A".to_string(), "B".to_string()),
+            ("A".to_string(), "C".to_string()),
+            ("A".to_string(), "D".to_string()),
+            ("A".to_string(), "E".to_string()),
+        ],
+        state_count: 6,
+    });
+    let mut diags = Vec::new();
+    lint_n06_weighted_parity_non_convergent(&b.ctx(), &mut diags);
+    assert_eq!(diags.len(), 1);
+    assert_eq!(diags[0].id, DiagnosticId::N06);
+    assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&diags[0]);
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // L01-L02: LTL (feature = "ltl")
 // ══════════════════════════════════════════════════════════════════════
@@ -3795,6 +3826,7 @@ fn a01_fires_on_depth_growth_pattern() {
     assert_eq!(diags[0].id, DiagnosticId::A01);
     assert_eq!(diags[0].severity, LintSeverity::Warning);
     assert!(diags[0].message.contains("Wrap"));
+    assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&diags[0]);
 }
 
 #[test]
@@ -3873,7 +3905,7 @@ fn a05_silent_on_multi_item_rule() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// A09: Ascent Struct Size
+// A09: Generated Rewrite-Network Size
 // ══════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -3894,12 +3926,14 @@ fn a09_fires_on_large_grammar() {
     }
 
     let mut diags = Vec::new();
-    lint_a09_ascent_struct_size(&b.ctx(), &mut diags);
+    lint_a09_generated_network_size(&b.ctx(), &mut diags);
 
     assert_eq!(diags.len(), 1);
     assert_eq!(diags[0].id, DiagnosticId::A09);
     assert_eq!(diags[0].severity, LintSeverity::Warning);
-    assert!(diags[0].message.contains("Ascent rules"));
+    assert_eq!(diags[0].name, "generated-rewrite-network-size");
+    assert!(diags[0].message.contains("Dovetail/Rho"));
+    assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&diags[0]);
 }
 
 #[test]
@@ -3913,7 +3947,7 @@ fn a09_silent_on_small_grammar() {
     ));
 
     let mut diags = Vec::new();
-    lint_a09_ascent_struct_size(&b.ctx(), &mut diags);
+    lint_a09_generated_network_size(&b.ctx(), &mut diags);
     assert!(diags.is_empty());
 }
 
@@ -4269,36 +4303,6 @@ fn group_a08_multiple_constructors() {
 }
 
 #[test]
-fn group_cap03_multiple_categories() {
-    let diags = vec![
-            make_diag(DiagnosticId::CAP03, "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Proc` has a self-recursive constructor field — congruence chain depth is unbounded", Some("consider adding depth bounds")),
-            make_diag(DiagnosticId::CAP03, "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Name` has unbounded congruence chain depth (indirect cycle)", Some("consider adding depth bounds")),
-        ];
-    let result = group_diagnostics(diags);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].id, DiagnosticId::CAP03);
-    assert_eq!(result[0].name, "deep-congruence-chains");
-    assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
-    assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
-    assert!(result[0].message.contains("Name"), "message: {}", result[0].message);
-}
-
-#[test]
-fn group_cap05_multiple_constructors() {
-    let diags = vec![
-            make_diag(DiagnosticId::CAP05, "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `PPar` (category `Proc`) has a `HashBag(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
-            make_diag(DiagnosticId::CAP05, "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `NSend` (category `Name`) has a `Vec(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
-        ];
-    let result = group_diagnostics(diags);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].id, DiagnosticId::CAP05);
-    assert_eq!(result[0].name, "clone-storm-risk");
-    assert!(result[0].message.contains("2 constructors"), "message: {}", result[0].message);
-    assert!(result[0].message.contains("PPar(Proc)"), "message: {}", result[0].message);
-    assert!(result[0].message.contains("NSend(Name)"), "message: {}", result[0].message);
-}
-
-#[test]
 fn group_dis01_multiple_categories() {
     let diags = vec![
             make_diag(DiagnosticId::DIS01, "hot-path-misalignment", LintSeverity::Note, Some("Proc"), None, "category `Proc`: WFST action table first weight 3.00 != minimum weight 1.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
@@ -4535,6 +4539,15 @@ fn test_a04_large_equivalence_class_fires() {
     assert_eq!(diags.len(), 1, "expected 1 A04 diagnostic, got: {:?}", diags);
     assert_eq!(diags[0].id, DiagnosticId::A04);
     assert_eq!(diags[0].rule.as_deref(), Some("Add"));
+    assert!(diags[0].message.contains("Dovetail/Rho"));
+    assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&diags[0]);
+    let grouped = group_diagnostics(diags);
+    assert_eq!(grouped.len(), 1);
+    assert!(grouped[0]
+        .hint
+        .as_deref()
+        .is_some_and(|hint| hint.contains("generated matching and rewrite closure")));
+    assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&grouped[0]);
 }
 
 #[test]
@@ -4709,6 +4722,7 @@ fn test_a07_fixpoint_iteration_anomaly_fires() {
     lint_a07_fixpoint_iteration_anomaly(&b.ctx(), &mut diags);
     assert_eq!(diags.len(), 1, "expected 1 A07 diagnostic, got: {:?}", diags);
     assert_eq!(diags[0].id, DiagnosticId::A07);
+    assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&diags[0]);
     assert!(
         diags[0].message.contains("11 dependency groups"),
         "message: {}",
@@ -5434,7 +5448,7 @@ fn d10_silent_on_shallow_tree() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// D13: Parsed-But-Unrewritten (Ascent Trie Correlation)
+// D13: Parsed-But-Unrewritten (semantic-network/trie correlation)
 // ══════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -5480,12 +5494,16 @@ fn d13_fires_on_parsed_but_unrewritten_rule() {
     b.semantic_dependency_groups.push(group);
 
     let mut diags = Vec::new();
-    lint_d13_ascent_trie_correlation(&b.ctx(), &mut diags);
+    lint_d13_semantic_trie_correlation(&b.ctx(), &mut diags);
 
     assert_eq!(diags.len(), 1, "expected one D13 for orphan 'Lit'");
     assert_eq!(diags[0].id, DiagnosticId::D13);
     assert_eq!(diags[0].severity, LintSeverity::Note);
     assert!(diags[0].message.contains("Lit"), "message: {}", diags[0].message);
+    assert!(diags[0]
+        .message
+        .contains("semantic equation/rewrite groups"));
+    assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&diags[0]);
 }
 
 #[test]
@@ -5521,7 +5539,7 @@ fn d13_silent_when_all_rules_consumed() {
     b.semantic_dependency_groups.push(group);
 
     let mut diags = Vec::new();
-    lint_d13_ascent_trie_correlation(&b.ctx(), &mut diags);
+    lint_d13_semantic_trie_correlation(&b.ctx(), &mut diags);
     assert!(diags.is_empty(), "all rules consumed should not trigger D13: {:?}", diags);
 }
 
@@ -7298,6 +7316,7 @@ mod predicated_types_lint_coverage {
         lint_tw03_constraint_propagation_divergent(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].id, DiagnosticId::TW03);
+        assert_current_diagnostic_avoids_stale_backend_and_limit_advice(&diags[0]);
     }
 
     // ── PT01: PATA emptiness violation ──

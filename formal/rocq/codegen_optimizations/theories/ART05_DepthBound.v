@@ -1,6 +1,11 @@
 (*
- * ART05_DepthBound: Depth-non-increasing convergence and bound soundness
- * for fixpoint evaluation with term-depth analysis.
+ * HISTORICAL ART05_DepthBound: depth-non-increasing convergence theorem.
+ *
+ * ART05 was removed from Optimization and OptimizationGates on 2026-08-10.
+ * An artificial accepted-term depth cutoff is not semantics preserving. This
+ * file retains a valid theorem about depth-non-increasing rewrite systems; it
+ * is not traceability evidence for a current Rust optimization and does not
+ * justify truncating a traversal or returning a partial fixpoint.
  *
  * The depth bound optimization (A-RT05) performs compile-time analysis of
  * the constructor signature graph to determine whether the fixpoint is
@@ -18,9 +23,9 @@
  *   DepthDeltaResult             | DepthDeltaResult struct                  | macros/src/logic/rules.rs:806
  *   is_depth_bounded             | is_depth_bounded()                       | macros/src/logic/rules.rs:910
  *   depth_bound (concept)        | DepthBounds.max_depth                    | prattail/src/wpds.rs (DepthBounds)
- *   Optimization::DepthBound     | cost_benefit::Optimization::DepthBound   | prattail/src/cost_benefit.rs:817
- *   OptimizationGates::depth_bound | depth_bound gate field                 | prattail/src/cost_benefit.rs:1156
- *   fixpoint iteration           | Ascent fixpoint engine                   | macros/src/logic/common.rs
+ *   Optimization::DepthBound     | RETIRED                                  | removed 2026-08-10
+ *   OptimizationGates::depth_bound | RETIRED                                | removed 2026-08-10
+ *   fixpoint iteration           | HISTORICAL Ascent model                  | no current Rust target
  *
  * Rocq 9.1 compatible.
  *)

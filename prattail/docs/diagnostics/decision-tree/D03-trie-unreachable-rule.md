@@ -15,7 +15,7 @@ dispatched to via the trie and is effectively dead code in the dispatch layer.
 
 This diagnostic is a **Warning** because an unreachable rule represents wasted
 grammar complexity: it contributes to compile-time overhead (rule processing,
-WFST weight computation, Ascent relation generation) without ever participating
+WFST weight computation, generated Dovetail/Rho network construction) without ever participating
 in runtime dispatch. It may also indicate an unintentional grammar design error
 where the author expected the rule to be reachable.
 

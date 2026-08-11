@@ -1,7 +1,7 @@
 # A05: self-referential-equation
 
 **Severity:** Warning
-**Category:** Ascent / Equation Structure
+**Category:** Equation/rewrite network / Equation Structure (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
@@ -29,7 +29,7 @@ fixpoint computation cycles.
 A self-referential identity rule as a **parsing** rule is legitimate -- it can
 serve as a cast or injection (e.g., wrapping a sub-expression for
 disambiguation).  The warning specifically concerns its use in **equations**,
-where it becomes a reflexivity tautology that wastes Ascent computation.
+where it becomes a reflexivity tautology that wastes generated rewrite work.
 
 ## Trigger Conditions
 
@@ -68,7 +68,7 @@ warning[A05] (SimpleLang): rule `Identity` is a trivial identity (single self-re
 
 1. **Remove the rule.**  If the rule was accidentally introduced or is left
    over from refactoring, removing it eliminates the redundant identity and
-   reduces the generated Ascent struct size.
+   reduces the generated rewrite-network size.
 
 2. **Verify intent.**  If the rule serves as a syntactic cast or injection
    (e.g., allowing `Expr` to appear where a `Statement` is expected), it is

@@ -3,7 +3,15 @@
 | Field   | Value                     |
 |---------|---------------------------|
 | Date    | 2026-03-09                |
-| Status  | Reference documentation   |
+| Status  | Historical architecture record |
+
+> **Superseded architecture notice (2026-08-10).** The Ascent optimization
+> layers and variant counts below describe the retired backend. Production
+> lowering uses Dovetail/Rho. `ART05 DepthBound` has been removed from
+> `Optimization` and `OptimizationGates`: an artificial term-depth cutoff is
+> not a semantics-preserving optimization. The live `term_depth()` method is a
+> stack-safe measurement used to derive explicit saturation work; it does not
+> reject or truncate deep ASTs.
 
 ---
 

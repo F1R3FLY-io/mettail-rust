@@ -354,7 +354,7 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_w03_cross_category_hotspot(ctx, &mut diagnostics);
     lint_g32_prefix_isomorphism(ctx, &mut diagnostics);
     lint_d10_lookahead_waste(ctx, &mut diagnostics);
-    lint_d13_ascent_trie_correlation(ctx, &mut diagnostics);
+    lint_d13_semantic_trie_correlation(ctx, &mut diagnostics);
 
     // ── Mathematical analysis lints ──
 
@@ -528,7 +528,7 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     // P06: Analysis pipeline timing
     lint_p06_analysis_pipeline_cost(ctx, &mut diagnostics);
 
-    // ── Ascent VM / Codegen lints ──
+    // ── Equation/rewrite network lints (historical A identifiers) ──
     lint_a01_fixpoint_non_convergence(ctx, &mut diagnostics);
     lint_a02_redundant_congruence(ctx, &mut diagnostics);
     lint_a03_eq_rw_category_mismatch(ctx, &mut diagnostics);
@@ -537,7 +537,7 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_a06_missing_equation_congruence(ctx, &mut diagnostics);
     lint_a07_fixpoint_iteration_anomaly(ctx, &mut diagnostics);
     lint_a08_equation_subsumes_rewrite(ctx, &mut diagnostics);
-    lint_a09_ascent_struct_size(ctx, &mut diagnostics);
+    lint_a09_generated_network_size(ctx, &mut diagnostics);
     lint_a10_unreachable_equation_variable(ctx, &mut diagnostics);
 
     // ── Lexer lints ──

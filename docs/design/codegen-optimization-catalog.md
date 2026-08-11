@@ -1,8 +1,17 @@
 # Codegen Optimization & Lint Expansion Catalog
 
 **Date:** 2026-03-08
-**Status:** Authoritative reference
-**Scope:** PraTTaIL / MeTTaIL compile-time optimization catalog
+**Status:** Historical architecture catalog; superseded for production code generation
+**Scope:** PraTTaIL / MeTTaIL compile-time optimization history
+
+> **Current-architecture notice (2026-08-10).** The `A-RT` and `B-CG`
+> sections below record proposals for the retired Ascent backend. Production
+> language generation uses the Dovetail/Rho equation and rewrite network. The
+> catalog remains available to explain historical identifiers and rejected
+> experiments; it is not implementation guidance for the current backend.
+> In particular, `A-RT05`'s artificial term-depth cutoff is rejected because
+> it narrows semantics. Current work must use stack-safe traversal,
+> well-founded rewrite structure, and measured work/COMM service-level policy.
 
 ## 1. Overview
 
@@ -225,8 +234,8 @@ deduplication path.  The Bloom filter is maintained as a TLS `Cell<Vec<u64>>`
 
 | Field | Value |
 |-------|-------|
-| Enum variant | `Optimization::DepthBound` |
-| Gate field | `OptimizationGates::depth_bound` |
+| Enum variant | retired (`Optimization::DepthBound` removed 2026-08-10) |
+| Gate field | retired (`OptimizationGates::depth_bound` removed 2026-08-10) |
 | Tier | 2 (Moderate complexity) |
 | Applicability | `rule_count > 2` |
 | Speedup weight | 0.40 |
@@ -559,7 +568,7 @@ multi-struct generation (extending the SCC splitting pattern).
 
 ---
 
-## 4. Ascent Antipatterns (C-AP01 to C-AP05)
+## 4. Equation/rewrite antipatterns (historical C-AP01 to C-AP05 IDs)
 
 These are **compile-time detection patterns** --- they do not transform code
 but emit diagnostics (lints A01-A10) that warn grammar authors about
@@ -577,8 +586,9 @@ patterns likely to cause performance problems at runtime.
 category as `f`, and there is no depth-reducing counterpart.  This can
 cause unbounded term growth in the fixpoint (e.g., `f(a) => f(f(a))`).
 
-**Mitigation.** Ensure complementary depth-reducing rules exist, or enable
-the depth bound optimization (A-RT05).
+**Mitigation.** Ensure complementary depth-reducing rules exist, prove a
+well-founded orientation, or isolate independent rewrite strata. Do not
+discard terms at an arbitrary depth.
 
 ---
 
@@ -616,17 +626,17 @@ equivalence, or reduce the number of equational axioms.
 
 ---
 
-### C-AP04: Ascent Struct Size
+### C-AP04: Generated Rewrite-Network Size
 
 | Lint | A09 |
 |------|-----|
-| Name | `ascent-struct-size` |
+| Name | `generated-rewrite-network-size` |
 | Severity | Warning (> 100 rules) / Note (> 50 relations) |
 | Detection | Estimated relation and rule counts exceed thresholds |
 
 **Pattern.** A grammar with many categories and constructors generates a
-large Ascent struct.  Rust's monomorphization of the struct is slow, and
-the fixpoint iteration scans many relations per round.
+large Dovetail/Rho equation and rewrite network. Rust compilation and network
+construction become expensive as generated relations and rules accumulate.
 
 **Mitigation.** Enable SCC splitting (Opt 5), demand-driven population
 (A-RT06), or split the grammar into independent modules.
@@ -644,8 +654,9 @@ the fixpoint iteration scans many relations per round.
 **Pattern.** The equational reasoning substrate has many interacting groups,
 suggesting the fixpoint will require many iterations to converge.
 
-**Mitigation.** Partition equations into independent strata (B-CG06) or add
-a depth bound (A-RT05).
+**Mitigation.** Partition equations into independent strata, remove redundant
+cross-group dependencies, and profile the resulting work and resident-set
+size. Do not trade completeness for an artificial bound.
 
 ---
 
@@ -1423,7 +1434,7 @@ same diagnostics).
 
 ## 9. New Lints
 
-### 9.1 Ascent VM / Codegen Lints (A01-A10)
+### 9.1 Equation/rewrite network lints (historical A01-A10 IDs)
 
 | ID | Name | Severity | Description |
 |----|------|----------|-------------|
@@ -1433,9 +1444,9 @@ same diagnostics).
 | A04 | `large-equivalence-class` | Warning | Constructor appears in 3+ dependency groups --- potential exponential blowup |
 | A05 | `self-referential-equation` | Warning | Rule is a trivial identity (single self-referential NT) --- redundant if used as equation |
 | A06 | `missing-equation-congruence` | Note | Constructor in equation has NT fields whose category has no equation participants |
-| A07 | `fixpoint-iteration-anomaly` | Warning | > 10 dependency groups with max size > 5 --- slow convergence expected |
+| A07 | `fixpoint-iteration-anomaly` | Warning | > 10 dependency groups with max size > 5 --- excessive propagation risk |
 | A08 | `equation-subsumes-rewrite` | Note | Constructor appears in 2+ dependency groups --- equation may subsume rewrite |
-| A09 | `ascent-struct-size` | Warning/Note | Estimated Ascent struct has > 100 rules or > 50 relations |
+| A09 | `generated-rewrite-network-size` | Warning/Note | Estimated Dovetail/Rho network has > 100 rules or > 50 relations |
 | A10 | `unreachable-equation-variable` | Note | Variable captured but may not be referenced in RHS --- possible typo |
 
 ### 9.2 Lexer Lints (LEX01-LEX05)
@@ -1495,7 +1506,7 @@ These build on Tier 1 and existing infrastructure.
 | ID | Name | Speedup | Cost | Rationale |
 |----|------|---------|------|-----------|
 | A-RT04 | Congruence Bloom | 0.35 | 0.15 | Reuses TLS pool pattern; existing `bloom_filter.rs` |
-| A-RT05 | Depth Bound | 0.40 | 0.10 | Reuses pipeline graph analysis |
+| A-RT05 | Depth Bound (rejected) | — | — | Narrows semantics; retained only as historical record |
 | A-RT06 | Demand-Driven | 0.50 | 0.10 | Extends SCC splitting (Opt 5) |
 | B-CG01 | Join Ordering | 0.40 | 0.15 | Uses existing `constructor_weights` from WFST |
 | B-CG03 | EqCongruence Prune | 0.35 | 0.15 | Extends dead-rule pruning (Opt 3) |
@@ -1635,7 +1646,7 @@ trivially correct by construction.
 | `HashConsEquivalence.v` | A-RT01 | Pointer equality implies structural equality; fixpoint unchanged | Pending |
 | `DeltaGuardEquivalence.v` | A-RT02 | Decomposed rules produce same fixpoint under semi-naive | Pending |
 | `BloomFilterSoundness.v` | A-RT04 | False positives preserve correctness; false negatives impossible | Pending |
-| `DepthBoundTermination.v` | A-RT05 | Bounded fixpoint terminates; produces sufficient subset | Pending |
+| `DepthBoundTermination.v` | A-RT05 | Rejected premise: a strict subset is not semantic equivalence | Not applicable |
 | `DemandDrivenEquivalence.v` | A-RT06 | Demand-driven fixpoint equals eager fixpoint on demanded relations | Pending |
 | `JoinOrderEquivalence.v` | B-CG01 | Body clause reordering preserves rule semantics | Pending |
 | `RuleFusionEquivalence.v` | B-CG02 | Fused rule produces same fixpoint as two-rule chain | Pending |

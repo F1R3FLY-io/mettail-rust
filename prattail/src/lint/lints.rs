@@ -28,11 +28,10 @@ impl DiagnosticId {
             DiagnosticId::W01  | DiagnosticId::W02  | DiagnosticId::W03  |
             DiagnosticId::W05  | DiagnosticId::W07  |
             DiagnosticId::W12  |
-            DiagnosticId::G03  | DiagnosticId::G08  | DiagnosticId::G27  |
+            DiagnosticId::G03  | DiagnosticId::G08  |
             DiagnosticId::D01  | DiagnosticId::D02  | DiagnosticId::D03  |
             DiagnosticId::D08  | DiagnosticId::D09  |
             DiagnosticId::A01  | DiagnosticId::A04  | DiagnosticId::A08  |
-            DiagnosticId::CAP03 | DiagnosticId::CAP05 |
             DiagnosticId::DIS01 |
             // Lint-B cleanup: high-volume IDs that produce many
             // near-identical duplicates in unconfigured languages.
@@ -3746,15 +3745,15 @@ pub(crate) fn lint_d10_lookahead_waste(ctx: &LintContext, diagnostics: &mut Vec<
     }
 }
 
-/// 2e: Ascent equation x dispatch trie correlation.
+/// 2e: Semantic rewrite-network × dispatch-trie correlation.
 ///
 /// Detects parsed-but-never-rewritten constructors: rules reachable in the
-/// trie (they can be parsed) but never consumed by any Ascent equation
+/// trie (they can be parsed) but never consumed by any equation/rewrite group
 /// (semantic dependency groups). Such rules produce parse nodes that are
 /// never processed by the semantic layer.
 ///
 /// Severity: Note (informational — the rule may still be needed for pattern matching).
-pub(crate) fn lint_d13_ascent_trie_correlation(
+pub(crate) fn lint_d13_semantic_trie_correlation(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
 ) {
@@ -3791,12 +3790,13 @@ pub(crate) fn lint_d13_ascent_trie_correlation(
                 category: Some(cat_name.clone()),
                 rule: Some(orphan.to_string()),
                 message: format!(
-                    "rule `{}` is reachable in trie dispatch but appears in zero Ascent equations",
+                    "rule `{}` is reachable in trie dispatch but appears in zero semantic \
+                     equation/rewrite groups",
                     orphan,
                 ),
                 hint: Some(
                     "this constructor is parsed but never semantically consumed; \
-                     verify it's needed or add an Ascent equation referencing it"
+                     verify it is needed or add an equation/rewrite referencing it"
                         .to_string(),
                 ),
                 grammar_name: Some(ctx.grammar_name.to_string()),
@@ -4517,7 +4517,7 @@ pub(crate) fn lint_p06_analysis_pipeline_cost(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Ascent VM / Codegen Lints (A01-A10)
+// Equation/rewrite network lints (historical A01-A10 identifiers)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A01: fixpoint-non-convergence — Warn when rewrite rules have positive depth delta.
@@ -4562,13 +4562,15 @@ pub(crate) fn lint_a01_fixpoint_non_convergence(
                 rule: Some(label.clone()),
                 message: format!(
                     "rule `{}` has {} self-referential nonterminals with {} terminal(s) — \
-                     potential unbounded term growth in fixpoint computation",
+                     potential unbounded term growth under repeated rewriting",
                     label,
                     self_refs.len(),
                     terminal_count
                 ),
                 hint: Some(
-                    "ensure complementary depth-reducing rules exist, or add a depth bound"
+                    "orient the rules around a well-founded decreasing measure, remove redundant \
+                     growth rules, or isolate the recursive family into an independently measured \
+                     rewrite stratum"
                         .to_string(),
                 ),
                 grammar_name: Some(ctx.grammar_name.to_string()),
@@ -4731,12 +4733,13 @@ pub(crate) fn lint_a04_large_equivalence_class(
                 rule: Some(label.to_string()),
                 message: format!(
                     "constructor `{}` appears in {} equation/rewrite groups ({}) — \
-                     potential equivalence class explosion during Ascent fixpoint evaluation",
+                     potential equivalence class explosion in the generated Dovetail/Rho \
+                     equation and rewrite network",
                     label, count, group_desc,
                 ),
                 hint: Some(
                     "this constructor is referenced by many equations/rewrites, which can cause \
-                     equivalence class explosion during Ascent fixpoint evaluation; consider \
+                     equivalence class explosion in generated matching and rewrite closure; consider \
                      reducing the number of equations involving this constructor, or simplifying \
                      equational axioms (e.g., removing redundant commutativity/associativity declarations)"
                         .to_string(),
@@ -4854,7 +4857,7 @@ pub(crate) fn lint_a06_missing_equation_congruence(
     }
 }
 
-/// A07: fixpoint-iteration-anomaly — Warn when grammar complexity suggests fixpoint may exceed 50 iterations.
+/// A07: fixpoint-iteration-anomaly — Warn when dependency propagation may perform excessive work.
 pub(crate) fn lint_a07_fixpoint_iteration_anomaly(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
@@ -4877,11 +4880,13 @@ pub(crate) fn lint_a07_fixpoint_iteration_anomaly(
             category: None,
             rule: None,
             message: format!(
-                "{} dependency groups with max size {} — fixpoint may require many iterations",
+                "{} dependency groups with max size {} — generated rewrite closure may require \
+                 excessive cross-group propagation",
                 group_count, max_group_size
             ),
             hint: Some(
-                "consider partitioning equations into independent strata or adding a depth bound"
+                "partition independent equations into strata, remove redundant cross-group \
+                 dependencies, and profile the measured work/RSS of the remaining closure"
                     .to_string(),
             ),
             grammar_name: Some(ctx.grammar_name.to_string()),
@@ -4941,8 +4946,8 @@ pub(crate) fn lint_a08_equation_subsumes_rewrite(
     }
 }
 
-/// A09: ascent-struct-size — Note/Warning when generated Ascent struct is very large.
-pub(crate) fn lint_a09_ascent_struct_size(
+/// A09: generated-rewrite-network-size — warn about estimated generated network size.
+pub(crate) fn lint_a09_generated_network_size(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
 ) {
@@ -4952,12 +4957,13 @@ pub(crate) fn lint_a09_ascent_struct_size(
     if rule_estimate > 100 {
         diagnostics.push(LintDiagnostic {
             id: DiagnosticId::A09,
-            name: "ascent-struct-size",
+            name: "generated-rewrite-network-size",
             severity: LintSeverity::Warning,
             category: None,
             rule: None,
             message: format!(
-                "estimated ~{} relations and ~{} Ascent rules — large struct may slow compilation",
+                "estimated ~{} relations and ~{} generated equation/rewrite rules — \
+                 a large Dovetail/Rho network may slow compilation",
                 relation_count, rule_estimate
             ),
             hint: Some(
@@ -4970,11 +4976,14 @@ pub(crate) fn lint_a09_ascent_struct_size(
     } else if relation_count > 50 {
         diagnostics.push(LintDiagnostic {
             id: DiagnosticId::A09,
-            name: "ascent-struct-size",
+            name: "generated-rewrite-network-size",
             severity: LintSeverity::Note,
             category: None,
             rule: None,
-            message: format!("estimated ~{} relations in Ascent struct", relation_count),
+            message: format!(
+                "estimated ~{} relations in the generated Dovetail/Rho rewrite network",
+                relation_count
+            ),
             hint: None,
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
@@ -5834,7 +5843,11 @@ pub(crate) fn lint_n06_weighted_parity_non_convergent(
                 "alternating automaton has {} non-bisimilar pairs across {} states — parity game value may not converge quickly",
                 pair_count, result.state_count
             ),
-            hint: Some("consider bounding the alternation depth or using a fixpoint iteration limit".to_string()),
+            hint: Some(
+                "reduce structurally redundant states, memoize repeated transitions, or prioritize \
+                 the parity-game worklist using a semantics-preserving strategy"
+                    .to_string(),
+            ),
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
         });
@@ -6467,7 +6480,11 @@ pub(crate) fn lint_tw03_constraint_propagation_divergent(
                 "backward constraint propagation may diverge: {} backward states with {} deadlock cycles",
                 result.num_backward, result.deadlock_cycles.len()
             ),
-            hint: Some("add a propagation depth limit or break the deadlock cycles".to_string()),
+            hint: Some(
+                "break the deadlock cycles or reformulate backward dependencies so every \
+                 propagation step decreases a well-founded measure"
+                    .to_string(),
+            ),
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
         });

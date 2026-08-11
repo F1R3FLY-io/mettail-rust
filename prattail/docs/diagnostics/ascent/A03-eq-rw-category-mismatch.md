@@ -1,7 +1,7 @@
 # A03: eq-rw-category-mismatch
 
 **Severity:** Note
-**Category:** Ascent / Equation-Rewrite Scope
+**Category:** Equation/rewrite network / Semantic Scope (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
@@ -102,7 +102,7 @@ note[A03] (MathLang): category `Atom` has parsing rules but no equations or rewr
 The hint **"if this category should participate in equational reasoning, add
 equations or rewrites"** highlights the disconnect between the category's
 syntactic presence and its semantic absence.  Equations and rewrites drive
-Ascent's fixpoint computation; a category not in that scope contributes syntax
+generated Dovetail/Rho rewrite closure; a category not in that scope contributes syntax
 but no equational semantics.
 
 ## Related Lints

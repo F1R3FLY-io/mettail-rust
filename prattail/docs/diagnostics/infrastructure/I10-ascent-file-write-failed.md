@@ -1,8 +1,12 @@
 # I10: ascent-file-write-failed
 
+> **Historical Ascent-era identifier.** The current Dovetail/Rho pipeline does
+> not generate an Ascent file and has no production I10 emitter. This page
+> records the retired diagnostic contract.
+
 **Severity:** Warning
 **Category:** infrastructure
-**Feature Gate:** None (always enabled)
+**Feature Gate:** retired (not emitted)
 
 ## Description
 

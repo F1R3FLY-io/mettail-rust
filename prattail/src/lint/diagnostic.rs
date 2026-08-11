@@ -41,7 +41,7 @@ macro_rules! define_diagnostic_ids {
         }
 
         impl DiagnosticId {
-            /// Return the canonical string form (e.g., `"W01"`, `"C-AP03"`).
+        /// Return the canonical string form (e.g., `"W01"`, `"A04"`).
             pub const fn as_str(&self) -> &'static str {
                 match self {
                     $( DiagnosticId::$variant => $str, )*
@@ -64,8 +64,6 @@ define_diagnostic_ids! {
 
     // ── Cross-category (C) ──
     C01 => "C01", C02 => "C02", C04 => "C04",
-    CAP00 => "C-AP00", CAP01 => "C-AP01", CAP02 => "C-AP02",
-    CAP03 => "C-AP03", CAP04 => "C-AP04", CAP05 => "C-AP05",
 
     // ── CEK machine ──
     CEK01 => "CEK01", CEK03 => "CEK03",
@@ -92,11 +90,7 @@ define_diagnostic_ids! {
     // ── Grammar (G) ──
     G01 => "G01", G02 => "G02", G03 => "G03", G04 => "G04", G05 => "G05",
     G06 => "G06", G07 => "G07", G08 => "G08", G09 => "G09", G10 => "G10",
-    G24 => "G24", G25 => "G25", G26 => "G26", G27 => "G27",
-    G28 => "G28", G29 => "G29", G30 => "G30", G31 => "G31",
-    G32 => "G32", G34 => "G34", G35 => "G35",
-    G36 => "G36", G37 => "G37", G38 => "G38",
-    G39 => "G39", G40 => "G40", G41 => "G41", G42 => "G42",
+    G24 => "G24", G32 => "G32",
 
     // ── Hindley-Milner base-sort consistency (HM) — OSLF Phase 6 `.1` ──
     // HM01: a constructor's inferred result sort disagrees with its declared
@@ -108,7 +102,7 @@ define_diagnostic_ids! {
     // ── Infrastructure (I) ──
     I01 => "I01", I02 => "I02", I03 => "I03", I04 => "I04",
     I05 => "I05", I06 => "I06", I07 => "I07", I08 => "I08", I09 => "I09",
-    I10 => "I10", I11 => "I11", I12 => "I12", I13 => "I13", I14 => "I14", I15 => "I15",
+    I11 => "I11", I12 => "I12", I13 => "I13", I14 => "I14", I15 => "I15",
     I16 => "I16", I17 => "I17", I18 => "I18", I19 => "I19",
     I20 => "I20", I21 => "I21",
     // I22: DB03 — a scoped analysis thread panicked and its payload was

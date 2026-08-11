@@ -1,7 +1,7 @@
 # A10: unreachable-equation-variable
 
 **Severity:** Note
-**Category:** Ascent / Equation Variables
+**Category:** Equation/rewrite network / Equation Variables (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description

@@ -3651,7 +3651,7 @@ P02 high-nfa-spillover, P03 deep-cast-nesting, P04 many-alternatives,
 P05 wpds-pipeline-cost, P06 analysis-pipeline-cost.
 
 **Diagnostics (D):**
-D10 lookahead-waste, D13 ascent-trie-correlation, D14 wpds-complexity-report.
+D10 lookahead-waste, D13 parsed-but-unrewritten, D14 wpds-complexity-report.
 
 **Infrastructure (I):**
 I01, I04, I08, I10, I17, I18.

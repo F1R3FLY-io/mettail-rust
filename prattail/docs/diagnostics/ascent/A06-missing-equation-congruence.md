@@ -1,7 +1,7 @@
 # A06: missing-equation-congruence
 
 **Severity:** Note
-**Category:** Ascent / Congruence Completeness
+**Category:** Equation/rewrite network / Congruence Completeness (historical `A` identifier)
 **Feature Gate:** none (always active)
 
 ## Description
@@ -34,7 +34,7 @@ there is nothing for congruence to propagate *through*.
 ```
 
 This diagnostic is informational.  The generated congruence rules are not
-incorrect -- they are simply dead code within the Ascent fixpoint computation
+incorrect -- they are simply dead code within generated Dovetail/Rho rewrite closure
 for the specific field category in question.
 
 ## Trigger Conditions

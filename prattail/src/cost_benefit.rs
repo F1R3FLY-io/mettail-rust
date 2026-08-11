@@ -135,8 +135,6 @@ pub enum Optimization {
     RelationIndexing,
     /// ART04: Bloom filter pre-check for congruence rules.
     CongruenceBloom,
-    /// ART05: Fixpoint convergence bound via term-depth analysis.
-    DepthBound,
     /// ART06: Demand-driven relation population.
     DemandDriven,
 
@@ -241,7 +239,6 @@ impl fmt::Display for Optimization {
             Self::IncrementalDelta => write!(f, "ART02:IncrementalDelta"),
             Self::RelationIndexing => write!(f, "ART03:RelationIndexing"),
             Self::CongruenceBloom => write!(f, "ART04:CongruenceBloom"),
-            Self::DepthBound => write!(f, "ART05:DepthBound"),
             Self::DemandDriven => write!(f, "ART06:DemandDriven"),
             Self::JoinOrdering => write!(f, "BCG01:JoinOrdering"),
             Self::RuleFusion => write!(f, "BCG02:RuleFusion"),
@@ -355,7 +352,6 @@ impl std::str::FromStr for Optimization {
             "ART02" => Ok(Self::IncrementalDelta),
             "ART03" => Ok(Self::RelationIndexing),
             "ART04" => Ok(Self::CongruenceBloom),
-            "ART05" => Ok(Self::DepthBound),
             "ART06" => Ok(Self::DemandDriven),
             "BCG01" => Ok(Self::JoinOrdering),
             "BCG02" => Ok(Self::RuleFusion),
@@ -388,7 +384,6 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("IncrementalDelta") => Ok(Self::IncrementalDelta),
             s if s.eq_ignore_ascii_case("RelationIndexing") => Ok(Self::RelationIndexing),
             s if s.eq_ignore_ascii_case("CongruenceBloom") => Ok(Self::CongruenceBloom),
-            s if s.eq_ignore_ascii_case("DepthBound") => Ok(Self::DepthBound),
             s if s.eq_ignore_ascii_case("DemandDriven") => Ok(Self::DemandDriven),
             s if s.eq_ignore_ascii_case("JoinOrdering") => Ok(Self::JoinOrdering),
             s if s.eq_ignore_ascii_case("RuleFusion") => Ok(Self::RuleFusion),
@@ -1072,15 +1067,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         format!("rule_count={} (threshold: >5)", profile.rule_count),
     ));
 
-    // ART05: Fixpoint convergence bound via term-depth analysis
-    candidates.push(OptimizationCandidate::new(
-        Optimization::DepthBound,
-        0.4,
-        0.1,
-        profile.rule_count > 2,
-        format!("rule_count={} (threshold: >2)", profile.rule_count),
-    ));
-
     // ART06: Demand-driven relation population
     candidates.push(OptimizationCandidate::new(
         Optimization::DemandDriven,
@@ -1447,8 +1433,6 @@ pub struct OptimizationGates {
     pub relation_indexing: bool,
     /// ART04: Bloom filter pre-check for congruence rules.
     pub congruence_bloom: bool,
-    /// ART05: Fixpoint convergence bound via term-depth analysis.
-    pub depth_bound: bool,
     /// ART06: Demand-driven relation population.
     pub demand_driven: bool,
 
@@ -1557,7 +1541,6 @@ impl OptimizationGates {
             incremental_delta: true,
             relation_indexing: true,
             congruence_bloom: true,
-            depth_bound: true,
             demand_driven: true,
             join_ordering: true,
             rule_fusion: true,
@@ -1639,7 +1622,6 @@ impl OptimizationGates {
             incremental_delta: enabled.contains(&Optimization::IncrementalDelta),
             relation_indexing: enabled.contains(&Optimization::RelationIndexing),
             congruence_bloom: enabled.contains(&Optimization::CongruenceBloom),
-            depth_bound: enabled.contains(&Optimization::DepthBound),
             demand_driven: enabled.contains(&Optimization::DemandDriven),
             join_ordering: enabled.contains(&Optimization::JoinOrdering),
             rule_fusion: enabled.contains(&Optimization::RuleFusion),
@@ -1715,7 +1697,6 @@ impl OptimizationGates {
             incremental_delta: false,
             relation_indexing: false,
             congruence_bloom: false,
-            depth_bound: false,
             demand_driven: false,
             join_ordering: false,
             rule_fusion: false,
@@ -1829,7 +1810,6 @@ impl OptimizationGates {
             incremental_delta: enabled.contains(&Optimization::IncrementalDelta),
             relation_indexing: enabled.contains(&Optimization::RelationIndexing),
             congruence_bloom: enabled.contains(&Optimization::CongruenceBloom),
-            depth_bound: enabled.contains(&Optimization::DepthBound),
             demand_driven: enabled.contains(&Optimization::DemandDriven),
             join_ordering: enabled.contains(&Optimization::JoinOrdering),
             rule_fusion: enabled.contains(&Optimization::RuleFusion),
@@ -2070,7 +2050,6 @@ impl Optimization {
             | Self::IncrementalDelta      // ART02
             | Self::RelationIndexing      // ART03
             | Self::CongruenceBloom       // ART04
-            | Self::DepthBound            // ART05
             | Self::DemandDriven          // ART06
             | Self::JoinOrdering          // BCG01
             | Self::RuleFusion            // BCG02
@@ -2437,7 +2416,8 @@ mod tests {
         // Stage 6 Phase F.2 (2026-04-24): removed CEK02:CekTracedParser (was 72 → 71).
         // Stage 10.7 (2026-05-05): removed F1/F2/F3/H1/CEK03 (71 → 66).
         // 2026-06-22: removed GT01:GreenThreadForkJoin with the green-thread runtime (66 → 65).
-        assert_eq!(all.len(), 65, "should evaluate all 65 optimization candidates");
+        // 2026-08-10: removed the rejected ART05 depth-bound candidate (65 → 64).
+        assert_eq!(all.len(), 64, "should evaluate all 64 optimization candidates");
     }
 
     #[test]
@@ -3215,7 +3195,6 @@ mod tests {
             ("ART02", Optimization::IncrementalDelta),
             ("ART03", Optimization::RelationIndexing),
             ("ART04", Optimization::CongruenceBloom),
-            ("ART05", Optimization::DepthBound),
             ("ART06", Optimization::DemandDriven),
             ("BCG01", Optimization::JoinOrdering),
             ("BCG02", Optimization::RuleFusion),
@@ -3272,7 +3251,7 @@ mod tests {
 
     // ── Display / FromStr roundtrip tests ────────────────────────────────
 
-    /// Returns all 53 non-feature-gated `Optimization` variants in declaration order.
+    /// Returns all 47 non-feature-gated `Optimization` variants in declaration order.
     fn all_optimizations() -> Vec<Optimization> {
         vec![
             Optimization::LeftFactoring,
@@ -3294,7 +3273,6 @@ mod tests {
             Optimization::IncrementalDelta,
             Optimization::RelationIndexing,
             Optimization::CongruenceBloom,
-            Optimization::DepthBound,
             Optimization::DemandDriven,
             Optimization::JoinOrdering,
             Optimization::RuleFusion,
@@ -3332,8 +3310,8 @@ mod tests {
         let variants = all_optimizations();
         assert_eq!(
             variants.len(),
-            48,
-            "expected exactly 48 variants (post-Stage-10.7: F1/F2/F3/H1/CEK03 deleted)"
+            47,
+            "expected exactly 47 variants after removing retired optimizations"
         );
 
         for variant in &variants {
@@ -3398,7 +3376,6 @@ mod tests {
             ("ART02", Optimization::IncrementalDelta),
             ("ART03", Optimization::RelationIndexing),
             ("ART04", Optimization::CongruenceBloom),
-            ("ART05", Optimization::DepthBound),
             ("ART06", Optimization::DemandDriven),
             ("BCG01", Optimization::JoinOrdering),
             ("BCG02", Optimization::RuleFusion),
@@ -3430,8 +3407,8 @@ mod tests {
         ];
         assert_eq!(
             all_codes.len(),
-            47,
-            "expected 47 short codes (Stage 10.7: F1/F2/F3/H1/CEK03 removed)"
+            46,
+            "expected 46 catalog short codes after removing rejected ART05"
         );
 
         for (code, expected) in &all_codes {
@@ -3503,8 +3480,8 @@ mod tests {
         let variants: HashSet<Optimization> = all_optimizations().into_iter().collect();
         assert_eq!(
             variants.len(),
-            48,
-            "all_optimizations() should return exactly 48 unique variants (post-Stage-10.7)"
+            47,
+            "all_optimizations() should return exactly 47 unique variants"
         );
 
         // Also verify each variant has a unique Display representation
@@ -3520,10 +3497,10 @@ mod tests {
         // Stage 10.7 (2026-05-05): F1, F2, F3, H1, CEK03 removed.
         let all_short_codes: Vec<&str> = vec![
             "A1", "A2", "A4", "A5", "B1", "B2", "B3", "G1", "G25", "T01", "V01", "S01", "S03",
-            "N01", "CEK01", "ART01", "ART02", "ART03", "ART04", "ART05", "ART06", "BCG01", "BCG02",
-            "BCG03", "BCG04", "BCG05", "BCG06", "AL01", "AL02", "AL03", "AL04", "AL05", "AL06",
-            "BP01", "BP02", "BP03", "BP04", "BP05", "BP06", "CD01", "CD02", "CD03", "CD04", "CD05",
-            "DB01", "DB02", "DB03", "DB04",
+            "N01", "CEK01", "ART01", "ART02", "ART03", "ART04", "ART06", "BCG01", "BCG02", "BCG03",
+            "BCG04", "BCG05", "BCG06", "AL01", "AL02", "AL03", "AL04", "AL05", "AL06", "BP01",
+            "BP02", "BP03", "BP04", "BP05", "BP06", "CD01", "CD02", "CD03", "CD04", "CD05", "DB01",
+            "DB02", "DB03", "DB04",
         ];
         let parsed_variants: HashSet<Optimization> = all_short_codes
             .iter()
@@ -3533,7 +3510,7 @@ mod tests {
             })
             .collect();
 
-        // All 50 short codes should map to 50 unique variants (one per variant).
+        // Every short code maps to exactly one unique variant.
         assert_eq!(
             parsed_variants.len(),
             all_short_codes.len(),
