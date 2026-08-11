@@ -124,6 +124,19 @@ codegen-backend = "llvm"
 codegen-backend = "llvm"      # Full LLVM optimization for runtime performance
 opt-level = 3
 
+# `macros` is a proc-macro that uses `rholang-codegen` on the host while the
+# generated language/runtime use the same crate graph on the target. Cargo's
+# default build override (`opt-level = 0`) otherwise compiles identical
+# `models → rspace++ → rholang-parser` package IDs twice into the same artifact
+# names, and release linking can nondeterministically combine their distinct
+# `smallvec`/`validated` type identities. Keep the two graphs artifact-identical.
+[profile.release.build-override]
+opt-level = 3
+
 [profile.bench]
 inherits = "release"          # Benchmarks use LLVM for accurate measurements
 debug = "line-tables-only"    # Source-line attribution in perf profiles
+
+[profile.bench.build-override]
+opt-level = 3
+debug = "line-tables-only"

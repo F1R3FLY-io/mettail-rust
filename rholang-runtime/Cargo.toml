@@ -308,7 +308,6 @@ rho-codegen = [
     "dep:rand",
     "dep:indexmap",
     "dep:mettail-dovetail-runtime",
-    "dep:dovetail",
 ]
 dovetail-codegen = [
     "dep:mettail-macros",
@@ -317,7 +316,6 @@ dovetail-codegen = [
     "dep:rand",
     "dep:indexmap",
     "dep:mettail-dovetail-runtime",
-    "dep:dovetail",
 ]
 # Backward-compatible test/oracle feature name. New production code should use
 # `rholang-runtime` directly.
@@ -344,23 +342,19 @@ source-oracle = []
 # FIRST-COMPILE pipeline (Stage-0 SELF-time phase splits via
 # `mettail_rholang_codegen::pipeline_spans`, first-touch cells, and the W-A(b)
 # direct `compile_structural` entry mode) — no runtime, no demo languages, no
-# naive baseline. `dep:dovetail` is pulled in ONLY for the direct entry mode's
-# pattern types (`Pattern`/`PatternId`/`SetAutomaton`), same path/version as
-# the dev-dependency. Production entry points never reference any of it.
+# naive baseline. The direct entry mode reuses the production Dovetail
+# dependency for `Pattern`/`PatternId`/`SetAutomaton`.
 # T-E6B (H4v2): forwards `rholang-codegen`'s `bench-fragment-store` quarantine
 # feature for the `--mode e6b` construction-side fragment-store arms (the
 # pathmap-0.2.2 store + the `HashMap` twin + the deterministic
-# retained-bytes/invalidation accounting).
-bench-e3-construction = ["dep:dovetail", "mettail-rholang-codegen/bench-fragment-store"]
+# retained-bytes/invalidation accounting). Dovetail is already a normal
+# dependency because the production FLT matcher retains its set automaton.
+bench-e3-construction = ["mettail-rholang-codegen/bench-fragment-store"]
+# The direct-construction workload uses the same normal Dovetail dependency as
+# the production FLT matcher; only the naive emitter and AST fixture are gated.
 bench-naive-baseline = [
     "mettail-rholang-codegen/bench-naive-baseline",
     "dep:mettail-ast",
-    # `dep:dovetail` is pulled in ONLY for the Track-B harness's
-    # direct-construction workload rulesets (the `nested_spine` `f(g(x))`
-    # entry, built admission-matrix style with `SetAutomaton::compile_structural`
-    # in `benches/support/workloads.rs`, which the DRIVER BIN also compiles —
-    # bins cannot see dev-dependencies). Same path/version as the dev-dependency.
-    "dep:dovetail",
 ]
 # BENCHMARK-ONLY QUARANTINE (E-1 scion grafting, pgmcp experiment 147): the L2
 # semantic-validator surface. Supersets `bench-naive-baseline` (the `bench_support`
@@ -442,10 +436,11 @@ num-bigint = "0.4"
 # formulation needs. Adds NO crate to the build graph: `typed-arena 2.0.2` was already in
 # `Cargo.lock` as a transitive dependency, and it has no dependencies of its own.
 typed-arena = "2.0"
-# BENCHMARK-ONLY (Track B, `bench-naive-baseline`): the set automaton, for the
-# harness's direct-construction workload rulesets (see the feature's comment).
-# Inert unless the quarantined bench feature is enabled.
-dovetail = { package = "dovetail", path = "../dovetail", optional = true }
+# The production FLT matcher retains Dovetail's append-only positional
+# SetAutomaton and serializes its StateIds into a matcher-owned PDA. This adds no
+# crate to the graph: rholang-codegen already depends on the same path crate in
+# every feature configuration.
+dovetail = { package = "dovetail", path = "../dovetail" }
 
 # Task #11 (extended 2026-07-26): the TEST-HOSTED demo definitions are `#[path]`-included by
 # the `rho_net_*_firing` tests, by `benches/support/workloads.rs`, and — through that shared
@@ -488,9 +483,6 @@ syn = { workspace = true }
 # Property-based testing of the Stage 0 multi-firing replay (arbitrary SwapDemo
 # terms: replay observations must equal the Dovetail report's per-firing RHS[σ]).
 proptest = "1"
-# The set automaton, to compile a pattern into the positional automaton the Stage 1
-# in-Rho matching test (`rho_net_equivalence`) serializes and runs on the interpreter.
-dovetail = { package = "dovetail", path = "../dovetail" }
 # Track B — B6: the criterion wall-clock harness (`benches/bench_sa_vs_naive.rs`).
 # Same version/features as the `languages` crate's criterion dev-dependency.
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -702,6 +694,12 @@ required-features = [
     "lambda-demo-runtime",
     "ctx-demo-runtime",
 ]
+
+# Production retained-FLT matcher microbench: warm exact matching against the
+# f1 spatial oracle, plus canonical batch preparation of shared pattern sets.
+[[bench]]
+name = "flt_automaton_matcher"
+harness = false
 
 # Track B — B6: the JSON-lines COUNTER driver (one `BenchRunResult` line per
 # rep + a run-header line + `"dnf":true` lines on guard breaches), for the

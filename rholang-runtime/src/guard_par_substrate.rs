@@ -57,6 +57,7 @@ use rholang::rust::interpreter::guard::RECEIVE_WHERE;
 use rholang::rust::interpreter::matcher::r#match::{guard_disposition, GuardDisposition, Matcher};
 use rspace_plus_plus::rspace::r#match::Match;
 
+use crate::flt_automaton_matcher::{FltAutomatonMatcher, FltAutomatonStats, FltMatchDecision};
 use crate::observation::render_par_text;
 
 use mettail_prattail::algebra_tower::Sat3;
@@ -1034,9 +1035,11 @@ pub const GUARD_REFUSAL_TARGET: &str = "mettail.runtime.guard";
 ///
 /// # What is *not* changed
 ///
-/// * [`Match::get`] delegates **verbatim** to f1r3node's [`Matcher`]. Spatial matching is
-///   untouched — the rule is about `where`, not about patterns — and delegating rather than
-///   reimplementing is what makes that structural rather than aspirational.
+/// * [`Match::get`] first asks the retained FLT automaton to match a strictly
+///   admitted reflected positional pattern. Anything outside that envelope is
+///   delegated **verbatim** to f1r3node's [`Matcher`]. The automaton changes no
+///   candidate ordering and never handles AC, remainders, foreign fingerprints,
+///   malformed reflections, or non-FLT patterns.
 /// * The **selection strategy** is untouched. This swaps the guard *predicate*; the candidate
 ///   pool order and the lexicographic search that walks it live in `rspace++` and are not
 ///   reached from here.
@@ -1063,8 +1066,11 @@ pub const GUARD_REFUSAL_TARGET: &str = "mettail.runtime.guard";
 /// fragments it decides itself never reach an evaluator at all.
 #[derive(Clone, Default)]
 pub struct SubstrateGuardMatcher {
-    /// f1r3node's matcher, held rather than reimplemented: [`Match::get`] is its, verbatim.
+    /// f1r3node's matcher, held rather than reimplemented: every declined FLT
+    /// pattern and every ordinary Rholang pattern reaches it verbatim.
     spatial: Matcher,
+    /// Retained positional FLT automaton and matcher-owned stack-safe PDA.
+    flt: FltAutomatonMatcher,
     /// ★ Where a guard that produced NO VERDICT is written down. See [`GuardRefusalLedger`].
     refusals: GuardRefusalLedger,
 }
@@ -1079,6 +1085,7 @@ impl SubstrateGuardMatcher {
     pub fn new() -> Self {
         SubstrateGuardMatcher {
             spatial: Matcher,
+            flt: FltAutomatonMatcher::default(),
             refusals: GuardRefusalLedger::new(),
         }
     }
@@ -1091,12 +1098,35 @@ impl SubstrateGuardMatcher {
     pub fn refusals(&self) -> GuardRefusalLedger {
         self.refusals.clone()
     }
+
+    /// Canonically pre-register every eligible FLT receive pattern reachable
+    /// from `program` before the program is injected into RSpace.
+    pub fn prepare_flt_patterns(&self, program: &Par) -> Result<usize, String> {
+        self.flt.prepare(program)
+    }
+
+    /// Snapshot retained FLT state and fast-path/fallback counters.
+    #[must_use]
+    pub fn flt_automaton_stats(&self) -> FltAutomatonStats {
+        self.flt.stats()
+    }
+
+    /// Stable diagnostic fingerprint of the retained FLT automaton layout.
+    #[must_use]
+    pub fn flt_automaton_layout_fingerprint(&self) -> [u8; 32] {
+        self.flt.layout_fingerprint()
+    }
 }
 
 impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuardMatcher {
-    /// Spatial matching, **verbatim** f1r3node's. Not a second matcher.
+    /// Positional reflected FLT matching through the retained automaton; every
+    /// non-admitted pattern delegates verbatim to f1r3node's spatial matcher.
     fn get(&self, pattern: &BindPattern, data: &ListParWithRandom) -> Option<ListParWithRandom> {
-        self.spatial.get(pattern, data)
+        match self.flt.get(pattern, data) {
+            FltMatchDecision::Declined => self.spatial.get(pattern, data),
+            FltMatchDecision::Miss => None,
+            FltMatchDecision::Match(matched) => Some(matched),
+        }
     }
 
     /// The cross-channel `where`-clause guard, decided by the substrate.

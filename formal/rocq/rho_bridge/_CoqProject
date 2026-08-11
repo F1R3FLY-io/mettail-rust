@@ -311,3 +311,7 @@ theories/InRhoFloatCanonicalization.v
 # as a corollary; conservative extension, InRhoQuiescenceDriver untouched).
 theories/InRhoDriveWithFloat.v
 theories/CrossLanguageSeparation.v
+# FLT Phase 3 Track B — strict positional eligibility, retained matcher-owned
+# set-automaton PDA equivalence, verbatim spatial fallback, append-only StateId
+# suffix serialization, and zero persistent-receiver admission.
+theories/FltRetainedSetAutomaton.v

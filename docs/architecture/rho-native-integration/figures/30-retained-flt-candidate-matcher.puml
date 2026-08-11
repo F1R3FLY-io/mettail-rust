@@ -1,0 +1,67 @@
+@startuml
+title Retained FLT Candidate Matcher — Preparation and Exact Dispatch
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.4
+skinparam componentStyle rectangle
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "Injection preparation\n`rholang-runtime`" as Prep #DBEAFE {
+  component "normalized `Par`\ncanonical stack-safe walk" as Program #BFDBFE
+  component "eligible `BindPattern`s\nsort + deduplicate" as Patterns #BFDBFE
+  component "one batch compile / extend" as Batch #93C5FD
+}
+
+rectangle "Retained matcher state" as Retained #DCFCE7 {
+  component "Dovetail `SetAutomaton`\nprefix-stable `StateId`s" as Automaton #BBF7D0
+  component "append-only flat PDA\nserialized new suffix only" as Pda #86EFAC
+  component "exact pattern → entry map" as Lookup #BBF7D0
+}
+
+rectangle "RSpace candidate boundary" as Candidate #FEF3C7 {
+  component "`Match::get(pattern, data)`" as Get #FDE68A
+  component "strict FLT eligibility" as Eligible #FDE68A
+  component "four-word frames +\nflat capture arena" as Execute #FCD34D
+}
+
+rectangle "Existing f1 matcher" as Existing #FCE7F3 {
+  component "spatial `Matcher::get`\noriginal inputs, verbatim" as Spatial #FBCFE8
+}
+
+rectangle "Result" as Result #EDE9FE {
+  component "exact ordered captures\nor proven miss" as Answer #DDD6FE
+}
+
+Program --> Patterns
+Patterns --> Batch
+Batch --> Automaton : intern shared states
+Automaton --> Pda : `state_ids().skip(first_new)`
+Patterns --> Lookup : exact entry boundary
+
+Get --> Eligible
+Eligible --> Lookup : admitted
+Lookup --> Execute : root + slot map
+Pda --> Execute : immutable instructions
+Execute --> Answer : match / miss
+Eligible --> Spatial : declined shape
+Spatial --> Answer : unchanged behavior
+
+note bottom of Retained
+  No RSpace receiver or message is retained.
+  The automaton and PDA are matcher-owned Rust data.
+end note
+
+legend right
+|= Color |= Responsibility |
+|<#DBEAFE> blue | injection-time canonical preparation |
+|<#DCFCE7> green | retained interning and serialization |
+|<#FEF3C7> amber | candidate-time fast path |
+|<#FCE7F3> pink | strict spatial fallback |
+|<#EDE9FE> violet | externally observable match result |
+endlegend
+@enduml

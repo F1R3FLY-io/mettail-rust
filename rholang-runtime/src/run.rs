@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::guard_par_substrate::{GuardRefusalLedger, SubstrateGuardMatcher};
+use crate::guard_par_substrate::SubstrateGuardMatcher;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_rholang_codegen::ValidatedRhoProgram;
 // The decoder and the refusal-reporting helper are unconditional: both are used by the minimal
@@ -138,15 +138,19 @@ fn take_pending_fold_definitions() -> Vec<Definition> {
     PENDING_FOLD_DEFINITIONS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
 }
 
-/// Build an in-memory `RhoRuntime`, and hand back the **guard-refusal ledger** its
-/// `SubstrateGuardMatcher` writes into.
+/// Build an in-memory `RhoRuntime`, and hand back a shared handle to the exact
+/// [`SubstrateGuardMatcher`] installed in its RSpace.
 ///
-/// ★ The ledger is returned rather than kept private because a `where` guard the substrate
-/// cannot DECIDE has nowhere else to go: `Match::check_commit` answers a `bool`, so the decider
-/// physically cannot raise, and without a driver that reads this ledger an undecidable guard
-/// blocks a COMM in total silence — indistinguishable from a guard that was evaluated and
-/// refuted. See [`crate::guard_par_substrate::GuardRefusalLedger`].
-async fn build_runtime() -> Result<(impl RhoRuntime, GuardRefusalLedger), String> {
+/// The handle has two driver-owned duties that cannot be recovered from the trait
+/// object after `RSpace::create`:
+///
+/// 1. canonical whole-program FLT-pattern preparation before normalized `Par`
+///    injection; and
+/// 2. reporting any undecidable `where` guard recorded during reduction.
+///
+/// The cloned matcher shares both retained structures with the boxed matcher, so
+/// preparation and reporting observe the same state that COMM matching uses.
+async fn build_runtime() -> Result<(impl RhoRuntime, SubstrateGuardMatcher), String> {
     // Tier-3 / A-S3 contracts for this exec (empty for every term without a held fold or an
     // admitted native rule, so the common path is byte-identical to the prior `&mut Vec::new()`).
     build_runtime_with_definitions(take_pending_fold_definitions()).await
@@ -160,7 +164,7 @@ async fn build_runtime() -> Result<(impl RhoRuntime, GuardRefusalLedger), String
 /// them without relying on same-thread thread-local discipline.
 async fn build_runtime_with_definitions(
     mut extra_system_processes: Vec<Definition>,
-) -> Result<(impl RhoRuntime, GuardRefusalLedger), String> {
+) -> Result<(impl RhoRuntime, SubstrateGuardMatcher), String> {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm
         .r_space_stores()
@@ -175,7 +179,7 @@ async fn build_runtime_with_definitions(
     // The handle is taken BEFORE the decider is boxed into the space, which is the only moment
     // it is reachable: `RSpace` keeps an `Arc<Box<dyn Match<…>>>` and the trait exposes no way
     // back to the concrete type.
-    let refusals = guards.refusals();
+    let driver_handle = guards.clone();
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(store, Arc::new(Box::new(guards))).map_err(|e| format!("rspace: {e:?}"))?;
 
@@ -188,7 +192,7 @@ async fn build_runtime_with_definitions(
             ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
         )
         .await,
-        refusals,
+        driver_handle,
     ))
 }
 
@@ -203,10 +207,10 @@ async fn build_runtime_with_definitions(
 async fn eval_on_runtime<R: RhoRuntime>(
     runtime: &mut R,
     program: &str,
-    refusals: &GuardRefusalLedger,
+    matcher: &SubstrateGuardMatcher,
 ) -> Result<(), String> {
     eval_on_runtime_unchecked(runtime, program).await?;
-    refusals.refuse_decider_gaps()
+    matcher.refusals().refuse_decider_gaps()
 }
 
 /// [`eval_on_runtime`] without the guard-refusal check, for the callers that report the refusals
@@ -281,10 +285,10 @@ fn deploy_rand(program: &Par) -> Blake2b512Random {
 async fn inj_on_runtime<R: RhoRuntime>(
     runtime: &mut R,
     program: Par,
-    refusals: &GuardRefusalLedger,
+    matcher: &SubstrateGuardMatcher,
 ) -> Result<(), String> {
-    inj_on_runtime_unchecked(runtime, program).await?;
-    refusals.refuse_decider_gaps()
+    inj_on_runtime_unchecked(runtime, program, matcher).await?;
+    matcher.refusals().refuse_decider_gaps()
 }
 
 /// [`inj_on_runtime`] without the guard-refusal check.
@@ -304,7 +308,14 @@ async fn inj_on_runtime<R: RhoRuntime>(
 async fn inj_on_runtime_unchecked<R: RhoRuntime>(
     runtime: &mut R,
     program: Par,
+    matcher: &SubstrateGuardMatcher,
 ) -> Result<(), String> {
+    // Canonical registration happens before any process can reach RSpace. The
+    // matcher clone shares the retained automaton with the boxed trait object,
+    // so the first COMM observes the complete, discovery-order-independent
+    // state layout. Source-text evaluation cannot expose its normalized `Par`
+    // here and therefore uses the matcher's defensive lazy path instead.
+    matcher.prepare_flt_patterns(&program)?;
     let checkpoint = runtime.create_soft_checkpoint().await;
     let rand = deploy_rand(&program);
     runtime.cost().set(Cost::unsafe_max());
@@ -355,14 +366,14 @@ where
 
 #[cfg(feature = "source-oracle")]
 async fn evaluate(program: &str) -> Result<impl RhoRuntime, String> {
-    let (mut runtime, refusals) = build_runtime().await?;
-    eval_on_runtime(&mut runtime, program, &refusals).await?;
+    let (mut runtime, matcher) = build_runtime().await?;
+    eval_on_runtime(&mut runtime, program, &matcher).await?;
     Ok(runtime)
 }
 
 async fn evaluate_par(program: &Par) -> Result<impl RhoRuntime, String> {
-    let (mut runtime, refusals) = build_runtime().await?;
-    inj_on_runtime(&mut runtime, program.clone(), &refusals).await?;
+    let (mut runtime, matcher) = build_runtime().await?;
+    inj_on_runtime(&mut runtime, program.clone(), &matcher).await?;
     Ok(runtime)
 }
 
@@ -717,8 +728,8 @@ pub async fn run_installed_program_with_call_definitions_and_read_runtime_values
 ) -> Result<Vec<RuntimeObservationValue>, String> {
     let composed = installed_program.append(call.clone());
     let runtime = {
-        let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
-        inj_on_runtime(&mut runtime, composed, &refusals).await?;
+        let (mut runtime, matcher) = build_runtime_with_definitions(definitions).await?;
+        inj_on_runtime(&mut runtime, composed, &matcher).await?;
         runtime
     };
     Ok(read_ground_from_runtime(&runtime, out_channel, par_as_runtime_observation_value).await)
@@ -1471,8 +1482,8 @@ pub async fn run_installed_program_with_call_definitions_and_read_observation_se
 ) -> Result<Vec<DriveObservationSet>, String> {
     let composed = installed_program.append(call.clone());
     let runtime = {
-        let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
-        inj_on_runtime(&mut runtime, composed, &refusals).await?;
+        let (mut runtime, matcher) = build_runtime_with_definitions(definitions).await?;
+        inj_on_runtime(&mut runtime, composed, &matcher).await?;
         runtime
     };
     let mut sets = Vec::with_capacity(channels.len());
@@ -1588,8 +1599,9 @@ pub async fn run_normalized_par_and_read_runtime_value_channels_with_guard_refus
     program: &Par,
     out_channels: &[&str],
 ) -> Result<(HashMap<String, Vec<RuntimeObservationValue>>, Vec<String>), String> {
-    let (mut runtime, refusals) = build_runtime().await?;
-    inj_on_runtime_unchecked(&mut runtime, program.clone()).await?;
+    let (mut runtime, matcher) = build_runtime().await?;
+    let refusals = matcher.refusals();
+    inj_on_runtime_unchecked(&mut runtime, program.clone(), &matcher).await?;
 
     let mut result = HashMap::with_capacity(out_channels.len());
     for channel in out_channels {
@@ -1637,12 +1649,12 @@ pub async fn run_normalized_par_with_lookahead_engine(
 
     let mut definitions = take_pending_fold_definitions();
     definitions.extend(engine.definitions());
-    let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
+    let (mut runtime, matcher) = build_runtime_with_definitions(definitions).await?;
     // The budget is the RUNTIME's, and `RuntimeBudget` is a handle over shared atomics — so
     // this clone observes `inj_on_runtime`'s later `set`, rather than a snapshot taken before
     // the deploy was funded.
     engine.bind_host(runtime.cost().clone());
-    inj_on_runtime(&mut runtime, program.clone(), &refusals).await?;
+    inj_on_runtime(&mut runtime, program.clone(), &matcher).await?;
 
     let mut result = HashMap::with_capacity(out_channels.len());
     for channel in out_channels {
@@ -1720,8 +1732,8 @@ pub async fn run_rholang_source_for_oracle_then_consume_strings(
         return Err("consume requires at least one channel".to_string());
     }
 
-    let (mut runtime, refusals) = build_runtime().await?;
-    eval_on_runtime(&mut runtime, program, &refusals).await?;
+    let (mut runtime, matcher) = build_runtime().await?;
+    eval_on_runtime(&mut runtime, program, &matcher).await?;
 
     let channel_pars: Vec<Par> = channels
         .iter()
@@ -1754,9 +1766,9 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_strings(
     programs: &[&str],
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<String>>, String> {
-    let (mut runtime, refusals) = build_runtime().await?;
+    let (mut runtime, matcher) = build_runtime().await?;
     for program in programs {
-        eval_on_runtime(&mut runtime, program, &refusals).await?;
+        eval_on_runtime(&mut runtime, program, &matcher).await?;
     }
 
     let mut result = HashMap::new();
@@ -1795,7 +1807,8 @@ pub async fn run_rholang_source_and_read_ints_with_guard_refusals(
     program: &str,
     out_channels: &[&str],
 ) -> Result<(HashMap<String, Vec<i64>>, Vec<String>), String> {
-    let (mut runtime, refusals) = build_runtime().await?;
+    let (mut runtime, matcher) = build_runtime().await?;
+    let refusals = matcher.refusals();
     eval_on_runtime_unchecked(&mut runtime, program).await?;
 
     let mut result = HashMap::with_capacity(out_channels.len());
@@ -1821,9 +1834,9 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_ints(
     programs: &[&str],
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<i64>>, String> {
-    let (mut runtime, refusals) = build_runtime().await?;
+    let (mut runtime, matcher) = build_runtime().await?;
     for program in programs {
-        eval_on_runtime(&mut runtime, program, &refusals).await?;
+        eval_on_runtime(&mut runtime, program, &matcher).await?;
     }
 
     let mut result = HashMap::new();
@@ -1844,9 +1857,9 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_bools(
     programs: &[&str],
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<bool>>, String> {
-    let (mut runtime, refusals) = build_runtime().await?;
+    let (mut runtime, matcher) = build_runtime().await?;
     for program in programs {
-        eval_on_runtime(&mut runtime, program, &refusals).await?;
+        eval_on_runtime(&mut runtime, program, &matcher).await?;
     }
 
     let mut result = HashMap::new();

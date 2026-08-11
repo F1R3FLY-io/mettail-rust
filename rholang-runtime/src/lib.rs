@@ -53,6 +53,9 @@ pub mod bench_support;
 /// `bench-naive-baseline` exactly like `bench_support`. No production surface.
 #[cfg(feature = "bench-naive-baseline")]
 pub mod e6a_support;
+/// Retained Dovetail set-automaton fast path for positional reflected FLT
+/// receive patterns.
+pub mod flt_automaton_matcher;
 /// Tier-3 held-fold trampoline: Dovetail-backed fold contracts for folds over COMM-received values.
 #[cfg(feature = "rholang-runtime")]
 pub mod fold_contract;

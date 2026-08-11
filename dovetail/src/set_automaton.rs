@@ -92,10 +92,10 @@ struct PatternEntry<L> {
 pub struct StateId(usize);
 
 impl StateId {
-    /// The dense index of this interned automaton state (`0..state_count`). The
-    /// in-Rho lowering keys a state's `sa:` receiver by this index — structurally
-    /// equal sub-patterns share one `StateId` (the `[optimal]` O1/O3 quotient the
-    /// interner already computes), so they will share one receiver.
+    /// The dense index of this interned automaton state (`0..state_count`).
+    /// Structurally equal sub-patterns share one `StateId` (the `[optimal]`
+    /// O1/O3 quotient the interner computes), so an append-only runtime
+    /// serializer can emit each canonical state exactly once.
     pub fn index(self) -> usize {
         self.0
     }
@@ -386,9 +386,12 @@ impl<L: Eq + Hash> PartialEq for SetAutomaton<L> {
 
 impl<L: Eq + Hash> Eq for SetAutomaton<L> {}
 
-/// A read-only view over a compiled [`SetAutomaton`]'s interned pattern DAG, for
-/// serializing it into an in-Rho `sa:`-receiver network (Stage 1). Additive: it
-/// exposes the automaton's structure without changing any matching behavior.
+/// A read-only view over a compiled [`SetAutomaton`]'s interned pattern DAG.
+///
+/// Serializers use this view to lower the append-only state prefix into their
+/// own execution representation without exposing a public [`StateId`]
+/// constructor. The view is additive: it exposes structure without changing
+/// matching behavior.
 pub struct SetAutomatonView<'a, L> {
     automaton: &'a SetAutomaton<L>,
 }
@@ -458,6 +461,17 @@ impl<'a, L> SetAutomatonView<'a, L> {
     /// count of distinct `sa:` receivers a full multi-pattern serialization emits.
     pub fn state_count(&self) -> usize {
         self.automaton.compiler.states.len()
+    }
+
+    /// Every interned state identifier in dense serialization order.
+    ///
+    /// [`SetAutomaton::extend`] is prefix-stable, so a retained serializer can
+    /// remember its previous length and consume only
+    /// `view.state_ids().skip(previous_len)`. Returning identifiers rather than
+    /// accepting raw indices preserves the invariant that every visible
+    /// [`StateId`] names a state owned by this automaton.
+    pub fn state_ids(&self) -> impl ExactSizeIterator<Item = StateId> + '_ {
+        (0..self.state_count()).map(StateId)
     }
 }
 

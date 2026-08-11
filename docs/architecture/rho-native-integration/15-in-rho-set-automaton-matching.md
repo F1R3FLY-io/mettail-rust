@@ -31,8 +31,8 @@ $`c(\ell) = \ulcorner \ell \urcorner`$ emitting $`[\![ R ]\!] \sigma`$:
 
 The campaign realizes this in three layers, each faithful to the same CLTS:
 
-1. **Matching** — the host `SetAutomaton` is compiled into a network of persistent
-   `sa:` receivers over a *spread* term $`[\![ t ]\!]`$; head-symbol
+1. **Matching** — the host `SetAutomaton` is compiled into a single-shot,
+   per-firing network of `sa:` receivers over a *spread* term $`[\![ t ]\!]`$; head-symbol
    dispatch via `Match`/`MatchCase`; non-linear consistency via enable-guarded
    `eq:` receivers. These run on the Rholang interpreter as internal
    ($`\tau`$, unobservable) COMMs. The channel for a context $`K`$ is the reflected
@@ -40,6 +40,14 @@ The campaign realizes this in three layers, each faithful to the same CLTS:
    `PatternCompiler::intern` already computes the paper's `O1`+`O3` quotient, so
    re-keying `sa:` channels by the interned `StateId` trace *is* the optimal
    scheme.
+
+The single-shot qualifier is load-bearing. The installed $`\sigma`$-receiver
+that performs the rewrite is persistent; the `sa:` inspection network is not.
+It travels with one spread subject under a fresh site nonce, as the production
+wiring in [17 §4](17-stage-3-production-wiring.md#4-piece-3-match-fire-from-the-derived-ruleset)
+specifies. Retained runtime matching of reflected Foreign Language Term receive
+patterns is a different RSpace seam and is documented in
+[30](30-retained-flt-candidate-matching.md).
 2. **Firing** — on an accepting match, the automaton emits $`\sigma`$ on the rule's
    channel and the flat $`(k+1)`$-ary $`\sigma`$-receiver fires the observable
    $`c(\ell)`$ COMM producing $`[\![ R ]\!] \sigma`$.

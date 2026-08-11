@@ -80,6 +80,7 @@ and Rho machine integration:
 - **`architecture/rho-native-integration/27-oslf-language-to-rholang-compilation.md`** - Compiling OSLF `language!` specifications to Rholang via the set-automaton pipeline
 - **`architecture/rho-native-integration/28-translation-rule-system.md`** - The specification-level translation calculus: the thirteen-rule master table, whole-language assembly, and worked whole-language instances with a test-pinned installed-program listing
 - **`architecture/rho-native-integration/29-knotted-topoi-satisfaction-crosswalk.md`** - Per-item crosswalk of the knotted-topoi paper's labeled claims to their mechanized, runtime-tested, or denotational-program status
+- **`architecture/rho-native-integration/30-retained-flt-candidate-matching.md`** - Retained matcher-owned Dovetail automata for stack-safe, equivalence-gated FLT candidate matching
 - **`architecture/rho-native-integration/references.md`** - Citations, DOI links, and repository-local proof references
 - **`architecture/rho-native-integration/validate.sh`** - Reproducible local validation for the suite
 
@@ -130,10 +131,14 @@ the generator, or the generated output:
 
 - **`languages/README.md`** - Suite index: the roster of bundled languages, where to start, page conventions, and the diagramming policy
 - **`languages/lambda.md`** - `Lambda` (the λ-calculus): binders and higher-order abstract syntax, β-reduction via the `eval` meta-operator, and congruence rules as reduction contexts — the recommended first read for the DSL
+- **`languages/monoid.md`** - `Monoid`: an equational theory of associativity and units, with no directed rewrites
+- **`languages/json.md`** - `Json`: native payloads, literal classes, collection sorts, and the GSLT type-and-term rung
+- **`languages/turing.md`** - `Turing`: a single-tape machine, zipper tape, and deliberately rejected fold helper
+- **`languages/pi.md`** - `Pi`: nominal binders, associative-commutative parallel composition, and typed communication
+- **`languages/ambient.md`** - `Ambient`: mobile-ambient capabilities, freshness premises, and scope extrusion
+- **`languages/calculator.md`** - `Calculator`: native numeric and Boolean folds, casts, literals, and evaluation modes
+- **`languages/rholang.md`** - `Rholang`: communication, multi-binder receives, guards, collections, and the production native tower
 - **`languages/validate.sh`** - Reproducible local validation for the suite
-
-Pages for `Monoid`, `Json`, `Turing`, `Pi`, `Ambient`, `Calculator`, and `Rholang` are
-tracked in the suite roster and not yet written.
 
 ---
 
