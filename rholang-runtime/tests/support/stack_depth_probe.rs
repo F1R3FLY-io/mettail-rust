@@ -1835,4 +1835,3 @@ fn main() {
     // only thing bounding this call is the `RLIMIT_STACK` the parent installed before `exec`.
     subject(&name)(depth);
 }
-
