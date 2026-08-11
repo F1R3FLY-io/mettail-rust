@@ -177,6 +177,8 @@ pub use rholang_ast::{
 pub use run::{
     binder_apply_redex_present, drive_cross_check, flatten_observation_value,
     run_installed_program_with_call_and_read_observation_set,
+    run_installed_program_with_call_and_read_observation_sets,
+    run_installed_program_with_call_definitions_and_read_observation_sets,
     run_normalized_par_and_read_runtime_value_channels_with_guard_refusals,
     run_normalized_par_for_oracle_and_read_runtime_value_channels,
     run_normalized_par_for_oracle_and_read_runtime_values,

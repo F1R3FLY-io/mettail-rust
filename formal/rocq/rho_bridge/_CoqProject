@@ -310,3 +310,4 @@ theories/InRhoFloatCanonicalization.v
 # float_phase_conservative (ffloat . embed = embed . bdrive — every landed bag theorem transfers
 # as a corollary; conservative extension, InRhoQuiescenceDriver untouched).
 theories/InRhoDriveWithFloat.v
+theories/CrossLanguageSeparation.v

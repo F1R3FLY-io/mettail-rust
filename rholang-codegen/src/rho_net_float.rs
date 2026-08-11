@@ -69,7 +69,7 @@
 //! ```
 //!
 //! plus the SHARED `^shift`/`^cmp` satellites
-//! ([`crate::rho_net_subst_trs::shift_receiver_par`] — WITH the A-S5.8 soup/Nil arms,
+//! ([`crate::rho_net_subst_trs::shift_receiver_par_with_coinstall_manifest`] — WITH the A-S5.8 soup/Nil arms,
 //! F8-AM-5e/5f — and [`crate::rho_net_subst_trs::cmp_receiver_par`]), installed by the
 //! float family exactly when the language carries no subst TRS (Ambient: first-time
 //! install; the closed dependency set is `^shift` + `^cmp` — the `^bound` arm's Peano
@@ -121,6 +121,7 @@
 use mettail_ast::language::LanguageDef;
 use models::rhoapi::Par;
 
+use crate::rho_net_coinstall::CoInstallManifest;
 use crate::rho_net_drive::{
     bag_fragment_dispatch, drive_err_channel, hashbag_collection_ops, soup_peel_pattern,
 };
@@ -131,10 +132,13 @@ use crate::rho_net_lower::{
     PEANO_ZERO_REFLECT_LABEL, SHIFT_RESERVED_LABEL,
 };
 use crate::rho_net_subst_trs::{
-    cmp_receiver_par, for1, ground, join, match_, new_scope, nullary_term,
+    cmp_receiver_par, for1, foreign_inert_cases, ground, join, match_, new_scope, nullary_term,
     object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard, persistent_contract,
-    send, shift_receiver_par, tag_par, tagged, Case, Env, Node,
+    send, shift_receiver_par_with_coinstall_manifest, tag_par, tagged, Case, Env, Node,
 };
+
+#[cfg(test)]
+use crate::rho_net_subst_trs::shift_receiver_par;
 
 use models::rust::utils::new_gstring_par;
 
@@ -167,9 +171,13 @@ pub(crate) fn float_program_par(
     def: &LanguageDef,
     fingerprint: &str,
     include_shift_cmp: bool,
+    coinstall: &CoInstallManifest,
 ) -> Par {
+    coinstall
+        .validate_host(fingerprint)
+        .expect("float program manifest belongs to its host fingerprint");
     let table = float_satellite_table(def);
-    let mut program = float_dispatcher_par(def, fingerprint, &table);
+    let mut program = float_dispatcher_par(def, fingerprint, &table, coinstall);
     for (constructor, float_index, arity) in &table.hoist {
         program = program.append(float_hoist_receiver_par(
             fingerprint,
@@ -183,7 +191,7 @@ pub(crate) fn float_program_par(
     }
     if include_shift_cmp {
         program = program
-            .append(shift_receiver_par(def, fingerprint))
+            .append(shift_receiver_par_with_coinstall_manifest(def, fingerprint, coinstall))
             .append(cmp_receiver_par(fingerprint));
     }
     program
@@ -191,7 +199,12 @@ pub(crate) fn float_program_par(
 
 /// The `^float(t, ret)` DISPATCHER (module docs — the arm table; head universe = the
 /// `^drive` receiver's minus the redex arms, patterns pairwise disjoint).
-fn float_dispatcher_par(def: &LanguageDef, fp: &str, table: &FloatSatelliteTable) -> Par {
+fn float_dispatcher_par(
+    def: &LanguageDef,
+    fp: &str,
+    table: &FloatSatelliteTable,
+    coinstall: &CoInstallManifest,
+) -> Par {
     let env = Env::root(&["t", "ret"]);
     let mut cases: Vec<Case> = Vec::new();
 
@@ -327,7 +340,9 @@ fn float_dispatcher_par(def: &LanguageDef, fp: &str, table: &FloatSatelliteTable
     // (6) The Nil (empty-bag) leaf — its own float NF (AM-3; also the peel recursion's
     //     base case). Emitted exactly when the language has bag constructors at all
     //     (the drive's Nil-leaf gating).
-    if !hashbag_collection_ops(def).is_empty() {
+    cases.extend(foreign_inert_cases(coinstall, &env));
+
+    if !hashbag_collection_ops(def).is_empty() || coinstall.any_foreign_ac() {
         cases.push(Case {
             pattern: Par::default(),
             free_count: 0,
@@ -728,7 +743,8 @@ mod tests {
     fn ambient_dispatcher_arm_table() {
         let def = production_ambient_def();
         let table = float_satellite_table(&def);
-        let dispatcher = float_dispatcher_par(&def, "fp-arms", &table);
+        let manifest = CoInstallManifest::isolated_at_fingerprint("fp-arms");
+        let dispatcher = float_dispatcher_par(&def, "fp-arms", &table, &manifest);
         assert_eq!(dispatcher.receives.len(), 1, "the dispatcher is one receiver");
         let receive = &dispatcher.receives[0];
         assert!(receive.persistent);
@@ -762,7 +778,8 @@ mod tests {
         let table = float_satellite_table(&def);
         assert_eq!(table.hoist.len(), 1, "one hoist satellite (PAmb)");
         assert!(table.merge_ops.is_empty(), "no collection equation ⟹ no merge satellite");
-        let dispatcher = float_dispatcher_par(&def, "fp-hoistonly", &table);
+        let manifest = CoInstallManifest::isolated_at_fingerprint("fp-hoistonly");
+        let dispatcher = float_dispatcher_par(&def, "fp-hoistonly", &table, &manifest);
         let body = dispatcher.receives[0]
             .body
             .as_ref()

@@ -104,12 +104,6 @@ fn oname(atom: &str) -> Value {
 fn oamb(name: Value, body: Value) -> Value {
     oterm("PAmb", vec![name, body])
 }
-fn oin(name: Value, cont: Value) -> Value {
-    oterm("PIn", vec![name, cont])
-}
-fn oout(name: Value, cont: Value) -> Value {
-    oterm("POut", vec![name, cont])
-}
 fn oopen(name: Value, cont: Value) -> Value {
     oterm("POpen", vec![name, cont])
 }
@@ -806,6 +800,27 @@ async fn flattening_empty_bag_open_splices_as_nothing() {
         &set.out_values[0],
         &obag(vec![o_leaf_amb("c")]),
         "the empty-bag P contributes NOTHING — no spurious Nil element"
+    );
+    assert_green_drive(&set, &channels, &subject_value, &["OpenRule"]);
+}
+
+/// A contractum containing two byte-identical bag members must retain multiplicity and
+/// still reach quiescence.  This is the smallest strict-shrink witness for the driver's
+/// soup-peel remainder: `{open(n,0) | n[{0}]}` becomes `{0,0}` and each descent step
+/// must remove exactly one occurrence rather than retrying the same multiset.
+#[tokio::test]
+async fn duplicate_nullary_contractum_preserves_multiplicity_and_quiesces() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fingerprint) = ambient_backend();
+    let name = g_name("n");
+    let subject = g_bag(vec![g_open(name.clone(), g_zero()), g_amb(name, g_bag(vec![g_zero()]))]);
+    let (set, channels, subject_value) =
+        drive_direct(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
+
+    assert_eq!(
+        set.out_values,
+        vec![obag(vec![ozero(), ozero()])],
+        "the two identical PZero occurrences survive as multiplicity two"
     );
     assert_green_drive(&set, &channels, &subject_value, &["OpenRule"]);
 }

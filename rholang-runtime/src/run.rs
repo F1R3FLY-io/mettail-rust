@@ -1386,15 +1386,11 @@ fn guarded_ac_trio_redex_present(
 /// observation value is an `Err` naming the OUT channel — never a silent drop
 /// (the drive cross-check depends on OUT being fully accounted for).
 #[cfg(feature = "runtime-report")]
-pub async fn run_installed_program_with_call_and_read_observation_set(
-    installed_program: &Par,
-    call: &Par,
+async fn read_drive_observation_set<R: RhoRuntime>(
+    runtime: &R,
     channels: &DriveObservationChannels,
 ) -> Result<DriveObservationSet, String> {
-    let composed = installed_program.append(call.clone());
-    let runtime = evaluate_par(&composed).await?;
-
-    let out_raw = read_ground_from_runtime(&runtime, &channels.out, par_verbatim).await;
+    let out_raw = read_ground_from_runtime(runtime, &channels.out, par_verbatim).await;
     let mut out_values = Vec::with_capacity(out_raw.len());
     for par in &out_raw {
         match par_as_runtime_observation_value(par) {
@@ -1409,9 +1405,9 @@ pub async fn run_installed_program_with_call_and_read_observation_set(
         }
     }
 
-    let fired_data = read_ground_from_runtime(&runtime, &channels.fired, par_verbatim).await;
-    let err_data = read_ground_from_runtime(&runtime, &channels.err, par_verbatim).await;
-    let fuel_data = read_ground_from_runtime(&runtime, &channels.fuel, par_verbatim).await;
+    let fired_data = read_ground_from_runtime(runtime, &channels.fired, par_verbatim).await;
+    let err_data = read_ground_from_runtime(runtime, &channels.err, par_verbatim).await;
+    let fuel_data = read_ground_from_runtime(runtime, &channels.fuel, par_verbatim).await;
 
     Ok(DriveObservationSet {
         out_values,
@@ -1419,6 +1415,71 @@ pub async fn run_installed_program_with_call_and_read_observation_set(
         err_data,
         fuel_data,
     })
+}
+
+#[cfg(feature = "runtime-report")]
+pub async fn run_installed_program_with_call_and_read_observation_set(
+    installed_program: &Par,
+    call: &Par,
+    channels: &DriveObservationChannels,
+) -> Result<DriveObservationSet, String> {
+    let mut sets = run_installed_program_with_call_and_read_observation_sets(
+        installed_program,
+        call,
+        std::slice::from_ref(channels),
+    )
+    .await?;
+    Ok(sets
+        .pop()
+        .expect("one requested drive observation channel set yields one result"))
+}
+
+/// Execute one co-installed driver network once and read each language's disjoint
+/// firing/error/fuel ledger from that same RSpace state. Results preserve `channels`
+/// order. Sharing the execution is load-bearing: evaluating once per fingerprint would
+/// not prove that the drivers coexist or partition one mixed reduction.
+#[cfg(feature = "runtime-report")]
+pub async fn run_installed_program_with_call_and_read_observation_sets(
+    installed_program: &Par,
+    call: &Par,
+    channels: &[DriveObservationChannels],
+) -> Result<Vec<DriveObservationSet>, String> {
+    let composed = installed_program.append(call.clone());
+    let runtime = evaluate_par(&composed).await?;
+    let mut sets = Vec::with_capacity(channels.len());
+    for channel_set in channels {
+        sets.push(read_drive_observation_set(&runtime, channel_set).await?);
+    }
+    Ok(sets)
+}
+
+/// Execute one co-installed driver network with the complete set of generated
+/// language-scoped system-process definitions, then read every fingerprint-disjoint
+/// observation ledger from the same RSpace state.
+///
+/// Co-installation must install the union of the participating languages' definitions:
+/// omitting (for example) Ambient's native shift definition leaves a generated carrier
+/// call resting forever and makes a valid driver appear non-terminating.  The definitions
+/// are supplied explicitly so one evaluation cannot accidentally consume only one
+/// thread-local language registration.
+#[cfg(feature = "runtime-report")]
+pub async fn run_installed_program_with_call_definitions_and_read_observation_sets(
+    installed_program: &Par,
+    call: &Par,
+    definitions: Vec<Definition>,
+    channels: &[DriveObservationChannels],
+) -> Result<Vec<DriveObservationSet>, String> {
+    let composed = installed_program.append(call.clone());
+    let runtime = {
+        let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
+        inj_on_runtime(&mut runtime, composed, &refusals).await?;
+        runtime
+    };
+    let mut sets = Vec::with_capacity(channels.len());
+    for channel_set in channels {
+        sets.push(read_drive_observation_set(&runtime, channel_set).await?);
+    }
+    Ok(sets)
 }
 
 /// [`run_installed_program_with_call_and_read_observation_set`] with explicit injected
@@ -1432,34 +1493,16 @@ pub async fn run_installed_program_with_call_definitions_and_read_observation_se
     definitions: Vec<Definition>,
     channels: &DriveObservationChannels,
 ) -> Result<DriveObservationSet, String> {
-    let composed = installed_program.append(call.clone());
-    let runtime = {
-        let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
-        inj_on_runtime(&mut runtime, composed, &refusals).await?;
-        runtime
-    };
-
-    let out_raw = read_ground_from_runtime(&runtime, &channels.out, par_verbatim).await;
-    let mut out_values = Vec::with_capacity(out_raw.len());
-    for par in &out_raw {
-        match par_as_runtime_observation_value(par) {
-            Some(value) => out_values.push(value),
-            None => {
-                return Err(format!(
-                    "drive OUT channel {:?} datum did not decode as a closed runtime \
-                     observation value: {par:?}",
-                    channels.out,
-                ));
-            },
-        }
-    }
-
-    Ok(DriveObservationSet {
-        out_values,
-        fired_data: read_ground_from_runtime(&runtime, &channels.fired, par_verbatim).await,
-        err_data: read_ground_from_runtime(&runtime, &channels.err, par_verbatim).await,
-        fuel_data: read_ground_from_runtime(&runtime, &channels.fuel, par_verbatim).await,
-    })
+    let mut sets = run_installed_program_with_call_definitions_and_read_observation_sets(
+        installed_program,
+        call,
+        definitions,
+        std::slice::from_ref(channels),
+    )
+    .await?;
+    Ok(sets
+        .pop()
+        .expect("one requested drive observation channel set yields one result"))
 }
 
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an

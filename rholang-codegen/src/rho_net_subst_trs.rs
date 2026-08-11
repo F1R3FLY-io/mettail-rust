@@ -80,6 +80,7 @@ use models::rust::utils::{
     new_wildcard_par,
 };
 
+use crate::rho_net_coinstall::CoInstallManifest;
 use crate::rho_net_lower::{
     ground_marker_tag_par, is_marked_object_label, par_carries_ground_marker,
     reflect_ground_term_par, reflect_tag, GroundTerm, BOUND_VAR_REFLECT_LABEL, CMP_RESERVED_LABEL,
@@ -813,16 +814,29 @@ pub(crate) fn shiftk_receiver_par(fp: &str) -> Par {
 
 /// `^shift(c, t, ret)` — increment every `^bound n` with `n ≥ c` (free-variable shift under a
 /// binder), descending `^lambda` with `c+1` and every object constructor structurally.
+#[cfg(test)]
 pub(crate) fn shift_receiver_par(def: &LanguageDef, fp: &str) -> Par {
+    let manifest = CoInstallManifest::isolated_at_fingerprint(fp);
+    shift_receiver_par_with_coinstall_manifest(def, fp, &manifest)
+}
+
+pub(crate) fn shift_receiver_par_with_coinstall_manifest(
+    def: &LanguageDef,
+    fp: &str,
+    coinstall: &CoInstallManifest,
+) -> Par {
+    coinstall
+        .validate_host(fp)
+        .expect("shift receiver manifest belongs to its host fingerprint");
     let chan = tag_par(fp, SHIFT_RESERVED_LABEL);
     let env = Env::root(&["c", "t", "ret"]);
-    let body = match_(env.var("t"), shift_cases(def, fp, &env));
+    let body = match_(env.var("t"), shift_cases(def, fp, coinstall, &env));
     persistent_contract(chan, 3, body).par
 }
 
 /// `^shift` `match t` cases: `^bound`, `^lambda`, `^free`, and one object-congruence arm per
 /// non-reserved constructor.
-fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
+fn shift_cases(def: &LanguageDef, fp: &str, coinstall: &CoInstallManifest, env: &Env) -> Vec<Case> {
     let mut cases = vec![
         // E-2-D: the hereditary-GROUND short-circuit — MUST be first (fires on `^gnd` before any
         // per-arm dispatch). `oground_shift_id`: shift is the identity on a ground subject.
@@ -931,38 +945,9 @@ fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
     // the legitimate reflection image of a nested EMPTY bag, and a `^float-merge` v-strip
     // shifts a Nil u (F8-AM-5f) — without this arm that shift stalls.
     let bag_ops = crate::rho_net_drive::hashbag_collection_ops(def);
-    for op in &bag_ops {
-        cases.push(Case {
-            pattern: crate::rho_net_drive::soup_peel_pattern(fp, op),
-            free_count: 2,
-            body: {
-                let env = env.push(&["e", "rem"]);
-                new_scope(2, {
-                    let env = env.push(&["re", "rr"]);
-                    let shift_element = send(
-                        ground(tag_par(fp, SHIFT_RESERVED_LABEL)),
-                        vec![env.var("c"), env.var("e"), env.var("re")],
-                    );
-                    let shift_remainder = send(
-                        ground(tag_par(fp, SHIFT_RESERVED_LABEL)),
-                        vec![env.var("c"), env.var("rem"), env.var("rr")],
-                    );
-                    let join_node = join(vec![env.var("re"), env.var("rr")], {
-                        let env = env.push(&["se", "sr"]);
-                        send(
-                            env.var("ret"),
-                            vec![par2(
-                                crate::rho_net_drive::wrap_element_send(fp, op, env.var("se")),
-                                env.var("sr"),
-                            )],
-                        )
-                    });
-                    par2(par2(shift_element, shift_remainder), join_node)
-                })
-            },
-        });
-    }
-    if !bag_ops.is_empty() {
+    cases.extend(owned_bag_congruence_cases(&bag_ops, fp, env, SHIFT_RESERVED_LABEL, "c"));
+    cases.extend(foreign_inert_cases(coinstall, env));
+    if !bag_ops.is_empty() || coinstall.any_foreign_ac() {
         cases.push(Case {
             pattern: Par::default(),
             free_count: 0,
@@ -972,17 +957,23 @@ fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
     cases
 }
 
-/// `^subst(j, a, t, ret)` — capture-avoiding de-Bruijn substitution `t[a/j]`.
-pub(crate) fn subst_receiver_par(def: &LanguageDef, fp: &str) -> Par {
+fn subst_receiver_par_with_coinstall_manifest(
+    def: &LanguageDef,
+    fp: &str,
+    coinstall: &CoInstallManifest,
+) -> Par {
+    coinstall
+        .validate_host(fp)
+        .expect("substitution receiver manifest belongs to its host fingerprint");
     let chan = tag_par(fp, SUBST_RESERVED_LABEL);
     let env = Env::root(&["j", "a", "t", "ret"]);
-    let body = match_(env.var("t"), subst_cases(def, fp, &env));
+    let body = match_(env.var("t"), subst_cases(def, fp, coinstall, &env));
     persistent_contract(chan, 4, body).par
 }
 
 /// `^subst` `match t` cases: `^bound`, `^lambda` (depth increment), `^free`, and one
 /// object-congruence arm per non-reserved constructor.
-fn subst_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
+fn subst_cases(def: &LanguageDef, fp: &str, coinstall: &CoInstallManifest, env: &Env) -> Vec<Case> {
     let mut cases = vec![
         // E-2-D: the hereditary-GROUND short-circuit — MUST be first (fires on `^gnd` before any
         // per-arm dispatch). `oground_subst_id`: subst is the identity on a ground subject.
@@ -1092,6 +1083,90 @@ fn subst_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
         free_passthrough_case(fp, env),
     ];
     cases.extend(object_congruence_cases(def, fp, env, SUBST_RESERVED_LABEL, "j"));
+    let bag_ops = crate::rho_net_drive::hashbag_collection_ops(def);
+    cases.extend(owned_bag_congruence_cases(&bag_ops, fp, env, SUBST_RESERVED_LABEL, "j"));
+    cases.extend(foreign_inert_cases(coinstall, env));
+    if !bag_ops.is_empty() || coinstall.any_foreign_ac() {
+        cases.push(Case {
+            pattern: Par::default(),
+            free_count: 0,
+            body: send(env.var("ret"), vec![ground(Par::default())]),
+        });
+    }
+    cases
+}
+
+/// Congruence over a host-owned HashBag for either `^shift` or `^subst`.
+///
+/// The two children (peeled element and remainder) are transformed concurrently,
+/// joined, and reassembled on the same fingerprint-scoped soup channel.  Factoring the
+/// construction keeps both recursive machines on one byte-level implementation; for
+/// `^shift` it is exactly the previously emitted network.
+fn owned_bag_congruence_cases(
+    bag_ops: &[String],
+    fp: &str,
+    env: &Env,
+    op: &str,
+    depth_var: &str,
+) -> Vec<Case> {
+    bag_ops
+        .iter()
+        .map(|bag_op| Case {
+            pattern: crate::rho_net_drive::soup_peel_pattern(fp, bag_op),
+            free_count: 2,
+            body: {
+                let env = env.push(&["e", "rem"]);
+                new_scope(2, {
+                    let env = env.push(&["re", "rr"]);
+                    let transform_element = descend_child_call(fp, op, &env, depth_var, "e", "re");
+                    let transform_remainder =
+                        descend_child_call(fp, op, &env, depth_var, "rem", "rr");
+                    let join_node = join(vec![env.var("re"), env.var("rr")], {
+                        let env = env.push(&["se", "sr"]);
+                        send(
+                            env.var("ret"),
+                            vec![par2(
+                                crate::rho_net_drive::wrap_element_send(fp, bag_op, env.var("se")),
+                                env.var("sr"),
+                            )],
+                        )
+                    });
+                    par2(par2(transform_element, transform_remainder), join_node)
+                })
+            },
+        })
+        .collect()
+}
+
+/// Identity arms for roots owned by a co-installed foreign language.
+///
+/// Host substitution and shifting must never cross a foreign syntax boundary: guest
+/// syntax cannot name a host binder, and the FLT admission boundary rejects an explicit
+/// cross-context binder hole.  Each arm therefore returns the complete original
+/// subject, including a foreign soup, without inspecting or rebuilding its children.
+pub(crate) fn foreign_inert_cases(coinstall: &CoInstallManifest, env: &Env) -> Vec<Case> {
+    let mut cases = Vec::new();
+    for foreign in coinstall.foreign() {
+        for (label, arity) in &foreign.tagged_roots {
+            cases.push(Case {
+                pattern: pat_tagged(
+                    &foreign.fingerprint,
+                    label,
+                    (0..*arity).map(|_| pat_wildcard()).collect(),
+                ),
+                free_count: 0,
+                body: send(env.var("ret"), vec![env.var("t")]),
+            });
+        }
+        for bag_op in &foreign.ac_operators {
+            let case_env = env.push(&["foreign_element", "foreign_remainder"]);
+            cases.push(Case {
+                pattern: crate::rho_net_drive::soup_peel_pattern(&foreign.fingerprint, bag_op),
+                free_count: 2,
+                body: send(case_env.var("ret"), vec![case_env.var("t")]),
+            });
+        }
+    }
     cases
 }
 
@@ -1376,12 +1451,28 @@ fn structural_arity(term: &mettail_ast::grammar::GrammarRule) -> Option<usize> {
 /// disturbing no landed receiver. `^cmp`/`^pred`/`^shiftk` are language-independent; `^subst`/
 /// `^shift` carry the object-congruence arms derived from `def`.
 pub fn subst_trs_program_par(def: &LanguageDef, fingerprint: &str) -> Par {
+    let manifest = CoInstallManifest::isolated_at_fingerprint(fingerprint);
+    subst_trs_program_par_with_coinstall_manifest(def, fingerprint, &manifest)
+}
+
+/// The substitution program specialized for a finite set of co-installed foreign
+/// languages.  Foreign reflected roots are opaque identity values under the host's
+/// `^subst` and `^shift` machines; all reserved helper receivers remain fingerprint-
+/// scoped exactly as in isolated lowering.
+pub fn subst_trs_program_par_with_coinstall_manifest(
+    def: &LanguageDef,
+    fingerprint: &str,
+    coinstall: &CoInstallManifest,
+) -> Par {
+    coinstall
+        .validate_host(fingerprint)
+        .expect("substitution program manifest belongs to its host fingerprint");
     Par::default()
         .append(cmp_receiver_par(fingerprint))
         .append(pred_receiver_par(fingerprint))
         .append(shiftk_receiver_par(fingerprint))
-        .append(shift_receiver_par(def, fingerprint))
-        .append(subst_receiver_par(def, fingerprint))
+        .append(shift_receiver_par_with_coinstall_manifest(def, fingerprint, coinstall))
+        .append(subst_receiver_par_with_coinstall_manifest(def, fingerprint, coinstall))
 }
 
 /// The β SEED as the `Beta` σ-receiver body (blueprint §2/§4): instead of forwarding a host-computed

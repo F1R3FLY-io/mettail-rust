@@ -201,6 +201,7 @@ use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par, new_se
 use syn::Ident;
 
 use crate::rho_net::RhoNetProgram;
+use crate::rho_net_coinstall::CoInstallManifest;
 use crate::rho_net_lower::{
     ac_soup_channel, count_var_occurrences, lower_lhs_vars, nested_match_bind_pattern_for,
     nested_match_pattern_for, nested_structural_ac_rule_shape,
@@ -632,6 +633,12 @@ pub struct DriveRedexArm {
     /// post-rewrap re-check emission rule (plan v2 §4.3.2; `false` for every bundled
     /// driver language).
     pub(crate) root_is_binder: bool,
+    /// Whether the RHS fixes its outermost constructor to one owned by this language.
+    /// Such a contractum cannot change language ownership even when one of its children
+    /// is foreign, so re-entry can call this driver's owner path directly.  A variable,
+    /// substitution, or collection transform can return a foreign root and therefore
+    /// requires the co-install fingerprint dispatcher.
+    pub(crate) contractum_root_is_statically_host_owned: bool,
     /// E-1: emit a scion bundle for this arm instead of `ContractumRedrive`. Set only under
     /// [`ScionPolicy::StructuralScion`] for a positional `BaseRewrite` arm (never β
     /// `SubstRewrite`); ALWAYS `false` on the production path ([`ScionPolicy::AllRedrive`]),
@@ -682,6 +689,10 @@ pub(crate) struct DriveAcArm {
     /// The fixed-channel persistent AC-CARRIER receiver ([`ac_carrier_receiver_par`]) —
     /// appended to the drive program once per AC arm.
     pub(crate) receiver: Par,
+    /// See [`DriveRedexArm::contractum_root_is_statically_host_owned`].  The production
+    /// Ambient carrier arms rebuild a host-owned `PPar` soup, so they take the direct
+    /// float/drive path instead of dynamically classifying an already-known root.
+    pub(crate) contractum_root_is_statically_host_owned: bool,
 }
 
 /// A compiled driver redex arm of either family, in the documented deterministic order
@@ -847,7 +858,35 @@ fn build_drive_ac_arm(
         guard,
         case_names,
         receiver,
+        contractum_root_is_statically_host_owned: contractum_root_is_statically_host_owned(
+            &rewrite.right,
+            def,
+        ),
     })
+}
+
+/// Decide whether lowering fixes the contractum's outermost reflected constructor to
+/// the current language.  This is intentionally a root-only property: foreign values in
+/// child positions remain opaque and will be dispatched when the owner driver descends.
+///
+/// `Var`, `Subst`, `MultiSubst`, and collection metasyntax can return the root supplied
+/// by a captured value, so they must remain dynamically dispatched.  A constructor
+/// application owned by `def`, or a literal binder, always lowers with `def`'s
+/// fingerprint at the root.
+fn contractum_root_is_statically_host_owned(rhs: &Pattern, def: &LanguageDef) -> bool {
+    match rhs {
+        Pattern::Term(PatternTerm::Apply { constructor, .. }) => {
+            def.terms.iter().any(|term| term.label == *constructor)
+        },
+        Pattern::Term(PatternTerm::Lambda { .. } | PatternTerm::MultiLambda { .. }) => true,
+        Pattern::Term(
+            PatternTerm::Var(_) | PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. },
+        )
+        | Pattern::Collection { .. }
+        | Pattern::Map { .. }
+        | Pattern::Zip { .. }
+        | Pattern::IndexedVec { .. } => false,
+    }
 }
 
 /// The `Match`-case pattern claiming a SAME-`op` process soup — one send-pattern on the
@@ -1611,6 +1650,7 @@ pub(crate) fn firing_emission_node(
     ret_var: &str,
     carrier: &dyn DriveCarrier,
     route_through_float: bool,
+    coinstall: &CoInstallManifest,
 ) -> Node {
     // The firing ledger `@"^fired:{fp}"!("RuleLabel")` — all-ground (no frame references),
     // so it is byte-identical whether assembled inside the `new r` scope (ContractumRedrive)
@@ -1646,6 +1686,8 @@ pub(crate) fn firing_emission_node(
                     ret_var,
                     carrier,
                     route_through_float,
+                    coinstall,
+                    arm.contractum_root_is_statically_host_owned,
                 )
             });
             par2(par2(accept, ledger()), emission_node)
@@ -1675,32 +1717,35 @@ fn contractum_redrive_node(
     ret_var: &str,
     carrier: &dyn DriveCarrier,
     route_through_float: bool,
+    coinstall: &CoInstallManifest,
+    contractum_root_is_statically_host_owned: bool,
 ) -> Node {
-    if !route_through_float {
-        return send(
-            ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-            vec![
-                carrier.contractum_payload(env, env.var("c")),
-                eminus(env.var(fuel_var), gint(1)),
-                env.var(ret_var),
-            ],
+    let payload = |case_env: &Env| carrier.contractum_payload(case_env, case_env.var("c"));
+    let fuel = |case_env: &Env| eminus(case_env.var(fuel_var), gint(1));
+    let ret = |case_env: &Env| case_env.var(ret_var);
+
+    if contractum_root_is_statically_host_owned {
+        return owner_drive_call(
+            coinstall,
+            fingerprint,
+            fingerprint,
+            env,
+            &payload,
+            &fuel,
+            &ret,
+            route_through_float,
         );
     }
-    new_scope(1, {
-        let env = env.push(&["rf"]);
-        let float_call = send(
-            ground(tag_par(fingerprint, crate::rho_net_lower::FLOAT_RESERVED_LABEL)),
-            vec![carrier.contractum_payload(&env, env.var("c")), env.var("rf")],
-        );
-        let redrive = for1(env.var("rf"), {
-            let env = env.push(&["cf"]);
-            send(
-                ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                vec![env.var("cf"), eminus(env.var(fuel_var), gint(1)), env.var(ret_var)],
-            )
-        });
-        par2(float_call, redrive)
-    })
+
+    fingerprint_dispatch_drive_call(
+        coinstall,
+        fingerprint,
+        env,
+        payload,
+        fuel,
+        ret,
+        route_through_float,
+    )
 }
 
 /// Emit ONE fired AC CARRIER-ABI arm's firing body (A-S5.5, plan v2 §4.3.1) — the
@@ -1728,6 +1773,7 @@ fn ac_firing_emission_node(
     carrier: &dyn DriveCarrier,
     subject: &DriveSubject<'_>,
     route_through_float: bool,
+    coinstall: &CoInstallManifest,
 ) -> Node {
     // Byte-identical whether inside the `new r` scope or the arm frame (all-ground).
     let ledger = || {
@@ -1754,6 +1800,8 @@ fn ac_firing_emission_node(
                     ret_var,
                     carrier,
                     route_through_float,
+                    coinstall,
+                    arm.contractum_root_is_statically_host_owned,
                 )
             });
             par2(par2(carrier_send, ledger()), emission_node)
@@ -2076,6 +2124,7 @@ pub(crate) fn drive_lowering(
     errors: &[RhoNetLoweringError],
     rewrite_by_id: &HashMap<String, &RewriteRule>,
     policy: ScionPolicy,
+    coinstall: &CoInstallManifest,
 ) -> (Option<Par>, DriveAdmission) {
     let name = def.name.to_string();
     if !DRIVE_OPT_IN.contains(&name.as_str()) {
@@ -2091,6 +2140,9 @@ pub(crate) fn drive_lowering(
                 ),
             },
         );
+    }
+    if let Err(reason) = coinstall.validate_host(&program.language_fingerprint) {
+        return (None, DriveAdmission::Unsupported { reason });
     }
     // The full admission predicate over the SAME pure derivation the memoized artifacts
     // carry (`compile_in_rho_matching_ruleset` is a pure function of `def`, so this
@@ -2227,6 +2279,10 @@ pub(crate) fn drive_lowering(
             rhs: rewrite.right.clone(),
             pattern,
             root_is_binder,
+            contractum_root_is_statically_host_owned: contractum_root_is_statically_host_owned(
+                &rewrite.right,
+                def,
+            ),
             scion,
         })));
     }
@@ -2235,7 +2291,7 @@ pub(crate) fn drive_lowering(
     arms.extend(structural_ac_arms);
 
     let carrier = PsValueCarrier { fingerprint: fingerprint.to_string() };
-    match drive_program_par(def, fingerprint, &arms, &carrier) {
+    match drive_program_par(def, fingerprint, &arms, &carrier, coinstall) {
         Ok(par) => {
             // Append the fixed-channel persistent AC-carrier receivers (one per AC arm,
             // arm order — deterministic). Empty for Lambda, so its drive `Par` is
@@ -2897,6 +2953,7 @@ fn fuel_gated_firing(
     env: &Env,
     carrier: &dyn DriveCarrier,
     route_through_float: bool,
+    coinstall: &CoInstallManifest,
 ) -> Result<Node, String> {
     let exhaustion_datum = rebuild_from_pattern(&arm.lhs, def, fingerprint, env)?;
     // E-1: a scion-selected arm emits its precompiled bundle (built in THIS arm frame) in
@@ -2942,6 +2999,7 @@ fn fuel_gated_firing(
                     "ret",
                     carrier,
                     route_through_float,
+                    coinstall,
                 ),
             },
         ],
@@ -2961,6 +3019,7 @@ fn ac_fuel_gated_firing(
     carrier: &dyn DriveCarrier,
     subject: &DriveSubject<'_>,
     route_through_float: bool,
+    coinstall: &CoInstallManifest,
 ) -> Node {
     match_(
         env.var("fuel"),
@@ -2986,6 +3045,7 @@ fn ac_fuel_gated_firing(
                     carrier,
                     subject,
                     route_through_float,
+                    coinstall,
                 ),
             },
         ],
@@ -3006,6 +3066,7 @@ fn redex_cases(
     env: &Env,
     carrier: &dyn DriveCarrier,
     subject: &DriveSubject<'_>,
+    coinstall: &CoInstallManifest,
 ) -> Result<Vec<(Case, Option<Par>)>, String> {
     // A-S5.8 (decision Q-AB = A): a float-bearing language's firing emissions route EVERY
     // contractum through the installed `^float` dispatcher before the re-drive; every other
@@ -3028,6 +3089,7 @@ fn redex_cases(
                         &env,
                         carrier,
                         route_through_float,
+                        coinstall,
                     )?
                 };
                 cases.push((
@@ -3051,6 +3113,7 @@ fn redex_cases(
                         carrier,
                         subject,
                         route_through_float,
+                        coinstall,
                     )
                 };
                 cases.push((
@@ -3077,9 +3140,10 @@ fn recheck_node(
     env: &Env,
     subject: &DriveSubject<'_>,
     carrier: &dyn DriveCarrier,
+    coinstall: &CoInstallManifest,
 ) -> Result<Node, String> {
     let assembled = drive_subject_node(subject, env, carrier);
-    let mut cases = redex_cases(arms, def, fingerprint, env, carrier, subject)?;
+    let mut cases = redex_cases(arms, def, fingerprint, env, carrier, subject, coinstall)?;
     cases.push((
         Case {
             pattern: pat_wildcard(),
@@ -3089,6 +3153,126 @@ fn recheck_node(
         None,
     ));
     Ok(match_guarded(assembled, cases))
+}
+
+/// Route one structural-descent call to the driver that owns the payload's reflected
+/// root.
+///
+/// The payload is rebuilt in each case environment rather than captured as a [`Node`]:
+/// a foreign soup pattern binds two values, so every reference to the surrounding
+/// child/fuel/return frame must be shifted by those binders.  [`Env`] performs that
+/// shift mechanically.  An empty foreign inventory takes the direct-send fast path and
+/// therefore preserves the isolated driver byte for byte.
+fn owner_drive_call<P, F, R>(
+    coinstall: &CoInstallManifest,
+    self_fingerprint: &str,
+    owner_fingerprint: &str,
+    env: &Env,
+    payload: &P,
+    fuel: &F,
+    ret: &R,
+    self_float_before_drive: bool,
+) -> Node
+where
+    P: Fn(&Env) -> Node,
+    F: Fn(&Env) -> Node,
+    R: Fn(&Env) -> Node,
+{
+    let float_before_drive = if owner_fingerprint == self_fingerprint {
+        self_float_before_drive
+    } else {
+        coinstall
+            .foreign_float_before_drive(owner_fingerprint)
+            .expect("fingerprint dispatch selects only a declared foreign owner")
+    };
+    if !float_before_drive {
+        return send(
+            ground(tag_par(owner_fingerprint, DRIVE_RESERVED_LABEL)),
+            vec![payload(env), fuel(env), ret(env)],
+        );
+    }
+
+    new_scope(1, {
+        let env = env.push(&["dispatch_float_ret"]);
+        let float_call = send(
+            ground(tag_par(owner_fingerprint, crate::rho_net_lower::FLOAT_RESERVED_LABEL)),
+            vec![payload(&env), env.var("dispatch_float_ret")],
+        );
+        let redrive = for1(env.var("dispatch_float_ret"), {
+            let env = env.push(&["dispatch_float_value"]);
+            send(
+                ground(tag_par(owner_fingerprint, DRIVE_RESERVED_LABEL)),
+                vec![env.var("dispatch_float_value"), fuel(&env), ret(&env)],
+            )
+        });
+        par2(float_call, redrive)
+    })
+}
+
+fn fingerprint_dispatch_drive_call<P, F, R>(
+    coinstall: &CoInstallManifest,
+    self_fingerprint: &str,
+    env: &Env,
+    payload: P,
+    fuel: F,
+    ret: R,
+    self_float_before_drive: bool,
+) -> Node
+where
+    P: Fn(&Env) -> Node,
+    F: Fn(&Env) -> Node,
+    R: Fn(&Env) -> Node,
+{
+    let drive_call = |owner_fingerprint: &str, case_env: &Env| {
+        owner_drive_call(
+            coinstall,
+            self_fingerprint,
+            owner_fingerprint,
+            case_env,
+            &payload,
+            &fuel,
+            &ret,
+            self_float_before_drive,
+        )
+    };
+
+    if coinstall.foreign().is_empty() {
+        return drive_call(self_fingerprint, env);
+    }
+
+    let mut cases = Vec::new();
+    for foreign in coinstall.foreign() {
+        for (label, arity) in &foreign.tagged_roots {
+            cases.push(Case {
+                pattern: pat_tagged(
+                    &foreign.fingerprint,
+                    label,
+                    (0..*arity).map(|_| pat_wildcard()).collect(),
+                ),
+                free_count: 0,
+                body: drive_call(&foreign.fingerprint, env),
+            });
+        }
+        for op in &foreign.ac_operators {
+            let case_env = env.push(&["foreign_element", "foreign_remainder"]);
+            cases.push(Case {
+                pattern: soup_peel_pattern(&foreign.fingerprint, op),
+                free_count: 2,
+                body: drive_call(&foreign.fingerprint, &case_env),
+            });
+        }
+    }
+
+    // Nil has no fingerprint.  Routing it back to the current driver lets the union
+    // bag gate below provide the common empty-soup identity without inventing a
+    // language owner for the empty value.  Every other unrecognized root remains on
+    // the current driver's typed fail-close path.
+    cases.push(Case {
+        pattern: pat_wildcard(),
+        free_count: 0,
+        body: drive_call(self_fingerprint, env),
+    });
+    match_(payload(env), cases)
 }
 
 /// Build the persistent `^drive` receiver family for one admitted language (see the
@@ -3102,14 +3286,24 @@ pub(crate) fn drive_program_par(
     fingerprint: &str,
     arms: &[DriveArm],
     carrier: &dyn DriveCarrier,
+    coinstall: &CoInstallManifest,
 ) -> Result<Par, String> {
+    coinstall.validate_host(fingerprint)?;
     let frame = carrier.frame_formals();
     let env = Env::root(&frame.formals);
     let mut cases: Vec<(Case, Option<Par>)> = Vec::new();
 
     // 1. Redex arms — outermost-first strategy: a redex at this node fires before any
     //    descent. The subject at the top level is the `^drive` formal `t`.
-    cases.extend(redex_cases(arms, def, fingerprint, &env, carrier, &DriveSubject::FrameT)?);
+    cases.extend(redex_cases(
+        arms,
+        def,
+        fingerprint,
+        &env,
+        carrier,
+        &DriveSubject::FrameT,
+        coinstall,
+    )?);
 
     // 2. Congruence-descent arms — one per non-reserved object constructor (the C2
     //    enumeration the subst TRS uses, minus nothing: binders are excluded there and
@@ -3132,13 +3326,14 @@ pub(crate) fn drive_program_par(
                     // (per-path semantics, plan v2 §4.2).
                     let mut composed: Option<Node> = None;
                     for (i, ret_name) in ret_names.iter().enumerate() {
-                        let call = send(
-                            ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                            vec![
-                                carrier.child_payload(&env, i),
-                                env.var("fuel"),
-                                env.var(ret_name),
-                            ],
+                        let call = fingerprint_dispatch_drive_call(
+                            coinstall,
+                            fingerprint,
+                            &env,
+                            |case_env| carrier.child_payload(case_env, i),
+                            |case_env| case_env.var("fuel"),
+                            |case_env| case_env.var(ret_name),
+                            false,
                         );
                         composed = Some(match composed {
                             None => call,
@@ -3158,6 +3353,7 @@ pub(crate) fn drive_program_par(
                             &env,
                             &DriveSubject::ReassembledNode { label: &label, child_names: &s_names },
                             carrier,
+                            coinstall,
                         )?
                     });
                     par2(composed.expect("arity ≥ 1"), join_node)
@@ -3191,9 +3387,14 @@ pub(crate) fn drive_program_par(
             let env = env.push(&["b"]);
             new_scope(1, {
                 let env = env.push(&["r"]);
-                let drive_body = send(
-                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                    vec![env.var("b"), env.var("fuel"), env.var("r")],
+                let drive_body = fingerprint_dispatch_drive_call(
+                    coinstall,
+                    fingerprint,
+                    &env,
+                    |case_env| case_env.var("b"),
+                    |case_env| case_env.var("fuel"),
+                    |case_env| case_env.var("r"),
+                    false,
                 );
                 let rewrap = for1(env.var("r"), {
                     let env = env.push(&["rb"]);
@@ -3211,6 +3412,7 @@ pub(crate) fn drive_program_par(
                                 child_names: &rb_names,
                             },
                             carrier,
+                            coinstall,
                         )?
                     } else {
                         send(
@@ -3248,13 +3450,23 @@ pub(crate) fn drive_program_par(
             let env = env.push(&["e", "rem"]);
             new_scope(2, {
                 let env = env.push(&["re", "rr"]);
-                let drive_element = send(
-                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                    vec![env.var("e"), env.var("fuel"), env.var("re")],
+                let drive_element = fingerprint_dispatch_drive_call(
+                    coinstall,
+                    fingerprint,
+                    &env,
+                    |case_env| case_env.var("e"),
+                    |case_env| case_env.var("fuel"),
+                    |case_env| case_env.var("re"),
+                    false,
                 );
-                let drive_remainder = send(
-                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                    vec![env.var("rem"), env.var("fuel"), env.var("rr")],
+                let drive_remainder = fingerprint_dispatch_drive_call(
+                    coinstall,
+                    fingerprint,
+                    &env,
+                    |case_env| case_env.var("rem"),
+                    |case_env| case_env.var("fuel"),
+                    |case_env| case_env.var("rr"),
+                    false,
                 );
                 let join_node = join(vec![env.var("re"), env.var("rr")], {
                     let env = env.push(&["ve", "vr"]);
@@ -3271,6 +3483,7 @@ pub(crate) fn drive_program_par(
                                 &env,
                                 &DriveSubject::ReassembledSoup { fragment: "w", remainder: "vr" },
                                 carrier,
+                                coinstall,
                             )?
                         });
                         par2(dispatch, observe)
@@ -3288,7 +3501,7 @@ pub(crate) fn drive_program_par(
             None,
         ));
     }
-    if !bag_ops.is_empty() {
+    if !bag_ops.is_empty() || coinstall.any_foreign_ac() {
         // The Nil empty-bag leaf (AM-3 case (a)): `op{}` reflects as `Par::default()`
         // and is its own normal form.
         cases.push((

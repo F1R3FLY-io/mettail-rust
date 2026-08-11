@@ -619,7 +619,32 @@ impl RhoNetProgram {
             crate::pipeline_spans::phase_span(crate::pipeline_spans::PipelinePhase::LowerToPar);
         // PRODUCTION always lowers under `AllRedrive` — every emitted driver Par is
         // byte-identical to pre-E-1 (the a_s5_6 / a_s5_8 byte pins guard this).
-        lower(self, def, lowering, crate::rho_net_drive::ScionPolicy::AllRedrive)
+        let manifest = crate::rho_net_coinstall::CoInstallManifest::isolated(def);
+        lower(self, def, lowering, crate::rho_net_drive::ScionPolicy::AllRedrive, &manifest)
+    }
+
+    /// Lower this language for installation beside the foreign languages recorded
+    /// in `manifest`.
+    ///
+    /// The manifest changes only the persistent drive/substitution machines: ordinary
+    /// contracts and isolated-language lowering remain byte-identical.  A manifest
+    /// derived for a different host fails closed before any partial artifact is built.
+    pub fn lower_to_par_with_coinstall_manifest(
+        &self,
+        def: &LanguageDef,
+        lowering: &RhoLowering,
+        manifest: &crate::rho_net_coinstall::CoInstallManifest,
+    ) -> Result<RhoNetLowered, String> {
+        manifest.validate_host(&self.language_fingerprint)?;
+        let _lower_to_par_span =
+            crate::pipeline_spans::phase_span(crate::pipeline_spans::PipelinePhase::LowerToPar);
+        Ok(lower(
+            self,
+            def,
+            lowering,
+            crate::rho_net_drive::ScionPolicy::AllRedrive,
+            manifest,
+        ))
     }
 
     /// E-1 `bench-scion` surface (design v1 §3.6): lower under a chosen [`ScionPolicy`], so
@@ -636,7 +661,8 @@ impl RhoNetProgram {
     ) -> RhoNetLowered {
         let _lower_to_par_span =
             crate::pipeline_spans::phase_span(crate::pipeline_spans::PipelinePhase::LowerToPar);
-        lower(self, def, lowering, scion_policy)
+        let manifest = crate::rho_net_coinstall::CoInstallManifest::isolated(def);
+        lower(self, def, lowering, scion_policy, &manifest)
     }
 }
 
@@ -655,6 +681,7 @@ pub(crate) fn lower(
     def: &LanguageDef,
     lowering: &RhoLowering,
     scion_policy: crate::rho_net_drive::ScionPolicy,
+    coinstall: &crate::rho_net_coinstall::CoInstallManifest,
 ) -> RhoNetLowered {
     let mut rules = Vec::with_capacity(program.rules.len());
     let mut errors = Vec::new();
@@ -750,7 +777,11 @@ pub(crate) fn lower(
         .iter()
         .any(|rule| matches!(rule, RhoNetLoweredRule::SubstRewrite { .. }))
         .then(|| {
-            crate::rho_net_subst_trs::subst_trs_program_par(def, &program.language_fingerprint)
+            crate::rho_net_subst_trs::subst_trs_program_par_with_coinstall_manifest(
+                def,
+                &program.language_fingerprint,
+                coinstall,
+            )
         });
 
     // A-S5.2 (leg v): the in-Rho quiescence-driver lowering — admission is decided (and
@@ -765,6 +796,7 @@ pub(crate) fn lower(
         &errors,
         &rewrite_by_id,
         scion_policy,
+        coinstall,
     );
 
     // A-S5.8: the in-Rho `^float` receiver family — generated + installed iff the language
@@ -780,6 +812,7 @@ pub(crate) fn lower(
             def,
             &program.language_fingerprint,
             subst_trs.is_none(),
+            coinstall,
         )
     });
 

@@ -114,6 +114,9 @@ pub mod pipeline_spans;
 pub mod rho_net;
 pub mod rho_net_automaton;
 pub mod rho_net_cache;
+/// FLT Phase 3: canonical cross-language installation metadata shared by the
+/// generated drive and substitution machines.
+pub mod rho_net_coinstall;
 /// A-S5.2 (leg v): the generated in-Rho self-re-spreading QUIESCENCE DRIVER — the
 /// persistent `^drive` receiver family (PS value carrier), its admission surface
 /// ([`DRIVE_OPT_IN`] / [`DriveAdmission`] / [`drive_admissible`]), the drive-seed
@@ -223,6 +226,7 @@ pub use rho_net_automaton::{
     multi_pattern_receiver_networks_at_rule_roots_par, AutomatonAcceptTarget, AutomatonUnsupported,
 };
 pub use rho_net_cache::{cached_in_rho_artifacts, CompiledInRhoArtifacts};
+pub use rho_net_coinstall::{CoInstallLanguageShape, CoInstallManifest, CoInstallManifestError};
 pub use rho_net_drive::{
     drive_admissible, drive_err_channel, drive_fired_channel, drive_fuel_channel,
     rho_net_drive_call_par, rho_net_drive_call_par_with_fuel, rho_net_drive_float_call_par,

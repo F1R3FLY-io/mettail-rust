@@ -16,6 +16,7 @@ use models::rhoapi::{Par, Send};
 use models::rust::utils::{new_elist_par, new_gbytearray_par, new_send_par};
 use prost::Message;
 
+use crate::rho_net_coinstall::CoInstallLanguageShape;
 use crate::rho_net_flt::bound_var_par;
 use crate::rho_net_lower::{
     ground_marker_tag_par, is_marked_object_label, par_carries_ground_marker, parse_reflected_tag,
@@ -33,6 +34,7 @@ pub struct NativeShiftSpec {
     fingerprint: String,
     object_arities: HashMap<String, usize>,
     hashbag_ops: HashSet<String>,
+    foreign: Vec<CoInstallLanguageShape>,
 }
 
 impl NativeShiftSpec {
@@ -46,6 +48,21 @@ impl NativeShiftSpec {
         )
     }
 
+    /// Derive the native shift domain of a co-installed host.  It is extensionally the
+    /// same domain as the generated `^shift` receiver: host constructors and soups are
+    /// traversed, while every declared foreign tagged root or soup is returned unchanged.
+    pub fn for_language_with_coinstall_manifest(
+        def: &LanguageDef,
+        fingerprint: impl Into<String>,
+        manifest: &crate::rho_net_coinstall::CoInstallManifest,
+    ) -> Result<Self, String> {
+        let fingerprint = fingerprint.into();
+        manifest.validate_host(&fingerprint)?;
+        let mut spec = Self::for_language(def, fingerprint);
+        spec.foreign = manifest.foreign().to_vec();
+        Ok(spec)
+    }
+
     /// Construct an explicit shift domain. This is useful for a minimal binder-only
     /// runtime and keeps tests honest about which reflected constructors are installed.
     pub fn new(
@@ -57,6 +74,7 @@ impl NativeShiftSpec {
             fingerprint: fingerprint.into(),
             object_arities: object_arities.into_iter().collect(),
             hashbag_ops: hashbag_ops.into_iter().collect(),
+            foreign: Vec::new(),
         }
     }
 
@@ -74,6 +92,22 @@ impl NativeShiftSpec {
 
     fn accepts_nil(&self) -> bool {
         !self.hashbag_ops.is_empty()
+            || self
+                .foreign
+                .iter()
+                .any(|shape| !shape.ac_operators.is_empty())
+    }
+
+    fn foreign_object_arity(&self, fingerprint: &str, label: &str) -> Option<usize> {
+        self.foreign
+            .iter()
+            .find(|shape| shape.fingerprint == fingerprint)
+            .and_then(|shape| {
+                shape
+                    .tagged_roots
+                    .iter()
+                    .find_map(|(candidate, arity)| (candidate == label).then_some(*arity))
+            })
     }
 }
 
@@ -278,6 +312,56 @@ fn is_hashbag_soup(par: &Par, spec: &NativeShiftSpec) -> bool {
     })
 }
 
+/// Whether the whole value is a well-formed soup owned by one declared foreign
+/// language.  A foreign soup is opaque under the host shift, matching the generated
+/// receiver's foreign identity arm; its element payloads are deliberately not visited.
+fn is_foreign_hashbag_soup(par: &Par, spec: &NativeShiftSpec) -> bool {
+    if par.sends.is_empty()
+        || !par.receives.is_empty()
+        || !par.news.is_empty()
+        || !par.exprs.is_empty()
+        || !par.matches.is_empty()
+        || !par.unforgeables.is_empty()
+        || !par.bundles.is_empty()
+        || !par.connectives.is_empty()
+        || !par.conditionals.is_empty()
+    {
+        return false;
+    }
+
+    spec.foreign.iter().any(|shape| {
+        let prefix = format!("ac:{}/", shape.fingerprint);
+        par.sends.iter().all(|send| {
+            if send.persistent || send.data.len() != 1 {
+                return false;
+            }
+            let Some(chan) = send.chan.as_ref() else {
+                return false;
+            };
+            if !chan.sends.is_empty()
+                || !chan.receives.is_empty()
+                || !chan.news.is_empty()
+                || !chan.matches.is_empty()
+                || !chan.unforgeables.is_empty()
+                || !chan.bundles.is_empty()
+                || !chan.connectives.is_empty()
+                || !chan.conditionals.is_empty()
+            {
+                return false;
+            }
+            let [expr] = chan.exprs.as_slice() else {
+                return false;
+            };
+            let Some(ExprInstance::GString(name)) = expr.expr_instance.as_ref() else {
+                return false;
+            };
+            name.strip_prefix(&prefix).is_some_and(|op| {
+                !op.is_empty() && shape.ac_operators.iter().any(|candidate| candidate == op)
+            })
+        })
+    })
+}
+
 fn union_locally_free_into(acc: &mut Vec<u8>, next: &[u8]) {
     if acc.len() < next.len() {
         acc.resize(next.len(), 0);
@@ -361,6 +445,10 @@ pub fn shift_reflected_par_by(
                     );
                     continue;
                 }
+                if is_foreign_hashbag_soup(par, spec) {
+                    values.push(par.clone());
+                    continue;
+                }
                 let parts = elist_values(par).ok_or(NativeShiftError::MalformedReflectedValue)?;
                 let (head, _) = parts
                     .split_first()
@@ -376,6 +464,15 @@ pub fn shift_reflected_par_by(
                 let (actual_fingerprint, label) =
                     parse_reflected_tag(&tag).ok_or(NativeShiftError::MalformedReflectedValue)?;
                 if actual_fingerprint != fingerprint {
+                    let child_start = if is_marked_object_label(label) { 2 } else { 1 };
+                    let foreign_arity = parts
+                        .len()
+                        .checked_sub(child_start)
+                        .ok_or(NativeShiftError::MalformedReflectedValue)?;
+                    if spec.foreign_object_arity(actual_fingerprint, label) == Some(foreign_arity) {
+                        values.push(par.clone());
+                        continue;
+                    }
                     return Err(NativeShiftError::FingerprintMismatch);
                 }
                 let child_start = if is_marked_object_label(label) {
@@ -514,6 +611,7 @@ pub fn clear_pending_native_shift_specs() {
 mod tests {
     use super::*;
     use crate::rho_net_lower::{reflect_ground_term_par, GroundTerm, FREE_VAR_REFLECT_LABEL};
+    use models::rust::utils::new_gstring_par;
 
     #[test]
     fn amount_abi_is_fixed_width_and_round_trips() {
@@ -549,6 +647,88 @@ mod tests {
         assert_eq!(
             shift_reflected_par_by(&ground, 1, &fp_b),
             Err(NativeShiftError::FingerprintMismatch)
+        );
+    }
+
+    fn coinstall_spec() -> NativeShiftSpec {
+        NativeShiftSpec {
+            fingerprint: "host".to_string(),
+            object_arities: HashMap::new(),
+            hashbag_ops: HashSet::new(),
+            foreign: vec![CoInstallLanguageShape {
+                fingerprint: "guest".to_string(),
+                tagged_roots: vec![("GuestNode".to_string(), 1)],
+                ac_operators: vec!["GuestBag".to_string()],
+                float_before_drive: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn coinstalled_foreign_roots_and_soups_are_opaque_shift_values() {
+        let spec = coinstall_spec();
+        let foreign_root = reflect_ground_term_par(
+            &GroundTerm::new("GuestNode", vec![GroundTerm::nullary("NestedGuestLeaf")]),
+            "guest",
+        );
+        assert_eq!(
+            shift_reflected_par_by(&foreign_root, 20_000, &spec),
+            Ok(foreign_root.clone()),
+            "the host shift must not traverse a declared foreign tagged root"
+        );
+
+        // The payload is intentionally not a reflected host value.  Foreign soup
+        // opacity is a boundary property, so a host shift validates only the complete
+        // foreign carrier and never inspects or rebuilds its elements.
+        let opaque_payload = new_send_par(
+            new_gstring_par("arbitrary-guest-process".to_string(), Vec::new(), false),
+            vec![Par::default()],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        let foreign_soup = new_send_par(
+            new_gstring_par("ac:guest/GuestBag".to_string(), Vec::new(), false),
+            vec![opaque_payload],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(
+            shift_reflected_par_by(&foreign_soup, 20_000, &spec),
+            Ok(foreign_soup.clone()),
+            "a declared foreign HashBag is returned byte-for-byte"
+        );
+        assert_eq!(
+            shift_reflected_par_by(&Par::default(), 20_000, &spec),
+            Ok(Par::default()),
+            "Nil is the fingerprint-neutral empty soup of the co-installed AC domain"
+        );
+    }
+
+    #[test]
+    fn coinstalled_foreign_shift_domain_is_exact_and_fail_closed() {
+        let spec = coinstall_spec();
+        let wrong_arity = reflect_ground_term_par(
+            &GroundTerm::new("GuestNode", vec![GroundTerm::nullary("a"), GroundTerm::nullary("b")]),
+            "guest",
+        );
+        assert_eq!(
+            shift_reflected_par_by(&wrong_arity, 1, &spec),
+            Err(NativeShiftError::FingerprintMismatch),
+            "a foreign fingerprint is not authority to widen its declared root shape"
+        );
+
+        let unknown_foreign =
+            reflect_ground_term_par(&GroundTerm::nullary("Unknown"), "uninstalled");
+        assert_eq!(
+            shift_reflected_par_by(&unknown_foreign, 1, &spec),
+            Err(NativeShiftError::FingerprintMismatch),
+            "an uninstalled fingerprint remains outside the shift domain"
         );
     }
 }
