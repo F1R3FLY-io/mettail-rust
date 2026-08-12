@@ -45,6 +45,8 @@ examples/src/*_gen.rs
 # Testing
 *.profraw
 *.profdata
+**/__pycache__/
+*.py[cod]
 
 # Profiling output
 prattail/docs/benchmarks/*.txt

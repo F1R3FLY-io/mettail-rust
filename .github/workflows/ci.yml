@@ -22,6 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
+
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mold
@@ -124,13 +128,10 @@ jobs:
       # `languages` already. The two crates added here reach it ZERO times, so they
       # cost this job nothing but their own compile.
       #
-      # ⚠ This step is NOT sibling-free today, and saying otherwise would repeat the
-      # defect this comment exists to avoid. `macros` — listed since the migration —
-      # pulls 6 sibling edges through `rholang-codegen`, and the `cargo check
-      # --workspace --all-features --all-targets` step above needs the sibling for
-      # the whole workspace. Neither is discharged by anything in this job. That is a
-      # real gap, logged and not fixed here; the split below is by MEASURED sibling
-      # distance so it stays correct once the gap is closed.
+      # The pinned sibling checkout above also makes the workspace-wide metadata and
+      # `macros`' six `rholang-codegen` edges reproducible in this job. The split below
+      # remains useful because the heavier sibling-dependent doctests are already paid
+      # for in `rho-backend`.
       #
       # `rholang-{codegen,adapter,runtime}` are covered by `rho-backend`'s plain
       # `cargo test -p …`, which runs doctests. `languages` is NOT covered by that
@@ -156,6 +157,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
 
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
@@ -208,6 +213,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
+
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold clang
 
@@ -241,8 +250,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout f1r3node-rust sibling
-        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
@@ -268,8 +278,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout f1r3node-rust sibling
-        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
       - uses: dtolnay/rust-toolchain@nightly
@@ -291,6 +302,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
       - uses: dtolnay/rust-toolchain@nightly
@@ -308,8 +322,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout f1r3node-rust sibling
-        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
       - uses: dtolnay/rust-toolchain@nightly
@@ -331,8 +346,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout f1r3node-rust sibling
-        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
 
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
@@ -433,6 +449,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/f1r3node-rust
+          ref: 6781d1d671cc0b98b9de946b3871bdbb8e7f1280
           path: f1r3node-rust
 
       - name: Install documentation validation tools
@@ -452,6 +469,10 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout pinned f1r3node-rust sibling
+        shell: bash
+        run: bash scripts/ci/checkout-f1r3node-sibling.sh
 
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
