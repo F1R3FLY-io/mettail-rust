@@ -1,38 +1,18 @@
 //! Main-thread zero-slope gate for the shared production Rholang formula PDA.
 //!
-//! This is a `harness = false` integration test because libtest executes test functions on a
-//! spawned thread. The child mode runs the included production traversal directly on the process
-//! main thread after the parent installs `RLIMIT_STACK` before `exec`.
+//! Libtest may execute this parent on a spawned thread because only the dedicated child probe's
+//! main-thread stack is measured. The parent installs `RLIMIT_STACK` before `exec` and the child
+//! runs the production traversal directly on its process's main thread.
 
-#[path = "support/formula_pda_carrier.rs"]
-mod rholang;
+use std::os::unix::process::CommandExt;
 
-use rholang::{formula, Proc};
-use std::{hint::black_box, os::unix::process::CommandExt, sync::Arc};
-
+const PROBE: &str = env!("CARGO_BIN_EXE_formula_pda_depth_probe");
 const CHILD_DEPTH: &str = "FORMULA_PDA_GATE_DEPTH";
 const RESOLUTION: usize = 4 * 1024;
 const ZERO_SLOPE_TOLERANCE: usize = 4 * RESOLUTION;
 
-fn probe_body(depth: usize) {
-    let mut root = formula::bool_formula(true);
-    for _ in 0..depth {
-        root = Proc::Not(Arc::new(root));
-    }
-
-    black_box(formula::is_statically_false(&root));
-    black_box(formula::is_statically_true(&root));
-    black_box(formula::host_matches_verdict(&Proc::PZero, &root));
-
-    // The minimal carrier deliberately retains derived recursive Drop. Production's generated
-    // AST has an iterative destructor, so forgetting only removes adapter teardown from this
-    // measurement of the shared production traversal.
-    std::mem::forget(root);
-}
-
 fn runs_within(stack: usize, depth: usize) -> bool {
-    let executable = std::env::current_exe().expect("formula PDA gate: current executable");
-    let mut command = std::process::Command::new(executable);
+    let mut command = std::process::Command::new(PROBE);
     command
         .env(CHILD_DEPTH, depth.to_string())
         .env_remove("RUST_MIN_STACK")
@@ -76,7 +56,8 @@ fn minimum_stack(depth: usize) -> usize {
     passing
 }
 
-fn parent_gate() {
+#[test]
+fn formula_pda_main_thread_stack_is_depth_independent() {
     for depth in [4usize, 512, 4096] {
         assert!(
             runs_within(128 * 1024, depth),
@@ -96,16 +77,4 @@ fn parent_gate() {
         "formula PDA main-thread stack: depth 512 = {low} B, depth 4096 = {high} B, growth = \
          {growth} B"
     );
-}
-
-fn main() {
-    match std::env::var(CHILD_DEPTH) {
-        Ok(depth) => probe_body(
-            depth
-                .parse()
-                .expect("formula PDA gate: numeric child depth"),
-        ),
-        Err(std::env::VarError::NotPresent) => parent_gate(),
-        Err(error) => panic!("formula PDA gate: invalid {CHILD_DEPTH}: {error}"),
-    }
 }
