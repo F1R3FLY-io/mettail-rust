@@ -40,4 +40,10 @@ proptest = "1"
 [[test]]
 name = "formula_pda_stack_gate"
 path = "tests/formula_pda_stack_gate.rs"
-harness = false
+
+# The child half of `formula_pda_stack_gate`. The ordinary libtest parent remains discoverable by
+# Cargo and nextest, while this standalone binary executes the measured traversal on its process's
+# main thread after the parent constrains `RLIMIT_STACK` before `exec`.
+[[bin]]
+name = "formula_pda_depth_probe"
+path = "tests/support/formula_pda_depth_probe.rs"
