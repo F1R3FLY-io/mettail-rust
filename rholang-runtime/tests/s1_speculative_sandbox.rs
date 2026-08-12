@@ -53,7 +53,7 @@
 //! | [`t0a_teeth_the_sandbox_stages_and_the_oracle_fires`] | does the sandbox genuinely suppress firing, and does the oracle genuinely observe it? |
 //! | [`t0b_teeth_firing_actually_changes_the_configuration`] | does `fire` do anything? |
 //! | [`t0c_the_post_bootstrap_baseline_is_carried_into_every_state`] | ★ correction 4, measured — and what a hand-built state loses without it |
-//! | [`t0d_snapshot_sees_what_to_map_cannot`] | ★ correction 3, measured on a real sandbox state |
+//! | [`t0d_real_sandbox_exercises_the_exact_state_fields`] | correction 3's exact-state premise, measured on a real sandbox state |
 //! | [`t1_a_trace_following_run_reaches_the_ordinary_configuration`] | ★ THE ACCEPTANCE, over the whole corpus |
 //! | [`t2_index_zero_diverges_from_the_ordinary_choice`] | ★ correction 1, measured over the corpus |
 //! | [`t3_a_peek_is_two_strata`] | ★ correction 2: the datum returns, carrying a DIFFERENT `Produce` source |
@@ -739,14 +739,14 @@ async fn t0c_the_post_bootstrap_baseline_is_carried_into_every_state() {
     );
 }
 
-/// ★ Correction 3, measured on a real speculative configuration: `to_map()` is
-/// not a faithful readback, and a speculative sandbox is *mostly* the shape it
-/// cannot see.
+/// Correction 3's premise, measured on a real speculative configuration: a sandbox carries both
+/// continuation-only rows and independent join indexes, so exact checkpoint comparison requires
+/// [`SpeculativeSandbox::snapshot`]. The repaired `to_map()` covers every row key; X3 separately
+/// proves that its row type still cannot encode the join indexes.
 #[tokio::test]
-async fn t0d_snapshot_sees_what_to_map_cannot() {
+async fn t0d_real_sandbox_exercises_the_exact_state_fields() {
     let sandbox = funded_sandbox().await;
-    // A receiver on a channel that holds NO data, plus a join — the two shapes
-    // `to_map` drops — alongside one channel that does hold data.
+    // A receiver on a channel that holds no data, plus a join and one channel that does hold data.
     sandbox
         .saturate(
             parallel(vec![
@@ -770,18 +770,19 @@ async fn t0d_snapshot_sees_what_to_map_cannot() {
         "snapshot() sees the joins index (one entry per channel per group); saw {program_joins}"
     );
 
-    // The `to_map` view of the same state, computed the way `InMemHotStore`
-    // computes it: iterate DATA and attach continuations.
-    let visible_to_to_map: usize = snapshot
-        .data
-        .keys()
-        .filter_map(|channel| snapshot.continuations.get(&vec![channel.clone()]))
-        .map(|group| group.len())
-        .sum();
-    assert_eq!(
-        visible_to_to_map, 1,
-        "to_map's data-keyed view sees ONLY the continuation whose channel also \
-         holds data — 1 of 3 — and never sees a join at all"
+    assert!(
+        snapshot.continuations.contains_key(&vec![chan("empty")]),
+        "the real sandbox must exercise a continuation-only row"
+    );
+    assert!(
+        snapshot
+            .continuations
+            .contains_key(&vec![chan("ja"), chan("jb")]),
+        "the real sandbox must exercise a multi-channel continuation row"
+    );
+    assert!(
+        snapshot.joins.contains_key(&chan("ja")) && snapshot.joins.contains_key(&chan("jb")),
+        "the exact state must independently carry both join-index entries"
     );
 }
 

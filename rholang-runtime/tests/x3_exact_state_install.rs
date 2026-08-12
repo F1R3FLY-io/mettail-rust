@@ -38,23 +38,18 @@
 //! | ⟶ install | does the state that goes in come back out unchanged? | [`d1_hand_built_state_installs_exactly`] |
 //! | ⟵ erase | does a second install fully erase the first run's effects? | [`d2_reinstall_erases_a_previous_runs_effects`] |
 //!
-//! # ⚠ A finding that changes the design's own test recipe
+//! # The row view is complete but is not an exact-state view
 //!
-//! The design says "read back with `to_map()`". **`to_map()` is not a faithful
-//! readback.** `InMemHotStore::to_map` (`hot_store.rs:653-695`) iterates the
-//! *data* map and joins continuations onto it:
+//! The original implementation of `InMemHotStore::to_map` iterated only the
+//! *data* map and joined continuations onto it, so continuation-only rows vanished. That defect
+//! is repaired: `to_map()` now constructs the union of the data, ordinary-continuation, and
+//! installed-continuation key domains. [`d0_teeth_to_map_covers_rows_but_not_exact_state`] pins
+//! the repaired behavior.
 //!
-//! ```text
-//! for (k, v) in data.into_iter() { … wks: all_continuations.get(&k) … }
-//! ```
-//!
-//! so a waiting continuation on a channel that holds **no data** never appears
-//! in the result, and `joins` never appear at all. A speculative sandbox is
-//! *full* of exactly that shape — a receiver installed and waiting is the
-//! normal quiescent state. [`d0_teeth_to_map_is_not_a_faithful_readback`] pins
-//! this, and the two direction tests use `HotStore::snapshot()` (the exact
-//! `HotStoreState`) as the primary observable, with `to_map()` reported
-//! alongside.
+//! A `HashMap<Vec<C>, Row<…>>` still cannot encode the separate `joins` and `installed_joins`
+//! indexes or distinguish ordinary from installed continuation provenance. Two distinct exact
+//! states can therefore have the same row view. The direction tests consequently continue to use
+//! `HotStore::snapshot()` (the exact `HotStoreState`) as their primary observable.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -169,13 +164,12 @@ fn waiting(
     WaitingContinuation::create(channels, &patterns, &continuation_body(marker), persist, peeks)
 }
 
-/// A state exercising every field of `HotStoreState`, including the two the
-/// design's proposed `to_map()` readback cannot see:
+/// A state exercising every field of `HotStoreState` and both fidelity levels:
 ///
-/// * `data` on a channel that ALSO has a waiting continuation (visible),
-/// * a waiting continuation on a channel with NO data (invisible to `to_map`),
-/// * a JOIN over two channels plus its `joins` index entries (invisible),
-/// * an `installed_continuation` + `installed_joins` (the `install` lane),
+/// * `data` on a channel that also has a waiting continuation,
+/// * a waiting continuation on a channel with no data (present in the repaired row view),
+/// * a join over two channels whose continuation is visible but whose `joins` indexes are not,
+/// * an `installed_continuation` visible in the row view plus an unrepresented `installed_joins`,
 /// * a PEEK continuation (`peeks = {0}`) and a PERSISTENT one.
 fn fixture_state() -> State {
     let mut state = State::default();
@@ -195,7 +189,7 @@ fn fixture_state() -> State {
         vec![waiting(&vec![chan("alpha")], false, BTreeSet::new(), 10)],
     );
 
-    // ── a PEEK continuation on a channel with NO data (to_map-invisible) ──
+    // ── a PEEK continuation on a channel with NO data (a continuation-only row) ──
     let mut peeks = BTreeSet::new();
     peeks.insert(0i32);
     state
@@ -316,7 +310,7 @@ fn describe_state(label: &str, state: &State) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// D0 — TEETH. Both the comparator and the `to_map()` claim.
+// D0 — TEETH. Both the exact-state comparator and the `to_map()` fidelity boundary.
 // ══════════════════════════════════════════════════════════════════════════
 
 /// The comparator must SEE a planted difference. Without this, every "no diff"
@@ -371,10 +365,10 @@ async fn d0_teeth_the_comparator_sees_a_planted_difference() {
     );
 }
 
-/// ⚠ The design's proposed readback, `to_map()`, is NOT faithful. This test
-/// documents exactly what it drops, so the design stops relying on it.
+/// `to_map()` must cover every row key, including continuation-only and installed-continuation
+/// keys, while remaining distinguishable from an exact [`HotStoreState`] snapshot.
 #[tokio::test]
-async fn d0_teeth_to_map_is_not_a_faithful_readback() {
+async fn d0_teeth_to_map_covers_rows_but_not_exact_state() {
     let space = fresh_sandbox().await;
     let planted = fixture_state();
     install(&space, planted.clone()).await;
@@ -388,27 +382,57 @@ async fn d0_teeth_to_map_is_not_a_faithful_readback() {
     describe_state("snapshot()", &read_back);
     println!("  to_map()               {} row(s): {:?}", map.len(), sorted_group_keys(&map));
 
-    // snapshot() sees everything…
+    // The exact snapshot sees every state field.
     assert_eq!(total_continuations(&read_back), 4, "snapshot must see all 4 continuations");
     assert_eq!(read_back.joins.len(), 2, "snapshot must see both join index entries");
 
-    // …to_map() does not. A continuation on a data-less channel is INVISIBLE.
+    // The repaired row view covers the union of data and both continuation key domains.
+    assert_eq!(map.len(), 5, "the row view must contain every distinct row key");
+    let alpha_group = vec![chan("alpha")];
+    let alpha = map.get(&alpha_group).expect("alpha data/continuation row");
+    assert_eq!(alpha.data.len(), 2);
+    assert_eq!(alpha.wks.len(), 1);
+
     let beta_group = vec![chan("beta")];
-    assert!(
-        !map.contains_key(&beta_group),
-        "to_map() unexpectedly surfaced the data-less `@\"beta\"` continuation — if this \
-         assertion starts failing, `to_map` was fixed and the design may use it after all"
-    );
+    let beta = map.get(&beta_group).expect("continuation-only beta row");
+    assert!(beta.data.is_empty());
+    assert_eq!(beta.wks.len(), 1);
+
     let join_group = vec![chan("delta"), chan("epsilon")];
-    assert!(
-        !map.contains_key(&join_group),
-        "to_map() unexpectedly surfaced the data-less join group"
-    );
+    let joined = map
+        .get(&join_group)
+        .expect("multi-channel continuation row");
+    assert!(joined.data.is_empty());
+    assert_eq!(joined.wks.len(), 1);
+
+    let installed_group = vec![chan("zeta")];
+    let installed = map
+        .get(&installed_group)
+        .expect("installed-continuation row");
+    assert!(installed.data.is_empty());
+    assert_eq!(installed.wks.len(), 1);
+
+    // The row representation has no slots for either join index. Prove the information loss
+    // extensionally: erase only those indexes, install that distinct exact state elsewhere, and
+    // observe the same row map.
+    let mut without_join_indexes = planted.clone();
+    without_join_indexes.joins.clear();
+    without_join_indexes.installed_joins.clear();
     assert_eq!(
-        map.len(),
+        diff(&planted, &without_join_indexes).len(),
         2,
-        "to_map() should surface exactly the two channels that hold data: {:?}",
-        sorted_group_keys(&map)
+        "the negative control must differ in exactly the two join-index fields"
+    );
+
+    let without_indexes_space = fresh_sandbox().await;
+    install(&without_indexes_space, without_join_indexes).await;
+    let without_indexes_map: HashMap<
+        Vec<Par>,
+        Row<BindPattern, ListParWithRandom, TaggedContinuation>,
+    > = without_indexes_space.to_map().await;
+    assert_eq!(
+        map, without_indexes_map,
+        "row projection must not be mistaken for an exact-state readback: join indexes are absent"
     );
 }
 

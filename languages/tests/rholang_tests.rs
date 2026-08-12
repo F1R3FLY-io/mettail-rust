@@ -2539,11 +2539,13 @@ mod native_ops {
             assert_reduces_to("1u32 + 2u32", "3u32");
         }
 
-        /// C analogy: `unsigned x = 0; x = x - 1` → `UINT_MAX`. Rust `u32` wraps in release; debug may panic.
-        #[cfg(not(debug_assertions))]
+        /// A `u32` suffix is Rholang's spelling of a `GInt`, not the MeTTaIL-only
+        /// 32-bit carrier produced by `uint(_, 32)`. Subtraction therefore remains signed in
+        /// every build profile; the true `UInt32` underflow case is pinned by the arithmetic
+        /// carrier matrix as an `error`.
         #[test]
-        fn u32_sub_underflow_wraps_to_uint_max_in_release() {
-            assert_reduces_to("0u32 - 1u32", "4294967295u32");
+        fn u32_suffix_subtraction_uses_rholang_gint_semantics() {
+            assert_normal_form_display("0u32 - 1u32", "-1");
         }
 
         #[test]
