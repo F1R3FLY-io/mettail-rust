@@ -1,0 +1,130 @@
+{- ---------------------------------------------------------------------------
+   UnivAlg.module
+
+   The universal-algebra tower, in the syntax frozen by
+   docs/plans/mettail-ddl-and-modules-2026-08-19.md.
+
+   Changes from the previous BNFC-form version of this file:
+
+     * `language!` is gone (D10); every language is a `Theory`.
+     * Term rules are judgement-form, `Label . ctx |- syntax : Cat` (D2),
+       so arguments are named rather than positional.
+     * A `Types` block declares categories; `Exports` is visibility only (G1).
+       `EmptySet` previously declared `Elem` by exporting it, which conflated
+       the two roles.
+     * `Replacements` have lost their `[0, 1]` integer profiles. Argument
+       permutation is now expressed by naming: compare `Mult`'s context
+       `x:Elem, y:Elem` with the replacement's, and read off the mapping.
+     * Equations follow their `Terms` block, because the builder chain is
+       ordered (plan §3.2) and a forward reference is a diagnostic.
+--------------------------------------------------------------------------- -}
+
+Module UnivAlg {
+
+  -- One carrier, no operations. The base of the tower.
+  Theory EmptySet() {
+    Types {
+      Elem;
+    }
+    Exports {
+      Elem;
+    }
+  }
+
+  Theory Monoid(s: EmptySet) {
+    s
+      Terms {
+        One  . |- "1" : Elem;
+        Mult . x:Elem, y:Elem |- "(" x "*" y ")" : Elem;
+      }
+      Equations {
+        (Mult (Mult x y) z) == (Mult x (Mult y z));
+        (Mult x (One)) == x;
+        (Mult (One) x) == x;
+      }
+  }
+
+  -- The same theory written additively. `One` and `Mult` keep their element
+  -- identities through the replacement, which is what lets `Rig` below take a
+  -- join without duplicating the carrier.
+  Theory CommutativeMonoid(m: Monoid) {
+    m
+      Replacements {
+        One  => Zero . |- "0" : Elem;
+        Mult => Plus . x:Elem, y:Elem |- "(" x "+" y ")" : Elem;
+      }
+      Equations {
+        (Plus x y) == (Plus y x);
+      }
+  }
+
+  Theory Group(m: Monoid) {
+    m
+      Terms {
+        Inv . x:Elem |- "inv" "(" x ")" : Elem;
+      }
+      Equations {
+        (Mult x (Inv x)) == (One);
+        (Inv (Inv x)) == x;
+        (Inv (Mult x y)) == (Mult (Inv y) (Inv x));
+      }
+  }
+
+  -- Note the permutation, which the integer profile used to carry:
+  -- `Inv`'s single argument is `x`, and `Neg` names it `x` too, so the
+  -- mapping is the identity. Naming a different variable would permute.
+  Theory AbelianGroup(g: Group, c: CommutativeMonoid) {
+    g
+      Replacements {
+        One  => Zero . |- "0" : Elem;
+        Mult => Plus . x:Elem, y:Elem |- "(" x "+" y ")" : Elem;
+        Inv  => Neg  . x:Elem |- "(" "-" x ")" : Elem;
+      }
+      \/ c
+  }
+
+  Theory Rig(add: CommutativeMonoid, mult: Monoid) {
+    { add \/ mult }
+      Equations {
+        (Mult x (Plus y z)) == (Plus (Mult x y) (Mult x z));
+        (Mult (Plus x y) z) == (Plus (Mult x z) (Mult y z));
+        (Mult x (Zero)) == (Zero);
+        (Mult (Zero) x) == (Zero);
+      }
+  }
+
+  Theory Ring(r: Rig, add: AbelianGroup) {
+    r \/ add
+  }
+
+  -- The instantiation chain, and the point of the whole exercise.
+  --
+  -- A rig has ONE carrier but TWO independent monoid structures on it. So
+  -- `madd` and `mmult` are two separate instantiations of `Monoid`, sharing
+  -- only `s`. The join in `Rig` is then a pushout over `EmptySet`: `Elem` is
+  -- identified, `One`/`Mult` and `Zero`/`Plus` are kept apart.
+  --
+  -- Writing `let m = Monoid(s)` once and passing it as both arguments is the
+  -- natural mistake, and it is rejected: it says the additive and
+  -- multiplicative monoids are the same monoid, so the elaborator reports
+  --   [join-collision] element ... was replaced differently on the two sides
+  --                    (`Zero` versus `One`)
+  -- which is exactly right. Sharing is a claim, and the elaborator holds you
+  -- to it.
+  --
+  -- `g` and `cm` DO share `madd`, on purpose: an abelian group is one
+  -- additive structure viewed two ways, so their join must not duplicate it.
+  Theory FreeRing() {
+    let s = EmptySet() in (
+    let madd = Monoid(s) in (
+    let mmult = Monoid(s) in (
+    let cm = CommutativeMonoid(madd) in (
+    let g = Group(madd) in (
+    let ag = AbelianGroup(g, cm) in (
+    let rg = Rig(cm, mmult) in (
+    Ring(rg, ag)
+    )))))))
+  }
+
+  theory FreeRing()
+}

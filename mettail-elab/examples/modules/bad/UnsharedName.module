@@ -1,0 +1,10 @@
+-- D3: a join of two theories that each invented `Name` independently.
+-- Under the old grammar, where Exports doubled as declaration, this was
+-- silently accepted.
+Module UnsharedName {
+  Theory Base() { Types { Proc; } Exports { Proc; } }
+  Theory Left(b: Base)  { b Types { Name; } Terms { L . n:Name |- "L" n : Proc; } }
+  Theory Right(b: Base) { b Types { Name; } Terms { R . n:Name |- "R" n : Proc; } }
+  Theory Both(l: Left, r: Right) { l \/ r }
+  theory Both(Left(Base()), Right(Base()))
+}

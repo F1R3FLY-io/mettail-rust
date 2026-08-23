@@ -112,6 +112,7 @@ pub mod dispatch_cohort;
 /// ledger row 4-alt.
 pub mod edge_stack_arena;
 pub mod grammar;
+pub mod grammar_core_bridge;
 pub mod hang_dump;
 /// Phase F.13 chain_10000 Plan D E6 (2026-05-26): generic path-tree
 /// interning arena. Both `SppfStackArena` and `EdgeStackArena` are

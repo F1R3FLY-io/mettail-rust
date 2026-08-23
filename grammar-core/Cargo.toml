@@ -1,0 +1,18 @@
+[package]
+name = "mettail-grammar-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Stable semantic grammar IR and verified runtime parser images for MeTTaIL"
+publish = false
+
+[lib]
+name = "mettail_grammar_core"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc"] }
+blake3 = "1"

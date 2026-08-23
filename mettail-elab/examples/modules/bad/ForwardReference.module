@@ -1,0 +1,14 @@
+-- Plan §7, new diagnostic: the builder chain is ordered (§3.2), so an
+-- Equations block may not mention a label a later Terms block introduces.
+Module ForwardReference {
+  Theory F() {
+    Types { T; }
+    Equations {
+      (Foo) == (Foo);
+    }
+    Terms {
+      Foo . |- "Foo" : T;
+    }
+  }
+  theory F()
+}

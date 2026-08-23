@@ -1,0 +1,10 @@
+-- G6: every argument must be referenced exactly once in the concrete syntax.
+Module ArgumentUse {
+  Theory A() {
+    Types { T; }
+    Terms {
+      Dup . x:T, y:T |- "(" x "+" x ")" : T;
+    }
+  }
+  theory A()
+}

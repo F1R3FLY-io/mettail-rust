@@ -1,0 +1,17 @@
+-- Plan §7: a replacement target colliding with an existing label.
+Module ReplacementShadows {
+  Theory One() {
+    Types { T; }
+    Terms {
+      Foo . |- "Foo" : T;
+      Bar . |- "Bar" : T;
+    }
+  }
+  Theory Two(one: One) {
+    one
+      Replacements {
+        Foo => Bar . |- "Oh-no!" : T;
+      }
+  }
+  theory Two(One())
+}

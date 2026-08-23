@@ -90,6 +90,7 @@ railroad-diagrams = []
 smt = ["dep:z3"]
 
 [dependencies]
+mettail-grammar-core = { path = "../grammar-core" }
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
 # to runtime/ to keep parser/predicate helpers on the runtime → prattail edge.
 proc-macro2 = { workspace = true }

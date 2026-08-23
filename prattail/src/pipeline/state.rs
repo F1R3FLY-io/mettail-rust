@@ -183,6 +183,11 @@ pub fn run_pipeline(spec: &LanguageSpec) -> Result<TokenStream, String> {
 pub fn run_pipeline_with_analysis(
     spec: &LanguageSpec,
 ) -> Result<(TokenStream, crate::PipelineAnalysis), String> {
+    // Validate the currently projected common GrammarCore subset while the
+    // typed Rust emitter continues to read `LanguageSpec`. Expanding this
+    // projection to every LanguageSpec field is a parity gate before the core
+    // becomes authoritative for compile-time grammar analysis.
+    let _grammar_core = spec.to_grammar_core()?;
     // Stage tracer gated by the `walker-trace` feature + `PRATTAIL_MACRO_TRACE`;
     // the env read compiles out on the default build (feature off ⇒ `trace` is a
     // constant `false` and every `stage!` body is dead-stripped). See

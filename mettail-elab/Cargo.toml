@@ -1,0 +1,17 @@
+[package]
+name = "mettail-elab"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "MeTTaIL DDL/module parser, canonicalizer, and theory elaborator"
+publish = false
+
+[lib]
+name = "mettail_elab"
+
+[dependencies]
+mettail-grammar-core = { path = "../grammar-core" }
+blake3 = "1"

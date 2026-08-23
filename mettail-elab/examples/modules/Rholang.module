@@ -1,0 +1,130 @@
+{- ---------------------------------------------------------------------------
+   Rholang.module
+
+   The rho calculus built out of the universal-algebra tower, in the syntax
+   frozen by docs/plans/mettail-ddl-and-modules-2026-08-19.md.
+
+   This is the file that motivates the theory algebra: `ParMonoid` is not a
+   new definition of parallel composition, it is `CommutativeMonoid` with its
+   carrier renamed to `Proc` and its operations re-spelled. Everything that
+   was proved about commutative monoids comes with it.
+
+   It exercises all four load-bearing additions of plan §3.4:
+     G1  `Types { Proc; Name; }`
+     G2  `ps:HashBag(Proc)` with the `ps.*sep("|")` rendering
+     G3  `...rest` in the COMM rule
+     G4  `^x.p:[Name -> Proc]` and the two-argument `(subst ^x.p ...)`
+--------------------------------------------------------------------------- -}
+
+import "UnivAlg.module" as u
+
+Module Rholang {
+
+  -- Parallel composition IS commutative-monoid multiplication. The carrier
+  -- is renamed on export, and the two operations are replaced: nullary `Zero`
+  -- becomes `PZero`, and binary `Plus` becomes `PPar` over a bag.
+  --
+  -- G2 is doing real work here. `Plus` is binary; `PPar` takes a HashBag,
+  -- because parallel composition is associative, commutative, and has a unit,
+  -- which is exactly what a bag quotients out. The bag is the monoid's
+  -- equations made structural.
+  Theory ParMonoid(cm: u.CommutativeMonoid) {
+    cm
+      Exports {
+        Elem => Proc;
+      }
+      Replacements {
+        Zero => PZero . |- "0" : Proc;
+        Plus => PPar  . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+      }
+      Rewrites {
+        RPar : if S ~> T then (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+      }
+  }
+
+  -- Reflection: names are quoted processes, processes are dropped names, and
+  -- the two are mutually inverse.
+  Theory QuoteDropCalc(pm: ParMonoid) {
+    pm
+      Types {
+        Name;
+      }
+      Exports {
+        Name;
+      }
+      Terms {
+        PDrop  . n:Name |- "*" "(" n ")" : Proc;
+        NQuote . p:Proc |- "@" "(" p ")" : Name;
+      }
+      Equations {
+        (NQuote (PDrop N)) == N;
+      }
+      Rewrites {
+        RDrop : (PDrop (NQuote P)) ~> P;
+      }
+  }
+
+  -- Communication. The COMM rule is the reason G3 and G4 exist: matching an
+  -- input against an output inside a bag requires binding the unmatched
+  -- remainder and putting it back, and firing the continuation requires
+  -- substituting into an abstraction.
+  Theory RhoCalc(qd: QuoteDropCalc) {
+    qd
+      Terms {
+        POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc;
+        PInput  . n:Name, ^x.p:[Name -> Proc] |- n "?" x "." "{" p "}" : Proc;
+      }
+      Rewrites {
+        RComm : (PPar {(PInput n ^x.p), (POutput n q), ...rest})
+                  ~> (PPar {(subst ^x.p (NQuote q)), ...rest});
+      }
+  }
+
+  -- Restriction and replication.
+  --
+  -- Note the parameter: `QuoteDropCalc`, not `ParMonoid`. `PNew` binds a
+  -- `Name`, so this theory needs `Name` to exist, and reflection is where
+  -- `Name` comes from. Parameterising on `ParMonoid` and declaring a fresh
+  -- `Name` here is the natural-looking alternative, and it is wrong: it
+  -- claims two unrelated categories that happen to share a spelling, and
+  -- the join below rejects it with
+  --   [join-collision] category `Name` was introduced independently on both
+  --                    sides
+  -- Under the old grammar, where `Exports` did double duty as declaration,
+  -- this modelling error was invisible. G1 is what makes it a diagnostic.
+  Theory NewReplCalc(qd: QuoteDropCalc) {
+    qd
+      Terms {
+        PRepl . p:Proc |- "!" p : Proc;
+        PNew  . ^x.p:[Name -> Proc] |- "new" x "in" p : Proc;
+      }
+      Equations {
+        if x # Q then (PPar {(PNew ^x.P), Q}) == (PNew ^x.(PPar {P, Q}));
+        (PRepl P) == (PPar {P, (PRepl P)});
+      }
+      Rewrites {
+        RNew : if S ~> T then (PNew ^x.S) ~> (PNew ^x.T);
+      }
+  }
+
+  -- The join. `nr` and `rc` both descend from the same `QuoteDropCalc`
+  -- instance, so this is a pushout over it: the result has exactly one
+  -- `PPar`, one `Name`, one `PDrop` and one `NQuote` -- not two of each.
+  Theory Rholang(nr: NewReplCalc, rc: RhoCalc) {
+    nr \/ rc
+  }
+
+  Theory FreeRholang() {
+    let s  = u.EmptySet() in (
+    let m  = u.Monoid(s) in (
+    let cm = u.CommutativeMonoid(m) in (
+    let pm = ParMonoid(cm) in (
+    let qd = QuoteDropCalc(pm) in (
+    let nr = NewReplCalc(qd) in (
+    let rc = RhoCalc(qd) in (
+    Rholang(nr, rc)
+    )))))))
+  }
+
+  theory FreeRholang()
+}

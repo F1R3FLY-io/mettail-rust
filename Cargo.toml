@@ -1,5 +1,5 @@
 [workspace]
-members = ["ast", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "dovetail-runtime", "rigail",
+members = ["ast", "grammar-core", "mettail-elab", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "dovetail-runtime", "rigail",
     "rholang-codegen", "rholang-runtime", "rholang-adapter",
 ]
 resolver = "2"

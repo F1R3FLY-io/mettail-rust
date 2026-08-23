@@ -38,6 +38,9 @@ use std::fmt;
 pub mod lex_weight;
 pub use lex_weight::LexicographicWeight;
 
+mod exact_weight;
+pub use exact_weight::ExactLexicographicWeight;
+
 mod traits;
 pub use traits::*;
 

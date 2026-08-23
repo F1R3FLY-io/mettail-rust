@@ -1,0 +1,10 @@
+-- G1: `Types` must declare a category before a term rule mentions it.
+Module UndeclaredCategory {
+  Theory U() {
+    Types { T; }
+    Terms {
+      Mystery . n:Nope |- "?" n : T;
+    }
+  }
+  theory U()
+}

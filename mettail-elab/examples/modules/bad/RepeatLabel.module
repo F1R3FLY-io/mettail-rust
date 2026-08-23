@@ -1,0 +1,11 @@
+-- Plan §7: duplicate label within one theory.
+Module RepeatLabel {
+  Theory R() {
+    Types { T; }
+    Terms {
+      Foo . |- "Foo1" : T;
+      Foo . |- "Foo2" : T;
+    }
+  }
+  theory R()
+}
