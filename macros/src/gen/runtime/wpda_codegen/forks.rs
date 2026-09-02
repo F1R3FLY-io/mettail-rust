@@ -1449,10 +1449,11 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
                 .map(|pk| prefix_primary_has_dispatch_rule(primary_src, &pk))
                 .unwrap_or(false);
             // A contextual keyword deliberately retains its identifier reading.
-            // When both readings have generated prefix branches, keep the lex
-            // fork so the surrounding syntax can select the fixed-token branch
-            // while a bare occurrence can still select the identifier branch.
-            // Reserved keywords keep the normal same-length reservation path.
+            // Keep the lex fork only when it also represents the PRIMARY fixed
+            // reading. Collection literals and other multi-token prefix rules
+            // are owned only by normal PrefixDispatch; when their primary branch
+            // is absent here, falling through is the sole route to the declared
+            // syntax. Reserved keywords retain the normal same-length path.
             let __primary_is_contextual_keyword = #primary_is_contextual_keyword;
             // Phase 5A cast-then-compare d1 (2026-06-10; FV:
             // CastLexForkCrossCatLhsGap — d1_restores_hosting +
@@ -1521,7 +1522,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
                     || (__branches.len() == 1 && __primary_survived)
                     || (__primary_has_dispatch
                         && __all_alts_same_length
-                        && !__primary_is_contextual_keyword)
+                        && (!__primary_is_contextual_keyword || !__primary_survived))
                     || (__primary_has_crosscat_lhs
                         && __all_alts_same_length
                         && !__secondary_survived));
@@ -1543,7 +1544,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
                         || (__branches.len() == 1 && __primary_survived)
                         || (__primary_has_dispatch
                             && __all_alts_same_length
-                            && !__primary_is_contextual_keyword)),
+                            && (!__primary_is_contextual_keyword || !__primary_survived))),
             );
             if !__fall_through {
                 return Some(WpdaStepAction::Fork {
@@ -2000,7 +2001,7 @@ mod tests {
     }
 
     #[test]
-    fn contextual_keyword_keeps_identifier_lex_branch() {
+    fn contextual_keyword_retains_fork_only_when_primary_is_represented() {
         let ts = emit_lex_fork_at_prefix_dispatch(
             0,
             &["Module".to_string(), "Theory".to_string()],
@@ -2012,6 +2013,14 @@ mod tests {
         assert!(
             s.contains("! __primary_is_contextual_keyword"),
             "contextual reservation guard is absent: {s}",
+        );
+        assert!(
+            s.contains("! __primary_survived"),
+            "unrepresented-primary completeness guard is absent: {s}",
+        );
+        assert!(
+            s.contains("(! __primary_is_contextual_keyword || ! __primary_survived)"),
+            "contextual dispatch does not encode the proved C/P disjunction: {s}",
         );
     }
 

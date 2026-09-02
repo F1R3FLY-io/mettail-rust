@@ -368,6 +368,73 @@ Section RejectedLexicalBranchTransparency.
   Qed.
 End RejectedLexicalBranchTransparency.
 
+(** A contextual keyword requires both its fixed-token and identifier readings
+    to remain reachable.  Prefix lexical forks do not encode every kind of
+    fixed-token rule: collection literals and other multi-token prefix rules
+    are owned by normal prefix dispatch.  Therefore contextuality alone may
+    not force a lexical fork.  When the fork has no branch for the primary
+    fixed-token reading, equal-extent resolution must fall through to normal
+    dispatch; when the fork represents that reading, retaining the fork
+    preserves the contextual identifier co-reading. *)
+Section ContextualPrefixDispatchCompleteness.
+  Inductive PrefixDispatchChoice : Type :=
+  | FallThroughToPrimary
+  | RetainLexicalFork.
+
+  Definition choose_prefix_dispatch
+      (is_contextual same_extent normal_has_primary fork_has_primary : bool)
+      : PrefixDispatchChoice :=
+    if andb (andb same_extent normal_has_primary)
+       (orb (negb is_contextual) (negb fork_has_primary))
+    then FallThroughToPrimary
+    else RetainLexicalFork.
+
+  Definition primary_reading_reachable
+      (choice : PrefixDispatchChoice)
+      (normal_has_primary fork_has_primary : bool) : bool :=
+    match choice with
+    | FallThroughToPrimary => normal_has_primary
+    | RetainLexicalFork => fork_has_primary
+    end.
+
+  Theorem contextual_unrepresented_primary_falls_through :
+    choose_prefix_dispatch true true true false = FallThroughToPrimary.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Theorem contextual_represented_primary_retains_fork :
+    choose_prefix_dispatch true true true true = RetainLexicalFork.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Theorem reserved_equal_extent_primary_falls_through :
+    forall fork_has_primary,
+      choose_prefix_dispatch false true true fork_has_primary =
+      FallThroughToPrimary.
+  Proof.
+    intros []; reflexivity.
+  Qed.
+
+  Theorem unequal_extent_retains_lexical_fork :
+    forall is_contextual normal_has_primary fork_has_primary,
+      choose_prefix_dispatch is_contextual false normal_has_primary
+        fork_has_primary = RetainLexicalFork.
+  Proof.
+    intros [] [] []; reflexivity.
+  Qed.
+
+  Theorem equal_extent_normal_primary_is_never_lost :
+    forall is_contextual fork_has_primary,
+      primary_reading_reachable
+        (choose_prefix_dispatch is_contextual true true fork_has_primary)
+        true fork_has_primary = true.
+  Proof.
+    intros [] []; reflexivity.
+  Qed.
+End ContextualPrefixDispatchCompleteness.
+
 Section NonRecursiveControlGraph.
   Inductive DispatchLayer : Type :=
   | StateRouter
@@ -637,6 +704,11 @@ Print Assumptions remainder_tail_step_is_deterministic.
 Print Assumptions rejected_lexical_branch_is_observationally_inert.
 Print Assumptions rejected_branch_private_packings_are_inert.
 Print Assumptions rejected_branch_preserves_result_cardinality.
+Print Assumptions contextual_unrepresented_primary_falls_through.
+Print Assumptions contextual_represented_primary_retains_fork.
+Print Assumptions reserved_equal_extent_primary_falls_through.
+Print Assumptions unequal_extent_retains_lexical_fork.
+Print Assumptions equal_extent_normal_primary_is_never_lost.
 Print Assumptions marked_postfix_preserves_level.
 Print Assumptions unmarked_postfix_opens_next_level.
 Print Assumptions marked_postfix_chain_has_one_level.

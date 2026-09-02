@@ -26,9 +26,12 @@
  *     (= `LexAltRuleKind` Atomic/PrefixOp/CrossCatProjection).
  *   - `has_dispatch k`  : the normal PrefixDispatch has an arm for kind `k`
  *     (= `prefix_primary_has_dispatch_rule`).
+ *   - `is_contextual k` : the token spelling retains an identifier co-reading.
  * `num_branches` mirrors the Rust branch vector (primary if representable, plus
- * each representable secondary); `fall_through_old`/`fall_through_new` mirror the
- * `__fall_through` disjunction before/after the fix.
+ * each representable secondary). `fall_through_old` is the original lex-fork
+ * decision, `fall_through_new` is the pre-contextual Phase 5A repair,
+ * `fall_through_contextual_bug` is the regressed decision, and
+ * `fall_through_refined` is the completeness-preserving contextual decision.
  *
  * Proven (zero-admission):
  *   - fix_preserves_keyword : a primary keyword with a normal dispatch arm and
@@ -65,6 +68,7 @@ Section LexForkKeywordReservation.
   (* Per-language classifiers (abstracted on Section close — not axioms). *)
   Variable representable : nat -> bool.   (* LexAltRuleKind-representable      *)
   Variable has_dispatch  : nat -> bool.   (* prefix_primary_has_dispatch_rule  *)
+  Variable is_contextual : nat -> bool.   (* identifier co-reading retained    *)
 
   (* The lex-fork branch vector: the primary contributes a branch iff its kind is
      representable; each representable secondary contributes one. (Mirrors the
@@ -89,6 +93,26 @@ Section LexForkKeywordReservation.
     fall_through_old primary secs
     || (has_dispatch (akind primary) && all_same_length primary secs).
 
+  (* The regressed contextual rule suppressed normal dispatch solely from the
+     token spelling, even when the lexical fork had no primary branch capable
+     of executing that token's declared fixed syntax. *)
+  Definition fall_through_contextual_bug
+      (primary : Alt) (secs : list Alt) : bool :=
+    fall_through_old primary secs
+    || (has_dispatch (akind primary)
+        && all_same_length primary secs
+        && negb (is_contextual (akind primary))).
+
+  (* A contextual fork is retained only when it actually represents its primary
+     fixed-token reading. Otherwise normal PrefixDispatch is the sole route to
+     that declared syntax and must receive control. *)
+  Definition fall_through_refined (primary : Alt) (secs : list Alt) : bool :=
+    fall_through_old primary secs
+    || (has_dispatch (akind primary)
+        && all_same_length primary secs
+        && (negb (is_contextual (akind primary))
+            || negb (primary_survived primary))).
+
   (* When the lex-fork falls through, the normal `match peek` dispatch runs on the
      PRIMARY token's kind — which (when `has_dispatch` holds) owns the
      collection / keyword-prefix / terminal arm. So "fall through" ≡ "the declared
@@ -108,6 +132,87 @@ Section LexForkKeywordReservation.
     unfold fall_through_new.
     rewrite Hdisp, Hlen. simpl.
     apply orb_true_r.
+  Qed.
+
+  (* A contextual token whose primary kind is absent from the fork must still
+     reach its declared normal-dispatch syntax. This is the generalized Set
+     collection-opener obligation. *)
+  Theorem contextual_unrepresented_primary_is_preserved :
+    forall (primary : Alt) (secs : list Alt),
+      representable (akind primary) = false ->
+      has_dispatch (akind primary) = true ->
+      all_same_length primary secs = true ->
+      fall_through_refined primary secs = true.
+  Proof.
+    intros primary secs Hrepr Hdisp Hlen.
+    unfold fall_through_refined, primary_survived.
+    rewrite Hrepr, Hdisp, Hlen.
+    destruct (is_contextual (akind primary)); simpl; apply orb_true_r.
+  Qed.
+
+  (* If a contextual primary is already represented in the fork, Phase 5A does
+     not erase the fork's identifier alternative. *)
+  Theorem contextual_represented_primary_retains_fork :
+    forall (primary : Alt) (secs : list Alt),
+      fall_through_old primary secs = false ->
+      is_contextual (akind primary) = true ->
+      primary_survived primary = true ->
+      has_dispatch (akind primary) = true ->
+      all_same_length primary secs = true ->
+      fall_through_refined primary secs = false.
+  Proof.
+    intros primary secs Hold Hctx Hprimary Hdisp Hlen.
+    unfold fall_through_refined.
+    rewrite Hold, Hctx, Hprimary, Hdisp, Hlen.
+    reflexivity.
+  Qed.
+
+  (* Outside contextual spellings, the refinement is exactly the pre-regression
+     Phase 5A decision. *)
+  Theorem noncontextual_refinement_is_pre_regression :
+    forall (primary : Alt) (secs : list Alt),
+      is_contextual (akind primary) = false ->
+      fall_through_refined primary secs = fall_through_new primary secs.
+  Proof.
+    intros primary secs Hctx.
+    unfold fall_through_refined, fall_through_new.
+    rewrite Hctx.
+    simpl.
+    rewrite andb_true_r.
+    reflexivity.
+  Qed.
+
+  (* Different lexical extents still require the lexical fork; contextual
+     refinement cannot alter that decision. *)
+  Theorem refined_multilength_guard :
+    forall (primary : Alt) (secs : list Alt),
+      all_same_length primary secs = false ->
+      fall_through_refined primary secs = fall_through_old primary secs.
+  Proof.
+    intros primary secs Hlen.
+    unfold fall_through_refined.
+    rewrite Hlen.
+    repeat rewrite andb_false_r.
+    apply orb_false_r.
+  Qed.
+
+  (* The refined decision never invents a route: success is justified either
+     by the old fork simplification or by an already-generated normal-dispatch
+     primary arm. Thus the repair adds no transition or stack operation. *)
+  Theorem refined_success_uses_existing_route :
+    forall (primary : Alt) (secs : list Alt),
+      fall_through_refined primary secs = true ->
+      fall_through_old primary secs = true \/
+      has_dispatch (akind primary) = true.
+  Proof.
+    intros primary secs H.
+    unfold fall_through_refined in H.
+    apply orb_true_iff in H as [Hold | Hroute].
+    - left. exact Hold.
+    - right.
+      apply andb_true_iff in Hroute as [Hdispatch_length _].
+      apply andb_true_iff in Hdispatch_length as [Hdispatch _].
+      exact Hdispatch.
   Qed.
 
   (* (2) Regression-safety: when SOME alternative differs in length, the new
@@ -178,6 +283,28 @@ Section LexForkKeywordReservation.
            primary_survived, all_same_length.
     cbn [akind alen filter length].
     rewrite Hr0, Hr1, Hd0.
+    cbn.
+    split; reflexivity.
+  Qed.
+
+  (* Concrete regression witness: the contextual guard alone forks the lone
+     identifier branch, whereas the refined law restores the unrepresented
+     fixed Set opener through normal dispatch. *)
+  Theorem contextual_set_regression_and_repair :
+    representable 0 = false ->
+    representable 1 = true ->
+    has_dispatch 0 = true ->
+    is_contextual 0 = true ->
+    fall_through_contextual_bug
+      {| akind := 0; alen := 3 |} [{| akind := 1; alen := 3 |}] = false /\
+    fall_through_refined
+      {| akind := 0; alen := 3 |} [{| akind := 1; alen := 3 |}] = true.
+  Proof.
+    intros Hr0 Hr1 Hd0 Hc0.
+    unfold fall_through_contextual_bug, fall_through_refined,
+           fall_through_old, num_branches, primary_survived, all_same_length.
+    cbn [akind alen filter length].
+    rewrite Hr0, Hr1, Hd0, Hc0.
     cbn.
     split; reflexivity.
   Qed.

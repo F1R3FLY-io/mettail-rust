@@ -754,6 +754,45 @@ fn the_collection_opener_opt_out_preserves_the_literal_but_not_the_identifier() 
     );
 }
 
+/// The contextual-keyword lex fork and normal prefix dispatcher jointly cover
+/// every declared collection opener. In particular, a contextual fixed opener
+/// whose fixed branch is absent from the fork must fall through instead of
+/// electing its lone identifier alternative.
+#[test]
+fn contextual_primary_dispatch_preserves_collection_and_cast_surfaces() {
+    let sources = [
+        "Set()",
+        "Set(1)",
+        "Set(1,2,3)",
+        "@\"OUT\"!(Set(1,2,3))",
+        "new x in { Set(1) }",
+        "[1,2,3]",
+        "{1:2}",
+        "#{1|2}#",
+        "{|1:2|}",
+        "int(1,32)",
+        "uint(1,32)",
+        "float(1,32)",
+        "fixed(1,32)",
+        "bigint(1)",
+        "bigrat(1)",
+        "new ordinary_name in { ordinary_name }",
+    ];
+
+    for source in sources {
+        mettail_runtime::clear_var_cache();
+        assert!(
+            Proc::parse_via_wpda(source).is_ok(),
+            "production WPDA rejected the declared surface `{source}`",
+        );
+        mettail_runtime::clear_var_cache();
+        assert!(
+            Proc::parse(source).is_ok(),
+            "structured parser rejected the declared surface `{source}`",
+        );
+    }
+}
+
 /// ★★ THE UNDER-RESERVED DIRECTION IS A PREMISE INVERSION, AND THIS IS THE PROOF.
 ///
 /// #128 asks whether `bundle` *"needs a grammar rule, or an explanation of why MeTTaIL has no
