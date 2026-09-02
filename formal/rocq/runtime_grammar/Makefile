@@ -14,6 +14,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.TheoremChannel \
 	RuntimeGrammar.WpdaDispatchPartition \
 	RuntimeGrammar.StructuralTemplate \
+	RuntimeGrammar.StructuralConstructMatch \
 	RuntimeGrammar.WireAdmission \
 	RuntimeGrammar.StringLiteralTransducer \
 	RuntimeGrammar.HostCapabilityManifest \

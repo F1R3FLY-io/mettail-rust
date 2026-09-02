@@ -1142,15 +1142,17 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuar
         if let Some(token) = crate::language_install::dynamic_flt_pattern_token(pattern) {
             let runtime = self.language_runtime.as_ref()?;
             let prepared = runtime.resolve_prepared_pattern(token).ok()?;
-            if prepared.pattern().free_count != pattern.free_count {
+            if prepared.capture_count() != usize::try_from(pattern.free_count).ok()?
+                || !prepared.admits_subject(data)
+            {
                 return None;
             }
-            let matched = match self.flt.get(prepared.pattern(), data) {
+            let occurrences = match self.flt.get(prepared.pattern(), data) {
                 FltMatchDecision::Declined => self.spatial.get(prepared.pattern(), data),
                 FltMatchDecision::Miss => None,
                 FltMatchDecision::Match(matched) => Some(matched),
             };
-            return matched.filter(|captures| prepared.admits(captures));
+            return occurrences.and_then(|captures| prepared.project_admitted_captures(captures));
         }
         match self.flt.get(pattern, data) {
             FltMatchDecision::Declined => self.spatial.get(pattern, data),

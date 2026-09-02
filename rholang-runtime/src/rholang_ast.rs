@@ -2226,7 +2226,7 @@ impl<'a> Drive<'a> {
                 selector,
                 &pieces,
                 &holes,
-                Some(template.category),
+                template.category,
                 &fills,
                 reply,
             );
@@ -2942,7 +2942,7 @@ impl<'a> Drive<'a> {
                 selector,
                 &pieces,
                 &holes,
-                Some(template.category),
+                template.category,
                 reply,
             );
             frames.push(PatternPrepFrame {

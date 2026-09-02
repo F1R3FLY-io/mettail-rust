@@ -1032,10 +1032,18 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangA
                 new_boundvar_par(level as i32, create_bit_vector(&[level]), false),
             );
         }
-        let (pieces, holes) = runtime_template_parts(node.as_ref());
+        node.validate()
+            .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
+        let template = node.stage(FltPolarity::PositiveConstruction);
+        let (pieces, holes) = runtime_template_parts(template);
         let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
         let request = crate::language_install::encode_flt_construct_call(
-            selector, &pieces, &holes, None, &fills, reply,
+            selector,
+            &pieces,
+            &holes,
+            template.category,
+            &fills,
+            reply,
         );
         let channel = LANGUAGE_FLT_CONSTRUCT_BAND
             .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);

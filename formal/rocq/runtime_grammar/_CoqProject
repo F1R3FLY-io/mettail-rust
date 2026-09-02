@@ -24,6 +24,7 @@ theories/TheoremChannel.v
 theories/WpdaDispatchPartition.v
 theories/CategoricalPrattFloor.v
 theories/StructuralTemplate.v
+theories/StructuralConstructMatch.v
 theories/WireAdmission.v
 theories/StringLiteralTransducer.v
 theories/HostCapabilityManifest.v

@@ -155,10 +155,7 @@ impl RholangTheoremChannel {
         if pattern.fingerprint_bytes() != self.handle.fingerprint() {
             return Err(RholangTheoremChannelError::ForeignPattern);
         }
-        let root_category = match pattern.root_category() {
-            Some(category) => category,
-            None => self.primary_category()?,
-        };
+        let root_category = pattern.root_category();
         if root_category != self.category {
             return Err(RholangTheoremChannelError::PatternCategoryMismatch);
         }
@@ -166,12 +163,15 @@ impl RholangTheoremChannel {
             pars: vec![message.value().clone()],
             random_state: Vec::new(),
         };
-        let captures = Matcher
+        if !pattern.admits_subject(&datum) {
+            return Err(RholangTheoremChannelError::StructuralAdmissionRejected);
+        }
+        let occurrences = Matcher
             .get(pattern.pattern(), &datum)
             .ok_or(RholangTheoremChannelError::PatternMismatch)?;
-        if !pattern.admits(&captures) {
-            return Err(RholangTheoremChannelError::CaptureAdmissionRejected);
-        }
+        let captures = pattern
+            .project_admitted_captures(occurrences)
+            .ok_or(RholangTheoremChannelError::CaptureAdmissionRejected)?;
         let mut capture_hashes = Vec::with_capacity(captures.pars.len());
         for (capture, category) in captures.pars.iter().zip(pattern.capture_categories()) {
             let hash = pattern
@@ -249,28 +249,6 @@ impl RholangTheoremChannel {
             .ok_or(RholangTheoremChannelError::StructuralAdmissionRejected)?;
         Ok(TermHash(hash))
     }
-
-    fn primary_category(&self) -> Result<CategoryId, RholangTheoremChannelError> {
-        let language = self
-            .runtime
-            .service()
-            .table()
-            .authorize(&self.handle, LanguageRight::Match)
-            .map_err(RholangTheoremChannelError::LanguageAccess)?;
-        let mut primary = language
-            .core()
-            .categories
-            .iter()
-            .filter(|category| category.primary);
-        let category = primary
-            .next()
-            .ok_or(RholangTheoremChannelError::MissingPrimaryCategory)?
-            .id;
-        if primary.next().is_some() {
-            return Err(RholangTheoremChannelError::DuplicatePrimaryCategory);
-        }
-        Ok(category)
-    }
 }
 
 pub struct PreparedRholangProduce {
@@ -325,8 +303,6 @@ pub enum RholangTheoremChannelError {
     NoSpaceRights,
     UnknownCategory(String),
     DuplicateCategory(String),
-    MissingPrimaryCategory,
-    DuplicatePrimaryCategory,
     StructuralAdmissionRejected,
     ForeignPattern,
     PatternCategoryMismatch,
@@ -345,10 +321,6 @@ impl fmt::Display for RholangTheoremChannelError {
             Self::UnknownCategory(name) => write!(formatter, "unknown grammar category `{name}`"),
             Self::DuplicateCategory(name) => {
                 write!(formatter, "grammar contains duplicate category `{name}`")
-            },
-            Self::MissingPrimaryCategory => formatter.write_str("grammar has no primary category"),
-            Self::DuplicatePrimaryCategory => {
-                formatter.write_str("grammar has more than one primary category")
             },
             Self::StructuralAdmissionRejected => {
                 formatter.write_str("value is not structurally admitted by the channel grammar")

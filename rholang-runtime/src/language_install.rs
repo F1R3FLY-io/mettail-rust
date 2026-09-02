@@ -1097,16 +1097,98 @@ struct PreparedPatternEntry {
     pattern_id: [u8; 32],
     handle: InstalledLanguageHandle,
     pattern: BindPattern,
-    root_category: Option<CategoryId>,
+    root_category: CategoryId,
+    capture_plan: PreparedCapturePlan,
     capture_categories: Vec<CategoryId>,
     admission: Arc<DynamicSyntaxAdmission>,
+}
+
+/// Matcher-owned projection from raw hole occurrences to the public capture
+/// telescope. The reflected pattern binds every occurrence independently so
+/// repeated holes can be checked before any capture is published. Public
+/// captures are then projected from first occurrences in declaration order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreparedCapturePlan {
+    occurrence_count: usize,
+    projection: Vec<usize>,
+    repetitions: Vec<(usize, usize)>,
+}
+
+impl PreparedCapturePlan {
+    fn compile(
+        holes: &[NamedRuntimeTemplateHole],
+        hole_bindings: &[(String, i32)],
+        linearity_guards: &[(i32, i32)],
+        free_count: i32,
+    ) -> Option<Self> {
+        let occurrence_count = usize::try_from(free_count).ok()?;
+        if occurrence_count != hole_bindings.len() {
+            return None;
+        }
+
+        let mut first_occurrence = BTreeMap::<&str, usize>::new();
+        let mut projection = Vec::new();
+        let mut repetitions = Vec::new();
+        let mut first_names = Vec::new();
+        for (expected_level, (name, level)) in hole_bindings.iter().enumerate() {
+            if usize::try_from(*level).ok() != Some(expected_level) {
+                return None;
+            }
+            match first_occurrence.get(name.as_str()).copied() {
+                Some(first) => repetitions.push((first, expected_level)),
+                None => {
+                    first_occurrence.insert(name, expected_level);
+                    first_names.push(name.as_str());
+                    projection.push(expected_level);
+                },
+            }
+        }
+        if first_names
+            .into_iter()
+            .ne(holes.iter().map(|hole| hole.name.as_str()))
+        {
+            return None;
+        }
+        let reflected_repetitions = linearity_guards
+            .iter()
+            .map(|(first, repeated)| {
+                Some((usize::try_from(*first).ok()?, usize::try_from(*repeated).ok()?))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if reflected_repetitions != repetitions {
+            return None;
+        }
+        Some(Self {
+            occurrence_count,
+            projection,
+            repetitions,
+        })
+    }
+
+    fn project(&self, matched: ListParWithRandom) -> Option<ListParWithRandom> {
+        if matched.pars.len() != self.occurrence_count {
+            return None;
+        }
+        for &(first, repeated) in &self.repetitions {
+            if matched.pars.get(first)? != matched.pars.get(repeated)? {
+                return None;
+            }
+        }
+        let pars = self
+            .projection
+            .iter()
+            .map(|&occurrence| matched.pars.get(occurrence).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        Some(ListParWithRandom { pars, random_state: matched.random_state })
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct ResolvedPreparedPattern {
     pattern: BindPattern,
     pattern_id: [u8; 32],
-    root_category: Option<CategoryId>,
+    root_category: CategoryId,
+    capture_plan: PreparedCapturePlan,
     capture_categories: Vec<CategoryId>,
     fingerprint: String,
     fingerprint_bytes: [u8; 32],
@@ -1118,8 +1200,12 @@ impl ResolvedPreparedPattern {
         &self.pattern
     }
 
-    pub(crate) fn root_category(&self) -> Option<CategoryId> {
+    pub(crate) fn root_category(&self) -> CategoryId {
         self.root_category
+    }
+
+    pub(crate) fn capture_count(&self) -> usize {
+        self.capture_categories.len()
     }
 
     pub(crate) fn pattern_id(&self) -> [u8; 32] {
@@ -1139,9 +1225,22 @@ impl ResolvedPreparedPattern {
             .admitted_term_hash(value, &self.fingerprint, category)
     }
 
-    pub(crate) fn admits(&self, captures: &ListParWithRandom) -> bool {
+    pub(crate) fn admits_subject(&self, data: &ListParWithRandom) -> bool {
+        let [subject] = data.pars.as_slice() else {
+            return false;
+        };
+        self.admission
+            .admits_category(subject, &self.fingerprint, self.root_category)
+    }
+
+    pub(crate) fn project_admitted_captures(
+        &self,
+        occurrences: ListParWithRandom,
+    ) -> Option<ListParWithRandom> {
+        let captures = self.capture_plan.project(occurrences)?;
         self.admission
             .admits_captures(&captures.pars, &self.fingerprint, &self.capture_categories)
+            .then_some(captures)
     }
 }
 
@@ -1493,7 +1592,7 @@ impl RholangLanguageRuntime {
                 found: holes.len(),
             });
         }
-        let category = resolve_category(core, category)?;
+        let category = resolve_root_category(core, category)?;
         let mut runtime_holes = Vec::with_capacity(holes.len());
         let mut hole_names = BTreeMap::new();
         for (index, hole) in holes.iter().enumerate() {
@@ -1532,7 +1631,7 @@ impl RholangLanguageRuntime {
                 &handle,
                 pieces,
                 &runtime_holes,
-                category,
+                Some(category),
                 LanguageRight::Construct,
                 self.host.as_ref(),
             )
@@ -1617,7 +1716,7 @@ impl RholangLanguageRuntime {
                 found: holes.len(),
             });
         }
-        let category = resolve_category(core, category)?;
+        let category = resolve_root_category(core, category)?;
         let mut runtime_holes = Vec::with_capacity(holes.len());
         let mut hole_names = BTreeMap::new();
         let mut reflection_holes = Vec::with_capacity(holes.len());
@@ -1646,7 +1745,7 @@ impl RholangLanguageRuntime {
                 &handle,
                 pieces,
                 &runtime_holes,
-                category,
+                Some(category),
                 LanguageRight::Match,
                 self.host.as_ref(),
             )
@@ -1673,18 +1772,24 @@ impl RholangLanguageRuntime {
         let fingerprint = grammar_fingerprint_label(handle.fingerprint());
         let admission = self.admission_for(handle.fingerprint(), core)?;
         let FltPatternReflection {
-            pattern, free_count, mut hole_bindings, ..
+            pattern,
+            free_count,
+            mut hole_bindings,
+            linearity_guards,
         } = reflect_flt_pattern(&ground, &reflection_holes, &fingerprint)
             .map_err(LanguageFltConstructionError::Construction)?;
         hole_bindings.sort_by_key(|(_, level)| *level);
-        if free_count != i32::try_from(holes.len()).unwrap_or(i32::MAX)
-            || hole_bindings
-                .iter()
-                .map(|(name, _)| name)
-                .ne(holes.iter().map(|hole| &hole.name))
-        {
-            return Err(LanguageFltConstructionError::PatternTelescopeMismatch);
+        let occurrence_count = usize::try_from(free_count)
+            .map_err(|_| LanguageFltConstructionError::PatternTelescopeMismatch)?;
+        if occurrence_count > capture_limit {
+            return Err(LanguageFltConstructionError::TemplateOccurrenceLimit {
+                limit: capture_limit,
+                found: occurrence_count,
+            });
         }
+        let capture_plan =
+            PreparedCapturePlan::compile(holes, &hole_bindings, &linearity_guards, free_count)
+                .ok_or(LanguageFltConstructionError::PatternTelescopeMismatch)?;
         let pattern = BindPattern {
             patterns: vec![pattern],
             remainder: None,
@@ -1695,10 +1800,10 @@ impl RholangLanguageRuntime {
             handle.fingerprint(),
             pieces,
             holes,
-            category,
+            Some(category),
         );
         let pattern_id =
-            prepared_pattern_semantic_id(handle.fingerprint(), pieces, holes, category);
+            prepared_pattern_semantic_id(handle.fingerprint(), pieces, holes, Some(category));
         let mut state = self
             .capabilities
             .write()
@@ -1717,6 +1822,7 @@ impl RholangLanguageRuntime {
                 handle,
                 pattern,
                 root_category: category,
+                capture_plan,
                 capture_categories,
                 admission,
             },
@@ -1745,6 +1851,7 @@ impl RholangLanguageRuntime {
             pattern: entry.pattern.clone(),
             pattern_id: entry.pattern_id,
             root_category: entry.root_category,
+            capture_plan: entry.capture_plan.clone(),
             capture_categories: entry.capture_categories.clone(),
             fingerprint: grammar_fingerprint_label(entry.fingerprint),
             fingerprint_bytes: entry.fingerprint,
@@ -1795,6 +1902,7 @@ pub struct NamedRuntimeTemplateHole {
 #[derive(Debug)]
 pub enum LanguageFltConstructionError {
     Runtime(LanguageRuntimeError),
+    MissingRootCategory,
     UnknownCategory(String),
     DuplicateCategory(String),
     NonCanonicalHoleId {
@@ -1820,12 +1928,19 @@ pub enum LanguageFltConstructionError {
         limit: usize,
         found: usize,
     },
+    TemplateOccurrenceLimit {
+        limit: usize,
+        found: usize,
+    },
 }
 
 impl fmt::Display for LanguageFltConstructionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Runtime(error) => error.fmt(formatter),
+            Self::MissingRootCategory => {
+                formatter.write_str("an FLT must select an explicit root category")
+            },
             Self::UnknownCategory(name) => write!(formatter, "unknown grammar category `{name}`"),
             Self::DuplicateCategory(name) => {
                 write!(formatter, "grammar contains duplicate category `{name}`")
@@ -1859,6 +1974,10 @@ impl fmt::Display for LanguageFltConstructionError {
                 formatter,
                 "FLT template declares {found} holes, exceeding the host limit {limit}",
             ),
+            Self::TemplateOccurrenceLimit { limit, found } => write!(
+                formatter,
+                "FLT pattern contains {found} hole occurrences, exceeding the host limit {limit}",
+            ),
         }
     }
 }
@@ -1881,6 +2000,14 @@ fn resolve_category(
         return Err(LanguageFltConstructionError::DuplicateCategory(name.into()));
     }
     Ok(Some(category.id))
+}
+
+fn resolve_root_category(
+    core: &mettail_grammar_core::GrammarCoreV1,
+    name: Option<&str>,
+) -> Result<CategoryId, LanguageFltConstructionError> {
+    let name = name.ok_or(LanguageFltConstructionError::MissingRootCategory)?;
+    resolve_category(core, Some(name))?.ok_or(LanguageFltConstructionError::MissingRootCategory)
 }
 
 fn resolve_required_category(
@@ -2327,7 +2454,7 @@ pub fn language_runtime_definitions(runtime: Arc<RholangLanguageRuntime>) -> Vec
 /// Machine boundary for structural construction through an installed language.
 /// The request is one ordinary Rho list datum:
 ///
-/// `[abi, handle, pieces, holes, root-category-or-Nil, fills, reply]`.
+/// `[abi, handle, pieces, holes, root-category, fills, reply]`.
 ///
 /// A malformed request or rejected parse aborts the system-process call. This
 /// endpoint is compiler-internal and its result is substituted directly into a
@@ -2373,7 +2500,7 @@ pub fn language_flt_construct_definition(runtime: Arc<RholangLanguageRuntime>) -
                             &request.handle,
                             &request.pieces,
                             &request.holes,
-                            request.category.as_deref(),
+                            Some(request.category.as_str()),
                             &request.fills,
                         )
                     })
@@ -2445,7 +2572,7 @@ pub fn language_flt_pattern_definition(runtime: Arc<RholangLanguageRuntime>) -> 
                             &request.handle,
                             &request.pieces,
                             &request.holes,
-                            request.category.as_deref(),
+                            Some(request.category.as_str()),
                         )
                     })
                     .await
@@ -2478,7 +2605,7 @@ struct FltConstructCall {
     handle: Par,
     pieces: Vec<RuntimeTemplatePiece>,
     holes: Vec<NamedRuntimeTemplateHole>,
-    category: Option<String>,
+    category: String,
     fills: BTreeMap<String, Par>,
     reply: Par,
 }
@@ -2487,7 +2614,7 @@ struct FltPatternCall {
     handle: Par,
     pieces: Vec<RuntimeTemplatePiece>,
     holes: Vec<NamedRuntimeTemplateHole>,
-    category: Option<String>,
+    category: String,
     reply: Par,
 }
 
@@ -2506,7 +2633,7 @@ pub(crate) fn encode_flt_construct_call(
     handle: Par,
     pieces: &[RuntimeTemplatePiece],
     holes: &[NamedRuntimeTemplateHole],
-    category: Option<&str>,
+    category: &str,
     fills: &BTreeMap<String, Par>,
     reply: Par,
 ) -> Par {
@@ -2548,7 +2675,7 @@ pub(crate) fn encode_flt_construct_call(
         handle,
         pieces,
         holes,
-        optional_string_par(category),
+        new_gstring_par(category.into(), Vec::new(), false),
         fills,
         reply,
     ])
@@ -2558,7 +2685,7 @@ pub(crate) fn encode_flt_pattern_call(
     handle: Par,
     pieces: &[RuntimeTemplatePiece],
     holes: &[NamedRuntimeTemplateHole],
-    category: Option<&str>,
+    category: &str,
     reply: Par,
 ) -> Par {
     let pieces = wire_list(
@@ -2593,7 +2720,7 @@ pub(crate) fn encode_flt_pattern_call(
         handle,
         pieces,
         holes,
-        optional_string_par(category),
+        new_gstring_par(category.into(), Vec::new(), false),
         reply,
     ])
 }
@@ -2720,7 +2847,7 @@ impl fmt::Display for FltConstructWireError {
 
 fn decode_flt_construct_call(datum: &Par) -> Result<FltConstructCall, FltConstructWireError> {
     let fields = exact_list(datum).ok_or(FltConstructWireError::Shape(
-        "expected [abi, handle, pieces, holes, root-category-or-Nil, fills, reply]",
+        "expected [abi, handle, pieces, holes, root-category, fills, reply]",
     ))?;
     let [abi, handle, pieces, holes, category, fills, reply] = fields else {
         return Err(FltConstructWireError::Shape(
@@ -2743,14 +2870,17 @@ fn decode_flt_construct_call(datum: &Par) -> Result<FltConstructCall, FltConstru
         .iter()
         .map(decode_flt_hole)
         .collect::<Result<Vec<_>, _>>()?;
-    let category = exact_optional_string(category)
-        .ok_or(FltConstructWireError::Shape("root category must be a string or Nil"))?;
+    let category = exact_string(category)
+        .ok_or(FltConstructWireError::Shape("root category must be a string"))?;
+    if category.is_empty() {
+        return Err(FltConstructWireError::Shape("root category must not be empty"));
+    }
     let fills = decode_flt_fills(fills)?;
     Ok(FltConstructCall {
         handle: handle.clone(),
         pieces,
         holes,
-        category,
+        category: category.into(),
         fills,
         reply: reply.clone(),
     })
@@ -2758,7 +2888,7 @@ fn decode_flt_construct_call(datum: &Par) -> Result<FltConstructCall, FltConstru
 
 fn decode_flt_pattern_call(datum: &Par) -> Result<FltPatternCall, FltConstructWireError> {
     let fields = exact_list(datum).ok_or(FltConstructWireError::Shape(
-        "expected [abi, handle, pieces, holes, root-category-or-Nil, reply]",
+        "expected [abi, handle, pieces, holes, root-category, reply]",
     ))?;
     let [abi, handle, pieces, holes, category, reply] = fields else {
         return Err(FltConstructWireError::Shape("pattern request list must have arity six"));
@@ -2778,13 +2908,16 @@ fn decode_flt_pattern_call(datum: &Par) -> Result<FltPatternCall, FltConstructWi
         .iter()
         .map(decode_flt_hole)
         .collect::<Result<Vec<_>, _>>()?;
-    let category = exact_optional_string(category)
-        .ok_or(FltConstructWireError::Shape("root category must be a string or Nil"))?;
+    let category = exact_string(category)
+        .ok_or(FltConstructWireError::Shape("root category must be a string"))?;
+    if category.is_empty() {
+        return Err(FltConstructWireError::Shape("root category must not be empty"));
+    }
     Ok(FltPatternCall {
         handle: handle.clone(),
         pieces,
         holes,
-        category,
+        category: category.into(),
         reply: reply.clone(),
     })
 }
@@ -3460,6 +3593,75 @@ mod tests {
         ])
     }
 
+    fn pair_value(name: &str, rights: RhoValue) -> RhoValue {
+        m([
+            ("mettail", s("language/2")),
+            ("name", s(name)),
+            ("rights", rights),
+            ("types", l([s("Expr")])),
+            (
+                "terms",
+                l([
+                    m([
+                        ("label", s("Zero")),
+                        ("category", s("Expr")),
+                        ("syntax", l([l([s("lit"), s("0")])])),
+                    ]),
+                    m([
+                        ("label", s("One")),
+                        ("category", s("Expr")),
+                        ("syntax", l([l([s("lit"), s("1")])])),
+                    ]),
+                    m([
+                        ("label", s("Pair")),
+                        ("category", s("Expr")),
+                        (
+                            "context",
+                            l([
+                                l([s("param"), s("left"), s("Expr")]),
+                                l([s("param"), s("right"), s("Expr")]),
+                            ]),
+                        ),
+                        (
+                            "syntax",
+                            l([
+                                l([s("lit"), s("(")]),
+                                s("left"),
+                                l([s("lit"), s(",")]),
+                                s("right"),
+                                l([s("lit"), s(")")]),
+                            ]),
+                        ),
+                    ]),
+                ]),
+            ),
+        ])
+    }
+
+    fn two_category_value(name: &str, rights: RhoValue) -> RhoValue {
+        m([
+            ("mettail", s("language/2")),
+            ("name", s(name)),
+            ("rights", rights),
+            ("types", l([s("Expr"), s("Other")])),
+            (
+                "terms",
+                l([
+                    m([
+                        ("label", s("ExprZero")),
+                        ("category", s("Expr")),
+                        ("syntax", l([l([s("lit"), s("0")])])),
+                    ]),
+                    m([
+                        ("label", s("OtherZero")),
+                        ("category", s("Other")),
+                        ("syntax", l([l([s("lit"), s("other")])])),
+                    ]),
+                ]),
+            ),
+        ])
+    }
+
     fn registry_module(source: &str) -> RegistryModuleValue {
         let reference = ModuleRef::Registry("rho:test:registry-record".into());
         let resolver =
@@ -4052,6 +4254,30 @@ mod tests {
             exhausted.parse_source(&handle, "0", "Expr"),
             Ok(LanguageParseOutcome::Exhausted(LanguageParseExhaustion::InputBytes))
         ));
+    }
+
+    #[test]
+    fn pattern_preparation_rejects_ambiguous_structural_meanings() {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(ambiguous_value(
+                "Ambiguous",
+                l([s("Parse"), s("Match")]),
+            )))
+            .expect("ambiguous grammar installs");
+        let result = runtime.prepare_pattern(
+            &handle,
+            &[RuntimeTemplatePiece::Text("0".into())],
+            &[],
+            Some("Expr"),
+        );
+        assert!(
+            matches!(result, Err(LanguageFltConstructionError::AmbiguousPattern)),
+            "unexpected pattern-preparation result: {result:?}",
+        );
     }
 
     #[test]
@@ -4747,10 +4973,12 @@ mod tests {
         assert_eq!(resolved.pattern().free_count, 1);
         assert_eq!(resolved.pattern().patterns.len(), 1);
         assert!(
-            !resolved.admits(&ListParWithRandom {
-                pars: vec![new_gint_par(73, Vec::new(), false)],
-                random_state: Vec::new(),
-            }),
+            resolved
+                .project_admitted_captures(ListParWithRandom {
+                    pars: vec![new_gint_par(73, Vec::new(), false)],
+                    random_state: Vec::new(),
+                })
+                .is_none(),
             "a raw Rho integer is not a forged Expr AST capture",
         );
 
@@ -4761,6 +4989,111 @@ mod tests {
             runtime.resolve_prepared_pattern(&prepared),
             Err(LanguageRuntimeError::UnknownHandle)
         ));
+    }
+
+    #[test]
+    fn prepared_capture_plan_enforces_repetitions_before_projecting_the_telescope() {
+        let holes = [
+            NamedRuntimeTemplateHole {
+                id: 0,
+                name: "x".into(),
+                category: Some("Expr".into()),
+            },
+            NamedRuntimeTemplateHole {
+                id: 1,
+                name: "y".into(),
+                category: Some("Expr".into()),
+            },
+        ];
+        let plan = PreparedCapturePlan::compile(
+            &holes,
+            &[("x".into(), 0), ("x".into(), 1), ("y".into(), 2)],
+            &[(0, 1)],
+            3,
+        )
+        .expect("the reflector's dense occurrence plan is admitted");
+        assert_eq!(plan.projection, vec![0, 2]);
+        assert_eq!(plan.repetitions, vec![(0, 1)]);
+
+        let x = new_gint_par(7, Vec::new(), false);
+        let y = new_gint_par(9, Vec::new(), false);
+        let projected = plan
+            .project(ListParWithRandom {
+                pars: vec![x.clone(), x.clone(), y.clone()],
+                random_state: vec![4, 2],
+            })
+            .expect("equal normalized occurrences satisfy the repeated hole");
+        assert_eq!(projected.pars, vec![x.clone(), y]);
+        assert_eq!(projected.random_state, vec![4, 2]);
+        assert!(
+            plan.project(ListParWithRandom {
+                pars: vec![x.clone(), new_gint_par(8, Vec::new(), false), x],
+                random_state: Vec::new(),
+            })
+            .is_none(),
+            "a mismatch must publish no partial telescope",
+        );
+    }
+
+    #[test]
+    fn construction_and_pattern_preparation_require_an_explicit_root_category() {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(tiny_value(
+                "Tiny",
+                l([s("Parse"), s("Construct"), s("Match")]),
+            )))
+            .expect("language installs");
+        assert!(matches!(
+            runtime.construct_template(
+                &handle,
+                &[RuntimeTemplatePiece::Text("0".into())],
+                &[],
+                None,
+                &BTreeMap::new(),
+            ),
+            Err(LanguageFltConstructionError::MissingRootCategory)
+        ));
+        assert!(matches!(
+            runtime.prepare_pattern(&handle, &[RuntimeTemplatePiece::Text("0".into())], &[], None,),
+            Err(LanguageFltConstructionError::MissingRootCategory)
+        ));
+    }
+
+    #[test]
+    fn prepared_pattern_root_admission_rejects_another_category() {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(two_category_value(
+                "TwoCategory",
+                l([s("Parse"), s("Construct"), s("Match")]),
+            )))
+            .expect("two-category language installs");
+        let pattern = runtime
+            .prepare_pattern(&handle, &[RuntimeTemplatePiece::Text("0".into())], &[], Some("Expr"))
+            .expect("Expr pattern prepares");
+        let prepared = runtime
+            .resolve_prepared_pattern(&pattern)
+            .expect("prepared pattern resolves");
+        let other = runtime
+            .construct_template(
+                &handle,
+                &[RuntimeTemplatePiece::Text("other".into())],
+                &[],
+                Some("Other"),
+                &BTreeMap::new(),
+            )
+            .expect("Other term constructs");
+        assert!(!prepared.admits_subject(&ListParWithRandom {
+            pars: vec![other],
+            random_state: Vec::new(),
+        }));
     }
 
     #[test]
@@ -4955,7 +5288,7 @@ mod tests {
                 l([s("Parse"), s("Construct")]),
             )))
             .expect("language installs");
-        let proc = Proc::parse_via_wpda(r#"for(lambda <- @"HANDLE"){ @"OUT"!(lambda`0`) }"#)
+        let proc = Proc::parse_via_wpda(r#"for(lambda <- @"HANDLE"){ @"OUT"!(lambda:Expr`0`) }"#)
             .expect("lexically selected FLT parses");
         let lowered = crate::rholang_ast::lower_rholang_proc(&proc)
             .expect("bound selector stages without a static resolver");
@@ -5020,7 +5353,7 @@ mod tests {
             .expect("zero is reflected through the installed grammar");
         let proc = Proc::parse_via_wpda(
             r#"for(lambda <- @"HANDLE"){
-                 for(@lambda`${x:Expr}` <- @"IN"){ @"OUT"!(x) }
+                 for(@lambda:Expr`${x:Expr}` <- @"IN"){ @"OUT"!(x) }
                }"#,
         )
         .expect("lexically selected FLT receive pattern parses");
@@ -5074,6 +5407,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repeated_flt_hole_matches_once_and_rejects_unequal_occurrences_atomically() {
+        mettail_runtime::clear_var_cache();
+        let service = Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        ));
+        let runtime = Arc::new(RholangLanguageRuntime::new(service));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(pair_value(
+                "Pairs",
+                l([s("Parse"), s("Construct"), s("Match")]),
+            )))
+            .expect("pair language installs");
+        let zero = runtime
+            .construct_template(
+                &handle,
+                &[RuntimeTemplatePiece::Text("0".into())],
+                &[],
+                Some("Expr"),
+                &BTreeMap::new(),
+            )
+            .expect("zero term");
+        let equal_pair = runtime
+            .construct_template(
+                &handle,
+                &[RuntimeTemplatePiece::Text("(0,0)".into())],
+                &[],
+                Some("Expr"),
+                &BTreeMap::new(),
+            )
+            .expect("equal pair");
+        let unequal_pair = runtime
+            .construct_template(
+                &handle,
+                &[RuntimeTemplatePiece::Text("(0,1)".into())],
+                &[],
+                Some("Expr"),
+                &BTreeMap::new(),
+            )
+            .expect("unequal pair");
+        let proc = Proc::parse_via_wpda(
+            r#"for(language <- @"HANDLE"){
+                 for(@language:Expr`(${x:Expr},${x:Expr})` <- @"IN"){
+                   @"OUT"!(x)
+                 }
+               }"#,
+        )
+        .expect("repeated-hole FLT receive parses");
+        let lowered = crate::rholang_ast::lower_rholang_proc(&proc)
+            .expect("the repeated-hole plan stages through the installed matcher");
+
+        let run = |datum: Par| {
+            let runtime = runtime.clone();
+            let program = lowered
+                .clone()
+                .append(new_send_par(
+                    new_gstring_par("HANDLE".into(), Vec::new(), false),
+                    vec![handle.clone()],
+                    false,
+                    Vec::new(),
+                    false,
+                    Vec::new(),
+                    false,
+                ))
+                .append(new_send_par(
+                    new_gstring_par("IN".into(), Vec::new(), false),
+                    vec![datum],
+                    false,
+                    Vec::new(),
+                    false,
+                    Vec::new(),
+                    false,
+                ));
+            async move {
+                crate::run::run_normalized_par_with_language_runtime_and_read_par_channels(
+                    &program,
+                    runtime,
+                    &["OUT", "IN"],
+                )
+                .await
+                .expect("installed repeated-hole matcher executes")
+            }
+        };
+
+        let equal_outputs = run(equal_pair).await;
+        assert_eq!(equal_outputs.get("OUT"), Some(&vec![zero]));
+        assert_eq!(equal_outputs.get("IN"), Some(&Vec::new()));
+
+        let unequal_outputs = run(unequal_pair.clone()).await;
+        assert_eq!(unequal_outputs.get("OUT"), Some(&Vec::new()));
+        assert_eq!(
+            unequal_outputs.get("IN"),
+            Some(&vec![unequal_pair]),
+            "failed equality must leave the datum available and publish no captures",
+        );
+    }
+
+    #[tokio::test]
     async fn joined_dynamic_flt_patterns_preserve_each_preparation_scope() {
         mettail_runtime::clear_var_cache();
         let service = Arc::new(LanguageInstallService::new(
@@ -5098,7 +5529,7 @@ mod tests {
             .expect("zero is reflected through the installed grammar");
         let proc = Proc::parse_via_wpda(
             r#"for(lambda <- @"HANDLE"){
-                 for(@lambda`${x:Expr}` <- @"LEFT" & @lambda`${y:Expr}` <- @"RIGHT"){
+                 for(@lambda:Expr`${x:Expr}` <- @"LEFT" & @lambda:Expr`${y:Expr}` <- @"RIGHT"){
                    @"OUT"!(x, y)
                  }
                }"#,
@@ -5619,5 +6050,42 @@ mod tests {
             ),
             Err(LanguageFltConstructionError::TemplateHoleLimit { limit: 0, found: 1 })
         ));
+    }
+
+    #[test]
+    fn host_capture_budget_counts_repeated_pattern_occurrences() {
+        let mut runtime_policy = RuntimePolicy::default();
+        runtime_policy.max_capture_bindings = 1;
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::new(
+                LanguageRights::all(),
+                runtime_policy,
+                LANGUAGE_CAPABILITY_ABI_V1,
+            ),
+        )));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(pair_value("Pairs", l([s("Parse"), s("Match")]))))
+            .expect("pair grammar installs");
+        let holes = [NamedRuntimeTemplateHole {
+            id: 0,
+            name: "x".into(),
+            category: Some("Expr".into()),
+        }];
+        let pieces = [
+            RuntimeTemplatePiece::Text("(".into()),
+            RuntimeTemplatePiece::Hole(0),
+            RuntimeTemplatePiece::Text(",".into()),
+            RuntimeTemplatePiece::Hole(0),
+            RuntimeTemplatePiece::Text(")".into()),
+        ];
+        let result = runtime.prepare_pattern(&handle, &pieces, &holes, Some("Expr"));
+        assert!(
+            matches!(
+                result,
+                Err(LanguageFltConstructionError::TemplateOccurrenceLimit { limit: 1, found: 2 })
+            ),
+            "unexpected repeated-hole limit result: {result:?}",
+        );
     }
 }
