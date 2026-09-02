@@ -109,6 +109,16 @@ impl LatticeTypeSystem {
         }
     }
 
+    /// Snapshot the exact predicate theory corresponding to this type system.
+    ///
+    /// Refinement predicates must query the same immutable subtype relation as
+    /// base-type checking. This method prevents callers from accidentally
+    /// supplying a bare builder theory whose propagation operation would assert
+    /// the proposition being checked.
+    pub fn frozen_constraint_theory(&self) -> FrozenLatticeTheory {
+        self.theory.freeze(&self.store)
+    }
+
     /// Infer the type of a term, returning None if inference fails.
     fn infer_single(
         &self,

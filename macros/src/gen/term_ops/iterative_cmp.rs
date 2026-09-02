@@ -253,33 +253,7 @@ fn unordered_collection_cmp_machine_expr(
                     .collect()
             },
         ),
-        CollectionType::PathMap => (
-            quote! { #left_expr.mode().cmp(&#right_expr.mode()) },
-            quote! {
-                #left_expr
-                    .iter()
-                    .map(|__entry| match __entry.value() {
-                        Some(__value) => mettail_runtime::CollectionCmpItem::pair(
-                            __entry.key(),
-                            __value,
-                        ),
-                        None => mettail_runtime::CollectionCmpItem::unary(__entry.key()),
-                    })
-                    .collect()
-            },
-            quote! {
-                #right_expr
-                    .iter()
-                    .map(|__entry| match __entry.value() {
-                        Some(__value) => mettail_runtime::CollectionCmpItem::pair(
-                            __entry.key(),
-                            __value,
-                        ),
-                        None => mettail_runtime::CollectionCmpItem::unary(__entry.key()),
-                    })
-                    .collect()
-            },
-        ),
+        CollectionType::PathMap => return pathmap_cmp_machine_expr(left_expr, right_expr),
         CollectionType::Vec => {
             return quote! {
                 compile_error!("unordered collection comparison machine requested for Vec")
@@ -294,6 +268,45 @@ fn unordered_collection_cmp_machine_expr(
             #right_items,
         )
     }
+}
+
+/// Build the canonical comparison PDA for a potentially heterogeneous
+/// `PathMap<K, V>`.  `CollectionCmpRole` keeps key and value requests distinct
+/// until the generated continuation restores their concrete categories.
+fn pathmap_cmp_machine_expr(left_expr: &TokenStream, right_expr: &TokenStream) -> TokenStream {
+    quote! {
+        mettail_runtime::CollectionCmpPda::new(
+            (#left_expr).mode().cmp(&(#right_expr).mode()),
+            (#left_expr)
+                .iter()
+                .map(|__entry| match __entry.value() {
+                    Some(__value) => mettail_runtime::CollectionCmpItem::pair(
+                        __entry.key(),
+                        __value,
+                    ),
+                    None => mettail_runtime::CollectionCmpItem::unary(__entry.key()),
+                })
+                .collect(),
+            (#right_expr)
+                .iter()
+                .map(|__entry| match __entry.value() {
+                    Some(__value) => mettail_runtime::CollectionCmpItem::pair(
+                        __entry.key(),
+                        __value,
+                    ),
+                    None => mettail_runtime::CollectionCmpItem::unary(__entry.key()),
+                })
+                .collect(),
+        )
+    }
+}
+
+fn recursive_native_cmp_resume_name(category: &Ident, label: &Ident) -> Ident {
+    format_ident!(
+        "cmp_resume_native_{}_{}",
+        category.to_string().to_lowercase(),
+        label.to_string().to_lowercase(),
+    )
 }
 
 // =============================================================================
@@ -338,17 +351,6 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
             }
         })
         .collect();
-    let collection_resume_variants: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let variant_name = format_ident!("ResumeCollection{}", t.name);
-            quote! {
-                #variant_name(Box<mettail_runtime::CollectionCmpPda>)
-            }
-        })
-        .collect();
-
     quote! {
         type CollectionCmpResume = fn(
             &mut Vec<CmpTask>,
@@ -365,7 +367,14 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
         #[allow(dead_code)]
         enum CmpTask {
             #(#variants,)*
-            #(#collection_resume_variants,)*
+            /// Resume a suspended collection PDA after its requested typed
+            /// comparison has completed.  Carrying the continuation function
+            /// avoids one generated task variant per category and supports
+            /// heterogeneous key/value carriers without type erasure.
+            ResumeCollection(
+                Box<mettail_runtime::CollectionCmpPda>,
+                CollectionCmpResume,
+            ),
             /// Begin a canonical-order comparison at its exact lexicographic
             /// position. Deferring the first `resume(None)` call is essential:
             /// a mode or multiplicity verdict computed while an arm is being
@@ -474,6 +483,7 @@ fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStr
         },
         VariantKind::Literal { label }
         | VariantKind::CollectionLiteral { label, .. }
+        | VariantKind::RecursiveNativeLiteral { label, .. }
         | VariantKind::Var { label }
         | VariantKind::Collection { label, .. } => {
             quote! { #category::#label(..) }
@@ -515,6 +525,11 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
                 .iter()
                 .map(|v| generate_eq_variant_arm(cat, v, language))
                 .collect();
+            let mismatch_arm = if variants.len() == 1 {
+                TokenStream::new()
+            } else {
+                quote! { _ => { return false; } }
+            };
             quote! {
                 /// Returns `false` on mismatch (caller should propagate),
                 /// `true` if matched so far (caller should continue draining stack).
@@ -525,6 +540,14 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
                     left_ptr: *const #cat,
                     right_ptr: *const #cat,
                 ) -> bool {
+                    // Shared immutable subterms are definitionally equal. This
+                    // check occurs before dereference and before scheduling
+                    // descendants, making the common Arc-shared chain edge
+                    // constant-time without changing the exact fallback for
+                    // separately allocated values.
+                    if std::ptr::eq(left_ptr, right_ptr) {
+                        return true;
+                    }
                     let left = unsafe { &*left_ptr };
                     let right = unsafe { &*right_ptr };
                     if #index_fn(left) != #index_fn(right) {
@@ -532,7 +555,7 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
                     }
                     match (left, right) {
                         #(#variant_arms)*
-                        _ => { return false; }
+                        #mismatch_arm
                     }
                     true
                 }
@@ -556,19 +579,6 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
             }
         })
         .collect();
-    let resume_arms: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let variant = format_ident!("ResumeCollection{}", t.name);
-            quote! {
-                CmpTask::#variant(_) => {
-                    unreachable!("collection ordering continuation reached equality engine");
-                }
-            }
-        })
-        .collect();
-
     quote! {
         /// Decide equality of one unordered collection by driving the same
         /// canonical-order PDA used by `Ord`. The category-specific resume
@@ -630,7 +640,9 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
-                    #(#resume_arms)*
+                    CmpTask::ResumeCollection(_, _) => {
+                        unreachable!("collection ordering continuation reached equality engine");
+                    }
                     CmpTask::StartCollection(_, _) => {
                         unreachable!("collection ordering start reached equality engine");
                     }
@@ -686,6 +698,25 @@ fn generate_eq_variant_arm(
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #stmts
+                }
+            }
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let left_pathmap = carrier.pathmap_ref(&quote! { a });
+            let right_pathmap = carrier.pathmap_ref(&quote! { b });
+            let left_focus = carrier.focus_ref(&quote! { a });
+            let right_focus = carrier.focus_ref(&quote! { b });
+            let machine = pathmap_cmp_machine_expr(&left_pathmap, &right_pathmap);
+            let resume = recursive_native_cmp_resume_name(category, label);
+            quote! {
+                (#category::#label(a), #category::#label(b)) => {
+                    if #left_focus != #right_focus {
+                        return false;
+                    }
+                    if !eq_unordered_collection(#machine, #resume) {
+                        return false;
+                    }
                 }
             }
         },
@@ -964,7 +995,6 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
-            let resume_variant = format_ident!("ResumeCollection{}", cat);
             let resume_fn =
                 format_ident!("cmp_resume_collection_{}", cat.to_string().to_lowercase());
             quote! {
@@ -975,8 +1005,8 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                     result: Option<std::cmp::Ordering>,
                 ) -> Option<std::cmp::Ordering> {
                     match machine.resume(result) {
-                        mettail_runtime::CollectionCmpStep::Compare { left, right } => {
-                            stack.push(CmpTask::#resume_variant(machine));
+                        mettail_runtime::CollectionCmpStep::Compare { left, right, .. } => {
+                            stack.push(CmpTask::ResumeCollection(machine, #resume_fn));
                             stack.push(CmpTask::#cmp_variant(
                                 left.cast::<#cat>(),
                                 right.cast::<#cat>(),
@@ -987,6 +1017,60 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                     }
                 }
             }
+        })
+        .collect();
+
+    let native_collection_resume_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .flat_map(|t| {
+            let category = &t.name;
+            collect_category_variants(category, language)
+                .into_iter()
+                .filter_map(move |variant| match variant {
+                    VariantKind::RecursiveNativeLiteral { label, carrier } => {
+                        let resume_fn = recursive_native_cmp_resume_name(category, &label);
+                        let key_variant = format_ident!("Cmp{}", carrier.key_category());
+                        let value_variant = format_ident!("Cmp{}", carrier.value_category());
+                        Some(quote! {
+                            #[inline]
+                            fn #resume_fn(
+                                stack: &mut Vec<CmpTask>,
+                                mut machine: Box<mettail_runtime::CollectionCmpPda>,
+                                result: Option<std::cmp::Ordering>,
+                            ) -> Option<std::cmp::Ordering> {
+                                match machine.resume(result) {
+                                    mettail_runtime::CollectionCmpStep::Compare {
+                                        role,
+                                        left,
+                                        right,
+                                    } => {
+                                        stack.push(CmpTask::ResumeCollection(machine, #resume_fn));
+                                        match role {
+                                            mettail_runtime::CollectionCmpRole::Primary => {
+                                                stack.push(CmpTask::#key_variant(
+                                                    left.cast(),
+                                                    right.cast(),
+                                                ));
+                                            },
+                                            mettail_runtime::CollectionCmpRole::Secondary => {
+                                                stack.push(CmpTask::#value_variant(
+                                                    left.cast(),
+                                                    right.cast(),
+                                                ));
+                                            },
+                                        }
+                                        None
+                                    },
+                                    mettail_runtime::CollectionCmpStep::Done(ordering) => {
+                                        Some(ordering)
+                                    },
+                                }
+                            }
+                        })
+                    },
+                    _ => None,
+                })
         })
         .collect();
 
@@ -1003,6 +1087,15 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                 .iter()
                 .map(|v| generate_cmp_variant_arm(cat, v, language))
                 .collect();
+            let mismatch_arm = if variants.len() == 1 {
+                TokenStream::new()
+            } else {
+                quote! {
+                    _ => {
+                        return l_idx.cmp(&r_idx);
+                    }
+                }
+            };
             quote! {
                 /// Returns `Ordering::Equal` to keep draining the stack;
                 /// any other ordering means "stop and propagate up".
@@ -1022,9 +1115,7 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                     }
                     match (left, right) {
                         #(#variant_arms)*
-                        _ => {
-                            return l_idx.cmp(&r_idx);
-                        }
+                        #mismatch_arm
                     }
                     std::cmp::Ordering::Equal
                 }
@@ -1052,56 +1143,9 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         })
         .collect();
 
-    let resume_task_arms: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let resume_variant = format_ident!("ResumeCollection{}", t.name);
-            let resume_fn =
-                format_ident!("cmp_resume_collection_{}", t.name.to_string().to_lowercase());
-            quote! {
-                CmpTask::#resume_variant(machine) => {
-                    if let Some(ordering) = #resume_fn(
-                        stack,
-                        machine,
-                        Some(std::cmp::Ordering::Equal),
-                    ) {
-                        if ordering != std::cmp::Ordering::Equal {
-                            if let Some(root_ordering) = cmp_deliver(stack, ordering) {
-                                return root_ordering;
-                            }
-                        }
-                    }
-                }
-            }
-        })
-        .collect();
-
-    let deliver_resume_arms: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let resume_variant = format_ident!("ResumeCollection{}", t.name);
-            let resume_fn =
-                format_ident!("cmp_resume_collection_{}", t.name.to_string().to_lowercase());
-            quote! {
-                CmpTask::#resume_variant(machine) => {
-                    match #resume_fn(stack, machine, Some(ordering)) {
-                        None => return None,
-                        Some(std::cmp::Ordering::Equal) => return None,
-                        Some(next) => {
-                            ordering = next;
-                            resumed = true;
-                            break;
-                        },
-                    }
-                }
-            }
-        })
-        .collect();
-
     quote! {
         #(#collection_resume_fns)*
+        #(#native_collection_resume_fns)*
         #(#helper_fns)*
 
         #[allow(dead_code, unused_variables)]
@@ -1113,7 +1157,17 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                 let mut resumed = false;
                 while let Some(task) = stack.pop() {
                     match task {
-                        #(#deliver_resume_arms)*
+                        CmpTask::ResumeCollection(machine, resume) => {
+                            match resume(stack, machine, Some(ordering)) {
+                                None => return None,
+                                Some(std::cmp::Ordering::Equal) => return None,
+                                Some(next) => {
+                                    ordering = next;
+                                    resumed = true;
+                                    break;
+                                },
+                            }
+                        },
                         _ => {},
                     }
                 }
@@ -1146,7 +1200,19 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                             }
                         }
                     }
-                    #(#resume_task_arms)*
+                    CmpTask::ResumeCollection(machine, resume) => {
+                        if let Some(ordering) = resume(
+                            stack,
+                            machine,
+                            Some(std::cmp::Ordering::Equal),
+                        ) {
+                            if ordering != std::cmp::Ordering::Equal {
+                                if let Some(root_ordering) = cmp_deliver(stack, ordering) {
+                                    return root_ordering;
+                                }
+                            }
+                        }
+                    }
                     // ★ #162 — a precomputed leaf verdict. Because tasks are
                     // pushed in REVERSE position order, popping them yields
                     // strict left-to-right (lexicographic) semantics: the FIRST
@@ -1209,6 +1275,24 @@ fn generate_cmp_variant_arm(
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #pushes
+                }
+            }
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let left_pathmap = carrier.pathmap_ref(&quote! { a });
+            let right_pathmap = carrier.pathmap_ref(&quote! { b });
+            let left_focus = carrier.focus_ref(&quote! { a });
+            let right_focus = carrier.focus_ref(&quote! { b });
+            let machine = pathmap_cmp_machine_expr(&left_pathmap, &right_pathmap);
+            let resume = recursive_native_cmp_resume_name(category, label);
+            quote! {
+                (#category::#label(a), #category::#label(b)) => {
+                    stack.push(CmpTask::Verdict((#left_focus).cmp(#right_focus)));
+                    stack.push(CmpTask::StartCollection(
+                        Box::new(#machine),
+                        #resume,
+                    ));
                 }
             }
         },
@@ -2109,6 +2193,61 @@ mod carrier_cell_census {
                 "{side}: the scope group sits at the wrong index. `eq` emits positions in \
                  field order so the scope is LAST; `cmp` reverse-pushes so the scope — the \
                  last position — is pushed FIRST and therefore pops last."
+            );
+        }
+    }
+
+    fn generated_function_body(tokens: TokenStream, function: &str) -> String {
+        let source = tokens.to_string();
+        let needle = format!("fn {function}");
+        let start = source.find(&needle).expect("generated function must exist");
+        let open = start
+            + source[start..]
+                .find('{')
+                .expect("generated function must have a body");
+        let mut depth = 0usize;
+        for (offset, ch) in source[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return source[open..=open + offset].to_owned();
+                    }
+                },
+                _ => {},
+            }
+        }
+        panic!("generated function body must be balanced");
+    }
+
+    #[test]
+    fn equality_helper_checks_pointer_identity_before_dereference() {
+        let language = crate::gen::singleton_collection_language_for_tests();
+        let helper = generated_function_body(generate_eq_engine(&language), "eq_handle_meta");
+        let pointer_check = helper
+            .find("std :: ptr :: eq (left_ptr , right_ptr)")
+            .expect("equality helper must test shared allocation identity");
+        let first_dereference = helper
+            .find("unsafe { & * left_ptr }")
+            .expect("equality helper must eventually dereference distinct values");
+        assert!(
+            pointer_check < first_dereference,
+            "pointer identity must return before dereference or descendant scheduling: {helper}",
+        );
+    }
+
+    #[test]
+    fn exhaustive_match_codegen_omits_singleton_comparison_fallbacks() {
+        let language = crate::gen::singleton_collection_language_for_tests();
+        for (engine, function) in [
+            (generate_eq_engine(&language), "eq_handle_meta"),
+            (generate_cmp_engine(&language), "cmp_handle_meta"),
+        ] {
+            let singleton = generated_function_body(engine, function);
+            assert!(
+                !singleton.contains("_ =>"),
+                "single-constructor comparison must not retain an unreachable fallback"
             );
         }
     }

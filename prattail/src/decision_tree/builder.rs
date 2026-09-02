@@ -205,8 +205,8 @@ impl DecisionTreeBuilder {
             if self.dead_rules.contains(&rule.label) {
                 continue;
             }
-            // Skip collections and unary prefix (handled separately)
-            if rule.is_collection || rule.prefix_bp.is_some() {
+            // Skip dedicated collection literals and unary prefix rules.
+            if rule.is_pure_collection_literal() || rule.prefix_bp.is_some() {
                 continue;
             }
             // Skip rules starting with nonterminal or ident capture — and (L9-3
@@ -366,7 +366,8 @@ impl DecisionTreeBuilder {
             if self.dead_rules.contains(&rule.label) {
                 continue;
             }
-            if rule.is_collection || rule.prefix_bp.is_some() || rule.items.len() < 2 {
+            if rule.is_pure_collection_literal() || rule.prefix_bp.is_some() || rule.items.len() < 2
+            {
                 continue;
             }
 

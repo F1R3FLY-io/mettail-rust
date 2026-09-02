@@ -54,6 +54,10 @@ use crate::gss::GssNodeId;
 /// `CollectionLoop` arm built). Each consumer now reads the field it needs:
 ///
 /// - `close` / `sep` — always present for a collection slot.
+/// - `min_elements` — the lower cardinality bound of the repetition.  The
+///   generated `.*sep(..)` and declared collection literals use zero; carrying
+///   the bound in the descriptor keeps the empty-entry decision structural
+///   rather than inferred from delimiters.
 /// - `kv_sep` — `Some(..)` iff the slot is a key/value map (`HashMap` /
 ///   `PathMap`), else `None`.
 /// - `element_src_idx` — the element category's `src_idx`, `Some(..)` iff it
@@ -81,6 +85,8 @@ pub struct CollectionSpec {
     pub close: &'static str,
     /// Element/pair separator literal.
     pub sep: &'static str,
+    /// Minimum number of elements admitted by this collection occurrence.
+    pub min_elements: u8,
     /// Key/value separator for kv-maps (`Some(":")`), else `None`.
     pub kv_sep: Option<&'static str>,
     /// Whether the per-entry value is OPTIONAL for this kv-collection
@@ -260,15 +266,14 @@ pub struct StackSymbolV2 {
     pub bp: Option<u8>,
     /// What this symbol represents.
     pub kind: SymbolKind,
-    /// Collection-primary dispatch binding power: `Some(cur_bp)` for a
-    /// `CollectionMarker` (the Pratt `cur_bp` at which the open delimiter was
-    /// dispatched as a primary); `None` for every other symbol kind, so it
-    /// never alters their `Eq`/`Hash`/`Ord` identity. On collection close the
-    /// engine resumes `InfixLoop { cur_bp }` from this value so a finalized
-    /// collection joins the enclosing Pratt loop exactly as an atomic primary
-    /// does (mirrors `GroupingMarker`'s `bp`-as-outer_bp, on a distinct slot
-    /// because `bp` already carries the collection's static slot_idx).
-    pub coll_dispatch_bp: Option<u8>,
+    /// Result-category continuation floor for a closed primary whose ordinary
+    /// `bp` slot already carries local control data. `CollectionMarker` uses
+    /// `bp` for its static slot and `MixfixMarker` uses it for the completed
+    /// operand count, so both preserve the caller's Pratt floor here. `None`
+    /// for every other symbol kind keeps unrelated symbol identity unchanged.
+    /// This field participates in `Eq`/`Hash`/`Ord`, preventing GSS nodes with
+    /// incompatible result continuations from merging.
+    pub continuation_bp: Option<u8>,
     /// Cross-cat operand/element GOAL category: `Some(g)` for a STRICT
     /// `category_entry_goal(g)` symbol — the source category index that the
     /// sub-parse rooted at this `CategoryEntry` must ultimately yield. `None`
@@ -296,7 +301,7 @@ impl StackSymbolV2 {
             rule_index_in_category: 0,
             bp: None,
             kind: SymbolKind::CategoryEntry,
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: None,
         }
     }
@@ -316,7 +321,7 @@ impl StackSymbolV2 {
             rule_index_in_category: 0,
             bp: None,
             kind: SymbolKind::CategoryEntry,
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: Some(category_src_idx),
         }
     }
@@ -333,7 +338,7 @@ impl StackSymbolV2 {
             rule_index_in_category,
             bp,
             kind: SymbolKind::RuleAt(position),
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: None,
         }
     }
@@ -345,7 +350,7 @@ impl StackSymbolV2 {
             rule_index_in_category,
             bp: Some(bp),
             kind: SymbolKind::InfixContinuation,
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: None,
         }
     }
@@ -355,7 +360,7 @@ impl StackSymbolV2 {
     /// the walker when this marker is pushed, not stored on the symbol.
     /// `dispatch_bp` is the enclosing Pratt
     /// `cur_bp` at which the collection's open delimiter was dispatched as a
-    /// primary; it is preserved in `coll_dispatch_bp` so the collection close
+    /// primary; it is preserved in `continuation_bp` so the collection close
     /// resumes `InfixLoop { cur_bp: dispatch_bp }` (a finalized collection
     /// participates in the enclosing Pratt loop just like an atomic primary).
     pub fn collection_marker(
@@ -369,7 +374,7 @@ impl StackSymbolV2 {
             rule_index_in_category: rule_idx,
             bp: Some(slot_idx),
             kind: SymbolKind::CollectionMarker,
-            coll_dispatch_bp: Some(dispatch_bp),
+            continuation_bp: Some(dispatch_bp),
             goal_src_idx: None,
         }
     }
@@ -384,7 +389,7 @@ impl StackSymbolV2 {
             rule_index_in_category: 0,
             bp: Some(outer_bp),
             kind: SymbolKind::GroupingMarker,
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: None,
         }
     }
@@ -396,13 +401,18 @@ impl StackSymbolV2 {
     /// Replace, and pushes the next operand's CategoryEntry. When `bp`
     /// equals `parts.len`, the marker is ConsumeAndPop'd (firing the
     /// mixfix rule's action with arity = 1 + parts.len).
-    pub fn mixfix_marker(result_src_idx: u16, rule_idx: u16, operands_completed: u8) -> Self {
+    pub fn mixfix_marker(
+        result_src_idx: u16,
+        rule_idx: u16,
+        operands_completed: u8,
+        continuation_bp: u8,
+    ) -> Self {
         StackSymbolV2 {
             category_src_idx: result_src_idx,
             rule_index_in_category: rule_idx,
             bp: Some(operands_completed),
             kind: SymbolKind::MixfixMarker,
-            coll_dispatch_bp: None,
+            continuation_bp: Some(continuation_bp),
             goal_src_idx: None,
         }
     }
@@ -417,7 +427,7 @@ impl StackSymbolV2 {
             rule_index_in_category: marker_id as u16,
             bp: Some(outer_bp),
             kind: SymbolKind::OptionalGroupAt,
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: None,
         }
     }
@@ -432,7 +442,7 @@ impl StackSymbolV2 {
             rule_index_in_category: marker_id as u16,
             bp: Some(outer_bp),
             kind: SymbolKind::BinderListLoopAt,
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: None,
         }
     }
@@ -452,7 +462,7 @@ impl StackSymbolV2 {
             rule_index_in_category,
             bp: None,
             kind: SymbolKind::Return,
-            coll_dispatch_bp: None,
+            continuation_bp: None,
             goal_src_idx: None,
         }
     }
@@ -496,7 +506,7 @@ impl fmt::Display for StackSymbolV2 {
                 self.category_src_idx,
                 self.rule_index_in_category,
                 bp_suffix,
-                match self.coll_dispatch_bp {
+                match self.continuation_bp {
                     Some(d) => format!("@d{}", d),
                     None => String::new(),
                 }
@@ -506,8 +516,14 @@ impl fmt::Display for StackSymbolV2 {
             },
             SymbolKind::MixfixMarker => write!(
                 f,
-                "⟨cat#{}.rule#{}.mixfix⟩{}",
-                self.category_src_idx, self.rule_index_in_category, bp_suffix
+                "⟨cat#{}.rule#{}.mixfix⟩{}{}",
+                self.category_src_idx,
+                self.rule_index_in_category,
+                bp_suffix,
+                match self.continuation_bp {
+                    Some(d) => format!("@d{}", d),
+                    None => String::new(),
+                }
             ),
             SymbolKind::OptionalGroupAt => write!(
                 f,
@@ -698,11 +714,16 @@ pub enum WpdaState {
         /// Index into the literal vector being walked.
         sub_pos: u8,
     },
-    /// Phase 5: mid-binder-rule. The engine progresses through the rule's
-    /// `syntax_pattern` items (literals, binder ident slot, body parse)
-    /// using `StackSymbolV2::rule_at(.., position, ..)` on the GSS top to
-    /// track which item we're at. After the body returns to Unwinding,
-    /// the rule's action fires (constructing `Scope::new(Binder, body)`).
+    /// Phase 5: selected binder-rule control state.  With a
+    /// `CategoryEntry` on the GSS top it is the cross-category trigger
+    /// prelude: the generated engine validates and consumes the rule's
+    /// declared leading literal, then pushes `RuleAt(1)`.  With a
+    /// `RuleAt(position)` on top it progresses through the remaining
+    /// `syntax_pattern` items (literals, binder ident slot, body parse).
+    /// After the body returns to Unwinding, the rule's action fires
+    /// (constructing `Scope::new(Binder, body)`).  Keeping both phases in one
+    /// control state avoids duplicating the rule identity in an extra state;
+    /// the pushdown symbol makes the phases disjoint.
     BinderRule {
         /// Result category index (where the constructed term lives).
         result_src_idx: u16,
@@ -938,6 +959,15 @@ pub enum WpdaResolveResult<W: SemiringRef> {
     /// Driver hit `max_steps` budget before reaching EOI. Caller may
     /// resume by extending the budget.
     MaxStepsExceeded { position: usize },
+    /// SPPF realization failed before any term was published.
+    ///
+    /// In particular, semantic-key cache exhaustion is distinct from invalid
+    /// syntax and from ambiguity exhaustion. The realization boundary
+    /// discards every candidate accumulated by the failed call.
+    RealizationFailed {
+        error: mettail_semantic_key::ContentKeyCacheError,
+        position: usize,
+    },
     /// The walker was configured with a cursor-count bound and the live
     /// frontier exceeded that bound during a `step_fanout` iteration.
     ///
@@ -1247,6 +1277,65 @@ pub trait WpdaTokenSource {
     }
 }
 
+/// One lexer-lattice edge that satisfies a grammar token-family capture.
+///
+/// A capture such as `name@Ident` is evidence about a token *family*, not
+/// permission to collapse the lattice to its primary edge.  Contextual
+/// keywords therefore need to retain their secondary `Ident` edge when the
+/// enclosing grammar asks for an identifier.  The edge index is preserved so
+/// generated engines can attach the same deterministic lexical weight used by
+/// ordinary lex-fork branches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenCaptureEdge {
+    pub alt_idx: u16,
+    pub kind: TokenKind,
+    pub text: String,
+    pub next_pos: usize,
+}
+
+/// Return every distinct outgoing edge at `pos` belonging to `kind_name`.
+///
+/// The result is primary-first and then lexer order.  Duplicate DFA accepts
+/// with the same kind, text, and target are collapsed to the lowest
+/// alternative index; they are the same lexical proof and must not multiply
+/// parser branches.
+pub fn matching_token_capture_edges(
+    tokens: &dyn WpdaTokenSource,
+    pos: usize,
+    kind_name: &str,
+) -> Vec<TokenCaptureEdge> {
+    let mut edges = Vec::new();
+    let mut push_distinct = |alt_idx: usize, kind: TokenKind, text: String, next_pos: usize| {
+        if !crate::automata::token_kind_matches_capture_name(kind_name, &kind) {
+            return;
+        }
+        if edges.iter().any(|edge: &TokenCaptureEdge| {
+            edge.kind == kind && edge.text == text && edge.next_pos == next_pos
+        }) {
+            return;
+        }
+        let Ok(alt_idx) = u16::try_from(alt_idx) else {
+            return;
+        };
+        edges.push(TokenCaptureEdge { alt_idx, kind, text, next_pos });
+    };
+
+    if let (Some(kind), Some(next_pos)) = (tokens.peek_kind(pos), tokens.next_pos(pos, 0)) {
+        push_distinct(0, kind, tokens.peek_text(pos).unwrap_or("").to_string(), next_pos);
+    }
+    for (secondary_idx, alternative) in tokens.peek_alternatives(pos).iter().enumerate() {
+        if let Some(next_pos) = tokens.next_pos(pos, secondary_idx + 1) {
+            push_distinct(
+                secondary_idx + 1,
+                alternative.kind.clone(),
+                alternative.text.clone(),
+                next_pos,
+            );
+        }
+    }
+    edges
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // M6c.6.4 (2026-05-14): LexAltRuleInfo + LexForkSite
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1270,6 +1359,11 @@ pub trait WpdaTokenSource {
 /// - `PrefixOp { body_src_idx }`: literal-leading binder trigger via
 ///   `LexAltPrefixOp` + plain `rule_at(slot=1)` +
 ///   `BinderRule { body_src_idx, outer_bp }`.
+/// - `LeadingCategory { source_src_idx }`: nonterminal-leading composite via
+///   ordinary `ReplaceAndPush`: replace the requested category entry with the
+///   outer rule's `rule_at(slot=1)`, push the source category entry, and let
+///   that source consume the still-current token lattice. Same-category Pratt
+///   led rules are excluded and appear only in the infix table.
 /// - `CrossCatProjection { source_src_idx }`: transparent wrapper via
 ///   `rule_at(slot=0).with_kind_return()` + `CrossCatDelegate`.
 /// - `CrossCatLhs { source_src_idx }`: source-category LHS delegation via
@@ -1307,6 +1401,22 @@ pub enum LexAltRuleKind {
     /// `FloatBin . a:Proc, w:Int |- "float" "(" a "," w ")" : Float`).
     /// `body_src_idx` is the initial parsed parameter/body category.
     PrefixOp { body_src_idx: u16 },
+    /// Literal-triggered unary rule whose operand belongs to a different
+    /// category from the result. Unlike a transparent projection, this rule
+    /// consumes the trigger before delegating to `source_src_idx` at
+    /// `operand_bp`. Keeping this shape in the lexical-alternative table is
+    /// necessary when the trigger also has another reading, such as an
+    /// identifier: the WPDA must retain both readings until syntax supplies
+    /// enough evidence to choose one.
+    CrossCatPrefixUnary { source_src_idx: u16, operand_bp: u8 },
+    /// Composite rule whose first syntax item is a category-valued parameter.
+    /// This is ordinary child descent, not a transparent projection: after the
+    /// child returns, the rule resumes at syntax position 1 and eventually
+    /// fires its own constructor action.
+    ///
+    /// Same-category Pratt led rules are deliberately absent: they belong to
+    /// led dispatch, where both left and right powers are enforced.
+    LeadingCategory { source_src_idx: u16 },
     /// Transparent cross-category projection (e.g.,
     /// `ProcFloat . a:Float |- a : Proc`) whose source category can consume
     /// the matched token kind.
@@ -1338,7 +1448,7 @@ pub enum LexAltRuleKind {
     /// `Fixed(trigger)` lattice reading binds here so it is NOT dropped in
     /// favour of the `Ident → Var` reading. The walker apply (modelled on
     /// `LexAltPrefixOp`) mirrors the trigger as a `TriggerTerminal`, pushes
-    /// `mixfix_marker(cat, rule_idx, 0)`, and transitions to
+    /// `mixfix_marker(cat, rule_idx, 0, continuation_bp)`, and transitions to
     /// `MixfixLiteralRun { kind: 2, parts_len == 0 }` — the SAME runtime arm
     /// the singleton/unified-Fork prefix dispatch uses for non-lattice
     /// triggers. `rule_idx` is carried by the enclosing `LexAltRuleInfo`.
@@ -1356,10 +1466,11 @@ pub enum LexAltRuleKind {
     LeadingGuestBody {
         body_src_idx: u16,
         open_kind: &'static str,
+        nested_open_kinds: &'static [&'static str],
         close_kind: &'static str,
     },
-    /// L9-3 — a LEADING `b@Tok` custom-kind capture whose token kind
-    /// (`Custom(kind_name)`) is the PrefixDispatch trigger. The lattice-safe
+    /// L9-3 — a LEADING `b@Tok` builtin/custom token-family capture whose
+    /// matching runtime token kind is the PrefixDispatch trigger. The lattice-safe
     /// twin of the legacy `UnifiedDescriptor::LeadingTokenKindCapture` peek-arm
     /// (see `LeadingGuestBody` for why registration here is required). The
     /// walker apply emits: push `RuleAt(1)`, enter `BinderRule`, carry
@@ -2772,15 +2883,18 @@ mod action_arg_lifecycle;
 /// a diagnostic instead of whatever generic error the dying frontier last
 /// produced.
 ///
-/// The `kv` flag on [`FlatDisposition::ArityUncovered`] records which arity law
-/// was applied, because the two laws differ:
+/// The `kv` flag on [`FlatDisposition::ArityUncovered`] records which item law
+/// was applied. The separator policy comes from the collection specification:
 ///
 /// ```text
-/// non-kv:  items == seps + 1                (a sequence: n elements, n−1 separators)
-/// kv:      items even  ∧  items == 2·(seps+1)   (pairs: 2p items, p−1 pair separators —
-///                                                the `:` is a plain consume and folds
-///                                                NO separator marker)
+/// explicit separator, non-kv: items == seps + 1
+/// explicit separator, kv:     items even ∧ items == 2·(seps + 1)
+/// epsilon separator, non-kv:  seps == 0
+/// epsilon separator, kv:      seps == 0 ∧ items even
 /// ```
+///
+/// A key/value separator such as `:` is not an entry separator and therefore
+/// never contributes a separator witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlatDisposition {
     /// The flat is a well-formed reading of this collection slot.
@@ -2817,6 +2931,34 @@ impl FlatDisposition {
     #[inline]
     pub fn is_accepted(&self) -> bool {
         matches!(self, FlatDisposition::Accepted)
+    }
+}
+
+/// Decide whether a flattened collection has a complete item/separator shape.
+///
+/// Concrete entry separators are represented by one witness between adjacent
+/// entries. An epsilon entry separator consumes no token and emits no witness,
+/// so its proof obligation is instead that no separator witness exists. A
+/// key/value collection additionally requires an even item count because each
+/// logical entry contains exactly one key and one value.
+pub(crate) fn collection_arity_is_covered(
+    items: usize,
+    separator_witnesses: usize,
+    is_kv: bool,
+    separator_is_epsilon: bool,
+) -> bool {
+    if separator_is_epsilon {
+        separator_witnesses == 0 && (!is_kv || items.is_multiple_of(2))
+    } else if items == 0 && separator_witnesses == 0 {
+        true
+    } else if is_kv {
+        items.is_multiple_of(2)
+            && separator_witnesses
+                .checked_add(1)
+                .and_then(|entries| entries.checked_mul(2))
+                == Some(items)
+    } else {
+        separator_witnesses.checked_add(1) == Some(items)
     }
 }
 
@@ -2874,10 +3016,19 @@ pub fn reset_coll_action_downcast_abandon() {
 pub struct GuestBodyData {
     /// The opener's tag (`lam` from `` lam` `` / `lam{` / ``` lam``` ```).
     pub tag: String,
+    /// The exact opener token text. This is retained independently from `tag`
+    /// so generalized, structurally delimited host forms can preserve their
+    /// complete header without reconstructing it from semantic fields.
+    pub open_src: String,
     /// The verbatim guest-body source `source_slice(open.end, close.start)`.
     pub body_src: String,
     /// The `${…}` holes, in source order, offset into `body_src`.
     pub holes: Vec<GuestBodyHole>,
+    /// Ordered guest-text and hole terminals. This, not `body_src`, is the
+    /// parser input for structural FLTs.
+    pub pieces: Vec<GuestBodyPiece>,
+    /// The exact closer token text.
+    pub close_src: String,
     /// The opener's start position in the original source.
     pub position: usize,
 }
@@ -2885,10 +3036,16 @@ pub struct GuestBodyData {
 /// L9-4: one `${name}` / `${name:Cat}` hole (see [`GuestBodyData`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuestBodyHole {
+    pub id: u32,
     pub name: String,
     pub category: Option<String>,
-    /// Byte offset into `GuestBodyData::body_src` (`hole.start - open.end`).
     pub offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuestBodyPiece {
+    Text(String),
+    Hole(u32),
 }
 
 impl fmt::Debug for ActionArg {
@@ -3763,54 +3920,15 @@ impl Default for SemanticBuilder {
     }
 }
 
-// C11.3 (2026-05-16): the M7b `DerivationSnapshot` newtype (an
-// Arc<SemanticBuilder> wrapper that fed the M11 multiset semiring) was
-// deleted alongside the C10 W revert. With W = LexicographicWeight,
-// builder snapshots are no longer carried in weight entries; the SPPF
-// arena's Symbol-dedup at `(nt, lo, hi)` is the structural ambiguity
-// substrate.
-
-// ══════════════════════════════════════════════════════════════════════════════
-// M11.3 (2026-05-14): codegen weight-construction helpers
-// ══════════════════════════════════════════════════════════════════════════════
-//
-// The codegen lifts walker `W` from `LexicographicWeight` to
-// `DerivationWeight<LexicographicWeight, DerivationSnapshot>` (M11.4). Every
-// `LexicographicWeight::from_cost(...)` emit site in the codegen wraps the
-// resulting weight in a singleton `DerivationWeight` carrying the unit
-// derivation snapshot (the walker's Fork-arm sites inject the parent's
-// real snapshot via `with_snapshot` at apply time — see M11.5).
-//
-// These helpers live in `wpda_runtime` (not `automata::derivation_weight`)
-// because they specialize on `DerivationSnapshot` — keeping the algebra
-// crate (`automata::derivation_weight`) `DerivationSnapshot`-agnostic.
-
-/// Construct a `DerivationWeight` carrying a single `LexicographicWeight`
-/// with `lex_alt_idx = 0` (the default — no lex ambiguity at this site).
-///
-/// The derivation component is `DerivationSnapshot::unit()` — codegen has
-/// no cursor scope. Walker Fork-arm sites inject the parent's real
-/// snapshot via `with_snapshot` before merging into the child cursor's
-/// accumulated weight.
 #[inline]
 pub fn lex_w(
     cost: f64,
     src_idx: u16,
     rule_idx: u16,
 ) -> crate::automata::lex_weight::LexicographicWeight {
-    // Phase 3.1.7 (C10, 2026-05-15): per Option C plan §8 C10 the walker
-    // `W` reverts from `DerivationWeight<LexicographicWeight,
-    // DerivationSnapshot>` (M11 multiset semiring) to plain
-    // `LexicographicWeight`. The SPPF arena carries derivation ambiguity
-    // (Tomita 1986 §6.3 / Scott-Johnstone 2010 §3 — packed parse forest
-    // is a *set* of derivations with structural dedup); `W` carries only
-    // path-cost tiebreak. Eliminates M11's O(merges²) multiset blow-up.
     crate::automata::lex_weight::LexicographicWeight::from_cost(cost, src_idx, rule_idx)
 }
 
-/// Construct a `LexicographicWeight` with explicit `lex_alt_idx`. Used
-/// by lex-Fork emission paths where a lex DAG position has multiple
-/// `TokenKind` alternatives.
 #[inline]
 pub fn lex_w_alt(
     cost: f64,
@@ -3826,13 +3944,6 @@ pub fn lex_w_alt(
     )
 }
 
-/// GEN-2 longest-open-token (2026-06-29): construct a `LexicographicWeight`
-/// carrying the byte length of the OPEN token a prefix lex-fork branch matched.
-/// A LONGER open wins over a shorter one (maximal munch), above the BP-tier
-/// biases in `cost`. Used by the prefix lex-fork emission (`emit_lex_fork_at_
-/// prefix_dispatch`) so e.g. the Pathmap `{|` (len 2) branch beats the PPar `{`
-/// (len 1) branch for the empty-collection ambiguity `{||}`. With `open_len`
-/// equal across branches the comparison falls through to `cost` unchanged.
 #[inline]
 pub fn lex_w_with_len(
     open_len: u16,
@@ -3844,10 +3955,6 @@ pub fn lex_w_with_len(
         .with_open_len(open_len)
 }
 
-/// GEN-2 longest-open-token (2026-06-29): the `lex_w_alt` counterpart that also
-/// carries the matched open-token byte length. Used by secondary lex-fork
-/// branches (which need an explicit `lex_alt_idx`) so they participate in the
-/// longest-open ordering identically to the primary branch.
 #[inline]
 pub fn lex_w_alt_with_len(
     open_len: u16,
@@ -3865,22 +3972,11 @@ pub fn lex_w_alt_with_len(
     .with_open_len(open_len)
 }
 
-/// Construct the multiplicative identity `LexicographicWeight::one()`.
-///
-/// Imported via `use mettail_prattail::wpda_runtime::lex_one;` in the
-/// emitted step() body.
 #[inline]
 pub fn lex_one() -> crate::automata::lex_weight::LexicographicWeight {
     use crate::automata::semiring::Semiring;
     crate::automata::lex_weight::LexicographicWeight::one()
 }
-
-// C11.3+C11.2 (2026-05-16): the M11.4 `From<LexicographicWeight> for
-// DerivationWeight<...>` impl + M11.5 `SnapshotWeight` trait + 3 impls
-// were deleted alongside the C10 W revert. Structural ambiguity now
-// lives in the SPPF arena (Symbol-dedup at `(nt, lo, hi)`); the walker
-// no longer needs to lift LexicographicWeight into a multiset semiring,
-// nor inject builder snapshots into weight entries.
 
 impl fmt::Debug for SemanticBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -3900,6 +3996,36 @@ mod tests {
     use super::*;
     use crate::automata::semiring::{Semiring, TropicalWeight};
     use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
+
+    #[test]
+    fn explicit_separator_collection_arity_requires_one_witness_between_entries() {
+        assert!(collection_arity_is_covered(0, 0, false, false));
+        assert!(collection_arity_is_covered(1, 0, false, false));
+        assert!(collection_arity_is_covered(3, 2, false, false));
+        assert!(!collection_arity_is_covered(2, 0, false, false));
+
+        assert!(collection_arity_is_covered(0, 0, true, false));
+        assert!(collection_arity_is_covered(2, 0, true, false));
+        assert!(collection_arity_is_covered(6, 2, true, false));
+        assert!(!collection_arity_is_covered(3, 0, true, false));
+        assert!(!collection_arity_is_covered(4, 0, true, false));
+    }
+
+    #[test]
+    fn epsilon_separator_collection_arity_uses_no_separator_witnesses() {
+        for items in 0..=8 {
+            assert!(collection_arity_is_covered(items, 0, false, true));
+            assert_eq!(collection_arity_is_covered(items, 0, true, true), items % 2 == 0,);
+        }
+        assert!(!collection_arity_is_covered(2, 1, false, true));
+        assert!(!collection_arity_is_covered(2, 1, true, true));
+    }
+
+    #[test]
+    fn collection_arity_rejects_overflowed_witness_counts() {
+        assert!(!collection_arity_is_covered(1, usize::MAX, false, false));
+        assert!(!collection_arity_is_covered(2, usize::MAX, true, false));
+    }
 
     fn ascii_alt(text: &str, end: usize, weight: f64) -> LexAlternative {
         LexAlternative {
@@ -4010,7 +4136,7 @@ mod tests {
     fn stack_symbol_v2_size_is_compact() {
         // Compact representation is load-bearing for hot-path use.
         // The str-cast collection-infix fix (2026-06-18) added the
-        // `coll_dispatch_bp: Option<u8>` carrier (the Pratt dispatch bp at which
+        // `continuation_bp: Option<u8>` carrier (the Pratt dispatch bp at which
         // a finalized Class-5 collection resumes InfixLoop), taking the struct
         // from 8 to 10 bytes.
         //
@@ -4019,7 +4145,7 @@ mod tests {
         // niche (all u16 bit patterns are valid), so it occupies 4 bytes
         // (1 discriminant byte + 1 pad + 2 payload, struct align 2), taking the
         // struct from 10 to 14 bytes. The growth is the deliberate cost of
-        // threading the goal onto the GSS symbol (mirrors the `coll_dispatch_bp`
+        // threading the goal onto the GSS symbol (mirrors the `continuation_bp`
         // precedent); it is `None` for every non-strict symbol so GSS identity
         // is preserved. Assert it does not regress beyond 14 bytes.
         // (Actual size depends on enum layout; assert it stays small.)

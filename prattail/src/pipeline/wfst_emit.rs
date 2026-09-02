@@ -98,6 +98,7 @@ pub(crate) fn generate_lexer_code_with_map(
 pub(crate) fn emit_prediction_wfst_static(
     buf: &mut String,
     prediction_wfsts: &std::collections::HashMap<String, crate::wfst::PredictionWfst>,
+    exported_categories: Option<&[String]>,
 ) {
     use std::fmt::Write;
 
@@ -115,6 +116,11 @@ pub(crate) fn emit_prediction_wfst_static(
         prediction_wfsts.iter().collect();
     sorted_wfsts.sort_by(|a, b| a.0.cmp(b.0));
     for (category, wfst) in sorted_wfsts {
+        if exported_categories
+            .is_some_and(|exports| !exports.iter().any(|export| export == category))
+        {
+            continue;
+        }
         if wfst.num_actions() == 0 {
             continue;
         }

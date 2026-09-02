@@ -121,9 +121,10 @@ pub(crate) enum GeneratorGap {
     /// `Display` is not re-parseable. `strategies.rs:331`. ★ PORTED, not deleted — see the module
     /// header's falsifier.
     InternalSurface,
-    /// A GUEST-BODY field (`*flt(…)` → `Arc<FltNode>`) has no tape construction and no reliably
-    /// re-parseable `Display`. `strategies.rs:490`.
-    GuestBodyLeaf,
+    /// A typed delimited-region field (`*flt(…)` → `Arc<FltNode>`) has no tape
+    /// construction and no generic reliably re-parseable `Display`.
+    /// `strategies.rs:490`.
+    DelimitedRegionLeaf,
     /// A `v@Tok` token-kind capture beside a category child: the text must satisfy a DECLARED
     /// kind's lexer pattern that this builder has no handle on. `strategies.rs:507`.
     DeclaredTokenKindCapture,
@@ -158,6 +159,13 @@ pub(crate) enum GeneratorGap {
     /// A TOP-LEVEL (mandatory) `?guard:Guard` slot requires generating a predicate, which the
     /// term_gen pipeline does not do. `random.rs:470`, `exhaustive.rs:769`.
     MandatoryGuardSlot,
+    /// Closed data categories are parsed and traversed structurally but are not
+    /// roots of the generic object-term generator.
+    ClosedDataCategory,
+    /// An object constructor contains a closed data field. Dedicated
+    /// grammar-specific tests construct these values; the generic object-term
+    /// generator must not synthesize a partial constructor.
+    ClosedDataField,
 }
 
 impl GeneratorGap {
@@ -165,7 +173,7 @@ impl GeneratorGap {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::InternalSurface => "InternalSurface",
-            Self::GuestBodyLeaf => "GuestBodyLeaf",
+            Self::DelimitedRegionLeaf => "DelimitedRegionLeaf",
             Self::DeclaredTokenKindCapture => "DeclaredTokenKindCapture",
             Self::NoRecursiveField => "NoRecursiveField",
             Self::RuntimeOnlyNativeField => "RuntimeOnlyNativeField",
@@ -177,6 +185,8 @@ impl GeneratorGap {
             Self::OptionalCollectionArity => "OptionalCollectionArity",
             Self::MultiBinderWithCollection => "MultiBinderWithCollection",
             Self::MandatoryGuardSlot => "MandatoryGuardSlot",
+            Self::ClosedDataCategory => "ClosedDataCategory",
+            Self::ClosedDataField => "ClosedDataField",
         }
     }
 }
@@ -235,7 +245,7 @@ pub(crate) fn generatability(
             let variant = crate::gen::term_ops::subst::rule_to_variant_kind(rule, language);
             refuse(unit_variant_gap(&variant, language))
         },
-        Generator::RandomTerm | Generator::ExhaustiveTerm => refuse(term_rule_gap(rule)),
+        Generator::RandomTerm | Generator::ExhaustiveTerm => refuse(term_rule_gap(rule, language)),
     }
 }
 
@@ -268,7 +278,7 @@ pub(crate) fn tape_rule_gap(rule: &GrammarRule) -> Option<GeneratorGap> {
     internal.then_some(GeneratorGap::InternalSurface)
 }
 
-fn is_guest_body(field: &FieldInfo) -> bool {
+fn is_delimited_region(field: &FieldInfo) -> bool {
     field.opaque_leaf == Some(OpaqueLeafKind::GuestBody)
 }
 
@@ -295,13 +305,14 @@ pub(crate) fn tape_variant_gap(
         VariantKind::Regular { label, fields } => {
             let has_recursive_field = fields.iter().any(|f| known(&f.category));
             let ident_params = ident_param_count_for(category, &label.to_string(), language);
+            let token_text_fields = fields.iter().filter(|field| is_token_text(field)).count();
 
-            // :490 — a guest body has no tape construction and no re-parseable Display.
-            if fields.iter().any(is_guest_body) {
-                return Some(GeneratorGap::GuestBodyLeaf);
+            // :490 — a delimited source region has no generic tape construction.
+            if fields.iter().any(is_delimited_region) {
+                return Some(GeneratorGap::DelimitedRegionLeaf);
             }
             // :507 — a `v@Tok` capture beside a category child.
-            if has_recursive_field && fields.iter().any(is_token_text) && ident_params == 0 {
+            if has_recursive_field && token_text_fields > ident_params {
                 return Some(GeneratorGap::DeclaredTokenKindCapture);
             }
             // ★ NOT A SKIP — the all-token-text LEAF is BUILDABLE, and must be answered before
@@ -342,6 +353,7 @@ pub(crate) fn tape_variant_gap(
         VariantKind::Nullary { .. }
         | VariantKind::Literal { .. }
         | VariantKind::CollectionLiteral { .. }
+        | VariantKind::RecursiveNativeLiteral { .. }
         | VariantKind::Var { .. }
         | VariantKind::Refused { .. } => None,
     }
@@ -392,6 +404,7 @@ pub(crate) fn unit_variant_gap(
         VariantKind::Nullary { .. }
         | VariantKind::Literal { .. }
         | VariantKind::CollectionLiteral { .. }
+        | VariantKind::RecursiveNativeLiteral { .. }
         | VariantKind::Var { .. }
         | VariantKind::Refused { .. } => None,
     }
@@ -480,7 +493,56 @@ pub(crate) fn term_guard_slot_gap(rule: &GrammarRule) -> Option<GeneratorGap> {
 /// `exhaustive.rs` applies the guard gate earlier and has no counterpart to `:418`; the two are
 /// nevertheless MEASURED co-extensional on the corpus (see [`Generator`]), and the census's
 /// matrix is what would report a divergence.
-pub(crate) fn term_rule_gap(rule: &GrammarRule) -> Option<GeneratorGap> {
+pub(crate) fn term_rule_gap(rule: &GrammarRule, language: &LanguageDef) -> Option<GeneratorGap> {
+    let is_data = |category: &syn::Ident| {
+        language
+            .types
+            .iter()
+            .any(|definition| definition.name == *category && definition.is_data())
+    };
+    if is_data(&rule.category) {
+        return Some(GeneratorGap::ClosedDataCategory);
+    }
+
+    let variant = crate::gen::term_ops::subst::rule_to_variant_kind(rule, language);
+    let has_data_field = match &variant {
+        VariantKind::Regular { fields, .. } => fields.iter().any(|field| is_data(&field.category)),
+        VariantKind::Binder { pre_scope_fields, body_cat, .. }
+        | VariantKind::MultiBinder { pre_scope_fields, body_cat, .. } => {
+            pre_scope_fields
+                .iter()
+                .any(|field| is_data(&field.category))
+                || is_data(body_cat)
+        },
+        VariantKind::Collection { element_cat, .. }
+        | VariantKind::CollectionLiteral { element_cat, .. } => is_data(element_cat),
+        VariantKind::RecursiveNativeLiteral { carrier, .. } => {
+            is_data(carrier.key_category()) || is_data(carrier.value_category())
+        },
+        VariantKind::Nullary { .. }
+        | VariantKind::Literal { .. }
+        | VariantKind::Var { .. }
+        | VariantKind::Refused { .. } => false,
+    };
+    if has_data_field {
+        return Some(GeneratorGap::ClosedDataField);
+    }
+
+    // The specialized capture-only generator samples the exact declared
+    // token DFA. An interleaved declared-token capture needs the complete
+    // field-schema generator; until that path exists, refuse the whole rule
+    // rather than omit the String field from its constructor.
+    if let VariantKind::Regular { fields, .. } = &variant {
+        let declared_token_fields = fields
+            .iter()
+            .filter(|field| is_token_text(field))
+            .count()
+            .saturating_sub(crate::gen::term_gen::ident_param_count(rule));
+        if declared_token_fields > 0 && fields.len() > declared_token_fields {
+            return Some(GeneratorGap::DeclaredTokenKindCapture);
+        }
+    }
+
     if let Some(gap) = term_multi_binder_gap(rule) {
         return Some(gap);
     }
@@ -754,6 +816,14 @@ mod tests {
         // B∩C rule, while the three prior rules remain unchanged. This is therefore a legitimate
         // corpus-domain addition, not a generator/classifier regression or a silently narrowed
         // walk. The measurement moves by exactly one in B, C, and B∩C and nowhere else.
+        //
+        // ★ 2026-08-26 STRUCTURAL DDL REBASE.
+        // The rejected two-rule opaque DDL capture was removed. Rholang's Greg/Mike DDL is now
+        // represented by ordinary structural categories and rules, so those rules participate in
+        // every generator classifier on their actual field shapes. The report above is the
+        // evidence: A moves 16 → 47, B 38 → 81, C 32 → 73, A∩B 12 → 43,
+        // A∩C 0 → 11, and B∩C 4 → 21. Its intersection listings name the contributing
+        // `Rholang::Ddl*` rules individually; no DDL-specific classifier or exemption remains.
         let pair = |a: Generator, b: Generator| {
             refused_by(&rows, a)
                 .intersection(&refused_by(&rows, b))
@@ -768,7 +838,7 @@ mod tests {
                 pair(Generator::TapeBuilder, Generator::RandomTerm),
                 pair(Generator::UnitTest, Generator::RandomTerm),
             ),
-            (14, 36, 32, 10, 0, 4),
+            (47, 81, 73, 43, 11, 21),
             "the ledger moved. These are MEASUREMENTS, not budgets: re-derive what changed and \
              why before touching this tuple, exactly as #150's own transcribed \
              `A∩B=3, A∩C=0, B∩C=2` had to be re-derived.{report}"

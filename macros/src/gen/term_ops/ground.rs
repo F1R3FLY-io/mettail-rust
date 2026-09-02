@@ -338,6 +338,25 @@ fn generate_ground_arm(
             }
         },
 
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let pushes = carrier.for_each_borrowed_subterm(
+                &quote! { native },
+                crate::gen::native_carrier::NativeCarrierWalkOrder::Forward,
+                &|child_category, child| {
+                    let task = format_ident!("Ground{}", child_category);
+                    quote! {
+                        stack.push(GroundTask::#task(#child as *const _));
+                    }
+                },
+            );
+            quote! {
+                #category::#label(native) => {
+                    #pushes
+                    true
+                },
+            }
+        },
+
         VariantKind::Regular { label, fields } => {
             generate_regular_ground_arm(category, label, fields, language)
         },

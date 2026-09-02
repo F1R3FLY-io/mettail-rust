@@ -11,6 +11,7 @@ name = "mettail_dovetail_runtime"
 
 [dependencies]
 dovetail = { path = "../dovetail" }
+mettail-grammar-core = { path = "../grammar-core" }
 mettail-runtime = { package = "runtime", path = "../runtime" }
 
 [dev-dependencies]

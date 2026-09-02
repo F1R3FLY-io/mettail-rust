@@ -343,7 +343,14 @@ pub(crate) fn detect_dead_rules_with_ignored(
     // WFST alone is not evidence that these labels are dead.
     let non_wfst_dispatch_rules: HashSet<&str> = rd_rules
         .iter()
-        .filter(|rule| rule.is_collection || rule.prefix_bp.is_some())
+        .filter(|rule| {
+            rule.is_pure_collection_literal()
+                || rule.prefix_bp.is_some()
+                || matches!(
+                    rule.items.first(),
+                    Some(crate::grammar::ir::RDSyntaxItem::TokenKindCapture { .. })
+                )
+        })
         .map(|rule| rule.label.as_str())
         .collect();
 

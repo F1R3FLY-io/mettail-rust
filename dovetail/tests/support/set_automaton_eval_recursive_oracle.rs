@@ -5,6 +5,11 @@
 
 use super::*;
 
+struct RecursiveEvalState<'a> {
+    cache: &'a mut HashMap<(StateId, EClassId), CachedSubsts>,
+    stats: &'a mut SetAutomatonStats,
+}
+
 pub(super) fn search_egraph<L: Clone + Eq + Hash>(
     automaton: &SetAutomaton<L>,
     eg: &EGraph<L>,
@@ -54,7 +59,13 @@ fn extend_entry_matches<L: Clone + Eq + Hash>(
     run: &mut SetAutomatonRun,
 ) {
     let entry = &automaton.entries[entry_idx];
-    let matches = eval_state(automaton, eg, entry.root_state, root, cache, &mut run.stats);
+    let matches = eval_state(
+        automaton,
+        eg,
+        entry.root_state,
+        root,
+        &mut RecursiveEvalState { cache, stats: &mut run.stats },
+    );
     run.matches.extend(matches.iter().map(|slots| {
         let mut subst = Subst::default();
         for (name, &class) in entry.slot_names.iter().zip(slots.iter()) {
@@ -69,24 +80,23 @@ fn eval_state<L: Clone + Eq + Hash>(
     eg: &EGraph<L>,
     state_id: StateId,
     class: EClassId,
-    cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
-    stats: &mut SetAutomatonStats,
+    state: &mut RecursiveEvalState<'_>,
 ) -> CachedSubsts {
     let class = eg.find(class);
     let key = (state_id, class);
-    if let Some(matches) = cache.get(&key) {
-        stats.state_cache_hits += 1;
+    if let Some(matches) = state.cache.get(&key) {
+        state.stats.state_cache_hits += 1;
         return Rc::clone(matches);
     }
 
-    stats.state_evaluations += 1;
+    state.stats.state_evaluations += 1;
     let matches = match &automaton.compiler.states[state_id.0] {
         PatternState::Var => cached_substs(vec![vec![class].into_boxed_slice()]),
         PatternState::App { op, args, slot_count } => {
-            eval_app_state(automaton, eg, op, args, *slot_count, class, cache, stats)
+            eval_app_state(automaton, eg, op, args, *slot_count, class, state)
         },
     };
-    cache.insert(key, Rc::clone(&matches));
+    state.cache.insert(key, Rc::clone(&matches));
     matches
 }
 
@@ -97,8 +107,7 @@ fn eval_app_state<L: Clone + Eq + Hash>(
     args: &[StateInvocation],
     slot_count: usize,
     class: EClassId,
-    cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
-    stats: &mut SetAutomatonStats,
+    state: &mut RecursiveEvalState<'_>,
 ) -> CachedSubsts {
     let mut out = Vec::new();
     for node in eg
@@ -108,7 +117,7 @@ fn eval_app_state<L: Clone + Eq + Hash>(
     {
         let mut partial = vec![vec![None; slot_count].into_boxed_slice()];
         for (invocation, &child) in args.iter().zip(&node.children) {
-            let child_matches = eval_state(automaton, eg, invocation.state(), child, cache, stats);
+            let child_matches = eval_state(automaton, eg, invocation.state(), child, state);
             if child_matches.is_empty() {
                 partial.clear();
                 break;

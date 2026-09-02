@@ -20,7 +20,7 @@
 //! - **Guard slot** (Phase 6, e.g. PGuardedInput): includes a
 //!   `?guard:Guard` parameter parsed via `parse_predicate_from_tokens`.
 
-use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
+use mettail_ast::grammar::{DelimitedRegionKind, GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::{CollectionDelimiters, LanguageDef};
 use mettail_ast::types::{CollectionType, TypeExpr};
 use mettail_prattail::binding_power::compute_prefix_bp;
@@ -32,6 +32,139 @@ use syn::Ident;
 use super::builtin_metadata::classify_unary_prefix_shape;
 use super::collection::kv_sep_for;
 use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
+
+/// Emit a mid-rule token-family capture without collapsing a lexical lattice
+/// to its primary edge.
+///
+/// Contextual keywords are intentionally represented by more than one lexer
+/// edge (for example, both `Fixed("PPar")` and `Ident("PPar")`).  A grammar
+/// capture such as `label@Ident` is therefore a predicate over every outgoing
+/// edge, not merely `peek_kind`.  Each surviving edge remains explicit in the
+/// WPDA branch and carries its lexer alternative index and target node through
+/// application, which keeps DAG advancement and semiring tie-breaking exact.
+fn emit_token_capture_and_replace(
+    kind_name: &str,
+    symbol: TokenStream,
+    new_state: TokenStream,
+) -> TokenStream {
+    quote! {{
+        let __capture_kind_name: &'static str = #kind_name;
+        let __capture_branches =
+            mettail_prattail::wpda_runtime::matching_token_capture_edges(
+                tokens,
+                _pos,
+                __capture_kind_name,
+            )
+            .into_iter()
+            .map(|__edge| {
+                let __open_len =
+                    u16::try_from(__edge.text.len()).expect("token length exceeds u16");
+                let __capture_symbol = #symbol;
+                mettail_prattail::wpda_walker::ForkBranch {
+                    weight: lex_w_alt_with_len(
+                        __open_len,
+                        0.0,
+                        __capture_symbol.category_src_idx,
+                        __capture_symbol.rule_index_in_category,
+                        __edge.alt_idx,
+                    ),
+                    symbol: __capture_symbol,
+                    new_state: #new_state,
+                    action_kind:
+                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeTokenKindAtAndReplace {
+                            alt_idx: __edge.alt_idx,
+                            kind_name: __capture_kind_name.to_string(),
+                            kind: __edge.kind,
+                            text: __edge.text,
+                            next_pos: __edge.next_pos,
+                        },
+                }
+            })
+            .collect();
+        return WpdaStepAction::Fork {
+            branches: __capture_branches,
+            consume_trigger: false,
+        };
+    }}
+}
+
+fn optional_delimited_region_extract(
+    value: &Ident,
+    parent: &Ident,
+    kind: DelimitedRegionKind,
+) -> TokenStream {
+    let DelimitedRegionKind::Flt = kind;
+    quote! {
+        let #value: Option<std::sync::Arc<mettail_runtime::FltNode>> =
+            match #parent.as_mut() {
+                Some(parent) => parent.next().and_then(|arg| {
+                    arg.as_guest_body().map(|gb| std::sync::Arc::new(
+                        mettail_runtime::FltNode {
+                            selector: mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                                mettail_runtime::get_or_create_var(&gb.tag),
+                            )),
+                            tag: gb.tag.clone(),
+                            open_src: gb.open_src.clone(),
+                            body_src: gb.body_src.clone(),
+                            holes: gb.holes.iter().map(|hole| mettail_runtime::FltHole {
+                                id: mettail_runtime::FltHoleId(hole.id),
+                                name: hole.name.clone(),
+                                category: hole.category.clone(),
+                                offset: hole.offset,
+                            }).collect(),
+                            pieces: gb.pieces.iter().map(|piece| match piece {
+                                mettail_prattail::wpda_runtime::GuestBodyPiece::Text(text) =>
+                                    mettail_runtime::FltTemplatePiece::Text(text.clone()),
+                                mettail_prattail::wpda_runtime::GuestBodyPiece::Hole(id) =>
+                                    mettail_runtime::FltTemplatePiece::Hole(
+                                        mettail_runtime::FltHoleId(*id),
+                                    ),
+                            }).collect(),
+                            close_src: gb.close_src.clone(),
+                            position: gb.position,
+                        }
+                    ))
+                }),
+                None => None,
+            };
+    }
+}
+
+fn required_delimited_region_extract(value: &Ident, kind: DelimitedRegionKind) -> TokenStream {
+    let DelimitedRegionKind::Flt = kind;
+    quote! {
+        let #value: std::sync::Arc<mettail_runtime::FltNode> = match iter.next() {
+            Some(arg) => match arg.as_guest_body() {
+                Some(gb) => std::sync::Arc::new(mettail_runtime::FltNode {
+                    selector: mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                        mettail_runtime::get_or_create_var(&gb.tag),
+                    )),
+                    tag: gb.tag.clone(),
+                    open_src: gb.open_src.clone(),
+                    body_src: gb.body_src.clone(),
+                    holes: gb.holes.iter().map(|hole| mettail_runtime::FltHole {
+                        id: mettail_runtime::FltHoleId(hole.id),
+                        name: hole.name.clone(),
+                        category: hole.category.clone(),
+                        offset: hole.offset,
+                    }).collect(),
+                    pieces: gb.pieces.iter().map(|piece| match piece {
+                        mettail_prattail::wpda_runtime::GuestBodyPiece::Text(text) =>
+                            mettail_runtime::FltTemplatePiece::Text(text.clone()),
+                        mettail_prattail::wpda_runtime::GuestBodyPiece::Hole(id) =>
+                            mettail_runtime::FltTemplatePiece::Hole(
+                                mettail_runtime::FltHoleId(*id),
+                            ),
+                    }).collect(),
+                    close_src: gb.close_src.clone(),
+                    position: gb.position,
+                }),
+                None => return,
+            },
+            None => return,
+        };
+    }
+}
 
 /// Stage 3.27d (G-PREFIX-BP, 2026-04-30): map from `(category_src_idx,
 /// rule_idx)` to the unary-prefix binding power, for rules whose shape
@@ -82,6 +215,14 @@ pub struct BinderShape {
     pub label: String,
     /// Result category name (e.g., `"Term"`, `"BigRat"`, `"Proc"`).
     pub result_cat: String,
+    /// Category parsed by a leading nonterminal parameter, when the syntax
+    /// begins with `Param` rather than a consumed terminal trigger. The prefix
+    /// dispatcher descends into this category without consuming input, then
+    /// resumes this rule at position 1.
+    pub leading_category: Option<String>,
+    /// A leading inert `name@Ident` capture. Prefix dispatch consumes it
+    /// through the token-family capture path without opening binder scope.
+    pub leading_ident_capture: Option<String>,
     /// Per-position dispatch entries (excluding position 0 which is the
     /// trigger consumed at PrefixDispatch open arm).
     pub positions: Vec<BinderPosition>,
@@ -132,6 +273,7 @@ pub enum BinderPosition {
     /// `Arc<FltNode>` as the `param_name` action arg (`ActionArgKind::GuestBody`).
     GuestBodyCapture {
         open_kind: String,
+        nested_open_kinds: Vec<String>,
         close_kind: String,
         param_name: String,
     },
@@ -288,7 +430,10 @@ pub enum ActionArgKind {
     /// L9-4: `ActionArg::GuestBody(GuestBodyData)` — an assembled FLT guest
     /// body, extracted via `as_guest_body()` and lowered to an
     /// `Arc<mettail_runtime::FltNode>` action arg / AST field.
-    GuestBody { param_name: String },
+    GuestBody {
+        param_name: String,
+        kind: mettail_ast::grammar::DelimitedRegionKind,
+    },
     /// `ActionArg::Term { value, .. }` of a specific category.
     Term(String),
     /// `ActionArg::Predicate` — parsed predicate.
@@ -641,11 +786,7 @@ fn emit_binder_list_entry(
                         symbol: StackSymbolV2::collection_marker(
                             #result_src_idx, #rule_idx, #slot_idx, 0u8,
                         ),
-                        weight: lex_w(
-                            mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                            #result_src_idx,
-                            #rule_idx,
-                        ),
+                        weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
                         new_state: WpdaState::BinderListLoop {
                             result_src_idx: #result_src_idx,
                             rule_idx: #rule_idx,
@@ -687,11 +828,7 @@ fn emit_binder_list_entry(
                 #empty_branch
                 mettail_prattail::wpda_walker::ForkBranch {
                     symbol: #resume_symbol,
-                    weight: lex_w(
-                        mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                        #result_src_idx,
-                        #rule_idx,
-                    ),
+                    weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
                     new_state: WpdaState::BinderListLoop {
                         result_src_idx: #result_src_idx,
                         rule_idx: #rule_idx,
@@ -729,6 +866,7 @@ fn optional_first_token_set(positions: &[BinderPosition]) -> Vec<String> {
 /// the construction-time PDA paired with the runtime optional-group PDA.
 fn classify_optional_body(
     root: &[SyntaxExpr],
+    language: &LanguageDef,
     param_map: &HashMap<String, ParamKind>,
     declared_delims: Option<&CollectionDelimiters>,
     next_group_idx: &mut u32,
@@ -792,14 +930,20 @@ fn classify_optional_body(
                 });
                 frame.args.push(ActionArgKind::TokenText { param_name });
             },
-            SyntaxExpr::GuestBody { open, close, bind } => {
+            SyntaxExpr::GuestBody { open, close, bind, kind } => {
                 let param_name = bind.to_string();
                 frame.positions.push(BinderPosition::GuestBodyCapture {
                     open_kind: open.to_string(),
+                    nested_open_kinds: super::guest_body_nested_open_kinds(
+                        language,
+                        &open.to_string(),
+                    ),
                     close_kind: close.to_string(),
                     param_name: param_name.clone(),
                 });
-                frame.args.push(ActionArgKind::GuestBody { param_name });
+                frame
+                    .args
+                    .push(ActionArgKind::GuestBody { param_name, kind: *kind });
             },
             SyntaxExpr::Param(name) => {
                 let param_name = name.to_string();
@@ -936,16 +1080,18 @@ pub(crate) fn classify_binder_in(
         .find(|t| t.name == rule.category)
         .and_then(|t| t.collection_kind.as_ref())
         .map(|c| c.delimiters());
-    // Position 0 must be a Literal trigger — OR (L9-3) a LEADING custom-kind
-    // capture (`b@GuestChunk …`) / (L9-4) a LEADING guest body (`*flt(node,…)`),
-    // whose consume is emitted by the prefix dispatch
-    // (UnifiedDescriptor::LeadingTokenKindCapture / LeadingGuestBody). The
-    // `.skip(1)` position loop below treats sp[0] as the trigger either way, so
-    // positions start at slot 1 (= sp[1]). Otherwise it's an infix/prefix Pratt
-    // rule handled by Phase 3.
+    // Position 0 is the dispatch anchor. It may be a consumed Literal trigger,
+    // a leading token/guest capture, or a category-valued Param. A leading
+    // category Param is parsed through an ordinary ReplaceAndPush descent; it
+    // is not a cross-category projection because this rule still has its own
+    // continuation and constructor action after that child returns. The
+    // `.skip(1)` loop below therefore starts with the first continuation item.
     if !matches!(
         &sp[0],
-        SyntaxExpr::Literal(_) | SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. }
+        SyntaxExpr::Literal(_)
+            | SyntaxExpr::TokenKind { .. }
+            | SyntaxExpr::GuestBody { .. }
+            | SyntaxExpr::Param(_)
     ) {
         return None;
     }
@@ -1086,6 +1232,30 @@ pub(crate) fn classify_binder_in(
         }
     }
 
+    // A leading Param is a real first action argument. It used to be silently
+    // dropped because the position walker skips the dispatch anchor. Category
+    // values descend into their parser; an inert Ident uses the existing
+    // leading token-family capture transition. Collection/binder/guard params
+    // still require their dedicated operators.
+    let (leading_category, leading_ident_capture) = match &sp[0] {
+        SyntaxExpr::Param(name) => match param_map.get(&name.to_string())? {
+            ParamKind::Body { cat } | ParamKind::Simple { cat }
+                if mettail_ast::grammar::NonTerminalKind::classify(cat)
+                    != mettail_ast::grammar::NonTerminalKind::Ident =>
+            {
+                (Some(cat.clone()), None)
+            },
+            ParamKind::Simple { cat }
+                if mettail_ast::grammar::NonTerminalKind::classify(cat)
+                    == mettail_ast::grammar::NonTerminalKind::Ident =>
+            {
+                (None, Some(name.to_string()))
+            },
+            _ => return None,
+        },
+        _ => (None, None),
+    };
+
     // Walk syntax_pattern (skipping index 0 = trigger) building positions
     // + action_args in encountered-order (push order).
     //
@@ -1102,6 +1272,12 @@ pub(crate) fn classify_binder_in(
     // iteration.
     let mut positions = Vec::new();
     let mut action_args = Vec::new();
+    if let Some(cat) = &leading_category {
+        action_args.push(ActionArgKind::Term(cat.clone()));
+    }
+    if let Some(param_name) = &leading_ident_capture {
+        action_args.push(ActionArgKind::TokenText { param_name: param_name.clone() });
+    }
     // L9-3: a LEADING custom-kind capture (sp[0] is a TokenKind) is consumed by
     // the prefix dispatch, which interns its ActionArg::Token FIRST. The
     // `.skip(1)` loop treats sp[0] as the trigger and does not re-push it, so
@@ -1117,8 +1293,11 @@ pub(crate) fn classify_binder_in(
     // L9-4: a LEADING guest body (sp[0] is `*flt(node,…)`) is consumed by the
     // prefix dispatch, which interns its ActionArg::GuestBody FIRST — prepend
     // its arg here (same off-by-one reasoning as the leading token capture).
-    if let SyntaxExpr::GuestBody { bind, .. } = &sp[0] {
-        action_args.push(ActionArgKind::GuestBody { param_name: bind.to_string() });
+    if let SyntaxExpr::GuestBody { bind, kind, .. } = &sp[0] {
+        action_args.push(ActionArgKind::GuestBody {
+            param_name: bind.to_string(),
+            kind: *kind,
+        });
     }
     let mut skip_next: bool = false;
     // Phase 4 #1.B (2026-05-11): track collection-slot index. Each
@@ -1159,13 +1338,20 @@ pub(crate) fn classify_binder_in(
             },
             // L9-4: a mid-rule `*flt(node, open, close)` guest body — push a
             // GuestBodyCapture position + a paired GuestBody action arg.
-            SyntaxExpr::GuestBody { open, close, bind } => {
+            SyntaxExpr::GuestBody { open, close, bind, kind } => {
                 positions.push(BinderPosition::GuestBodyCapture {
                     open_kind: open.to_string(),
+                    nested_open_kinds: super::guest_body_nested_open_kinds(
+                        language,
+                        &open.to_string(),
+                    ),
                     close_kind: close.to_string(),
                     param_name: bind.to_string(),
                 });
-                action_args.push(ActionArgKind::GuestBody { param_name: bind.to_string() });
+                action_args.push(ActionArgKind::GuestBody {
+                    param_name: bind.to_string(),
+                    kind: *kind,
+                });
             },
             SyntaxExpr::Param(name) => {
                 let n = name.to_string();
@@ -1281,9 +1467,16 @@ pub(crate) fn classify_binder_in(
                         // existing CollectionLoop apparatus then parses
                         // elements separated by `separator` until `close`.
                         // The action body extracts CollectionDrain.
-                        let close = match sp.get(i + 1) {
-                            Some(SyntaxExpr::Literal(text)) => text.clone(),
-                            _ => return None,
+                        // A following literal is an explicit terminator owned
+                        // by the repetition. When no literal follows, the
+                        // repetition is open-ended and yields to the enclosing
+                        // continuation through a non-consuming pop. This is
+                        // the direct EBNF meaning of a trailing
+                        // `xs.*sep(..)`; requiring a synthetic close made the
+                        // data-faithful vector form inexpressible.
+                        let (close, absorbs_following_literal) = match sp.get(i + 1) {
+                            Some(SyntaxExpr::Literal(text)) => (text.clone(), true),
+                            _ => (String::new(), false),
                         };
                         // Phase 4 #5 (2026-05-11): populate
                         // key_val_separator only for HashMap; None for
@@ -1316,9 +1509,10 @@ pub(crate) fn classify_binder_in(
                             elem_cat: elem_cat.clone(),
                             coll_kind: coll_kind.clone(),
                         });
-                        // Skip the close Literal at i+1 — absorbed into
-                        // CollectionLoop's close-branch dispatch.
-                        skip_next = true;
+                        // Skip only a concrete close Literal at i+1 — an
+                        // open-ended repetition leaves the following syntax
+                        // position to the ordinary binder continuation.
+                        skip_next = absorbs_following_literal;
                     },
                     _ => return None, // bare Simple, Body, Guard, Binder are not Sep-eligible.
                 }
@@ -1460,6 +1654,7 @@ pub(crate) fn classify_binder_in(
                 next_optional_group_idx = next_optional_group_idx.checked_add(1)?;
                 let (inner_positions, inner_action_args) = classify_optional_body(
                     inner,
+                    language,
                     &param_map,
                     declared_delims,
                     &mut next_optional_group_idx,
@@ -1493,8 +1688,8 @@ pub(crate) fn classify_binder_in(
     // binder-shape so the leading-capture fork is emitted. It always carries a
     // leading capture action arg (pushed above), so the `action_args.is_empty()`
     // guard below still filters pure-literal rules.
-    let has_leading_capture =
-        matches!(&sp[0], SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. });
+    let has_leading_capture = leading_ident_capture.is_some()
+        || matches!(&sp[0], SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. });
     if positions.is_empty() && !has_leading_capture {
         return None;
     }
@@ -1520,6 +1715,8 @@ pub(crate) fn classify_binder_in(
     Some(BinderShape {
         label: rule.label.to_string(),
         result_cat: rule.category.to_string(),
+        leading_category,
+        leading_ident_capture,
         positions,
         is_multi,
         has_binder,
@@ -1764,7 +1961,7 @@ pub(crate) fn binder_initial_body_cat(shape: &BinderShape) -> Option<&str> {
 /// rule. The walker fans out N `BranchCursor`s and `step_fanout` drives
 /// each independently until lex-min selects the surviving branch.
 ///
-/// Per-branch `lex_w(0.0, result_src, rule_idx)`
+/// Per-branch `lex_w(0.0, result_src_idx, rule_idx)`
 /// gives a unique tiebreak by source-order rule_idx — preserving the
 /// trampoline's first-declared-wins convention under tie. Wrong-arity
 /// branches auto-discriminate via parse failure: if the wrong branch's
@@ -1856,9 +2053,7 @@ pub(crate) fn emit_binder_prefix_arms(
                         symbol: StackSymbolV2::rule_at(
                             #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
                         ),
-                        weight: lex_w(
-                            0.0, #result_src_idx, #rule_idx,
-                        ),
+                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
                         new_state: WpdaState::BinderRule {
                             result_src_idx: #result_src_idx,
                             rule_idx: #rule_idx,
@@ -1886,9 +2081,7 @@ pub(crate) fn emit_binder_prefix_arms(
                         symbol: StackSymbolV2::rule_at(
                             #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
                         ),
-                        weight: lex_w(
-                            0.0, #result_src_idx, #rule_idx,
-                        ),
+                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
                         new_state: WpdaState::BinderRule {
                             result_src_idx: #result_src_idx,
                             rule_idx: #rule_idx,
@@ -1904,12 +2097,21 @@ pub(crate) fn emit_binder_prefix_arms(
                 }
             })
             .collect();
+        let branch_count = branches.len();
+        let branch_pushes = branches.iter().map(|branch| {
+            quote! {
+                __binder_trigger_branches.push(#branch);
+            }
+        });
 
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
                 if __trigger == #trigger && state_cat_src_idx == #result_src_idx => {
+                let mut __binder_trigger_branches =
+                    ::std::vec::Vec::with_capacity(#branch_count);
+                #( #branch_pushes )*
                 return WpdaStepAction::Fork {
-                    branches: vec![ #( #branches ),* ],
+                    branches: __binder_trigger_branches,
                     consume_trigger: true,
                 };
             }
@@ -1955,6 +2157,11 @@ pub(crate) fn emit_binder_rule_body(
     // (result_src_idx, rule_idx, that group's arm token streams). The arms are
     // moved verbatim into the group's `#[inline(never)]` helper below.
     let mut groups: Vec<(u16, u16, Vec<TokenStream>)> = Vec::new();
+    // Rules that may be entered through an already-pushed source
+    // CategoryEntry.  This is the exact trigger table for BinderRule's
+    // cross-category prelude; deriving it from the rule avoids a delimiter
+    // special case in either the generated engine or walker.
+    let mut category_entry_trigger_arms: Vec<TokenStream> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_binder_in(rule, language) else {
@@ -1963,6 +2170,15 @@ pub(crate) fn emit_binder_rule_body(
             let frame_indices = binder_list_frame_indices(&shape.positions);
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
+            if let Some(SyntaxExpr::Literal(trigger)) = rule
+                .syntax_pattern
+                .as_ref()
+                .and_then(|pattern| pattern.first())
+            {
+                category_entry_trigger_arms.push(quote! {
+                    (#result_src_idx, #rule_idx) => Some(#trigger),
+                });
+            }
             let mut group_arms: Vec<TokenStream> = Vec::with_capacity(shape.positions.len() + 1);
             // Stage 4 fix: emit a "rule complete" arm at position
             // `positions.len() + 1`. This arm fires when the marker has
@@ -1987,35 +2203,27 @@ pub(crate) fn emit_binder_rule_body(
                 let next_pos = pos + 1;
                 let arm = match position {
                     BinderPosition::TokenKindCapture { kind_name, .. } => {
-                        // L9-3: mid-rule custom-kind capture — a structural clone
-                        // of the Literal arm below, swapping the peek_text guard
-                        // (GuardedConsumeAndReplace) for the peek_kind==Custom(K)
-                        // guard (GuardedConsumeTokenKindAndReplace). The walker's
-                        // kind gate runs inside the branch; a miss produces no
-                        // child (cursor dies via step_fanout's empty-children
-                        // pathway), and a hit interns an ActionArg::Token leaf.
+                        let capture = emit_token_capture_and_replace(
+                            kind_name,
+                            quote! {
+                                StackSymbolV2::rule_at(
+                                    #result_src_idx,
+                                    #rule_idx,
+                                    #next_pos,
+                                    Some(*outer_bp),
+                                )
+                            },
+                            quote! {
+                                WpdaState::BinderRule {
+                                    result_src_idx: #result_src_idx,
+                                    rule_idx: #rule_idx,
+                                    body_src_idx: *_body_src_idx,
+                                    outer_bp: *outer_bp,
+                                }
+                            },
+                        );
                         quote! {
-                            (#result_src_idx, #rule_idx, #pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::BinderRule {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            body_src_idx: *_body_src_idx,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
-                                                kind_name: #kind_name.to_string(),
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
-                            }
+                            (#result_src_idx, #rule_idx, #pos) => #capture
                         }
                     },
                     // ★★ IF YOU ARE ADDING A NEW CAPTURE KIND, READ THIS FIRST.
@@ -2072,38 +2280,39 @@ pub(crate) fn emit_binder_rule_body(
                     // `GuardedConsumeTokenKindAndPush` emitted from `forks.rs`, NOT from
                     // this binder-rule body — that is the routing to compare against.
                     BinderPosition::IdentTextCapture { .. } => {
-                        // `m:Ident` — the builtin-kind twin of the TokenKindCapture arm
-                        // directly above. Same single-branch Fork, same position advance;
-                        // the action is the EXISTING `ConsumeIdentAndReplace` op with
-                        // `start_scope: false`, so the ident's text is interned as an
-                        // `ActionArg::Ident` leaf and NO binder scope is opened. `false`
-                        // is the whole distinction from `BinderIdent`: an inert name must
-                        // not bind, or `new nth in { l.nth(0) }` would capture it.
+                        let capture = emit_token_capture_and_replace(
+                            "Ident",
+                            quote! {
+                                StackSymbolV2::rule_at(
+                                    #result_src_idx,
+                                    #rule_idx,
+                                    #next_pos,
+                                    Some(*outer_bp),
+                                )
+                            },
+                            quote! {
+                                WpdaState::BinderRule {
+                                    result_src_idx: #result_src_idx,
+                                    rule_idx: #rule_idx,
+                                    body_src_idx: *_body_src_idx,
+                                    outer_bp: *outer_bp,
+                                }
+                            },
+                        );
                         quote! {
-                            (#result_src_idx, #rule_idx, #pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::BinderRule {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            body_src_idx: *_body_src_idx,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
-                                                kind_name: "Ident".to_string(),
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
-                            }
+                            (#result_src_idx, #rule_idx, #pos) => #capture
                         }
                     },
-                    BinderPosition::GuestBodyCapture { open_kind, close_kind, .. } => {
+                    BinderPosition::GuestBodyCapture {
+                        open_kind,
+                        nested_open_kinds,
+                        close_kind,
+                        ..
+                    } => {
+                        let nested_open_kinds = nested_open_kinds
+                            .iter()
+                            .map(|kind| quote! { #kind.to_string() })
+                            .collect::<Vec<_>>();
                         // L9-4: mid-rule guest body — a single-branch Fork whose
                         // ConsumeGuestBodyAndReplace action scans the whole
                         // opener→body→closer region, assembles the FltNode, and
@@ -2126,6 +2335,7 @@ pub(crate) fn emit_binder_rule_body(
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
                                                 open_kind: #open_kind.to_string(),
+                                                nested_open_kinds: vec![#(#nested_open_kinds),*],
                                                 close_kind: #close_kind.to_string(),
                                             },
                                     }],
@@ -2245,7 +2455,13 @@ pub(crate) fn emit_binder_rule_body(
                                         replace_symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                         ),
-                                        push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                        // A typed nonterminal occurrence is a strict goal:
+                                        // operators may change category while parsing the
+                                        // child only when their result can still reach the
+                                        // declared child category.  A goal-free entry lets
+                                        // a cross-category continuation consume the
+                                        // enclosing rule's following literal.
+                                        push_symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
                                         weight: lex_one(),
                                         new_state: WpdaState::PrefixDispatch {
                                             pos: _pos,
@@ -2416,19 +2632,152 @@ pub(crate) fn emit_binder_rule_body(
             }
         });
     }
+    // Bound the native skeleton frame independently of the number of binder
+    // rules.  The generated control graph is a fixed-depth router followed by
+    // one existing per-rule transition leaf; chunks are scanned in the exact
+    // former source order, so first-match behavior is unchanged.
+    const BINDER_RULES_PER_ROUTER_CHUNK: usize = 24;
+    let mut router_helpers: Vec<TokenStream> = Vec::new();
+    let mut router_chunk_calls = TokenStream::new();
+    for (chunk_idx, chunk) in skeleton_arms
+        .chunks(BINDER_RULES_PER_ROUTER_CHUNK)
+        .enumerate()
+    {
+        let chunk_helper = format_ident!("binder_rule_dispatch_chunk_{chunk_idx}");
+        router_chunk_calls.extend(quote! {
+            if let Some(__action) = self.#chunk_helper(
+                result_src_idx,
+                rule_idx,
+                position,
+                _pos,
+                tokens,
+                _body_src_idx,
+                outer_bp,
+                frame_ctx,
+            ) {
+                return Some(__action);
+            }
+        });
+        router_helpers.push(quote! {
+            #[inline(never)]
+            fn #chunk_helper(
+                &self,
+                result_src_idx: &u16,
+                rule_idx: &u16,
+                position: u8,
+                _pos: usize,
+                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                _body_src_idx: &u16,
+                outer_bp: &u8,
+                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+            ) -> Option<
+                mettail_prattail::wpda_walker::WpdaStepAction<
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                >,
+            > {
+                let __action = match (*result_src_idx, *rule_idx, position) {
+                    #( #chunk )*
+                    _ => return None,
+                };
+                Some(__action)
+            }
+        });
+    }
+    router_helpers.push(quote! {
+        #[inline(never)]
+        fn binder_rule_dispatch(
+            &self,
+            result_src_idx: &u16,
+            rule_idx: &u16,
+            position: u8,
+            _pos: usize,
+            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+            _body_src_idx: &u16,
+            outer_bp: &u8,
+            frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+        ) -> Option<
+            mettail_prattail::wpda_walker::WpdaStepAction<
+                mettail_prattail::automata::lex_weight::LexicographicWeight,
+            >,
+        > {
+            #router_chunk_calls
+            None
+        }
+    });
+
     let body = quote! {
         {
+            // A cross-category concrete-rule branch first pushes the source
+            // CategoryEntry without consuming.  Pairing BinderRule with that
+            // entry is the prelude state: validate this rule's declared
+            // leading literal, consume it, and push the selected RuleAt.  The
+            // resulting stack is identical to ordinary source-category
+            // parsing, so source infix/postfix continuations remain active.
+            if let Some(__entry) = frontier_top.filter(|node| {
+                node.symbol.kind
+                    == mettail_prattail::wpda_runtime::SymbolKind::CategoryEntry
+            }) {
+                if __entry.symbol.category_src_idx != *result_src_idx {
+                    return WpdaStepAction::Error(format!(
+                        "binder-rule source category mismatch: expected {}, found {}",
+                        result_src_idx,
+                        __entry.symbol.category_src_idx,
+                    ));
+                }
+                let __expected_trigger: Option<&'static str> = match (*result_src_idx, *rule_idx) {
+                    #( #category_entry_trigger_arms )*
+                    _ => None,
+                };
+                let Some(__expected_trigger) = __expected_trigger else {
+                    return WpdaStepAction::Error(format!(
+                        "binder rule {}:{} has no literal trigger for category-entry dispatch",
+                        result_src_idx,
+                        rule_idx,
+                    ));
+                };
+                if tokens.peek_text(_pos) != Some(__expected_trigger) {
+                    return WpdaStepAction::Error(format!(
+                        "expected binder-rule trigger {:?} at pos {}, found {:?}",
+                        __expected_trigger,
+                        _pos,
+                        tokens.peek_text(_pos),
+                    ));
+                }
+                return WpdaStepAction::ConsumeAndPush {
+                    symbol: StackSymbolV2::rule_at(
+                        *result_src_idx,
+                        *rule_idx,
+                        1u8,
+                        Some(*outer_bp),
+                    ),
+                    weight: lex_one(),
+                    new_state: WpdaState::BinderRule {
+                        result_src_idx: *result_src_idx,
+                        rule_idx: *rule_idx,
+                        body_src_idx: *_body_src_idx,
+                        outer_bp: *outer_bp,
+                    },
+                    trigger_mode:
+                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                };
+            }
             let position: u8 = match frontier_top.map(|n| n.symbol.kind) {
                 Some(mettail_prattail::wpda_runtime::SymbolKind::RuleAt(p)) => p,
                 _ => return WpdaStepAction::Idle,
             };
-            // The empty-list branch needs to push an empty BinderList arg
-            // representing zero binders. Use a closure-based local helper.
-            // (N1: dead no-op closure — inert; kept in the skeleton.)
-            #[allow(unused_variables)]
-            let b_pre_finalize_empty_list = || ();
+            if let Some(__action) = self.binder_rule_dispatch(
+                result_src_idx,
+                rule_idx,
+                position,
+                _pos,
+                tokens,
+                _body_src_idx,
+                outer_bp,
+                frame_ctx,
+            ) {
+                return __action;
+            }
             match (*result_src_idx, *rule_idx, position) {
-                #(#skeleton_arms)*
                 // S1-FACTORING F1 spine arms — `(cat, SPINE_ID, node_pos)`
                 // keys, disjoint from every real-rule key above (SPINE_ID ∈
                 // 0xF800..0xFE00). Kept UNCHANGED in the skeleton (A2). Empty
@@ -2439,7 +2788,10 @@ pub(crate) fn emit_binder_rule_body(
             }
         }
     };
-    let helpers_ts = quote! { #(#helpers)* };
+    let helpers_ts = quote! {
+        #(#helpers)*
+        #(#router_helpers)*
+    };
     (body, helpers_ts)
 }
 
@@ -2665,11 +3017,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                     },
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: #resume_symbol,
-                                        weight: lex_w(
-                                            mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                            #result_src_idx,
-                                            #rule_idx,
-                                        ),
+                                        weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
                                         new_state: WpdaState::BinderListLoop {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
@@ -2730,11 +3078,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                     symbol: StackSymbolV2::binder_list_loop_at(
                                         #first_marker_id, *outer_bp,
                                     ),
-                                    weight: lex_w(
-                                        mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                        #result_src_idx,
-                                        #rule_idx,
-                                    ),
+                                    weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
                                     new_state: WpdaState::BinderListLoop {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
@@ -2789,53 +3133,53 @@ pub(crate) fn emit_binder_list_loop_body(
                                 };
                             }
                         },
-                        BinderPosition::TokenKindCapture { kind_name, .. } => quote! {
-                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #next_symbol,
-                                        weight: lex_one(),
-                                        new_state: #next_state,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
-                                                kind_name: #kind_name.to_string(),
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                        BinderPosition::TokenKindCapture { kind_name, .. } => {
+                            let capture = emit_token_capture_and_replace(
+                                kind_name,
+                                next_symbol.clone(),
+                                next_state.clone(),
+                            );
+                            quote! {
+                                (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => #capture
                             }
                         },
-                        BinderPosition::IdentTextCapture { .. } => quote! {
-                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #next_symbol,
-                                        weight: lex_one(),
-                                        new_state: #next_state,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndReplace {
-                                                start_scope: false,
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                        BinderPosition::IdentTextCapture { .. } => {
+                            let capture = emit_token_capture_and_replace(
+                                "Ident",
+                                next_symbol.clone(),
+                                next_state.clone(),
+                            );
+                            quote! {
+                                (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => #capture
                             }
                         },
-                        BinderPosition::GuestBodyCapture { open_kind, close_kind, .. } => quote! {
-                            (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #next_symbol,
-                                        weight: lex_one(),
-                                        new_state: #next_state,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
-                                                open_kind: #open_kind.to_string(),
-                                                close_kind: #close_kind.to_string(),
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                        BinderPosition::GuestBodyCapture {
+                            open_kind,
+                            nested_open_kinds,
+                            close_kind,
+                            ..
+                        } => {
+                            let nested_open_kinds = nested_open_kinds
+                                .iter()
+                                .map(|kind| quote! { #kind.to_string() })
+                                .collect::<Vec<_>>();
+                            quote! {
+                                (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
+                                    return WpdaStepAction::Fork {
+                                        branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                            symbol: #next_symbol,
+                                            weight: lex_one(),
+                                            new_state: #next_state,
+                                            action_kind:
+                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
+                                                    open_kind: #open_kind.to_string(),
+                                                    nested_open_kinds: vec![#(#nested_open_kinds),*],
+                                                    close_kind: #close_kind.to_string(),
+                                                },
+                                        }],
+                                        consume_trigger: false,
+                                    };
+                                }
                             }
                         },
                         BinderPosition::BinderIdent => quote! {
@@ -2867,7 +3211,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                     return WpdaStepAction::ReplaceAndPush {
                                         replace_symbol: #next_symbol,
                                         push_symbol:
-                                            StackSymbolV2::category_entry(#cat_src_idx),
+                                            StackSymbolV2::category_entry_goal(#cat_src_idx),
                                         weight: lex_one(),
                                         new_state: WpdaState::PrefixDispatch {
                                             pos: _pos,
@@ -3074,27 +3418,8 @@ fn emit_nested_optional_action(
                 });
                 fields.push(quote! { #value_var });
             },
-            ActionArgKind::GuestBody { .. } => {
-                statements.push(quote! {
-                    let #value_var: Option<std::sync::Arc<mettail_runtime::FltNode>> =
-                        match #parent_iter.as_mut() {
-                            Some(parent) => parent.next().and_then(|arg| {
-                                arg.as_guest_body().map(|gb| std::sync::Arc::new(
-                                    mettail_runtime::FltNode {
-                                        tag: gb.tag.clone(),
-                                        body_src: gb.body_src.clone(),
-                                        holes: gb.holes.iter().map(|hole| mettail_runtime::FltHole {
-                                            name: hole.name.clone(),
-                                            category: hole.category.clone(),
-                                            offset: hole.offset,
-                                        }).collect(),
-                                        position: gb.position,
-                                    }
-                                ))
-                            }),
-                            None => None,
-                        };
-                });
+            ActionArgKind::GuestBody { kind, .. } => {
+                statements.push(optional_delimited_region_extract(&value_var, &parent_iter, *kind));
                 fields.push(quote! { #value_var });
             },
             ActionArgKind::Term(cat) => {
@@ -3260,9 +3585,7 @@ pub(crate) fn emit_optional_group_body(
                                     symbol: StackSymbolV2::optional_group_at(
                                         #take_marker_id, *outer_bp,
                                     ),
-                                    weight: lex_w(
-                                        0.0, #result_src_idx, #rule_idx,
-                                    ),
+                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
                                     new_state: WpdaState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
@@ -3282,10 +3605,7 @@ pub(crate) fn emit_optional_group_body(
                                     // `action_kind`. We supply a stable
                                     // sentinel to satisfy the field.
                                     symbol: StackSymbolV2::category_entry(0),
-                                    weight: lex_w(
-                                        mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                        #result_src_idx, #rule_idx,
-                                    ),
+                                    weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
                                     new_state: #resume_state,
                                     action_kind: mettail_prattail::wpda_walker::ForkActionKind::OptGroupAbsent {
                                         replace_symbol: #resume_symbol,
@@ -3310,53 +3630,64 @@ pub(crate) fn emit_optional_group_body(
                         },
                     );
                     let inner_arm = match ipos {
-                        BinderPosition::TokenKindCapture { kind_name, .. } => quote! {
-                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::optional_group_at(
-                                            #next_marker_id, *outer_bp,
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::OptionalGroup {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            group_idx: #group_idx_value,
-                                            sub_pos: #next_sp,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
-                                                kind_name: #kind_name.to_string(),
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                        BinderPosition::TokenKindCapture { kind_name, .. } => {
+                            let capture = emit_token_capture_and_replace(
+                                kind_name,
+                                quote! {
+                                    StackSymbolV2::optional_group_at(
+                                        #next_marker_id,
+                                        *outer_bp,
+                                    )
+                                },
+                                quote! {
+                                    WpdaState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx_value,
+                                        sub_pos: #next_sp,
+                                        outer_bp: *outer_bp,
+                                    }
+                                },
+                            );
+                            quote! {
+                                (#result_src_idx, #rule_idx, #group_idx_value, #sp) => #capture
                             }
                         },
-                        BinderPosition::GuestBodyCapture { open_kind, close_kind, .. } => quote! {
-                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::optional_group_at(
-                                            #next_marker_id, *outer_bp,
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::OptionalGroup {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            group_idx: #group_idx_value,
-                                            sub_pos: #next_sp,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
-                                                open_kind: #open_kind.to_string(),
-                                                close_kind: #close_kind.to_string(),
+                        BinderPosition::GuestBodyCapture {
+                            open_kind,
+                            nested_open_kinds,
+                            close_kind,
+                            ..
+                        } => {
+                            let nested_open_kinds = nested_open_kinds
+                                .iter()
+                                .map(|kind| quote! { #kind.to_string() })
+                                .collect::<Vec<_>>();
+                            quote! {
+                                (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
+                                    return WpdaStepAction::Fork {
+                                        branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                            symbol: StackSymbolV2::optional_group_at(
+                                                #next_marker_id, *outer_bp,
+                                            ),
+                                            weight: lex_one(),
+                                            new_state: WpdaState::OptionalGroup {
+                                                result_src_idx: #result_src_idx,
+                                                rule_idx: #rule_idx,
+                                                group_idx: #group_idx_value,
+                                                sub_pos: #next_sp,
+                                                outer_bp: *outer_bp,
                                             },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                                            action_kind:
+                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
+                                                    open_kind: #open_kind.to_string(),
+                                                    nested_open_kinds: vec![#(#nested_open_kinds),*],
+                                                    close_kind: #close_kind.to_string(),
+                                                },
+                                        }],
+                                        consume_trigger: false,
+                                    };
+                                }
                             }
                         },
                         // An `m:Ident` INSIDE an `#opt(...)` group. Unlike the two capture
@@ -3367,28 +3698,27 @@ pub(crate) fn emit_optional_group_body(
                         // would never advance past the ident and the `Some(..)` branch
                         // could not be produced. Structural clone of the `Literal` arm
                         // below, swapping the text guard for the ident consume.
-                        BinderPosition::IdentTextCapture { .. } => quote! {
-                            (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::optional_group_at(
-                                            #next_marker_id, *outer_bp,
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::OptionalGroup {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            group_idx: #group_idx_value,
-                                            sub_pos: #next_sp,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndReplace {
-                                                start_scope: false,
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                        BinderPosition::IdentTextCapture { .. } => {
+                            let capture = emit_token_capture_and_replace(
+                                "Ident",
+                                quote! {
+                                    StackSymbolV2::optional_group_at(
+                                        #next_marker_id,
+                                        *outer_bp,
+                                    )
+                                },
+                                quote! {
+                                    WpdaState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx_value,
+                                        sub_pos: #next_sp,
+                                        outer_bp: *outer_bp,
+                                    }
+                                },
+                            );
+                            quote! {
+                                (#result_src_idx, #rule_idx, #group_idx_value, #sp) => #capture
                             }
                         },
                         BinderPosition::Literal(text) => quote! {
@@ -3435,7 +3765,7 @@ pub(crate) fn emit_optional_group_body(
                                             replace_symbol: StackSymbolV2::optional_group_at(
                                                 #next_marker_id, *outer_bp,
                                             ),
-                                            push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                            push_symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
                                             weight: lex_one(),
                                             new_state: WpdaState::PrefixDispatch {
                                                 pos: _pos,
@@ -3740,29 +4070,12 @@ pub(crate) fn emit_binder_action_entry(
                 });
                 field_names.push(quote! { #var });
             },
-            ActionArgKind::GuestBody { .. } => {
+            ActionArgKind::GuestBody { kind, .. } => {
                 // L9-4: the assembled guest body arrives as
                 // `ActionArg::GuestBody(GuestBodyData)` (prattail primitives);
                 // lower it to `Arc<FltNode>` here (the generated crate depends on
                 // `mettail_runtime`; prattail does not). 1:1 field map.
-                extracts.push(quote! {
-                    let #var: std::sync::Arc<mettail_runtime::FltNode> = match iter.next() {
-                        Some(a) => match a.as_guest_body() {
-                            Some(gb) => std::sync::Arc::new(mettail_runtime::FltNode {
-                                tag: gb.tag.clone(),
-                                body_src: gb.body_src.clone(),
-                                holes: gb.holes.iter().map(|h| mettail_runtime::FltHole {
-                                    name: h.name.clone(),
-                                    category: h.category.clone(),
-                                    offset: h.offset,
-                                }).collect(),
-                                position: gb.position,
-                            }),
-                            None => return,
-                        },
-                        None => return,
-                    };
-                });
+                extracts.push(required_delimited_region_extract(&var, *kind));
                 field_names.push(quote! { #var });
             },
             ActionArgKind::Term(cat) => {
@@ -4381,6 +4694,7 @@ mod tests {
         };
         lang.types.push(LangType {
             name: Ident::new("Term", proc_macro2::Span::call_site()),
+            role: Default::default(),
             native_type: None,
             collection_kind: None,
         });
@@ -4443,6 +4757,11 @@ mod tests {
         // emitted code contains ReplaceAndPush (for ParamParse slots) and
         // the literals.
         assert!(s.contains("ReplaceAndPush"));
+        assert_eq!(
+            s.matches("category_entry_goal (0u16)").count(),
+            2,
+            "every typed BigInt child occurrence must carry its declared category goal",
+        );
         assert!(s.contains("\"(\""));
         assert!(s.contains("\")\""));
         assert!(s.contains("\",\""));
@@ -4470,6 +4789,8 @@ mod tests {
         BinderShape {
             label: RED2_RULE_LABEL.to_string(),
             result_cat: "Term".to_string(),
+            leading_category: None,
+            leading_ident_capture: None,
             positions: Vec::new(),
             is_multi: false,
             has_binder: false,
@@ -4750,11 +5071,13 @@ mod tests {
         lang.types = vec![
             LangType {
                 name: Ident::new("Proc", Span::call_site()),
+                role: Default::default(),
                 native_type: None,
                 collection_kind: None,
             },
             LangType {
                 name: Ident::new("Name", Span::call_site()),
+                role: Default::default(),
                 native_type: None,
                 collection_kind: None,
             },

@@ -3,7 +3,7 @@
 **Status:** Core infrastructure — always compiled (`pub mod logict;` in `prattail/src/lib.rs`; no Cargo feature gate)
 **Module:** `prattail/src/logict.rs`
 **Benchmark target:** `bench_logict` (`prattail/benches/bench_logict.rs`)
-**Dependencies:** `std` only (`VecDeque`, `HashMap`, `HashSet`); bridges to `crate::symbolic::BooleanAlgebra`
+**Dependencies:** `std` collections plus the in-crate algebra tower; exact theories bridge to `crate::symbolic::BooleanAlgebra`
 
 > **This is the deep engine reference.** It is the full API, algorithm, and
 > mathematical account of the LogicT logic-monad, the `ConstraintTheory` trait,
@@ -18,7 +18,10 @@
 >
 > The mechanized proofs that ground §9 (theory combination) live in
 > [`TheoryCombination.v`](../../../../formal/rocq/symbolic_algebra/theories/TheoryCombination.v)
-> and are surveyed in
+> while the bounded-search, exact-decision, checked-negation, and truncated-
+> quantifier laws live in
+> [`ConstraintDecision.v`](../../../../formal/rocq/symbolic_algebra/theories/ConstraintDecision.v).
+> Both proof families are surveyed in
 > [10 — Formal Verification and Tests](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md).
 > The bounded-search diagnostic is
 > [`LT01`](../../diagnostics/logict/LT01.md) (`logict-search-bound-exceeded`).
@@ -77,8 +80,8 @@ five groups:
 |---|---|
 | Search stream | `LogicStream<T>`, `LogicStreamIter<T>` |
 | Constraint domain | `ConstraintTheory` (trait) |
-| Boolean-algebra bridge | `TheoryAlgebra<T>`, `TheoryPred<T>` |
-| Quantified FOL | `QuantifiedFormula`, `QuantifiedDomain`, `QuantifiedArg`, `evaluate_quantified`, `evaluate_quantified_with_theory`, `TriState` |
+| Constraint-algebra bridge | `TheoryAlgebra<T>`, `TheoryPred<T>`, `TheoryDecision<T>`, `DecidableConstraintTheory`, `ExactSatisfiability<T>` |
+| Quantified FOL | `QuantifiedFormula`, `QuantifiedDomain`, `QuantifiedArg`, `evaluate_quantified`, `evaluate_quantified_3v`, `evaluate_quantified_with_theory`, `TriState` |
 | AC-matching | `MultisetPartition<T>`, `multiset_partitions`, `multiset_select` |
 
 The internal types `Branch<T>` and `BranchResult<T>` are private (they back
@@ -249,6 +252,7 @@ unless marked as a constructor. Signatures are stated with the real Rust types.
 | `gnot()` | `LogicStream<T> → LogicStream<()>` | — | Negation as finite failure: `unit(())` iff `self` is empty, else `empty()`. |
 | `map(f)` | `(T → U) → LogicStream<U>` | eager | Eagerly collect, then map (preserves all answers). |
 | `filter(p)` | `(&T → bool) → LogicStream<T>` | eager | Eagerly collect, then retain answers satisfying `p`. |
+| `collect_bounded_with_status(n)` | `usize → BoundedCollection<T>` | — | Up to `n` answers plus an explicit implementation-stream exhaustion flag. |
 | `collect_bounded(n)` | `usize → Vec<T>` | — | Up to `n` answers via repeated `msplit`. Terminates on infinite streams. |
 | `collect_all()` | `() → Vec<T>` | — | **All** answers. **Diverges on an infinite stream** — see the warning below. |
 | `is_empty()` | `() → bool` | — | `true` iff `msplit()` is `None` (consumes the stream). |
@@ -260,7 +264,8 @@ unless marked as a constructor. Signatures are stated with the real Rust types.
 > infinite or unbounded stream they do not terminate. For any stream whose size
 > is not known to be finite — in particular the output of `multiset_partitions`
 > over a large bag, or a `ConstraintTheory::label` that enumerates a
-> semi-decidable domain — use `collect_bounded(limit)` or the lazy
+> semi-decidable domain — use `collect_bounded_with_status(limit)` when logical
+> conclusions depend on exhaustion, or the lazy
 > `into_iter()` adapter instead. The bounded variants are the resource meter
 > that the `LT01` diagnostic (§13) reports on.
 
@@ -539,11 +544,13 @@ across the fair-search frontier.
 | `PresburgerTheory` | Decidable | `LogicStream::empty()` | NFA emptiness decides satisfiability; no search choices. |
 | `LatticeTheory` | Decidable | `LogicStream::empty()` | Finite universe; transitive-closure decides all relationships. |
 | `UnificationTheory` | Decidable (core) | `empty()` for core; alternatives for extended custom-match | Martelli–Montanari unification is deterministic; extended pattern matching may branch. |
-| User-defined | Varies | Domain-specific stream | Implement `ConstraintTheory`; obtain `BooleanAlgebra` for free via `TheoryAlgebra`. |
+| User-defined | Varies | Domain-specific stream | `ConstraintTheory` grants reject-safe three-valued search; `BooleanAlgebra` additionally requires `DecidableConstraintTheory`. |
 
-The decidable theories make the `search_bound` of §7 irrelevant: with an empty
-`label`, no labeling step is ever taken and propagation always terminates. The
-bound only bites when a theory's `label` is non-empty (the `LT01` case, §13).
+An exact theory's `DecidableConstraintTheory::decide_exact` procedure does not
+use the bounded labeling adapter. In the general adapter, however, an empty
+`label` proves only that this implementation stream ended; it is not by itself a
+semantic completeness certificate. The result remains `DontKnow` when no
+checked witness exists.
 
 ### 6.3 A complete, in-tree example: `PropTheory`
 
@@ -624,18 +631,26 @@ impl ConstraintTheory for PropTheory {
 }
 ```
 
-`PropTheory` is decidable, so its `label` is empty; the entire satisfiability
-decision rides on `propagate` detecting the `a ∧ ¬a` contradiction. This is the
-canonical shape of a decidable `ConstraintTheory`.
+`PropTheory` has an empty labeling stream and supplies useful positive witnesses,
+but it intentionally implements only `ConstraintTheory` in the test module.
+Consequently a propagation contradiction is reported as `DontKnow` by the
+general adapter. An exact propositional implementation would additionally
+implement `DecidableConstraintTheory` with a complete truth-table, BDD, or SAT
+decision procedure.
 
 ---
 
 ## 7. The `TheoryAlgebra` bridge
 
-`TheoryAlgebra<T>` wraps any `ConstraintTheory` and provides a `BooleanAlgebra`
-implementation, so a domain solver integrates with
-`SymbolicAutomaton<TheoryAlgebra<T>>` — and thereby with minterm computation,
-determinization, and the lint analyses — without touching the automata.
+`TheoryAlgebra<T>` gives every `ConstraintTheory` a reject-safe algebra with
+three-valued satisfiability. A checked witness yields `Sat`; a structurally false
+predicate yields `Unsat`; and bounded search without a witness yields
+`DontKnow`, irrespective of whether the implementation stream happened to end.
+
+Classical automata operations are a separate capability. They are available only
+when `T` implements `DecidableConstraintTheory`, whose `decide_exact` method has
+no undecided case. This type-level gate prevents a semi-decision procedure from
+entering SFA complement, determinization, inclusion, or equivalence.
 
 ```rust
 #[derive(Clone, Debug)]
@@ -665,102 +680,90 @@ combinations even when the underlying theory supports only forward propagation
 `Eq`, and `Hash` *structurally* (so it can serve as the automaton's predicate
 alphabet), delegating to `T::Constraint`'s own `Eq`/`Hash`.
 
-### 7.2 `collect_constraints` — folding a `TheoryPred` into a store stream
+### 7.2 Fair candidate-store PDA
 
-The bridge's private workhorse turns a `TheoryPred` into a `LogicStream` of
-satisfying stores, using the fair operators of §4 for the connectives.
+The bridge lowers a `TheoryPred` through an explicit, stack-safe pushdown
+machine. Each machine state contains a constraint store and a vector of pending
+predicate/polarity frames. Conjunction pushes both operands on the same frame
+stack. Disjunction clones the continuation and places both alternatives on a
+breadth-first `VecDeque`. Positive atoms call `propagate`; negative atoms remain
+structural and are checked only against a concrete witness.
 
-**Algorithm `CollectConstraints`** *(logict.rs:1240–1314)*
-
-```text
-⟨CollectConstraints(self, pred, store) → LogicStream<Store>⟩ ≡
-  1.  case pred of
-  2.    True:        return unit(store)                       ▷ ⊤ admits the store unchanged
-  3.    False:       return empty()                           ▷ ⊥ admits nothing
-  4.    Atom(c):     case theory.propagate(store, c) of       ▷ narrow by the atom
-  5.                   Some(s′): return unit(s′)
-  6.                   None:     return empty()                ▷ atom contradicts the store
-  7.    And(a, b):   aₛ ← CollectConstraints(a, store)         ▷ conjunction = fair bind
-  8.                 return aₛ.fair_conjoin(λ s. CollectConstraints(b, s))
-  9.    Or(a, b):    aₛ ← CollectConstraints(a, store)         ▷ disjunction = fair merge
- 10.                 bₛ ← CollectConstraints(b, store)
- 11.                 return interleave(aₛ, bₛ)
- 12.    Not(inner):  case inner of                             ▷ De Morgan push-down
- 13.                   True:        return empty()             ▷ ¬⊤ = ⊥
- 14.                   False:       return unit(store)         ▷ ¬⊥ = ⊤
- 15.                   Not(inner₂): return CollectConstraints(inner₂, store)  ▷ ¬¬A = A
- 16.                   And(a, b):   return interleave(¬a-stores, ¬b-stores)   ▷ ¬(A∧B)=¬A∨¬B
- 17.                   Or(a, b):    return (¬a-stores).fair_conjoin(λ s. ¬b-stores) ▷ ¬(A∨B)=¬A∧¬B
- 18.                   Atom(_):     return unit(store)         ▷ atomic NAF — tracked, validated later
-```
-
-Two subtleties deserve emphasis:
-
-- **Conjunction is `fair_conjoin`** (line 8): each store produced by `a` becomes
-  the input store for `b`, and all the resulting `b`-searches are interleaved.
-  This threads the constraint state through the conjunction *and* keeps the
-  search fair.
-- **Atomic negation is negation-as-failure** (line 18): `propagate` cannot add a
-  *negated* atom (the theory only narrows by positive constraints), so
-  `¬Atom(c)` leaves the store unchanged and defers the check. The negation is
-  carried structurally in the `TheoryPred` and enforced at witness time by
-  `evaluate(¬Atom(c), witness)` — i.e. the witness must *not* satisfy `c`.
-
-### 7.3 `witness` and `is_satisfiable`
-
-`is_satisfiable(pred)` is defined as `witness(pred).is_some()`. The `witness`
-method runs the store stream, takes a bounded prefix, and validates each
-candidate against the *full* predicate (so structurally-tracked atomic negations
-are honored):
-
-**Algorithm `Witness`** *(logict.rs:1370–1396)*
+**Algorithm `CandidateStores`**
 
 ```text
-⟨Witness(self, pred) → Option<Assignment>⟩ ≡
-  1.  store  ← theory.empty_store()
-  2.  stores ← CollectConstraints(pred, store).collect_bounded(search_bound)
-  3.  for each s in stores:
-  4.      if theory.witness(s) = Some(w) and self.evaluate(pred, w):   ▷ direct witness
-  5.          return Some(w)
-  6.      ▷ otherwise try labeling this store (non-decidable theories)
-  7.      for each label in theory.label(s).collect_bounded(search_bound):
-  8.          if theory.propagate(s, label) = Some(s′)
-  9.             and theory.witness(s′) = Some(w)
- 10.             and self.evaluate(pred, w):
- 11.              return Some(w)
- 12.  return None                                                       ▷ no witness within budget
+CandidateStores(predicate, theory, branch_limit):
+  frontier := queue(([(predicate, positive)], theory.empty_store()))
+  completed := []
+  while frontier is nonempty and explored_branches < branch_limit:
+    state := frontier.pop_front()
+    advance state iteratively until it is rejected, complete, or branches
+    if state branches:
+      enqueue both alternatives with cloned continuations
+    else if state is complete:
+      completed.push(state.store)
+  return BoundedCollection(completed, frontier is empty)
 ```
 
-Line 2's `collect_bounded(search_bound)` is the *first* resource gate (it caps
-how many satisfying stores are drawn from the fair search), and line 7's bound is
-the *second* (it caps labeling alternatives per store). For a decidable theory,
-`label` is empty, so lines 7–11 are vacuous and the decision is made entirely by
-propagation plus the line-4 witness check. The `evaluate` re-check on lines 4 and
-10 is what makes atomic negation-as-failure sound: a store that was admitted only
-because a `¬Atom` was left unpropagated is rejected here unless the produced witness truly
-falsifies the negated atom.
+Three subtleties are load-bearing:
 
-### 7.4 `BooleanAlgebra` smart constructors
+- The native call stack never follows predicate depth; all traversal state is
+  explicit.
+- Breadth-first branch scheduling prevents a left disjunct from starving a
+  shallow witness on the right.
+- A negated atom is never accepted by absence. The complete predicate is
+  re-evaluated against every candidate witness through `evaluate_checked`, whose
+  unknown value remains unknown through negation.
 
-`TheoryAlgebra`'s `and`/`or`/`not` perform the obvious `⊤`/`⊥` simplifications
-(e.g. `and(⊤, b) = b`, `or(a, ⊤) = ⊤`, `not(not(a)) = a`) before constructing a
-node, keeping predicates small. `true_pred`/`false_pred` return `TheoryPred::True`/
-`TheoryPred::False`, and `evaluate` recurses structurally, bottoming out at
-`theory.evaluate` for atoms. These are exercised by the
-`theory_algebra_tests` module (`theory_algebra_disjunction_satisfiable`,
-`theory_algebra_contradiction_unsatisfiable`, `theory_algebra_negation`, etc.).
+### 7.3 Bounded decision and exact decision
 
-### 7.5 Negation: bridge NAF versus a direct algebra
+`decide_bounded` evaluates candidate stores and labeling alternatives through an
+explicit work queue. Every candidate assignment is checked against the complete
+predicate. If no checked witness is found, the result is `Undetermined`; the
+`implementation_exhausted` field records operational exhaustion without
+upgrading it to a proof.
 
-Because the bridge uses **negation-as-failure** for atomic negation while a
-direct decision-procedure algebra (e.g. `PresburgerAlgebra`, which complements
-NFAs) uses **classical** negation, the two paths can diverge on predicates that
-negate atoms. This is intended: the bridge is the *general* path that works for
-any theory, and the direct algebra is a *faster, theory-specific* path where the
-theory happens to support exact complementation. Cross-validation tests document
-the agreed behavior. The mirror of this distinction at the substrate level — and
-why "don't know" is collapsed to *rejection* rather than admission — is described
-in [13 §5](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md).
+**Algorithm `DecideBounded`**
+
+```text
+DecideBounded(predicate, theory, search_bound):
+  if predicate is structurally false:
+    return Refuted
+  candidates := CandidateStores(predicate, theory, search_bound)
+  frontier := queue(candidates.values)
+  while frontier is nonempty and labeling_steps < search_bound:
+    store := frontier.pop_front()
+    if theory.witness(store) returns witness
+       and EvaluateChecked(predicate, witness) is determined true:
+      return Proven(witness)
+    labels := theory.label(store).collect_bounded_with_status(remaining_budget)
+    propagate each retained label and enqueue every consistent successor store
+  return Undetermined(implementation streams exhausted?)
+```
+
+The general adapter never converts the final no-witness state into `Refuted`.
+Only `DecidableConstraintTheory::decide_exact` may return
+`ExactSatisfiability::Unsatisfiable`. `TheoryAlgebra<T>` implements the classical
+`BooleanAlgebra` trait only under that bound, and it independently rechecks every
+positive witness before exposing it.
+
+### 7.4 Algebra operations
+
+Both algebra tiers share stack-safe smart constructors and structural
+evaluation. The reject-safe tier exposes `pseudo_complement` and
+`is_satisfiable_3v`; the exact tier exposes classical `not` and
+`is_satisfiable`. Atomic evaluation uses `ConstraintTheory::evaluate_checked`,
+and strong three-valued conjunction, disjunction, and negation are composed
+before uncertainty is collapsed at a Boolean admission boundary.
+
+### 7.5 Negation and the no-escalation rule
+
+The predicate AST denotes ordinary structural negation, but bounded search does
+not use absence of a witness as evidence for that negation. A candidate must
+evaluate to determined true under the complete predicate. If an atom is
+indeterminate, its negation is also indeterminate. This is the no-escalation rule:
+truncation, solver uncertainty, overflow, or partial observation can never become
+admission merely by crossing a negative position.
 
 ### 7.6 A complete `TheoryAlgebra` example (in-tree, decidable)
 
@@ -768,8 +771,8 @@ This example uses `PropTheory` from §6.3 and is exactly the
 `theory_algebra_disjunction_satisfiable` test, so it is guaranteed valid:
 
 ```rust
+use mettail_prattail::algebra_tower::{RejectSafeAlgebra, Sat3};
 use mettail_prattail::logict::{TheoryAlgebra, TheoryPred};
-use mettail_prattail::symbolic::BooleanAlgebra;
 // PropTheory / PropConstraint as defined in §6.3.
 
 let algebra = TheoryAlgebra::new(PropTheory, 100);
@@ -783,7 +786,7 @@ let pred = algebra.or(
     &TheoryPred::Atom(PropConstraint::Assert("y".into())),
 );
 
-assert!(algebra.is_satisfiable(&pred));      // the `y` disjunct yields a witness
+assert_eq!(algebra.is_satisfiable_3v(&pred), Sat3::Sat);
 ```
 
 For a *decidable arithmetic* theory the same shape applies with
@@ -805,16 +808,17 @@ let pred = algebra.and(
     &TheoryPred::Atom(LinearConstraint::new(vec![(0, 1)], 7)),   // `new` is the ≤ form
 );
 
-assert!(algebra.is_satisfiable(&pred));           // decided by NFA emptiness (label = empty)
+assert!(algebra.is_satisfiable(&pred));           // exact NFA decision via DecidableConstraintTheory
 
 let witness = algebra.witness(&pred).expect("should find a witness");
 let v = witness.get(0);                            // IntAssignment::get → i64
 assert!(v >= 3 && v <= 7);
 ```
 
-Here `PresburgerTheory::label` returns `empty()`, so `Witness` (§7.3) reaches a
-verdict by propagation and the line-4 witness check alone; `search_bound = 100`
-never binds.
+Here `PresburgerTheory` implements `DecidableConstraintTheory` by lowering the
+full `TheoryPred` iteratively into `PresburgerPred` and invoking the NFA decision
+procedure. `search_bound = 100` governs only the reject-safe adapter; it does not
+weaken the exact classical result.
 
 ---
 
@@ -897,15 +901,15 @@ where F: Fn(&str, &[String]) -> bool,
 ```
 
 where `EnumerateDomain(Relation(r)) = enum(r)` and
-`EnumerateDomain(Bounded{r, limit}) = enum(r).take(min(limit, bound))`. A
-quantifier binds `x` to the *first column* of each tuple (the common projection
-for guards); multi-column relations are queried positionally via `Atom`.
+Bounded enumeration returns both the retained tuple prefix and an `exhausted`
+flag computed against the finite relation snapshot. A quantifier binds its
+variable to the first column of each tuple; multi-column relations are queried
+positionally through `Atom`.
 
 > **How this connects to the logic monad — precisely.** `evaluate_quantified`
-> does **not** construct a `LogicStream` per quantifier. It recurses directly
-> over the *materialized* `Vec<Vec<String>>` returned by `domain_enumerate`,
-> using Rust's `Iterator::all`/`any` for `∀`/`∃` and `take(min(limit, bound))`
-> for a `Bounded` domain. The relationship to LogicT is **semantic**, not
+> does **not** construct a `LogicStream` per quantifier. It uses an explicit
+> stack machine over the materialized `Vec<Vec<String>>` returned by
+> `domain_enumerate`. The relationship to LogicT is **semantic**, not
 > structural:
 >
 > - the closed-world reading of negation that makes `∀x. φ ≡ ¬∃x. ¬φ` hold is
@@ -913,15 +917,18 @@ for guards); multi-column relations are queried positionally via `Atom`.
 >   crate's tests `gnot_equivalence_forall_not_exists_not` and
 >   `gnot_equivalence_exists_not_forall_not` assert these De Morgan dualities
 >   over the evaluator; and
-> - the `Bounded`-domain truncation mirrors `collect_bounded`'s finite budget.
+> - bounded-domain truncation mirrors
+>   `collect_bounded_with_status`'s explicit frontier evidence.
 >
 > The monad backs this layer *semantically*; it backs `TheoryAlgebra::witness`
 > and `multiset_partitions` *literally* (true fair search). The fairness of §3.4
 > matters at the `witness` layer *beneath* a theory-guided quantifier (§8.4), not
 > in the plain tuple enumeration here.
 
-`ForAll` over an empty domain returns `true` (vacuous `⊤`); `Exists` over an
-empty domain returns `false` (`⊥`). These are pinned by
+`ForAll` over an exhausted empty domain returns `true`; `Exists` over an
+exhausted empty domain returns `false`. A truncated universal with no observed
+counterexample and a truncated existential with no observed witness both return
+`Unknown`. These laws are pinned by
 `evaluate_empty_domain_forall_vacuous` and `evaluate_empty_domain_exists_false`.
 
 ### 8.3 `TriState` — three-valued (Kleene) logic
@@ -1161,12 +1168,13 @@ The essential bridges, in one table, so a reader need not chase them:
 
 | Engine artifact (this doc) | Substrate role | Where |
 |---|---|---|
-| `TheoryAlgebra<T> : BooleanAlgebra` (§7) | makes a registered theory a reusable guard algebra → `SymbolicAutomaton`, minterms, determinization | [13 §2](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md), [02](../../../../docs/architecture/semantic-predicates/02-effective-boolean-algebra.md) |
+| `TheoryAlgebra<T> : RejectSafeAlgebra` (§7) | gives every registered native theory bounded three-valued guard reasoning | [13 §2](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md), [05](../../../../docs/architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md) |
+| `TheoryAlgebra<T> : BooleanAlgebra` when `T: DecidableConstraintTheory` (§7) | admits only exact theories to classical SFA operations | [02](../../../../docs/architecture/semantic-predicates/02-effective-boolean-algebra.md) |
 | `evaluate_quantified*` → `TriState` (§8) | quantified-guard verdict, three-valued | [13 §3](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md), [06 §2.3.1](../../../../docs/architecture/semantic-predicates/06-guard-syntax-and-extensions.md) |
 | `TriState` ↔ `Sat3`; `into_safe_bool` (§8.3) | reject-safe collapse feeding the flip gate | [13 §5](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md), [05](../../../../docs/architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md), [12](../../../../docs/architecture/semantic-predicates/12-heyting-behavioral-logic.md) |
 | joint-search combination (§9) | Nelson–Oppen base-case EBA | `TheoryCombination.v`, [10 §2.1](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md) |
 | `multiset_partitions` (§10) | `BehavioralPred::AcMatch` enumeration | [13 §1](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md) |
-| `collect_bounded(search_bound)` (§4, §7.3) | the resource meter; tier T3 boundary | `LT01` (§13), [05 §6](../../../../docs/architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md) |
+| `collect_bounded_with_status(search_bound)` (§4, §7.3) | resource meter plus non-lossy exhaustion evidence; tier T3 boundary | `LT01` (§13), [05 §6](../../../../docs/architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md) |
 
 ---
 
@@ -1178,7 +1186,8 @@ The essential bridges, in one table, so a reader need not chase them:
 | `mplus(b)` | `O(\|b\|)` | Extends the deque with all branches of `b`. |
 | `interleave(b)` | `O(\|self\| + \|b\|)` | Splices the two branch queues element-by-element (no thunk forced). |
 | `fair_conjoin(f)` | `O(\|self\| · \|f(x)\|)` | Applies `f` to each answer, folds by `interleave`. |
-| `collect_bounded(n)` | `O(n · cost(msplit))` | At most `n` `msplit` calls. The bounded resource meter. |
+| `collect_bounded_with_status(n)` | `O((n + 1) · cost(msplit))` | Retains at most `n` results and probes once beyond the prefix to distinguish exact exhaustion from truncation. |
+| `collect_bounded(n)` | `O((n + 1) · cost(msplit))` | Compatibility projection that discards the status; unsuitable for logical negative conclusions. |
 | `collect_all()` | `O(\|stream\| · cost(msplit))` | **Diverges** on an infinite stream — §4.1 warning. |
 | `ifte` | `O(cost(msplit) + then/else)` | One `msplit` for the test. |
 | `once` | `O(cost(msplit))` | One `msplit`, discard the remainder. |
@@ -1207,9 +1216,10 @@ That truncation is surfaced as the lint
 - **Severity:** Warning (a *possibly* missed solution, not a definite failure) —
   because a truncated search may still have a witness beyond the explored
   frontier, the honest verdict is `Unknown`, never `Unsat`.
-- **What it means:** `label()` produced more alternatives than `search_bound`
-  allows; the global budget (a gas meter across *all* choice points, not
-  per-point) was exhausted.
+- **What it means:** predicate branching or `label()` produced more alternatives
+  than the configured bound admits. Candidate branching and iterative labeling
+  each have an explicit bounded frontier; neither missing prefix can prove a
+  negative result.
 - **Common causes:** a genuinely deep search space, a divergent search (e.g. a
   recursive `custom_match` pattern that yields an infinite stream), or
   inefficient labeling order that buries the solution.

@@ -171,6 +171,33 @@ Section ExactKeyDedup.
     - exact Hneq.
   Qed.
 
+  (* A production index may bucket exact keys by a finite accelerator, but the
+     accelerator never decides equality. This models the immutable
+     (length,fingerprint) bucket used by ContentKeyMap/ContentKeySet: a bucket
+     hit is followed by exact key equality, including on collisions. *)
+  Definition accelerated_exact_equal
+      (accelerator : Key -> nat) (left right : Key) : bool :=
+    Nat.eqb (accelerator left) (accelerator right) && Nat.eqb left right.
+
+  Theorem accelerated_exact_equal_iff : forall accelerator left right,
+    accelerated_exact_equal accelerator left right = true <-> left = right.
+  Proof.
+    intros accelerator left right. unfold accelerated_exact_equal.
+    rewrite Bool.andb_true_iff. split.
+    - intros [_ Hkey]. now apply Nat.eqb_eq in Hkey.
+    - intro Hequal. subst right. split; apply Nat.eqb_refl.
+  Qed.
+
+  Theorem accelerator_collision_uses_exact_fallback : forall accelerator left right,
+    accelerator left = accelerator right ->
+    left <> right ->
+    accelerated_exact_equal accelerator left right = false.
+  Proof.
+    intros accelerator left right Haccelerator Hdistinct.
+    unfold accelerated_exact_equal. rewrite Haccelerator, Nat.eqb_refl. simpl.
+    now apply Nat.eqb_neq.
+  Qed.
+
   Inductive AddResult : Type :=
     | Added : nat -> AddResult
     | Overflow : nat -> AddResult.
@@ -202,5 +229,8 @@ Section ExactKeyDedup.
       + reflexivity.
       + apply Nat.ltb_ge. exact Hlt.
   Qed.
+
+  Print Assumptions accelerated_exact_equal_iff.
+  Print Assumptions accelerator_collision_uses_exact_fallback.
 
 End ExactKeyDedup.

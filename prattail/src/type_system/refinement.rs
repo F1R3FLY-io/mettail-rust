@@ -392,6 +392,20 @@ pub struct RefinementTypeEnv<
 /// ```
 ///
 /// Base types lift: `T` is equivalent to `{ x: T | true }`.
+type ExactRefinementDecider<T> = fn(
+    &crate::logict::TheoryAlgebra<T>,
+    &crate::logict::TheoryPred<T>,
+) -> crate::algebra_tower::Sat3;
+
+#[derive(Clone, Copy, Debug)]
+enum RefinementDecisionMode<T: ConstraintTheory> {
+    /// Bounded certificate search. `DontKnow` is preserved and fails closed at
+    /// the Boolean `TypeSystem` boundary.
+    RejectSafe,
+    /// A statically trusted complete procedure with checked positive witnesses.
+    Exact(ExactRefinementDecider<T>),
+}
+
 #[derive(Clone, Debug)]
 pub struct RefinementTypeSystem<S: TypeSystem, T: ConstraintTheory> {
     /// The base type system.
@@ -400,6 +414,9 @@ pub struct RefinementTypeSystem<S: TypeSystem, T: ConstraintTheory> {
     pub constraint_theory: T,
     /// Search bound for LogicT-based entailment checking.
     pub search_bound: usize,
+    /// Whether this instance owns only reject-safe search or a statically
+    /// authorized exact decision procedure.
+    decision_mode: RefinementDecisionMode<T>,
 }
 
 impl<S: TypeSystem, T: ConstraintTheory> RefinementTypeSystem<S, T>
@@ -412,6 +429,51 @@ where
             base_system,
             constraint_theory,
             search_bound,
+            decision_mode: RefinementDecisionMode::RejectSafe,
+        }
+    }
+
+    /// Create a refinement system backed by a complete decision procedure.
+    ///
+    /// The additional trait bound is the authority gate: arbitrary runtime
+    /// grammar data cannot opt into classical conclusions. Every positive
+    /// result is rechecked against the whole predicate by [`TheoryAlgebra`].
+    pub fn new_exact(base_system: S, constraint_theory: T, search_bound: usize) -> Self
+    where
+        T: crate::logict::DecidableConstraintTheory,
+    {
+        fn decide<T>(
+            algebra: &crate::logict::TheoryAlgebra<T>,
+            predicate: &crate::logict::TheoryPred<T>,
+        ) -> crate::algebra_tower::Sat3
+        where
+            T: crate::logict::DecidableConstraintTheory,
+        {
+            use crate::logict::ExactSatisfiability;
+            match algebra.decide_exact_checked(predicate) {
+                ExactSatisfiability::Satisfiable(_) => crate::algebra_tower::Sat3::Sat,
+                ExactSatisfiability::Unsatisfiable => crate::algebra_tower::Sat3::Unsat,
+            }
+        }
+
+        RefinementTypeSystem {
+            base_system,
+            constraint_theory,
+            search_bound,
+            decision_mode: RefinementDecisionMode::Exact(decide::<T>),
+        }
+    }
+
+    fn classify_predicate(
+        &self,
+        predicate: &crate::logict::TheoryPred<T>,
+    ) -> crate::algebra_tower::Sat3 {
+        use crate::algebra_tower::RejectSafeAlgebra;
+        let algebra =
+            crate::logict::TheoryAlgebra::new(self.constraint_theory.clone(), self.search_bound);
+        match self.decision_mode {
+            RefinementDecisionMode::RejectSafe => algebra.is_satisfiable_3v(predicate),
+            RefinementDecisionMode::Exact(decide) => decide(&algebra, predicate),
         }
     }
 
@@ -423,10 +485,41 @@ where
         }
     }
 
-    /// Check if a predicate is satisfiable using the constraint theory.
+    /// Classify predicate satisfiability without erasing bounded-search
+    /// uncertainty.
+    pub fn predicate_satisfiability(&self, pred: &T::Constraint) -> crate::algebra_tower::Sat3 {
+        self.classify_predicate(&crate::logict::TheoryPred::Atom(pred.clone()))
+    }
+
+    /// Check whether a predicate has a certificate-checked witness.
+    ///
+    /// `DontKnow` fails closed; `propagate(...).is_some()` is not sufficient
+    /// because it denotes only "not proven inconsistent" and may carry solver
+    /// uncertainty.
     pub fn predicate_satisfiable(&self, pred: &T::Constraint) -> bool {
-        let store = self.constraint_theory.empty_store();
-        self.constraint_theory.propagate(&store, pred).is_some()
+        matches!(self.predicate_satisfiability(pred), crate::algebra_tower::Sat3::Sat)
+    }
+
+    /// Prove that a predicate is valid for every assignment.
+    fn predicate_tautological(&self, pred: &T::Constraint) -> bool {
+        use crate::algebra_tower::{RejectSafeAlgebra, Sat3};
+        use crate::logict::{TheoryAlgebra, TheoryPred};
+
+        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), self.search_bound);
+        let negated = algebra.pseudo_complement(&TheoryPred::Atom(pred.clone()));
+        matches!(self.classify_predicate(&negated), Sat3::Unsat)
+    }
+
+    /// Check a conjunction by requiring a concrete witness for the whole
+    /// predicate rather than treating successful propagation as a proof.
+    fn conjunction_satisfiable(&self, left: &T::Constraint, right: &T::Constraint) -> bool {
+        use crate::algebra_tower::{RejectSafeAlgebra, Sat3};
+        use crate::logict::{TheoryAlgebra, TheoryPred};
+
+        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), self.search_bound);
+        let conjunction =
+            algebra.and(&TheoryPred::Atom(left.clone()), &TheoryPred::Atom(right.clone()));
+        matches!(self.classify_predicate(&conjunction), Sat3::Sat)
     }
 
     /// Check predicate entailment: does P(x) imply Q(x)?
@@ -436,43 +529,37 @@ where
     /// implementations checked "is Q consistent in a store where P
     /// holds" — that is *joint* satisfiability, not entailment, and
     /// returns true whenever P and Q have any common model
-    /// (semantically distinct from ⟹). The corrected version lifts
-    /// the constraints into the `TheoryAlgebra<T>` `BooleanAlgebra`
-    /// wrapper (which exposes negation) and checks
-    /// `!is_satisfiable(P ∧ ¬Q)`.
+    /// (semantically distinct from ⟹). The corrected version lifts the
+    /// constraints into the reject-safe `TheoryAlgebra<T>` and asks whether
+    /// `P ∧ ¬Q` is *proven* unsatisfiable. A found witness refutes entailment;
+    /// a bounded no-witness result is `DontKnow` and fails closed.
     ///
-    /// The `TheoryAlgebra<T>` witness-search decider is the PRIMARY (verified)
-    /// decider. When the `smt` feature is enabled (OSLF Phase 8), Z3 is consulted
-    /// as a SECONDARY gap-filler — see [`Self::predicate_entails`]'s `smt` variant —
-    /// only for the concrete [`Z3Theory`](crate::logict_smt::Z3Theory) constraint
-    /// domain that the search cannot decide (mixed numeric/bitvector guards).
+    /// When the `smt` feature is enabled, the concrete
+    /// [`Z3Theory`](crate::logict_smt::Z3Theory) path preserves the solver's
+    /// three-valued result. All other theories use the same bounded reject-safe
+    /// search.
     #[cfg(not(feature = "smt"))]
     pub fn predicate_entails(&self, premise: &T::Constraint, conclusion: &T::Constraint) -> bool {
+        use crate::algebra_tower::{RejectSafeAlgebra, Sat3};
         use crate::logict::{TheoryAlgebra, TheoryPred};
-        use crate::symbolic::BooleanAlgebra;
 
-        // 1024 is the same default search bound used by the runtime
-        // guard evaluator (`generate_inline_guard_eval` in macros).
-        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), 1024);
+        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), self.search_bound);
         let p = TheoryPred::Atom(premise.clone());
         let q = TheoryPred::Atom(conclusion.clone());
-        let not_q = algebra.not(&q);
+        let not_q = algebra.pseudo_complement(&q);
         let p_and_not_q = algebra.and(&p, &not_q);
-        !algebra.is_satisfiable(&p_and_not_q)
+        matches!(self.classify_predicate(&p_and_not_q), Sat3::Unsat)
     }
 
     /// `smt`-feature variant of [`Self::predicate_entails`].
     ///
-    /// For every NON-`Z3Theory` constraint domain this is byte-for-byte the default
-    /// build: the `TheoryAlgebra<T>` witness-search decides (the `Any` downcast to
-    /// `Z3Theory` fails, so the verified primary decider runs unchanged).
+    /// For every non-`Z3Theory` constraint domain this follows the default build's
+    /// reject-safe path because the concrete downcast fails.
     ///
     /// ONLY for the concrete [`Z3Theory`](crate::logict_smt::Z3Theory) domain (a
     /// genuine SMT constraint — mixed numeric/bitvector — the verified search cannot
-    /// decide) Z3 decides `P ∧ ¬Q` three-valued via
-    /// [`is_satisfiable_3v`](crate::logict_smt::is_satisfiable_3v), and the
-    /// defect-prone `TheoryAlgebra<Z3Theory>::is_satisfiable` (which collapses
-    /// `DontKnow → false`) is NEVER constructed for it:
+    /// decide) Z3 classifies `P ∧ ¬Q` through
+    /// [`is_satisfiable_3v`](crate::logict_smt::is_satisfiable_3v):
     ///
     /// - `Unsat` ⇒ entailment PROVEN ⇒ `true`.
     /// - `Sat` ⇒ a genuine counter-model exists (certificate-checked via
@@ -483,20 +570,15 @@ where
     ///   `DontKnow` is never collapsed to Unsat/true.
     #[cfg(feature = "smt")]
     pub fn predicate_entails(&self, premise: &T::Constraint, conclusion: &T::Constraint) -> bool {
-        use crate::algebra_tower::Sat3;
+        use crate::algebra_tower::{RejectSafeAlgebra, Sat3};
         use crate::logict::{TheoryAlgebra, TheoryPred};
         use crate::logict_smt::{self, SmtConstraint, Z3Theory};
-        use crate::symbolic::BooleanAlgebra;
         use std::any::Any;
 
-        // SECONDARY (Z3) gap-filler — applies ONLY for the `Z3Theory` constraint
-        // domain (the `Any` downcast of the theory succeeds iff `T = Z3Theory`, so
-        // `T::Constraint = SmtConstraint`). For Z3 the SOUND three-valued decision
-        // REPLACES the verified witness-search entirely: `TheoryAlgebra<Z3Theory>::
-        // is_satisfiable` collapses `DontKnow → witness None → false` (exactly the
-        // unsoundness Phase 8 fixes), so it must NEVER decide a Z3 guard — we do not
-        // even construct it here. For every other theory the downcast fails and we
-        // fall through to the verified primary decider below.
+        // The Z3 branch applies only when both the theory and constraints have the
+        // corresponding concrete types. It preserves the three-valued solver
+        // result directly; every other theory falls through to bounded
+        // reject-safe search below.
         let theory_any: &dyn Any = &self.constraint_theory;
         if let Some(z3) = theory_any.downcast_ref::<Z3Theory>() {
             let premise_any: &dyn Any = premise;
@@ -527,14 +609,13 @@ where
             }
         }
 
-        // PRIMARY (verified) decider for every non-Z3 theory — byte-for-byte the
-        // default (`#[cfg(not(feature = "smt"))]`) computation.
-        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), 1024);
+        // Default bounded reject-safe path for every non-Z3 theory.
+        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), self.search_bound);
         let p = TheoryPred::Atom(premise.clone());
         let q = TheoryPred::Atom(conclusion.clone());
-        let not_q = algebra.not(&q);
+        let not_q = algebra.pseudo_complement(&q);
         let p_and_not_q = algebra.and(&p, &not_q);
-        !algebra.is_satisfiable(&p_and_not_q)
+        matches!(self.classify_predicate(&p_and_not_q), Sat3::Unsat)
     }
 
     /// Apply a variable substitution to a refinement type.
@@ -547,11 +628,12 @@ where
     /// Returns:
     /// - `Some(RefType::Refined { ... })` if the substitution yields a satisfiable predicate
     /// - `Some(RefType::Base(base))` if all free variables are substituted (predicate becomes ground)
-    /// - `None` if the substituted predicate is unsatisfiable
+    /// - `None` if the conjunction is refuted or remains undetermined within the
+    ///   configured search bound
     ///
-    /// This is used at **compile time** to analyze guard propagation through substitutions
-    /// in Comm rules. The runtime codegen uses the simpler approach of checking
-    /// `is_refined_<name>(value)` via the Ascent relation generated by RT8.
+    /// This is used at **compile time** to analyze guard propagation through
+    /// substitutions in Comm rules. Acceptance requires a checked witness; a
+    /// bounded no-witness result cannot authorize the substitution.
     pub fn apply_substitution(
         &self,
         ty: &RefType<S::Type, T::Constraint>,
@@ -566,22 +648,9 @@ where
                     return Some(RefType::Refined(refined.clone()));
                 }
 
-                // The predicate's binding variable is being substituted.
-                // Propagate both the original predicate and the value constraint
-                // into a fresh store. If the result is satisfiable, the substitution
-                // is valid.
-                let store = self.constraint_theory.empty_store();
-                let Some(store_with_pred) =
-                    self.constraint_theory.propagate(&store, &refined.predicate)
-                else {
-                    return None; // Original predicate was unsatisfiable
-                };
-                let Some(_store_final) = self
-                    .constraint_theory
-                    .propagate(&store_with_pred, constraint_value)
-                else {
-                    return None; // Value doesn't satisfy the predicate
-                };
+                if !self.conjunction_satisfiable(&refined.predicate, constraint_value) {
+                    return None;
+                }
 
                 // After ground substitution, the refinement is satisfied — return base type
                 Some(RefType::Base(refined.base.clone()))
@@ -592,7 +661,8 @@ where
     /// Check whether a value (represented as a constraint) satisfies a refinement type.
     ///
     /// This is the compile-time validation: given `{ x: T | P(x) }` and a concrete
-    /// value constraint `V`, check whether `P ∧ V` is satisfiable.
+    /// value constraint `V`, require a checked witness for `P ∧ V`. Refutation and
+    /// bounded uncertainty both fail closed.
     pub fn value_satisfies_refinement(
         &self,
         ty: &RefType<S::Type, T::Constraint>,
@@ -601,15 +671,7 @@ where
         match ty {
             RefType::Base(_) => true, // No predicate to check
             RefType::Refined(refined) => {
-                let store = self.constraint_theory.empty_store();
-                let Some(store_with_pred) =
-                    self.constraint_theory.propagate(&store, &refined.predicate)
-                else {
-                    return false; // Predicate itself is unsatisfiable
-                };
-                self.constraint_theory
-                    .propagate(&store_with_pred, value_constraint)
-                    .is_some()
+                self.conjunction_satisfiable(&refined.predicate, value_constraint)
             },
         }
     }
@@ -675,13 +737,8 @@ where
             (RefType::Refined(_), RefType::Base(_)) => true,
             // Base <: Refined → base subtype + predicate must be tautology
             (RefType::Base(_), RefType::Refined(r)) => {
-                // { x: T | true } <: { x: T | Q } iff Q is always true
-                // We approximate: check if propagating Q produces a valid store
-                // (conservative — this may reject valid subtypings)
-                let store = self.constraint_theory.empty_store();
-                self.constraint_theory
-                    .propagate(&store, &r.predicate)
-                    .is_some()
+                // { x: T | true } <: { x: T | Q } iff ¬Q is unsatisfiable.
+                self.predicate_tautological(&r.predicate)
             },
             // Refined <: Refined → base subtype + P ⟹ Q
             (RefType::Refined(r1), RefType::Refined(r2)) => {

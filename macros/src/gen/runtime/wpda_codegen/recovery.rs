@@ -205,6 +205,7 @@ mod tests {
         let mut language = empty_language("LiteralRecovery");
         language.types.push(LangType {
             name: Ident::new("BigRat", Span::call_site()),
+            role: Default::default(),
             native_type: Some(parse_quote! { mettail_runtime::CanonicalBigRat }),
             collection_kind: None,
         });

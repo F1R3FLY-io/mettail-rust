@@ -27,10 +27,10 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 
 .PHONY: check check-inner check-uncapped check-capped check-memory-cap require-capped clean prepare-tmp
 .PHONY: prattail-wpda rocq-support
-.PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail tla-prattail-wpda-binder-broadcast-expected-fail rust-prattail-wpda
+.PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail tla-prattail-wpda-binder-broadcast-expected-fail tla-runtime-grammar rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
-.PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-slot rocq-advanced-automata-inrho-indexed-channels rocq-advanced-automata-inrho-ac-rest
-.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
+.PHONY: rocq-prattail-wpda rocq-runtime-grammar rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-slot rocq-advanced-automata-inrho-indexed-channels rocq-advanced-automata-inrho-ac-rest
+.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail-exact-keys rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
 .PHONY: rocq-rho-bridge rocq-rho-bridge-artifact-boundary rocq-rho-bridge-rejected-coverage rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family rocq-rho-bridge-cbn-budget rocq-rho-bridge-escrow-settlement rocq-rho-bridge-purse-determinism rocq-rho-bridge-inrho-ix rocq-rho-bridge-inrho-iv rocq-rho-bridge-inrho-vi rocq-rho-bridge-persistent-root
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
@@ -44,6 +44,7 @@ check-inner: require-capped
 	mkdir -p "$(TMPDIR)"
 	$(MAKE) prattail-wpda
 	$(MAKE) rocq-support
+	$(MAKE) tla-runtime-grammar
 	$(MAKE) process-rho-comm-slice
 	$(MAKE) tla-rho-settlement
 	$(MAKE) why3-dovetail-budget
@@ -94,7 +95,7 @@ prepare-tmp:
 
 prattail-wpda: require-capped prepare-tmp rocq-prattail-wpda tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda rust-wpda-codegen rust-wpda-generated-smoke
 
-rocq-support: require-capped prepare-tmp rocq-trampoline rocq-advanced-automata
+rocq-support: require-capped prepare-tmp rocq-runtime-grammar rocq-trampoline rocq-advanced-automata
 rocq-support: rocq-ascent-optimizations rocq-codegen-optimizations
 rocq-support: rocq-dovetail rocq-rho-bridge rocq-egraph rocq-lattice rocq-logict rocq-mathematical-analyses
 rocq-support: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
@@ -102,6 +103,9 @@ rocq-support: rocq-sft rocq-unification rocq-symbolic-algebra rocq-critical-zero
 
 rocq-prattail-wpda: require-capped
 	$(MAKE) -C rocq/prattail_wpda_runtime
+
+rocq-runtime-grammar: require-capped rocq-dovetail-exact-keys
+	$(MAKE) -C rocq/runtime_grammar
 
 rocq-trampoline: require-capped
 	$(MAKE) -C rocq/trampoline
@@ -155,6 +159,9 @@ rocq-egraph: require-capped
 
 rocq-dovetail: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq
+
+rocq-dovetail-exact-keys: require-capped
+	$(MAKE) -C ../dovetail/formal/rocq theories/ExactKeys/ExactKeyDedup.vo
 
 rocq-dovetail-refinement: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq theories/Refinement/RhoReportHandoff.vo
@@ -250,6 +257,9 @@ tla-rho-machine: require-capped
 tla-rho-settlement: require-capped
 	$(MAKE) -C tla/rho_settlement check
 
+tla-runtime-grammar: require-capped
+	$(MAKE) -C tla/runtime_grammar check
+
 process-rho-comm-slice: require-capped process-rho-generated-check mcrl2-rho-machine maude-rho-machine tla-rho-machine
 
 process-rho-first-slice: process-rho-comm-slice
@@ -339,6 +349,7 @@ rust-wpda-generated-smoke: require-capped
 
 clean:
 	$(MAKE) -C rocq/prattail_wpda_runtime clean
+	$(MAKE) -C rocq/runtime_grammar clean
 	$(MAKE) -C rocq/trampoline clean
 	$(MAKE) -C rocq/advanced_automata clean
 	$(MAKE) -C rocq/ascent_optimizations clean
@@ -349,6 +360,7 @@ clean:
 	$(MAKE) -C mcrl2/rho_machine clean
 	$(MAKE) -C maude/rho_machine clean
 	$(MAKE) -C tla/rho_machine clean
+	$(MAKE) -C tla/runtime_grammar clean
 	$(MAKE) -C rocq/lattice clean
 	$(MAKE) -C rocq/logict clean
 	$(MAKE) -C rocq/mathematical_analyses clean

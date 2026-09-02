@@ -53,6 +53,7 @@ fn proc_has_machine_effects_recursive(proc: &Proc) -> bool {
         | Proc::PForUser(..)
         | Proc::CommWhere(..)
         | Proc::PNew(..)
+        | Proc::PNewUris(..)
         | Proc::PVar(..) => true,
         Proc::PPar(parts) => parts
             .iter_elements()
@@ -94,10 +95,13 @@ fn find_fold_recursive(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
             let (operand, kind, width) = liftable_fold_parts(proc)?;
             Some((operand.clone(), kind, width))
         },
-        Proc::POutput(_, payload)
-        | Proc::PPersistOutput(_, payload)
-        | Proc::POutputShort(_, payload)
-        | Proc::PPersistOutputShort(_, payload) => find_fold_recursive(payload.as_ref()),
+        Proc::POutput(channel, payload) | Proc::PPersistOutput(channel, payload) => {
+            find_fold_in_name_recursive(channel.as_ref())
+                .or_else(|| find_fold_recursive(payload.as_ref()))
+        },
+        Proc::POutputShort(channel, payload) | Proc::PPersistOutputShort(channel, payload) => {
+            find_fold_recursive(channel.as_ref()).or_else(|| find_fold_recursive(payload.as_ref()))
+        },
         Proc::PParInfix(left, right)
         | Proc::Add(left, right)
         | Proc::Sub(left, right)
@@ -117,13 +121,48 @@ fn find_fold_recursive(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
         },
         Proc::PPar(parts) => parts.iter_elements().find_map(find_fold_recursive),
         Proc::Matches(target, _formula) => find_fold_recursive(target.as_ref()),
-        Proc::NegProc(a) | Proc::Not(a) => find_fold_recursive(a.as_ref()),
+        Proc::NegProc(a) | Proc::Not(a) | Proc::PLookaheadAll(a) | Proc::PLookahead(a, _) => {
+            find_fold_recursive(a.as_ref())
+        },
         Proc::PDrop(name) => find_fold_in_name_recursive(name.as_ref()),
         Proc::CastList(list) => match list.as_ref() {
             List::ListLit(items) => items.iter().find_map(find_fold_recursive),
             _ => None,
         },
-        Proc::PForUser(..) | Proc::PNew(..) => None,
+        Proc::CastBag(bag) => match bag.as_ref() {
+            Bag::BagLit(entries) => {
+                let mut entries = entries.iter().collect::<Vec<_>>();
+                entries.sort_by_key(|(item, _)| *item);
+                entries
+                    .into_iter()
+                    .find_map(|(item, _)| find_fold_recursive(item))
+            },
+            _ => None,
+        },
+        Proc::CastMap(map) => match map.as_ref() {
+            Map::MapLit(entries) => entries.iter().find_map(|(key, value)| {
+                find_fold_recursive(key).or_else(|| find_fold_recursive(value))
+            }),
+            _ => None,
+        },
+        Proc::CastSet(set) => match set.as_ref() {
+            Set::SetLit(items) => {
+                let mut items = items.iter().collect::<Vec<_>>();
+                items.sort();
+                items.into_iter().find_map(find_fold_recursive)
+            },
+            _ => None,
+        },
+        Proc::CastPathmap(pathmap) => match pathmap.as_ref() {
+            Pathmap::PathmapLit(entries) => entries.iter().find_map(|entry| {
+                find_fold_recursive(entry.key())
+                    .or_else(|| entry.value().and_then(find_fold_recursive))
+            }),
+            _ => None,
+        },
+        Proc::MethodCall(receiver, _, arguments) => find_fold_recursive(receiver.as_ref())
+            .or_else(|| arguments.iter().find_map(find_fold_recursive)),
+        Proc::PForUser(..) | Proc::PNew(..) | Proc::PNewUris(..) => None,
         _ => None,
     }
 }
@@ -161,19 +200,19 @@ fn replace_fold_recursive(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Pr
             proc.clone()
         },
         Proc::POutput(name, payload) => Proc::POutput(
-            name.clone(),
+            Arc::new(replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced)),
             Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
         ),
         Proc::PPersistOutput(name, payload) => Proc::PPersistOutput(
-            name.clone(),
+            Arc::new(replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced)),
             Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
         ),
         Proc::POutputShort(channel, payload) => Proc::POutputShort(
-            channel.clone(),
+            Arc::new(replace_fold_recursive(channel.as_ref(), r_drop, replaced)),
             Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
         ),
         Proc::PPersistOutputShort(channel, payload) => Proc::PPersistOutputShort(
-            channel.clone(),
+            Arc::new(replace_fold_recursive(channel.as_ref(), r_drop, replaced)),
             Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
         ),
         Proc::PParInfix(left, right) => Proc::PParInfix(
@@ -208,6 +247,13 @@ fn replace_fold_recursive(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Pr
             Proc::NegProc(Arc::new(replace_fold_recursive(a.as_ref(), r_drop, replaced)))
         },
         Proc::Not(a) => Proc::Not(Arc::new(replace_fold_recursive(a.as_ref(), r_drop, replaced))),
+        Proc::PLookaheadAll(a) => {
+            Proc::PLookaheadAll(Arc::new(replace_fold_recursive(a.as_ref(), r_drop, replaced)))
+        },
+        Proc::PLookahead(a, bound) => Proc::PLookahead(
+            Arc::new(replace_fold_recursive(a.as_ref(), r_drop, replaced)),
+            bound.clone(),
+        ),
         Proc::PDrop(name) => {
             Proc::PDrop(Arc::new(replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced)))
         },
@@ -220,6 +266,80 @@ fn replace_fold_recursive(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Pr
             ))),
             _ => proc.clone(),
         },
+        Proc::CastBag(bag) => match bag.as_ref() {
+            Bag::BagLit(entries) => {
+                let mut ordered = entries.iter().collect::<Vec<_>>();
+                ordered.sort_by_key(|(item, _)| *item);
+                let mut rebuilt = mettail_runtime::HashBag::new();
+                for (item, count) in ordered {
+                    rebuilt.insert_n(replace_fold_recursive(item, r_drop, replaced), count);
+                }
+                Proc::CastBag(Arc::new(Bag::BagLit(rebuilt)))
+            },
+            _ => proc.clone(),
+        },
+        Proc::CastMap(map) => match map.as_ref() {
+            Map::MapLit(entries) => {
+                let mut rebuilt = mettail_runtime::HashMapLit::new();
+                for (key, value) in entries.iter() {
+                    rebuilt.insert(
+                        replace_fold_recursive(key, r_drop, replaced),
+                        replace_fold_recursive(value, r_drop, replaced),
+                    );
+                }
+                Proc::CastMap(Arc::new(Map::MapLit(rebuilt)))
+            },
+            _ => proc.clone(),
+        },
+        Proc::CastSet(set) => match set.as_ref() {
+            Set::SetLit(items) => {
+                let mut ordered = items.iter().collect::<Vec<_>>();
+                ordered.sort();
+                Proc::CastSet(Arc::new(Set::SetLit(
+                    ordered
+                        .into_iter()
+                        .map(|item| replace_fold_recursive(item, r_drop, replaced))
+                        .collect(),
+                )))
+            },
+            _ => proc.clone(),
+        },
+        Proc::CastPathmap(pathmap) => match pathmap.as_ref() {
+            Pathmap::PathmapLit(entries) => {
+                let rebuilt = match entries.mode() {
+                    mettail_runtime::PathMapMode::Empty => mettail_runtime::PathMapLit::new(),
+                    mettail_runtime::PathMapMode::Set => {
+                        mettail_runtime::PathMapLit::from_set_iter(
+                            entries
+                                .iter()
+                                .map(|entry| replace_fold_recursive(entry.key(), r_drop, replaced)),
+                        )
+                    },
+                    mettail_runtime::PathMapMode::Map => {
+                        mettail_runtime::PathMapLit::from_map_iter(entries.iter().map(|entry| {
+                            (
+                                replace_fold_recursive(entry.key(), r_drop, replaced),
+                                replace_fold_recursive(
+                                    entry.value().expect("map-mode pathmap entry"),
+                                    r_drop,
+                                    replaced,
+                                ),
+                            )
+                        }))
+                    },
+                };
+                Proc::CastPathmap(Arc::new(Pathmap::PathmapLit(rebuilt)))
+            },
+            _ => proc.clone(),
+        },
+        Proc::MethodCall(receiver, method, arguments) => Proc::MethodCall(
+            Arc::new(replace_fold_recursive(receiver.as_ref(), r_drop, replaced)),
+            method.clone(),
+            arguments
+                .iter()
+                .map(|argument| replace_fold_recursive(argument, r_drop, replaced))
+                .collect(),
+        ),
         _ => proc.clone(),
     }
 }
@@ -285,6 +405,20 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
             lower_arm_p_flt(node, env)
         },
+        Proc::DdlModule(name, items) => {
+            lower_ddl(DdlRoot::Module { name, imports: None, items }, env)
+        },
+        Proc::DdlModuleImported(imports, name, items) => lower_ddl(
+            DdlRoot::Module {
+                name,
+                imports: Some(imports.as_ref()),
+                items,
+            },
+            env,
+        ),
+        Proc::DdlTheory(name, parameters, body) => {
+            lower_ddl(DdlRoot::Theory { name, parameters, body: body.as_ref() }, env)
+        },
         Proc::PPar(parts) => lower_arm_p_par(parts, env),
         // Bare infix parallel `a | b` (no outer braces). The WPDA parser emits the raw `PParInfix`
         // node; its `fold` to `PPar({a, b})` (`merge_pp_parallel`) runs only at eval time. Parallel
@@ -318,6 +452,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
             lower_arm_p_persist_output_short(channel_proc, payload, env)
         },
         Proc::PNew(scope) => lower_arm_p_new(scope, env),
+        Proc::PNewUris(uris, scope) => lower_arm_p_new_uris(uris, scope, env),
         // ── A-S4 cast purity: casts lower STRUCTURALLY ─────────────────────────────────────
         // A literal leaf is DATA (embedding `GInt(5)` is translation, not evaluation); a
         // structural node lowers to the machine's own metered `Expr` (`-a` → `ENeg`); anything
@@ -443,6 +578,16 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
     }
 }
 
+fn lower_ddl<'a>(root: DdlRoot<'a>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    let plan = DdlLowerPlan::build(root);
+    let processes: Vec<_> = plan.process_jobs().collect();
+    let values = processes
+        .into_iter()
+        .map(|process| lower_proc(process, env))
+        .collect::<Result<Vec<_>, _>>()?;
+    plan.finish(values).map_err(RholangAstLowerError::DdlWire)
+}
+
 #[inline(never)]
 fn lower_arm_p_drop(
     name: &std::sync::Arc<Name>,
@@ -560,6 +705,28 @@ fn lower_arm_p_new(
         binders.len() as i32,
         body,
         Vec::new(),
+        BTreeMap::new(),
+        locally_free.clone(),
+        locally_free,
+        connective_used,
+    ))
+}
+
+#[inline(never)]
+fn lower_arm_p_new_uris(
+    uris: &[Uri],
+    scope: &mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<Proc>>,
+    env: &BoundEnv,
+) -> Result<Par, RholangAstLowerError> {
+    let (binders, body, uris) = unbind_uri_scope(uris, scope)?;
+    let extended_env = extend_env(env, &binders);
+    let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
+    let locally_free = filter_and_adjust_bitset(&body.locally_free, binders.len());
+    let connective_used = body.connective_used;
+    Ok(new_new_par(
+        binders.len() as i32,
+        body,
+        uris,
         BTreeMap::new(),
         locally_free.clone(),
         locally_free,
@@ -842,6 +1009,41 @@ fn lower_method(
 }
 
 fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    if let Some(node) = find_dynamic_flt(body, env) {
+        let ret_var = FreeVar::fresh_named("__mtl_flt_ret".to_string());
+        let result_var = FreeVar::fresh_named("__mtl_flt_result".to_string());
+        let result_drop = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(result_var.clone())))));
+        let mut replaced = false;
+        let transformed = replace_dynamic_flt(body, &node, &result_drop, &mut replaced);
+        assert!(replaced, "the recursive FLT finder and replacement diverged");
+
+        let env_new = extend_env(env, &[Binder(ret_var)]);
+        let selector = lower_proc_var(&node.selector, &env_new)?;
+        let mut fills = BTreeMap::new();
+        for hole in &node.holes {
+            let level = env_new.flt_hole_level(&hole.name).ok_or_else(|| {
+                RholangAstLowerError::FltReflect(format!(
+                    "construction hole ${{{}}} is not bound by an enclosing FLT pattern",
+                    hole.name
+                ))
+            })?;
+            fills.insert(
+                hole.name.clone(),
+                new_boundvar_par(level as i32, create_bit_vector(&[level]), false),
+            );
+        }
+        let (pieces, holes) = runtime_template_parts(node.as_ref());
+        let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
+        let request = crate::language_install::encode_flt_construct_call(
+            selector, &pieces, &holes, None, &fills, reply,
+        );
+        let channel = LANGUAGE_FLT_CONSTRUCT_BAND
+            .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);
+        let env_for = extend_env(&env_new, &[Binder(result_var)]);
+        let for_body = lower_body_lifting_folds(&transformed, &env_for)?;
+        return Ok(installed_flt_trampoline(channel, request, for_body));
+    }
+
     let Some((operand, kind, width)) = find_fold(body) else {
         return lower_proc(body, env);
     };
@@ -1641,6 +1843,11 @@ mod differential {
             "PForUser, body is itself a receive",
             Expect::Lowers,
         ),
+        (
+            "new ret in { for(lambda <- ret){lambda`x`} }",
+            "receive-bound FLT selector ▸ InstalledFlt construction trampoline",
+            Expect::Lowers,
+        ),
         // `!?` QUERY BINDS — expanded by `desugar_surface_sugar_node` into
         // `new r in { svc!(*r, args…) | for(pat <- r){body} }`. The driver and this oracle
         // expand at DIFFERENT places (the driver's `enter_proc` head loop; the oracle's
@@ -1847,6 +2054,83 @@ mod differential {
         let recursive = replace_fold_recursive(&infix, &replacement, &mut recursive_replaced);
         assert!(driven_replaced && recursive_replaced);
         assert_eq!(format!("{driven:?}"), format!("{recursive:?}"));
+
+        // Search and replacement must enumerate the same post-order sites. Each witness puts a
+        // fold in a position that the former dedicated finder skipped, followed by a second fold
+        // that it did see. A divergent finder would report the later operand while the rewriter
+        // replaced the earlier one.
+        fn assert_first_fold_site(label: &str, wrap: impl FnOnce(Proc) -> Proc) {
+            let early_operand = Proc::PZero;
+            let late_operand = Proc::CastBool(Arc::new(Bool::BoolLit(true)));
+            let proc = Proc::PParInfix(
+                Arc::new(wrap(Proc::BigintCastProc(Arc::new(early_operand.clone())))),
+                Arc::new(Proc::BigratCastProc(Arc::new(late_operand.clone()))),
+            );
+            let found = super::super::find_fold(&proc)
+                .unwrap_or_else(|| panic!("{label}: expected the early fold"));
+            assert_eq!(
+                rholang_proc_semantic_key(&found.0),
+                rholang_proc_semantic_key(&early_operand),
+                "{label}: search did not select the first replacement site"
+            );
+
+            let mut replaced = false;
+            let rewritten =
+                super::super::replace_fold(&proc, &Proc::POutputNilEmpty, &mut replaced);
+            assert!(replaced, "{label}: replacement did not select a site");
+            let remaining = super::super::find_fold(&rewritten)
+                .unwrap_or_else(|| panic!("{label}: expected the later fold to remain"));
+            assert_eq!(
+                rholang_proc_semantic_key(&remaining.0),
+                rholang_proc_semantic_key(&late_operand),
+                "{label}: search and replacement enumerated different sites"
+            );
+        }
+
+        assert_first_fold_site("quoted send channel", |site| {
+            Proc::POutput(Arc::new(Name::NQuote(Arc::new(site))), Arc::new(Proc::PZero))
+        });
+        assert_first_fold_site("short send channel", |site| {
+            Proc::POutputShort(Arc::new(site), Arc::new(Proc::PZero))
+        });
+        assert_first_fold_site("lookahead subject", |site| Proc::PLookaheadAll(Arc::new(site)));
+        assert_first_fold_site("list element", |site| {
+            Proc::CastList(Arc::new(List::ListLit(vec![site])))
+        });
+        assert_first_fold_site("bag element", |site| {
+            let mut entries = mettail_runtime::HashBag::new();
+            entries.insert(site);
+            Proc::CastBag(Arc::new(Bag::BagLit(entries)))
+        });
+        assert_first_fold_site("map key", |site| {
+            let mut entries = mettail_runtime::HashMapLit::new();
+            entries.insert(site, Proc::PZero);
+            Proc::CastMap(Arc::new(Map::MapLit(entries)))
+        });
+        assert_first_fold_site("map value", |site| {
+            let mut entries = mettail_runtime::HashMapLit::new();
+            entries.insert(Proc::PZero, site);
+            Proc::CastMap(Arc::new(Map::MapLit(entries)))
+        });
+        assert_first_fold_site("set element", |site| {
+            Proc::CastSet(Arc::new(Set::SetLit([site].into_iter().collect())))
+        });
+        assert_first_fold_site("path-map key", |site| {
+            Proc::CastPathmap(Arc::new(Pathmap::PathmapLit(
+                mettail_runtime::PathMapLit::from_map_iter([(site, Proc::PZero)]),
+            )))
+        });
+        assert_first_fold_site("path-map value", |site| {
+            Proc::CastPathmap(Arc::new(Pathmap::PathmapLit(
+                mettail_runtime::PathMapLit::from_map_iter([(Proc::PZero, site)]),
+            )))
+        });
+        assert_first_fold_site("method receiver", |site| {
+            Proc::MethodCall(Arc::new(site), "size".to_string(), Vec::new())
+        });
+        assert_first_fold_site("method argument", |site| {
+            Proc::MethodCall(Arc::new(Proc::PZero), "m".to_string(), vec![site])
+        });
     }
 
     #[test]

@@ -413,6 +413,25 @@ fn connective_map_active_role_lookup() {
     // Drop _guard at end of scope; map should be cleared.
 }
 
+#[test]
+fn category_roles_partition_structural_and_semantic_capabilities() {
+    use super::{CategoryCapability, CategoryRole};
+
+    for role in [CategoryRole::Object, CategoryRole::Data, CategoryRole::SpannedData] {
+        assert!(role.supports(CategoryCapability::ParseRoot));
+        assert!(role.supports(CategoryCapability::StructuralLifecycle));
+        assert_eq!(
+            role.supports(CategoryCapability::SemanticTransit),
+            role == CategoryRole::Object
+        );
+        assert_eq!(role.supports(CategoryCapability::SemanticRoot), role == CategoryRole::Object);
+        assert_eq!(
+            role.supports(CategoryCapability::VariableCarrier),
+            role == CategoryRole::Object
+        );
+    }
+}
+
 /// Phase 5: After dropping the guard, the thread-local must be cleared.
 #[test]
 fn connective_map_guard_restores_on_drop() {

@@ -315,6 +315,7 @@ fn nested_optional_language(rule: GrammarRule) -> LanguageDef {
         mixin_names: Vec::new(),
         types: vec![LangType {
             name: Ident::new("Expr", Span::call_site()),
+            role: Default::default(),
             native_type: None,
             collection_kind: None,
         }],
@@ -453,12 +454,14 @@ fn optional_classifier_is_stack_safe_at_depth_20k() {
                 expression = SyntaxExpr::Op(PatternOp::Opt { inner: vec![expression] });
             }
             let root = vec![expression];
+            let language = nested_optional_language(nested_optional_rule());
             let mut params = HashMap::new();
             params.insert("x".to_string(), ParamKind::Simple { cat: "Expr".to_string() });
             let mut next_group_idx = 0;
             let mut collection_slots = 0;
             let (positions, args) = classify_optional_body(
                 &root,
+                &language,
                 &params,
                 None,
                 &mut next_group_idx,

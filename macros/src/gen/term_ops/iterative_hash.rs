@@ -347,40 +347,55 @@ fn unordered_collection_hash_stmts(
                 stack.push(HashTask::AbsorbUsize(#coll_expr.len()));
             }
         },
-        CollectionType::PathMap => quote! {
-            {
-                match #coll_expr {
-                    mettail_runtime::PathMapLit::Empty => {},
-                    mettail_runtime::PathMapLit::Set(__entries) => {
-                        let mut __items: Vec<_> = __entries.iter().collect();
-                        __items.sort_by(|__left, __right| __left.0.cmp(__right.0));
-                        for (__key, _) in __items.into_iter().rev() {
-                            stack.push(HashTask::#task_variant(__key as *const _));
-                        }
-                        stack.push(HashTask::AbsorbUsize(__entries.len()));
-                    },
-                    mettail_runtime::PathMapLit::Map(__entries) => {
-                        let mut __items: Vec<_> = __entries.iter().collect();
-                        __items.sort_by(
-                            |(__left_key, __left_value), (__right_key, __right_value)| {
-                                __left_key
-                                    .cmp(__right_key)
-                                    .then_with(|| __left_value.cmp(__right_value))
-                            },
-                        );
-                        for (__key, __value) in __items.into_iter().rev() {
-                            stack.push(HashTask::#task_variant(__value as *const _));
-                            stack.push(HashTask::#task_variant(__key as *const _));
-                        }
-                        stack.push(HashTask::AbsorbUsize(__entries.len()));
-                    },
-                }
-                stack.push(HashTask::HashPathMapMode(#coll_expr.mode()));
-            }
-        },
+        CollectionType::PathMap => pathmap_hash_stmts(element_cat, element_cat, coll_expr),
         CollectionType::Vec => quote! {
             compile_error!("unordered collection hashing requested for Vec");
         },
+    }
+}
+
+/// Schedule the exact public `Hash` stream of `PathMapLit<K, V>` without
+/// recursively hashing either generated category.  Mode is absorbed first;
+/// each valued mode then emits the `HashMapLit` length prefix and canonical
+/// key/value sequence.  Distinct key/value task variants preserve
+/// heterogeneous recursive native carriers.
+fn pathmap_hash_stmts(
+    key_category: &Ident,
+    value_category: &Ident,
+    pathmap: &TokenStream,
+) -> TokenStream {
+    let key_task = format_ident!("Hash{}", key_category);
+    let value_task = format_ident!("Hash{}", value_category);
+    quote! {
+        {
+            match #pathmap {
+                mettail_runtime::PathMapLit::Empty => {},
+                mettail_runtime::PathMapLit::Set(__entries) => {
+                    let mut __items: Vec<_> = __entries.iter().collect();
+                    __items.sort_by(|__left, __right| __left.0.cmp(__right.0));
+                    for (__key, _) in __items.into_iter().rev() {
+                        stack.push(HashTask::#key_task(__key as *const _));
+                    }
+                    stack.push(HashTask::AbsorbUsize(__entries.len()));
+                },
+                mettail_runtime::PathMapLit::Map(__entries) => {
+                    let mut __items: Vec<_> = __entries.iter().collect();
+                    __items.sort_by(
+                        |(__left_key, __left_value), (__right_key, __right_value)| {
+                            __left_key
+                                .cmp(__right_key)
+                                .then_with(|| __left_value.cmp(__right_value))
+                        },
+                    );
+                    for (__key, __value) in __items.into_iter().rev() {
+                        stack.push(HashTask::#value_task(__value as *const _));
+                        stack.push(HashTask::#key_task(__key as *const _));
+                    }
+                    stack.push(HashTask::AbsorbUsize(__entries.len()));
+                },
+            }
+            stack.push(HashTask::HashPathMapMode((#pathmap).mode()));
+        }
     }
 }
 
@@ -417,6 +432,22 @@ fn generate_hash_variant_arm(
             let body = hash_collection_stmts(element_cat, coll_type, &quote! { v }, language);
             quote! {
                 #category::#label(v) => {
+                    #body
+                }
+            }
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let pathmap = carrier.pathmap_ref(&quote! { v });
+            let focus = carrier.focus_ref(&quote! { v });
+            let body =
+                pathmap_hash_stmts(carrier.key_category(), carrier.value_category(), &pathmap);
+            quote! {
+                #category::#label(v) => {
+                    // The carrier hash is the lexicographic product
+                    // `PathMap` then focus.  Focus is pushed first so the LIFO
+                    // machine absorbs it after every structural PathMap task.
+                    stack.push(hash_opaque_task::<_, H>(#focus));
                     #body
                 }
             }

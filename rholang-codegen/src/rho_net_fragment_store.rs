@@ -98,22 +98,15 @@ use crate::rho_net_cache::CompiledInRhoArtifacts;
 use crate::rho_net_ruleset::convert_lhs_pattern;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Content hashing (FNV-1a 64 — the same stable family `identity.rs` uses).
+// Content hashing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-/// FNV-1a 64 over `bytes` — deterministic across runs and builds (the content
-/// identity of a fragment; `DefaultHasher` is NOT used because its keys are not
-/// a documented stability contract).
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = FNV_OFFSET;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
+fn content_digest(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"MeTTaIL construction fragment\0");
+    hasher.update(&(bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,8 +291,8 @@ pub struct Fragment {
     rule_label: String,
     /// The canonical serialized payload — THE retained bytes of metric (i).
     bytes: Vec<u8>,
-    /// FNV-1a 64 of `bytes` (the content identity; the Lattice fast path).
-    content_hash: u64,
+    /// Domain-separated BLAKE3-256 of `bytes` (the Lattice fast path).
+    content_hash: [u8; 32],
 }
 
 /// EM-8 (BINDING): the store value — a newtype over `Arc<Fragment>` carrying
@@ -310,7 +303,7 @@ pub struct FragmentHandle(Arc<Fragment>);
 
 impl FragmentHandle {
     fn new(family: String, root_op: String, rule_label: String, bytes: Vec<u8>) -> Self {
-        let content_hash = fnv1a64(&bytes);
+        let content_hash = content_digest(&bytes);
         Self(Arc::new(Fragment {
             family,
             root_op,
@@ -325,8 +318,8 @@ impl FragmentHandle {
         &self.0.bytes
     }
 
-    /// The FNV-1a 64 content hash of [`bytes`](Self::bytes).
-    pub fn content_hash(&self) -> u64 {
+    /// The BLAKE3-256 content hash of [`bytes`](Self::bytes).
+    pub fn content_hash(&self) -> [u8; 32] {
         self.0.content_hash
     }
 
@@ -711,7 +704,7 @@ pub struct ConstructionFragmentStore<B: FragmentStoreBackend> {
     backend: B,
     /// content hash → interned handles with that hash (byte-verified on reuse,
     /// so a hash collision stores both fragments rather than aliasing them).
-    intern: HashMap<u64, Vec<FragmentHandle>>,
+    intern: HashMap<[u8; 32], Vec<FragmentHandle>>,
     /// Total content-level dedup hits (a recomputed payload byte-equal to an
     /// already-interned fragment) since construction.
     content_dedup_hits: u64,
@@ -758,7 +751,7 @@ impl<B: FragmentStoreBackend> ConstructionFragmentStore<B> {
         rule_label: &str,
         bytes: Vec<u8>,
     ) -> FragmentHandle {
-        let content_hash = fnv1a64(&bytes);
+        let content_hash = content_digest(&bytes);
         if let Some(candidates) = self.intern.get(&content_hash) {
             if let Some(existing) = candidates
                 .iter()

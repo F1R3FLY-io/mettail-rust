@@ -16,3 +16,6 @@ name = "mettail_grammar_core"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 blake3 = "1"
+regex-automata = "0.4"
+regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }
+rigail = { path = "../rigail" }

@@ -91,6 +91,7 @@ smt = ["dep:z3"]
 
 [dependencies]
 mettail-grammar-core = { path = "../grammar-core" }
+mettail-semantic-key = { path = "../semantic-key" }
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
 # to runtime/ to keep parser/predicate helpers on the runtime → prattail edge.
 proc-macro2 = { workspace = true }
@@ -117,6 +118,9 @@ num-traits = "0.2"
 # hasher so dedup_packing keys are content-stable across runs and reparse
 # sessions (see plan §11.5 invariant I3). Standard `RandomState` is excluded.
 rustc-hash = "2"
+# Fixed-width, domain-separated accelerators for collision-safe semantic
+# deduplication. Exact semantic-key equality remains the final decision.
+blake3 = "1"
 # T4 SIGUSR1 hang-dump (optional under `hang-dump` feature).
 signal-hook = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
@@ -196,6 +200,11 @@ harness = false
 [[bench]]
 name = "bench_logict"
 harness = false
+
+[[bench]]
+name = "bench_logict_smt"
+harness = false
+required-features = ["smt"]
 
 [[bench]]
 name = "bench_type_system"

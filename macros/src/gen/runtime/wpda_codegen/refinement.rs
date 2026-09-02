@@ -740,6 +740,7 @@ mod tests {
         let i32_ty: Type = parse_str("i32").expect("parse i32");
         lang.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
+            role: Default::default(),
             native_type: Some(i32_ty),
             collection_kind: None,
         });
@@ -885,6 +886,7 @@ mod tests {
         // Declare PosInt against base Int, but Int has no native_type.
         lang.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
+            role: Default::default(),
             native_type: None,
             collection_kind: None,
         });

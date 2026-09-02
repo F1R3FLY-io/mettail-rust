@@ -24,10 +24,10 @@ impl CollectionCmpItem {
     }
 
     #[inline]
-    pub fn pair<T>(primary: &T, secondary: &T) -> Self {
+    pub fn pair<K, V>(primary: &K, secondary: &V) -> Self {
         Self {
-            primary: primary as *const T as *const (),
-            secondary: Some(secondary as *const T as *const ()),
+            primary: primary as *const K as *const (),
+            secondary: Some(secondary as *const V as *const ()),
             repetitions: 1,
         }
     }
@@ -35,8 +35,25 @@ impl CollectionCmpItem {
 
 #[derive(Debug)]
 pub enum CollectionCmpStep {
-    Compare { left: *const (), right: *const () },
+    Compare {
+        role: CollectionCmpRole,
+        left: *const (),
+        right: *const (),
+    },
     Done(Ordering),
+}
+
+/// Identifies which structural position a collection comparison requests.
+///
+/// Unary collections and map keys use [`Primary`](Self::Primary); map values
+/// use [`Secondary`](Self::Secondary).  The distinction is part of the erased
+/// PDA protocol because heterogeneous `Map<K, V>` and `PathMap<K, V>` carriers
+/// must restore the correct generated category before dereferencing either
+/// pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollectionCmpRole {
+    Primary,
+    Secondary,
 }
 
 #[derive(Debug)]
@@ -159,7 +176,11 @@ impl CollectionCmpPda {
             return self.request_secondary_or_accept(left, right, destination);
         }
         self.pending = Some(PendingTermCmp::Primary { left, right, destination });
-        Some(CollectionCmpStep::Compare { left: left.primary, right: right.primary })
+        Some(CollectionCmpStep::Compare {
+            role: CollectionCmpRole::Primary,
+            left: left.primary,
+            right: right.primary,
+        })
     }
 
     fn request_secondary_or_accept(
@@ -187,7 +208,11 @@ impl CollectionCmpPda {
             },
             (Some(left), Some(right)) => {
                 self.pending = Some(PendingTermCmp::Secondary { destination });
-                Some(CollectionCmpStep::Compare { left, right })
+                Some(CollectionCmpStep::Compare {
+                    role: CollectionCmpRole::Secondary,
+                    left,
+                    right,
+                })
             },
         }
     }
@@ -404,7 +429,7 @@ mod tests {
         let mut result = None;
         loop {
             match pda.resume(result.take()) {
-                CollectionCmpStep::Compare { left, right } => {
+                CollectionCmpStep::Compare { left, right, .. } => {
                     result = Some(unsafe { (*(left.cast::<i32>())).cmp(&*(right.cast::<i32>())) });
                 },
                 CollectionCmpStep::Done(ordering) => return ordering,
@@ -447,6 +472,49 @@ mod tests {
             expected_right.sort();
             prop_assert_eq!(run(CollectionCmpPda::new(Ordering::Equal, left_items, right_items)), expected_left.cmp(&expected_right));
         }
+    }
+
+    #[test]
+    fn heterogeneous_pairs_report_the_exact_pointer_role() {
+        let left = [(1_i32, String::from("left"))];
+        let right = [(1_i32, String::from("right"))];
+        let left_items = left
+            .iter()
+            .map(|(key, value)| CollectionCmpItem::pair(key, value))
+            .collect();
+        let right_items = right
+            .iter()
+            .map(|(key, value)| CollectionCmpItem::pair(key, value))
+            .collect();
+        let mut pda = CollectionCmpPda::new(Ordering::Equal, left_items, right_items);
+        let mut result = None;
+        let mut saw_primary = false;
+        let mut saw_secondary = false;
+
+        loop {
+            match pda.resume(result.take()) {
+                CollectionCmpStep::Compare { role, left, right } => match role {
+                    CollectionCmpRole::Primary => {
+                        saw_primary = true;
+                        result =
+                            Some(unsafe { (*(left.cast::<i32>())).cmp(&*(right.cast::<i32>())) });
+                    },
+                    CollectionCmpRole::Secondary => {
+                        saw_secondary = true;
+                        result = Some(unsafe {
+                            (*(left.cast::<String>())).cmp(&*(right.cast::<String>()))
+                        });
+                    },
+                },
+                CollectionCmpStep::Done(ordering) => {
+                    assert_eq!(ordering, Ordering::Less);
+                    break;
+                },
+            }
+        }
+
+        assert!(saw_primary);
+        assert!(saw_secondary);
     }
 
     #[test]

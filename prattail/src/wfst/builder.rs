@@ -306,7 +306,7 @@ pub fn enrich_with_two_token_paths(
             if rule.category != *cat {
                 continue;
             }
-            if rule.is_collection || rule.prefix_bp.is_some() {
+            if rule.is_pure_collection_literal() || rule.prefix_bp.is_some() {
                 continue;
             }
             if let Some(RDSyntaxItem::Terminal(t)) = rule.items.first() {

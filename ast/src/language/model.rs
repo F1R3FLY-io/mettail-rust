@@ -11,6 +11,8 @@ pub enum AttributeValue {
     Bool(bool),
     /// String value (e.g., `log_semiring_model_path: "path/to/model.json"`).
     Str(String),
+    /// Ordered string-list value (e.g., contextual keyword spellings).
+    StringList(Vec<String>),
     /// Keyword identifier (e.g., `beam_width: none`, `beam_width: auto`).
     Keyword(String),
 }
@@ -18,11 +20,10 @@ pub enum AttributeValue {
 // NOTE: HOL variant auto-generation is automatic and DEMAND-DRIVEN PER LANGUAGE
 // (#98). A language whose grammar declares a binder — an `^x.body` / `^[xs].body`
 // abstraction param, or a legacy positional `GrammarItem::Binder` — receives the
-// `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` family for every (category, domain)
-// pair. A language that declares no binder receives none of it. There is no
-// user-facing option: the demand signal is the grammar itself, via
-// `grammar_shapes::declares_binder`, consumed by
-// `macros/src/logic/common.rs::compute_hol_domain_pairs`.
+// `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` family for every pair of OBJECT
+// categories. Closed `data` categories are parser metasyntax rather than object-
+// language sorts: they receive only their declared constructors and never enter
+// either axis of the HOL family.
 //
 // ⚠ The note that stood here claimed the emission "scans the grammar for explicit
 // `Lam{D}` / `Apply{D}` references … and only emits variants that are actually
@@ -970,10 +971,82 @@ impl CollectionCategory {
 #[derive(Debug, Clone)]
 pub struct LangType {
     pub name: Ident,
+    /// Whether this is an object-language category or closed parser data.
+    pub role: CategoryRole,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
     pub native_type: Option<Type>,
     /// Optional collection category (List, Bag, Map) with delimiters for literal syntax.
     pub collection_kind: Option<CollectionCategory>,
+}
+
+/// Semantic role of a category declared in `types { ... }`.
+///
+/// `Object` is the historical language category and retains implicit variables,
+/// binder/HOL synthesis, and language-level automation. `Data` is a closed
+/// structural nonterminal: only explicitly declared constructors are inhabitable.
+/// `SpannedData` has the same closed semantics and additionally requests
+/// nonsemantic source provenance from backends that support located nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CategoryRole {
+    #[default]
+    Object,
+    Data,
+    SpannedData,
+}
+
+/// Independently generated capabilities for a declared category.
+///
+/// Closed data categories remain parser roots and structural lifecycle nodes.
+/// They are boundaries of generic object-language semantics: dedicated
+/// structural projections may inspect them, but substitution, normalization,
+/// matching, and executable backends do not manufacture semantics for them.
+/// They are not independently executable terms and never introduce the
+/// variable namespace used by generated substitution environments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CategoryCapability {
+    ParseRoot,
+    StructuralLifecycle,
+    SemanticTransit,
+    SemanticRoot,
+    VariableCarrier,
+}
+
+impl CategoryRole {
+    #[inline]
+    pub fn is_data(self) -> bool {
+        matches!(self, Self::Data | Self::SpannedData)
+    }
+
+    #[inline]
+    pub fn is_spanned(self) -> bool {
+        matches!(self, Self::SpannedData)
+    }
+
+    /// Whether this role receives a code-generation capability.
+    ///
+    /// This is the executable counterpart of
+    /// `formal/rocq/runtime_grammar/theories/DataCategoryCapabilities.v`.
+    #[inline]
+    pub fn supports(self, capability: CategoryCapability) -> bool {
+        match capability {
+            CategoryCapability::ParseRoot | CategoryCapability::StructuralLifecycle => true,
+            CategoryCapability::SemanticTransit
+            | CategoryCapability::SemanticRoot
+            | CategoryCapability::VariableCarrier => !self.is_data(),
+        }
+    }
+}
+
+impl LangType {
+    #[inline]
+    pub fn is_data(&self) -> bool {
+        self.role.is_data()
+    }
+
+    #[inline]
+    pub fn supports(&self, capability: CategoryCapability) -> bool {
+        self.role.supports(capability)
+    }
 }
 
 /// Typed classification of a category's native Rust type.
@@ -1721,28 +1794,17 @@ impl LanguageDef {
         self.types.iter().find(|t| &t.name == category)
     }
 
-    /// Element type for a collection category (e.g. `List` → `Proc`). First tries the type-based
-    /// path (native_type + collection_kind) for List/Bag/Map; otherwise looks for a constructor
-    /// whose grammar contains a Collection item.
+    /// Element type for a collection category (e.g. `List` → `Proc`). Native
+    /// collection categories are classified from their declared carrier type,
+    /// independent of the category's spelling; constructor-backed collections
+    /// are classified from their grammar item.
     pub fn collection_element_type_for_category(&self, category: &Ident) -> Option<Ident> {
-        let cat_str = category.to_string();
-        if matches!(cat_str.as_str(), "List" | "Bag" | "Map" | "Set" | "Pathmap") {
-            if let Some(lang_type) = self.types.iter().find(|t| &t.name == category) {
-                if lang_type.collection_kind.is_some() {
-                    // Map/Pathmap are implicitly key/value over Proc, so element type is always Proc.
-                    if cat_str == "Map" || cat_str == "Pathmap" {
-                        return Some(quote::format_ident!("Proc"));
-                    }
-                    // List/Bag/Set carry their element in the native type
-                    // (`Vec<Proc>` / `HashBag<Proc>` / `HashSetLit<Proc>`).
-                    if let Some(native_type) = lang_type.native_type.as_ref() {
-                        if let Some(elem) = element_ident_from_native_type(native_type) {
-                            return Some(elem);
-                        }
-                    }
-                    // Fallback: native_type parse failed; assume element type Proc.
-                    return Some(quote::format_ident!("Proc"));
-                }
+        if let Some(lang_type) = self.get_type(category) {
+            if lang_type.collection_kind.is_some() {
+                return lang_type
+                    .native_type
+                    .as_ref()
+                    .and_then(element_ident_from_native_type);
             }
         }
         // Term-based: constructor whose category matches and whose grammar has a Collection item.

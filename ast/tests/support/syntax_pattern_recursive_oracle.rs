@@ -23,10 +23,13 @@ fn parse_syntax_expr_recursive(input: ParseStream) -> SynResult<SyntaxExpr> {
     if input.peek(Token![*]) {
         let fork = input.fork();
         let _ = fork.parse::<Token![*]>();
-        if fork
-            .parse::<Ident>()
-            .map(|name| name == "flt")
-            .unwrap_or(false)
+        if let Some(kind) =
+            fork.parse::<Ident>()
+                .ok()
+                .and_then(|name| match name.to_string().as_str() {
+                    "flt" => Some(DelimitedRegionKind::Flt),
+                    _ => None,
+                })
         {
             let _ = input.parse::<Token![*]>()?;
             let _ = input.parse::<Ident>()?;
@@ -36,7 +39,12 @@ fn parse_syntax_expr_recursive(input: ParseStream) -> SynResult<SyntaxExpr> {
             let _ = content.parse::<Token![,]>()?;
             let open = content.parse()?;
             let _ = content.parse::<Token![,]>()?;
-            return Ok(SyntaxExpr::GuestBody { open, close: content.parse()?, bind });
+            return Ok(SyntaxExpr::GuestBody {
+                open,
+                close: content.parse()?,
+                bind,
+                kind,
+            });
         }
         return Ok(SyntaxExpr::Op(parse_pattern_op_recursive(input)?));
     }

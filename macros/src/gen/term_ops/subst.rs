@@ -58,6 +58,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+use crate::gen::native_carrier::{native_recursive_carrier_for_category, NativeRecursiveCarrier};
+
 // =============================================================================
 // Variant Kind — Unified representation of AST variants (shared with
 // iterative_cmp.rs, iterative_hash.rs, etc. via `pub(crate)`)
@@ -146,6 +148,13 @@ pub(crate) enum VariantKind {
         element_cat: Ident,
         coll_type: CollectionType,
     },
+    /// A native wrapper whose closed structural carrier contains language
+    /// terms but is not an ordinary collection literal. Every term operation
+    /// must recurse according to the shared finite carrier descriptor.
+    RecursiveNativeLiteral {
+        label: Ident,
+        carrier: NativeRecursiveCarrier,
+    },
     /// Single binder: PInput(Box<Name>, Scope<Binder<String>, Box<Proc>>)
     Binder {
         label: Ident,
@@ -160,6 +169,26 @@ pub(crate) enum VariantKind {
         binder_cat: Ident,
         body_cat: Ident,
     },
+}
+
+impl VariantKind {
+    /// The generated Rust enum constructor represented by this classification.
+    /// Consumers use this shared projection when proving that an emitted arm
+    /// census covers the complete generated datatype.
+    pub(crate) fn label(&self) -> &Ident {
+        match self {
+            Self::Refused { label, .. }
+            | Self::Var { label }
+            | Self::Literal { label }
+            | Self::Nullary { label }
+            | Self::Regular { label, .. }
+            | Self::Collection { label, .. }
+            | Self::CollectionLiteral { label, .. }
+            | Self::RecursiveNativeLiteral { label, .. }
+            | Self::Binder { label, .. }
+            | Self::MultiBinder { label, .. } => label,
+        }
+    }
 }
 
 /// Information about a field in a constructor
@@ -185,22 +214,22 @@ pub(crate) struct FieldInfo {
     /// `__inner` to a borrow of the inner type. Nested Optional
     /// flattens — the parser-walker never produces `Some(Some(...))`.
     pub(crate) is_optional: bool,
-    /// OPAQUE CAPTURE LEAF (L9-3 token-text, L9-4 guest-body): `Some(kind)` iff
+    /// OPAQUE CAPTURE LEAF: `Some(kind)` iff
     /// this field is a non-category leaf produced by a syntax-pattern capture —
     /// a `v@Tok` token text (`OpaqueLeafKind::TokenText` → `String`) or a `*flt`
     /// guest body (`OpaqueLeafKind::GuestBody` → `Arc<FltNode>`). Both are
-    /// handled IDENTICALLY by every term op — like `is_predicate`, they are
+    /// handled identically by every term op — like `is_predicate`, they are
     /// plain values that derive `Clone`/`Hash`/`Eq`/`Ord`, carried through
     /// substitution/normalization UNCHANGED (a captured token/body is not a host
     /// term: no free variables, no α-conversion, no β/shift, no descent). The
     /// ONLY per-kind difference is the emitted field TYPE ([`OpaqueLeafKind::
     /// field_type`]); every behavioral site branches on [`FieldInfo::
     /// is_opaque_leaf`] (which never reads the placeholder `category`), so
-    /// token-text and guest-body share ONE mechanism with zero duplication.
+    /// three kinds share ONE mechanism with zero behavioral duplication.
     pub(crate) opaque_leaf: Option<OpaqueLeafKind>,
 }
 
-/// The two opaque capture-leaf field kinds (see [`FieldInfo::opaque_leaf`]).
+/// The opaque capture-leaf field kinds (see [`FieldInfo::opaque_leaf`]).
 /// They differ ONLY in the emitted Rust field type; every term op treats them
 /// the same (inline hash/cmp, clone-through subst/normalize, no descent).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +273,44 @@ impl FieldInfo {
             base
         }
     }
+
+    /// Whether this field crosses from an object-language constructor into a
+    /// closed parser-data category. Generic semantic machines preserve such a
+    /// field as one immutable coefficient; dedicated structural projections
+    /// remain responsible for inspecting it.
+    pub(crate) fn is_semantic_boundary(&self, language: &LanguageDef) -> bool {
+        !self.is_opaque_leaf()
+            && !self.is_predicate
+            && language
+                .get_type(&self.category)
+                .is_some_and(mettail_ast::language::LangType::is_data)
+    }
+
+    /// Exact generated carrier type for a closed-data field at a semantic
+    /// boundary. This mirrors the enum emitter's scalar/collection mapping so
+    /// the semantic PDA can clone the coefficient without descending into it.
+    pub(crate) fn semantic_boundary_carrier_type(&self) -> TokenStream {
+        let category = &self.category;
+        let bare = if self.is_collection {
+            match self.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                CollectionType::Vec => quote! { Vec<#category> },
+                CollectionType::HashBag => quote! { mettail_runtime::HashBag<#category> },
+                CollectionType::HashSet => {
+                    quote! { std::collections::HashSet<#category> }
+                },
+                CollectionType::HashMap | CollectionType::PathMap => {
+                    quote! { mettail_runtime::HashMapLit<#category, #category> }
+                },
+            }
+        } else {
+            quote! { std::sync::Arc<#category> }
+        };
+        if self.is_optional {
+            quote! { Option<#bare> }
+        } else {
+            bare
+        }
+    }
 }
 
 // =============================================================================
@@ -269,9 +336,7 @@ pub fn generate_substitution(language: &LanguageDef) -> TokenStream {
     let subst_task = generate_subst_task_enum(language);
     let subst_tls = generate_subst_tls_pools();
     let subst_driver = generate_subst_driver(language);
-    let subst_wrappers: Vec<TokenStream> = language
-        .types
-        .iter()
+    let subst_wrappers: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| generate_subst_wrappers(&t.name, language))
         .collect();
 
@@ -296,65 +361,24 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
     let language_name = &language.name;
     let env_name = format_ident!("{}Env", language_name);
 
-    // A replacement category `X` needs full PDA dispatch in `subst_by_name_X` only if an
-    // `X`-typed FREE VARIABLE can occur in a term — otherwise there is nothing for the
-    // walk to rewrite and the method may short-circuit to `self.clone()`.
-    //
-    // ⚠★ #98 — this predicate used to ask the HOL set, and that was a latent
-    // unsoundness that only #98 could have detonated. Read carefully before editing:
-    //
-    //  * The old form was `hol_pairs.iter().any(|(c, d)| c == cat || d == cat) || <cat
-    //    has a DECLARED var rule>`. Because `compute_hol_domain_pairs` returned the full
-    //    cross-product, `(cat, cat)` was a member for EVERY declared category, so the
-    //    first disjunct was unconditionally `true` and the second was dead. The
-    //    "size reduction" the old comment described therefore never once fired.
-    //  * #98 empties that set for a binderless language. The first disjunct then goes
-    //    `false`, and the fallback decides — but the fallback only sees var rules the
-    //    grammar DECLARES, whereas `gen/types/enums.rs` emits an auto-injected
-    //    `<Cat>Var(OrdVar)` for every category that declares none. Every category has a
-    //    variable form; only some declare it. The fallback would thus have answered
-    //    `false` for categories that demonstrably hold variables, silently degrading
-    //    `subst_by_name_X` to a clone and dropping substitutions on the floor.
-    //
-    // The predicate now asks the question it actually means, against the same source
-    // `enums.rs` uses: does this category have a variable form in its emitted enum? That
-    // is true for every declared category — by a DECLARED var rule, else by the
-    // auto-injected one — so this is a no-op relative to the pre-#98 behavior (which was
-    // also unconditionally `true`, by the accident above). The disjunction is spelled out
-    // rather than collapsed to `true` because it names the two sources, so a future
-    // change to `enums.rs` that stops emitting a variable form for some category has a
-    // matching term here to update instead of a bare literal to rediscover.
-    let is_variable_bearing = |cat_name: &syn::Ident| -> bool {
-        let declares_var_rule = language
-            .terms
-            .iter()
-            .any(|r| r.category == *cat_name && crate::gen::is_var_rule(r));
-        // `enums.rs` emits `#var_label(OrdVar)` for exactly the categories with no
-        // declared var rule, so a declared category always has one form or the other.
-        let receives_auto_var = language.types.iter().any(|t| t.name == *cat_name);
-        declares_var_rule || receives_auto_var
-    };
-
-    let env_wrappers: Vec<TokenStream> = language
-        .types
-        .iter()
+    // Environments and replacement operations are generated only for object
+    // categories. Every category remains in the shared traversal PDA, so an
+    // object replacement still crosses any number of closed data nodes.
+    let env_wrappers: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|host| {
             let host_cat = &host.name;
             let host_visit = format_ident!("Visit{}", host_cat);
             let host_wrap = format_ident!("Wrap{}", host_cat);
 
             // Per-replacement-category subst_by_name_<R> methods
-            let subst_by_name_methods: Vec<TokenStream> = language
-                .types
-                .iter()
+            let subst_by_name_methods: Vec<TokenStream> = crate::gen::variable_types(language)
                 .map(|repl| {
                     let repl_cat = &repl.name;
                     let repl_lower = repl_cat.to_string().to_lowercase();
                     let method_name = format_ident!("subst_by_name_{}", repl_lower);
                     let env_variant = format_ident!("Env{}", repl_cat);
 
-                    let body = if is_variable_bearing(repl_cat) {
-                        quote! {
+                    let body = quote! {
                             if env_map.is_empty() { return self.clone(); }
                             let result: Self = SUBST_TASK_POOL.with(|t| {
                                 SUBST_RESULT_POOL.with(|r| {
@@ -395,15 +419,6 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                                 })
                             });
                             result
-                        }
-                    } else {
-                        // Stub: replacement category has no variable
-                        // producers; the PDA would just clone every
-                        // node. Short-circuit to preserve API.
-                        quote! {
-                            let _ = env_map;
-                            self.clone()
-                        }
                     };
 
                     quote! {
@@ -423,9 +438,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
             // substitute_env: fixed-point loop, each iter hits every
             // replacement category once. Preserved semantics from the
             // pre-PDA code — unchanged surface behavior.
-            let all_subst_calls: Vec<TokenStream> = language
-                .types
-                .iter()
+            let all_subst_calls: Vec<TokenStream> = crate::gen::variable_types(language)
                 .map(|repl| {
                     let field = format_ident!("{}", repl.name.to_string().to_lowercase());
                     let method = format_ident!("subst_by_name_{}", repl.name.to_string().to_lowercase());
@@ -547,9 +560,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
 /// Emit `AnySubstTerm` — heterogeneous wrapper for PDA result slots, one
 /// variant per exported category (same shape as `AnyClonedTerm`).
 fn generate_any_subst_term_enum(language: &LanguageDef) -> TokenStream {
-    let variants: Vec<TokenStream> = language
-        .types
-        .iter()
+    let variants: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|t| {
             let cat = &t.name;
             let wrap = format_ident!("Wrap{}", cat);
@@ -584,9 +595,7 @@ fn generate_any_subst_term_enum(language: &LanguageDef) -> TokenStream {
 /// TLS `Cell`. Root-level wrappers clone their `&[…]` inputs into owned
 /// Vecs at entry; filtered variants at binder descent are likewise owned.
 fn generate_subst_op_enum(language: &LanguageDef) -> TokenStream {
-    let match_variants: Vec<TokenStream> = language
-        .types
-        .iter()
+    let match_variants: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("Match{}", cat);
@@ -599,9 +608,7 @@ fn generate_subst_op_enum(language: &LanguageDef) -> TokenStream {
         })
         .collect();
 
-    let env_variants: Vec<TokenStream> = language
-        .types
-        .iter()
+    let env_variants: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("Env{}", cat);
@@ -642,9 +649,7 @@ fn generate_subst_op_enum(language: &LanguageDef) -> TokenStream {
 /// - `Assemble<Cat>_<Label> { slot, <child slots> }` — reconstructs a parent
 ///   from already-substituted children (referenced by slot indices).
 fn generate_subst_task_enum(language: &LanguageDef) -> TokenStream {
-    let visit_variants: Vec<TokenStream> = language
-        .types
-        .iter()
+    let visit_variants: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("Visit{}", cat);
@@ -655,7 +660,7 @@ fn generate_subst_task_enum(language: &LanguageDef) -> TokenStream {
         .collect();
 
     let mut assemble_variants: Vec<TokenStream> = Vec::new();
-    for lang_type in &language.types {
+    for lang_type in crate::gen::semantic_transit_types(language) {
         let category = &lang_type.name;
         let variants = collect_category_variants(category, language);
         for v in &variants {
@@ -720,12 +725,30 @@ fn generate_assemble_variant_decl(
             }
         },
 
+        VariantKind::RecursiveNativeLiteral { label, .. } => {
+            let variant_name = format_ident!("Assemble{}_{}Native", category, label);
+            Some(quote! {
+                #variant_name {
+                    slot: usize,
+                    mode: mettail_runtime::PathMapMode,
+                    elements_start: usize,
+                    elements_count: usize,
+                    focus: Vec<u8>,
+                }
+            })
+        },
+
         VariantKind::Regular { label, fields } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
             let field_slots: Vec<TokenStream> = fields
                 .iter()
                 .enumerate()
                 .map(|(i, field)| {
+                    if field.is_semantic_boundary(language) {
+                        let carrier = format_ident!("f{}_data", i);
+                        let ty = field.semantic_boundary_carrier_type();
+                        return quote! { #carrier: #ty };
+                    }
                     if field.is_opaque_leaf() {
                         // L9-3/L9-4: opaque capture leaves (token-text `String` /
                         // guest-body `Arc<FltNode>`) ride the Assemble variant as
@@ -810,7 +833,7 @@ fn generate_assemble_variant_decl(
 
         VariantKind::Binder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
-            let pre_field_slots = emit_pre_field_decl_list(pre_scope_fields);
+            let pre_field_slots = emit_pre_field_decl_list(pre_scope_fields, language);
 
             Some(quote! {
                 #variant_name {
@@ -824,7 +847,7 @@ fn generate_assemble_variant_decl(
 
         VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
-            let pre_field_slots = emit_pre_field_decl_list(pre_scope_fields);
+            let pre_field_slots = emit_pre_field_decl_list(pre_scope_fields, language);
 
             Some(quote! {
                 #variant_name {
@@ -842,11 +865,19 @@ fn generate_assemble_variant_decl(
 /// Assemble variant. Predicate fields become bare `BehavioralPred` fields;
 /// collection fields become (start, count, [counts]) tuples; regular fields
 /// become single-slot indices.
-fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+fn emit_pre_field_decl_list(
+    pre_scope_fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> Vec<TokenStream> {
     pre_scope_fields
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            if field.is_semantic_boundary(language) {
+                let carrier = format_ident!("pf{}_data", i);
+                let ty = field.semantic_boundary_carrier_type();
+                return quote! { #carrier: #ty };
+            }
             if field.is_predicate {
                 let pred_name = format_ident!("pf{}_pred", i);
                 // Task #14 (Option<Guard>): Option-aware pre-scope decl —
@@ -923,16 +954,12 @@ fn generate_subst_tls_pools() -> TokenStream {
 /// 2 MB thread stack.
 fn generate_subst_driver(language: &LanguageDef) -> TokenStream {
     // Per-category Visit helpers (one fn per cat).
-    let visit_helper_fns: Vec<TokenStream> = language
-        .types
-        .iter()
+    let visit_helper_fns: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|t| generate_visit_helper_fn(&t.name, language))
         .collect();
 
     // Tiny dispatch arms that delegate to the per-cat helper.
-    let visit_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let visit_arms: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|t| {
             let cat = &t.name;
             let visit_variant = format_ident!("Visit{}", cat);
@@ -946,7 +973,7 @@ fn generate_subst_driver(language: &LanguageDef) -> TokenStream {
         .collect();
 
     let mut assemble_arms: Vec<TokenStream> = Vec::new();
-    for lang_type in &language.types {
+    for lang_type in crate::gen::semantic_transit_types(language) {
         let category = &lang_type.name;
         let variants = collect_category_variants(category, language);
         for v in &variants {
@@ -1039,8 +1066,13 @@ fn generate_visit_variant_arm(
         VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             generate_literal_visit_arm(cat, label, language)
         },
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            generate_recursive_native_visit_arm(cat, label, carrier)
+        },
         VariantKind::Nullary { label } => generate_nullary_visit_arm(cat, label),
-        VariantKind::Regular { label, fields } => generate_regular_visit_arm(cat, label, fields),
+        VariantKind::Regular { label, fields } => {
+            generate_regular_visit_arm(cat, label, fields, language)
+        },
         VariantKind::Collection { label, element_cat, coll_type } => {
             generate_collection_visit_arm(cat, label, element_cat, coll_type)
         },
@@ -1049,13 +1081,74 @@ fn generate_visit_variant_arm(
             pre_scope_fields,
             binder_cat,
             body_cat,
-        } => generate_binder_visit_arm(cat, label, pre_scope_fields, binder_cat, body_cat),
+        } => {
+            generate_binder_visit_arm(cat, label, pre_scope_fields, binder_cat, body_cat, language)
+        },
         VariantKind::MultiBinder {
             label,
             pre_scope_fields,
             binder_cat,
             body_cat,
-        } => generate_multi_binder_visit_arm(cat, label, pre_scope_fields, binder_cat, body_cat),
+        } => generate_multi_binder_visit_arm(
+            cat,
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+            language,
+        ),
+    }
+}
+
+fn generate_recursive_native_visit_arm(
+    cat: &Ident,
+    label: &Ident,
+    carrier: &NativeRecursiveCarrier,
+) -> TokenStream {
+    let assemble = format_ident!("Assemble{}_{}Native", cat, label);
+    let pathmap = carrier.pathmap_ref(&quote! { native });
+    let focus = carrier.focus_ref(&quote! { native });
+    let pushes = carrier.for_each_borrowed_subterm(
+        &quote! { native },
+        crate::gen::native_carrier::NativeCarrierWalkOrder::ReverseForLifo,
+        &|child_category, child| {
+            let visit = format_ident!("Visit{}", child_category);
+            quote! {
+                __native_next_slot -= 1;
+                stack.push(SubstTask::#visit {
+                    src: #child as *const _,
+                    slot: __native_next_slot,
+                    op_idx,
+                });
+            }
+        },
+    );
+
+    quote! {
+        #cat::#label(native) => {
+            let __native_mode = (#pathmap).mode();
+            let __native_elements_count = match __native_mode {
+                mettail_runtime::PathMapMode::Empty => 0,
+                mettail_runtime::PathMapMode::Set => (#pathmap).len(),
+                mettail_runtime::PathMapMode::Map => (#pathmap).len().saturating_mul(2),
+            };
+            let __native_elements_start = results.len();
+            results.resize_with(
+                __native_elements_start + __native_elements_count,
+                || None,
+            );
+            stack.push(SubstTask::#assemble {
+                slot,
+                mode: __native_mode,
+                elements_start: __native_elements_start,
+                elements_count: __native_elements_count,
+                focus: (*#focus).clone(),
+            });
+            let mut __native_next_slot =
+                __native_elements_start + __native_elements_count;
+            #pushes
+            debug_assert_eq!(__native_next_slot, __native_elements_start);
+        }
     }
 }
 
@@ -1356,6 +1449,11 @@ fn generate_var_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) ->
         let mettail_ast::types::TypeExpr::Base(source_ident) = ty else {
             continue;
         };
+        if language.get_type(source_ident).is_some_and(|lang_type| {
+            !lang_type.supports(mettail_ast::language::CategoryCapability::VariableCarrier)
+        }) {
+            continue;
+        }
         let source_name = source_ident.to_string();
         if source_name == cat_name {
             continue;
@@ -1441,7 +1539,12 @@ fn generate_var_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) ->
 
 /// Regular arm: allocate child slots, push Assemble + per-field Visits with
 /// the same op_idx. Collection fields expand to a slot range.
-fn generate_regular_visit_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
+fn generate_regular_visit_arm(
+    cat: &Ident,
+    label: &Ident,
+    fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
 
@@ -1452,6 +1555,15 @@ fn generate_regular_visit_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) 
     for (i, field) in fields.iter().enumerate() {
         let name = &field_names[i];
         let visit_task = format_ident!("Visit{}", field.category);
+
+        if field.is_semantic_boundary(language) {
+            let carrier = format_ident!("f{}_data", i);
+            alloc_stmts.push(quote! {
+                let #carrier = #name.clone();
+            });
+            assemble_fields.push(quote! { #carrier });
+            continue;
+        }
 
         if field.is_opaque_leaf() {
             // L9-3: token-text captures are opaque `String` leaves — a token's
@@ -1734,6 +1846,7 @@ fn generate_binder_visit_arm(
     pre_scope_fields: &[FieldInfo],
     binder_cat: &Ident,
     body_cat: &Ident,
+    language: &LanguageDef,
 ) -> TokenStream {
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
     let body_visit = format_ident!("Visit{}", body_cat);
@@ -1745,7 +1858,7 @@ fn generate_binder_visit_arm(
     let scope_name = &field_names[total_fields - 1];
 
     let (alloc_pre, push_pre, assemble_pre) =
-        emit_pre_field_visit_alloc(pre_scope_fields, &field_names);
+        emit_pre_field_visit_alloc(pre_scope_fields, &field_names, language);
 
     quote! {
         #cat::#label(#(ref #field_names),*) => {
@@ -1818,6 +1931,7 @@ fn generate_multi_binder_visit_arm(
     pre_scope_fields: &[FieldInfo],
     binder_cat: &Ident,
     body_cat: &Ident,
+    language: &LanguageDef,
 ) -> TokenStream {
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
     let body_visit = format_ident!("Visit{}", body_cat);
@@ -1829,7 +1943,7 @@ fn generate_multi_binder_visit_arm(
     let scope_name = &field_names[total_fields - 1];
 
     let (alloc_pre, push_pre, assemble_pre) =
-        emit_pre_field_visit_alloc(pre_scope_fields, &field_names);
+        emit_pre_field_visit_alloc(pre_scope_fields, &field_names, language);
 
     quote! {
         #cat::#label(#(ref #field_names),*) => {
@@ -1893,6 +2007,7 @@ fn generate_multi_binder_visit_arm(
 fn emit_pre_field_visit_alloc(
     pre_scope_fields: &[FieldInfo],
     field_names: &[Ident],
+    language: &LanguageDef,
 ) -> (Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>) {
     let mut alloc_stmts: Vec<TokenStream> = Vec::new();
     let mut push_stmts: Vec<TokenStream> = Vec::new();
@@ -1900,6 +2015,15 @@ fn emit_pre_field_visit_alloc(
 
     for (i, field) in pre_scope_fields.iter().enumerate() {
         let name = &field_names[i];
+
+        if field.is_semantic_boundary(language) {
+            let carrier = format_ident!("pf{}_data", i);
+            alloc_stmts.push(quote! {
+                let #carrier = #name.clone();
+            });
+            assemble_refs.push(quote! { #carrier });
+            continue;
+        }
 
         if field.is_predicate {
             let pred_name = format_ident!("pf{}_pred", i);
@@ -2037,18 +2161,107 @@ fn generate_assemble_arm_for_variant(
             let (coll_type, element_cat) = collection_literal_info(cat, language)?;
             Some(generate_collection_literal_assemble_arm(cat, label, &element_cat, &coll_type))
         },
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            Some(generate_recursive_native_assemble_arm(cat, label, carrier))
+        },
         VariantKind::Regular { label, fields } => {
-            Some(generate_regular_assemble_arm(cat, label, fields))
+            Some(generate_regular_assemble_arm(cat, label, fields, language))
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
             Some(generate_collection_assemble_arm(cat, label, element_cat, coll_type))
         },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-            Some(generate_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
+            Some(generate_binder_assemble_arm(cat, label, pre_scope_fields, body_cat, language))
         },
-        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            Some(generate_multi_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
-        },
+        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => Some(
+            generate_multi_binder_assemble_arm(cat, label, pre_scope_fields, body_cat, language),
+        ),
+    }
+}
+
+fn generate_recursive_native_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    carrier: &NativeRecursiveCarrier,
+) -> TokenStream {
+    let assemble = format_ident!("Assemble{}_{}Native", cat, label);
+    let wrap = format_ident!("Wrap{}", cat);
+    let key_wrap = format_ident!("Wrap{}", carrier.key_category());
+    let value_wrap = format_ident!("Wrap{}", carrier.value_category());
+    let payload = carrier.construct(&quote! { __native_pathmap }, &quote! { focus });
+
+    quote! {
+        SubstTask::#assemble {
+            slot,
+            mode,
+            elements_start,
+            elements_count,
+            focus,
+        } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble(
+                results: &mut Vec<Option<AnySubstTerm>>,
+                slot: usize,
+                mode: mettail_runtime::PathMapMode,
+                elements_start: usize,
+                elements_count: usize,
+                focus: Vec<u8>,
+            ) {
+                let __native_pathmap = match mode {
+                    mettail_runtime::PathMapMode::Empty => {
+                        assert_eq!(elements_count, 0);
+                        mettail_runtime::PathMapLit::Empty
+                    },
+                    mettail_runtime::PathMapMode::Set => {
+                        let mut __native_entries = mettail_runtime::HashMapLit::new();
+                        for index in 0..elements_count {
+                            let key = match results[elements_start + index].take()
+                                .expect("iterative subst: missing zipper set key")
+                            {
+                                AnySubstTerm::#key_wrap(value) => value,
+                                _ => unreachable!("iterative subst: wrong zipper set-key category"),
+                            };
+                            __native_entries.insert(key, ());
+                        }
+                        mettail_runtime::PathMapLit::Set(__native_entries)
+                    },
+                    mettail_runtime::PathMapMode::Map => {
+                        assert_eq!(elements_count % 2, 0);
+                        let mut __native_entries = mettail_runtime::HashMapLit::new();
+                        let mut index = 0;
+                        while index < elements_count {
+                            let key = match results[elements_start + index].take()
+                                .expect("iterative subst: missing zipper map key")
+                            {
+                                AnySubstTerm::#key_wrap(value) => value,
+                                _ => unreachable!("iterative subst: wrong zipper map-key category"),
+                            };
+                            let value = match results[elements_start + index + 1].take()
+                                .expect("iterative subst: missing zipper map value")
+                            {
+                                AnySubstTerm::#value_wrap(value) => value,
+                                _ => unreachable!("iterative subst: wrong zipper map-value category"),
+                            };
+                            __native_entries.insert(key, value);
+                            index += 2;
+                        }
+                        mettail_runtime::PathMapLit::Map(__native_entries)
+                    },
+                };
+                results[slot] = Some(AnySubstTerm::#wrap(
+                    #cat::#label(#payload)
+                ));
+            }
+            assemble(
+                results,
+                slot,
+                mode,
+                elements_start,
+                elements_count,
+                focus,
+            );
+        }
     }
 }
 
@@ -2235,7 +2448,12 @@ fn generate_collection_literal_assemble_arm(
 /// `Box::new(...)`, collection builders) live in the helper's frame instead
 /// of `subst_iterative`'s. (The same `#[inline(never)]` peel idiom is shared
 /// with the sibling iterative term-ops.)
-fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
+fn generate_regular_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> TokenStream {
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
     let wrap = format_ident!("Wrap{}", cat);
 
@@ -2244,6 +2462,14 @@ fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
+        if field.is_semantic_boundary(language) {
+            let carrier = format_ident!("f{}_data", i);
+            let ty = field.semantic_boundary_carrier_type();
+            pat_flat.push(quote! { #carrier });
+            decl_flat.push(quote! { #carrier: #ty });
+            call_flat.push(quote! { #carrier });
+            continue;
+        }
         if field.is_opaque_leaf() {
             // L9-3/L9-4: opaque-leaf carrier `f{i}_text` (declared with the
             // leaf's own type in `generate_subst_task_variant`); pass-through.
@@ -2321,13 +2547,17 @@ fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo
     let field_extracts: Vec<TokenStream> = fields
         .iter()
         .enumerate()
-        .map(|(i, field)| emit_field_extract(i, field))
+        .map(|(i, field)| emit_field_extract(i, field, language))
         .collect();
 
     let construct_fields: Vec<TokenStream> = fields
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            if field.is_semantic_boundary(language) {
+                let carrier = format_ident!("f{}_data", i);
+                return quote! { #carrier };
+            }
             if field.is_opaque_leaf() {
                 // L9-3: token-text carrier is in scope by frame name; pass the
                 // bare `String` through unwrapped (never Arc-wrapped).
@@ -2388,8 +2618,8 @@ fn optional_collection_field_type_subst(field: &FieldInfo) -> TokenStream {
 /// Extract the result for a single field from a slot (or slot range).
 /// Predicate fields are already in scope as `f{i}_pred` — no extract needed
 /// (mirrors `emit_pre_field_extracts`' predicate arm).
-fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
-    if field.is_predicate || field.is_opaque_leaf() {
+fn emit_field_extract(i: usize, field: &FieldInfo, language: &LanguageDef) -> TokenStream {
+    if field.is_predicate || field.is_opaque_leaf() || field.is_semantic_boundary(language) {
         // L9-3: token-text carrier `f{i}_text` is already in scope (no slot,
         // no Wrap) — nothing to extract (mirrors the predicate no-op).
         return quote! {};
@@ -2614,19 +2844,20 @@ fn generate_binder_assemble_arm(
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
+    language: &LanguageDef,
 ) -> TokenStream {
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
     let wrap = format_ident!("Wrap{}", cat);
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
-    let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields);
+    let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields, language);
     // Residual #11-2 (2026-07-14): typed helper-param decls for the peel. subst's
     // `emit_pre_field_decl_list` is symmetric with `emit_pre_field_assemble_slot_pattern`
     // for every shape (HashBag|HashMap both -> 3 fields), and no HashBag/HashMap
     // pre-scope field exists in-tree anyway.
-    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
-    let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
-    let pre_construct = emit_pre_field_constructs(pre_scope_fields);
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields, language);
+    let pre_extracts = emit_pre_field_extracts(pre_scope_fields, language);
+    let pre_construct = emit_pre_field_constructs(pre_scope_fields, language);
 
     // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
     // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
@@ -2683,17 +2914,18 @@ fn generate_multi_binder_assemble_arm(
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
+    language: &LanguageDef,
 ) -> TokenStream {
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
     let wrap = format_ident!("Wrap{}", cat);
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
-    let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields);
+    let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields, language);
     // Residual #11-2 (2026-07-14): typed helper-param decls for the peel (see
     // `generate_binder_assemble_arm` for the arity-agreement argument).
-    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
-    let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
-    let pre_construct = emit_pre_field_constructs(pre_scope_fields);
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields, language);
+    let pre_extracts = emit_pre_field_extracts(pre_scope_fields, language);
+    let pre_construct = emit_pre_field_constructs(pre_scope_fields, language);
 
     // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
     // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
@@ -2747,11 +2979,18 @@ fn generate_multi_binder_assemble_arm(
 }
 
 /// Slot pattern list for a Binder/MultiBinder Assemble arm's destructure.
-fn emit_pre_field_assemble_slot_pattern(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+fn emit_pre_field_assemble_slot_pattern(
+    pre_scope_fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> Vec<TokenStream> {
     pre_scope_fields
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            if field.is_semantic_boundary(language) {
+                let carrier = format_ident!("pf{}_data", i);
+                return quote! { #carrier };
+            }
             if field.is_predicate {
                 let pred_name = format_ident!("pf{}_pred", i);
                 return quote! { #pred_name };
@@ -2781,11 +3020,17 @@ fn emit_pre_field_assemble_slot_pattern(pre_scope_fields: &[FieldInfo]) -> Vec<T
 
 /// Extract each pre-scope field into a local `pre_field_{i}` binding.
 /// Predicate fields are already in scope as `pf{i}_pred` — no extract needed.
-fn emit_pre_field_extracts(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+fn emit_pre_field_extracts(
+    pre_scope_fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> Vec<TokenStream> {
     pre_scope_fields
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            if field.is_semantic_boundary(language) {
+                return quote! {};
+            }
             if field.is_predicate {
                 return quote! {};
             }
@@ -2872,11 +3117,18 @@ fn emit_pre_field_extracts(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
 /// Emit the pre-scope-field constructor arguments (with Box wrapping for
 /// non-collection, non-predicate fields). Uses trailing commas so they can
 /// be interspersed before `new_scope` in the constructor.
-fn emit_pre_field_constructs(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+fn emit_pre_field_constructs(
+    pre_scope_fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> Vec<TokenStream> {
     pre_scope_fields
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            if field.is_semantic_boundary(language) {
+                let carrier = format_ident!("pf{}_data", i);
+                return quote! { #carrier, };
+            }
             if field.is_predicate {
                 let pred_name = format_ident!("pf{}_pred", i);
                 return quote! { #pred_name, };
@@ -2919,9 +3171,7 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
 
     // Cross-category methods. Each emits a thin wrapper that pushes
     // SubstOp::Match<R> onto the op stack and invokes the PDA.
-    let cross_methods: Vec<TokenStream> = language
-        .types
-        .iter()
+    let cross_methods: Vec<TokenStream> = crate::gen::variable_types(language)
         .filter(|t| t.name != *category)
         .map(|t| {
             let repl_cat = &t.name;
@@ -3133,7 +3383,7 @@ pub(crate) fn collect_category_variants(
     let has_var = variants
         .iter()
         .any(|v| matches!(v, VariantKind::Var { .. }));
-    if !has_var {
+    if !has_var && crate::gen::category_emits_implicit_var(category, language) {
         variants.push(VariantKind::Var { label: generate_var_label(category) });
     }
 
@@ -3187,15 +3437,21 @@ pub(crate) fn collect_category_variants(
             });
             if !has_lit {
                 let label = generate_literal_label(native_type);
-                match collection_literal_info(category, language) {
-                    Some((coll_type, element_cat)) if COLLECTION_LITERAL_KIND_GATE => {
-                        variants.push(VariantKind::CollectionLiteral {
-                            label,
-                            element_cat,
-                            coll_type,
-                        });
+                match native_recursive_carrier_for_category(category, language) {
+                    Ok(Some(carrier)) => {
+                        variants.push(VariantKind::RecursiveNativeLiteral { label, carrier })
                     },
-                    _ => variants.push(VariantKind::Literal { label }),
+                    Err(message) => variants.push(VariantKind::Refused { label, message }),
+                    Ok(None) => match collection_literal_info(category, language) {
+                        Some((coll_type, element_cat)) if COLLECTION_LITERAL_KIND_GATE => {
+                            variants.push(VariantKind::CollectionLiteral {
+                                label,
+                                element_cat,
+                                coll_type,
+                            });
+                        },
+                        _ => variants.push(VariantKind::Literal { label }),
+                    },
                 }
             }
         }
@@ -3354,7 +3610,8 @@ pub(crate) fn variant_kind_from_term_context(
                         crate::gen::capture::CaptureFieldKind::TokenText => {
                             field_info_for_token_capture()
                         },
-                        crate::gen::capture::CaptureFieldKind::GuestBody { .. } => {
+                        crate::gen::capture::CaptureFieldKind::GuestBody { kind, .. } => {
+                            let mettail_ast::grammar::DelimitedRegionKind::Flt = kind;
                             field_info_for_guest_body()
                         },
                         crate::gen::capture::CaptureFieldKind::Term(ty) => {
@@ -3464,7 +3721,11 @@ pub(crate) fn variant_kind_from_term_context(
         .flat_map(|p| field_infos_from_term_param(p, false))
         .collect();
 
-    if fields.len() == 1 && fields[0].is_collection {
+    // `VariantKind::Collection` denotes a constructor whose sole payload is
+    // the bare collection carrier.  An optional sole collection has the
+    // distinct payload `Option<Collection>` and must stay `Regular` so every
+    // generated term operation observes and reconstructs the Option boundary.
+    if fields.len() == 1 && fields[0].is_collection && !fields[0].is_optional {
         return VariantKind::Collection {
             label: label.clone(),
             element_cat: fields[0].category.clone(),
@@ -3907,6 +4168,10 @@ mod shape_refusal_red {
 mod task14_tests {
     use super::*;
 
+    fn language() -> LanguageDef {
+        crate::gen::empty_language_for_tests()
+    }
+
     fn pred_field(optional: bool) -> FieldInfo {
         FieldInfo {
             category: format_ident!("Guard"),
@@ -3930,13 +4195,48 @@ mod task14_tests {
     }
 
     #[test]
+    fn optional_single_collection_retains_its_regular_option_boundary() {
+        let optional = vec![TermParam::Optional {
+            params: vec![TermParam::Simple {
+                name: format_ident!("values"),
+                ty: TypeExpr::Collection {
+                    coll_type: CollectionType::Vec,
+                    element: Box::new(TypeExpr::Base(format_ident!("Proc"))),
+                },
+            }],
+        }];
+        match variant_kind_from_term_context(&format_ident!("MaybeMany"), &optional, None) {
+            VariantKind::Regular { fields, .. } => {
+                assert_eq!(fields.len(), 1);
+                assert!(fields[0].is_collection);
+                assert!(fields[0].is_optional);
+            },
+            other => panic!(
+                "an optional sole collection is Option<Vec<_>>, not a bare collection: {other:?}"
+            ),
+        }
+
+        let required = vec![TermParam::Simple {
+            name: format_ident!("values"),
+            ty: TypeExpr::Collection {
+                coll_type: CollectionType::Vec,
+                element: Box::new(TypeExpr::Base(format_ident!("Proc"))),
+            },
+        }];
+        assert!(matches!(
+            variant_kind_from_term_context(&format_ident!("Many"), &required, None),
+            VariantKind::Collection { coll_type: CollectionType::Vec, .. }
+        ));
+    }
+
+    #[test]
     fn regular_visit_arm_pred_clones_no_visit_guard() {
         // Task #14 gate-1: pre-#14 the Regular visit arm pushed the
         // nonexistent `SubstTask::VisitGuard` for an optional pred.
         let cat = format_ident!("Int");
         let label = format_ident!("PCheck");
         let fields = vec![scalar_field("Int"), pred_field(true)];
-        let arm = generate_regular_visit_arm(&cat, &label, &fields).to_string();
+        let arm = generate_regular_visit_arm(&cat, &label, &fields, &language()).to_string();
         assert!(
             arm.contains("let f1_pred = f1 . clone ()"),
             "the pred must be cloned into the assemble carrier: {arm}",
@@ -3954,7 +4254,7 @@ mod task14_tests {
         let cat = format_ident!("Int");
         let label = format_ident!("PCheck");
         let fields = vec![scalar_field("Int"), pred_field(true)];
-        let arm = generate_regular_assemble_arm(&cat, &label, &fields).to_string();
+        let arm = generate_regular_assemble_arm(&cat, &label, &fields, &language()).to_string();
         assert!(
             arm.contains("f1_pred : Option < mettail_runtime :: BehavioralPred >"),
             "the Assemble decl must carry the Option type: {arm}",
@@ -3971,7 +4271,7 @@ mod task14_tests {
 
     #[test]
     fn field_extract_pred_is_noop() {
-        assert!(emit_field_extract(1, &pred_field(true)).is_empty());
-        assert!(emit_field_extract(1, &pred_field(false)).is_empty());
+        assert!(emit_field_extract(1, &pred_field(true), &language()).is_empty());
+        assert!(emit_field_extract(1, &pred_field(false), &language()).is_empty());
     }
 }

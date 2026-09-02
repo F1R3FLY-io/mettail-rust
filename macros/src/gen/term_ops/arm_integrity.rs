@@ -73,6 +73,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
     use crate::gen::{
         collection_literal_language_for_tests, COLLECTION_LITERAL_TEST_CATEGORIES,
         OPAQUE_LITERAL_TEST_CATEGORY,
@@ -334,57 +335,48 @@ mod tests {
         );
     }
 
-    /// ⚠ PINNED KNOWN GAP (decision 4 of the campaign): `ReadZipper`/`WriteZipper`
-    /// genuinely contain `Proc`s — `ReadZipperLit(PathMapLit<Proc, Proc>, Vec<u8>)`
-    /// — but `LanguageDef::collection_element_type_for_category`
-    /// (`ast/src/language/model.rs`) gates its type-based branch on the hardcoded
-    /// category NAMES `"List" | "Bag" | "Map" | "Set" | "Pathmap"`. Because these
-    /// two categories are named otherwise, they resolve to `None` and are treated
-    /// as opaque leaves by `collection_literal_info` — and therefore by the
-    /// landed `subst` fix as well, which silently does not cover them either.
-    ///
-    /// This is a PRE-EXISTING gap that the `CollectionLiteral` discriminant
-    /// inherits rather than introduces, and closing it means replacing a
-    /// name-based test with a structural one (does the native type mention a
-    /// term category?). That is a separate change with its own blast radius, so
-    /// it is deliberately NOT bundled here — but it is pinned as an executable
-    /// `#[ignore]`d test rather than a comment, because an unpinned known gap is
-    /// exactly the pathology this module exists to end.
     #[test]
-    #[ignore = "PINNED KNOWN GAP: name-based collection-category test in \
-                LanguageDef::collection_element_type_for_category excludes \
-                ReadZipper/WriteZipper, which do contain Procs. Fixed separately."]
-    fn readzipper_writezipper_collection_literal_gap() {
-        use crate::gen::term_ops::subst::collection_literal_info;
+    fn readzipper_writezipper_use_the_shared_recursive_carrier() {
+        use crate::gen::native_carrier::{
+            NativeCarrierStorage, NativeRecursiveCarrier, ZipperAccess,
+        };
         use mettail_ast::language::LangType;
 
         let mut language = collection_literal_language_for_tests();
-        language.types.push(LangType {
-            name: quote::format_ident!("ReadZipper"),
-            native_type: Some(
-                syn::parse_str::<syn::Type>("mettail_runtime::ReadZipperLit<Proc, Proc>")
+        for (name, carrier) in [("ReadZipper", "ReadZipperLit"), ("WriteZipper", "WriteZipperLit")]
+        {
+            language.types.push(LangType {
+                name: quote::format_ident!("{}", name),
+                role: Default::default(),
+                native_type: Some(
+                    syn::parse_str::<syn::Type>(&format!(
+                        "std::sync::Arc<mettail_runtime::{carrier}<Proc, Proc>>"
+                    ))
                     .expect("fixture native type must parse"),
-            ),
-            // Declared with NO collection_kind, mirroring how the real languages
-            // declare it — which is itself part of the gap.
-            collection_kind: None,
-        });
+                ),
+                collection_kind: None,
+            });
+        }
 
-        let cat = quote::format_ident!("ReadZipper");
-        assert!(
-            collection_literal_info(&cat, &language).is_some(),
-            "ReadZipper contains Procs (ReadZipperLit(PathMapLit<Proc, Proc>, \
-             Vec<u8>)) and must be recognised as carrying element terms"
-        );
-    }
-
-    /// Developer aid: prints the observed set so the ratchet can be refreshed
-    /// deliberately. Not an assertion.
-    #[test]
-    #[ignore = "developer aid: prints the observed wildcard-payload set"]
-    fn print_actual_wildcard_payload_set() {
-        for (op, cat) in actual_wildcard_payload_set() {
-            println!("(\"{op}\", \"{cat}\"),");
+        for (name, access) in
+            [("ReadZipper", ZipperAccess::Read), ("WriteZipper", ZipperAccess::Write)]
+        {
+            let category = quote::format_ident!("{}", name);
+            let variants = collect_category_variants(&category, &language);
+            assert!(variants.iter().any(|variant| matches!(
+                variant,
+                VariantKind::RecursiveNativeLiteral {
+                    carrier: NativeRecursiveCarrier::Zipper {
+                        storage: NativeCarrierStorage::Arc,
+                        access: actual_access,
+                        key_category,
+                        value_category,
+                    },
+                    ..
+                } if *actual_access == access
+                    && key_category == "Proc"
+                    && value_category == "Proc"
+            )));
         }
     }
 }

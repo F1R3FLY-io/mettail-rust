@@ -254,6 +254,11 @@ fn semantic_task_usage(language: &LanguageDef, needs_keep_alive: bool) -> Semant
                 | VariantKind::Collection { element_cat, coll_type, .. } => {
                     usage.record_collection(&element_cat, &coll_type);
                 },
+                VariantKind::RecursiveNativeLiteral { carrier, .. } => {
+                    usage.record_collection(carrier.key_category(), &CollectionType::PathMap);
+                    usage.record_collection(carrier.value_category(), &CollectionType::PathMap);
+                    usage.needs_opaque = true;
+                },
                 VariantKind::Regular { fields, .. } => {
                     for field in &fields {
                         usage.record_field(field);
@@ -471,6 +476,7 @@ fn generate_fold_alias_send_arm(
             stack.push(SemanticHashTask::#task_variant {
                 value: __canonical_ptr,
                 target,
+                cacheable: false,
             });
         }
     }
@@ -536,7 +542,305 @@ pub fn generate_semantic_hash(language: &LanguageDef) -> TokenStream {
 // SemanticHashTask Enum + TLS Pool
 // =============================================================================
 
+fn generate_semantic_sink_support() -> TokenStream {
+    quote! {
+        trait __MettailSemanticSink: std::hash::Hasher {
+            const COMPOSES_KEYS: bool;
+
+            fn max_key_bytes(&self) -> usize {
+                usize::MAX
+            }
+
+            fn record_key_error(
+                &mut self,
+                _error: mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+            ) {
+            }
+
+            fn write_exact_key(
+                &mut self,
+                key: mettail_runtime::exact_semantic_key::ContentKey,
+            ) {
+                self.write(key.as_bytes());
+            }
+
+            fn begin_node(
+                &mut self,
+                _identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
+                _cacheable: bool,
+            ) -> bool {
+                false
+            }
+
+            fn finish_node(
+                &mut self,
+                _identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
+                _cacheable: bool,
+            ) {
+            }
+        }
+
+        struct __MettailFlatSemanticSink<'a, H>(&'a mut H);
+
+        impl<H: std::hash::Hasher> std::hash::Hasher for __MettailFlatSemanticSink<'_, H> {
+            fn finish(&self) -> u64 {
+                self.0.finish()
+            }
+            fn write(&mut self, bytes: &[u8]) {
+                self.0.write(bytes);
+            }
+            fn write_u8(&mut self, value: u8) {
+                self.0.write_u8(value);
+            }
+            fn write_u16(&mut self, value: u16) {
+                self.0.write_u16(value);
+            }
+            fn write_u32(&mut self, value: u32) {
+                self.0.write_u32(value);
+            }
+            fn write_u64(&mut self, value: u64) {
+                self.0.write_u64(value);
+            }
+            fn write_u128(&mut self, value: u128) {
+                self.0.write_u128(value);
+            }
+            fn write_usize(&mut self, value: usize) {
+                self.0.write_usize(value);
+            }
+            fn write_i8(&mut self, value: i8) {
+                self.0.write_i8(value);
+            }
+            fn write_i16(&mut self, value: i16) {
+                self.0.write_i16(value);
+            }
+            fn write_i32(&mut self, value: i32) {
+                self.0.write_i32(value);
+            }
+            fn write_i64(&mut self, value: i64) {
+                self.0.write_i64(value);
+            }
+            fn write_i128(&mut self, value: i128) {
+                self.0.write_i128(value);
+            }
+            fn write_isize(&mut self, value: isize) {
+                self.0.write_isize(value);
+            }
+        }
+
+        impl<H: std::hash::Hasher> __MettailSemanticSink
+            for __MettailFlatSemanticSink<'_, H>
+        {
+            const COMPOSES_KEYS: bool = false;
+        }
+
+        impl __MettailSemanticSink
+            for mettail_runtime::exact_semantic_key::SemanticKeyBuilder
+        {
+            const COMPOSES_KEYS: bool = true;
+
+            fn max_key_bytes(&self) -> usize {
+                mettail_runtime::exact_semantic_key::SemanticKeyBuilder::max_key_bytes(self)
+            }
+
+            fn write_exact_key(
+                &mut self,
+                key: mettail_runtime::exact_semantic_key::ContentKey,
+            ) {
+                self.push_framed_key(key);
+            }
+        }
+
+        struct __MettailComposingSemanticSink<'transaction, 'cache> {
+            transaction:
+                &'transaction mut mettail_runtime::exact_semantic_key::ContentKeyCacheTransaction<'cache>,
+            frames: Vec<mettail_runtime::exact_semantic_key::SemanticKeyBuilder>,
+            orphan: mettail_runtime::exact_semantic_key::SemanticKeyBuilder,
+            root: Option<mettail_runtime::exact_semantic_key::ContentKey>,
+            error: Option<mettail_runtime::exact_semantic_key::ContentKeyCacheError>,
+        }
+
+        impl<'transaction, 'cache> __MettailComposingSemanticSink<'transaction, 'cache> {
+            fn new(
+                transaction:
+                    &'transaction mut mettail_runtime::exact_semantic_key::ContentKeyCacheTransaction<'cache>,
+            ) -> Self {
+                let max_key_bytes = transaction.max_key_bytes();
+                Self {
+                    transaction,
+                    frames: Vec::new(),
+                    orphan: mettail_runtime::exact_semantic_key::SemanticKeyBuilder::with_max_bytes(
+                        max_key_bytes,
+                    ),
+                    root: None,
+                    error: None,
+                }
+            }
+
+            fn current(&mut self) -> &mut mettail_runtime::exact_semantic_key::SemanticKeyBuilder {
+                let Some(current) = self.frames.last_mut() else {
+                    self.error.get_or_insert(
+                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
+                    );
+                    return &mut self.orphan;
+                };
+                current
+            }
+
+            fn append_key(&mut self, key: mettail_runtime::exact_semantic_key::ContentKey) {
+                if let Some(parent) = self.frames.last_mut() {
+                    parent.push_key(key);
+                } else if self.root.is_none() {
+                    self.root = Some(key);
+                } else {
+                    self.error.get_or_insert(
+                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
+                    );
+                }
+            }
+
+            fn into_result(
+                mut self,
+            ) -> Result<
+                mettail_runtime::exact_semantic_key::ContentKey,
+                mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+            > {
+                if !self.frames.is_empty() {
+                    return Err(
+                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
+                    );
+                }
+                if let Some(error) = self.error.take() {
+                    return Err(error);
+                }
+                self.root.take().ok_or(
+                    mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
+                )
+            }
+        }
+
+        impl std::hash::Hasher for __MettailComposingSemanticSink<'_, '_> {
+            fn finish(&self) -> u64 {
+                self.frames.last().map_or(0, std::hash::Hasher::finish)
+            }
+            fn write(&mut self, bytes: &[u8]) {
+                self.current().write(bytes);
+            }
+            fn write_u8(&mut self, value: u8) {
+                self.current().write_u8(value);
+            }
+            fn write_u16(&mut self, value: u16) {
+                self.current().write_u16(value);
+            }
+            fn write_u32(&mut self, value: u32) {
+                self.current().write_u32(value);
+            }
+            fn write_u64(&mut self, value: u64) {
+                self.current().write_u64(value);
+            }
+            fn write_u128(&mut self, value: u128) {
+                self.current().write_u128(value);
+            }
+            fn write_usize(&mut self, value: usize) {
+                self.current().write_usize(value);
+            }
+            fn write_i8(&mut self, value: i8) {
+                self.current().write_i8(value);
+            }
+            fn write_i16(&mut self, value: i16) {
+                self.current().write_i16(value);
+            }
+            fn write_i32(&mut self, value: i32) {
+                self.current().write_i32(value);
+            }
+            fn write_i64(&mut self, value: i64) {
+                self.current().write_i64(value);
+            }
+            fn write_i128(&mut self, value: i128) {
+                self.current().write_i128(value);
+            }
+            fn write_isize(&mut self, value: isize) {
+                self.current().write_isize(value);
+            }
+        }
+
+        impl __MettailSemanticSink for __MettailComposingSemanticSink<'_, '_> {
+            const COMPOSES_KEYS: bool = true;
+
+            fn max_key_bytes(&self) -> usize {
+                self.transaction.max_key_bytes()
+            }
+
+            fn record_key_error(
+                &mut self,
+                error: mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+            ) {
+                self.error.get_or_insert(error);
+            }
+
+            fn write_exact_key(
+                &mut self,
+                key: mettail_runtime::exact_semantic_key::ContentKey,
+            ) {
+                self.current().push_framed_key(key);
+            }
+
+            fn begin_node(
+                &mut self,
+                identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
+                cacheable: bool,
+            ) -> bool {
+                if cacheable {
+                    if let Some(key) = self.transaction.get_identity(identity) {
+                        self.append_key(key);
+                        return true;
+                    }
+                }
+                self.frames.push(
+                    mettail_runtime::exact_semantic_key::SemanticKeyBuilder::with_max_bytes(
+                        self.transaction.max_key_bytes(),
+                    ),
+                );
+                false
+            }
+
+            fn finish_node(
+                &mut self,
+                identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
+                cacheable: bool,
+            ) {
+                let Some(frame) = self.frames.pop() else {
+                    self.error.get_or_insert(
+                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
+                    );
+                    return;
+                };
+                let mut key = match frame.into_key() {
+                    Ok(key) => key,
+                    Err(error) => {
+                        self.error.get_or_insert(error);
+                        return;
+                    },
+                };
+                if cacheable {
+                    // SAFETY: generated tasks mark only nodes transitively
+                    // owned by the transaction's retained immutable AST root.
+                    match unsafe {
+                        self.transaction.stage_identity(identity, key.clone())
+                    } {
+                        Ok(shared) => key = shared,
+                        Err(error) => {
+                            self.error.get_or_insert(error);
+                        },
+                    }
+                }
+                self.append_key(key);
+            }
+        }
+    }
+}
+
 fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage) -> TokenStream {
+    let sink_support = generate_semantic_sink_support();
     let scratch_target = (!usage.unordered_element_categories.is_empty()).then(|| {
         quote! {
             Scratch(*mut mettail_runtime::CollectionSemanticHasher),
@@ -548,28 +852,34 @@ fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage
         .map(|t| {
             let cat = &t.name;
             let variant_name = format_ident!("SemHash{}", cat);
-            let resume_variant = usage
-                .unordered_element_categories
-                .contains(&cat.to_string())
-                .then(|| {
-                    let resume_name = format_ident!("ResumeSemHashCollection{}", cat);
-                    quote! {
-                        ,
-                        #resume_name {
-                            pda: Box<mettail_runtime::CollectionSemanticHashPda>,
-                            target: SemanticHashTarget,
-                        }
-                    }
-                });
             quote! {
                 #variant_name {
                     value: *const #cat,
                     target: SemanticHashTarget,
+                    cacheable: bool,
                 }
-                #resume_variant
             }
         })
         .collect();
+    let resume_collection_variant = (!usage.unordered_element_categories.is_empty()).then(|| {
+        quote! {
+            ResumeCollection {
+                pda: Box<mettail_runtime::CollectionSemanticHashPda>,
+                target: SemanticHashTarget,
+                schedule: SemanticHashCollectionSchedule,
+            },
+        }
+    });
+    let collection_schedule_alias = (!usage.unordered_element_categories.is_empty()).then(|| {
+        quote! {
+            type SemanticHashCollectionSchedule = fn(
+                &mut Vec<SemanticHashTask>,
+                mettail_runtime::CollectionSemanticHashRole,
+                *const (),
+                SemanticHashTarget,
+            );
+        }
+    });
 
     let opaque_variant = usage.needs_opaque.then(|| {
         quote! {
@@ -638,11 +948,15 @@ fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage
     });
 
     quote! {
+        #sink_support
+
         #[derive(Clone, Copy)]
         enum SemanticHashTarget {
             Root,
             #scratch_target
         }
+
+        #collection_schedule_alias
 
         /// Work item for the iterative semantic_hash engine (Stage 2.3).
         ///
@@ -653,6 +967,7 @@ fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage
         #[allow(dead_code)]
         enum SemanticHashTask {
             #(#variants,)*
+            #resume_collection_variant
             /// ★ #162 — a `usize` written to `state` at its own position in the
             /// stream, so a collection's LENGTH PREFIX can precede element tasks.
             ///
@@ -668,12 +983,12 @@ fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage
                 value: u8,
                 target: SemanticHashTarget,
             },
-            AbsorbPathMapMode {
-                value: mettail_runtime::PathMapMode,
-                target: SemanticHashTarget,
-            },
             #opaque_variant
             #keep_alive_variant
+            FinishNode {
+                identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
+                cacheable: bool,
+            },
         }
 
         #opaque_helper
@@ -696,6 +1011,14 @@ fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage
 // Engine
 // =============================================================================
 
+fn recursive_native_semantic_schedule_name(category: &Ident, label: &Ident) -> Ident {
+    format_ident!(
+        "semantic_hash_schedule_native_{}_{}",
+        category.to_string().to_lowercase(),
+        label.to_string().to_lowercase(),
+    )
+}
+
 fn generate_semantic_engine(
     language: &LanguageDef,
     transparent_labels: &HashSet<String>,
@@ -704,6 +1027,83 @@ fn generate_semantic_engine(
     usage: &SemanticTaskUsage,
 ) -> TokenStream {
     let has_scratch_target = !usage.unordered_element_categories.is_empty();
+    let homogeneous_schedule_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .filter(|t| {
+            usage
+                .unordered_element_categories
+                .contains(&t.name.to_string())
+        })
+        .map(|t| {
+            let category = &t.name;
+            let task_variant = format_ident!("SemHash{}", category);
+            let schedule_fn = format_ident!(
+                "semantic_hash_schedule_collection_{}",
+                category.to_string().to_lowercase(),
+            );
+            quote! {
+                #[inline]
+                fn #schedule_fn(
+                    stack: &mut Vec<SemanticHashTask>,
+                    _role: mettail_runtime::CollectionSemanticHashRole,
+                    value: *const (),
+                    target: SemanticHashTarget,
+                ) {
+                    stack.push(SemanticHashTask::#task_variant {
+                        value: value.cast::<#category>(),
+                        target,
+                        cacheable: false,
+                    });
+                }
+            }
+        })
+        .collect();
+    let native_schedule_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .flat_map(|t| {
+            let category = &t.name;
+            collect_category_variants(category, language)
+                .into_iter()
+                .filter_map(move |variant| match variant {
+                    VariantKind::RecursiveNativeLiteral { label, carrier } => {
+                        let schedule_fn = recursive_native_semantic_schedule_name(category, &label);
+                        let key_task = format_ident!("SemHash{}", carrier.key_category());
+                        let value_task = format_ident!("SemHash{}", carrier.value_category());
+                        let key_category = carrier.key_category();
+                        let value_category = carrier.value_category();
+                        Some(quote! {
+                            #[inline]
+                            fn #schedule_fn(
+                                stack: &mut Vec<SemanticHashTask>,
+                                role: mettail_runtime::CollectionSemanticHashRole,
+                                value: *const (),
+                                target: SemanticHashTarget,
+                            ) {
+                                match role {
+                                    mettail_runtime::CollectionSemanticHashRole::Primary => {
+                                        stack.push(SemanticHashTask::#key_task {
+                                            value: value.cast::<#key_category>(),
+                                            target,
+                                            cacheable: false,
+                                        });
+                                    },
+                                    mettail_runtime::CollectionSemanticHashRole::Secondary => {
+                                        stack.push(SemanticHashTask::#value_task {
+                                            value: value.cast::<#value_category>(),
+                                            target,
+                                            cacheable: false,
+                                        });
+                                    },
+                                }
+                            }
+                        })
+                    },
+                    _ => None,
+                })
+        })
+        .collect();
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
@@ -716,12 +1116,6 @@ fn generate_semantic_engine(
             let cat_str = cat.to_string().to_lowercase();
             let helper_fn = format_ident!("semantic_hash_handle_{}", cat_str);
             let visit_fn = format_ident!("semantic_hash_visit_{}", cat_str);
-            let resume_fn = format_ident!("semantic_hash_resume_collection_{}", cat_str);
-            let task_variant = format_ident!("SemHash{}", cat);
-            let resume_variant = format_ident!("ResumeSemHashCollection{}", cat);
-            let needs_resume = usage
-                .unordered_element_categories
-                .contains(&cat.to_string());
             let variants = collect_category_variants(cat, language);
             // Phase F.13 Stage 2.3.6 (2026-05-23): per-variant indices
             // for per-node u8 discriminator. Reduces semantic_hash byte
@@ -752,60 +1146,45 @@ fn generate_semantic_engine(
                     )
                 })
                 .collect();
-            let resume_helper = needs_resume.then(|| quote! {
-                #[inline(never)]
-                #[allow(dead_code)]
-                fn #resume_fn<H: std::hash::Hasher>(
-                    stack: &mut Vec<SemanticHashTask>,
-                    root_state: &mut H,
-                    mut pda: Box<mettail_runtime::CollectionSemanticHashPda>,
-                    target: SemanticHashTarget,
-                ) {
-                    loop {
-                        match pda.resume() {
-                            mettail_runtime::CollectionSemanticHashStep::Hash { value, state } => {
-                                stack.push(SemanticHashTask::#resume_variant { pda, target });
-                                stack.push(SemanticHashTask::#task_variant {
-                                    value: value.cast::<#cat>(),
-                                    target: SemanticHashTarget::Scratch(state),
-                                });
-                                return;
-                            },
-                            mettail_runtime::CollectionSemanticHashStep::WriteUsize(value) => {
-                                semantic_hash_write_usize(root_state, target, value);
-                            },
-                            mettail_runtime::CollectionSemanticHashStep::WriteU64(value) => {
-                                semantic_hash_write_u64(root_state, target, value);
-                            },
-                            mettail_runtime::CollectionSemanticHashStep::Done => return,
-                        }
+            let root_dispatch = quote! {
+                if H::COMPOSES_KEYS {
+                    let identity =
+                        mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity::of_ref(unsafe { &*ptr });
+                    if root_state.begin_node(identity, cacheable) {
+                        return;
                     }
+                    stack.push(SemanticHashTask::FinishNode {
+                        identity,
+                        cacheable,
+                    });
                 }
-            });
+                #visit_fn(stack, root_state, target, ptr, cacheable);
+            };
             let dispatch = if has_scratch_target {
                 quote! {
                     match target {
                         SemanticHashTarget::Root => {
-                            #visit_fn(stack, root_state, target, ptr);
+                            #root_dispatch
                         },
                         SemanticHashTarget::Scratch(state) => {
-                            #visit_fn(stack, unsafe { &mut *state }, target, ptr);
+                            #visit_fn(stack, unsafe { &mut *state }, target, ptr, false);
                         },
                     }
                 }
             } else {
                 quote! {
-                    #visit_fn(stack, root_state, target, ptr);
+                    #root_dispatch
                 }
             };
             quote! {
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
-                fn #visit_fn<S: std::hash::Hasher>(
+                fn #visit_fn<S: __MettailSemanticSink>(
                     stack: &mut Vec<SemanticHashTask>,
                     state: &mut S,
                     target: SemanticHashTarget,
                     ptr: *const #cat,
+                    cacheable: bool,
                 ) {
                     let val = unsafe { &*ptr };
                     // NOTE: Unlike iterative_hash, we do NOT emit the
@@ -819,16 +1198,15 @@ fn generate_semantic_engine(
 
                 #[inline(never)]
                 #[allow(dead_code)]
-                fn #helper_fn<H: std::hash::Hasher>(
+                fn #helper_fn<H: __MettailSemanticSink>(
                     stack: &mut Vec<SemanticHashTask>,
                     root_state: &mut H,
                     target: SemanticHashTarget,
                     ptr: *const #cat,
+                    cacheable: bool,
                 ) {
                     #dispatch
                 }
-
-                #resume_helper
             }
         })
         .collect();
@@ -839,26 +1217,16 @@ fn generate_semantic_engine(
         .map(|t| {
             let cat = &t.name;
             let task_variant = format_ident!("SemHash{}", cat);
-            let resume_variant = format_ident!("ResumeSemHashCollection{}", cat);
             let helper_fn =
                 format_ident!("semantic_hash_handle_{}", cat.to_string().to_lowercase());
-            let resume_fn =
-                format_ident!("semantic_hash_resume_collection_{}", cat.to_string().to_lowercase());
-            let resume_arm = usage
-                .unordered_element_categories
-                .contains(&cat.to_string())
-                .then(|| {
-                    quote! {
-                        SemanticHashTask::#resume_variant { pda, target } => {
-                            #resume_fn(stack, state, pda, target);
-                        }
-                    }
-                });
             quote! {
-                SemanticHashTask::#task_variant { value, target } => {
-                    #helper_fn(stack, state, target, value);
+                SemanticHashTask::#task_variant {
+                    value,
+                    target,
+                    cacheable,
+                } => {
+                    #helper_fn(stack, state, target, value, cacheable);
                 }
-                #resume_arm
             }
         })
         .collect();
@@ -909,25 +1277,83 @@ fn generate_semantic_engine(
             },
         }
     });
-    let write_u64_helper = has_scratch_target.then(|| {
+    let write_key_helper = has_scratch_target.then(|| {
         quote! {
             #[inline]
-            fn semantic_hash_write_u64<H: std::hash::Hasher>(
+            fn semantic_hash_write_key<H: __MettailSemanticSink>(
                 root_state: &mut H,
                 target: SemanticHashTarget,
-                value: u64,
+                key: mettail_runtime::exact_semantic_key::ContentKey,
             ) {
                 match target {
-                    SemanticHashTarget::Root => std::hash::Hash::hash(&value, root_state),
+                    SemanticHashTarget::Root => root_state.write_exact_key(key),
                     SemanticHashTarget::Scratch(state) => {
-                        std::hash::Hash::hash(&value, unsafe { &mut *state });
+                        unsafe { &mut *state }.push_framed_key(key);
                     },
                 }
             }
         }
     });
+    let resume_collection_helper = has_scratch_target.then(|| {
+        quote! {
+            #[inline(never)]
+            fn semantic_hash_resume_collection<H: __MettailSemanticSink>(
+                stack: &mut Vec<SemanticHashTask>,
+                root_state: &mut H,
+                mut pda: Box<mettail_runtime::CollectionSemanticHashPda>,
+                target: SemanticHashTarget,
+                schedule: SemanticHashCollectionSchedule,
+            ) {
+                loop {
+                    match pda.resume() {
+                        mettail_runtime::CollectionSemanticHashStep::Hash {
+                            role,
+                            value,
+                            state,
+                        } => {
+                            stack.push(SemanticHashTask::ResumeCollection {
+                                pda,
+                                target,
+                                schedule,
+                            });
+                            schedule(
+                                stack,
+                                role,
+                                value,
+                                SemanticHashTarget::Scratch(state),
+                            );
+                            return;
+                        },
+                        mettail_runtime::CollectionSemanticHashStep::WriteUsize(value) => {
+                            semantic_hash_write_usize(root_state, target, value);
+                        },
+                        mettail_runtime::CollectionSemanticHashStep::WriteU8(value) => {
+                            semantic_hash_write_u8(root_state, target, value);
+                        },
+                        mettail_runtime::CollectionSemanticHashStep::WriteKey(key) => {
+                            semantic_hash_write_key(root_state, target, key);
+                        },
+                        mettail_runtime::CollectionSemanticHashStep::Error(error) => {
+                            root_state.record_key_error(error);
+                            return;
+                        },
+                        mettail_runtime::CollectionSemanticHashStep::Done => return,
+                    }
+                }
+            }
+        }
+    });
+    let resume_collection_task_arm = has_scratch_target.then(|| {
+        quote! {
+            SemanticHashTask::ResumeCollection { pda, target, schedule } => {
+                semantic_hash_resume_collection(stack, state, pda, target, schedule);
+            },
+        }
+    });
 
     quote! {
+        #(#homogeneous_schedule_fns)*
+        #(#native_schedule_fns)*
         #(#helper_fns)*
 
         #[inline]
@@ -954,32 +1380,22 @@ fn generate_semantic_engine(
             }
         }
 
-        #write_u64_helper
-
-        #[inline]
-        fn semantic_hash_write_pathmap_mode<H: std::hash::Hasher>(
-            root_state: &mut H,
-            target: SemanticHashTarget,
-            value: mettail_runtime::PathMapMode,
-        ) {
-            match target {
-                SemanticHashTarget::Root => std::hash::Hash::hash(&value, root_state),
-                #scratch_hash_arm
-            }
-        }
+        #write_key_helper
+        #resume_collection_helper
 
         #opaque_apply_helper
 
         /// Iterative semantic_hash engine. Processes the work stack
         /// until empty, hashing each node's fields into `state`.
         #[allow(dead_code, unused_variables)]
-        fn semantic_hash_iterative<H: std::hash::Hasher>(
+        fn semantic_hash_iterative<H: __MettailSemanticSink>(
             stack: &mut Vec<SemanticHashTask>,
             state: &mut H,
         ) {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
+                    #resume_collection_task_arm
                     // ★ #162 — `state.write_usize(n)`, the exact call the eager
                     // form made, issued at its own position in the stream.
                     SemanticHashTask::AbsorbUsize { value, target } => {
@@ -988,11 +1404,12 @@ fn generate_semantic_engine(
                     SemanticHashTask::AbsorbU8 { value, target } => {
                         semantic_hash_write_u8(state, target, value);
                     }
-                    SemanticHashTask::AbsorbPathMapMode { value, target } => {
-                        semantic_hash_write_pathmap_mode(state, target, value);
-                    }
                     #opaque_task_arm
                     #keep_alive_task_arm
+                    SemanticHashTask::FinishNode {
+                        identity,
+                        cacheable,
+                    } => state.finish_node(identity, cacheable),
                 }
             }
         }
@@ -1007,13 +1424,10 @@ fn generate_semantic_engine(
 /// alpha-irrelevant value into the semantic fingerprint (`exact_key`). The
 /// collection's order semantics are preserved per kind:
 /// - `Vec`: ordered — length + each element in order.
-/// - `HashBag`: order-independent multiset combine, reproduced by
-///   `CollectionSemanticHashPda` without a recursive callback.
-/// - `HashMap`: order-independent map combine, ordered by semantic digest
-///   through the same resumable PDA.
-/// - `HashSet`: order-independent sorted semantic element digests.
-/// - `PathMap`: a homogeneous Empty/Set/Map mode tag followed by the matching
-///   map-PDA stream; set mode uses an intentionally empty unit-value digest.
+/// - `HashBag`: exact sorted element-key/multiplicity pairs.
+/// - `HashMap`: exact sorted key/value pairs with preserved pair boundaries.
+/// - `HashSet`: exact sorted element keys.
+/// - `PathMap`: an explicit Empty/Set/Map mode and mode-correct exact entries.
 ///
 /// `coll_expr` borrows the collection; `element_cat` is its element category.
 fn semantic_hash_collection(
@@ -1022,7 +1436,10 @@ fn semantic_hash_collection(
     coll_type: &CollectionType,
 ) -> TokenStream {
     let task_variant = format_ident!("SemHash{}", element_cat);
-    let resume_variant = format_ident!("ResumeSemHashCollection{}", element_cat);
+    let schedule_fn = format_ident!(
+        "semantic_hash_schedule_collection_{}",
+        element_cat.to_string().to_lowercase(),
+    );
     match coll_type {
         CollectionType::Vec => {
             quote! {
@@ -1030,6 +1447,7 @@ fn semantic_hash_collection(
                     stack.push(SemanticHashTask::#task_variant {
                         value: __e as *const _,
                         target,
+                        cacheable,
                     });
                 }
                 stack.push(SemanticHashTask::AbsorbUsize {
@@ -1044,9 +1462,15 @@ fn semantic_hash_collection(
                     .iter()
                     .map(mettail_runtime::CollectionSemanticHashItem::unary)
                     .collect();
-                stack.push(SemanticHashTask::#resume_variant {
-                    pda: Box::new(mettail_runtime::CollectionSemanticHashPda::set(__items)),
+                stack.push(SemanticHashTask::ResumeCollection {
+                    pda: Box::new(
+                        mettail_runtime::CollectionSemanticHashPda::set_with_max_bytes(
+                            __items,
+                            state.max_key_bytes(),
+                        ),
+                    ),
                     target,
+                    schedule: #schedule_fn,
                 });
             }
         },
@@ -1061,12 +1485,14 @@ fn semantic_hash_collection(
                         )
                     })
                     .collect();
-                stack.push(SemanticHashTask::#resume_variant {
-                    pda: Box::new(mettail_runtime::CollectionSemanticHashPda::bag(
+                stack.push(SemanticHashTask::ResumeCollection {
+                    pda: Box::new(mettail_runtime::CollectionSemanticHashPda::bag_with_max_bytes(
                         #coll_expr.len(),
                         __items,
+                        state.max_key_bytes(),
                     )),
                     target,
+                    schedule: #schedule_fn,
                 });
             }
         },
@@ -1078,57 +1504,79 @@ fn semantic_hash_collection(
                         mettail_runtime::CollectionSemanticHashItem::pair(__key, __value)
                     })
                     .collect();
-                stack.push(SemanticHashTask::#resume_variant {
-                    pda: Box::new(mettail_runtime::CollectionSemanticHashPda::map(__items)),
+                stack.push(SemanticHashTask::ResumeCollection {
+                    pda: Box::new(
+                        mettail_runtime::CollectionSemanticHashPda::map_with_max_bytes(
+                            __items,
+                            state.max_key_bytes(),
+                        ),
+                    ),
                     target,
+                    schedule: #schedule_fn,
                 });
             }
         },
-        CollectionType::PathMap => quote! {
-            {
-                match #coll_expr {
-                    mettail_runtime::PathMapLit::Empty => {
-                        stack.push(SemanticHashTask::AbsorbUsize {
-                            value: 0,
-                            target,
-                        });
-                    },
-                    mettail_runtime::PathMapLit::Set(__entries) => {
-                        let __items = __entries
-                            .keys()
-                            .map(mettail_runtime::CollectionSemanticHashItem::key_only)
-                            .collect();
-                        stack.push(SemanticHashTask::#resume_variant {
-                            pda: Box::new(
-                                mettail_runtime::CollectionSemanticHashPda::map(__items),
+        CollectionType::PathMap => semantic_hash_pathmap(coll_expr, &quote! { #schedule_fn }),
+    }
+}
+
+/// Schedule the exact semantic-hash stream of a PathMap through a supplied
+/// typed callback.  The callback may be homogeneous or may route primary keys
+/// and secondary values to distinct generated categories.
+fn semantic_hash_pathmap(pathmap: &TokenStream, schedule: &TokenStream) -> TokenStream {
+    quote! {
+        {
+            match #pathmap {
+                mettail_runtime::PathMapLit::Empty => {
+                    stack.push(SemanticHashTask::ResumeCollection {
+                        pda: Box::new(
+                            mettail_runtime::CollectionSemanticHashPda::path_neutral_with_max_bytes(
+                                state.max_key_bytes(),
                             ),
-                            target,
-                        });
-                    },
-                    mettail_runtime::PathMapLit::Map(__entries) => {
-                        let __items = __entries
-                            .iter()
-                            .map(|(__key, __value)| {
-                                mettail_runtime::CollectionSemanticHashItem::pair(
-                                    __key,
-                                    __value,
-                                )
-                            })
-                            .collect();
-                        stack.push(SemanticHashTask::#resume_variant {
-                            pda: Box::new(
-                                mettail_runtime::CollectionSemanticHashPda::map(__items),
+                        ),
+                        target,
+                        schedule: #schedule,
+                    });
+                },
+                mettail_runtime::PathMapLit::Set(__entries) => {
+                    let __items = __entries
+                        .keys()
+                        .map(mettail_runtime::CollectionSemanticHashItem::key_only)
+                        .collect();
+                    stack.push(SemanticHashTask::ResumeCollection {
+                        pda: Box::new(
+                            mettail_runtime::CollectionSemanticHashPda::path_set_with_max_bytes(
+                                __items,
+                                state.max_key_bytes(),
                             ),
-                            target,
-                        });
-                    },
-                }
-                stack.push(SemanticHashTask::AbsorbPathMapMode {
-                    value: #coll_expr.mode(),
-                    target,
-                });
+                        ),
+                        target,
+                        schedule: #schedule,
+                    });
+                },
+                mettail_runtime::PathMapLit::Map(__entries) => {
+                    let __items = __entries
+                        .iter()
+                        .map(|(__key, __value)| {
+                            mettail_runtime::CollectionSemanticHashItem::pair(
+                                __key,
+                                __value,
+                            )
+                        })
+                        .collect();
+                    stack.push(SemanticHashTask::ResumeCollection {
+                        pda: Box::new(
+                            mettail_runtime::CollectionSemanticHashPda::path_map_with_max_bytes(
+                                __items,
+                                state.max_key_bytes(),
+                            ),
+                        ),
+                        target,
+                        schedule: #schedule,
+                    });
+                },
             }
-        },
+        }
     }
 }
 
@@ -1167,6 +1615,7 @@ fn semantic_hash_field_tasks(field: &FieldInfo, name: &Ident) -> TokenStream {
                         stack.push(SemanticHashTask::#task_variant {
                             value: &**__child as *const _,
                             target,
+                            cacheable,
                         });
                         stack.push(SemanticHashTask::AbsorbU8 {
                             value: 1u8,
@@ -1204,6 +1653,7 @@ fn semantic_hash_field_tasks(field: &FieldInfo, name: &Ident) -> TokenStream {
                 stack.push(SemanticHashTask::#task_variant {
                     value: &**#name as *const _,
                     target,
+                    cacheable,
                 });
             }
         },
@@ -1364,6 +1814,7 @@ fn variant_label(variant: &VariantKind) -> &Ident {
         VariantKind::Var { label }
         | VariantKind::Literal { label }
         | VariantKind::CollectionLiteral { label, .. }
+        | VariantKind::RecursiveNativeLiteral { label, .. }
         | VariantKind::Nullary { label }
         | VariantKind::Regular { label, .. }
         | VariantKind::Collection { label, .. }
@@ -1416,6 +1867,7 @@ fn generate_fold_alias_arm(
                     stack.push(SemanticHashTask::#task_variant {
                         value: __canonical_ptr,
                         target,
+                        cacheable: false,
                     });
                 }
             }
@@ -1450,6 +1902,7 @@ fn generate_fold_alias_arm(
                     stack.push(SemanticHashTask::#task_variant {
                         value: __canonical_ptr,
                         target,
+                        cacheable: false,
                     });
                 }
             }
@@ -1556,6 +2009,26 @@ fn generate_semantic_variant_arm(
                 #category::#label(v) => {
                     state.write_u8(#variant_idx);
                     #body
+                }
+            }
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let category_tag = fnv1a64(&category.to_string());
+            let pathmap = carrier.pathmap_ref(&quote! { v });
+            let focus = carrier.focus_ref(&quote! { v });
+            let schedule = recursive_native_semantic_schedule_name(category, label);
+            let pathmap_body = semantic_hash_pathmap(&pathmap, &quote! { #schedule });
+            quote! {
+                #category::#label(v) => {
+                    // Recursive native access types remain distinct even when
+                    // an enclosing projection is transparent.  The stable
+                    // category tag is therefore part of the structural key;
+                    // topology and focus follow without rendering or reparsing.
+                    state.write_u64(#category_tag);
+                    state.write_u8(#variant_idx);
+                    stack.push(semantic_hash_opaque_task::<_, S>(#focus, target));
+                    #pathmap_body
                 }
             }
         },
@@ -1980,6 +2453,7 @@ fn generate_semantic_regular_arm(
                     stack.push(SemanticHashTask::#task_variant {
                         value: &**inner as *const _,
                         target,
+                        cacheable,
                     });
                 }
             }
@@ -2057,6 +2531,7 @@ fn generate_semantic_scoped_arm(
             stack.push(SemanticHashTask::#body_task {
                 value: body_ptr,
                 target,
+                cacheable,
             });
             stack.push(SemanticHashTask::AbsorbUsize {
                 value: #arity,
@@ -2100,6 +2575,7 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
             /// onto an explicit work stack.
             #[allow(dead_code)]
             pub fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                let mut sink = __MettailFlatSemanticSink(state);
                 // Fast path: try TLS pool.
                 let tls_result = SEMANTIC_HASH_TASK_POOL.try_with(|cell| {
                     let mut stack = cell.take();
@@ -2108,8 +2584,9 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
                     stack.push(SemanticHashTask::#task_variant {
                         value: self as *const _,
                         target: SemanticHashTarget::Root,
+                        cacheable: false,
                     });
-                    semantic_hash_iterative(&mut stack, state);
+                    semantic_hash_iterative(&mut stack, &mut sink);
 
                     if was_empty {
                         stack.clear();
@@ -2125,8 +2602,51 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
                 let mut stack = vec![SemanticHashTask::#task_variant {
                     value: self as *const _,
                     target: SemanticHashTarget::Root,
+                    cacheable: false,
                 }];
-                semantic_hash_iterative(&mut stack, state);
+                semantic_hash_iterative(&mut stack, &mut sink);
+            }
+
+            /// Construct the same exact semantic stream as semantic_hash while
+            /// retaining cached child streams as persistent ContentKey ropes.
+            ///
+            /// Every address admitted to the cache is transitively owned by
+            /// owner. The transaction publishes all discovered keys together,
+            /// or none of them when a deterministic cache limit is exhausted.
+            pub fn semantic_content_key(
+                owner: std::sync::Arc<Self>,
+                cache: &mut mettail_runtime::exact_semantic_key::ContentKeyCache,
+            ) -> Result<
+                mettail_runtime::exact_semantic_key::ContentKey,
+                mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+            > {
+                let mut transaction = cache.transaction_for_root(owner.clone());
+                let mut sink = __MettailComposingSemanticSink::new(&mut transaction);
+                let used_tls = SEMANTIC_HASH_TASK_POOL
+                    .try_with(|cell| {
+                        let mut stack = cell.take();
+                        stack.clear();
+                        stack.push(SemanticHashTask::#task_variant {
+                            value: std::sync::Arc::as_ptr(&owner),
+                            target: SemanticHashTarget::Root,
+                            cacheable: true,
+                        });
+                        semantic_hash_iterative(&mut stack, &mut sink);
+                        stack.clear();
+                        cell.set(stack);
+                    })
+                    .is_ok();
+                if !used_tls {
+                    let mut stack = vec![SemanticHashTask::#task_variant {
+                        value: std::sync::Arc::as_ptr(&owner),
+                        target: SemanticHashTarget::Root,
+                        cacheable: true,
+                    }];
+                    semantic_hash_iterative(&mut stack, &mut sink);
+                }
+                let key = sink.into_result()?;
+                transaction.commit()?;
+                Ok(key)
             }
         }
     }
@@ -2199,9 +2719,9 @@ mod task_usage_tests {
             "semantic_hash_keep_alive",
             "SemanticHashTask::Opaque",
             "SemanticHashTask::KeepAlive",
-            "ResumeSemHashCollection",
+            "SemanticHashTask::ResumeCollection",
             "Scratch(*mutmettail_runtime::CollectionSemanticHasher)",
-            "fnsemantic_hash_write_u64",
+            "fnsemantic_hash_write_key",
         ] {
             assert!(
                 !generated.contains(absent),
@@ -2211,31 +2731,37 @@ mod task_usage_tests {
     }
 
     #[test]
-    fn only_the_unordered_element_category_gets_a_resume_driver() {
+    fn unordered_categories_share_one_resume_driver_and_keep_typed_schedulers() {
         let language = crate::gen::collection_literal_language_for_tests();
         let generated = compact(generate_semantic_hash(&language));
 
         assert!(
-            generated.contains("ResumeSemHashCollectionProc"),
-            "the fixture's Bag/Set/Map/Pathmap literals all require the Proc resume driver"
+            generated.contains("SemanticHashTask::ResumeCollection"),
+            "the fixture's Bag/Set/Map/Pathmap literals require the shared resume driver"
         );
         assert!(
             generated.contains("Scratch(*mutmettail_runtime::CollectionSemanticHasher)")
-                && generated.contains("fnsemantic_hash_write_u64"),
-            "an unordered collection requires scratch hashing and the PDA's u64 lane"
+                && generated.contains("fnsemantic_hash_write_key"),
+            "an unordered collection requires scratch construction and exact framed keys"
         );
-        for category in ["List", "Bag", "Set", "Map", "Pathmap", "Int"] {
-            assert!(
-                !generated.contains(&format!("ResumeSemHashCollection{category}")),
-                "{category} is a wrapper category, not an unordered collection element"
-            );
-        }
+        assert!(
+            !generated.contains("CollectionSemanticHashStep::WriteU64")
+                && !generated.contains("AbsorbPathMapMode"),
+            "StructuralV2 must not retain digest-only lanes or implicit PathMap modes"
+        );
         assert_eq!(
             generated
-                .matches("fnsemantic_hash_resume_collection_proc")
+                .matches("fnsemantic_hash_resume_collection<")
                 .count(),
             1,
-            "all four unordered shapes share one category-specific resume driver"
+            "all unordered shapes share one type-erased PDA resume driver"
+        );
+        assert_eq!(
+            generated
+                .matches("fnsemantic_hash_schedule_collection_proc")
+                .count(),
+            1,
+            "the shared driver restores Proc through one typed scheduler"
         );
     }
 

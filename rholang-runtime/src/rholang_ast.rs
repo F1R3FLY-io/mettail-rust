@@ -10,20 +10,23 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use crate::ddl_ast::{DdlLowerPlan, DdlRoot};
 use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
 use crate::guard_discharge::{self, GuardDischargeReport, LoweringOptions};
+use crate::language_install::NamedRuntimeTemplateHole;
+use mettail_grammar_core::RuntimeTemplatePiece;
 use mettail_languages::rholang::receive::{
     desugar_for_rows, eval_guard_bool, pfor_user_still_has_query_rows,
 };
 use mettail_languages::rholang::{
     Bag, BigInt, BigRat, Bool, Bytes, Fixed, Float, ForRow, InputBind, Int, List, Map, Name,
-    Pathmap, Proc, RholangLanguage, RholangTerm, RholangTermInner, Set, Str, UInt32,
+    Pathmap, Proc, RholangLanguage, RholangTerm, RholangTermInner, Set, Str, UInt32, Uri,
 };
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reflect_flt_construction, reflect_flt_pattern,
     suggest_rejected_rule_dispositions, EmptyFltResolver, FltHole, FltPatternReflection,
     FltResolve, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
-    RhoGuardCoverageEvidence,
+    RhoGuardCoverageEvidence, LANGUAGE_FLT_CONSTRUCT_BAND,
 };
 use mettail_runtime::{
     Binder, FltNode, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
@@ -31,10 +34,11 @@ use mettail_runtime::{
     WeightedSeedId,
 };
 use models::create_bit_vector;
+use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
-    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMethod, EMinus, EMod, EMult, ENeg, ENeq,
-    ENot, EOr, EPathMap, EPlus, EPlusPlus, Expr, Par, ReceiveBind,
+    Connective, EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMethod, EMinus, EMod, EMult,
+    ENeg, ENeq, ENot, EOr, EPathMap, EPlus, EPlusPlus, Expr, Par, ReceiveBind, VarRef,
 };
 use models::rust::rholang::implicits::GPrivateBuilder;
 use typed_arena::Arena;
@@ -285,6 +289,12 @@ pub enum RholangAstLowerError {
         names: usize,
         binders: usize,
     },
+    InvalidUriBindings {
+        binders: usize,
+        uris: usize,
+    },
+    InvalidUriLiteral,
+    DuplicateUriBinding(String),
     /// L9-6: a `PFlt` node's `tag` resolves to no guest in the installed
     /// [`FltResolve`] registry (the empty-resolver default, or an unregistered
     /// tag). A `PFlt` cannot elaborate without its guest reflector — fail closed.
@@ -296,6 +306,9 @@ pub enum RholangAstLowerError {
     /// pattern/construction admission gate rejected it (a category mismatch, a
     /// malformed hole envelope, or an unfilled construction hole).
     FltReflect(String),
+    /// The already-parsed DDL AST could not be projected to its closed structural wire value.
+    /// This is a structural encoding failure, never a request to fall back to source parsing.
+    DdlWire(String),
     /// A lookahead suffix (`P[*]` / `P[n]`) was written over an operand that is not a send.
     ///
     /// The grammar takes `p:Proc` because Rholang's ~20 send sugars are all `: Proc` and there is
@@ -736,6 +749,7 @@ fn proc_has_machine_effects(proc: &Proc) -> bool {
                     | Proc::PForUser(..)
                     | Proc::CommWhere(..)
                     | Proc::PNew(..)
+                    | Proc::PNewUris(..)
                     | Proc::PVar(..) => return true,
                     Proc::PPar(parts) => {
                         let first = work.len();
@@ -1221,6 +1235,11 @@ struct ForState<'a> {
     /// `rows[0]`'s binds, BORROWED. The recursive `decompose_for_row` cloned each
     /// `InputBind` out of its `Arc`; nothing reads the clone, so the driver borrows.
     binds: Vec<&'a InputBind>,
+    /// Per-bind prepared-pattern token binder. `Some` means this bind's FLT
+    /// selector is lexical and its pattern must use the opaque token envelope.
+    pattern_tokens: Vec<Option<FreeVar<String>>>,
+    /// Nested pre-publication preparation frames, outermost first.
+    pattern_preparations: Vec<PatternPrepFrame>,
     persistent: bool,
     cond: Option<&'a Proc>,
     /// How many of `binds` are done. `binds[next_bind]` is the one in flight.
@@ -1235,6 +1254,11 @@ struct ForState<'a> {
     extended_env: EnvId,
     /// The lowered continuation, held while the guard is lowered.
     lowered_body: Option<Par>,
+}
+
+struct PatternPrepFrame {
+    channel: Par,
+    request: Par,
 }
 
 /// The counter and binder list one receive PATTERN accumulates.
@@ -1306,6 +1330,10 @@ enum Kont<'a> {
     /// `new_elist_par` over `n` items — `CastList`, and the payload of the `!(a, b, …)` and
     /// `!()` send sugars.
     ListLit(usize),
+    /// Structural Greg/Mike DDL projection. Its children are precisely the embedded Rholang
+    /// process leaves (`Data(v)` and non-theory module programs); the post-order DDL plan owns
+    /// every other node. This keeps mutual `DDL -> Proc -> DDL` nesting on the heap work stack.
+    Ddl(Box<DdlLowerPlan<'a>>),
     /// `new_eset_par` over `n` elements, pre-sorted at Enter.
     SetLit(usize),
     /// `new_emap_par` over `n` key/value pairs, i.e. `2n` children.
@@ -1317,7 +1345,7 @@ enum Kont<'a> {
     /// represented by `map == false, len == 0` and remains mode-neutral.
     PathmapLit { map: bool, len: usize },
     /// `PNew`'s `new`-scope wrapper over its lowered body.
-    New { binder_count: usize },
+    New { binder_count: usize, uris: Vec<String> },
     /// `x!(P)[*]` — an unbounded speculation request over `(channel, payload)`.
     SpecAll,
     /// `x!(P)[n]` — a bounded speculation request over `(channel, payload)`.
@@ -1341,6 +1369,10 @@ enum Kont<'a> {
     /// `Combine(Box<Kont>)`, is the opposite trade — an allocation on the HOT path to hide
     /// a cold variant's width — and must not be taken.
     HeldFold { channel: Box<Par> },
+    /// Run-time-selected FLT construction. `request` already contains the
+    /// lexical handle, structural telescope, fills, and private reply channel
+    /// under the surrounding `new`; the sole child is the transformed body.
+    InstalledFlt { channel: Box<Par>, request: Box<Par> },
     /// Stage A of `lower_pfor_user`: the SOURCE of `binds[next_bind]` is on the value stack.
     ForSource(Box<ForState<'a>>),
     /// Stage B: the PATTERN of `binds[next_bind]` is on the value stack.
@@ -1388,6 +1420,7 @@ impl Kont<'_> {
             Kont::Matches => 2,
             Kont::MatchesStaticallyFalse => 1,
             Kont::ListLit(n) => *n,
+            Kont::Ddl(plan) => plan.process_jobs().len(),
             Kont::SetLit(n) => *n,
             Kont::MapLit(n) => 2 * *n,
             Kont::BagLit(counts) => counts.len(),
@@ -1402,6 +1435,7 @@ impl Kont<'_> {
             Kont::SpecAll => 2,
             Kont::SpecN { .. } => 2,
             Kont::HeldFold { .. } => 2,
+            Kont::InstalledFlt { .. } => 1,
             // The four receive stages are STAGED: each awaits exactly one value.
             Kont::ForSource(_) => 1,
             Kont::ForPattern(..) => 1,
@@ -1439,6 +1473,7 @@ impl Kont<'_> {
             Kont::Matches => "Matches",
             Kont::MatchesStaticallyFalse => "MatchesStaticallyFalse",
             Kont::ListLit(_) => "ListLit",
+            Kont::Ddl(_) => "Ddl",
             Kont::SetLit(_) => "SetLit",
             Kont::MapLit(_) => "MapLit",
             Kont::BagLit(_) => "BagLit",
@@ -1447,6 +1482,7 @@ impl Kont<'_> {
             Kont::SpecAll => "SpecAll",
             Kont::SpecN { .. } => "SpecN",
             Kont::HeldFold { .. } => "HeldFold",
+            Kont::InstalledFlt { .. } => "InstalledFlt",
             Kont::ForSource(_) => "ForSource",
             Kont::ForPattern(..) => "ForPattern",
             Kont::ForBody(_) => "ForBody",
@@ -1477,6 +1513,7 @@ pub(crate) const KONT_NAMES: &[&str] = &[
     "Matches",
     "MatchesStaticallyFalse",
     "ListLit",
+    "Ddl",
     "SetLit",
     "MapLit",
     "BagLit",
@@ -1485,6 +1522,7 @@ pub(crate) const KONT_NAMES: &[&str] = &[
     "SpecAll",
     "SpecN",
     "HeldFold",
+    "InstalledFlt",
     "ForSource",
     "ForPattern",
     "ForBody",
@@ -1781,6 +1819,24 @@ impl<'a> Drive<'a> {
             Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
                 self.stacks.value(lower_arm_p_flt(node, self.env(env))?)
             },
+            // A DDL declaration is immutable specification data. The generated parser has
+            // already produced the complete structural AST. Project that AST to the closed
+            // versioned value envelope without source rendering or a second parse. Embedded
+            // Rholang values/programs are scheduled as ordinary jobs in THIS drive.
+            Proc::DdlModule(name, items) => {
+                self.enter_ddl(DdlRoot::Module { name, imports: None, items }, env)
+            },
+            Proc::DdlModuleImported(imports, name, items) => self.enter_ddl(
+                DdlRoot::Module {
+                    name,
+                    imports: Some(imports.as_ref()),
+                    items,
+                },
+                env,
+            ),
+            Proc::DdlTheory(name, parameters, body) => {
+                self.enter_ddl(DdlRoot::Theory { name, parameters, body: body.as_ref() }, env)
+            },
             Proc::PPar(parts) => {
                 let members: Vec<&'a Proc> = parts.iter_elements().collect();
                 self.push_children(
@@ -1834,7 +1890,22 @@ impl<'a> Drive<'a> {
                 let extended = self.envs.push(extend_env(self.env(env), &binders));
                 let body = self.keep(body);
                 self.push_children(
-                    Kont::New { binder_count: binders.len() },
+                    Kont::New {
+                        binder_count: binders.len(),
+                        uris: Vec::new(),
+                    },
+                    [Job::Body(body, extended)],
+                );
+            },
+            Proc::PNewUris(uris, scope) => {
+                let (ordered_binders, body, ordered_uris) = unbind_uri_scope(uris, scope)?;
+                let extended = self.envs.push(extend_env(self.env(env), &ordered_binders));
+                let body = self.keep(body);
+                self.push_children(
+                    Kont::New {
+                        binder_count: ordered_binders.len(),
+                        uris: ordered_uris,
+                    },
                     [Job::Body(body, extended)],
                 );
             },
@@ -1894,6 +1965,14 @@ impl<'a> Drive<'a> {
                     return Err(RholangAstLowerError::UnsupportedProc("computed map process"));
                 },
             },
+            Proc::MapEmpty => self.stacks.value(new_emap_par(
+                Vec::new(),
+                Vec::new(),
+                false,
+                None,
+                Vec::new(),
+                false,
+            )),
             Proc::CastSet(value) => match value.as_ref() {
                 Set::SetLit(items) => {
                     let mut items: Vec<&Proc> = items.iter().collect();
@@ -1940,6 +2019,10 @@ impl<'a> Drive<'a> {
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc("computed pathmap process"));
                 },
+            },
+            Proc::PathmapEmpty => {
+                self.stacks
+                    .value(new_epathmap_set_par(Vec::new(), Vec::new(), false))
             },
             Proc::CastBytes(value) => self.stacks.value(lower_arm_cast_bytes(value)?),
             // ── A-S4 fold purity: a fold reaching THIS arm sits where the lift traversal
@@ -2104,6 +2187,55 @@ impl<'a> Drive<'a> {
     /// further sites (a `new` inside an operand), and the site index is `HELD_FOLD_SITES.len()`
     /// at the moment of registration.
     fn enter_body(&mut self, body: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
+        if let Some(node) = find_dynamic_flt(body, self.env(env)) {
+            let ret_var = FreeVar::fresh_named("__mtl_flt_ret".to_string());
+            let result_var = FreeVar::fresh_named("__mtl_flt_result".to_string());
+            let result_drop =
+                Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(result_var.clone())))));
+            let mut replaced = false;
+            let transformed =
+                self.keep(Arc::new(replace_dynamic_flt(body, &node, &result_drop, &mut replaced)));
+            debug_assert!(replaced, "the dynamic FLT finder and replacement PDA diverged");
+
+            let env_new = self
+                .envs
+                .push(extend_env(self.env(env), &[Binder(ret_var)]));
+            let selector = lower_proc_var(&node.selector, self.env(env_new))?;
+            let mut fills = BTreeMap::new();
+            for hole in &node.holes {
+                let level = self
+                    .env(env_new)
+                    .flt_hole_level(&hole.name)
+                    .ok_or_else(|| {
+                        RholangAstLowerError::FltReflect(format!(
+                            "construction hole ${{{}}} is not bound by an enclosing FLT pattern",
+                            hole.name
+                        ))
+                    })?;
+                fills.insert(
+                    hole.name.clone(),
+                    new_boundvar_par(level as i32, create_bit_vector(&[level]), false),
+                );
+            }
+            let (pieces, holes) = runtime_template_parts(node.as_ref());
+            let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
+            let request = crate::language_install::encode_flt_construct_call(
+                selector, &pieces, &holes, None, &fills, reply,
+            );
+            let channel = LANGUAGE_FLT_CONSTRUCT_BAND
+                .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);
+            let env_for = self
+                .envs
+                .push(extend_env(self.env(env_new), &[Binder(result_var)]));
+            self.push_children(
+                Kont::InstalledFlt {
+                    channel: Box::new(channel),
+                    request: Box::new(request),
+                },
+                [Job::Body(transformed, env_for)],
+            );
+            return Ok(());
+        }
         let Some((operand, kind, width)) = find_fold(body) else {
             self.stacks.push(Job::Proc(body, env));
             return Ok(());
@@ -2245,6 +2377,39 @@ impl<'a> Drive<'a> {
     }
 }
 
+fn unbind_uri_scope(
+    uris: &[Uri],
+    scope: &mettail_runtime::Scope<Vec<Binder<String>>, Arc<Proc>>,
+) -> Result<(Vec<Binder<String>>, Arc<Proc>, Vec<String>), RholangAstLowerError> {
+    let (binders, body) = scope.clone().unbind::<String>();
+    if binders.len() != uris.len() || binders.is_empty() {
+        return Err(RholangAstLowerError::InvalidUriBindings {
+            binders: binders.len(),
+            uris: uris.len(),
+        });
+    }
+    let mut bindings: Vec<(String, Binder<String>)> = binders
+        .into_iter()
+        .zip(uris)
+        .map(|(binder, uri)| match uri {
+            Uri::UriText(value) => value
+                .strip_prefix('`')
+                .and_then(|value| value.strip_suffix('`'))
+                .filter(|value| !value.is_empty())
+                .map(|value| (value.to_string(), binder))
+                .ok_or(RholangAstLowerError::InvalidUriLiteral),
+            _ => Err(RholangAstLowerError::InvalidUriLiteral),
+        })
+        .collect::<Result<_, _>>()?;
+    bindings.sort_by(|left, right| left.0.cmp(&right.0));
+    if let Some(pair) = bindings.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+        return Err(RholangAstLowerError::DuplicateUriBinding(pair[0].0.clone()));
+    }
+    let ordered_uris = bindings.iter().map(|(uri, _)| uri.clone()).collect();
+    let ordered_binders = bindings.into_iter().map(|(_, binder)| binder).collect();
+    Ok((ordered_binders, body, ordered_uris))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // δ — THE COMBINE HALF
 //
@@ -2255,6 +2420,15 @@ impl<'a> Drive<'a> {
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 impl<'a> Drive<'a> {
+    fn enter_ddl(&mut self, root: DdlRoot<'a>, env: EnvId) {
+        let plan = DdlLowerPlan::build(root);
+        let processes: Vec<_> = plan.process_jobs().collect();
+        self.push_children(
+            Kont::Ddl(Box::new(plan)),
+            processes.into_iter().map(|process| Job::Proc(process, env)),
+        );
+    }
+
     fn combine(&mut self, kont: Kont<'a>) -> Result<(), RholangAstLowerError> {
         match kont {
             Kont::ParFold(n) => {
@@ -2352,6 +2526,13 @@ impl<'a> Drive<'a> {
                     locally_free,
                     connective_used,
                 ));
+            },
+            Kont::Ddl(plan) => {
+                let process_values = self.stacks.pop_values(plan.process_jobs().len());
+                let value = plan
+                    .finish(process_values)
+                    .map_err(RholangAstLowerError::DdlWire)?;
+                self.stacks.value(value);
             },
             Kont::SetLit(n) => {
                 let elements = self.stacks.pop_values(n);
@@ -2456,14 +2637,14 @@ impl<'a> Drive<'a> {
                     connective_used,
                 ));
             },
-            Kont::New { binder_count } => {
+            Kont::New { binder_count, uris } => {
                 let body = self.stacks.pop_value();
                 let locally_free = filter_and_adjust_bitset(&body.locally_free, binder_count);
                 let connective_used = body.connective_used;
                 self.stacks.value(new_new_par(
                     binder_count as i32,
                     body,
-                    Vec::new(),
+                    uris,
                     BTreeMap::new(),
                     locally_free.clone(),
                     locally_free,
@@ -2520,6 +2701,15 @@ impl<'a> Drive<'a> {
                     new_locally_free,
                     false,
                 ));
+            },
+            // `new ret { construct!([..., ret]) | for(@result <- ret){ body[*result] } }`.
+            // Parsing and structural reflection happen before the transformed
+            // body is admitted to the machine; the lexical handle and fills in
+            // `request` are substituted by the surrounding scopes first.
+            Kont::InstalledFlt { channel, request } => {
+                let for_body = self.stacks.pop_value();
+                self.stacks
+                    .value(installed_flt_trampoline(*channel, *request, for_body));
             },
             Kont::ForSource(state) => return self.for_source(state),
             Kont::ForPattern(state, slot) => return self.for_pattern(state, slot),
@@ -2630,6 +2820,45 @@ impl<'a> Drive<'a> {
     }
 }
 
+/// Assemble the capability-mediated construction request staged by [`Kont::InstalledFlt`].
+///
+/// Kept as one non-recursive constructor so the production PDA and the bounded recursive
+/// differential oracle compare traversal strategy while sharing the exact ABI envelope. The
+/// helper performs no parsing, matching, registry lookup, or authority decision.
+fn installed_flt_trampoline(channel: Par, request: Par, for_body: Par) -> Par {
+    let ret_channel = new_boundvar_par(0, Vec::new(), false);
+    let send = send_par(channel, vec![request]);
+    let bind = ReceiveBind {
+        patterns: vec![new_freevar_par(0, Vec::new())],
+        source: Some(ret_channel),
+        remainder: None,
+        free_count: 1,
+    };
+    let recv_locally_free = receive_locally_free(std::slice::from_ref(&bind), &for_body, 1);
+    let recv = new_receive_par(
+        vec![bind],
+        for_body,
+        false,
+        false,
+        1,
+        recv_locally_free.clone(),
+        false,
+        recv_locally_free,
+        false,
+    );
+    let inner = send.append(recv);
+    let new_locally_free = filter_and_adjust_bitset(&inner.locally_free, 1);
+    new_new_par(
+        1,
+        inner,
+        Vec::new(),
+        BTreeMap::new(),
+        new_locally_free.clone(),
+        new_locally_free,
+        false,
+    )
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // `lower_pfor_user`, staged
 //
@@ -2654,12 +2883,16 @@ impl<'a> Drive<'a> {
         if binds.is_empty() {
             return Err(RholangAstLowerError::EmptyInputJoin);
         }
+        let (env, pattern_tokens, pattern_preparations) =
+            self.prepare_dynamic_patterns(&binds, env)?;
         let binds_rho = Vec::with_capacity(binds.len());
         self.schedule_bind_source(Box::new(ForState {
             rows,
             body,
             env,
             binds,
+            pattern_tokens,
+            pattern_preparations,
             persistent,
             cond,
             next_bind: 0,
@@ -2669,6 +2902,45 @@ impl<'a> Drive<'a> {
             extended_env: ROOT_ENV,
             lowered_body: None,
         }))
+    }
+
+    fn prepare_dynamic_patterns(
+        &mut self,
+        binds: &[&InputBind],
+        mut env: EnvId,
+    ) -> Result<(EnvId, Vec<Option<FreeVar<String>>>, Vec<PatternPrepFrame>), RholangAstLowerError>
+    {
+        let mut tokens = vec![None; binds.len()];
+        let mut frames = Vec::new();
+        for (index, bind) in binds.iter().enumerate() {
+            let Some(node) = bind_flt_node(bind) else {
+                continue;
+            };
+            if flt_selector_level(node.as_ref(), self.env(env)).is_none() {
+                continue;
+            }
+            let ret_var = FreeVar::fresh_named("__mtl_flt_pattern_ret".to_string());
+            let token_var = FreeVar::fresh_named("__mtl_flt_pattern_token".to_string());
+            let env_new = self
+                .envs
+                .push(extend_env(self.env(env), &[Binder(ret_var)]));
+            let selector = lower_proc_var(&node.selector, self.env(env_new))?;
+            let (pieces, holes) = runtime_template_parts(node.as_ref());
+            let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
+            let request = crate::language_install::encode_flt_pattern_call(
+                selector, &pieces, &holes, None, reply,
+            );
+            frames.push(PatternPrepFrame {
+                channel: mettail_rholang_codegen::LANGUAGE_FLT_PATTERN_BAND
+                    .channel(0, crate::language_install::LANGUAGE_FLT_PATTERN_ABI_V1),
+                request,
+            });
+            env = self
+                .envs
+                .push(extend_env(self.env(env_new), &[Binder(token_var.clone())]));
+            tokens[index] = Some(token_var);
+        }
+        Ok((env, tokens, frames))
     }
 
     /// Schedule the next bind's SOURCE, or — once every bind is done — the continuation.
@@ -2695,6 +2967,45 @@ impl<'a> Drive<'a> {
         // L9-6b: an FLT receive pattern is reflected by the guest, not walked here. Its holes
         // are receive binders, so they enter the slot list in bind order alongside monikers.
         if let Some(node) = bind_flt_node(bind) {
+            if let Some(token_var) = &state.pattern_tokens[state.next_bind] {
+                // `Reduce::eval_receive` substitutes patterns at depth one. An outer value
+                // referenced from a pattern is therefore a `VarRef { depth: 1 }`, not an
+                // ordinary `BoundVar`; the latter is intentionally left untouched at pattern
+                // depth. `index` remains the token's level in the enclosing environment, which
+                // also handles several nested preparation frames without special cases.
+                let token_level = self.env(state.env).binders.get(token_var).copied().ok_or(
+                    RholangAstLowerError::UnsupportedProc("dynamic FLT pattern token scope"),
+                )?;
+                let token_index = i32::try_from(token_level).map_err(|_| {
+                    RholangAstLowerError::FltReflect(
+                        "dynamic FLT pattern scope exceeds the Rho de-Bruijn range".into(),
+                    )
+                })?;
+                let mut token = Par::default().with_connectives(vec![Connective {
+                    connective_instance: Some(ConnectiveInstance::VarRefBody(VarRef {
+                        index: token_index,
+                        depth: 1,
+                    })),
+                }]);
+                token.locally_free = create_bit_vector(&[token_level]);
+                token.connective_used = true;
+                let pattern = crate::language_install::dynamic_flt_pattern_token_pattern(token);
+                for hole in &node.holes {
+                    state.slots.push(ReceiveSlot::Hole(hole.name.clone()));
+                }
+                state.binds_rho.push(ReceiveBind {
+                    patterns: vec![pattern],
+                    source: Some(source),
+                    remainder: None,
+                    free_count: i32::try_from(node.holes.len()).map_err(|_| {
+                        RholangAstLowerError::FltReflect(
+                            "FLT pattern telescope exceeds the Rho free-count range".into(),
+                        )
+                    })?,
+                });
+                state.next_bind += 1;
+                return self.schedule_bind_source(state);
+            }
             let (pattern, free_count, hole_names) =
                 lower_flt_pattern(node.as_ref(), self.env(state.env))?;
             for name in hole_names {
@@ -2810,6 +3121,7 @@ impl<'a> Drive<'a> {
             cond,
             binds_rho,
             slots,
+            pattern_preparations,
             lowered_body,
             ..
         } = *state;
@@ -2865,6 +3177,9 @@ impl<'a> Drive<'a> {
             if let Some(receive) = receive_par.receives.get_mut(0) {
                 receive.condition = Some(cond_par);
             }
+        }
+        for frame in pattern_preparations.into_iter().rev() {
+            receive_par = wrap_pattern_preparation(receive_par, frame);
         }
         self.stacks.value(receive_par);
         Ok(())
@@ -3409,8 +3724,6 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::BitOr(..) => "bitor bitwise-or (no Rholang bitwise Expr)",
         Proc::BitAnd(..) => "bitand bitwise-and (no Rholang bitwise Expr)",
         Proc::BitNot(..) => "bitnot bitwise-not (no Rholang bitwise Expr)",
-        Proc::MapEmpty => "Map() empty-map constructor",
-        Proc::PathmapEmpty => "Pathmap() empty-pathmap constructor",
         // Every method spelling is represented by `MethodCall` and handled before this
         // fail-closed table. Unknown names are intentionally lowered to `EMethod`; the
         // reducer's own table returns the typed method-not-found diagnostic.
@@ -3723,15 +4036,22 @@ fn liftable_fold_parts(proc: &Proc) -> Option<(&Proc, FoldKind, i64)> {
     // host-evaluated.
 }
 
-/// Find the first (innermost) liftable fold in `proc`, NOT descending into nested binders
-/// (`PForUser`/`PNew` — their bodies are lifted separately as their own fold-lift scopes).
-/// Returns `(operand, kind, width)`. Send sugar is desugared in place so folds inside sugar
-/// payloads (`c!(int(5,8), 7)`) are found; the traversal mirrors [`replace_fold`] exactly.
-fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
+fn flt_selector_level(node: &FltNode, env: &BoundEnv) -> Option<usize> {
+    match &node.selector.0 {
+        Var::Free(selector) => env.binders.get(selector).copied(),
+        Var::Bound(_) => None,
+    }
+}
+
+/// Find the first post-order site in one binder body through the exact set of
+/// value positions rebuilt by [`replace_first_body_site`]. Receive patterns and
+/// nested binder bodies are opaque: the former have their own Match-authority
+/// preparation pass and the latter stage in their own de-Bruijn environment.
+fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option<T>) -> Option<T> {
     enum Work<'a> {
         Proc(&'a Proc),
         Name(&'a Name),
-        EmitFold(&'a Proc),
+        Emit(&'a Proc),
     }
 
     let desugared_nodes = Arena::new();
@@ -3743,23 +4063,27 @@ fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
                     work.push(Work::Proc(desugared_nodes.alloc(desugared)));
                     continue;
                 }
+                work.push(Work::Emit(proc));
                 match proc {
-                    Proc::IntBinProc(a, _)
-                    | Proc::UIntBinProc(a, _)
-                    | Proc::FloatBinProc(a, _)
-                    | Proc::FixedBinProc(a, _)
-                    | Proc::BigintCastProc(a)
-                    | Proc::BigratCastProc(a) => {
-                        // Post-order continuation: a nested fold in the operand wins before the
-                        // enclosing fold, exactly as in the recursive implementation.
-                        work.push(Work::EmitFold(proc));
-                        work.push(Work::Proc(a.as_ref()));
-                    },
-                    Proc::POutput(_, payload)
-                    | Proc::PPersistOutput(_, payload)
-                    | Proc::POutputShort(_, payload)
-                    | Proc::PPersistOutputShort(_, payload) => {
+                    Proc::IntBinProc(child, _)
+                    | Proc::UIntBinProc(child, _)
+                    | Proc::FloatBinProc(child, _)
+                    | Proc::FixedBinProc(child, _)
+                    | Proc::BigintCastProc(child)
+                    | Proc::BigratCastProc(child)
+                    | Proc::NegProc(child)
+                    | Proc::Not(child)
+                    | Proc::PLookaheadAll(child)
+                    | Proc::PLookahead(child, _)
+                    | Proc::Matches(child, _) => work.push(Work::Proc(child.as_ref())),
+                    Proc::POutput(channel, payload) | Proc::PPersistOutput(channel, payload) => {
                         work.push(Work::Proc(payload.as_ref()));
+                        work.push(Work::Name(channel.as_ref()));
+                    },
+                    Proc::POutputShort(channel, payload)
+                    | Proc::PPersistOutputShort(channel, payload) => {
+                        work.push(Work::Proc(payload.as_ref()));
+                        work.push(Work::Proc(channel.as_ref()));
                     },
                     Proc::PParInfix(left, right)
                     | Proc::Add(left, right)
@@ -3775,7 +4099,6 @@ fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
                     | Proc::GtEq(left, right)
                     | Proc::And(left, right)
                     | Proc::Or(left, right)
-                    // M-0: `implies` is an ordinary binary expression operand position.
                     | Proc::Implies(left, right) => {
                         work.push(Work::Proc(right.as_ref()));
                         work.push(Work::Proc(left.as_ref()));
@@ -3785,24 +4108,58 @@ fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
                         work.extend(parts.iter_elements().map(Work::Proc));
                         work[first..].reverse();
                     },
-                    // M-1b: a `matches` formula is a pattern and therefore not a liftable
-                    // position. Only its target participates in this traversal.
-                    Proc::Matches(target, _formula) => {
-                        work.push(Work::Proc(target.as_ref()));
-                    },
-                    Proc::NegProc(a) | Proc::Not(a) => work.push(Work::Proc(a.as_ref())),
-                    // `*(@(P))` inlines `P` — folds inside it lift at this scope.
                     Proc::PDrop(name) => work.push(Work::Name(name.as_ref())),
-                    // Ordered list literals are visited left-to-right. Hashed collections are
-                    // intentionally not descended because replacement would re-key them.
                     Proc::CastList(list) => {
                         if let List::ListLit(items) = list.as_ref() {
                             work.extend(items.iter().rev().map(Work::Proc));
                         }
                     },
-                    // Binder bodies are lifted separately; all other constructors have no
-                    // liftable position.
-                    Proc::PForUser(..) | Proc::PNew(..) => {},
+                    Proc::CastBag(bag) => {
+                        if let Bag::BagLit(entries) = bag.as_ref() {
+                            let mut entries = entries.iter().collect::<Vec<_>>();
+                            entries.sort_by_key(|(item, _)| *item);
+                            work.extend(
+                                entries.into_iter().rev().map(|(item, _)| Work::Proc(item)),
+                            );
+                        }
+                    },
+                    Proc::CastMap(map) => {
+                        if let Map::MapLit(entries) = map.as_ref() {
+                            let mut children = Vec::with_capacity(entries.len() * 2);
+                            for (key, value) in entries.iter() {
+                                children.push(Work::Proc(key));
+                                children.push(Work::Proc(value));
+                            }
+                            work.extend(children.into_iter().rev());
+                        }
+                    },
+                    Proc::CastSet(set) => {
+                        if let Set::SetLit(items) = set.as_ref() {
+                            let mut items = items.iter().collect::<Vec<_>>();
+                            items.sort();
+                            work.extend(items.into_iter().rev().map(Work::Proc));
+                        }
+                    },
+                    Proc::CastPathmap(pathmap) => {
+                        if let Pathmap::PathmapLit(entries) = pathmap.as_ref() {
+                            let mut children = Vec::with_capacity(match entries.mode() {
+                                mettail_runtime::PathMapMode::Map => entries.len() * 2,
+                                _ => entries.len(),
+                            });
+                            for entry in entries.iter() {
+                                children.push(Work::Proc(entry.key()));
+                                if let Some(value) = entry.value() {
+                                    children.push(Work::Proc(value));
+                                }
+                            }
+                            work.extend(children.into_iter().rev());
+                        }
+                    },
+                    Proc::MethodCall(receiver, _, arguments) => {
+                        work.extend(arguments.iter().rev().map(Work::Proc));
+                        work.push(Work::Proc(receiver.as_ref()));
+                    },
+                    Proc::PForUser(..) | Proc::PNew(..) | Proc::PNewUris(..) => {},
                     _ => {},
                 }
             },
@@ -3813,14 +4170,35 @@ fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
                 Name::NParen(inner) => work.push(Work::Name(inner.as_ref())),
                 _ => {},
             },
-            Work::EmitFold(proc) => {
-                if let Some((operand, kind, width)) = liftable_fold_parts(proc) {
-                    return Some((operand.clone(), kind, width));
+            Work::Emit(proc) => {
+                if let Some(site) = project(proc) {
+                    return Some(site);
                 }
             },
         }
     }
     None
+}
+
+/// Find the first run-time-selected FLT in one binder body.
+fn find_dynamic_flt(proc: &Proc, env: &BoundEnv) -> Option<Arc<FltNode>> {
+    find_first_body_site(proc, |proc| {
+        let node = match proc {
+            Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => node,
+            _ => return None,
+        };
+        flt_selector_level(node, env).map(|_| node.clone())
+    })
+}
+
+/// Find the first (innermost) liftable fold in `proc`, NOT descending into nested binders
+/// (`PForUser`/`PNew` — their bodies are lifted separately as their own fold-lift scopes).
+/// Returns `(operand, kind, width)`. Send sugar is desugared in place so folds inside sugar
+/// payloads (`c!(int(5,8), 7)`) are found; the traversal mirrors [`replace_fold`] exactly.
+fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
+    find_first_body_site(proc, |candidate| {
+        liftable_fold_parts(candidate).map(|(operand, kind, width)| (operand.clone(), kind, width))
+    })
 }
 
 /// Rebuild a fold constructor with a replaced operand (widths keep their original literal).
@@ -3839,6 +4217,35 @@ fn rebuild_fold(orig: &Proc, operand: Arc<Proc>) -> Proc {
 /// Replace the first (innermost) liftable fold in `proc` with `r_drop` (`*r`), mirroring
 /// [`find_fold`]'s traversal (desugaring included). Sets `replaced` once a replacement is made.
 fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
+    replace_first_body_site(proc, r_drop, replaced, |candidate| {
+        liftable_fold_parts(candidate).is_some()
+    })
+}
+
+fn replace_dynamic_flt(
+    proc: &Proc,
+    target: &Arc<FltNode>,
+    result_drop: &Proc,
+    replaced: &mut bool,
+) -> Proc {
+    replace_first_body_site(proc, result_drop, replaced, |candidate| {
+        matches!(
+            candidate,
+            Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node)
+                if Arc::ptr_eq(node, target)
+        )
+    })
+}
+
+/// Stack-safe post-order replacement shared by fold and installed-FLT body
+/// staging. Binder bodies are intentionally opaque: each becomes its own
+/// [`Job::Body`] scope and stages against its own de-Bruijn environment.
+fn replace_first_body_site(
+    proc: &Proc,
+    replacement: &Proc,
+    replaced: &mut bool,
+    is_site: impl Fn(&Proc) -> bool,
+) -> Proc {
     enum Job<'a> {
         VisitProc(&'a Proc),
         VisitName(&'a Name),
@@ -3886,15 +4293,24 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
                     | Proc::FixedBinProc(a, _)
                     | Proc::BigintCastProc(a)
                     | Proc::BigratCastProc(a)
-                    | Proc::POutput(_, a)
-                    | Proc::PPersistOutput(_, a)
-                    | Proc::POutputShort(_, a)
-                    | Proc::PPersistOutputShort(_, a)
                     | Proc::Matches(a, _)
                     | Proc::NegProc(a)
-                    | Proc::Not(a) => {
+                    | Proc::Not(a)
+                    | Proc::PLookaheadAll(a)
+                    | Proc::PLookahead(a, _) => {
                         jobs.push(Job::BuildProc { proc, proc_base, name_base });
                         jobs.push(Job::VisitProc(a.as_ref()));
+                    },
+                    Proc::POutput(name, payload) | Proc::PPersistOutput(name, payload) => {
+                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                        jobs.push(Job::VisitProc(payload.as_ref()));
+                        jobs.push(Job::VisitName(name.as_ref()));
+                    },
+                    Proc::POutputShort(channel, payload)
+                    | Proc::PPersistOutputShort(channel, payload) => {
+                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                        jobs.push(Job::VisitProc(payload.as_ref()));
+                        jobs.push(Job::VisitProc(channel.as_ref()));
                     },
                     Proc::PParInfix(left, right)
                     | Proc::Add(left, right)
@@ -3933,6 +4349,71 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
                             proc_values.push(proc.clone());
                         }
                     },
+                    Proc::CastBag(bag) => {
+                        if let Bag::BagLit(entries) = bag.as_ref() {
+                            let mut entries = entries.iter().collect::<Vec<_>>();
+                            entries.sort_by_key(|(item, _)| *item);
+                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            jobs.extend(
+                                entries
+                                    .into_iter()
+                                    .rev()
+                                    .map(|(item, _)| Job::VisitProc(item)),
+                            );
+                        } else {
+                            proc_values.push(proc.clone());
+                        }
+                    },
+                    Proc::CastMap(map) => {
+                        if let Map::MapLit(entries) = map.as_ref() {
+                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            let mut children = Vec::with_capacity(entries.len() * 2);
+                            for (key, value) in entries.iter() {
+                                children.push(Job::VisitProc(key));
+                                children.push(Job::VisitProc(value));
+                            }
+                            jobs.extend(children.into_iter().rev());
+                        } else {
+                            proc_values.push(proc.clone());
+                        }
+                    },
+                    Proc::CastSet(set) => {
+                        if let Set::SetLit(items) = set.as_ref() {
+                            let mut items = items.iter().collect::<Vec<_>>();
+                            items.sort();
+                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            jobs.extend(items.into_iter().rev().map(Job::VisitProc));
+                        } else {
+                            proc_values.push(proc.clone());
+                        }
+                    },
+                    Proc::CastPathmap(pathmap) => {
+                        if let Pathmap::PathmapLit(entries) = pathmap.as_ref() {
+                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            let mut children = Vec::with_capacity(match entries.mode() {
+                                mettail_runtime::PathMapMode::Map => entries.len() * 2,
+                                _ => entries.len(),
+                            });
+                            for entry in entries.iter() {
+                                children.push(Job::VisitProc(entry.key()));
+                                if let Some(value) = entry.value() {
+                                    children.push(Job::VisitProc(value));
+                                }
+                            }
+                            jobs.extend(children.into_iter().rev());
+                        } else {
+                            proc_values.push(proc.clone());
+                        }
+                    },
+                    Proc::MethodCall(receiver, _, arguments) => {
+                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                        jobs.extend(arguments.iter().rev().map(Job::VisitProc));
+                        jobs.push(Job::VisitProc(receiver.as_ref()));
+                    },
+                    _ if is_site(proc) => {
+                        *replaced = true;
+                        proc_values.push(replacement.clone());
+                    },
                     _ => proc_values.push(proc.clone()),
                 }
             },
@@ -3965,38 +4446,39 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
                     | Proc::BigratCastProc(..) => {
                         let mut children = take_children(&mut proc_values, proc_base, 1);
                         let operand = children.pop().expect("one fold operand");
-                        if *replaced {
-                            rebuild_fold(proc, Arc::new(operand))
-                        } else if liftable_fold_parts(proc).is_some() {
-                            *replaced = true;
-                            r_drop.clone()
-                        } else {
-                            proc.clone()
-                        }
+                        rebuild_fold(proc, Arc::new(operand))
                     },
-                    Proc::POutput(name, _) => {
+                    Proc::POutput(_, _) => {
                         let payload = take_children(&mut proc_values, proc_base, 1)
                             .pop()
                             .expect("one send payload");
-                        Proc::POutput(name.clone(), Arc::new(payload))
+                        let name = take_children(&mut name_values, name_base, 1)
+                            .pop()
+                            .expect("one send channel");
+                        Proc::POutput(Arc::new(name), Arc::new(payload))
                     },
-                    Proc::PPersistOutput(name, _) => {
+                    Proc::PPersistOutput(_, _) => {
                         let payload = take_children(&mut proc_values, proc_base, 1)
                             .pop()
                             .expect("one persistent-send payload");
-                        Proc::PPersistOutput(name.clone(), Arc::new(payload))
-                    },
-                    Proc::POutputShort(channel, _) => {
-                        let payload = take_children(&mut proc_values, proc_base, 1)
+                        let name = take_children(&mut name_values, name_base, 1)
                             .pop()
-                            .expect("one short-send payload");
-                        Proc::POutputShort(channel.clone(), Arc::new(payload))
+                            .expect("one persistent-send channel");
+                        Proc::PPersistOutput(Arc::new(name), Arc::new(payload))
                     },
-                    Proc::PPersistOutputShort(channel, _) => {
-                        let payload = take_children(&mut proc_values, proc_base, 1)
-                            .pop()
-                            .expect("one persistent-short-send payload");
-                        Proc::PPersistOutputShort(channel.clone(), Arc::new(payload))
+                    Proc::POutputShort(..) => {
+                        let mut children =
+                            take_children(&mut proc_values, proc_base, 2).into_iter();
+                        let channel = children.next().expect("one short-send channel");
+                        let payload = children.next().expect("one short-send payload");
+                        Proc::POutputShort(Arc::new(channel), Arc::new(payload))
+                    },
+                    Proc::PPersistOutputShort(..) => {
+                        let mut children =
+                            take_children(&mut proc_values, proc_base, 2).into_iter();
+                        let channel = children.next().expect("one persistent-short-send channel");
+                        let payload = children.next().expect("one persistent-short-send payload");
+                        Proc::PPersistOutputShort(Arc::new(channel), Arc::new(payload))
                     },
                     Proc::PParInfix(..)
                     | Proc::Add(..)
@@ -4045,6 +4527,18 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
                             .expect("one not operand");
                         Proc::Not(Arc::new(inner))
                     },
+                    Proc::PLookaheadAll(..) => {
+                        let subject = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one lookahead subject");
+                        Proc::PLookaheadAll(Arc::new(subject))
+                    },
+                    Proc::PLookahead(_, bound) => {
+                        let subject = take_children(&mut proc_values, proc_base, 1)
+                            .pop()
+                            .expect("one bounded-lookahead subject");
+                        Proc::PLookahead(Arc::new(subject), bound.clone())
+                    },
                     Proc::PDrop(..) => {
                         let name = take_children(&mut name_values, name_base, 1)
                             .pop()
@@ -4059,10 +4553,87 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
                             child_count,
                         ))))
                     },
+                    Proc::CastBag(bag) => {
+                        let Bag::BagLit(entries) = bag.as_ref() else {
+                            unreachable!("only bag literals receive a continuation")
+                        };
+                        let mut ordered = entries.iter().collect::<Vec<_>>();
+                        ordered.sort_by_key(|(item, _)| *item);
+                        let children = take_children(&mut proc_values, proc_base, ordered.len());
+                        let mut rebuilt = mettail_runtime::HashBag::new();
+                        for (child, (_, count)) in children.into_iter().zip(ordered) {
+                            rebuilt.insert_n(child, count);
+                        }
+                        Proc::CastBag(Arc::new(Bag::BagLit(rebuilt)))
+                    },
+                    Proc::CastMap(map) => {
+                        let Map::MapLit(entries) = map.as_ref() else {
+                            unreachable!("only map literals receive a continuation")
+                        };
+                        let mut children =
+                            take_children(&mut proc_values, proc_base, entries.len() * 2)
+                                .into_iter();
+                        let mut rebuilt = mettail_runtime::HashMapLit::new();
+                        for _ in 0..entries.len() {
+                            let key = children.next().expect("one map key");
+                            let value = children.next().expect("one map value");
+                            rebuilt.insert(key, value);
+                        }
+                        Proc::CastMap(Arc::new(Map::MapLit(rebuilt)))
+                    },
+                    Proc::CastSet(set) => {
+                        let Set::SetLit(items) = set.as_ref() else {
+                            unreachable!("only set literals receive a continuation")
+                        };
+                        let children = take_children(&mut proc_values, proc_base, items.len());
+                        Proc::CastSet(Arc::new(Set::SetLit(children.into_iter().collect())))
+                    },
+                    Proc::CastPathmap(pathmap) => {
+                        let Pathmap::PathmapLit(entries) = pathmap.as_ref() else {
+                            unreachable!("only pathmap literals receive a continuation")
+                        };
+                        let rebuilt = match entries.mode() {
+                            mettail_runtime::PathMapMode::Empty => {
+                                take_children(&mut proc_values, proc_base, 0);
+                                mettail_runtime::PathMapLit::new()
+                            },
+                            mettail_runtime::PathMapMode::Set => {
+                                let children =
+                                    take_children(&mut proc_values, proc_base, entries.len());
+                                mettail_runtime::PathMapLit::from_set_iter(children)
+                            },
+                            mettail_runtime::PathMapMode::Map => {
+                                let mut children =
+                                    take_children(&mut proc_values, proc_base, entries.len() * 2)
+                                        .into_iter();
+                                let mut pairs = Vec::with_capacity(entries.len());
+                                for _ in 0..entries.len() {
+                                    pairs.push((
+                                        children.next().expect("one pathmap key"),
+                                        children.next().expect("one pathmap value"),
+                                    ));
+                                }
+                                mettail_runtime::PathMapLit::from_map_iter(pairs)
+                            },
+                        };
+                        Proc::CastPathmap(Arc::new(Pathmap::PathmapLit(rebuilt)))
+                    },
+                    Proc::MethodCall(_, method, arguments) => {
+                        let mut children =
+                            take_children(&mut proc_values, proc_base, 1 + arguments.len())
+                                .into_iter();
+                        let receiver = children.next().expect("one method receiver");
+                        Proc::MethodCall(Arc::new(receiver), method.clone(), children.collect())
+                    },
                     _ => unreachable!("only traversed constructors receive a continuation"),
                 };
                 assert_eq!(name_values.len(), name_base);
-                proc_values.push(rebuilt);
+                if !*replaced && is_site(&rebuilt) {
+                    *replaced = true;
+                    proc_values.push(replacement.clone());
+                } else {
+                    proc_values.push(rebuilt);
+                }
             },
             Job::BuildName { name, proc_base, name_base } => {
                 let rebuilt = match name {
@@ -4641,39 +5212,6 @@ fn flt_hole_bound_level(free_var: &FreeVar<String>, env: &BoundEnv) -> Option<us
 
 // ── L9-6b: FLT `PFlt` elaboration (construction + pattern) ─────────────────────────────────────
 
-/// Rewrite an FLT body's `${name}` / `${name:Cat}` metavariables to the bare guest
-/// free variable `name`, so the guest parser (which knows nothing of the `${…}`
-/// host hole syntax) reads each hole as an ordinary guest free variable. ONLY the
-/// declared `${…}` spans are rewritten; every other byte — a spelled-out guest
-/// subterm like a `lam a. lam b. a` combinator — is copied verbatim and so
-/// reflects GROUND. Balanced by the lexer's raw guest mode, a `${` always closes
-/// at the next `}` (a hole cannot nest), so a single left-to-right scan suffices.
-fn flt_body_to_guest_syntax(body_src: &str) -> String {
-    let mut out = String::with_capacity(body_src.len());
-    let mut rest = body_src;
-    while let Some(start) = rest.find("${") {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 2..];
-        match after.find('}') {
-            Some(end) => {
-                let inner = &after[..end];
-                // `name` or `name:Cat` — the guest free variable is the bare name.
-                let name = inner.split(':').next().unwrap_or(inner).trim();
-                out.push_str(name);
-                rest = &after[end + 1..];
-            },
-            None => {
-                // Malformed (no closing `}`): copy verbatim and stop (the assembler
-                // guarantees balanced holes, so this is unreachable in practice).
-                out.push_str(&rest[start..]);
-                rest = "";
-            },
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
 /// The [`FltHole`] admission descriptors for a node's declared holes (name +
 /// optional `:Cat`), in first-declaration order — the reflectors' hole input.
 fn flt_holes_of(node: &FltNode) -> Vec<FltHole> {
@@ -4686,13 +5224,44 @@ fn flt_holes_of(node: &FltNode) -> Vec<FltHole> {
         .collect()
 }
 
+fn runtime_template_parts(
+    node: &FltNode,
+) -> (Vec<RuntimeTemplatePiece>, Vec<NamedRuntimeTemplateHole>) {
+    let pieces = node
+        .pieces
+        .iter()
+        .map(|piece| match piece {
+            mettail_runtime::FltTemplatePiece::Text(text) => {
+                RuntimeTemplatePiece::Text(text.clone())
+            },
+            mettail_runtime::FltTemplatePiece::Hole(id) => RuntimeTemplatePiece::Hole(id.0),
+        })
+        .collect();
+    let holes = node
+        .holes
+        .iter()
+        .map(|hole| NamedRuntimeTemplateHole {
+            id: hole.id.0,
+            name: hole.name.clone(),
+            category: hole.category.clone(),
+        })
+        .collect();
+    (pieces, holes)
+}
+
 /// Resolve a `PFlt` node's guest reflector + definition fingerprint, then reflect
-/// its (hole-rewritten) body to a guest [`GroundTerm`] whose holes are `^free(name)`
-/// leaves — the shared front half of both the construction and the pattern arm.
+/// its structural template to a guest [`GroundTerm`] whose holes are
+/// `^free(name)` leaves — the shared front half of construction and matching.
 fn flt_resolve_and_reflect(
     node: &FltNode,
     env: &BoundEnv,
 ) -> Result<(GroundTerm, String), RholangAstLowerError> {
+    if flt_selector_level(node, env).is_some() {
+        return Err(RholangAstLowerError::FltReflect(
+            "a lexical installed-language selector reached the static FLT adapter without body staging"
+                .into(),
+        ));
+    }
     let guest = env
         .resolver
         .resolve(&node.tag)
@@ -4702,9 +5271,8 @@ fn flt_resolve_and_reflect(
         .definition_fingerprint()
         .ok_or_else(|| RholangAstLowerError::FltGuestHasNoFingerprint(node.tag.clone()))?
         .to_string();
-    let guest_body = flt_body_to_guest_syntax(&node.body_src);
     let ground = guest
-        .parse_and_reflect_flt(&guest_body)
+        .parse_and_reflect_flt_template(node)
         .map_err(RholangAstLowerError::FltReflect)?;
     Ok((ground, fingerprint))
 }
@@ -4823,6 +5391,40 @@ fn send_par(channel: Par, data: Vec<Par>) -> Par {
         connective_used,
         locally_free,
         connective_used,
+    )
+}
+
+fn wrap_pattern_preparation(inner: Par, frame: PatternPrepFrame) -> Par {
+    let ret_channel = new_boundvar_par(0, Vec::new(), false);
+    let send = send_par(frame.channel, vec![frame.request]);
+    let bind = ReceiveBind {
+        patterns: vec![new_freevar_par(0, Vec::new())],
+        source: Some(ret_channel),
+        remainder: None,
+        free_count: 1,
+    };
+    let recv_locally_free = receive_locally_free(std::slice::from_ref(&bind), &inner, 1);
+    let recv = new_receive_par(
+        vec![bind],
+        inner,
+        false,
+        false,
+        1,
+        recv_locally_free.clone(),
+        false,
+        recv_locally_free,
+        false,
+    );
+    let staged = send.append(recv);
+    let locally_free = filter_and_adjust_bitset(&staged.locally_free, 1);
+    new_new_par(
+        1,
+        staged,
+        Vec::new(),
+        BTreeMap::new(),
+        locally_free.clone(),
+        locally_free,
+        false,
     )
 }
 
@@ -4947,6 +5549,34 @@ mod alternative_collection_tests {
                 other => panic!("test built only CastInt leaves, got {other:?}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn explicit_empty_collection_constructors_lower_to_exact_empty_carriers() {
+        let map = lower_rholang_proc(&Proc::MapEmpty).expect("Map() lowers");
+        let [map_expr] = map.exprs.as_slice() else {
+            panic!("Map() must lower to exactly one expression")
+        };
+        let Some(ExprInstance::EMapBody(map_body)) = &map_expr.expr_instance else {
+            panic!("Map() must lower to EMap, got {map_expr:?}")
+        };
+        assert!(map_body.kvs.is_empty());
+        assert!(map_body.remainder.is_none());
+        assert!(map_body.locally_free.is_empty());
+        assert!(!map_body.connective_used);
+
+        let pathmap = lower_rholang_proc(&Proc::PathmapEmpty).expect("Pathmap() lowers");
+        let [pathmap_expr] = pathmap.exprs.as_slice() else {
+            panic!("Pathmap() must lower to exactly one expression")
+        };
+        let Some(ExprInstance::EPathmapBody(pathmap_body)) = &pathmap_expr.expr_instance else {
+            panic!("Pathmap() must lower to EPathMap, got {pathmap_expr:?}")
+        };
+        assert_eq!(pathmap_body.mode(), models::rust::epathmap_trie_codec::EPathMapMode::Empty);
+        assert_eq!(pathmap_body.len(), 0);
+        assert!(pathmap_body.remainder.is_none());
+        assert!(pathmap_body.locally_free.is_empty());
+        assert!(!pathmap_body.connective_used);
     }
 
     /// Every shape, including ones the parser cannot produce (nested `Ambiguous`) and

@@ -54,9 +54,10 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
             // outside the caller's `use` scope.
             native_type: t.native_type.as_ref().map(native_type_to_full_string),
             is_primary: idx == 0,
-            has_var: true, // For now, all categories are assumed to have a Var variant.
-                           // Future: derive from grammar analysis (categories with no Var rule
-                           // should get `has_var: false`, e.g. List/Bag synthetic collection types).
+            // Closed data categories never receive synthesized Var/HOL forms.
+            // Object categories retain the existing generated variable surface,
+            // including native object sorts such as Int and Bool.
+            has_var: !t.is_data(),
         })
         .collect();
 
@@ -66,7 +67,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
         .terms
         .iter()
         .map(|rule| convert_rule(rule, &cat_names))
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     // PIECE 3 (keyword reservation): collect the *ident-shaped* collection-open
     // delimiters (e.g. `Set` from a `Set( … )` literal, as opposed to bracket
@@ -110,8 +111,13 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
                 (CollectionKind::PathMap, "PathmapLit")
             },
         };
-        let (open, close, sep, kv) =
-            (d.open.clone(), d.close.clone(), d.sep.clone(), d.key_val_sep.clone());
+        let (open, close, sep) = (d.open.clone(), d.close.clone(), d.sep.clone());
+        // Map-like categories always retain the separator in the semantic IR.
+        // PathMap permits a bare key at runtime, but still needs `:` available
+        // for valued entries.  Resolve an omitted declaration through the same
+        // typed default used for inline collection slots instead of projecting
+        // the absence as if PathMap were a non-map collection.
+        let kv = kv_sep_for(&ck.coll_type(), Some(d));
         // Resolve element category from the collection's payload type.
         // For Vec<Proc>/HashBag<Proc>, that's Proc; for HashMap<K, V>
         // the element is the key category — the map's `key_val_separator`
@@ -213,11 +219,25 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
     // parsing — the grammar-derived global-vs-contextual decision (see the
     // S0-kw-no-break measurement: reserving `Set` broke `Set(1,2,3).size()`
     // et al. while every bracket-delimited collection was unaffected).
+    let mut contextual_keywords = contextual_collection_openers;
+    match language.options.get("contextual_keywords") {
+        Some(AttributeValue::StringList(values)) => {
+            contextual_keywords.extend(values.iter().cloned());
+        },
+        None => {},
+        Some(other) => {
+            return Err(unexpected_option_shape(
+                "contextual_keywords",
+                &describe_option_value(other),
+                "a list of strings",
+            ))
+        },
+    }
     let reservation_policy = match language.options.get("reserved_keywords") {
         Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
             "auto" => ReservationPolicy {
                 mode: mettail_prattail::ReservationMode::Auto,
-                contextual: contextual_collection_openers,
+                contextual: contextual_keywords,
             },
             "none" => ReservationPolicy::none(),
             other => {
@@ -536,6 +556,7 @@ fn describe_option_value(value: &AttributeValue) -> String {
         AttributeValue::Int(_) => "an integer".to_string(),
         AttributeValue::Bool(_) => "a boolean".to_string(),
         AttributeValue::Str(_) => "a string".to_string(),
+        AttributeValue::StringList(_) => "a list of strings".to_string(),
         AttributeValue::Keyword(kw) => format!("the keyword `{kw}`"),
     }
 }
@@ -628,10 +649,10 @@ fn lower_guard_config(
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.
 ///
 /// Only performs structural mapping — no flag classification.
-fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
+fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> Result<RuleSpecInput, String> {
     // Convert syntax items
     let syntax = if let Some(ref pattern) = rule.syntax_pattern {
-        convert_syntax_pattern(pattern, rule.term_context.as_deref().unwrap_or(&[]), cat_names)
+        convert_syntax_pattern(pattern, rule.term_context.as_deref().unwrap_or(&[]), cat_names)?
     } else {
         convert_grammar_items(&rule.items, cat_names)
     };
@@ -646,7 +667,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
         })
     };
 
-    RuleSpecInput {
+    Ok(RuleSpecInput {
         label: rule.label.to_string(),
         category: rule.category.to_string(),
         syntax,
@@ -666,7 +687,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
         source_location,
         // Stage 3.13b (2026-05-01): propagate provenance flag from the AST.
         is_auto_injected: rule.is_auto_injected,
-    }
+    })
 }
 
 /// Opt-Group: find a TermParam by name through the stack-safe leaf iterator
@@ -702,7 +723,7 @@ fn convert_syntax_pattern(
     pattern: &[SyntaxExpr],
     context: &[TermParam],
     cat_names: &[String],
-) -> Vec<SyntaxItemSpec> {
+) -> Result<Vec<SyntaxItemSpec>, String> {
     let mut items = Vec::new();
 
     for expr in pattern {
@@ -782,7 +803,7 @@ fn convert_syntax_pattern(
             },
             SyntaxExpr::Op(op) => {
                 // Pattern operations are handled as collections or special items
-                convert_pattern_op(op, context, cat_names, &mut items);
+                convert_pattern_op(op, context, cat_names, &mut items)?;
             },
             SyntaxExpr::TokenKind { name, bind } => {
                 // L9-3: consume ONE token of the declared custom KIND, binding
@@ -810,7 +831,7 @@ fn convert_syntax_pattern(
         }
     }
 
-    items
+    Ok(items)
 }
 
 /// Classify a parameter name from the term context into the correct SyntaxItemSpec.
@@ -880,7 +901,7 @@ fn convert_pattern_op(
     context: &[TermParam],
     cat_names: &[String],
     items: &mut Vec<SyntaxItemSpec>,
-) {
+) -> Result<(), String> {
     enum Task<'syntax> {
         Op(&'syntax PatternOp),
         Expr(&'syntax SyntaxExpr),
@@ -897,7 +918,7 @@ fn convert_pattern_op(
                     .expect("pattern PDA lost its output frame");
                 if let Some(source_op) = source {
                     // Chained pattern: e.g., *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
-                    convert_chained_sep(source_op, separator, context, cat_names, output);
+                    convert_chained_sep(source_op, separator, context, cat_names, output)?;
                     continue;
                 }
                 let coll_name = collection.to_string();
@@ -922,7 +943,7 @@ fn convert_pattern_op(
                     // lexer's terminal set via `collect_terminals_recursive`
                     // in `pipeline.rs:4263-4296` so the `:` token is
                     // recognized by the lexer.
-                    let (elem_cat, kind, kv) = find_collection_info(&coll_name, context);
+                    let (elem_cat, kind, kv) = find_collection_info(&coll_name, context)?;
                     output.push(SyntaxItemSpec::Collection {
                         param_name: coll_name,
                         element_category: elem_cat,
@@ -990,6 +1011,7 @@ fn convert_pattern_op(
     let root = outputs.pop().expect("pattern PDA lost its root output");
     debug_assert!(outputs.is_empty(), "pattern PDA retained unfinished optional frames");
     items.extend(root);
+    Ok(())
 }
 
 /// Convert a chained Sep(Map(Zip(...))) pattern into composed Sep/Zip/Map items.
@@ -1003,7 +1025,7 @@ fn convert_chained_sep(
     context: &[TermParam],
     cat_names: &[String],
     items: &mut Vec<SyntaxItemSpec>,
-) {
+) -> Result<(), String> {
     match source_op {
         PatternOp::Map { source, params, body } => {
             match source.as_ref() {
@@ -1012,8 +1034,8 @@ fn convert_chained_sep(
                     let right_name = right.to_string();
 
                     // Determine categories for left and right from the term context
-                    let left_cat = find_param_category(&left_name, context);
-                    let right_cat = find_param_category(&right_name, context);
+                    let left_cat = find_param_category(&left_name, context)?;
+                    let right_cat = find_param_category(&right_name, context)?;
 
                     // Build a mapping from closure params to zip params
                     // e.g., |n,x| means n→ns (left), x→xs (right)
@@ -1027,24 +1049,28 @@ fn convert_chained_sep(
                     }
 
                     // Convert body items, resolving closure params to their original context
-                    let body_items: Vec<SyntaxItemSpec> = body
-                        .iter()
-                        .map(|expr| match expr {
-                            SyntaxExpr::Literal(text) => SyntaxItemSpec::Terminal(text.clone()),
+                    let mut body_items = Vec::new();
+                    for expr in body {
+                        match expr {
+                            SyntaxExpr::Literal(text) => {
+                                body_items.push(SyntaxItemSpec::Terminal(text.clone()));
+                            },
                             SyntaxExpr::Param(name) => {
                                 let name_str = name.to_string();
                                 // Check if this is a closure param and map it back
-                                if let Some(original) = param_mapping.get(&name_str) {
+                                let item = if let Some(original) = param_mapping.get(&name_str) {
                                     classify_param_from_context(original, context, cat_names)
                                 } else {
                                     classify_param_from_context(&name_str, context, cat_names)
-                                }
+                                };
+                                body_items.push(item);
                             },
                             SyntaxExpr::Op(_) => {
-                                // Nested ops in map body — fallback to ident capture
-                                SyntaxItemSpec::IdentCapture {
-                                    param_name: "__nested_op__".to_string(),
-                                }
+                                return Err(
+                                    "a nested pattern operation inside a chained `map(...)` body \
+                                     has no PraTTaIL IR representation"
+                                        .to_string(),
+                                );
                             },
                             SyntaxExpr::TokenKind { name, bind } => {
                                 let kind_name = name.to_string();
@@ -1052,16 +1078,19 @@ fn convert_chained_sep(
                                     .as_ref()
                                     .map(|b| b.to_string())
                                     .unwrap_or_else(|| format!("__tok_{}", kind_name));
-                                SyntaxItemSpec::TokenKindCapture { kind_name, param_name }
+                                body_items.push(SyntaxItemSpec::TokenKindCapture {
+                                    kind_name,
+                                    param_name,
+                                });
                             },
                             SyntaxExpr::GuestBody { open, bind, .. } => {
-                                SyntaxItemSpec::TokenKindCapture {
+                                body_items.push(SyntaxItemSpec::TokenKindCapture {
                                     kind_name: open.to_string(),
                                     param_name: bind.to_string(),
-                                }
+                                });
                             },
-                        })
-                        .collect();
+                        }
+                    }
 
                     items.push(SyntaxItemSpec::Sep {
                         body: Box::new(SyntaxItemSpec::Zip {
@@ -1076,53 +1105,41 @@ fn convert_chained_sep(
                     });
                 },
                 _ => {
-                    // Unsupported map source — fall back to simple collection
-                    items.push(SyntaxItemSpec::Collection {
-                        param_name: "__chain__".to_string(),
-                        element_category: "Unknown".to_string(),
-                        separator: separator.to_string(),
-                        key_val_separator: None,
-                        kind: CollectionKind::Vec,
-                    });
+                    return Err(
+                        "a chained `map(...).sep(...)` source must be a `zip(...)` pattern"
+                            .to_string(),
+                    );
                 },
             }
         },
         _ => {
-            // Unsupported sep source — fall back to simple collection
-            items.push(SyntaxItemSpec::Collection {
-                param_name: "__chain__".to_string(),
-                element_category: "Unknown".to_string(),
-                separator: separator.to_string(),
-                key_val_separator: None,
-                kind: CollectionKind::Vec,
-            });
+            return Err("a chained `sep(...)` source must be a `map(...)` pattern".to_string());
         },
     }
+    Ok(())
 }
 
 /// Find the category of a parameter from the term context.
-fn find_param_category(name: &str, context: &[TermParam]) -> String {
-    for param in context {
-        match param {
-            TermParam::Simple { name: n, ty, .. } if n.to_string() == name => {
-                return extract_base_category(ty);
-            },
-            TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name => {
-                return extract_binder_category(ty);
-            },
-            TermParam::Abstraction { body, ty, .. } if body.to_string() == name => {
-                return extract_base_category(ty);
-            },
-            TermParam::MultiAbstraction { binder, ty, .. } if binder.to_string() == name => {
-                return extract_binder_category(ty);
-            },
-            TermParam::MultiAbstraction { body, ty, .. } if body.to_string() == name => {
-                return extract_base_category(ty);
-            },
-            _ => {},
-        }
+fn find_param_category(name: &str, context: &[TermParam]) -> Result<String, String> {
+    match find_param_by_name(context, name) {
+        Some(TermParam::Simple { ty, .. }) => Ok(extract_base_category(ty)),
+        Some(TermParam::Abstraction { binder, ty, .. })
+        | Some(TermParam::MultiAbstraction { binder, ty, .. })
+            if binder.to_string() == name =>
+        {
+            Ok(extract_binder_category(ty))
+        },
+        Some(TermParam::Abstraction { ty, .. }) | Some(TermParam::MultiAbstraction { ty, .. }) => {
+            Ok(extract_base_category(ty))
+        },
+        Some(TermParam::GuardBody { .. }) => {
+            Err(format!("guard parameter `{name}` has no grammar category"))
+        },
+        Some(TermParam::Optional { .. }) => {
+            Err(format!("optional wrapper was returned instead of its `{name}` leaf parameter",))
+        },
+        None => Err(format!("syntax parameter `{name}` is absent from the term context")),
     }
-    "Unknown".to_string()
 }
 
 /// Convert old-style grammar items to SyntaxItemSpec list.
@@ -1225,44 +1242,38 @@ fn extract_binder_category(ty: &TypeExpr) -> String {
 fn find_collection_info(
     name: &str,
     context: &[TermParam],
-) -> (String, CollectionKind, Option<String>) {
-    for param in context {
-        if let TermParam::Simple { name: n, ty, .. } = param {
-            if n.to_string() == name {
-                if let TypeExpr::Collection { coll_type, element, .. } = ty {
-                    let elem_cat = extract_base_category(element);
-                    let kind = match coll_type {
-                        CollectionType::HashBag
-                        | CollectionType::HashMap
-                        | CollectionType::PathMap => CollectionKind::HashBag,
-                        CollectionType::HashSet => CollectionKind::HashSet,
-                        CollectionType::Vec => CollectionKind::Vec,
-                    };
-                    // Stage 3 (2026-06-27): lexer-terminal kv-source routed
-                    // through the single `kv_sep_for` resolver. An inline term-
-                    // context collection type carries no declared delimiters, so
-                    // `declared = None` ⇒ per-type default (`HashMap`/`PathMap`
-                    // ⇒ `":"`, else `None`) — byte-identical to the former match.
-                    let kv = kv_sep_for(coll_type, None);
-                    return (elem_cat, kind, kv);
-                }
-                if let TypeExpr::Map { value, .. } = ty {
-                    // Phase 4 #5b (2026-05-12): `HashMap(K, V)` Map type.
-                    // Stage 3 (2026-06-27): kv via `kv_sep_for(HashMap, None)` ⇒
-                    // `Some(":")`, byte-identical to the former literal.
-                    let elem_cat = extract_base_category(value);
-                    return (
-                        elem_cat,
-                        CollectionKind::HashBag,
-                        kv_sep_for(&CollectionType::HashMap, None),
-                    );
-                }
-            }
-        }
+) -> Result<(String, CollectionKind, Option<String>), String> {
+    let Some(param) = find_param_by_name(context, name) else {
+        return Err(format!("collection parameter `{name}` is absent from the term context"));
+    };
+    let TermParam::Simple { ty, .. } = param else {
+        return Err(format!("collection parameter `{name}` is not a simple typed parameter"));
+    };
+    if let TypeExpr::Collection { coll_type, element, .. } = ty {
+        let elem_cat = extract_base_category(element);
+        let kind = match coll_type {
+            CollectionType::HashBag => CollectionKind::HashBag,
+            CollectionType::HashSet => CollectionKind::HashSet,
+            CollectionType::Vec => CollectionKind::Vec,
+            CollectionType::HashMap => CollectionKind::HashMap,
+            CollectionType::PathMap => CollectionKind::PathMap,
+        };
+        // Stage 3 (2026-06-27): lexer-terminal kv-source routed
+        // through the single `kv_sep_for` resolver. An inline term-
+        // context collection type carries no declared delimiters, so
+        // `declared = None` ⇒ per-type default (`HashMap`/`PathMap`
+        // ⇒ `":"`, else `None`) — byte-identical to the former match.
+        let kv = kv_sep_for(coll_type, None);
+        return Ok((elem_cat, kind, kv));
     }
-
-    // Fallback: unknown element type
-    ("Unknown".to_string(), CollectionKind::Vec, None)
+    if let TypeExpr::Map { value, .. } = ty {
+        // Phase 4 #5b (2026-05-12): `HashMap(K, V)` Map type.
+        // Stage 3 (2026-06-27): kv via `kv_sep_for(HashMap, None)` ⇒
+        // `Some(":")`, byte-identical to the former literal.
+        let elem_cat = extract_base_category(value);
+        return Ok((elem_cat, CollectionKind::HashMap, kv_sep_for(&CollectionType::HashMap, None)));
+    }
+    Err(format!("parameter `{name}` is not a collection type"))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1350,6 +1361,133 @@ fn collect_constructor_idents_from_token_stream(
 #[path = "../../../../tests/support/prattail_bridge_recursive_oracle.rs"]
 mod recursive_oracle;
 
+#[cfg(test)]
+#[path = "../../../../tests/support/ddl_migration_round_trip.rs"]
+mod ddl_migration_round_trip;
+
+#[cfg(test)]
+mod collection_projection_tests {
+    use super::*;
+    use quote::quote;
+
+    fn parse_language(source: proc_macro2::TokenStream) -> LanguageDef {
+        syn::parse2(source).expect("the collection projection fixture must parse")
+    }
+
+    #[test]
+    fn inline_hashmap_slot_preserves_map_kind_and_separator() {
+        let language = parse_language(quote! {
+            name: InlineMapProjection,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types { Proc },
+            terms {
+                PZero . |- "0" : Proc;
+                MapNode . entries:HashMap(Proc, Proc)
+                    |- "mapNode" "(" entries.*sep(",") ")" : Proc;
+            },
+        });
+        let specification = language_def_to_spec(&language).expect("the map fixture must project");
+        let collection = specification
+            .rules
+            .iter()
+            .find(|rule| rule.label == "MapNode")
+            .and_then(|rule| {
+                rule.syntax.iter().find_map(|item| match item {
+                    SyntaxItemSpec::Collection { kind, key_val_separator, .. } => {
+                        Some((*kind, key_val_separator.as_deref()))
+                    },
+                    _ => None,
+                })
+            })
+            .expect("MapNode must retain its collection slot");
+        assert_eq!(collection.0, CollectionKind::HashMap);
+        assert_eq!(collection.1, Some(":"));
+        specification
+            .to_grammar_core()
+            .expect("the projected map must satisfy the GrammarCore key/value contract");
+    }
+
+    #[test]
+    fn pathmap_category_retains_default_separator_for_valued_entries() {
+        let language = parse_language(quote! {
+            name: PathMapProjection,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types {
+                Proc
+                ![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap {
+                    open_parts: ["{|"],
+                    close_parts: ["|}"],
+                    sep: ",",
+                }
+            },
+            terms { PZero . |- "0" : Proc; },
+        });
+        let specification =
+            language_def_to_spec(&language).expect("the pathmap fixture must project");
+        let collection = specification
+            .rules
+            .iter()
+            .find(|rule| rule.label == "PathmapLit")
+            .and_then(|rule| {
+                rule.syntax.iter().find_map(|item| match item {
+                    SyntaxItemSpec::Collection { kind, key_val_separator, .. } => {
+                        Some((*kind, key_val_separator.as_deref()))
+                    },
+                    _ => None,
+                })
+            })
+            .expect("the synthetic PathmapLit rule must contain its collection slot");
+        assert_eq!(collection.0, CollectionKind::PathMap);
+        assert_eq!(collection.1, Some(":"));
+        specification
+            .to_grammar_core()
+            .expect("the projected pathmap must satisfy the GrammarCore key/value contract");
+    }
+
+    #[test]
+    fn optional_group_preserves_its_nested_collection_descriptor() {
+        let language = parse_language(quote! {
+            name: OptionalCollectionProjection,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types { Proc },
+            terms {
+                PZero . |- "0" : Proc;
+                ChooseMaybe . value:Proc, *opt(items:Vec(Proc))
+                    |- "choose" value *opt("with" "(" items.*sep("|") ")") : Proc;
+            },
+        });
+        let specification =
+            language_def_to_spec(&language).expect("the optional collection must project");
+        let optional_body = specification
+            .rules
+            .iter()
+            .find(|rule| rule.label == "ChooseMaybe")
+            .and_then(|rule| {
+                rule.syntax.iter().find_map(|item| match item {
+                    SyntaxItemSpec::Optional { inner } => Some(inner),
+                    _ => None,
+                })
+            })
+            .expect("ChooseMaybe must retain its optional syntax group");
+        let collection = optional_body
+            .iter()
+            .find_map(|item| match item {
+                SyntaxItemSpec::Collection {
+                    element_category,
+                    kind,
+                    key_val_separator,
+                    ..
+                } => Some((element_category.as_str(), *kind, key_val_separator.as_deref())),
+                _ => None,
+            })
+            .expect("the optional group must retain its nested collection");
+        assert_eq!(collection, ("Proc", CollectionKind::Vec, None));
+        specification
+            .to_grammar_core()
+            .expect("the nested descriptor must name a real GrammarCore category");
+    }
+}
+
 /// Generate the PraTTaIL parser along with pipeline analysis data.
 ///
 /// Returns `(TokenStream, PipelineAnalysis)` where the analysis captures
@@ -1366,8 +1504,26 @@ mod recursive_oracle;
 pub fn generate_prattail_parser_with_analysis(
     language: &LanguageDef,
 ) -> Result<(proc_macro2::TokenStream, mettail_prattail::PipelineAnalysis), String> {
+    let trace = cfg!(feature = "walker-trace") && std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
+    if trace {
+        eprintln!("[macro-trace] {} generate_all.prattail_parser.bridge.start", language.name);
+    }
     let spec = language_def_to_spec(language)?;
-    mettail_prattail::generate_parser_with_analysis(&spec)
+    if trace {
+        eprintln!("[macro-trace] {} generate_all.prattail_parser.bridge.done", language.name);
+        eprintln!("[macro-trace] {} generate_all.prattail_parser.pipeline.start", language.name);
+    }
+    let prediction_exports: Vec<String> = crate::gen::semantic_types(language)
+        .map(|category| category.name.to_string())
+        .collect();
+    let generated = mettail_prattail::generate_parser_with_analysis_for_prediction_exports(
+        &spec,
+        &prediction_exports,
+    );
+    if trace {
+        eprintln!("[macro-trace] {} generate_all.prattail_parser.pipeline.done", language.name);
+    }
+    generated
 }
 
 /// ★ THE TWO REFUSALS THIS BRIDGE CAN RAISE, asserted on the text they carry.
@@ -1522,5 +1678,42 @@ mod refusal_tests {
                  refusal above proves only that the bridge rejects everything",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod prediction_export_tests {
+    use super::*;
+
+    #[test]
+    fn closed_data_categories_keep_parsers_but_do_not_export_prediction_statics() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: PredictionProjection,
+                types {
+                    Expr
+                    data Meta
+                },
+                terms {
+                    Unit . |- "unit" : Expr;
+                    Wrap . metadata:Meta |- "wrap" metadata : Expr;
+                    EmptyMeta . |- "meta" : Meta;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("prediction-projection fixture must parse");
+
+        let (generated, _) = generate_prattail_parser_with_analysis(&language)
+            .expect("prediction-projection parser generation must succeed");
+        let generated = generated.to_string();
+
+        assert!(generated.contains("PREDICTION_Expr"));
+        assert!(!generated.contains("PREDICTION_Meta"));
+        assert!(
+            generated.contains("is_sync_Meta"),
+            "prediction export pruning must not remove structural category handling"
+        );
     }
 }

@@ -171,5 +171,6 @@ fn gate4_mf5_tripling_self_application_also_terminates() {
 // Gate 6 (generality — a synthetic non-Lambda language β-reduces) lives in its own test binary:
 // each `language!` expansion emits crate-level PDA/lexer helpers (`subst_iterative`, `lex`, …)
 // with un-namespaced names, so two `language!` invocations cannot coexist in one compilation
-// unit. See `lambda_dovetail_synthetic_samecat.rs` (same-category `[T->T]`) and
-// `lambda_dovetail_synthetic_crosscat.rs` (cross-category `[Name->Proc]`).
+// unit. See `lambda_dovetail_synthetic.rs` for same-category `[T->T]` substitution and
+// `cross_category_binder_inverse.rs` for a generated binder whose result and body categories
+// differ (`Wrapper` with a `[Name->Proc]` scope).

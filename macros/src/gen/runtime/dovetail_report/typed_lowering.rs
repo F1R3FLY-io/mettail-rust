@@ -36,20 +36,23 @@
 //! visible to congruence closure than before: the leaf holds the collection as ONE opaque
 //! payload, so no element is an e-class and no element is reduced.
 
-use mettail_ast::grammar::NonTerminalKind;
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
 use super::category_lowering_fn;
 use super::op_enum::{
-    field_withheld_variant_ident, op_enum_ident, op_variant_ident, ordered_seq_element_categories,
+    collection_pair_variant_ident, field_withheld_variant_ident, native_pathmap_mode_variant_ident,
+    native_pathmap_pair_variant_ident, op_enum_ident, op_variant_ident, pathmap_mode_variant_ident,
+    pathmap_pair_variant_ident,
 };
-use super::withholding::{self, WithholdingSet};
-use crate::gen::term_ops::subst::{
-    collect_category_variants, FieldInfo, OpaqueLeafKind, VariantKind,
+use super::semantic_adapter::{
+    SemanticAdapterLayout, SemanticFieldLayout, SemanticFieldProjection, SemanticVariantLayout,
 };
+use crate::gen::native_carrier::NativeRecursiveCarrier;
+use crate::gen::term_ops::subst::{FieldInfo, VariantKind};
 
 use carrier_handle::{
     resolve_field_carrier, resolve_variant_carrier, AcOp, ResolvedCarrier, SeqLeafOp,
@@ -78,13 +81,12 @@ use carrier_handle::{
 /// `super::ac::lower_ac_collection`'s `HashBag`-only check remains in place, now
 /// redundant-by-construction rather than load-bearing-by-vigilance.
 mod carrier_handle {
-    use mettail_ast::types::CollectionType;
     use proc_macro2::TokenStream;
     use quote::quote;
     use syn::Ident;
 
     use super::super::op_enum::{field_seq_variant_ident, op_variant_ident};
-    use super::super::{collection_carrier, CollectionCarrier};
+    use super::super::semantic_adapter::{SemanticCollectionProjection, SemanticFieldProjection};
 
     /// The AC-bag OPERATOR handle: the typed op-enum variant of an n-ary bag node, whose
     /// children the AC matcher is licensed to permute. Its field is private to this module and
@@ -130,25 +132,21 @@ mod carrier_handle {
     /// variant does not exist.
     pub(super) fn resolve_variant_carrier(
         enum_id: &Ident,
-        coll_type: &CollectionType,
         category: &Ident,
         label: &Ident,
         element_cat: &Ident,
-        earned: &[Ident],
+        projection: SemanticCollectionProjection,
     ) -> ResolvedCarrier {
-        match collection_carrier(Some(coll_type)) {
-            CollectionCarrier::AcBag => {
+        match projection {
+            SemanticCollectionProjection::AcBag => {
                 let v = op_variant_ident(category, label);
                 ResolvedCarrier::AcBag(AcOp(quote! { #enum_id::#v }))
             },
-            // A whole-constructor collection is always a DECLARED rule, so its element category
-            // is necessarily earned; the check is kept so both resolvers obey one rule rather
-            // than one obeying it and the other assuming it.
-            CollectionCarrier::OrderedSeq if earned.iter().any(|e| e == element_cat) => {
+            SemanticCollectionProjection::OrderedSequence => {
                 let v = field_seq_variant_ident(element_cat);
                 ResolvedCarrier::OrderedSeq(SeqLeafOp(quote! { #enum_id::#v }))
             },
-            CollectionCarrier::OrderedSeq | CollectionCarrier::Opaque => ResolvedCarrier::Opaque,
+            SemanticCollectionProjection::Opaque => ResolvedCarrier::Opaque,
         }
     }
 
@@ -172,18 +170,22 @@ mod carrier_handle {
     /// a leaf whose op-enum variant does not exist.
     pub(super) fn resolve_field_carrier(
         enum_id: &Ident,
-        coll_type: Option<&CollectionType>,
         element_cat: &Ident,
-        earned: &[Ident],
+        projection: SemanticFieldProjection,
     ) -> ResolvedCarrier {
-        match collection_carrier(coll_type) {
-            CollectionCarrier::OrderedSeq if earned.iter().any(|e| e == element_cat) => {
+        match projection {
+            SemanticFieldProjection::OrderedSequence
+            | SemanticFieldProjection::OptionalOrderedSequence => {
                 let v = field_seq_variant_ident(element_cat);
                 ResolvedCarrier::OrderedSeq(SeqLeafOp(quote! { #enum_id::#v }))
             },
-            CollectionCarrier::OrderedSeq
-            | CollectionCarrier::AcBag
-            | CollectionCarrier::Opaque => ResolvedCarrier::Opaque,
+            SemanticFieldProjection::Child
+            | SemanticFieldProjection::OptionalChild
+            | SemanticFieldProjection::Withheld
+            | SemanticFieldProjection::TokenText
+            | SemanticFieldProjection::OptionalTokenText
+            | SemanticFieldProjection::Opaque
+            | SemanticFieldProjection::OptionalOpaque => ResolvedCarrier::Opaque,
         }
     }
 }
@@ -293,154 +295,336 @@ fn ac_bag_lowering_typed(op: &AcOp, element_cat: &Ident, bag_expr: TokenStream) 
     }
 }
 
+/// Lower a native collection-literal category through the exact structural
+/// projection already described by [`SemanticAdapterLayout`].  Recursive
+/// elements become category visits; map entries receive an explicit pair node;
+/// and PathMap receives a first-child mode leaf plus pair nodes in map mode.
+/// Unordered children are sorted only by the e-graph's exact [`ContentKey`].
+fn collection_literal_lowering_typed(
+    enum_id: &Ident,
+    category: &Ident,
+    label: &Ident,
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    layout: &SemanticAdapterLayout,
+) -> TokenStream {
+    let op = op_variant_ident(category, label);
+
+    // A native collection of scalars (Rholang Bytes is Vec<u8>) has no
+    // generated category visit task.  It remains one exact scalar coefficient;
+    // StructuralV2 applies to the term-bearing collection domain.
+    if layout.category(element_cat).is_none() {
+        return quote! {
+            #category::#label(value) => {
+                __tasks.push(__MettailDovetailLowerTask::Leaf(
+                    #enum_id::#op(value.clone()),
+                ));
+            }
+        };
+    }
+
+    let visit = lower_task_variant(element_cat);
+    match coll_type {
+        CollectionType::Vec => quote! {
+            #category::#label(value) => {
+                __tasks.push(__MettailDovetailLowerTask::Assemble {
+                    op: #enum_id::#op,
+                    child_count: value.len(),
+                    canonicalize: false,
+                });
+                for __element in value.iter().rev() {
+                    __tasks.push(__MettailDovetailLowerTask::#visit(
+                        __element as *const _,
+                    ));
+                }
+            }
+        },
+        CollectionType::HashBag => quote! {
+            #category::#label(value) => {
+                let __elements: ::std::vec::Vec<_> = value.iter_elements().collect();
+                __tasks.push(__MettailDovetailLowerTask::Assemble {
+                    op: #enum_id::#op,
+                    child_count: __elements.len(),
+                    canonicalize: true,
+                });
+                for __element in __elements.into_iter().rev() {
+                    __tasks.push(__MettailDovetailLowerTask::#visit(
+                        __element as *const _,
+                    ));
+                }
+            }
+        },
+        CollectionType::HashSet => quote! {
+            #category::#label(value) => {
+                let __elements: ::std::vec::Vec<_> = value.iter().collect();
+                __tasks.push(__MettailDovetailLowerTask::Assemble {
+                    op: #enum_id::#op,
+                    child_count: __elements.len(),
+                    canonicalize: true,
+                });
+                for __element in __elements.into_iter().rev() {
+                    __tasks.push(__MettailDovetailLowerTask::#visit(
+                        __element as *const _,
+                    ));
+                }
+            }
+        },
+        CollectionType::HashMap => {
+            layout
+                .sentinels()
+                .collection_pair(mettail_grammar_core::CollectionKind::Map, element_cat)
+                .expect("structural Map literal must have one checked pair sentinel");
+            let pair = collection_pair_variant_ident(
+                mettail_grammar_core::CollectionKind::Map,
+                element_cat,
+            );
+            quote! {
+                #category::#label(value) => {
+                    let __entries: ::std::vec::Vec<_> = value.iter().collect();
+                    __tasks.push(__MettailDovetailLowerTask::Assemble {
+                        op: #enum_id::#op,
+                        child_count: __entries.len(),
+                        canonicalize: true,
+                    });
+                    for (__key, __value) in __entries.into_iter().rev() {
+                        __tasks.push(__MettailDovetailLowerTask::Assemble {
+                            op: #enum_id::#pair,
+                            child_count: 2,
+                            canonicalize: false,
+                        });
+                        __tasks.push(__MettailDovetailLowerTask::#visit(
+                            __value as *const _,
+                        ));
+                        __tasks.push(__MettailDovetailLowerTask::#visit(
+                            __key as *const _,
+                        ));
+                    }
+                }
+            }
+        },
+        CollectionType::PathMap => {
+            layout
+                .sentinels()
+                .pathmap_mode(element_cat)
+                .expect("structural PathMap literal must have one checked mode sentinel");
+            layout
+                .sentinels()
+                .pathmap_pair(element_cat)
+                .expect("structural PathMap literal must have one checked pair sentinel");
+            let mode = pathmap_mode_variant_ident(element_cat);
+            let pair = pathmap_pair_variant_ident(element_cat);
+            quote! {
+                #category::#label(value) => {
+                    let __entries: ::std::vec::Vec<_> = value.iter().collect();
+                    let __mode = match value.mode() {
+                        ::mettail_runtime::PathMapMode::Empty => 0u8,
+                        ::mettail_runtime::PathMapMode::Set => 1u8,
+                        ::mettail_runtime::PathMapMode::Map => 2u8,
+                    };
+                    __tasks.push(__MettailDovetailLowerTask::AssemblePathMap {
+                        op: #enum_id::#op,
+                        child_count: __entries.len() + 1usize,
+                    });
+                    for __entry in __entries.into_iter().rev() {
+                        match __entry {
+                            ::mettail_runtime::PathMapEntryRef::Set(__key) => {
+                                __tasks.push(__MettailDovetailLowerTask::#visit(
+                                    __key as *const _,
+                                ));
+                            },
+                            ::mettail_runtime::PathMapEntryRef::Map(__key, __value) => {
+                                __tasks.push(__MettailDovetailLowerTask::Assemble {
+                                    op: #enum_id::#pair,
+                                    child_count: 2,
+                                    canonicalize: false,
+                                });
+                                __tasks.push(__MettailDovetailLowerTask::#visit(
+                                    __value as *const _,
+                                ));
+                                __tasks.push(__MettailDovetailLowerTask::#visit(
+                                    __key as *const _,
+                                ));
+                            },
+                        }
+                    }
+                    // LIFO: the mode is visited first and remains the first
+                    // ordered child while only the entry suffix is sorted.
+                    __tasks.push(__MettailDovetailLowerTask::Leaf(
+                        #enum_id::#mode(__mode),
+                    ));
+                }
+            }
+        },
+    }
+}
+
+/// Lower a recursive native zipper through the same closed PathMap product as
+/// the canonical semantic image. The ordered root children are mode, an
+/// exact-key-canonical entry suffix, and the uninterpreted focus bytes.
+fn recursive_native_lowering_typed(
+    enum_id: &Ident,
+    category: &Ident,
+    label: &Ident,
+    carrier: &NativeRecursiveCarrier,
+    layout: &SemanticAdapterLayout,
+) -> TokenStream {
+    let op = op_variant_ident(category, label);
+    let key_category = carrier.key_category();
+    let value_category = carrier.value_category();
+    layout
+        .sentinels()
+        .native_pathmap_mode(key_category, value_category)
+        .expect("recursive native carrier must have one checked mode sentinel");
+    layout
+        .sentinels()
+        .native_pathmap_pair(key_category, value_category)
+        .expect("recursive native carrier must have one checked pair sentinel");
+    assert!(
+        layout.has_byte_string(),
+        "recursive native carrier must have one checked byte-string sentinel",
+    );
+    let mode = native_pathmap_mode_variant_ident(key_category, value_category);
+    let pair = native_pathmap_pair_variant_ident(key_category, value_category);
+    let visit_key = lower_task_variant(key_category);
+    let visit_value = lower_task_variant(value_category);
+    let pathmap = carrier.pathmap_ref(&quote! { value });
+    let focus = carrier.focus_ref(&quote! { value });
+
+    quote! {
+        #category::#label(value) => {
+            let __pathmap = #pathmap;
+            let __entries: ::std::vec::Vec<_> = __pathmap.iter().collect();
+            let __mode = match __pathmap.mode() {
+                ::mettail_runtime::PathMapMode::Empty => 0u8,
+                ::mettail_runtime::PathMapMode::Set => 1u8,
+                ::mettail_runtime::PathMapMode::Map => 2u8,
+            };
+            __tasks.push(__MettailDovetailLowerTask::AssembleNativePathMap {
+                op: #enum_id::#op,
+                entry_count: __entries.len(),
+            });
+            // LIFO: focus is emitted after every entry but remains the final
+            // ordered child, outside the canonicalized entry suffix.
+            __tasks.push(__MettailDovetailLowerTask::Leaf(
+                #enum_id::FieldBytes((#focus).clone()),
+            ));
+            for __entry in __entries.into_iter().rev() {
+                let __key = __entry.key();
+                if let ::core::option::Option::Some(__value) = __entry.value() {
+                    __tasks.push(__MettailDovetailLowerTask::Assemble {
+                        op: #enum_id::#pair,
+                        child_count: 2,
+                        canonicalize: false,
+                    });
+                    __tasks.push(__MettailDovetailLowerTask::#visit_value(
+                        __value as *const _,
+                    ));
+                    __tasks.push(__MettailDovetailLowerTask::#visit_key(
+                        __key as *const _,
+                    ));
+                } else {
+                    __tasks.push(__MettailDovetailLowerTask::#visit_key(
+                        __key as *const _,
+                    ));
+                }
+            }
+            __tasks.push(__MettailDovetailLowerTask::Leaf(
+                #enum_id::#mode(__mode),
+            ));
+        }
+    }
+}
+
 /// Typed analogue of [`super::field_child_expr`]: a category field recurses; everything else
 /// becomes a `FieldOpaque`/`FieldNone` spine sentinel (field-level collections included — see
 /// the module doc; Rholang's reconstructable collections are categories, not fields).
 fn field_child_expr_typed(
     enum_id: &Ident,
-    owner_label: &Ident,
-    field_index: usize,
-    field: &FieldInfo,
+    layout: &SemanticFieldLayout,
     field_var: &Ident,
-    earned_seq_elements: &[Ident],
-    withheld: &WithholdingSet,
 ) -> TokenStream {
+    let field_index = layout.index();
+    let field = layout.field();
     let child_task = format_ident!("Visit{}", field.category);
-    let field_kind = NonTerminalKind::classify(&field.category.to_string());
-    // ★★★ (#195) SEVERANCE — the FIRST branch, and it must be first.
-    //
-    // A `| S ~/> T |-` declaration says this position is NOT an evaluation context. On an
-    // e-graph that can only be honoured by taking the position out of the child-e-class
-    // world (Theorem W1: once two children merge, two parent e-nodes with equal canonical
-    // child vectors are the SAME hashcons key, so propagation through a child position is
-    // an identity the data structure IS, not a policy it applies). So instead of
-    // `__mettail_dovetail_add_<cat>(eg, …)` — which would hand the field's e-class id to
-    // the parent e-node — the field's VALUE travels whole inside one nullary leaf.
-    //
-    // Consequences, all three of them intended and all three measured by
-    // `languages/tests/congruence_declaration_witness.rs`:
-    //   • the matcher cannot see inside the field (a leaf has no children), so no rule
-    //     fires under it;
-    //   • funded 1-best extraction cannot substitute a rewritten member for it, so the
-    //     reported normal form keeps the subterm as written;
-    //   • reconstruction is LOSSLESS anyway, because the payload IS the value
-    //     (`reconstruct::withheld_reconstruct` is a `clone()`), so a term with a withheld
-    //     field still has a normal form to compare — unlike the lossy `FieldOpaque` leaf,
-    //     which would have turned every such term into a stuck reconstruction.
-    //
-    // ⚠ Placed before the builtin/predicate/collection branches because
-    // `withholding::severable` REFUSES every one of those shapes by name: reaching this
-    // branch already implies a plain scalar category field, and the ordering makes the
-    // implication a fact about the code rather than a claim about the classifier.
-    if withheld.is_severed(owner_label, field_index) {
-        let leaf = withheld_leaf_typed(enum_id, &field.category, quote! { #field_var });
-        return quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); };
-    }
-    if field_kind.is_builtin() {
-        let leaf = opaque_leaf_typed(enum_id, quote! { #field_var });
-        return quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); };
-    }
-
-    if field.is_optional {
-        if field.is_predicate || field.is_opaque_leaf() {
-            // L9-3/L9-4: an optional token-text (`Option<String>`) / guest-body
-            // (`Option<Arc<FltNode>>`) capture — the present payload is an opaque
-            // e-graph leaf (atomic data, never a recursible subterm), absence a
-            // distinct nullary leaf. Mirrors the string-path `field_child_expr`.
-            //
-            // (A4) A PRESENT token-text payload takes the LABELLED, INVERTIBLE leaf; a
-            // guest-body or a predicate keeps the lossy `FieldOpaque`. Absence is the same
-            // `FieldNone(i)` nullary leaf either way, so `Option<String>` reconstructs as
-            // `Some(text)`/`None` losslessly once the present arm is invertible.
-            let leaf = match field.opaque_leaf {
-                Some(OpaqueLeafKind::TokenText) => {
-                    token_text_leaf_typed(enum_id, quote! { __pred })
-                },
-                Some(OpaqueLeafKind::GuestBody) | None => {
-                    opaque_leaf_typed(enum_id, quote! { __pred })
-                },
-            };
+    match layout.projection() {
+        SemanticFieldProjection::Opaque => {
+            let leaf = opaque_leaf_typed(enum_id, quote! { #field_var });
+            quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); }
+        },
+        SemanticFieldProjection::Withheld => {
+            let leaf = withheld_leaf_typed(enum_id, &field.category, quote! { #field_var });
+            quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); }
+        },
+        SemanticFieldProjection::TokenText => {
+            let leaf = token_text_leaf_typed(enum_id, quote! { #field_var });
+            quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); }
+        },
+        SemanticFieldProjection::OptionalTokenText => {
+            let leaf = token_text_leaf_typed(enum_id, quote! { __value });
             let none = field_none_typed(enum_id, field_index);
-            return quote! {
+            quote! {
                 match #field_var.as_ref() {
-                    Some(__pred) => __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)),
+                    Some(__value) => __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)),
                     None => __tasks.push(__MettailDovetailLowerTask::Leaf(#none)),
                 }
-            };
-        }
-        if field.is_collection {
-            let leaf = opaque_leaf_typed(enum_id, quote! { __values });
-            let none = field_none_typed(enum_id, field_index);
-            return quote! {
-                match #field_var.as_ref() {
-                    Some(__values) => __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)),
-                    None => __tasks.push(__MettailDovetailLowerTask::Leaf(#none)),
-                }
-            };
-        }
-        let none = field_none_typed(enum_id, field_index);
-        return quote! {
-            match #field_var.as_ref() {
-                Some(__inner) => __tasks.push(__MettailDovetailLowerTask::#child_task(
-                    __inner.as_ref() as *const _,
-                )),
-                None => __tasks.push(__MettailDovetailLowerTask::Leaf(#none)),
             }
-        };
-    }
-
-    if field.is_predicate || field.is_opaque_leaf() {
-        // L9-3/L9-4: a token-text (`String`) / guest-body (`Arc<FltNode>`)
-        // capture lowers to an e-graph LEAF — atomic data, never a recursible
-        // category child (there is no `__mettail_dovetail_add_flt_node` to call).
-        // Mirrors the string-path `field_child_expr`; branch BEFORE the `child_fn`
-        // fall-through.
-        //
-        // (A4) The two opaque-leaf KINDS part company here, and only here:
-        //   • `TokenText` → `FieldTokenText(text)`, labelled and INVERTIBLE;
-        //   • `GuestBody` → `FieldOpaque(Debug)`, still non-invertible — an
-        //     `Arc<FltNode>` has no lossless `Debug` inverse, so promoting it would
-        //     be a lie about recoverability rather than a capability.
-        // A predicate slot (`?g:Guard`) keeps `FieldOpaque` for the same reason.
-        let leaf = match field.opaque_leaf {
-            Some(OpaqueLeafKind::TokenText) => {
-                token_text_leaf_typed(enum_id, quote! { #field_var })
-            },
-            Some(OpaqueLeafKind::GuestBody) | None => {
-                opaque_leaf_typed(enum_id, quote! { #field_var })
-            },
-        };
-        return quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); };
-    }
-
-    if field.is_collection {
-        // (#101) An ORDERED (`Vec`) collection field takes the LABELLED, INVERTIBLE sequence
-        // leaf; every other container keeps the lossy `FieldOpaque`. See
-        // [`carrier_handle::resolve_field_carrier`] for why a `HashBag` FIELD stays opaque on
-        // this path (unchanged behaviour — the typed path AC-lowers only whole-constructor
-        // collections).
-        let leaf = match resolve_field_carrier(
-            enum_id,
-            field.coll_type.as_ref(),
-            &field.category,
-            earned_seq_elements,
-        ) {
-            ResolvedCarrier::OrderedSeq(seq) => ordered_seq_leaf_typed(&seq, quote! { #field_var }),
-            // `AcBag` is UNREACHABLE from `resolve_field_carrier` (it maps a HashBag field to
-            // `Opaque`); the arm is written out rather than wildcarded so that changing that
-            // mapping forces this site to state what it wants instead of inheriting a silent
-            // opaque leaf.
-            ResolvedCarrier::AcBag(_) | ResolvedCarrier::Opaque => {
-                opaque_leaf_typed(enum_id, quote! { #field_var })
-            },
-        };
-        return quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); };
-    }
-
-    quote! {
-        __tasks.push(__MettailDovetailLowerTask::#child_task(
-            #field_var.as_ref() as *const _,
-        ));
+        },
+        SemanticFieldProjection::OptionalOpaque => {
+            let leaf = opaque_leaf_typed(enum_id, quote! { __value });
+            let none = field_none_typed(enum_id, field_index);
+            quote! {
+                match #field_var.as_ref() {
+                    Some(__value) => __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)),
+                    None => __tasks.push(__MettailDovetailLowerTask::Leaf(#none)),
+                }
+            }
+        },
+        SemanticFieldProjection::OptionalOrderedSequence => {
+            let leaf = match resolve_field_carrier(enum_id, &field.category, layout.projection()) {
+                ResolvedCarrier::OrderedSeq(seq) => {
+                    ordered_seq_leaf_typed(&seq, quote! { __values })
+                },
+                ResolvedCarrier::AcBag(_) | ResolvedCarrier::Opaque => {
+                    opaque_leaf_typed(enum_id, quote! { __values })
+                },
+            };
+            let none = field_none_typed(enum_id, field_index);
+            quote! {
+                match #field_var.as_ref() {
+                    Some(__values) => {
+                        __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf));
+                    },
+                    None => __tasks.push(__MettailDovetailLowerTask::Leaf(#none)),
+                }
+            }
+        },
+        SemanticFieldProjection::Child => quote! {
+            __tasks.push(__MettailDovetailLowerTask::#child_task(
+                #field_var.as_ref() as *const _,
+            ));
+        },
+        SemanticFieldProjection::OptionalChild => {
+            let none = field_none_typed(enum_id, field_index);
+            quote! {
+                match #field_var.as_ref() {
+                    Some(__inner) => __tasks.push(__MettailDovetailLowerTask::#child_task(
+                        __inner.as_ref() as *const _,
+                    )),
+                    None => __tasks.push(__MettailDovetailLowerTask::Leaf(#none)),
+                }
+            }
+        },
+        SemanticFieldProjection::OrderedSequence => {
+            let leaf = match resolve_field_carrier(enum_id, &field.category, layout.projection()) {
+                ResolvedCarrier::OrderedSeq(seq) => {
+                    ordered_seq_leaf_typed(&seq, quote! { #field_var })
+                },
+                ResolvedCarrier::AcBag(_) | ResolvedCarrier::Opaque => {
+                    opaque_leaf_typed(enum_id, quote! { #field_var })
+                },
+            };
+            quote! { __tasks.push(__MettailDovetailLowerTask::Leaf(#leaf)); }
+        },
     }
 }
 
@@ -449,9 +633,9 @@ fn regular_arm_typed(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
-    earned_seq_elements: &[Ident],
-    withheld: &WithholdingSet,
+    layout: &SemanticVariantLayout,
 ) -> TokenStream {
+    debug_assert_eq!(fields.len(), layout.fields().len());
     let variant = op_variant_ident(category, label);
     let field_vars: Vec<Ident> = (0..fields.len())
         .map(|i| format_ident!("field_{i}"))
@@ -461,9 +645,7 @@ fn regular_arm_typed(
         .zip(field_vars.iter())
         .enumerate()
         .rev()
-        .map(|(i, (field, var))| {
-            field_child_expr_typed(enum_id, label, i, field, var, earned_seq_elements, withheld)
-        })
+        .map(|(i, (_field, var))| field_child_expr_typed(enum_id, &layout.fields()[i], var))
         .collect();
     let child_count = fields.len();
     quote! {
@@ -481,12 +663,13 @@ fn regular_arm_typed(
 fn binder_arm_typed(
     enum_id: &Ident,
     category: &Ident,
+    body_category: &Ident,
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     multi: bool,
-    earned_seq_elements: &[Ident],
-    withheld: &WithholdingSet,
+    layout: &SemanticVariantLayout,
 ) -> TokenStream {
+    debug_assert_eq!(pre_scope_fields.len(), layout.fields().len());
     let variant = op_variant_ident(category, label);
     let pre_vars: Vec<Ident> = (0..pre_scope_fields.len())
         .map(|i| format_ident!("field_{i}"))
@@ -497,11 +680,12 @@ fn binder_arm_typed(
         .zip(pre_vars.iter())
         .enumerate()
         .rev()
-        .map(|(i, (field, var))| {
-            field_child_expr_typed(enum_id, label, i, field, var, earned_seq_elements, withheld)
-        })
+        .map(|(i, (_field, var))| field_child_expr_typed(enum_id, &layout.fields()[i], var))
         .collect();
-    let body_task = format_ident!("Visit{}", category);
+    // The scope codomain is an independent typed category.  Deriving this
+    // task from the enclosing constructor category permits a cross-category
+    // body pointer to be dereferenced as the wrong generated enum type.
+    let body_task = format_ident!("Visit{}", body_category);
     // (FIX-A) anonymous arity-only binder marker — see `super::binder_arm`.
     let binder_child = if multi {
         quote! { #enum_id::BinderArity(#scope_var.unsafe_pattern().len() as u32) }
@@ -536,22 +720,25 @@ fn lower_handler_name(category: &Ident) -> Ident {
 /// Generate the one pooled PDA shared by every typed category lowering in an assembly scope.
 /// `Leaf` and `Assemble` retain the recursive reference's exact postorder e-graph insertion;
 /// category pointers are borrowed from the live root and drained synchronously.
-pub(crate) fn lowering_pda_support(language: &LanguageDef) -> TokenStream {
+pub(crate) fn lowering_pda_support(
+    language: &LanguageDef,
+    layout: &SemanticAdapterLayout,
+) -> TokenStream {
     let enum_id = op_enum_ident(language);
-    let visits: Vec<TokenStream> = language
-        .types
+    let visits: Vec<TokenStream> = layout
+        .categories()
         .iter()
-        .map(|ty| {
-            let category = &ty.name;
+        .map(|category_layout| {
+            let category = category_layout.category();
             let visit = lower_task_variant(category);
             quote! { #visit(*const #category) }
         })
         .collect();
-    let dispatch: Vec<TokenStream> = language
-        .types
+    let dispatch: Vec<TokenStream> = layout
+        .categories()
         .iter()
-        .map(|ty| {
-            let category = &ty.name;
+        .map(|category_layout| {
+            let category = category_layout.category();
             let visit = lower_task_variant(category);
             let handler = lower_handler_name(category);
             quote! {
@@ -573,6 +760,14 @@ pub(crate) fn lowering_pda_support(language: &LanguageDef) -> TokenStream {
                 child_count: usize,
                 canonicalize: bool,
             },
+            AssemblePathMap {
+                op: #enum_id,
+                child_count: usize,
+            },
+            AssembleNativePathMap {
+                op: #enum_id,
+                entry_count: usize,
+            },
         }
 
         ::std::thread_local! {
@@ -580,7 +775,10 @@ pub(crate) fn lowering_pda_support(language: &LanguageDef) -> TokenStream {
                 ::std::cell::Cell<::std::vec::Vec<__MettailDovetailLowerTask>> =
                     const { ::std::cell::Cell::new(::std::vec::Vec::new()) };
             static __METTAIL_DOVETAIL_LOWER_VALUE_POOL:
-                ::std::cell::Cell<::std::vec::Vec<::dovetail::egraph::EClassId>> =
+                ::std::cell::Cell<::std::vec::Vec<(
+                    ::dovetail::egraph::EClassId,
+                    ::dovetail::key::ContentKey,
+                )>> =
                     const { ::std::cell::Cell::new(::std::vec::Vec::new()) };
         }
 
@@ -598,7 +796,12 @@ pub(crate) fn lowering_pda_support(language: &LanguageDef) -> TokenStream {
                 match __task {
                     #(#dispatch)*
                     __MettailDovetailLowerTask::Leaf(__op) => {
-                        __values.push(eg.add(::dovetail::egraph::ENode::leaf(__op)));
+                        let __key = ::dovetail::key::ContentKey::tree(
+                            &__op,
+                            ::std::vec::Vec::new(),
+                        );
+                        let __class = eg.add(::dovetail::egraph::ENode::leaf(__op));
+                        __values.push((__class, __key));
                     },
                     __MettailDovetailLowerTask::Assemble {
                         op,
@@ -610,11 +813,61 @@ pub(crate) fn lowering_pda_support(language: &LanguageDef) -> TokenStream {
                         );
                         let mut __children = __values.split_off(__first);
                         if canonicalize {
-                            __children.sort_by_cached_key(|__child| {
-                                eg.canonical_class_key(*__child)
-                            });
+                            __children.sort_by(|__left, __right| __left.1.cmp(&__right.1));
                         }
-                        __values.push(eg.add(::dovetail::egraph::ENode::new(op, __children)));
+                        let mut __child_classes = ::std::vec::Vec::with_capacity(child_count);
+                        let mut __child_keys = ::std::vec::Vec::with_capacity(child_count);
+                        for (__class, __key) in __children {
+                            __child_classes.push(__class);
+                            __child_keys.push(__key);
+                        }
+                        let __key = ::dovetail::key::ContentKey::tree(&op, __child_keys);
+                        let __class = eg.add(::dovetail::egraph::ENode::new(op, __child_classes));
+                        __values.push((__class, __key));
+                    },
+                    __MettailDovetailLowerTask::AssemblePathMap { op, child_count } => {
+                        let __first = __values.len().checked_sub(child_count).expect(
+                            "generated PathMap lowering PDA lost a structural child",
+                        );
+                        let mut __children = __values.split_off(__first);
+                        assert!(
+                            !__children.is_empty(),
+                            "generated PathMap lowering requires a mode child",
+                        );
+                        __children[1..].sort_by(|__left, __right| __left.1.cmp(&__right.1));
+                        let mut __child_classes = ::std::vec::Vec::with_capacity(child_count);
+                        let mut __child_keys = ::std::vec::Vec::with_capacity(child_count);
+                        for (__class, __key) in __children {
+                            __child_classes.push(__class);
+                            __child_keys.push(__key);
+                        }
+                        let __key = ::dovetail::key::ContentKey::tree(&op, __child_keys);
+                        let __class = eg.add(::dovetail::egraph::ENode::new(op, __child_classes));
+                        __values.push((__class, __key));
+                    },
+                    __MettailDovetailLowerTask::AssembleNativePathMap { op, entry_count } => {
+                        let __child_count = entry_count.checked_add(2).expect(
+                            "generated native PathMap child count overflowed",
+                        );
+                        let __first = __values.len().checked_sub(__child_count).expect(
+                            "generated native PathMap lowering PDA lost a structural child",
+                        );
+                        let mut __children = __values.split_off(__first);
+                        let __entry_end = 1usize.checked_add(entry_count).expect(
+                            "generated native PathMap entry boundary overflowed",
+                        );
+                        __children[1..__entry_end]
+                            .sort_by(|__left, __right| __left.1.cmp(&__right.1));
+                        let mut __child_classes =
+                            ::std::vec::Vec::with_capacity(__child_count);
+                        let mut __child_keys = ::std::vec::Vec::with_capacity(__child_count);
+                        for (__class, __key) in __children {
+                            __child_classes.push(__class);
+                            __child_keys.push(__key);
+                        }
+                        let __key = ::dovetail::key::ContentKey::tree(&op, __child_keys);
+                        let __class = eg.add(::dovetail::egraph::ENode::new(op, __child_classes));
+                        __values.push((__class, __key));
                     },
                 }
             }
@@ -624,7 +877,9 @@ pub(crate) fn lowering_pda_support(language: &LanguageDef) -> TokenStream {
                 1,
                 "generated Dovetail lowering PDA must produce exactly one root e-class",
             );
-            let __root = __values.pop().expect("root-result count checked above");
+            let (__root, __root_key) =
+                __values.pop().expect("root-result count checked above");
+            drop(__root_key);
             __tasks.clear();
             __values.clear();
             __METTAIL_DOVETAIL_LOWER_TASK_POOL.with(|__pool| __pool.set(__tasks));
@@ -636,27 +891,26 @@ pub(crate) fn lowering_pda_support(language: &LanguageDef) -> TokenStream {
 
 /// Generate the typed per-category lowering `__mettail_dovetail_add_<cat>(eg, term) -> EClassId`
 /// over `EGraph<L>` (the same fn name as the String version; only one is emitted per language).
-pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) -> TokenStream {
+pub(crate) fn category_lowering_typed(
+    language: &LanguageDef,
+    category: &Ident,
+    layout: &SemanticAdapterLayout,
+) -> TokenStream {
     let enum_id = op_enum_ident(language);
     let fn_name = category_lowering_fn(category);
     let handler_name = lower_handler_name(category);
     let seed_task = lower_task_variant(category);
-    // (#101) The element categories that have a `FieldSeq*` variant. Computed ONCE per
-    // category lowering and threaded to every field site, so a leaf can never name a variant
-    // the enum does not have.
-    let earned_seq_elements = ordered_seq_element_categories(language);
-    // ★ (#195) The severed-position set. Computed ONCE per category lowering and threaded
-    // to every field site, from the SAME derivation `op_enum` and `reconstruct` read, so a
-    // severed leaf can never name a variant the enum does not have.
-    let withheld = withholding::classify_withholdings(language);
-    let arms: Vec<TokenStream> = collect_category_variants(category, language)
-        .into_iter()
-        .map(|variant| match variant {
+    let Some(category_layout) = layout.category(category) else {
+        let message = format!("semantic adapter layout is missing category `{category}`");
+        return quote! { compile_error!(#message); };
+    };
+    let arms: Vec<TokenStream> = category_layout
+        .variants()
+        .iter()
+        .map(|variant_layout| match variant_layout.kind().clone() {
             // ★ #141 G5 — see `VariantKind::Refused`.
             VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
-            VariantKind::Var { label }
-            | VariantKind::Literal { label }
-            | VariantKind::CollectionLiteral { label, .. } => {
+            VariantKind::Var { label } | VariantKind::Literal { label } => {
                 let v = op_variant_ident(category, &label);
                 quote! {
                     #category::#label(value) => {
@@ -666,6 +920,19 @@ pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) 
                     }
                 }
             },
+            VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
+                collection_literal_lowering_typed(
+                    &enum_id,
+                    category,
+                    &label,
+                    &element_cat,
+                    &coll_type,
+                    layout,
+                )
+            },
+            VariantKind::RecursiveNativeLiteral { label, carrier } => {
+                recursive_native_lowering_typed(&enum_id, category, &label, &carrier, layout)
+            },
             VariantKind::Nullary { label } => {
                 let v = op_variant_ident(category, &label);
                 quote! {
@@ -674,23 +941,19 @@ pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) 
                     }
                 }
             },
-            VariantKind::Regular { label, fields } => regular_arm_typed(
-                &enum_id,
-                category,
-                &label,
-                &fields,
-                &earned_seq_elements,
-                &withheld,
-            ),
-            VariantKind::Collection { label, element_cat, coll_type } => {
+            VariantKind::Regular { label, fields } => {
+                regular_arm_typed(&enum_id, category, &label, &fields, variant_layout)
+            },
+            VariantKind::Collection { label, element_cat, .. } => {
                 let v = op_variant_ident(category, &label);
                 match resolve_variant_carrier(
                     &enum_id,
-                    &coll_type,
                     category,
                     &label,
                     &element_cat,
-                    &earned_seq_elements,
+                    variant_layout
+                        .collection_projection()
+                        .expect("collection variant must have a checked collection projection"),
                 ) {
                     ResolvedCarrier::AcBag(op) => {
                         let body = ac_bag_lowering_typed(&op, &element_cat, quote! { values });
@@ -735,23 +998,23 @@ pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) 
                     },
                 }
             },
-            VariantKind::Binder { label, pre_scope_fields, .. } => binder_arm_typed(
+            VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => binder_arm_typed(
                 &enum_id,
                 category,
+                &body_cat,
                 &label,
                 &pre_scope_fields,
                 false,
-                &earned_seq_elements,
-                &withheld,
+                variant_layout,
             ),
-            VariantKind::MultiBinder { label, pre_scope_fields, .. } => binder_arm_typed(
+            VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => binder_arm_typed(
                 &enum_id,
                 category,
+                &body_cat,
                 &label,
                 &pre_scope_fields,
                 true,
-                &earned_seq_elements,
-                &withheld,
+                variant_layout,
             ),
         })
         .collect();
@@ -775,5 +1038,86 @@ pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) 
                 __MettailDovetailLowerTask::#seed_task(term as *const _),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod structural_collection_literal_tests {
+    use super::*;
+
+    fn compact(tokens: TokenStream) -> String {
+        tokens.to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn lowering_emits_exact_value_pair_and_pathmap_shapes() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let layout = SemanticAdapterLayout::derive(&language).expect("semantic layout");
+
+        let list: Ident = syn::parse_str("List").expect("identifier");
+        let list_tokens = compact(category_lowering_typed(&language, &list, &layout));
+        assert!(list_tokens.contains("List::ListLit(value)"));
+        assert!(list_tokens.contains("canonicalize:false"));
+        assert!(list_tokens.contains("VisitProc(__elementas*const_,)"));
+        assert!(!list_tokens.contains("List_ListLit(value.clone())"));
+
+        for category_name in ["Bag", "Set"] {
+            let category: Ident = syn::parse_str(category_name).expect("identifier");
+            let tokens = compact(category_lowering_typed(&language, &category, &layout));
+            assert!(tokens.contains("canonicalize:true"));
+            assert!(tokens.contains("VisitProc(__elementas*const_,)"));
+        }
+
+        let map: Ident = syn::parse_str("Map").expect("identifier");
+        let map_tokens = compact(category_lowering_typed(&language, &map, &layout));
+        assert!(map_tokens.contains("CollectionPairMapProc"));
+        assert!(map_tokens.contains("child_count:2usize") || map_tokens.contains("child_count:2"));
+        assert!(map_tokens.contains("canonicalize:true"));
+
+        let pathmap: Ident = syn::parse_str("Pathmap").expect("identifier");
+        let pathmap_tokens = compact(category_lowering_typed(&language, &pathmap, &layout));
+        assert!(pathmap_tokens.contains("AssemblePathMap"));
+        assert!(pathmap_tokens.contains("PathMapModeProc(__mode)"));
+        assert!(pathmap_tokens.contains("PathMapPairProc"));
+        assert!(pathmap_tokens.contains("PathMapMode::Empty=>0u8"));
+        assert!(pathmap_tokens.contains("PathMapMode::Set=>1u8"));
+        assert!(pathmap_tokens.contains("PathMapMode::Map=>2u8"));
+
+        let support = compact(lowering_pda_support(&language, &layout));
+        assert!(support.contains("ContentKey::tree"));
+        assert!(!support.contains("canonical_class_key"));
+    }
+
+    #[test]
+    fn cross_category_binder_uses_its_declared_body_visit_type() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: CrossCategoryBinder,
+                types { Wrapper Proc Name },
+                terms {
+                    Nil . |- "0" : Proc;
+                    NameLit . |- "n" : Name;
+                    Wrap . ^x.body:[Name -> Proc]
+                        |- "wrap" x "." body : Wrapper;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("cross-category binder fixture must parse");
+        let layout = SemanticAdapterLayout::derive(&language).expect("semantic layout");
+        let wrapper: Ident = syn::parse_str("Wrapper").expect("identifier");
+        let tokens = compact(category_lowering_typed(&language, &wrapper, &layout));
+        let wrap_arm = tokens
+            .split("Wrapper::Wrap(scope)=>")
+            .nth(1)
+            .and_then(|rest| rest.split("Wrapper::WVar").next())
+            .expect("Wrap arm must be emitted before the generated variable arm");
+
+        assert!(wrap_arm.contains("__MettailDovetailLowerTask::VisitProc("));
+        assert!(
+            !wrap_arm.contains("__MettailDovetailLowerTask::VisitWrapper("),
+            "cross-category Wrap body was routed through Wrapper: {wrap_arm}",
+        );
     }
 }

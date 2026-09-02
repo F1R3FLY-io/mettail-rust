@@ -17,7 +17,7 @@ use mettail_ast::language::{CollectionDelimiters, LanguageDef};
 use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::quote;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::type_expr_walk::TypeExprBaseIdents;
@@ -460,9 +460,7 @@ pub(crate) fn emit_collection_prefix_arms(
                                 // direct-delimited open paths (shared ConsumeAndPush).
                                 #result_src_idx, #rule_idx, 0, *cur_bp,
                             ),
-                            weight: lex_w(
-                                0.0, #result_src_idx, #rule_idx,
-                            ),
+                            weight: lex_w(0.0, #result_src_idx, #rule_idx),
                             new_state: #new_state,
                             // Phase F.8: collection open delimiter discards
                             // the trigger token.
@@ -491,7 +489,8 @@ pub(crate) fn emit_collection_prefix_arms(
                                 ).with_kind_return(),
                                 weight: lex_w(
                                     mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
-                                    #result_src_idx, #proj_rule,
+                                    #result_src_idx,
+                                    #proj_rule,
                                 ),
                                 new_state: WpdaState::CrossCatDelegate {
                                     source_src_idx: #source_src_idx,
@@ -520,9 +519,7 @@ pub(crate) fn emit_collection_prefix_arms(
                                     symbol: StackSymbolV2::collection_marker(
                                         #result_src_idx, #rule_idx, 0, *cur_bp,
                                     ),
-                                    weight: lex_w(
-                                        0.0, #result_src_idx, #rule_idx,
-                                    ),
+                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
                                     new_state: #new_state,
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
@@ -658,13 +655,11 @@ pub(crate) fn emit_collection_loop_arm(
                                     __branches.push(
                                         mettail_prattail::wpda_walker::ForkBranch {
                                             symbol: StackSymbolV2::category_entry(0),
-                                            weight: lex_w(
-                                                0.0, *result_src_idx, *rule_idx,
-                                            ),
+                                            weight: lex_w(0.0, *result_src_idx, *rule_idx),
                                             // str-cast collection-infix fix (2026-06-18):
                                             // resume the enclosing Pratt InfixLoop at the
                                             // dispatch bp (CollectionLoop.outer_bp, carried
-                                            // from the marker's coll_dispatch_bp) so a
+                                            // from the marker's continuation_bp) so a
                                             // finalized collection can attach a following
                                             // infix operator with l_bp > outer_bp — exactly
                                             // mirroring the atomic Return-pop path. When no
@@ -706,9 +701,7 @@ pub(crate) fn emit_collection_loop_arm(
                                             __branches.push(
                                                 mettail_prattail::wpda_walker::ForkBranch {
                                                     symbol: StackSymbolV2::category_entry(0),
-                                                    weight: lex_w(
-                                                        0.0, *result_src_idx, *rule_idx,
-                                                    ),
+                                                    weight: lex_w(0.0, *result_src_idx, *rule_idx),
                                                     // str-cast collection-infix fix
                                                     // (2026-06-18): same as the primary close
                                                     // branch — resume InfixLoop at the dispatch
@@ -740,9 +733,7 @@ pub(crate) fn emit_collection_loop_arm(
                                 __branches.push(
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
-                                        weight: lex_w(
-                                            0.0, *result_src_idx, *rule_idx,
-                                        ),
+                                        weight: lex_w(0.0, *result_src_idx, *rule_idx),
                                         new_state: WpdaState::PrefixDispatch {
                                             pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: 0,
@@ -757,8 +748,34 @@ pub(crate) fn emit_collection_loop_arm(
                                     },
                                 );
                             }
-                            // G3: bare-element, separator-free grammars only.
-                            if sep.is_empty() {
+                            // G3: a delimiter-free continuation exists only
+                            // when the complete lexical lattice at this
+                            // position intersects FIRST(element).  The old
+                            // unconditional branch attempted to parse every
+                            // following token as an element, so an open-ended
+                            // `xs.*sep("")` could never yield to its enclosing
+                            // continuation.
+                            let __element_can_start = tokens
+                                .peek_kind(_pos)
+                                .as_ref()
+                                .is_some_and(|kind| {
+                                    self.collection_element_can_start(
+                                        element_src_idx,
+                                        kind,
+                                    )
+                                })
+                                || tokens
+                                    .peek_alternatives(_pos)
+                                    .iter()
+                                    .any(|alternative| {
+                                        self.collection_element_can_start(
+                                            element_src_idx,
+                                            &alternative.kind,
+                                        )
+                                    });
+                            if sep.is_empty()
+                                && (!close.is_empty() || __element_can_start)
+                            {
                                 __branches.push(
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         // GEN-1 goal-gate G2 (2026-06-28): strict
@@ -771,7 +788,8 @@ pub(crate) fn emit_collection_loop_arm(
                                         ),
                                         weight: lex_w(
                                             mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                            *result_src_idx, *rule_idx,
+                                            *result_src_idx,
+                                            *rule_idx,
                                         ),
                                         new_state: WpdaState::PrefixDispatch {
                                             pos: _pos,
@@ -782,75 +800,62 @@ pub(crate) fn emit_collection_loop_arm(
                                     },
                                 );
                             }
-                            // G4: advance-or-recover.
-                            if __branches.is_empty() {
-                                if close.is_empty() {
-                                    // F2 (§4.5 no-close repetition, 2026-06-28):
-                                    // a `*sep` rep with an EMPTY close (e.g.
-                                    // ForRowNoWhere `b "&" bs.*sep("&")`) has no
-                                    // explicit terminator literal. A token that is
-                                    // neither the separator (G2 would have fired)
-                                    // nor a close (none exists) TERMINATES the rep:
-                                    // finalize the accumulated Vec by popping the
-                                    // CollectionMarker WITHOUT consuming the token
-                                    // (it belongs to the enclosing context — the
-                                    // for-`)`, a `where`/`;`, or the body `{`).
-                                    // `WpdaStepAction::Pop` fires the marker's
-                                    // finalize via `apply_pop_body_to_cursor`
-                                    // (keyed on the popped CollectionMarker symbol)
-                                    // exactly like the G1 explicit-close
-                                    // `ConsumeAtAndPop`, minus the consume; the
-                                    // popped-into parent mixfix marker resumes its
-                                    // post-rep handling → FireAction. The rule's
-                                    // own slice fork (GEN1_MAX_SLICE uncapped) keeps
-                                    // a `where`-closed sibling (e.g. ForRowWhere)
-                                    // alive in parallel; lex-min selects the
-                                    // no-recovery finalize for the no-`where` input.
-                                    // count ≥ min holds by construction: the rep
-                                    // entry's PrefixDispatch parses ≥ 1 element
-                                    // before this loop runs and MixfixRep.min = 0.
-                                    WpdaStepAction::Pop {
+                            // G4: an empty close denotes an open-ended EBNF
+                            // repetition.  Stopping is a real epsilon branch,
+                            // not a fallback after the element branch fails:
+                            // when FIRST(element) overlaps FOLLOW(repetition),
+                            // both interpretations must remain live and the
+                            // enclosing continuation decides.  At this point at
+                            // least one element has returned, so every supported
+                            // lower bound (zero or one) is satisfied.
+                            if close.is_empty() {
+                                __branches.push(
+                                    mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::category_entry(0),
                                         weight: lex_w(0.0, *result_src_idx, *rule_idx),
                                         new_state: if is_binder_internal {
                                             WpdaState::Unwinding
                                         } else {
                                             WpdaState::InfixLoop { cur_bp: *_outer_bp }
                                         },
-                                    }
-                                } else {
-                                    WpdaStepAction::Fork {
-                                        branches: vec![
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::category_entry(0),
-                                                weight: lex_w(
-                                                    mettail_prattail::recovery::costs::INSERT.value(),
-                                                    *result_src_idx,
-                                                    *rule_idx,
-                                                ),
-                                                new_state: if is_binder_internal {
-                                                    WpdaState::Unwinding
-                                                } else {
-                                                    WpdaState::InfixLoop { cur_bp: *_outer_bp }
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::PopWithEffect {
-                                                        effect:
-                                                            mettail_prattail::wpda_walker::BuilderDelta::InsertToken {
-                                                                pos: _pos,
-                                                                kind: mettail_prattail::automata::TokenKind::Fixed(close.to_string()),
-                                                                text: close.to_string(),
-                                                            },
-                                                    },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::Pop,
+                                    },
+                                );
+                            }
+                            if __branches.is_empty() {
+                                WpdaStepAction::Fork {
+                                    branches: vec![
+                                        mettail_prattail::wpda_walker::ForkBranch {
+                                            symbol: StackSymbolV2::category_entry(0),
+                                            weight: lex_w(
+                                                mettail_prattail::recovery::costs::INSERT.value(),
+                                                *result_src_idx,
+                                                *rule_idx,
+                                            ),
+                                            new_state: if is_binder_internal {
+                                                WpdaState::Unwinding
+                                            } else {
+                                                WpdaState::InfixLoop { cur_bp: *_outer_bp }
                                             },
-                                        ],
-                                        consume_trigger: false,
-                                    }
+                                            action_kind:
+                                                mettail_prattail::wpda_walker::ForkActionKind::PopWithEffect {
+                                                    effect:
+                                                        mettail_prattail::wpda_walker::BuilderDelta::InsertToken {
+                                                            pos: _pos,
+                                                            kind: mettail_prattail::automata::TokenKind::Fixed(close.to_string()),
+                                                            text: close.to_string(),
+                                                        },
+                                                },
+                                        },
+                                    ],
+                                    consume_trigger: false,
                                 }
                             } else {
                                 WpdaStepAction::Fork {
                                     branches: __branches,
                                     // Each branch's action_kind encodes its own
-                                    // consume semantics (or no-consume for Push).
+                                    // consume semantics (or no-consume for Push/Pop).
                                     consume_trigger: false,
                                 }
                             }
@@ -904,9 +909,7 @@ pub(crate) fn emit_collection_loop_arm(
                                                 .any(|a| a.text == close || a.text == sep));
                                     if token_text == expected_kv_sep {
                                         WpdaStepAction::Consume {
-                                            weight: lex_w(
-                                                0.0, *result_src_idx, *rule_idx,
-                                            ),
+                                            weight: lex_w(0.0, *result_src_idx, *rule_idx),
                                             // Transition to kv_phase=2 to
                                             // Push the value's CategoryEntry
                                             // on the next step. We use
@@ -982,9 +985,7 @@ pub(crate) fn emit_collection_loop_arm(
                                 // GEN-1 goal-gate G2 (2026-06-28): strict GOAL =
                                 // the kv-collection value element's category.
                                 symbol: StackSymbolV2::category_entry_goal(element_src_idx),
-                                weight: lex_w(
-                                    0.0, *result_src_idx, *rule_idx,
-                                ),
+                                weight: lex_w(0.0, *result_src_idx, *rule_idx),
                                 new_state: WpdaState::PrefixDispatch {
                                     pos: _pos,
                                     cur_bp: 0,
@@ -1036,12 +1037,66 @@ pub(crate) fn emit_collection_loop_arm(
 /// FireAction-suppression query (`emit_is_binder_internal_collection_lookup`)
 /// stays a SEPARATE method — it is keyed without a slot and is not a per-slot
 /// field of this record.
+type CollectionSpecKey = (u16, u16, u8);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GeneratedCollectionSpec {
+    open: String,
+    has_synth_paren: bool,
+    close: String,
+    sep: String,
+    min_elements: u8,
+    kv_sep: Option<String>,
+    kv_value_optional: bool,
+    element_src_idx: Option<u16>,
+    close_resumes_via_unwinding: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GeneratedCollectionSpecArm {
+    key: CollectionSpecKey,
+    spec: GeneratedCollectionSpec,
+    first_origin: String,
+}
+
+/// Insert one discovered collection slot into the generated finite map.
+///
+/// A repeated identical discovery is idempotent. A repeated key with a
+/// different value is a generator error rather than a first-match-wins policy:
+/// traversal order must never select parser semantics accidentally. This is
+/// the Rust refinement of `CanonicalDispatchTable.insert_checked`.
+fn insert_collection_spec_arm(
+    arms: &mut Vec<GeneratedCollectionSpecArm>,
+    indices: &mut BTreeMap<CollectionSpecKey, usize>,
+    key: CollectionSpecKey,
+    spec: GeneratedCollectionSpec,
+    origin: String,
+) -> Result<(), String> {
+    if let Some(&index) = indices.get(&key) {
+        let existing = &arms[index];
+        if existing.spec == spec {
+            return Ok(());
+        }
+        return Err(format!(
+            "conflicting generated CollectionSpec for key {key:?}: first from {} as {:?}; \
+             conflicting discovery from {origin} as {spec:?}",
+            existing.first_origin, existing.spec,
+        ));
+    }
+
+    indices.insert(key, arms.len());
+    arms.push(GeneratedCollectionSpecArm { key, spec, first_origin: origin });
+    Ok(())
+}
+
 pub(crate) fn emit_collection_spec_table(
     language: &mettail_ast::language::LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
-    let mut arms = Vec::new();
+    let mut arms: Vec<GeneratedCollectionSpecArm> = Vec::new();
+    let mut indices: BTreeMap<CollectionSpecKey, usize> = BTreeMap::new();
+    let mut conflict: Option<String> = None;
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let result_src_idx = cat_i as u16;
@@ -1055,26 +1110,32 @@ pub(crate) fn emit_collection_spec_table(
             // The close is the SINGLE terminator literal following the `*sep` (")",
             // "<-", "<="); open-ended reps (empty close — ForRow only, gated out)
             // would carry "". Disjoint from collection-literal / binder keys.
-            for (slot_idx, elem_cat, sep, close) in mixfix_rep_slots(rule) {
+            for (slot_idx, elem_cat, sep, close, min_elements) in mixfix_rep_slots(rule) {
                 let close_str = close.first().cloned().unwrap_or_default();
-                let element_src_expr = match lookup_element_src_idx(&elem_cat, categories) {
-                    Some(i) => quote! { Some(#i) },
-                    None => quote! { None },
+                let spec = GeneratedCollectionSpec {
+                    open: String::new(),
+                    has_synth_paren: false,
+                    close: close_str,
+                    sep,
+                    min_elements,
+                    kv_sep: None,
+                    kv_value_optional: false,
+                    element_src_idx: lookup_element_src_idx(&elem_cat, categories),
+                    close_resumes_via_unwinding: true,
                 };
-                arms.push(quote! {
-                    (#result_src_idx, #rule_idx, #slot_idx) => Some(
-                        mettail_prattail::wpda_runtime::CollectionSpec {
-                            open: "",
-                            has_synth_paren: false,
-                            close: #close_str,
-                            sep: #sep,
-                            kv_sep: None,
-                            kv_value_optional: false,
-                            element_src_idx: #element_src_expr,
-                            close_resumes_via_unwinding: true,
-                        }
-                    ),
-                });
+                if conflict.is_none() {
+                    conflict = insert_collection_spec_arm(
+                        &mut arms,
+                        &mut indices,
+                        (result_src_idx, rule_idx, slot_idx),
+                        spec,
+                        format!(
+                            "mixfix repetition in category {cat_i}, rule {rule_i} ({})",
+                            rule.label,
+                        ),
+                    )
+                    .err();
+                }
             }
             let Some(shape) = classify_collection(rule, language) else {
                 // Class-2/3 binder-internal collection slots: one arm per slot
@@ -1082,37 +1143,32 @@ pub(crate) fn emit_collection_spec_table(
                 // via Unwinding (close_resumes_via_unwinding = true).
                 if let Some(bshape) = classify_binder_in(rule, language) {
                     for info in binder_collection_infos(&bshape) {
-                        let close = &info.close;
-                        let sep = &info.separator;
                         let slot_idx = info.slot_idx;
-                        let kv_sep_expr = match &info.key_val_separator {
-                            Some(k) => quote! { Some(#k) },
-                            None => quote! { None },
+                        let spec = GeneratedCollectionSpec {
+                            open: String::new(),
+                            has_synth_paren: false,
+                            close: info.close.clone(),
+                            sep: info.separator.clone(),
+                            min_elements: 0,
+                            kv_sep: info.key_val_separator.clone(),
+                            // Binder-internal slots are never PathMap.
+                            kv_value_optional: false,
+                            element_src_idx: lookup_element_src_idx(&info.elem_cat, categories),
+                            close_resumes_via_unwinding: true,
                         };
-                        let element_src_expr =
-                            match lookup_element_src_idx(&info.elem_cat, categories) {
-                                Some(i) => quote! { Some(#i) },
-                                None => quote! { None },
-                            };
-                        arms.push(quote! {
-                            (#result_src_idx, #rule_idx, #slot_idx) => Some(
-                                mettail_prattail::wpda_runtime::CollectionSpec {
-                                    open: "",
-                                    has_synth_paren: false,
-                                    close: #close,
-                                    sep: #sep,
-                                    kv_sep: #kv_sep_expr,
-                                    // Binder-internal collection slots are never
-                                    // PathMap (`ast/src/types.rs` admits only
-                                    // Vec/HashBag/HashSet/HashMap inline, and
-                                    // `binder.rs` rejects PathMap), so the value
-                                    // is never optional here.
-                                    kv_value_optional: false,
-                                    element_src_idx: #element_src_expr,
-                                    close_resumes_via_unwinding: true,
-                                }
-                            ),
-                        });
+                        if conflict.is_none() {
+                            conflict = insert_collection_spec_arm(
+                                &mut arms,
+                                &mut indices,
+                                (result_src_idx, rule_idx, slot_idx),
+                                spec,
+                                format!(
+                                    "binder collection in category {cat_i}, rule {rule_i} ({})",
+                                    rule.label,
+                                ),
+                            )
+                            .err();
+                        }
                     }
                 }
                 continue;
@@ -1120,38 +1176,43 @@ pub(crate) fn emit_collection_spec_table(
             // Class-5 collection literal rule: single slot at slot_idx=0. The
             // close resumes the enclosing InfixLoop
             // (close_resumes_via_unwinding = false).
-            let open = &shape.open_token;
-            let has_synth_paren = shape.has_synth_paren;
-            let close = &shape.close;
-            let sep = &shape.separator;
-            let kv_sep_expr = match &shape.pair_separator {
-                Some(k) => quote! { Some(#k) },
-                None => quote! { None },
-            };
-            let element_src_expr = match lookup_element_src_idx(&shape.element_cat, categories) {
-                Some(i) => quote! { Some(#i) },
-                None => quote! { None },
-            };
             // Pathmap optional-value (2026-06-27): a Pathmap set-form literal
             // `{| k |}` ≡ `{| k : k |}` (value = key). ONLY PathMap admits an
             // optional per-entry value; HashMap values stay mandatory. Scoped
             // to the declared collection type, NOT a blanket kv change.
             let kv_value_optional = matches!(shape.coll_kind, CollectionType::PathMap);
-            arms.push(quote! {
-                (#result_src_idx, #rule_idx, 0u8) => Some(
-                    mettail_prattail::wpda_runtime::CollectionSpec {
-                        open: #open,
-                        has_synth_paren: #has_synth_paren,
-                        close: #close,
-                        sep: #sep,
-                        kv_sep: #kv_sep_expr,
-                        kv_value_optional: #kv_value_optional,
-                        element_src_idx: #element_src_expr,
-                        close_resumes_via_unwinding: false,
-                    }
-                ),
-            });
+            let spec = GeneratedCollectionSpec {
+                open: shape.open_token.clone(),
+                has_synth_paren: shape.has_synth_paren,
+                close: shape.close.clone(),
+                sep: shape.separator.clone(),
+                min_elements: 0,
+                kv_sep: shape.pair_separator.clone(),
+                kv_value_optional,
+                element_src_idx: lookup_element_src_idx(&shape.element_cat, categories),
+                close_resumes_via_unwinding: false,
+            };
+            if conflict.is_none() {
+                conflict = insert_collection_spec_arm(
+                    &mut arms,
+                    &mut indices,
+                    (result_src_idx, rule_idx, 0),
+                    spec,
+                    format!(
+                        "collection literal in category {cat_i}, rule {rule_i} ({})",
+                        rule.label,
+                    ),
+                )
+                .err();
+            }
         }
+    }
+    if let Some(message) = conflict {
+        return quote! {{
+            compile_error!(#message);
+            let _ = (result_src_idx, rule_idx, slot_idx);
+            None
+        }};
     }
     if arms.is_empty() {
         return quote! {
@@ -1161,9 +1222,46 @@ pub(crate) fn emit_collection_spec_table(
             }
         };
     }
+    let rendered_arms: Vec<TokenStream> = arms
+        .iter()
+        .map(|arm| {
+            let (result_src_idx, rule_idx, slot_idx) = arm.key;
+            let spec = &arm.spec;
+            let open = &spec.open;
+            let has_synth_paren = spec.has_synth_paren;
+            let close = &spec.close;
+            let sep = &spec.sep;
+            let min_elements = spec.min_elements;
+            let kv_sep = match &spec.kv_sep {
+                Some(value) => quote! { Some(#value) },
+                None => quote! { None },
+            };
+            let kv_value_optional = spec.kv_value_optional;
+            let element_src_idx = match spec.element_src_idx {
+                Some(value) => quote! { Some(#value) },
+                None => quote! { None },
+            };
+            let close_resumes_via_unwinding = spec.close_resumes_via_unwinding;
+            quote! {
+                (#result_src_idx, #rule_idx, #slot_idx) => Some(
+                    mettail_prattail::wpda_runtime::CollectionSpec {
+                        open: #open,
+                        has_synth_paren: #has_synth_paren,
+                        close: #close,
+                        sep: #sep,
+                        min_elements: #min_elements,
+                        kv_sep: #kv_sep,
+                        kv_value_optional: #kv_value_optional,
+                        element_src_idx: #element_src_idx,
+                        close_resumes_via_unwinding: #close_resumes_via_unwinding,
+                    }
+                ),
+            }
+        })
+        .collect();
     quote! {
         match (result_src_idx, rule_idx, slot_idx) {
-            #(#arms)*
+            #(#rendered_arms)*
             _ => None,
         }
     }
@@ -1219,7 +1317,7 @@ fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u1
 /// (`"{" ps.*sep("|") "}"`) and binder rules start with a literal / are handled by
 /// their own classifiers, so they classify to non-mixfix or `None` here and never
 /// collide with a rep slot's `(result_src, rule_idx, part_idx)` key.
-fn mixfix_rep_slots(rule: &GrammarRule) -> Vec<(u8, String, String, Vec<String>)> {
+fn mixfix_rep_slots(rule: &GrammarRule) -> Vec<(u8, String, String, Vec<String>, u8)> {
     let Some(info) = super::infix::classify_rule_public(rule) else {
         return Vec::new();
     };
@@ -1228,10 +1326,59 @@ fn mixfix_rep_slots(rule: &GrammarRule) -> Vec<(u8, String, String, Vec<String>)
         .enumerate()
         .filter_map(|(i, part)| {
             part.repetition.as_ref().map(|rep| {
-                (i as u8, part.operand_category.clone(), rep.separator.clone(), rep.close.clone())
+                (
+                    i as u8,
+                    part.operand_category.clone(),
+                    rep.separator.clone(),
+                    rep.close.clone(),
+                    rep.min,
+                )
             })
         })
         .collect()
+}
+
+/// Emit the grammar-derived FIRST-set predicate used by collection entry and
+/// no-separator continuation.  It reuses the same closure computation and
+/// token patterns as ordinary prefix dispatch, so collection control flow
+/// cannot drift from the element parser it is about to invoke.
+pub(crate) fn emit_collection_element_prefix_predicate(
+    language: &mettail_ast::language::LanguageDef,
+    categories: &[String],
+) -> TokenStream {
+    let mut category_arms = Vec::new();
+    for (category_src_idx, category) in categories.iter().enumerate() {
+        let first_arms = super::prefix::first_set_of_category(category, language)
+            .into_iter()
+            .map(|first| {
+                let pattern = first.pattern;
+                match first.extra_guard {
+                    Some(guard) => quote! { #pattern if #guard => true, },
+                    None => quote! { #pattern => true, },
+                }
+            })
+            .collect::<Vec<_>>();
+        let category_src_idx = category_src_idx as u16;
+        category_arms.push(quote! {
+            #category_src_idx => match Some(kind) {
+                #(#first_arms)*
+                _ => false,
+            },
+        });
+    }
+    quote! {
+        #[inline]
+        fn collection_element_can_start(
+            &self,
+            category_src_idx: u16,
+            kind: &mettail_prattail::automata::TokenKind,
+        ) -> bool {
+            match category_src_idx {
+                #(#category_arms)*
+                _ => false,
+            }
+        }
+    }
 }
 
 /// Trigger-ownership soundness (2026-07-02): emit a per-rule lookup that
@@ -1852,12 +1999,14 @@ mod tests {
         let mut lang = empty_lang();
         lang.types.push(mettail_ast::language::LangType {
             name: Ident::new("Proc", Span::call_site()),
+            role: Default::default(),
             native_type: None,
             collection_kind: None,
         });
         // Map's open delimiter is `{` — the shared open token that collides.
         lang.types.push(mettail_ast::language::LangType {
             name: Ident::new("Map", Span::call_site()),
+            role: Default::default(),
             native_type: None,
             collection_kind: Some(CollectionCategory::Map(
                 mettail_ast::language::CollectionDelimiters {
@@ -1924,5 +2073,73 @@ mod tests {
             !fast.contains("Fork"),
             "no-collision fast path must NOT Fork (byte-identical to pre-ROOT-A): {fast}"
         );
+    }
+
+    fn generated_spec(close: &str) -> GeneratedCollectionSpec {
+        GeneratedCollectionSpec {
+            open: String::new(),
+            has_synth_paren: false,
+            close: close.to_string(),
+            sep: ",".to_string(),
+            min_elements: 0,
+            kv_sep: None,
+            kv_value_optional: false,
+            element_src_idx: Some(3),
+            close_resumes_via_unwinding: true,
+        }
+    }
+
+    #[test]
+    fn collection_spec_table_coalesces_identical_duplicate_keys() {
+        let mut arms = Vec::new();
+        let mut indices = BTreeMap::new();
+        let key = (2, 7, 1);
+        insert_collection_spec_arm(
+            &mut arms,
+            &mut indices,
+            key,
+            generated_spec(")"),
+            "first".to_string(),
+        )
+        .expect("first insertion is fresh");
+        insert_collection_spec_arm(
+            &mut arms,
+            &mut indices,
+            key,
+            generated_spec(")"),
+            "duplicate".to_string(),
+        )
+        .expect("an identical duplicate is idempotent");
+
+        assert_eq!(arms.len(), 1, "one key emits exactly one Rust match arm");
+        assert_eq!(indices.get(&key), Some(&0));
+    }
+
+    #[test]
+    fn collection_spec_table_rejects_conflicting_duplicate_keys() {
+        let mut arms = Vec::new();
+        let mut indices = BTreeMap::new();
+        let key = (2, 7, 1);
+        insert_collection_spec_arm(
+            &mut arms,
+            &mut indices,
+            key,
+            generated_spec(")"),
+            "first origin".to_string(),
+        )
+        .expect("first insertion is fresh");
+        let error = insert_collection_spec_arm(
+            &mut arms,
+            &mut indices,
+            key,
+            generated_spec("}"),
+            "second origin".to_string(),
+        )
+        .expect_err("the same key cannot select a different parser specification");
+
+        assert!(error.contains("(2, 7, 1)"));
+        assert!(error.contains("first origin"));
+        assert!(error.contains("second origin"));
+        assert_eq!(arms.len(), 1, "a conflict never mutates the admitted table");
     }
 }

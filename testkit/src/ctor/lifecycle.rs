@@ -30,6 +30,12 @@ fn clone_field_leaf(spec: &FieldSpec) -> FieldSpec {
         FieldSpec::CollLit { kind, elem } => {
             FieldSpec::CollLit { kind: kind.clone(), elem: elem.clone() }
         },
+        FieldSpec::NativeZipper { storage, access, key, value } => FieldSpec::NativeZipper {
+            storage: *storage,
+            access: *access,
+            key: key.clone(),
+            value: value.clone(),
+        },
         FieldSpec::Scope1 { binder, body } => FieldSpec::Scope1 {
             binder: binder.clone(),
             body: body.clone(),
@@ -82,6 +88,20 @@ impl PartialEq for FieldSpec {
                     FieldSpec::CollLit { kind: bk, elem: be },
                 ) => return ak == bk && ae == be,
                 (
+                    FieldSpec::NativeZipper {
+                        storage: as_,
+                        access: aa,
+                        key: ak,
+                        value: av,
+                    },
+                    FieldSpec::NativeZipper {
+                        storage: bs,
+                        access: ba,
+                        key: bk,
+                        value: bv,
+                    },
+                ) => return as_ == bs && aa == ba && ak == bk && av == bv,
+                (
                     FieldSpec::Scope1 { binder: ab, body: ad },
                     FieldSpec::Scope1 { binder: bb, body: bd },
                 )
@@ -119,6 +139,12 @@ impl fmt::Debug for FieldSpec {
             },
             FieldSpec::CollLit { kind, elem } => {
                 write!(formatter, "CollLit {{ kind: {kind:?}, elem: {elem:?} }}")?;
+            },
+            FieldSpec::NativeZipper { storage, access, key, value } => {
+                write!(
+                    formatter,
+                    "NativeZipper {{ storage: {storage:?}, access: {access:?}, key: {key:?}, value: {value:?} }}",
+                )?;
             },
             FieldSpec::Scope1 { binder, body } => {
                 write!(formatter, "Scope1 {{ binder: {binder:?}, body: {body:?} }}")?;

@@ -12,12 +12,16 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::gen::capture::capture_layout;
+use crate::gen::capture::{field_layout, FieldSlotSource};
 use crate::gen::native::has_native_type;
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
+use crate::gen::term_ops::subst::collect_category_variants;
 use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::type_expr_walk::terminal_base;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use crate::gen::{
+    category_emits_implicit_var, generate_literal_label, generate_var_label, is_literal_rule,
+    is_var_rule,
+};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     grammar_shapes::{classify_simple_projection_shape, classify_unary_prefix_shape},
@@ -643,7 +647,7 @@ fn generate_display_visit_helper(
 
     // Auto-generated Var variant
     let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
-    if !has_var_rule {
+    if !has_var_rule && category_emits_implicit_var(category, language) {
         variant_arms.push(generate_engine_auto_var_arm(category));
     }
 
@@ -1328,8 +1332,60 @@ fn is_sigil_prefix_operand(rule: &GrammarRule, param: &str) -> bool {
     // Leading sigil terminal immediately followed by this operand param.
     matches!(
         (sp.first(), sp.get(1)),
-        (Some(SyntaxExpr::Literal(_)), Some(SyntaxExpr::Param(p))) if p.to_string() == param
+        (Some(SyntaxExpr::Literal(sigil)), Some(SyntaxExpr::Param(p)))
+            if sigil == "@" && p.to_string() == param
     )
+}
+
+/// A syntax item whose generated display operation emits exactly one captured surface
+/// value. These items need an explicit lexical boundary when adjacent because either
+/// value may end or begin with an identifier character. Pattern operations are excluded:
+/// their separator-aware generator owns the boundaries of a possibly-empty sequence.
+fn is_direct_surface_capture(expr: Option<&SyntaxExpr>) -> bool {
+    matches!(
+        expr,
+        Some(SyntaxExpr::Param(_))
+            | Some(SyntaxExpr::TokenKind { .. })
+            | Some(SyntaxExpr::GuestBody { .. })
+    )
+}
+
+/// Compute the minimum spaces needed around one literal to preserve lexer token
+/// boundaries. Identifier-shaped literals must be separated from captured values and
+/// collection operations on either side; punctuation retains the historical canonical
+/// spacing only when it separates two direct captures.
+fn literal_surface_spacing(
+    literal: &str,
+    previous: Option<&SyntaxExpr>,
+    next: Option<&SyntaxExpr>,
+    is_member_call_pattern: bool,
+) -> (&'static str, &'static str) {
+    if is_member_call_pattern && literal == "." {
+        return ("", "");
+    }
+
+    let previous_capture = is_direct_surface_capture(previous);
+    let next_capture = is_direct_surface_capture(next);
+    let previous_op = matches!(previous, Some(SyntaxExpr::Op(_)));
+    let next_op = matches!(next, Some(SyntaxExpr::Op(_)));
+    let is_word = !literal.is_empty()
+        && literal.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !literal.chars().next().is_some_and(char::is_numeric);
+
+    if is_word {
+        (
+            if previous_capture || previous_op {
+                " "
+            } else {
+                ""
+            },
+            if next_capture || next_op { " " } else { "" },
+        )
+    } else if previous_capture && next_capture {
+        (" ", " ")
+    } else {
+        ("", "")
+    }
 }
 
 /// Whether a term whose top constructor is `rule` must be wrapped `(…)` when it
@@ -1441,7 +1497,7 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
         }
     }
     if sigil_operand_cats.is_empty() {
-        return quote! {};
+        return generate_sigil_operand_wrap_gate(language);
     }
 
     let impls: Vec<TokenStream> = language
@@ -1450,7 +1506,7 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
         .filter(|t| sigil_operand_cats.contains(&t.name.to_string()))
         .map(|lang_type| {
             let cat = &lang_type.name;
-            let wrap_arms: Vec<TokenStream> = language
+            let wrap_rules: Vec<&GrammarRule> = language
                 .terms
                 .iter()
                 .filter(|rule| rule.category.to_string() == cat.to_string())
@@ -1461,6 +1517,13 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
                     rule_is_sigil_operand_wrap_shape(rule)
                         || rule_projection_source_is_keyword_led_collection(rule, language)
                 })
+                .collect();
+            let covered_labels: BTreeSet<String> = wrap_rules
+                .iter()
+                .map(|rule| rule.label.to_string())
+                .collect();
+            let wrap_arms: Vec<TokenStream> = wrap_rules
+                .into_iter()
                 .map(|rule| {
                     let label = &rule.label;
                     // ★ 2026-07-27: the wrap is conditioned on the RENDERED surface, not on the
@@ -1502,6 +1565,11 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
                     }
                 })
                 .collect();
+            let fallback = if generated_arms_cover_category(cat, language, &covered_labels) {
+                quote! {}
+            } else {
+                quote! { _ => false, }
+            };
             quote! {
                 impl #cat {
                     /// Grammar-derived: `true` iff this term, placed BARE as the
@@ -1519,7 +1587,7 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
                     pub fn __at_sigil_operand_needs_wrap(&self) -> bool {
                         match self {
                             #(#wrap_arms)*
-                            _ => false,
+                            #fallback
                         }
                     }
                 }
@@ -1537,7 +1605,15 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
         .iter()
         .map(|lang_type| {
             let cat = &lang_type.name;
-            let arms = self_delimiting_sigil_arms_for(cat, language);
+            let arm_rows = self_delimiting_sigil_arms_for(cat, language);
+            let covered_labels: BTreeSet<String> =
+                arm_rows.iter().map(|(label, _)| label.clone()).collect();
+            let arms = arm_rows.into_iter().map(|(_, arm)| arm);
+            let fallback = if generated_arms_cover_category(cat, language, &covered_labels) {
+                quote! {}
+            } else {
+                quote! { _ => false, }
+            };
             quote! {
                 impl #cat {
                     /// Grammar-derived: `true` iff this term's RENDERED surface begins with a
@@ -1567,7 +1643,7 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
                     pub fn __renders_sigil_led_primary(&self) -> bool {
                         match self {
                             #(#arms)*
-                            _ => false,
+                            #fallback
                         }
                     }
                 }
@@ -1575,8 +1651,20 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
         })
         .collect();
 
-    let wrap_gate = generate_sigil_operand_wrap_gate(language, &sigil_operand_cats);
+    let wrap_gate = generate_sigil_operand_wrap_gate(language);
     quote! { #(#impls)* #(#terminal_leading_impls)* #wrap_gate }
+}
+
+/// Whether an emitted constructor-arm set covers the shared generated enum
+/// census exactly enough to omit a wildcard fallback.
+fn generated_arms_cover_category(
+    category: &syn::Ident,
+    language: &LanguageDef,
+    covered_labels: &BTreeSet<String>,
+) -> bool {
+    collect_category_variants(category, language)
+        .iter()
+        .all(|variant| covered_labels.contains(&variant.label().to_string()))
 }
 
 /// ★ THE SIGIL-OPERAND WRAP GATE — the constructor-surface counterpart of
@@ -1605,16 +1693,10 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
 /// `category`, applies the SAME predicate `Display` applies, and returns the composed `@…`
 /// spelling. `languages/tests/sigil_operand_wrap_agreement.rs` then requires that spelling to
 /// parse and to be a `Display` fixpoint.
-fn generate_sigil_operand_wrap_gate(
-    language: &LanguageDef,
-    sigil_operand_cats: &HashSet<String>,
-) -> TokenStream {
+fn generate_sigil_operand_wrap_gate(language: &LanguageDef) -> TokenStream {
     use crate::gen::syntax::synonymy::{
         nonground_filler_surfaces, nullary_filler_surfaces, sample_surface_for,
     };
-    if sigil_operand_cats.is_empty() {
-        return quote! {};
-    }
     // ★ TWO FILLER REGIMES, because ONE of them cannot express every shape.
     //
     // `nullary_filler_surfaces` exercises closed values, while the VARIABLE regime keeps each
@@ -1824,38 +1906,51 @@ fn generate_sigil_operand_wrap_gate(
     // `Cat::Label(Arc::new(f0), …)` with each field a leaf, except `lead` when supplied.
     // `None` for any rule whose fields are not all plain `Simple { Base }` with a leafable
     // category — a collection, binder, capture or optional slot has no single child to construct.
-    let ctor_expr =
-        |rule: &GrammarRule, lead: Option<(usize, TokenStream)>| -> Option<TokenStream> {
-            let cat = quote::format_ident!("{}", rule.category.to_string());
-            let label = &rule.label;
-            // A UNIT variant is a rule whose whole surface is literals — the same test
-            // `nullary_filler_surfaces` uses. An absent `term_context` is NOT sufficient: an FLT rule
-            // (`PFlt`) carries a capture instead of a term context and still has fields, and naming it
-            // as a unit variant does not compile.
-            let is_nullary_surface = rule.syntax_pattern.as_ref().is_some_and(|sp| {
-                !sp.is_empty() && sp.iter().all(|e| matches!(e, SyntaxExpr::Literal(_)))
-            });
-            let Some(tc) = rule.term_context.as_ref().filter(|tc| !tc.is_empty()) else {
-                return is_nullary_surface.then(|| quote! { #cat::#label });
-            };
-            let mut fields: Vec<TokenStream> = Vec::with_capacity(tc.len());
-            for (i, param) in tc.iter().enumerate() {
-                let TermParam::Simple { ty: TypeExpr::Base(field_cat), .. } = param else {
-                    return None;
-                };
-                if let Some((_, expr)) = lead.as_ref().filter(|(j, _)| *j == i) {
-                    fields.push(quote! { std::sync::Arc::new(#expr) });
-                    continue;
-                }
-                let field_cat = field_cat.to_string();
-                if !leaf_cats.contains_key(&field_cat) {
-                    return None;
-                }
-                let leaf_fn = quote::format_ident!("__sigil_leaf_{}", field_cat);
-                fields.push(quote! { std::sync::Arc::new(#leaf_fn()) });
+    let ctor_expr = |rule: &GrammarRule,
+                     lead: Option<(usize, TokenStream)>|
+     -> Option<TokenStream> {
+        let cat = quote::format_ident!("{}", rule.category.to_string());
+        let label = &rule.label;
+        // A UNIT variant is a rule whose whole surface is literals — the same test
+        // `nullary_filler_surfaces` uses. An absent `term_context` is NOT sufficient: an FLT rule
+        // (`PFlt`) carries a capture instead of a term context and still has fields, and naming it
+        // as a unit variant does not compile.
+        let is_nullary_surface = rule.syntax_pattern.as_ref().is_some_and(|sp| {
+            !sp.is_empty() && sp.iter().all(|e| matches!(e, SyntaxExpr::Literal(_)))
+        });
+        let empty_context = Vec::new();
+        let context = rule.term_context.as_ref().unwrap_or(&empty_context);
+        let layout = field_layout(context, rule.syntax_pattern.as_deref());
+        if layout.slots.is_empty() {
+            return is_nullary_surface.then(|| quote! { #cat::#label });
+        }
+        let mut fields: Vec<TokenStream> = Vec::with_capacity(layout.slots.len());
+        for (i, slot) in layout.slots.iter().enumerate() {
+            if slot.optional {
+                return None;
             }
-            Some(quote! { #cat::#label(#(#fields),*) })
-        };
+            let FieldSlotSource::Param(TermParam::Simple { ty: TypeExpr::Base(field_cat), .. }) =
+                &slot.source
+            else {
+                // Captures, collections, predicates, guest bodies and
+                // scopes have no honest single-leaf witness for this
+                // generated gate. Report the row as uncovered instead of
+                // guessing a constructor argument.
+                return None;
+            };
+            if let Some((_, expr)) = lead.as_ref().filter(|(j, _)| *j == i) {
+                fields.push(quote! { std::sync::Arc::new(#expr) });
+                continue;
+            }
+            let field_cat = field_cat.to_string();
+            if !leaf_cats.contains_key(&field_cat) {
+                return None;
+            }
+            let leaf_fn = quote::format_ident!("__sigil_leaf_{}", field_cat);
+            fields.push(quote! { std::sync::Arc::new(#leaf_fn()) });
+        }
+        Some(quote! { #cat::#label(#(#fields),*) })
+    };
 
     // One leaf constructor per leafable category. A leaf is the ONE place a surface is parsed,
     // and its surface is a single identifier (or, for a literal-typed category, that category's
@@ -1890,19 +1985,26 @@ fn generate_sigil_operand_wrap_gate(
                 .filter_map(|r| {
                     let expr = ctor_expr(r, None)?;
                     let label = r.label.to_string();
-                    Some(quote! { #label => #expr, })
+                    Some(quote! { #label => Some(#expr), })
                 })
                 .collect();
+            let selection = if arms.is_empty() {
+                quote! { None }
+            } else {
+                quote! {
+                    match label {
+                        #(#arms)*
+                        _ => None,
+                    }
+                }
+            };
             quote! {
                 #[allow(dead_code, non_snake_case)]
                 fn #fn_ident(label: &str) -> Option<#cat_ident> {
                     if label.is_empty() {
                         return Some(#leaf_fn());
                     }
-                    Some(match label {
-                        #(#arms)*
-                        _ => return None,
-                    })
+                    #selection
                 }
             }
         })
@@ -1923,12 +2025,7 @@ fn generate_sigil_operand_wrap_gate(
                 .iter()
                 .filter(|r| r.category.to_string() == *cat)
                 .filter_map(|r| {
-                    let lead_idx = leading_operand_field_index(r)?;
-                    let TermParam::Simple { ty: TypeExpr::Base(lead_cat), .. } =
-                        r.term_context.as_ref()?.get(lead_idx)?
-                    else {
-                        return None;
-                    };
+                    let (lead_idx, lead_cat) = leading_operand_field(r)?;
                     let lead_cat = lead_cat.to_string();
                     if !leaf_cats.contains_key(&lead_cat) {
                         return None;
@@ -1936,19 +2033,29 @@ fn generate_sigil_operand_wrap_gate(
                     let lead_at = quote::format_ident!("__sigil_term_at_{}", lead_cat);
                     let expr = ctor_expr(r, Some((lead_idx, quote! { #lead_at(lead_label)? })))?;
                     let label = r.label.to_string();
-                    Some(quote! { #label => #expr, })
+                    Some(quote! { #label => Some(#expr), })
                 })
                 .collect();
+            let selection = if arms.is_empty() {
+                quote! {
+                    let _ = op_label;
+                    None
+                }
+            } else {
+                quote! {
+                    match op_label {
+                        #(#arms)*
+                        _ => None,
+                    }
+                }
+            };
             quote! {
                 #[allow(dead_code, non_snake_case)]
                 fn #fn_ident(op_label: &str, lead_label: &str) -> Option<#cat_ident> {
                     if lead_label.is_empty() {
                         return #at_fn(op_label);
                     }
-                    Some(match op_label {
-                        #(#arms)*
-                        _ => return None,
-                    })
+                    #selection
                 }
             }
         })
@@ -1999,14 +2106,7 @@ fn generate_sigil_operand_wrap_gate(
             ) {
                 continue;
             }
-            let Some(lead_idx) = leading_operand_field_index(op_rule) else {
-                continue;
-            };
-            let Some(TermParam::Simple { ty: TypeExpr::Base(lead_cat), .. }) = op_rule
-                .term_context
-                .as_ref()
-                .and_then(|tc| tc.get(lead_idx))
-            else {
+            let Some((_lead_idx, lead_cat)) = leading_operand_field(op_rule) else {
                 continue;
             };
             let lead_cat = lead_cat.to_string();
@@ -2097,6 +2197,7 @@ fn generate_sigil_operand_wrap_gate(
             op_label: &str,
             lead_label: &str,
         ) -> Option<String> {
+            let _ = (op_label, lead_label);
             match operand_category {
                 #(#frame_surface_arms)*
                 _ => None,
@@ -2140,26 +2241,41 @@ fn generate_sigil_operand_wrap_gate(
 /// projection, and for any rule whose leading `Param` is not a plain `Simple { Base }` constructor
 /// field (a collection or binder slot has no single child to recurse into).
 fn leading_operand_field_index(rule: &GrammarRule) -> Option<usize> {
+    leading_operand_field(rule).map(|(index, _)| index)
+}
+
+/// The syntax-ordered constructor slot and category of an operand-leading
+/// rule. This is derived from the same complete layout used for enum fields and
+/// WPDA actions, so an interleaved token capture cannot shift the index.
+fn leading_operand_field(rule: &GrammarRule) -> Option<(usize, &syn::Ident)> {
     let sp = rule.syntax_pattern.as_ref()?;
     let tc = rule.term_context.as_ref()?;
     let SyntaxExpr::Param(lead) = sp.first()? else {
         return None;
     };
     let lead = lead.to_string();
-    // Constructor fields are the term-context params in declaration order; find the leading one
-    // and require it to be a plain boxed category field.
-    let idx = tc
+    let layout = field_layout(tc, Some(sp));
+    let (idx, slot) = layout
+        .slots
         .iter()
-        .position(|p| matches!(p, TermParam::Simple { name, .. } if *name == lead))?;
-    match tc.get(idx) {
-        Some(TermParam::Simple { ty: TypeExpr::Base(_), .. }) => Some(idx),
+        .enumerate()
+        .find(|(_, slot)| slot.name == lead)?;
+    if slot.optional {
+        return None;
+    }
+    match &slot.source {
+        FieldSlotSource::Param(TermParam::Simple { ty: TypeExpr::Base(category), .. }) => {
+            Some((idx, category))
+        },
         _ => None,
     }
 }
 
-/// The number of constructor fields `rule` declares (its term-context arity).
+/// The number of syntax-ordered fields in the generated constructor.
 fn constructor_field_count(rule: &GrammarRule) -> usize {
-    rule.term_context.as_ref().map(|tc| tc.len()).unwrap_or(0)
+    field_layout(rule.term_context.as_deref().unwrap_or(&[]), rule.syntax_pattern.as_deref())
+        .slots
+        .len()
 }
 
 /// ★ THE `__renders_sigil_led_primary` ARMS, and why this predicate has to exist.
@@ -2230,7 +2346,10 @@ fn constructor_field_count(rule: &GrammarRule) -> usize {
 ///   @@Nil!(Nil).get(Nil)   PARSES     POutput …     n "!" …    operand-leading, bracket-closed
 ///   @-Nil.get(Nil)         REJECTS    NegProc       "-" a      SAME-category unary prefix  ✗
 /// ```
-fn self_delimiting_sigil_arms_for(cat: &syn::Ident, language: &LanguageDef) -> Vec<TokenStream> {
+fn self_delimiting_sigil_arms_for(
+    cat: &syn::Ident,
+    language: &LanguageDef,
+) -> Vec<(String, TokenStream)> {
     language
         .terms
         .iter()
@@ -2256,9 +2375,11 @@ fn self_delimiting_sigil_arms_for(cat: &syn::Ident, language: &LanguageDef) -> V
                 // The rule spells its own opening sigil: the surface begins with it.
                 // A NULLARY constructor is a unit variant, so it takes no `(..)` pattern.
                 SyntaxExpr::Literal(_) if constructor_field_count(rule) == 0 => {
-                    Some(quote! { #cat::#label => true, })
+                    Some((label.to_string(), quote! { #cat::#label => true, }))
                 },
-                SyntaxExpr::Literal(_) => Some(quote! { #cat::#label(..) => true, }),
+                SyntaxExpr::Literal(_) => {
+                    Some((label.to_string(), quote! { #cat::#label(..) => true, }))
+                },
                 // Operand-leading: the surface begins wherever the leading operand's does.
                 SyntaxExpr::Param(_) => {
                     let idx = leading_operand_field_index(rule)?;
@@ -2271,9 +2392,12 @@ fn self_delimiting_sigil_arms_for(cat: &syn::Ident, language: &LanguageDef) -> V
                             }
                         })
                         .collect();
-                    Some(quote! {
-                        #cat::#label(#(#binds),*) => __lead.__renders_sigil_led_primary(),
-                    })
+                    Some((
+                        label.to_string(),
+                        quote! {
+                            #cat::#label(#(#binds),*) => __lead.__renders_sigil_led_primary(),
+                        },
+                    ))
                 },
                 _ => None,
             }
@@ -2973,116 +3097,6 @@ pub(crate) fn flt_delimiters_for(
     (open, close)
 }
 
-/// L9-3: linear Display arm for a capture-bearing rule. Fields are bound in
-/// `capture_layout` order (identical to the enum definition and the walker
-/// constructor), and each syntax position prints in encounter order separated
-/// by a single space — a token's captured text prints verbatim, so re-lexing
-/// the printed form yields the same tokens (`parse(display(t)) == t`).
-fn generate_capture_display_arm(
-    rule: &GrammarRule,
-    syntax_pattern: &[SyntaxExpr],
-    term_context: &[TermParam],
-) -> TokenStream {
-    let category = &rule.category;
-    let label = &rule.label;
-    let layout = capture_layout(term_context, syntax_pattern)
-        .expect("generate_capture_display_arm requires a capture-bearing rule");
-
-    // Pattern bindings in variant-field order (non-scope fields, then Scope).
-    let mut pats: Vec<TokenStream> = Vec::new();
-    for f in &layout.non_scope {
-        let name = format_ident!("{}", f.name);
-        pats.push(quote! { #name });
-    }
-    if layout.scope.is_some() {
-        pats.push(quote! { _scope });
-    }
-
-    // Resolve a simple param's base category (for a Display recursion task).
-    let simple_cat = |name: &str| -> Option<syn::Ident> {
-        term_context.iter().find_map(|p| match p {
-            TermParam::Simple { name: n, ty: TypeExpr::Base(cat) } if n.to_string() == name => {
-                Some(cat.clone())
-            },
-            _ => None,
-        })
-    };
-
-    let mut forward_ops: Vec<TokenStream> = Vec::new();
-    let mut emitted = false;
-    for expr in syntax_pattern {
-        // A single separating space between adjacent printed positions.
-        let space = if emitted {
-            quote! { stack.push(DisplayTask::WriteString(" ".to_string())); }
-        } else {
-            quote! {}
-        };
-        match expr {
-            SyntaxExpr::Literal(s) => {
-                forward_ops.push(space);
-                forward_ops.push(quote! {
-                    stack.push(DisplayTask::WriteString(#s.to_string()));
-                });
-                emitted = true;
-            },
-            SyntaxExpr::TokenKind { name, bind } => {
-                forward_ops.push(space);
-                let ident = bind
-                    .as_ref()
-                    .map(|b| format_ident!("{}", b.to_string()))
-                    .unwrap_or_else(|| format_ident!("__tok_{}", name));
-                // The captured token's text prints verbatim (bound `&String`).
-                forward_ops.push(quote! {
-                    stack.push(DisplayTask::WriteString(#ident.clone()));
-                });
-                emitted = true;
-            },
-            SyntaxExpr::GuestBody { open, close, bind } => {
-                forward_ops.push(space);
-                let field = format_ident!("{}", bind.to_string());
-                // Reconstruct the guest region: `<tag><open_delim><body_src>
-                // <close_delim>`. `body_src` already carries the `${…}` holes
-                // verbatim; the delimiters (derived from the FLT opener/closer
-                // kind names) re-lex to the same opener/closer kinds, so the
-                // printed form round-trips.
-                let (open_delim, close_delim) =
-                    flt_delimiters_for(&open.to_string(), &close.to_string());
-                forward_ops.push(quote! {
-                    stack.push(DisplayTask::WriteString(format!(
-                        "{}{}{}{}",
-                        #field.tag, #open_delim, #field.body_src, #close_delim,
-                    )));
-                });
-                emitted = true;
-            },
-            SyntaxExpr::Param(id) => {
-                if let Some(cat) = simple_cat(&id.to_string()) {
-                    forward_ops.push(space);
-                    let task = format_ident!("Display{}", cat);
-                    let field = format_ident!("{}", id.to_string());
-                    forward_ops.push(quote! {
-                        stack.push(DisplayTask::#task(&**#field as *const _, 0));
-                    });
-                    emitted = true;
-                }
-                // Abstraction binder/body params fold into the trailing Scope
-                // (bound `_scope`); a capture+binder rule is not exercised by
-                // any grammar, and its Scope body render is deferred.
-            },
-            SyntaxExpr::Op(_) => {
-                // Sep/Zip/Map/Opt never co-occur with a capture in one rule.
-            },
-        }
-    }
-
-    forward_ops.reverse();
-    quote! {
-        #category::#label(#(#pats),*) => {
-            #(#forward_ops)*
-        }
-    }
-}
-
 fn generate_engine_syntax_pattern_arm(
     rule: &GrammarRule,
     syntax_pattern: &[SyntaxExpr],
@@ -3139,14 +3153,11 @@ fn generate_engine_syntax_pattern_arm_inner(
         ] if dot == "." && open == "(" && separator == "," && close == ")"
     );
 
-    // L9-3 (ROUND-TRIP-CRITICAL): a rule with a `v@Tok` capture is never an
-    // infix Pratt operator — it renders LINEARLY. Bind fields in
-    // `capture_layout` order (matching the enum) and print each syntax
-    // position (literal / captured token text / param) left-to-right, space
-    // separated, so `parse(display(t)) == t`.
-    if capture_layout(term_context, syntax_pattern).is_some() {
-        return generate_capture_display_arm(rule, syntax_pattern, term_context);
-    }
+    // Capture-bearing rules use this same stack-safe syntax walk.  Token-text
+    // and guest-body positions are ordinary surface positions, while
+    // `field_layout` below supplies the exact constructor-field order.  Keeping
+    // captures on a separate renderer used to discard every `Sep`/`Opt`/`Map`
+    // operation in a capture-bearing rule.
 
     // Check if this rule is an infix/postfix/mixfix operator
     let infix_info = bp_lookup.infix.get(&label_str);
@@ -3253,6 +3264,10 @@ fn generate_engine_syntax_pattern_arm_inner(
     // Threaded into `generate_engine_pattern_op` so the `#opt(...)` inner
     // bindings can skip the Arc-deref map for `Option<BehavioralPred>`.
     let mut guard_params: HashSet<String> = HashSet::new();
+    // Builtin `Ident` parameters are exact token-text leaves backed by
+    // `String`, including inside an optional group.  They have no `Arc`
+    // layer to strip when display borrows the present value.
+    let mut token_text_params: HashSet<String> = HashSet::new();
 
     // Opt-Group: the shared stack-safe leaf iterator makes inner params
     // visible with the same declaration order as top-level params. Display
@@ -3262,6 +3277,14 @@ fn generate_engine_syntax_pattern_arm_inner(
             TermParamLeafKind::Simple { name, ty, .. } => {
                 param_names.push(name.to_string());
                 param_types.insert(name.to_string(), ty);
+                if matches!(
+                    ty,
+                    TypeExpr::Base(ident)
+                        if mettail_ast::grammar::NonTerminalKind::classify(&ident.to_string())
+                            == mettail_ast::grammar::NonTerminalKind::Ident
+                ) {
+                    token_text_params.insert(name.to_string());
+                }
             },
             TermParamLeafKind::Abstraction { binder, body, .. } => {
                 has_abstraction = true;
@@ -3418,107 +3441,26 @@ fn generate_engine_syntax_pattern_arm_inner(
     let mut forward_ops: Vec<TokenStream> = Vec::new();
 
     for (i, expr) in syntax_pattern.iter().enumerate() {
+        if i > 0
+            && is_direct_surface_capture(syntax_pattern.get(i - 1))
+            && is_direct_surface_capture(Some(expr))
+        {
+            forward_ops.push(quote! {
+                stack.push(DisplayTask::WriteString(" ".to_string()));
+            });
+        }
         match expr {
             SyntaxExpr::Literal(s) => {
-                let next_param = syntax_pattern
-                    .get(i + 1)
-                    .map(|e| matches!(e, SyntaxExpr::Param(_)));
-                let prev_param =
-                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
-                // Roundtrip fix (2026-07-01): a pattern-op element
-                // (`SyntaxExpr::Op` — a repeated-with-separator `bs.*sep("&")`,
-                // or a `#map`/`#zip` chain) emits PARAM VALUES as its leading /
-                // trailing tokens, and those values can be identifiers. For the
-                // WORD-adjacency spacing decision below (does a keyword-literal
-                // risk glomming with an adjacent emitted identifier?), an `Op`
-                // neighbour is therefore exactly as word-adjacent as a bare
-                // `Param`. Treat them uniformly.
-                //
-                // Bug fixed: `ForRowWhere = b "&" bs.*sep("&") "where" cond`
-                // displayed `<a>where <cond>` — no space BEFORE the `where`
-                // keyword — because the element preceding `"where"` is an `Op`
-                // (`bs.*sep("&")`), not a `Param`, so the old `prev_param` guard
-                // was false and the leading space was dropped. The result
-                // `@Nil <= @Nil&awhere error` then re-lexes `awhere` as ONE
-                // identifier (the lexer's `is_alphanumeric()||'_'` keyword rule)
-                // and fails to parse — a Display/parse roundtrip break surfaced
-                // nondeterministically by `arb_*` (a persistent/plain `where`
-                // row with a var immediately before `where`). Only ADDS a space
-                // where a word-literal abuts a param-value-emitting neighbour, so
-                // it can never introduce a glom; it never removes a space.
-                //
-                // NOTE: the `next_word_adjacent` (SUFFIX) half only concerns a
-                // word-literal FOLLOWED by an `Op` whose first emitted token is
-                // an identifier. That case is rare and, when the Op's first token
-                // is a delimiter (`(`,`{`,`[`) rather than an identifier, adding a
-                // trailing space is unnecessary (harmless but perturbs canonical
-                // display). We restrict the ADDED behavior to the PREFIX side (a
-                // word-literal PRECEDED by an Op) which is the exact `where`-glom
-                // bug; the suffix side stays as the pre-existing behavior.
-                let prev_op_adjacent =
-                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Op(_)));
-                // 2026-07-24: the SUFFIX twin of `prev_op_adjacent` — a
-                // word-literal immediately FOLLOWED by an `Op` (see the
-                // `is_word && (prev_op_adjacent || next_op_adjacent)` arm below).
-                let next_op_adjacent = matches!(syntax_pattern.get(i + 1), Some(SyntaxExpr::Op(_)));
-                // Stage 3.3 (2026-04-30): broaden `is_word` to mirror the
-                // lexer's keyword-recognition rule
-                // (`prattail/src/lexer.rs:523`): `is_alphanumeric() || '_'`,
-                // not just `is_alphabetic()`. A literal like `"r2d2"` IS an
-                // identifier-like keyword to the lexer; failing to space it
-                // from adjacent ident-char text would re-lex into a single
-                // glommed Ident. Guard against empty literals (vacuously
-                // true) and digit-leading literals (those parse as Integer,
-                // not as keywords).
-                let is_word = !s.is_empty()
-                    && s.chars().all(|c| c.is_alphanumeric() || c == '_')
-                    && !s.chars().next().unwrap().is_numeric();
-                let (prefix, suffix) = if is_member_call_pattern && s == "." {
-                    ("", "")
-                } else if prev_param && next_param.unwrap_or(false) {
-                    (" ", " ")
-                } else if next_param == Some(true) && is_word {
-                    // Word-literal FOLLOWED by a param (existing behavior: space
-                    // after). PLUS: when the PRECEDING element is an `Op`
-                    // (repeated-param that emits identifier values), also add a
-                    // LEADING space — the exact `where`-glom fix (`bs.*sep("&")
-                    // "where" cond`). This is the ONLY added case; it strictly
-                    // adds a space (never removes one) between an identifier-
-                    // emitting Op and a following keyword.
-                    if prev_op_adjacent {
-                        (" ", " ")
-                    } else {
-                        ("", " ")
-                    }
-                } else if is_word && (prev_op_adjacent || next_op_adjacent) {
-                    // Word-literal keyword ABUTTING an `Op` on either side. An
-                    // `Op` emits PARAM VALUES, which can be identifiers, so a
-                    // word-literal touching one gloms exactly as it would touch
-                    // a bare `Param`.
-                    //
-                    // - PREFIX half (`prev_op_adjacent`, 2026-07-01): a trailing
-                    //   keyword after a list, e.g. ForRow's
-                    //   `bs.*sep("&") "where" cond` → `…&a where …`, not
-                    //   `…&awhere …`.
-                    // - SUFFIX half (`next_op_adjacent`, 2026-07-24): a LEADING
-                    //   keyword before a list, e.g. PNew's
-                    //   `"new" xs.*sep(",") "in" p` → `new x in …`, not
-                    //   `newx in …` (which re-lexes as the single Ident `newx`
-                    //   and breaks the Display→parse roundtrip). This completes
-                    //   the symmetry the 2026-07-01 fix deliberately deferred as
-                    //   "rare"; `PNew` is the only word-literal-before-`Op`
-                    //   production in the repo, so no other rule's canonical
-                    //   display moves.
-                    //
-                    // Byte-identical to the previous `(" ", "")` whenever
-                    // `next_op_adjacent` is false; it only ever ADDS a space.
-                    (
-                        if prev_op_adjacent { " " } else { "" },
-                        if next_op_adjacent { " " } else { "" },
-                    )
-                } else {
-                    ("", "")
-                };
+                // Compute lexical boundaries symmetrically. This covers both a
+                // captured base followed by a builder keyword (`Base Types`) and
+                // repeated captures adjacent to a keyword (`... where cond`)
+                // without changing member-call punctuation.
+                let (prefix, suffix) = literal_surface_spacing(
+                    s,
+                    syntax_pattern.get(i.wrapping_sub(1)).filter(|_| i > 0),
+                    syntax_pattern.get(i + 1),
+                    is_member_call_pattern,
+                );
                 let raw = format!("{}{}{}", prefix, s, suffix);
                 // Roundtrip fix (2026-07-01): a MANDATORY separator literal that
                 // immediately precedes a matching `.*sep(S)` rest-list which is the
@@ -3759,23 +3701,56 @@ fn generate_engine_syntax_pattern_arm_inner(
                     }
                 }
             },
-            SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
-                // L9-3/L9-4: capture positions render via the dedicated
-                // `generate_capture_display_arm` (a capture-bearing rule is
-                // routed there before this general renderer), so this arm is
-                // never reached for them.
+            SyntaxExpr::TokenKind { name, bind } => {
+                let field = bind
+                    .as_ref()
+                    .map(|bound| format_ident!("{}", bound.to_string()))
+                    .unwrap_or_else(|| format_ident!("__tok_{}", name));
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#field.clone()));
+                });
+            },
+            SyntaxExpr::GuestBody { open, close, bind, .. } => {
+                let field = format_ident!("{}", bind.to_string());
+                let (open_delim, close_delim) =
+                    flt_delimiters_for(&open.to_string(), &close.to_string());
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(if !#field.open_src.is_empty()
+                        && !#field.close_src.is_empty()
+                    {
+                        format!("{}{}{}", #field.open_src, #field.body_src, #field.close_src)
+                    } else {
+                        format!(
+                            "{}{}{}{}",
+                            #field.tag, #open_delim, #field.body_src, #close_delim,
+                        )
+                    }));
+                });
             },
             SyntaxExpr::Op(op) => {
-                // Stage 3.3 (2026-04-30): pass outer-adjacent Param flags so
-                // PatternOp::Opt can apply the same word-literal spacing rules
-                // the outer SyntaxExpr::Literal arm uses. Without this, an
-                // optional group like `*opt("else" e)` placed after a Param
-                // emits `<param><else>` with no separator → re-lex glomming
-                // into Ident("<value>else").
-                let prev_outer_is_param =
-                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
-                let next_outer_is_param =
-                    matches!(syntax_pattern.get(i + 1), Some(SyntaxExpr::Param(_)));
+                // Pattern operations can abut any structural value capture,
+                // not only a category parameter.  All three capture forms can
+                // end or begin with identifier characters, so an empty-separator
+                // repetition must retain a lexical boundary beside each one.
+                // In particular, `"(" label@Ident args.*sep("") ")"`
+                // must display `(Label Arg)`, never `(LabelArg)`.
+                let prev_outer_emits_value = i > 0
+                    && matches!(
+                        syntax_pattern.get(i - 1),
+                        Some(
+                            SyntaxExpr::Param(_)
+                                | SyntaxExpr::TokenKind { .. }
+                                | SyntaxExpr::GuestBody { .. }
+                        )
+                    );
+                let next_outer_emits_value = matches!(
+                    syntax_pattern.get(i + 1),
+                    Some(
+                        SyntaxExpr::Param(_)
+                            | SyntaxExpr::TokenKind { .. }
+                            | SyntaxExpr::GuestBody { .. }
+                    )
+                );
                 // FENCE CAPTURE: the literal that TERMINATES this op's loop.
                 // For a `.*sep(S)` repetition an element must be grouped when it
                 // carries `S` (loop continues) OR this terminator (loop ends) at
@@ -3789,8 +3764,9 @@ fn generate_engine_syntax_pattern_arm_inner(
                     &body_cat_ident,
                     &param_types,
                     &guard_params,
-                    prev_outer_is_param,
-                    next_outer_is_param,
+                    &token_text_params,
+                    prev_outer_emits_value,
+                    next_outer_emits_value,
                     outer_fence.as_deref(),
                     is_member_call_pattern,
                 );
@@ -3802,10 +3778,19 @@ fn generate_engine_syntax_pattern_arm_inner(
     // Reverse so stack processes left-to-right
     forward_ops.reverse();
 
-    // Build field pattern
-    let mut field_idents: Vec<syn::Ident> = param_names
+    // Match fields in the single syntax-ordered layout shared by enum
+    // generation, actions, matching, and display.  An abstraction occupies
+    // one trailing Scope field even though its surface names binder and body
+    // separately.
+    let field_idents: Vec<syn::Ident> = field_layout(term_context, Some(syntax_pattern))
+        .slots
         .iter()
-        .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
+        .map(|slot| match &slot.source {
+            FieldSlotSource::Param(
+                TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. },
+            ) => syn::Ident::new("scope", proc_macro2::Span::call_site()),
+            _ => syn::Ident::new(&slot.name, proc_macro2::Span::call_site()),
+        })
         .collect();
 
     // Determine if we need parenthesization wrapping
@@ -3818,8 +3803,6 @@ fn generate_engine_syntax_pattern_arm_inner(
         0
     };
     if has_abstraction {
-        field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
-
         if is_multi_binder {
             // Abstraction rules are never infix, no parenthesization needed
             quote! {
@@ -3910,11 +3893,11 @@ fn generate_engine_syntax_pattern_arm_inner(
 /// These produce inline write-to-formatter code (since they involve loops/conditionals
 /// that don't recurse deeply) and push the result as a WriteString.
 ///
-/// `prev_outer_is_param` / `next_outer_is_param` (Stage 3.3, 2026-04-30):
-/// whether the immediately-adjacent OUTER syntax-pattern position is a
-/// `SyntaxExpr::Param`. Used by `PatternOp::Opt` to embed leading/trailing
-/// spaces in its emitted `result` string when its first/last inner element
-/// is a word-literal abutting an outer Param. The space MUST be embedded
+/// `prev_outer_emits_value` / `next_outer_emits_value` say whether the
+/// immediately adjacent outer syntax-pattern position emits a structural
+/// value (`Param`, token-family capture, or guest-body capture). Used by
+/// repetitions and optional groups to embed lexical boundary spaces when
+/// their first/last emitted value can abut that outer value. The space MUST be embedded
 /// (not pushed as a separate `WriteLiteral` task) so it's atomically gated
 /// on the optional-group's Some/None discriminant — emitting outer-side
 /// would produce trailing whitespace when the group is absent.
@@ -3929,20 +3912,36 @@ fn generate_engine_pattern_op(
     _body_cat_ident: &Option<syn::Ident>,
     param_types: &HashMap<String, &TypeExpr>,
     guard_params: &HashSet<String>,
-    prev_outer_is_param: bool,
-    next_outer_is_param: bool,
+    token_text_params: &HashSet<String>,
+    prev_outer_emits_value: bool,
+    next_outer_emits_value: bool,
     outer_fence: Option<&str>,
     compact_member_arguments: bool,
 ) -> TokenStream {
     // Sep / Var ignore the outer flags; their emission already produces
     // self-contained spacing or atomic ident formatting.
-    let _ = (prev_outer_is_param, next_outer_is_param);
+    let _ = (prev_outer_emits_value, next_outer_emits_value);
     match op {
         PatternOp::Sep { collection, separator, source } => {
             if let Some(chain_source) = source {
                 return generate_engine_chained_sep(chain_source, separator);
             }
             let coll_name = collection.to_string();
+            // A repetition owns the separators BETWEEN its elements, but its
+            // first/last element can still be adjacent to an outer parameter.
+            // Add those lexical boundaries only when the collection is
+            // nonempty; otherwise an optional empty repetition must remain
+            // observationally absent (no leading or trailing whitespace).
+            let outer_spacing = quote! {
+                if !parts.is_empty() {
+                    if #prev_outer_emits_value {
+                        parts.first_mut().expect("checked nonempty").insert(0, ' ');
+                    }
+                    if #next_outer_emits_value {
+                        parts.last_mut().expect("checked nonempty").push(' ');
+                    }
+                }
+            };
             let sep_with_spaces = if compact_member_arguments && separator == "," {
                 ", ".to_string()
             } else {
@@ -3957,6 +3956,7 @@ fn generate_engine_pattern_op(
                         for name in &binder_names {
                             parts.push(name.clone());
                         }
+                        #outer_spacing
                         stack.push(DisplayTask::WriteString(parts.join(#sep_with_spaces)));
                     }
                 }
@@ -4062,6 +4062,7 @@ fn generate_engine_pattern_op(
                     {
                         let mut parts = Vec::new();
                         #iter_body
+                        #outer_spacing
                         stack.push(DisplayTask::WriteString(parts.join(#sep_with_spaces)));
                     }
                 }
@@ -4112,7 +4113,9 @@ fn generate_engine_pattern_op(
                             // Bind `&BehavioralPred` directly; rendering goes
                             // through BehavioralPred's Display (`Top` renders
                             // `true()`, display-stable under re-parse).
-                            if guard_params.contains(&id.to_string()) {
+                            if guard_params.contains(&id.to_string())
+                                || token_text_params.contains(&id.to_string())
+                            {
                                 Some(quote! {
                                     let #inner_var: &_ = #id_ident.as_ref()
                                         .expect("Opt-Group: inner display ran with None");
@@ -4175,10 +4178,25 @@ fn generate_engine_pattern_op(
                 .iter()
                 .enumerate()
                 .map(|(j, expr)| {
-                    let inner_prev_is_param =
-                        j > 0 && matches!(inner.get(j - 1), Some(SyntaxExpr::Param(_)));
-                    let inner_next_is_param =
-                        inner.get(j + 1).map(|e| matches!(e, SyntaxExpr::Param(_)));
+                    let inner_prev_emits_value = j > 0
+                        && matches!(
+                            inner.get(j - 1),
+                            Some(
+                                SyntaxExpr::Param(_)
+                                    | SyntaxExpr::TokenKind { .. }
+                                    | SyntaxExpr::GuestBody { .. }
+                                    | SyntaxExpr::Op(_)
+                            )
+                        );
+                    let inner_next_emits_value = inner.get(j + 1).map(|e| {
+                        matches!(
+                            e,
+                            SyntaxExpr::Param(_)
+                                | SyntaxExpr::TokenKind { .. }
+                                | SyntaxExpr::GuestBody { .. }
+                                | SyntaxExpr::Op(_)
+                        )
+                    });
                     let is_first = j == 0;
                     let is_last = j + 1 == inner.len();
                     // FENCE CAPTURE inside an optional group: the terminator is
@@ -4205,13 +4223,13 @@ fn generate_engine_pattern_op(
                             let is_word = !s.is_empty()
                                 && s.chars().all(|c| c.is_alphanumeric() || c == '_')
                                 && !s.chars().next().unwrap().is_numeric();
-                            let inner_3case_force =
-                                inner_prev_is_param && inner_next_is_param.unwrap_or(false);
-                            let need_prefix = (inner_prev_is_param && is_word)
-                                || (is_first && prev_outer_is_param && is_word)
+                            let inner_3case_force = inner_prev_emits_value
+                                && inner_next_emits_value.unwrap_or(false);
+                            let need_prefix = (inner_prev_emits_value && is_word)
+                                || (is_first && prev_outer_emits_value && is_word)
                                 || inner_3case_force;
                             let need_suffix = (is_word && !is_last)
-                                || (is_last && next_outer_is_param && is_word)
+                                || (is_last && next_outer_emits_value && is_word)
                                 || inner_3case_force;
                             let prefix = if need_prefix { " " } else { "" };
                             let suffix = if need_suffix { " " } else { "" };
@@ -4220,12 +4238,12 @@ fn generate_engine_pattern_op(
                         },
                         SyntaxExpr::Param(id) => {
                             let inner_var = quote::format_ident!("__opt_{}", id);
-                            let leading = if is_first && prev_outer_is_param {
+                            let leading = if is_first && prev_outer_emits_value {
                                 quote! { result.push_str(" "); }
                             } else {
                                 quote! {}
                             };
-                            let trailing = if is_last && next_outer_is_param {
+                            let trailing = if is_last && next_outer_emits_value {
                                 quote! { result.push_str(" "); }
                             } else {
                                 quote! {}
@@ -5338,6 +5356,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn exhaustive_match_codegen_uses_the_shared_constructor_census() {
+        let language = crate::gen::singleton_collection_language_for_tests();
+        let meta = ident("Meta");
+        let complete = BTreeSet::from(["MOnly".to_owned()]);
+        assert!(generated_arms_cover_category(&meta, &language, &complete));
+        assert!(!generated_arms_cover_category(&meta, &language, &BTreeSet::new()));
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // DISABLED 2026-07-26 (DEFECT 1) — the four unit tests that pinned the
     // borrowed-wrapper election. Each asserted a PROPERTY OF THE DEFECT, not of the
@@ -5523,5 +5550,58 @@ mod tests {
             1,
             "a source category with no operators still gets a non-zero threshold"
         );
+    }
+
+    #[test]
+    fn explicit_grouping_frame_is_not_a_sigil_prefix() {
+        let grouping = rule(
+            "Group",
+            "Expr",
+            vec![simple_param("body", "Expr")],
+            vec![
+                SyntaxExpr::Literal("{".to_string()),
+                SyntaxExpr::Param(ident("body")),
+                SyntaxExpr::Literal("}".to_string()),
+            ],
+            false,
+        );
+        assert!(!is_sigil_prefix_operand(&grouping, "body"));
+    }
+
+    #[test]
+    fn cross_category_quote_sigil_still_uses_operand_protection() {
+        let quote = rule(
+            "Quote",
+            "Name",
+            vec![simple_param("body", "Expr")],
+            vec![SyntaxExpr::Literal("@".to_string()), SyntaxExpr::Param(ident("body"))],
+            false,
+        );
+        assert!(is_sigil_prefix_operand(&quote, "body"));
+    }
+
+    #[test]
+    fn non_quote_leading_literal_is_not_a_sigil_prefix() {
+        let prefixed = rule(
+            "Prefixed",
+            "Name",
+            vec![simple_param("body", "Expr")],
+            vec![SyntaxExpr::Literal("$".to_string()), SyntaxExpr::Param(ident("body"))],
+            false,
+        );
+        assert!(!is_sigil_prefix_operand(&prefixed, "body"));
+    }
+
+    #[test]
+    fn literal_spacing_preserves_capture_word_boundaries_symmetrically() {
+        let left = SyntaxExpr::Param(ident("left"));
+        let right = SyntaxExpr::Param(ident("right"));
+
+        assert_eq!(literal_surface_spacing("Types", Some(&left), None, false), (" ", ""));
+        assert_eq!(literal_surface_spacing("then", None, Some(&right), false), ("", " "));
+        assert_eq!(literal_surface_spacing(",", Some(&left), Some(&right), false), (" ", " "));
+        assert_eq!(literal_surface_spacing(".", Some(&left), Some(&right), true), ("", ""));
+        assert!(is_direct_surface_capture(Some(&left)));
+        assert!(is_direct_surface_capture(Some(&right)));
     }
 }

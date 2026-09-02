@@ -244,6 +244,21 @@ fn data_builder_rejects_whole_language_identity_keys() {
 }
 
 #[test]
+fn data_builder_rejects_recursive_scalar_collisions() {
+    let src = r#"
+        Module Collision {
+          Theory T() {
+            Data({"options": {"dispatch": "static"}})
+            Data({"options": {"dispatch": "weighted"}})
+          }
+          theory T()
+        }
+    "#;
+    let resolver = MemResolver::new().with("collision", src);
+    rejects("collision", DiagKind::Value, &resolver);
+}
+
+#[test]
 fn unknown_collection_sort_is_named() {
     let src = r#"
         Module C {

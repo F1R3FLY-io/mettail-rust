@@ -112,6 +112,7 @@ fn iterative_var_only_analysis_handles_20k_projection_depth_on_a_256k_stack() {
                 let category = Ident::new(&format!("C{depth}"), Span::call_site());
                 language.types.push(LangType {
                     name: category.clone(),
+                    role: Default::default(),
                     native_type: None,
                     collection_kind: None,
                 });

@@ -43,6 +43,36 @@ fn l9_5_rholang_typed_hole_records_category() {
 }
 
 #[test]
+fn l9_5_repeated_holes_share_one_telescope_identity() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::parse("lam`pair(${x}, ${x})`").expect("repeated-hole FLT parse");
+    let node = node_of(&term);
+    assert_eq!(node.holes.len(), 1, "one declaration per hole name");
+    let occurrences: Vec<_> = node
+        .pieces
+        .iter()
+        .filter_map(|piece| match piece {
+            mettail_runtime::FltTemplatePiece::Hole(id) => Some(*id),
+            mettail_runtime::FltTemplatePiece::Text(_) => None,
+        })
+        .collect();
+    assert_eq!(occurrences, vec![node.holes[0].id, node.holes[0].id]);
+}
+
+#[test]
+fn l9_5_malformed_hole_is_rejected_before_guest_parsing() {
+    mettail_runtime::clear_var_cache();
+    assert!(
+        Proc::parse("lam`pair(${x) , injected}, K)`").is_err(),
+        "hole text cannot inject guest punctuation",
+    );
+    assert!(
+        Proc::parse("lam`pair(${x:Term)Bad}, K)`").is_err(),
+        "typed-hole categories are qualified identifiers",
+    );
+}
+
+#[test]
 fn l9_5_rholang_fence_and_brace_forms() {
     mettail_runtime::clear_var_cache();
     let fence = Proc::parse("lam```App(${f}, ${g})```").expect("fence FLT parse");
@@ -77,4 +107,30 @@ fn l9_5_rholang_default_mode_unperturbed() {
     let _ = Proc::parse("@Nil!(0)").expect("send still parses");
     let _ = Proc::parse("{ Nil | Nil }").expect("par still parses");
     let _ = Proc::parse("new x in { Nil }").expect("new still parses");
+}
+
+#[test]
+fn flt_selector_is_the_same_lexical_variable_as_the_receive_binding() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::parse("for(lambda <- ret){lambda`x`}").expect("bound FLT selector parses");
+    let Proc::PForUser(rows, body) = &term else {
+        panic!("expected a receive");
+    };
+    let [ForRow::ForRowSingleNoWhere(bind)] = rows.as_slice() else {
+        panic!("expected one unguarded receive row");
+    };
+    let InputBind::InputBind(lhs, _) = bind.as_ref() else {
+        panic!("expected one ordinary input binding");
+    };
+    let Name::NVar(bound_name) = lhs.as_ref() else {
+        panic!("expected a variable binding");
+    };
+    let Proc::PFlt(node) = body.as_ref() else {
+        panic!("expected an FLT construction in the continuation");
+    };
+
+    assert_eq!(
+        &node.selector, bound_name,
+        "the FLT opener must denote the received capability, not an ambient tag",
+    );
 }

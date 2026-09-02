@@ -1,4 +1,5 @@
 use super::*;
+use mettail_ast::grammar::DelimitedRegionKind;
 use proc_macro2::{Delimiter, Group, Span, TokenStream, TokenTree};
 use quote::quote;
 use std::fmt::Write;
@@ -17,7 +18,8 @@ fn convert_pattern_op_recursive(
     match op {
         PatternOp::Sep { collection, separator, source } => {
             if let Some(source_op) = source {
-                convert_chained_sep(source_op, separator, context, cat_names, items);
+                convert_chained_sep(source_op, separator, context, cat_names, items)
+                    .expect("the recursive-oracle chained fixture must project");
                 return;
             }
             let coll_name = collection.to_string();
@@ -32,7 +34,8 @@ fn convert_pattern_op_recursive(
                 });
             } else {
                 let (element_category, kind, key_val_separator) =
-                    find_collection_info(&coll_name, context);
+                    find_collection_info(&coll_name, context)
+                        .expect("the recursive-oracle collection fixture must resolve");
                 items.push(SyntaxItemSpec::Collection {
                     param_name: coll_name,
                     element_category,
@@ -227,6 +230,7 @@ fn pattern_conversion_pda_matches_recursive_equation() {
                         open: ident("Open"),
                         close: ident("Close"),
                         bind: ident("guest"),
+                        kind: DelimitedRegionKind::Flt,
                     },
                 ],
             }),
@@ -235,7 +239,8 @@ fn pattern_conversion_pda_matches_recursive_equation() {
     };
 
     let mut actual = Vec::new();
-    convert_pattern_op(&fixture, &context, &categories, &mut actual);
+    convert_pattern_op(&fixture, &context, &categories, &mut actual)
+        .expect("the agreement fixture must project");
     let mut expected = Vec::new();
     convert_pattern_op_recursive(&fixture, &context, &categories, &mut expected);
     let mut actual_snapshot = String::new();
@@ -255,7 +260,8 @@ fn pattern_conversion_pda_handles_20k_nesting_on_a_256k_stack() {
                 op = PatternOp::Opt { inner: vec![SyntaxExpr::Op(op)] };
             }
             let mut items = Vec::new();
-            convert_pattern_op(&op, &[], &[], &mut items);
+            convert_pattern_op(&op, &[], &[], &mut items)
+                .expect("the deeply nested optional fixture must project");
             let mut depth = 0;
             let mut cursor = items.as_slice();
             while let [SyntaxItemSpec::Optional { inner }] = cursor {

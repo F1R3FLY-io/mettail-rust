@@ -5026,6 +5026,10 @@ pub(crate) fn emit_parse_fns(
                             // actually realizes.
                             let (term, dw) =
                                 __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                    .map_err(|error| WpdaParseError::RealizationFailed {
+                                        error,
+                                        position: walker.position(),
+                                    })?
                                     .ok_or(WpdaParseError::EmptyResult)?;
                             let arc = std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map_err(|_| WpdaParseError::EmptyResult)?;
@@ -5042,12 +5046,19 @@ pub(crate) fn emit_parse_fns(
                             // M6 realize-selection belt (see helper above).
                             let (term, dw) =
                                 __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                    .map_err(|error| WpdaParseError::RealizationFailed {
+                                        error,
+                                        position: walker.position(),
+                                    })?
                                     .ok_or(WpdaParseError::EmptyResult)?;
                             let arc = std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map_err(|_| WpdaParseError::EmptyResult)?;
                             let typed = std::sync::Arc::try_unwrap(arc)
                                 .unwrap_or_else(|arc| (*arc).clone());
                             Ok((typed, dw))
+                        }
+                        WpdaResolveResult::RealizationFailed { error, position } => {
+                            Err(WpdaParseError::RealizationFailed { error, position })
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
@@ -5073,7 +5084,12 @@ pub(crate) fn emit_parse_fns(
         // (2) The demand-`Accepted` arm body: Some(verbatim common path) / None
         //     (fall through to the exhaustive retry).
         let accepted_arm_body: TokenStream = quote! {
-            match __mettail_wpda_select_min_weight_realizing(&walker, &roots) {
+            match __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                .map_err(|error| WpdaParseError::RealizationFailed {
+                    error,
+                    position: walker.position(),
+                })?
+            {
                 // Common path — BYTE-IDENTICAL to the pre-edit behavior.
                 Some((term, dw)) => {
                     let arc = std::sync::Arc::downcast::<#cat_ident>(term)
@@ -5224,10 +5240,13 @@ pub(crate) fn emit_parse_fns(
                         #engine_ident,
                     >,
                     roots: &[mettail_prattail::sppf::SppfId],
-                ) -> Option<(
-                    std::sync::Arc<dyn std::any::Any + Send + Sync>,
-                    mettail_prattail::automata::lex_weight::LexicographicWeight,
-                )> {
+                ) -> Result<
+                    Option<(
+                        std::sync::Arc<dyn std::any::Any + Send + Sync>,
+                        mettail_prattail::automata::lex_weight::LexicographicWeight,
+                    )>,
+                    mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+                > {
                     type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
                     // The facade's historical single-result raw-probe cap. The
                     // ladder descends from here so the common path is
@@ -5246,7 +5265,7 @@ pub(crate) fn emit_parse_fns(
                                 root,
                                 Some(cap),
                                 mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
-                            );
+                            )?;
                             if let Some((term, w)) = realized
                                 .into_iter()
                                 .min_by(|(_, a), (_, b)| a.cmp(b))
@@ -5265,7 +5284,7 @@ pub(crate) fn emit_parse_fns(
                             }
                         }
                     }
-                    best
+                    Ok(best)
                 }
 
                 // ROOT2 driver fall-through (2026-07-04, session da0842dc): the
@@ -5315,6 +5334,9 @@ pub(crate) fn emit_parse_fns(
                             ..
                         } => {
                             #accepted_with_trailing_arm_body
+                        }
+                        WpdaResolveResult::RealizationFailed { error, position } => {
+                            Err(WpdaParseError::RealizationFailed { error, position })
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
@@ -5433,7 +5455,11 @@ pub(crate) fn emit_parse_fns(
                                 root,
                                 Some(per_root_limit),
                                 mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
-                            );
+                            )
+                            .map_err(|error| WpdaParseError::RealizationFailed {
+                                error,
+                                position: walker.position(),
+                            })?;
                             if realized.len() >= per_root_limit {
                                 exhausted_all_roots = false;
                             }
@@ -5485,6 +5511,9 @@ pub(crate) fn emit_parse_fns(
                                 expected_display,
                                 max_raw_derivations,
                             )
+                        }
+                        WpdaResolveResult::RealizationFailed { error, position } => {
+                            Err(WpdaParseError::RealizationFailed { error, position })
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
@@ -5679,7 +5708,11 @@ pub(crate) fn emit_parse_fns(
                                 root,
                                 Some(raw_probe_limit),
                                 mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
-                            );
+                            )
+                            .map_err(|error| WpdaParseError::RealizationFailed {
+                                error,
+                                position,
+                            })?;
                             if realized.len() >= raw_probe_limit {
                                 exhausted_all_roots = false;
                             }
@@ -5763,6 +5796,9 @@ pub(crate) fn emit_parse_fns(
                                 max_alternatives,
                                 position,
                             )
+                        }
+                        WpdaResolveResult::RealizationFailed { error, position } => {
+                            Err(WpdaParseError::RealizationFailed { error, position })
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
@@ -5883,7 +5919,11 @@ pub(crate) fn emit_parse_fns(
                                         root,
                                         Some(raw_probe_limit),
                                         mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
-                                    );
+                                    )
+                                    .map_err(|error| WpdaParseError::RealizationFailed {
+                                        error,
+                                        position: completion_position,
+                                    })?;
                                     let exhausted_root = realized.len() < raw_probe_limit;
                                     for (term, weight) in realized {
                                         let arc = std::sync::Arc::downcast::<#cat_ident>(term)
@@ -5979,7 +6019,11 @@ pub(crate) fn emit_parse_fns(
                                         root,
                                         Some(raw_probe_limit),
                                         mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
-                                    );
+                                    )
+                                    .map_err(|error| WpdaParseError::RealizationFailed {
+                                        error,
+                                        position,
+                                    })?;
                                     let exhausted_root = realized.len() < raw_probe_limit;
                                     for (term, weight) in realized {
                                         let arc = std::sync::Arc::downcast::<#cat_ident>(term)
@@ -6045,6 +6089,9 @@ pub(crate) fn emit_parse_fns(
                             let (typed_terms, typed_weights): (Vec<_>, Vec<_>) =
                                 paired.into_iter().unzip();
                             Ok((typed_terms, typed_weights))
+                        }
+                        WpdaResolveResult::RealizationFailed { error, position } => {
+                            Err(WpdaParseError::RealizationFailed { error, position })
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
@@ -6200,18 +6247,25 @@ pub(crate) fn emit_parse_fns(
                         // Task #10 item 2 amendment 3: recovering-mode
                         // single-result pick → `SingleResultElection`
                         // (byte-identical: Some(1) inferred single before).
-                        let pick = roots
-                            .first()
-                            .and_then(|&root|
-                                walker
-                                    .realize_root_to_terms(
-                                        root,
-                                        Some(1),
-                                        mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
-                                    )
-                                    .into_iter()
-                                    .next()
-                            );
+                        let pick = match roots.first() {
+                            Some(&root) => match walker.realize_root_to_terms(
+                                root,
+                                Some(1),
+                                mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                            ) {
+                                Ok(terms) => terms.into_iter().next(),
+                                Err(error) => {
+                                    return (
+                                        Err(WpdaParseError::RealizationFailed {
+                                            error,
+                                            position: walker.position(),
+                                        }),
+                                        attempts,
+                                    );
+                                },
+                            },
+                            None => None,
+                        };
                         let result = match pick {
                             Some(term) => std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map(|arc| std::sync::Arc::try_unwrap(arc)
@@ -6234,18 +6288,25 @@ pub(crate) fn emit_parse_fns(
                         // Task #10 item 2 amendment 3: recovering-mode
                         // single-result pick → `SingleResultElection`
                         // (byte-identical: Some(1) inferred single before).
-                        let pick = roots
-                            .first()
-                            .and_then(|&root|
-                                walker
-                                    .realize_root_to_terms(
-                                        root,
-                                        Some(1),
-                                        mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
-                                    )
-                                    .into_iter()
-                                    .next()
-                            );
+                        let pick = match roots.first() {
+                            Some(&root) => match walker.realize_root_to_terms(
+                                root,
+                                Some(1),
+                                mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                            ) {
+                                Ok(terms) => terms.into_iter().next(),
+                                Err(error) => {
+                                    return (
+                                        Err(WpdaParseError::RealizationFailed {
+                                            error,
+                                            position,
+                                        }),
+                                        attempts,
+                                    );
+                                },
+                            },
+                            None => None,
+                        };
                         let result = match pick {
                             Some(term) => std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map(|arc| std::sync::Arc::try_unwrap(arc)
@@ -6254,6 +6315,12 @@ pub(crate) fn emit_parse_fns(
                             None => Err(WpdaParseError::EmptyResult),
                         };
                         (result, attempts)
+                    }
+                    WpdaResolveResult::RealizationFailed { error, position } => {
+                        (
+                            Err(WpdaParseError::RealizationFailed { error, position }),
+                            attempts,
+                        )
                     }
                     WpdaResolveResult::ParseError { message, position } => {
                         let err = WpdaParseError::ParseFailed {
@@ -6411,6 +6478,12 @@ pub(crate) fn emit_parse_fns(
             Incomplete {
                 position: usize,
             },
+            /// SPPF realization failed before any candidate term was
+            /// published. This is distinct from invalid source syntax.
+            RealizationFailed {
+                error: mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+                position: usize,
+            },
             /// M11.7 (2026-05-14): walker was configured with
             /// `CursorBoundingMode::AmbiguityBudget(budget)` and the live
             /// frontier exceeded that budget. `actual` is the frontier
@@ -6452,6 +6525,9 @@ pub(crate) fn emit_parse_fns(
                     }
                     WpdaParseError::Incomplete { position } => {
                         write!(f, "wpds parse incomplete at position {}", position)
+                    }
+                    WpdaParseError::RealizationFailed { error, position } => {
+                        write!(f, "wpds realization failed at position {}: {}", position, error)
                     }
                     WpdaParseError::AmbiguityBudget { budget, actual, position, .. } => {
                         // Engine-neutral wording (task #18, amdt #6): the PURE

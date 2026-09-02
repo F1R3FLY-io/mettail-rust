@@ -28,7 +28,7 @@ pub use canonical_fixed_point::CanonicalFixedPoint;
 // L9-4: the native capture of a delimited FLT (foreign-language template) guest
 // body — an opaque host-side leaf assembled by the `GuestBody` WPDA codegen.
 mod flt_node;
-pub use flt_node::{FltHole, FltNode};
+pub use flt_node::{FltHole, FltHoleId, FltNode, FltTemplateError, FltTemplatePiece};
 
 // Numeric literal parsers for fixed-point and float types. These live here
 // (not in `mettail-prattail`) because they construct runtime types above and
@@ -136,6 +136,8 @@ pub use pathmap_lit::{
     PathMapEntry, PathMapEntryRef, PathMapIntoIter, PathMapIter, PathMapKeys, PathMapLit,
     PathMapMode, PathMapModeError,
 };
+mod zipper_lit;
+pub use zipper_lit::{ReadZipperLit, WriteZipperLit};
 mod pathmap_bridge;
 pub use pathmap::PathMap as RawPathMap;
 pub use pathmap_bridge::{
@@ -149,12 +151,14 @@ mod hashset_lit;
 pub use hashset_lit::HashSetLit;
 
 mod collection_cmp_pda;
-pub use collection_cmp_pda::{CollectionCmpItem, CollectionCmpPda, CollectionCmpStep};
+pub use collection_cmp_pda::{
+    CollectionCmpItem, CollectionCmpPda, CollectionCmpRole, CollectionCmpStep,
+};
 
 mod collection_semantic_hash_pda;
 pub use collection_semantic_hash_pda::{
-    CollectionSemanticHashItem, CollectionSemanticHashPda, CollectionSemanticHashStep,
-    CollectionSemanticHasher,
+    CollectionSemanticHashItem, CollectionSemanticHashPda, CollectionSemanticHashRole,
+    CollectionSemanticHashStep, CollectionSemanticHasher, COLLECTION_SEMANTIC_KEY_ABI_V2,
 };
 
 // Language metadata for REPL introspection
@@ -166,6 +170,7 @@ mod language;
 pub use language::*;
 
 mod semantic_key;
+pub use mettail_semantic_key as exact_semantic_key;
 pub use semantic_key::FramedSemanticKeyHasher;
 
 // Matchings enumeration for zip+map correlated search (used by generated rewrite clauses)

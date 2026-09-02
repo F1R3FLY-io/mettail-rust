@@ -118,6 +118,31 @@ fn emit_field_recursive(
         FieldSpec::CollLit { kind, elem } => {
             emit_collection_recursive(schema, kind, elem, node, true)
         },
+        FieldSpec::NativeZipper { storage, access, key, value } => {
+            let constructor = match access {
+                ZipperAccess::Read => "ReadZipperLit",
+                ZipperAccess::Write => "WriteZipperLit",
+            };
+            let DebugNode::Call { head, args } = node else {
+                return Err(EmitError::ShapeMismatch {
+                    expected: format!("`{constructor}(PathMapLit, [u8])`"),
+                    found: describe(node),
+                });
+            };
+            if head != constructor || args.len() != 2 {
+                return Err(EmitError::ShapeMismatch {
+                    expected: format!("`{constructor}(PathMapLit, [u8])`"),
+                    found: describe(node),
+                });
+            }
+            let pathmap = emit_pathmap_recursive(schema, key, value, &args[0])?;
+            let focus = emit_byte_vector_recursive(&args[1])?;
+            let payload = format!("mettail_runtime::{constructor}({pathmap}, {focus})");
+            Ok(match storage {
+                ZipperStorage::Direct => payload,
+                ZipperStorage::Arc => format!("std::sync::Arc::new({payload})"),
+            })
+        },
         FieldSpec::Scope1 { body, .. } => match node {
             DebugNode::Struct { head, fields } if head == "Scope" => {
                 let pattern = field_named(fields, "pattern")?;
@@ -172,6 +197,102 @@ fn emit_field_recursive(
         }),
         FieldSpec::OpaqueGuest => Err(EmitError::UnsupportedFieldType {
             descriptor: "opaque:guest (Arc<FltNode>)".to_string(),
+        }),
+    }
+}
+
+fn emit_byte_vector_recursive(node: &DebugNode) -> Result<String, EmitError> {
+    let DebugNode::List(bytes) = node else {
+        return Err(EmitError::ShapeMismatch {
+            expected: "a `[u8, ..]` focus vector".to_string(),
+            found: describe(node),
+        });
+    };
+    let mut rendered = Vec::with_capacity(bytes.len());
+    for byte in bytes {
+        let DebugNode::Int(byte) = byte else {
+            return Err(EmitError::ShapeMismatch {
+                expected: "a byte integer in `0..=255`".to_string(),
+                found: describe(byte),
+            });
+        };
+        let byte = u8::try_from(*byte).map_err(|_| EmitError::ShapeMismatch {
+            expected: "a byte integer in `0..=255`".to_string(),
+            found: byte.to_string(),
+        })?;
+        rendered.push(format!("{byte}_u8"));
+    }
+    Ok(format!("vec![{}]", rendered.join(", ")))
+}
+
+fn emit_pathmap_recursive(
+    schema: &Schema,
+    key_category: &str,
+    value_category: &str,
+    node: &DebugNode,
+) -> Result<String, EmitError> {
+    match node {
+        DebugNode::Ident(mode) if mode == "Empty" => {
+            Ok("mettail_runtime::PathMapLit::Empty".to_string())
+        },
+        DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Set" => {
+            let inner = unwrap_lit_container(&args[0], "HashMapLit");
+            let entries = match inner {
+                DebugNode::Map(entries) => entries.as_slice(),
+                DebugNode::Set(items) if items.is_empty() => &[],
+                other => {
+                    return Err(EmitError::ShapeMismatch {
+                        expected: "`Set(HashMapLit({key: (), ..}))`".to_string(),
+                        found: describe(other),
+                    })
+                },
+            };
+            let mut pairs = Vec::with_capacity(entries.len());
+            for (key, unit) in entries {
+                if !matches!(unit, DebugNode::Tuple(items) if items.is_empty()) {
+                    return Err(EmitError::ShapeMismatch {
+                        expected: "the unit marker `()` for set-mode path membership".to_string(),
+                        found: describe(unit),
+                    });
+                }
+                pairs
+                    .push(
+                        format!("({}, ())", emit_category_recursive(schema, key_category, key)?,),
+                    );
+            }
+            Ok(format!(
+                "mettail_runtime::PathMapLit::Set(mettail_runtime::HashMapLit::from_iter(vec![{}]))",
+                pairs.join(", "),
+            ))
+        },
+        DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Map" => {
+            let inner = unwrap_lit_container(&args[0], "HashMapLit");
+            let entries = match inner {
+                DebugNode::Map(entries) => entries.as_slice(),
+                DebugNode::Set(items) if items.is_empty() => &[],
+                other => {
+                    return Err(EmitError::ShapeMismatch {
+                        expected: "`Map(HashMapLit({key: value, ..}))`".to_string(),
+                        found: describe(other),
+                    })
+                },
+            };
+            let mut pairs = Vec::with_capacity(entries.len());
+            for (key, value) in entries {
+                pairs.push(format!(
+                    "({}, {})",
+                    emit_category_recursive(schema, key_category, key)?,
+                    emit_category_recursive(schema, value_category, value)?,
+                ));
+            }
+            Ok(format!(
+                "mettail_runtime::PathMapLit::Map(mettail_runtime::HashMapLit::from_iter(vec![{}]))",
+                pairs.join(", "),
+            ))
+        },
+        other => Err(EmitError::ShapeMismatch {
+            expected: "`Empty`, `Set(HashMapLit(..))`, or `Map(HashMapLit(..))`".to_string(),
+            found: describe(other),
         }),
     }
 }
@@ -278,65 +399,7 @@ fn emit_collection_recursive(
             }
             Ok(format!("mettail_runtime::HashMapLit::from_iter(vec![{}])", parts.join(", ")))
         },
-        "PathMap" => match node {
-            DebugNode::Ident(mode) if mode == "Empty" => {
-                Ok("mettail_runtime::PathMapLit::new()".to_string())
-            },
-            DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Set" => {
-                let inner = unwrap_lit_container(&args[0], "HashMapLit");
-                let entries = match inner {
-                    DebugNode::Map(entries) => entries.as_slice(),
-                    DebugNode::Set(items) if items.is_empty() => &[],
-                    other => {
-                        return Err(EmitError::ShapeMismatch {
-                            expected: "`Set(HashMapLit({key: (), ..}))`".to_string(),
-                            found: describe(other),
-                        })
-                    },
-                };
-                let mut keys = Vec::with_capacity(entries.len());
-                for (key, unit) in entries {
-                    if !matches!(unit, DebugNode::Tuple(items) if items.is_empty()) {
-                        return Err(EmitError::ShapeMismatch {
-                            expected: "the unit marker `()` for set-mode path membership"
-                                .to_string(),
-                            found: describe(unit),
-                        });
-                    }
-                    keys.push(emit_category_recursive(schema, elem, key)?);
-                }
-                Ok(format!("mettail_runtime::PathMapLit::from_set_iter(vec![{}])", keys.join(", ")))
-            },
-            DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Map" => {
-                let inner = unwrap_lit_container(&args[0], "HashMapLit");
-                let entries = match inner {
-                    DebugNode::Map(entries) => entries.as_slice(),
-                    DebugNode::Set(items) if items.is_empty() => &[],
-                    other => {
-                        return Err(EmitError::ShapeMismatch {
-                            expected: "`Map(HashMapLit({key: value, ..}))`".to_string(),
-                            found: describe(other),
-                        })
-                    },
-                };
-                let mut parts = Vec::with_capacity(entries.len());
-                for (key, value) in entries {
-                    parts.push(format!(
-                        "({}, {})",
-                        emit_category_recursive(schema, elem, key)?,
-                        emit_category_recursive(schema, elem, value)?
-                    ));
-                }
-                Ok(format!(
-                    "mettail_runtime::PathMapLit::from_map_iter(vec![{}])",
-                    parts.join(", ")
-                ))
-            },
-            other => Err(EmitError::ShapeMismatch {
-                expected: "`Empty`, `Set(HashMapLit(..))`, or `Map(HashMapLit(..))`".to_string(),
-                found: describe(other),
-            }),
-        },
+        "PathMap" => emit_pathmap_recursive(schema, elem, elem, node),
         other => Err(EmitError::UnsupportedFieldType {
             descriptor: format!("collection kind `{other}`"),
         }),

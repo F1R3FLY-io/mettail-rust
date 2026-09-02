@@ -2004,6 +2004,32 @@ impl GroundTerm {
     pub fn map_entry(key: GroundTerm, value: GroundTerm) -> Self {
         Self::new(AC_MAP_ENTRY_LABEL, vec![key, value])
     }
+
+    /// An exact byte-string leaf. Hex is a canonical transport encoding: two
+    /// octets per byte, lowercase, with no locale or UTF-8 interpretation.
+    pub fn bytes(bytes: &[u8]) -> Self {
+        use std::fmt::Write as _;
+
+        let mut constructor = String::with_capacity(BYTES_REFLECT_LABEL.len() + bytes.len() * 2);
+        constructor.push_str(BYTES_REFLECT_LABEL);
+        for byte in bytes {
+            write!(&mut constructor, "{byte:02x}").expect("String writes are infallible");
+        }
+        Self::nullary(constructor)
+    }
+
+    /// The closed PathMap mode leaf used by static and dynamic structural
+    /// reflection. Unknown tags fail closed instead of being reflected as a
+    /// user constructor.
+    pub fn pathmap_mode(mode: u8) -> Option<Self> {
+        let constructor = match mode {
+            0 => PATHMAP_EMPTY_REFLECT_LABEL,
+            1 => PATHMAP_SET_REFLECT_LABEL,
+            2 => PATHMAP_MAP_REFLECT_LABEL,
+            _ => return None,
+        };
+        Some(Self::nullary(constructor))
+    }
 }
 
 /// Which side of a rewrite is being reconstructed as a positional ground image.
@@ -4159,6 +4185,14 @@ pub const PEANO_SUCC_REFLECT_LABEL: &str = "^S";
 /// its whole *located* in-Rho method match for σ-replay, silently and with no diagnostic.
 pub const IDENT_TEXT_REFLECT_LABEL: &str = "^ident";
 
+/// Exact byte-string reflection prefix and closed PathMap mode labels. These
+/// live in the reserved namespace and are shared by generated static carriers
+/// and GrammarCore dynamic reflection.
+pub const BYTES_REFLECT_LABEL: &str = "^dynamic-bytes:";
+pub const PATHMAP_EMPTY_REFLECT_LABEL: &str = "^pathmap-empty";
+pub const PATHMAP_SET_REFLECT_LABEL: &str = "^pathmap-set";
+pub const PATHMAP_MAP_REFLECT_LABEL: &str = "^pathmap-map";
+
 /// E-2 MECHANISM D — the reflected-ABI HEREDITARY-GROUND MARKER (reflected-ABI v2).
 ///
 /// Every reflected OBJECT node (`is_marked_object_label`) carries, as its FIRST element
@@ -4225,6 +4259,10 @@ pub fn all_reserved_reflect_labels() -> Vec<&'static str> {
         // instance. The namespace assertion is about the RESERVED PREFIX, and every instance
         // inherits it: `format!("{}({:?})", "^ident", …)` starts with `^` for every text.
         IDENT_TEXT_REFLECT_LABEL,
+        BYTES_REFLECT_LABEL,
+        PATHMAP_EMPTY_REFLECT_LABEL,
+        PATHMAP_SET_REFLECT_LABEL,
+        PATHMAP_MAP_REFLECT_LABEL,
     ]);
     labels.sort_unstable();
     labels.dedup();

@@ -18,6 +18,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Ident, LitStr};
 
+use crate::gen::native_carrier::NativeRecursiveCarrier;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use crate::gen::{generate_literal_label, literal_rule_nonterminal};
 
@@ -365,10 +366,8 @@ fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPla
     // The outer `_ => None` fallback is reachable only when some inner category lacks a scalar
     // arm. When every category is covered, the per-category arms plus the explicit `Ambiguous`
     // arm exhaust `#inner_enum`, so the wildcard would be an unreachable pattern (MixedMath).
-    let all_covered = language
-        .types
-        .iter()
-        .all(|t| covered.contains(&t.name.to_string()));
+    let all_covered =
+        crate::gen::semantic_types(language).all(|t| covered.contains(&t.name.to_string()));
     let outer_default = if all_covered {
         quote! {}
     } else {
@@ -401,7 +400,7 @@ fn invocation_body(language: &LanguageDef, plans: &[RhoScalarInvocationPlan]) ->
     let term_name = format_ident!("{}Term", name);
     let no_match = no_match_expr(&language_name);
 
-    if language.types.len() > 1 {
+    if crate::gen::semantic_types(language).count() > 1 {
         let try_fn = multi_category_try_fn(language, plans);
         quote! {
             #try_fn
@@ -549,6 +548,10 @@ fn reflect_fn_name(category: &Ident) -> Ident {
     format_ident!("__mettail_rho_net_reflect_{}", to_snake(&category.to_string()))
 }
 
+fn reflect_support_module_ident(language: &LanguageDef) -> Ident {
+    format_ident!("__mettail_{}_rho_reflection", to_snake(&language.name.to_string()),)
+}
+
 /// Whether a constructor field is a PLAIN structural category subterm the M-reflect walk can
 /// recurse into (`Box`/`Arc<Cat>`, `.as_ref()` → `&Cat`): a non-collection, non-optional,
 /// non-predicate field whose category is a language non-terminal (not a builtin like `i32`).
@@ -559,7 +562,7 @@ fn reflect_fn_name(category: &Ident) -> Ident {
 /// here?"; whether a field is admissible at all is [`classify_reflect_field`]. A token-text
 /// leaf is not recursible (it is atomic data, not a subterm) yet IS reflectable, as a nullary
 /// node — so the two questions had to stop being the same question.
-fn is_structural_category_field(field: &FieldInfo) -> bool {
+fn is_structural_category_field(field: &FieldInfo, language: &LanguageDef) -> bool {
     !field.is_collection
         && !field.is_optional
         && !field.is_predicate
@@ -568,6 +571,7 @@ fn is_structural_category_field(field: &FieldInfo) -> bool {
         // `category`, whose placeholder is `String`). Its NULLARY image is emitted by
         // `ReflectField::IdentText` instead.
         && !field.is_opaque_leaf()
+        && !field.is_semantic_boundary(language)
         && !NonTerminalKind::classify(&field.category.to_string()).is_builtin()
 }
 
@@ -591,8 +595,8 @@ enum ReflectField {
 
 /// Classify a field for the M-reflect walk. Branches on the leaf FLAG before reading
 /// `category`, whose value is a placeholder (`String`/`FltNode`) for leaf fields.
-fn classify_reflect_field(field: &FieldInfo) -> ReflectField {
-    if is_structural_category_field(field) {
+fn classify_reflect_field(field: &FieldInfo, language: &LanguageDef) -> ReflectField {
+    if is_structural_category_field(field, language) {
         return ReflectField::Structural;
     }
     match field.opaque_leaf {
@@ -645,7 +649,7 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
             VariantKind::Regular { label, fields }
                 if fields
                     .iter()
-                    .all(|f| classify_reflect_field(f) != ReflectField::NotReflectable) =>
+                    .all(|f| classify_reflect_field(f, language) != ReflectField::NotReflectable) =>
             {
                 let label_lit = lit(&label.to_string());
                 let ident_label_lit = lit(mettail_rholang_codegen::IDENT_TEXT_REFLECT_LABEL);
@@ -654,7 +658,7 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                 let child_calls: Vec<TokenStream> = fields
                     .iter()
                     .zip(field_vars.iter())
-                    .map(|(field, var)| match classify_reflect_field(field) {
+                    .map(|(field, var)| match classify_reflect_field(field, language) {
                         ReflectField::Structural => {
                             let child_fn = reflect_fn_name(&field.category);
                             quote! { #child_fn(#var.as_ref())? }
@@ -704,6 +708,42 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                 quote! {
                     #category::#label(..) =>
                         ::core::result::Result::Err(::std::string::String::from(#msg))
+                }
+            },
+            VariantKind::RecursiveNativeLiteral { label, carrier } => {
+                let label_lit = lit(&label.to_string());
+                let key_reflect = reflect_fn_name(carrier.key_category());
+                let value_reflect = reflect_fn_name(carrier.value_category());
+                let pathmap = carrier.pathmap_ref(&quote! { __value });
+                let focus = carrier.focus_ref(&quote! { __value });
+                quote! {
+                    #category::#label(__value) => {
+                        let __pathmap = #pathmap;
+                        let __mode = match __pathmap.mode() {
+                            ::mettail_runtime::PathMapMode::Empty => 0u8,
+                            ::mettail_runtime::PathMapMode::Set => 1u8,
+                            ::mettail_runtime::PathMapMode::Map => 2u8,
+                        };
+                        let mut __children = ::std::vec::Vec::with_capacity(
+                            __pathmap.len() + 2usize,
+                        );
+                        __children.push(#ground::pathmap_mode(__mode).ok_or_else(|| {
+                            ::std::string::String::from(
+                                "generated recursive reference reflection received an invalid PathMap mode",
+                            )
+                        })?);
+                        for __entry in __pathmap.iter() {
+                            let __key = #key_reflect(__entry.key())?;
+                            if let ::core::option::Option::Some(__entry_value) = __entry.value() {
+                                let __entry_value = #value_reflect(__entry_value)?;
+                                __children.push(#ground::map_entry(__key, __entry_value));
+                            } else {
+                                __children.push(__key);
+                            }
+                        }
+                        __children.push(#ground::bytes(#focus));
+                        ::core::result::Result::Ok(#ground::new(#label_lit, __children))
+                    }
                 }
             },
             // A native-scalar LITERAL leaf (`Int::NumLit(8)`, a `![i64]`-category value) reflects to
@@ -776,6 +816,19 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
             // element_cat-shaped image here (its entries are `key => value` pairs — its reflection is
             // reached through the runtime-value path, not this constructor arm) and fails CLOSED,
             // routing that firing to the σ-replay driver.
+            VariantKind::Collection { label, element_cat, .. }
+                if language
+                    .get_type(&element_cat)
+                    .is_some_and(mettail_ast::language::LangType::is_data) =>
+            {
+                let msg = lit(&format!(
+                    "in-Rho match reflection: {label} contains closed parser data and has no generic ground image"
+                ));
+                quote! {
+                    #category::#label(..) =>
+                        ::core::result::Result::Err(::std::string::String::from(#msg))
+                }
+            },
             VariantKind::Collection { label, element_cat, coll_type } => match coll_type {
                 mettail_ast::types::CollectionType::HashBag => {
                     let label_lit = lit(&label.to_string());
@@ -877,12 +930,31 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
         })
         .collect();
     quote! {
-        fn #fn_name(
+        pub(super) fn #fn_name(
             __term: &#category,
         ) -> ::core::result::Result<#ground, ::std::string::String> {
             match __term {
                 #(#arms),*
             }
+        }
+    }
+}
+
+/// Emit the stack-safe reflection engine once per generated language module.
+/// FLT reflection and every Rho-net entrypoint call this same engine instead
+/// of embedding a fresh mutually identical task algebra in each method body.
+pub(crate) fn generate_rho_reflection_support(language: &LanguageDef) -> TokenStream {
+    let support_module = reflect_support_module_ident(language);
+    let reflect_pda = reflect_pda_support(language);
+    let reflect_fns: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
+        .map(|ty| reflect_category_pda_fn(language, &ty.name))
+        .collect();
+    quote! {
+        #[cfg(feature = "rho-codegen")]
+        mod #support_module {
+            use super::*;
+            #reflect_pda
+            #(#reflect_fns)*
         }
     }
 }
@@ -897,23 +969,72 @@ fn reflect_task_variant(category: &Ident) -> Ident {
     format_ident!("Visit{}", category)
 }
 
+fn recursive_native_reflect_arm(
+    category: &Ident,
+    label: &Ident,
+    carrier: &NativeRecursiveCarrier,
+) -> TokenStream {
+    let label_lit = lit(&label.to_string());
+    let key_visit = reflect_task_variant(carrier.key_category());
+    let value_visit = reflect_task_variant(carrier.value_category());
+    let pathmap = carrier.pathmap_ref(&quote! { __value });
+    let focus = carrier.focus_ref(&quote! { __value });
+
+    quote! {
+        #category::#label(__value) => {
+            let __pathmap = #pathmap;
+            let __entries: ::std::vec::Vec<_> = __pathmap.iter().collect();
+            let __mode = match __pathmap.mode() {
+                ::mettail_runtime::PathMapMode::Empty => 0u8,
+                ::mettail_runtime::PathMapMode::Set => 1u8,
+                ::mettail_runtime::PathMapMode::Map => 2u8,
+            };
+            __tasks.push(__MettailReflectTask::Assemble {
+                constructor: #label_lit,
+                coll_type: ::core::option::Option::None,
+                child_count: __entries.len() + 2usize,
+            });
+            __tasks.push(__MettailReflectTask::Bytes(#focus as *const _));
+            for __entry in __entries.into_iter().rev() {
+                let __key = __entry.key();
+                if let ::core::option::Option::Some(__entry_value) = __entry.value() {
+                    __tasks.push(__MettailReflectTask::AssembleMapEntry);
+                    __tasks.push(__MettailReflectTask::#value_visit(
+                        __entry_value as *const _,
+                    ));
+                    __tasks.push(__MettailReflectTask::#key_visit(
+                        __key as *const _,
+                    ));
+                } else {
+                    __tasks.push(__MettailReflectTask::#key_visit(
+                        __key as *const _,
+                    ));
+                }
+            }
+            __tasks.push(__MettailReflectTask::PathMapMode(__mode));
+            ::core::result::Result::Ok(())
+        }
+    }
+}
+
 /// Generate the task algebra, reusable allocation pools, and single dispatch engine used by all
 /// category reflectors in one language. Raw pointers make the task type lifetime-free so its
 /// allocation can be retained between calls; every pointer is derived from the wrapper's live
 /// input borrow and consumed synchronously before that wrapper returns.
 fn reflect_pda_support(language: &LanguageDef) -> TokenStream {
-    let task_variants: Vec<TokenStream> = language
-        .types
-        .iter()
+    let has_recursive_native = crate::gen::semantic_transit_types(language).any(|ty| {
+        collect_category_variants(&ty.name, language)
+            .iter()
+            .any(|variant| matches!(variant, VariantKind::RecursiveNativeLiteral { .. }))
+    });
+    let task_variants: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|ty| {
             let category = &ty.name;
             let variant = reflect_task_variant(category);
             quote! { #variant(*const #category) }
         })
         .collect();
-    let dispatch: Vec<TokenStream> = language
-        .types
-        .iter()
+    let dispatch: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|ty| {
             let category = &ty.name;
             let variant = reflect_task_variant(category);
@@ -928,12 +1049,47 @@ fn reflect_pda_support(language: &LanguageDef) -> TokenStream {
         })
         .collect();
     let ident_label_lit = lit(mettail_rholang_codegen::IDENT_TEXT_REFLECT_LABEL);
+    let native_tasks = has_recursive_native.then(|| {
+        quote! {
+            Bytes(*const ::std::vec::Vec<u8>),
+            PathMapMode(u8),
+            AssembleMapEntry,
+        }
+    });
+    let native_dispatch = has_recursive_native.then(|| {
+        quote! {
+            __MettailReflectTask::Bytes(__ptr) => {
+                let __bytes = unsafe { &*__ptr };
+                __values.push(::mettail_rholang_codegen::GroundTerm::bytes(__bytes));
+            },
+            __MettailReflectTask::PathMapMode(__mode) => {
+                let __mode = ::mettail_rholang_codegen::GroundTerm::pathmap_mode(__mode)
+                    .ok_or_else(|| ::std::string::String::from(
+                        "generated reflection received an invalid PathMap mode",
+                    ))?;
+                __values.push(__mode);
+            },
+            __MettailReflectTask::AssembleMapEntry => {
+                let __value = __values.pop().ok_or_else(|| ::std::string::String::from(
+                    "generated reflection lost a PathMap value",
+                ))?;
+                let __key = __values.pop().ok_or_else(|| ::std::string::String::from(
+                    "generated reflection lost a PathMap key",
+                ))?;
+                __values.push(::mettail_rholang_codegen::GroundTerm::map_entry(
+                    __key,
+                    __value,
+                ));
+            },
+        }
+    });
 
     quote! {
         #[allow(dead_code)]
         enum __MettailReflectTask {
             #(#task_variants,)*
             IdentText(*const ::std::string::String),
+            #native_tasks
             Assemble {
                 constructor: &'static str,
                 coll_type: ::core::option::Option<
@@ -977,6 +1133,7 @@ fn reflect_pda_support(language: &LanguageDef) -> TokenStream {
                                 ::std::vec::Vec::new(),
                             ));
                         },
+                        #native_dispatch
                         __MettailReflectTask::Assemble {
                             constructor,
                             coll_type,
@@ -1040,7 +1197,9 @@ fn reflect_category_pda_fn(language: &LanguageDef, category: &Ident) -> TokenStr
             VariantKind::Regular { label, fields }
                 if fields
                     .iter()
-                    .all(|field| classify_reflect_field(field) != ReflectField::NotReflectable) =>
+                    .all(|field| {
+                        classify_reflect_field(field, language) != ReflectField::NotReflectable
+                    }) =>
             {
                 let label_lit = lit(&label.to_string());
                 let field_vars: Vec<Ident> =
@@ -1049,7 +1208,7 @@ fn reflect_category_pda_fn(language: &LanguageDef, category: &Ident) -> TokenStr
                     .iter()
                     .zip(field_vars.iter())
                     .rev()
-                    .map(|(field, var)| match classify_reflect_field(field) {
+                    .map(|(field, var)| match classify_reflect_field(field, language) {
                         ReflectField::Structural => {
                             let child_variant = reflect_task_variant(&field.category);
                             quote! {
@@ -1104,6 +1263,9 @@ fn reflect_category_pda_fn(language: &LanguageDef, category: &Ident) -> TokenStr
                     }
                 }
             },
+            VariantKind::RecursiveNativeLiteral { label, carrier } => {
+                recursive_native_reflect_arm(category, &label, &carrier)
+            },
             VariantKind::Var { label } => {
                 let bound_lit = lit(mettail_rholang_codegen::BOUND_VAR_REFLECT_LABEL);
                 let free_lit = lit(mettail_rholang_codegen::FREE_VAR_REFLECT_LABEL);
@@ -1133,6 +1295,20 @@ fn reflect_category_pda_fn(language: &LanguageDef, category: &Ident) -> TokenStr
                         __values.push(__reflected);
                         ::core::result::Result::Ok(())
                     }
+                }
+            },
+            VariantKind::Collection { label, element_cat, .. }
+                if language
+                    .get_type(&element_cat)
+                    .is_some_and(mettail_ast::language::LangType::is_data) =>
+            {
+                let message = lit(&format!(
+                    "in-Rho match reflection: {label} contains closed parser data and has no generic ground image"
+                ));
+                quote! {
+                    #category::#label(..) => ::core::result::Result::Err(
+                        ::std::string::String::from(#message),
+                    )
                 }
             },
             VariantKind::Collection { label, element_cat, coll_type } => match coll_type {
@@ -1255,7 +1431,7 @@ fn reflect_category_pda_fn(language: &LanguageDef, category: &Ident) -> TokenStr
             }
         }
 
-        fn #fn_name(
+        pub(super) fn #fn_name(
             __term: &#category,
         ) -> ::core::result::Result<#ground, ::std::string::String> {
             __mettail_rho_net_reflect_run(__MettailReflectTask::#seed_variant(
@@ -1299,15 +1475,9 @@ fn reflect_subject_binding_inner(language: &LanguageDef, canonicalize: bool) -> 
     let name = &language.name;
     let language_lit = lit(&name.to_string());
     let term_name = format_ident!("{}Term", name);
-    let reflect_pda = reflect_pda_support(language);
-    let reflect_fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|ty| reflect_category_pda_fn(language, &ty.name))
-        .collect();
-    let primary = language
-        .types
-        .first()
+    let support_module = reflect_support_module_ident(language);
+    let primary = crate::gen::semantic_types(language)
+        .next()
         .map(|ty| ty.name.clone())
         .expect("a language declares at least one category");
 
@@ -1338,15 +1508,15 @@ fn reflect_subject_binding_inner(language: &LanguageDef, canonicalize: bool) -> 
         quote! {}
     };
 
-    let subject_expr = if language.types.len() > 1 {
+    let subject_expr = if crate::gen::semantic_types(language).count() > 1 {
         let inner_enum = format_ident!("{}TermInner", name);
-        let arms: Vec<TokenStream> = language
-            .types
-            .iter()
+        let arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .map(|ty| {
                 let cat = &ty.name;
                 let reflect = reflect_fn_name(cat);
-                quote! { #inner_enum::#cat(__value) => #reflect(__value), }
+                quote! {
+                    #inner_enum::#cat(__value) => #support_module::#reflect(__value),
+                }
             })
             .collect();
         quote! {
@@ -1377,14 +1547,11 @@ fn reflect_subject_binding_inner(language: &LanguageDef, canonicalize: bool) -> 
     } else {
         let reflect_primary = reflect_fn_name(&primary);
         quote! {
-            let __subject = #reflect_primary(&#subject_source)?;
+            let __subject = #support_module::#reflect_primary(&#subject_source)?;
         }
     };
 
     quote! {
-        #reflect_pda
-        #(#reflect_fns)*
-
         let __typed_term = term
             .as_any()
             .downcast_ref::<#term_name>()
@@ -1446,6 +1613,17 @@ pub fn generate_flt_reflect(language: &LanguageDef) -> TokenStream {
                 // variables); `parse_term_for_env` does NOT clear the var cache, so the caller's
                 // interning is undisturbed when a lowering pass reflects several FLTs in a row.
                 let __parsed = mettail_runtime::Language::parse_term_for_env(self, body)?;
+                self.reflect_flt_term(__parsed.as_ref())
+            }
+
+            fn parse_and_reflect_flt_template(
+                &self,
+                template: &mettail_runtime::FltNode,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::GroundTerm,
+                ::std::string::String,
+            > {
+                let __parsed = mettail_runtime::Language::parse_term_template(self, template)?;
                 self.reflect_flt_term(__parsed.as_ref())
             }
         }
@@ -1839,6 +2017,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     let language_struct = format_ident!("{}Language", name);
     let language_name = name.to_string();
     let language_lit = lit(&language_name);
+    let reflection_support = generate_rho_reflection_support(language);
 
     let sites = mettail_rholang_codegen::rho_net_injection_sites(language);
     // Stage AC-U3: the AC firing sites — an un-skipped linear with-rest HashBag AC rewrite
@@ -3098,6 +3277,8 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     };
 
     quote! {
+        #reflection_support
+
         #[cfg(feature = "rho-codegen")]
         impl #language_struct {
             /// Build a Rho-net σ-injection for the rewrite firing at `firing_index`
@@ -3649,10 +3830,16 @@ mod tests {
         assert!(!twin.contains("rho_net_drive_invocation_to"));
 
         // (b) the match fn item is byte-identical across the opt-in toggle (modulo the
-        // name-derived identifiers, normalized by the rename).
+        // name-derived identifiers, normalized by the renames).  Reflection support is
+        // emitted once per language module, so its private module identifier is derived
+        // independently from the public language type identifiers.
         let opted_match = extract_fn_item(&opted, "rho_net_match_invocation_to").to_string();
         let twin_match = extract_fn_item(&twin, "rho_net_match_invocation_to")
-            .replace("LambdaDrivePinTwin", "Lambda");
+            .replace("LambdaDrivePinTwin", "Lambda")
+            .replace(
+                "__mettail_lambda_drive_pin_twin_rho_reflection",
+                "__mettail_lambda_rho_reflection",
+            );
         assert_eq!(
             opted_match, twin_match,
             "rho_net_match_invocation_to must be byte-identical whether or not the \
@@ -3702,6 +3889,12 @@ mod tests {
     /// `rho_net_drive_invocation` as the general congruence-capable fallback. The
     /// explicit match adds 253 rendered bytes (8610 → 8863); the two path-token
     /// assertions below pin both routes and the absence of float machinery.
+    ///
+    /// RE-CAPTURED (shared reflection engine, 2026-08-28) — explained diff: the generated
+    /// reflection PDA and per-category seed wrappers moved from every invocation method into
+    /// one private per-language support module.  The drive item now contains only its call to
+    /// that shared engine, shrinking from 8863 to 2899 rendered bytes while leaving both the
+    /// certified persistent route and general fallback pinned below.
     #[test]
     fn lambda_drive_fn_item_pins_certified_persistent_route_and_general_fallback() {
         use std::hash::{Hash, Hasher};
@@ -3723,7 +3916,7 @@ mod tests {
         item.hash(&mut hasher);
         assert_eq!(
             (item.len(), hasher.finish()),
-            (8863, 0x72c65e84582c89b9),
+            (2899, 0x2ec76da5bc99f1ec),
             "the Lambda drive fn item must contain exactly the certified persistent route + \
              general fallback token stream documented above"
         );
@@ -4176,5 +4369,20 @@ mod tests {
                 "generated code must not USE the Rho runtime crate as a path"
             );
         }
+    }
+
+    #[test]
+    fn shared_reflection_seed_wrappers_are_visible_to_the_parent_module() {
+        let support = generate_rho_reflection_support(&swap_net_fixture()).to_string();
+        assert!(
+            support.contains("pub (super) fn __mettail_rho_net_reflect_proc"),
+            "FLT and Rho invocation impls live in the parent module and must be able to call \
+             the shared child module's per-category seed wrapper",
+        );
+        assert!(
+            support.contains("fn __mettail_rho_net_reflect_handle_proc")
+                && !support.contains("pub (super) fn __mettail_rho_net_reflect_handle_proc"),
+            "only the thin seed wrapper is parent-visible; PDA handlers remain private",
+        );
     }
 }

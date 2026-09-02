@@ -216,6 +216,14 @@ pub enum ParseError {
         range: Range,
         hint: Option<Cow<'static, str>>,
     },
+    /// The source was recognized, but SPPF realization failed before any
+    /// candidate term could be published.
+    ///
+    /// This is deliberately separate from syntax and ambiguity errors.
+    RealizationFailed {
+        error: mettail_semantic_key::ContentKeyCacheError,
+        range: Range,
+    },
 }
 
 #[path = "runtime_types/parse_error_lifecycle.rs"]
@@ -235,6 +243,7 @@ impl ParseError {
             ParseError::TrailingTokens { range, .. } => *range,
             ParseError::RecoveryApplied { range, .. } => *range,
             ParseError::AmbiguityBudget { range, .. } => *range,
+            ParseError::RealizationFailed { range, .. } => *range,
         }
     }
 }

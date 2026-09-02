@@ -816,15 +816,14 @@ pub enum GuardSiteKind {
 pub enum DontKnowPolicy {
     /// The guard does **not** pass: the COMM does not fire, the guard is not discharged.
     FailClosedBlock,
-    /// The guard passes. Never selected today; present so that "fail closed" is a *choice* the
-    /// policy point records rather than an accident of the code's shape.
-    FailOpenFire,
 }
 
 impl DontKnowPolicy {
     /// The boolean this policy assigns to an undecided guard.
     pub fn as_bool(self) -> bool {
-        matches!(self, DontKnowPolicy::FailOpenFire)
+        match self {
+            DontKnowPolicy::FailClosedBlock => false,
+        }
     }
 }
 
@@ -860,8 +859,9 @@ impl DontKnowPolicy {
 ///   later step can still consume it. A COMM that fires wrongly consumes a datum and runs a
 ///   continuation, and nothing undoes that.
 ///
-/// So the verdict is unchanged from what the tree already did; what changed is that it is now
-/// *justified by determinism* rather than by caution.
+/// Fail-open is deliberately not representable by [`DontKnowPolicy`]. Changing
+/// this security invariant requires a new verdict type and proof obligations,
+/// rather than adding a permissive enum arm that downstream code could select.
 pub fn dont_know_policy(_site: GuardSiteKind) -> DontKnowPolicy {
     DontKnowPolicy::FailClosedBlock
 }

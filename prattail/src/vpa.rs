@@ -1338,13 +1338,11 @@ pub fn build_alphabet_from_syntax(
                 crate::SyntaxItemSpec::Terminal(t) => {
                     out.push(t.clone());
                 },
-                crate::SyntaxItemSpec::Collection { separator, .. } => {
-                    out.push(separator.clone());
-                },
-                crate::SyntaxItemSpec::Sep { separator, .. } => {
-                    out.push(separator.clone());
-                },
-                crate::SyntaxItemSpec::BinderCollection { separator, .. } => {
+                crate::SyntaxItemSpec::Collection { separator, .. }
+                | crate::SyntaxItemSpec::Sep { separator, .. }
+                | crate::SyntaxItemSpec::BinderCollection { separator, .. }
+                    if !separator.is_empty() =>
+                {
                     out.push(separator.clone());
                 },
                 // NonTerminal, IdentCapture, Binder — no terminals to extract.

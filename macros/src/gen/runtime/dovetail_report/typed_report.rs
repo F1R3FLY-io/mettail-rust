@@ -753,14 +753,14 @@ fn generate_helpers(
         .iter()
         .map(|f| {
             let v = &f.op_variant;
-            quote! { #enum_id::#v }
+            quote! { &#enum_id::#v }
         })
         .collect();
     // (MF1) Substitution-rewrite LHS head ops join the redex-head set so an un-reduced redex
     // (e.g. `App(Lam.., ..)`) is heavier than its contractum.
     for s in substs {
         let v = op_variant_ident(&s.rewrite.head_cat, &s.rewrite.head_label);
-        redex_heads.push(quote! { #enum_id::#v });
+        redex_heads.push(quote! { &#enum_id::#v });
     }
     // (A-3 / MF1) The Comm BINDER (receive) element head — present in the redex bag, CONSUMED by
     // the COMM (`(PFor N cont)` is gone from `op{ cont[Q/y], ...rest }`) — joins the redex-head
@@ -771,7 +771,7 @@ fn generate_helpers(
     for c in comms {
         let element = &c.rewrite.elements[c.rewrite.binder_element_index];
         let v = op_variant_ident(&element.category, &element.constructor);
-        redex_heads.push(quote! { #enum_id::#v });
+        redex_heads.push(quote! { &#enum_id::#v });
     }
     // (Stage 3d / MF1) EVERY structured element head of a structural-AC rewrite is CONSUMED by the
     // firing (Ambient's `{(open N P), N[Q], ...rest}` becomes `{P, Q, ...rest}` — neither `open` nor
@@ -781,7 +781,7 @@ fn generate_helpers(
     for s in structural_acs {
         for element in &s.rewrite.elements {
             let v = op_variant_ident(&element.category, &element.constructor);
-            redex_heads.push(quote! { #enum_id::#v });
+            redex_heads.push(quote! { &#enum_id::#v });
         }
     }
     // (Stage 4 / MF1) For a DEPTH-2 nested structural-AC rewrite the RESTRUCTURED contractum PRESERVES
@@ -794,7 +794,7 @@ fn generate_helpers(
     for s in nested_structural_acs {
         for (category, constructor) in &s.rewrite.consumed_heads {
             let v = op_variant_ident(category, constructor);
-            redex_heads.push(quote! { #enum_id::#v });
+            redex_heads.push(quote! { &#enum_id::#v });
         }
     }
     // ── MEASURED AND REJECTED (2026-07-25): plain-rewrite LHS heads must NOT join this set ──────
@@ -960,7 +960,6 @@ fn generate_native_rules_and_dispatch(
         .map(|f| {
             let op_id = f.op_id;
             let out_add = category_lowering_fn(&f.output_cat);
-            let body = f.body;
             // The fold's published label, spelled exactly as its `NativeRule` spells it above, so
             // a DECLINE record and a FIRING record name the same rule.
             let fold_label = {
@@ -1802,7 +1801,10 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         "generate_dovetail_normal_term (typed path)",
     );
 
-    let primary_cat = &language.types.first().expect("language has a type").name;
+    let primary_cat = &crate::gen::semantic_types(language)
+        .next()
+        .expect("category capability validation requires an object category")
+        .name;
     let primary_add = category_lowering_fn(primary_cat);
     let primary_build = build_fn(primary_cat);
 
@@ -1811,11 +1813,9 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     // each `all_alts()` alternative is lowered under its own category, the category index is
     // tracked alongside the root e-class, and after extraction the per-category
     // `build_<cat>_d` reconstructs it and re-wraps it into `<Lang>TermInner::<cat>`.
-    let multi = language.types.len() > 1;
+    let multi = crate::gen::semantic_types(language).count() > 1;
     let (lower_roots, reconstruct_wrap) = if multi {
-        let lower_arms: Vec<TokenStream> = language
-            .types
-            .iter()
+        let lower_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .enumerate()
             .map(|(idx, ty)| {
                 let cat = &ty.name;
@@ -1829,9 +1829,7 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
                 }
             })
             .collect();
-        let rebuild_arms: Vec<TokenStream> = language
-            .types
-            .iter()
+        let rebuild_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .enumerate()
             .map(|(idx, ty)| {
                 let cat = &ty.name;
@@ -2129,11 +2127,14 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         "generate_step_graph (typed path)",
     );
 
-    let primary_cat = &language.types.first().expect("language has a type").name;
+    let primary_cat = &crate::gen::semantic_types(language)
+        .next()
+        .expect("category capability validation requires an object category")
+        .name;
     let primary_add = category_lowering_fn(primary_cat);
     let primary_build = build_fn(primary_cat);
 
-    let multi = language.types.len() > 1;
+    let multi = crate::gen::semantic_types(language).count() > 1;
 
     // Per-category lowering arms (inner-enum alt → its category's e-class root) and reconstruction
     // arms (category index → `build_<cat>_d` then re-wrap into the inner enum). For a single-type
@@ -2151,9 +2152,7 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         // the Rust type the BFS frontier/successors carry (`<Lang>TermInner` or `<primary>`)
         node_ty,
     ) = if multi {
-        let lower_arms: Vec<TokenStream> = language
-            .types
-            .iter()
+        let lower_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .enumerate()
             .map(|(idx, ty)| {
                 let cat = &ty.name;
@@ -2164,9 +2163,7 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 }
             })
             .collect();
-        let build_arms: Vec<TokenStream> = language
-            .types
-            .iter()
+        let build_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .enumerate()
             .map(|(idx, ty)| {
                 let cat = &ty.name;
@@ -2180,9 +2177,7 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         // Map each inner-enum alternative to its declared category index (so `__step_lower` /
         // `__step_build` can route it). `Ambiguous` is impossible here — `all_alts()` returns flat
         // alternatives, never a nested `Ambiguous`.
-        let idx_arms: Vec<TokenStream> = language
-            .types
-            .iter()
+        let idx_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .enumerate()
             .map(|(idx, ty)| {
                 let cat = &ty.name;
@@ -2554,8 +2549,15 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
 /// Generate the full typed `impl <Lang>Language { dovetail_report_for, dovetail_compiler_stage }`
 /// + the op-enum, for a fold-bearing language.
 pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStream {
+    let semantic_layout = match super::semantic_adapter::SemanticAdapterLayout::derive(language) {
+        Ok(layout) => layout,
+        Err(error) => {
+            let message = error.to_string();
+            return quote! { compile_error!(#message); };
+        },
+    };
     let enum_id = op_enum_ident(language);
-    let op_enum_decl = op_enum::generate_dovetail_op_enum(language);
+    let op_enum_decl = op_enum::generate_dovetail_op_enum_from_layout(language, &semantic_layout);
     let language_struct = format_ident!("{}Language", language.name);
     let term_name = format_ident!("{}Term", language.name);
     let language_lit = lit(&language.name.to_string());
@@ -2563,18 +2565,18 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         format_ident!("__mettail_{}_dovetail_pda", to_snake(&language.name.to_string()),);
 
     let mut typed_category_fns: Vec<TokenStream> =
-        vec![typed_lowering::lowering_pda_support(language)];
+        vec![typed_lowering::lowering_pda_support(language, &semantic_layout)];
     typed_category_fns.extend(
-        language
-            .types
-            .iter()
-            .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name)),
+        crate::gen::semantic_transit_types(language).map(|ty| {
+            typed_lowering::category_lowering_typed(language, &ty.name, &semantic_layout)
+        }),
     );
     // One generated lowering/reconstruction engine per language. All typed report entry
     // points import this module instead of emitting private copies into their function bodies.
     // Besides preventing drift, this makes rustc type-check and codegen the large Rholang PDA
     // once rather than three times.
-    let reconstruct_fns: Vec<TokenStream> = reconstruct::all_reconstructors(language);
+    let reconstruct_fns: Vec<TokenStream> =
+        reconstruct::all_reconstructors(language, &semantic_layout);
 
     let (folds, fold_dispositions) = collect_fold_rules(language);
     // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at
@@ -2632,14 +2634,15 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         "generate_typed_dovetail_report (typed path)",
     );
 
-    let primary_cat = &language.types.first().expect("language has a type").name;
+    let primary_cat = &crate::gen::semantic_types(language)
+        .next()
+        .expect("category capability validation requires an object category")
+        .name;
     let primary_add = category_lowering_fn(primary_cat);
 
-    let root_block = if language.types.len() > 1 {
+    let root_block = if crate::gen::semantic_types(language).count() > 1 {
         let inner_enum = format_ident!("{}TermInner", language.name);
-        let arms: Vec<TokenStream> = language
-            .types
-            .iter()
+        let arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .map(|ty| {
                 let cat = &ty.name;
                 let add_fn = category_lowering_fn(cat);
@@ -2680,9 +2683,7 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // matching category returns `Some`) and renders the typed term via its source-syntax `Display`.
     // `__collect_sources` walks a derivation tree, recording one source string per exact
     // `ContentKey`. Emitted into the report impl; only invoked when `record_source`.
-    let source_attempts: Vec<TokenStream> = language
-        .types
-        .iter()
+    let source_attempts: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|ty| {
             let bf = reconstruct::build_fn(&ty.name);
             quote! {

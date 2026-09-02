@@ -46,6 +46,37 @@ fn parse_count(src: &str) -> usize {
         .len()
 }
 
+#[test]
+fn category_changing_closed_operands_preserve_parallel_associativity() {
+    for src in [
+        "a | b | c",
+        "x!(0) | y!(1) | Nil",
+        "x!(0) | b | c",
+        "a | y!(1) | c",
+        "a | b | z!(2)",
+        "new r in { a | b | c }",
+        "new r in { x!(0) | y!(1) | Nil }",
+        "new r in { x!(*r, a) | y!(1) | for(p <- r){p} }",
+        "new r1, r2 in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2){p} }",
+    ] {
+        mettail_runtime::clear_var_cache();
+        let facade = Proc::parse_via_wpda_all_with_weights(src)
+            .unwrap_or_else(|e| panic!("facade `{src}` must parse: {e:?}"));
+        let monolithic = Proc::__all_with_weights_monolithic(src)
+            .unwrap_or_else(|e| panic!("monolithic `{src}` must parse: {e:?}"));
+        assert_eq!(
+            facade.0.len(),
+            1,
+            "facade admitted a second association for `{src}`: {facade:#?}",
+        );
+        assert_eq!(
+            monolithic.0.len(),
+            1,
+            "monolithic walker admitted a second association for `{src}`: {monolithic:#?}",
+        );
+    }
+}
+
 fn parse(src: &str) -> Proc {
     mettail_runtime::clear_var_cache();
     Proc::parse(src).unwrap_or_else(|e| panic!("`{src}` must parse: {e:?}"))
@@ -223,7 +254,7 @@ fn new_nests_and_composes() {
 /// 2026-07-24 and is reproduced EXACTLY by the paren-free production — the
 /// paren-drop is ambiguity-neutral by measurement, not by assertion.
 ///
-/// The two `2`s are PRE-EXISTING ambiguities of the BODY, not of `new`:
+/// The three `2`s are PRE-EXISTING ambiguities of the BODY, not of `new`:
 /// `for(…){…}` and `*(@(…))` bodies already realized two parses under the old
 /// production. They are pinned here (rather than filed as `new` regressions) so
 /// that if they ever change, the diff points at the body construct that owns
@@ -251,9 +282,16 @@ const PARSE_COUNT_GOLDEN: &[(&str, usize)] = &[
 fn parse_counts_match_the_pre_change_golden() {
     let mut wrong = Vec::new();
     for (src, want) in PARSE_COUNT_GOLDEN {
-        let got = parse_count(src);
+        mettail_runtime::clear_var_cache();
+        let (alternatives, weights) = Proc::parse_via_wpda_all_with_weights(src)
+            .unwrap_or_else(|e| panic!("`{src}` must parse: {e:?}"));
+        let got = alternatives.len();
         if got != *want {
-            wrong.push(format!("  `{src}`: want {want}, got {got}"));
+            let monolithic = Proc::__all_with_weights_monolithic(src)
+                .unwrap_or_else(|e| panic!("monolithic `{src}` must parse: {e:?}"));
+            wrong.push(format!(
+                "  `{src}`: want {want}, got {got}\n    alternatives: {alternatives:#?}\n    weights: {weights:#?}\n    monolithic: {monolithic:#?}"
+            ));
         }
     }
     assert!(
@@ -301,18 +339,18 @@ fn empty_decl_list_is_accepted_a_known_divergence() {
 }
 
 #[test]
-fn uri_declarations_are_not_yet_supported() {
+fn uri_declarations_are_first_class_binders() {
     // Official `name_decl: seq($.var, optional(seq('(', $.uri_literal, ')')))`
     // — e.g. ``new stdout(`rho:io:stdout`) in { … }``, the standard way a
-    // Rholang program reaches a system channel. Rholang has neither a
-    // `uri_literal` token nor a per-name URI slot in the binder loop. Tracked
-    // as convergence item §17.10-C1. Pinned as a REJECT so the day it starts
-    // parsing is a deliberate change.
+    // Rholang program reaches a system channel. URI binders have a dedicated
+    // constructor, distinct from strings and FLT backtick bodies; lowering
+    // sorts URI/name pairs into f1r3node's normalized `New.uri` order.
     mettail_runtime::clear_var_cache();
-    assert!(
-        Proc::parse("new stdout(`rho:io:stdout`) in { stdout!(\"hi\") }").is_err(),
-        "URI name-declarations are not implemented yet (§17.10-C1)",
-    );
+    let source = "new stdout(`rho:io:stdout`) in { stdout!(\"hi\") }";
+    let parsed = Proc::parse(source).expect("official URI declaration parses");
+    assert!(matches!(parsed, Proc::PNewUris(..)));
+    let rendered = parsed.to_string();
+    assert_eq!(Proc::parse(&rendered).expect("rendered URI declaration reparses"), parsed);
 }
 
 // ══════════════════════════════════════════════════════════════════════════

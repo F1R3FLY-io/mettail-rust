@@ -58,6 +58,8 @@ impl Clone for ParseError {
                         hint: hint.clone(),
                     })
                 },
+                CloneTask::Visit(ParseError::RealizationFailed { error, range }) => values
+                    .push(ParseError::RealizationFailed { error: error.clone(), range: *range }),
                 CloneTask::Recovery(repair_description, range, base) => {
                     let original_error = values.pop().expect("parse-error clone lost its source");
                     values.truncate(base);
@@ -149,6 +151,10 @@ impl fmt::Debug for ParseError {
                     formatter,
                     "AmbiguityBudget {{ budget: {budget:?}, actual: {actual:?}, range: {range:?}, hint: {hint:?} }}"
                 )?,
+                DebugTask::Visit(ParseError::RealizationFailed { error, range }) => write!(
+                    formatter,
+                    "RealizationFailed {{ error: {error:?}, range: {range:?} }}"
+                )?,
             }
         }
         Ok(())
@@ -219,6 +225,16 @@ impl fmt::Display for ParseError {
                         actual
                     )?;
                     display_hint(hint, formatter)?;
+                    break;
+                },
+                ParseError::RealizationFailed { error, range } => {
+                    write!(
+                        formatter,
+                        "{}:{}: parser realization failed: {}",
+                        range.start.line + 1,
+                        range.start.column + 1,
+                        error,
+                    )?;
                     break;
                 },
             }

@@ -1,6 +1,6 @@
 //! **THE** reserved-band allocator for every MeTTaIL system-process contract (#36 S4 + S5).
 //!
-//! MeTTaIL installs four families of f1r3node *system processes* — machine-side contracts the
+//! MeTTaIL installs system-process families — machine-side contracts the
 //! emitted Rholang calls through a fixed unforgeable channel:
 //!
 //! | band | what it serves | built by |
@@ -9,6 +9,10 @@
 //! | **native-handler** (A-S3) | one contract per registrable native RULE | `rholang-runtime/src/native_contract.rs` |
 //! | **lookahead** | the `[*]` / `[n]` request servers | `rholang-runtime/src/speculation/server.rs` |
 //! | **native-shift** (A-S5.8) | one shift-by-k PDA per language | `rholang-runtime/src/shift_contract.rs` |
+//! | **language-install** | install a Rholang-authored grammar and return its capability | `rholang-runtime/src/language_install.rs` |
+//! | **language-parse** | recognize guest source through an opaque installed capability | `rholang-runtime/src/language_install.rs` |
+//! | **FLT-construct** | parse and structurally reflect an FLT through an installed capability | `rholang-runtime/src/language_install.rs` |
+//! | **FLT-pattern** | prepare a capability-scoped FLT receive pattern before publication | `rholang-runtime/src/language_install.rs` |
 //!
 //! Each contract needs two identifiers, and f1r3node treats them very differently:
 //!
@@ -61,12 +65,16 @@
 //! ```text
 //!  bit 63    62 … 56       55 … 48        47 … 0
 //! ┌───────┬────────────┬─────────────┬──────────────────────────┐
-//! │   0   │  band id   │    index    │  48-bit fingerprint hash │
+//! │   0   │  band id   │    index    │ 48-bit BLAKE3 fingerprint │
 //! └───────┴────────────┴─────────────┴──────────────────────────┘
-//!  always   1=held-fold  site_index /   FNV-1a over the whole
+//!  always   1=held-fold  site_index /   BLAKE3 over the whole
 //!  clear    2=native      rule_index    fingerprint string
 //!           3=lookahead   request kind
 //!           4=shift       zero
+//!           5=install     zero
+//!           6=FLT-build   zero
+//!           7=FLT-match   zero
+//!           8=parse       zero
 //! ```
 //!
 //! * bit 63 is always clear, so every `body_ref` is a positive `i64` (f1r3node compares them as
@@ -80,25 +88,17 @@
 //!   birthday bound of a 48-bit digest (~2²⁴ ≈ 16.7 M co-installed languages for even odds),
 //!   and it is checked rather than assumed.
 //!
-//! # Why the digest is FNV-1a and not [`std::hash::DefaultHasher`]
+//! # Why the digest is BLAKE3 and not [`std::hash::DefaultHasher`]
 //!
 //! `DefaultHasher`'s output is explicitly **not** guaranteed stable across Rust releases. A
 //! `body_ref` derived from it would silently change under a toolchain upgrade, so two nodes on
 //! different toolchains would build different dispatch tables from the *same* language — a
-//! replay divergence introduced by a compiler bump. FNV-1a is specified here in full, in code,
-//! and can never drift.
-//!
-//! Reference: Fowler, Noll & Vo, *FNV Hash* — the 64-bit variant, offset basis
-//! `0xcbf29ce484222325`, prime `0x100000001b3`. IETF draft:
-//! <https://datatracker.ietf.org/doc/html/draft-eastlake-fnv-21>
+//! replay divergence introduced by a compiler bump. BLAKE3 has a stable specification and is
+//! domain-separated here from every other MeTTaIL digest. Truncation is forced by the `i64`
+//! host ABI; pairwise admission checks turn the residual collision possibility into refusal.
 
 use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
 use models::rhoapi::{GPrivate, GUnforgeable, Par};
-
-/// FNV-1a 64-bit offset basis.
-const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-/// FNV-1a 64-bit prime.
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// Bit position of the band id inside a `body_ref`.
 const BAND_ID_SHIFT: u32 = 56;
@@ -109,18 +109,23 @@ const DIGEST_BITS: u32 = 48;
 /// Mask selecting [`DIGEST_BITS`] low bits.
 const DIGEST_MASK: u64 = (1u64 << DIGEST_BITS) - 1;
 
-/// The stable 48-bit digest of a language fingerprint — FNV-1a 64 over the fingerprint's UTF-8
-/// bytes, truncated to the low [`DIGEST_BITS`] bits.
+/// The stable 48-bit digest of a language fingerprint — domain-separated BLAKE3-256 over the
+/// length-prefixed fingerprint, truncated to the low [`DIGEST_BITS`] bits required by the host
+/// `i64` body-reference ABI.
 ///
 /// Specified in code (not delegated to a hasher whose output may change) precisely because a
 /// `body_ref` derived from it is replay-relevant: see this module's header.
 pub fn fingerprint_digest(language_fingerprint: &str) -> u64 {
-    let mut hash = FNV_OFFSET_BASIS;
-    for byte in language_fingerprint.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash & DIGEST_MASK
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"MeTTaIL system-process body-ref v2\0");
+    hasher.update(&(language_fingerprint.len() as u64).to_be_bytes());
+    hasher.update(language_fingerprint.as_bytes());
+    let bytes = hasher.finalize();
+    u64::from_be_bytes(
+        bytes.as_bytes()[..8]
+            .try_into()
+            .expect("eight-byte digest prefix"),
+    ) & DIGEST_MASK
 }
 
 /// One reserved system-process band: a channel tag byte plus a `body_ref` band id.
@@ -180,6 +185,40 @@ pub const NATIVE_SHIFT_BAND: SystemProcessBand = SystemProcessBand {
     channel_tag: MTL_NATIVE_SHIFT_CHANNEL_TAG,
 };
 
+/// The process-wide Rholang-authored language installer. Index zero is the
+/// sole allocation; the ABI string scopes its deterministic body reference.
+pub const LANGUAGE_INSTALL_BAND: SystemProcessBand = SystemProcessBand {
+    name: "language-install",
+    band_id: 5,
+    channel_tag: MTL_LANGUAGE_INSTALL_CHANNEL_TAG,
+};
+
+/// Structural FLT construction through an installed language capability. This
+/// is deliberately a separate band from installation: both handlers share one
+/// [`RholangLanguageRuntime`](../../rholang-runtime/src/language_install.rs),
+/// but f1r3node dispatch identity must distinguish their contracts.
+pub const LANGUAGE_FLT_CONSTRUCT_BAND: SystemProcessBand = SystemProcessBand {
+    name: "language-flt-construct",
+    band_id: 6,
+    channel_tag: MTL_LANGUAGE_FLT_CONSTRUCT_CHANNEL_TAG,
+};
+
+/// Pre-publication preparation of installed-language FLT receive patterns.
+pub const LANGUAGE_FLT_PATTERN_BAND: SystemProcessBand = SystemProcessBand {
+    name: "language-flt-pattern",
+    band_id: 7,
+    channel_tag: MTL_LANGUAGE_FLT_PATTERN_CHANNEL_TAG,
+};
+
+/// Parse-only recognition through an opaque installed-language capability.
+/// It is separate from FLT construction because it exposes no reflected term
+/// and therefore requires no `Construct` or `ReflectAst` authority.
+pub const LANGUAGE_PARSE_BAND: SystemProcessBand = SystemProcessBand {
+    name: "language-parse",
+    band_id: 8,
+    channel_tag: MTL_LANGUAGE_PARSE_CHANNEL_TAG,
+};
+
 /// Leading byte of every held-fold contract channel id.
 pub const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
 /// Leading byte of every native-handler contract channel id.
@@ -190,6 +229,14 @@ pub const MTL_NATIVE_CHANNEL_TAG: u8 = 0xF1;
 pub const MTL_LOOKAHEAD_CHANNEL_TAG: u8 = 0xF2;
 /// Leading byte of the fingerprint-scoped native shift-by-k contract channel.
 pub const MTL_NATIVE_SHIFT_CHANNEL_TAG: u8 = 0xF3;
+/// Leading byte of the `rho:mettail:install` system-process channel.
+pub const MTL_LANGUAGE_INSTALL_CHANNEL_TAG: u8 = 0xF4;
+/// Leading byte of the installed-language structural FLT constructor channel.
+pub const MTL_LANGUAGE_FLT_CONSTRUCT_CHANNEL_TAG: u8 = 0xF5;
+/// Leading byte of the installed-language FLT pattern preparation channel.
+pub const MTL_LANGUAGE_FLT_PATTERN_CHANNEL_TAG: u8 = 0xF6;
+/// Leading byte of the installed-language parse-only recognizer channel.
+pub const MTL_LANGUAGE_PARSE_CHANNEL_TAG: u8 = 0xF7;
 
 impl SystemProcessBand {
     /// The unforgeable contract channel for `(index, fingerprint)` in this band:
@@ -316,7 +363,16 @@ mod tests {
     /// longer produce the same channel or the same `body_ref` in either band.
     #[test]
     fn index_zero_in_two_languages_no_longer_collides() {
-        for band in [HELD_FOLD_BAND, NATIVE_HANDLER_BAND, LOOKAHEAD_BAND, NATIVE_SHIFT_BAND] {
+        for band in [
+            HELD_FOLD_BAND,
+            NATIVE_HANDLER_BAND,
+            LOOKAHEAD_BAND,
+            NATIVE_SHIFT_BAND,
+            LANGUAGE_INSTALL_BAND,
+            LANGUAGE_FLT_CONSTRUCT_BAND,
+            LANGUAGE_FLT_PATTERN_BAND,
+            LANGUAGE_PARSE_BAND,
+        ] {
             assert_ne!(
                 band.channel(0, FP_A),
                 band.channel(0, FP_B),
@@ -355,7 +411,7 @@ mod tests {
         );
     }
 
-    /// The four bands are disjoint from each other and from f1r3node's own `body_ref`s, and
+    /// Every band is disjoint from the others and from f1r3node's own `body_ref`s, and
     /// every allocation is a positive `i64` (the sign bit is structurally clear).
     #[test]
     fn the_bands_are_disjoint_and_positive() {
@@ -363,12 +419,26 @@ mod tests {
         let native = NATIVE_HANDLER_BAND.body_ref_range();
         let lookahead = LOOKAHEAD_BAND.body_ref_range();
         let shift = NATIVE_SHIFT_BAND.body_ref_range();
+        let install = LANGUAGE_INSTALL_BAND.body_ref_range();
+        let construct = LANGUAGE_FLT_CONSTRUCT_BAND.body_ref_range();
+        let pattern = LANGUAGE_FLT_PATTERN_BAND.body_ref_range();
+        let parse = LANGUAGE_PARSE_BAND.body_ref_range();
         assert!(fold.end() < native.start(), "the fold and native bands must not overlap");
         assert!(
             native.end() < lookahead.start(),
             "the native and lookahead bands must not overlap"
         );
         assert!(lookahead.end() < shift.start(), "lookahead and shift bands must not overlap");
+        assert!(shift.end() < install.start(), "shift and install bands must not overlap");
+        assert!(
+            install.end() < construct.start(),
+            "install and construct bands must not overlap"
+        );
+        assert!(
+            construct.end() < pattern.start(),
+            "construct and pattern bands must not overlap"
+        );
+        assert!(pattern.end() < parse.start(), "pattern and parse bands must not overlap");
         assert!(
             *fold.start() > 108,
             "every band sits above f1r3node's std (0-36) and test-framework (101-108) body_refs"
@@ -380,6 +450,10 @@ mod tests {
                     (NATIVE_HANDLER_BAND, &native),
                     (LOOKAHEAD_BAND, &lookahead),
                     (NATIVE_SHIFT_BAND, &shift),
+                    (LANGUAGE_INSTALL_BAND, &install),
+                    (LANGUAGE_FLT_CONSTRUCT_BAND, &construct),
+                    (LANGUAGE_FLT_PATTERN_BAND, &pattern),
+                    (LANGUAGE_PARSE_BAND, &parse),
                 ] {
                     let body_ref = band.body_ref(index, fingerprint);
                     assert!(body_ref > 0, "{}: body_ref must be positive", band.name);
@@ -421,22 +495,14 @@ mod tests {
         assert_eq!(first, reversed, "allocation must not depend on request order");
     }
 
-    /// FNV-1a is pinned against its published test vectors, so a future edit cannot quietly
+    /// The domain-separated BLAKE3 derivation is pinned, so a future edit cannot quietly
     /// change every `body_ref` in the tree.
     #[test]
-    fn fnv1a_matches_the_published_vectors() {
-        // The published FNV-1a 64 values, truncated to the 48 bits this module uses.
-        for (input, full) in [
-            ("", 0xcbf29ce484222325u64),
-            ("a", 0xaf63dc4c8601ec8cu64),
-            ("foobar", 0x85944171f73967e8u64),
-        ] {
-            assert_eq!(
-                fingerprint_digest(input),
-                full & DIGEST_MASK,
-                "FNV-1a 64 of {input:?} must match the published vector"
-            );
-        }
+    fn blake3_derivation_is_pinned() {
+        assert_eq!(
+            [fingerprint_digest(""), fingerprint_digest("a"), fingerprint_digest("foobar"),],
+            [0xa72311ceb1e1, 0x1124dede8dc5, 0xc04e1c1355c2]
+        );
     }
 
     /// A collision is REFUSED, not resolved — the check reports both colliding identities.

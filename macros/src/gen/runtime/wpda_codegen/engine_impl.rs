@@ -8,7 +8,7 @@
 //! generated engine reports a structured error rather than panicking.
 
 use mettail_ast::grammar::GrammarRule;
-use mettail_ast::language::LanguageDef;
+use mettail_ast::language::{AttributeValue, LanguageDef};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
@@ -70,7 +70,8 @@ pub(crate) fn emit_engine_impl_full(
     // Aggregate Phase A.2 prefix arms across all categories. Each arm
     // guards on `state_cat_src_idx` so the same token can produce
     // different AST depending on which category is being parsed.
-    let mut all_prefix_arms = TokenStream::new();
+    let mut prefix_category_dispatch_arms = TokenStream::new();
+    let mut prefix_category_router_helpers = TokenStream::new();
     // Task #15 (frame-bound peel): collect each category's per-arm
     // `#[inline(never)]` PrefixDispatch helper methods alongside the arms; they
     // are emitted into the inherent `impl #engine_ident` block below.
@@ -91,8 +92,49 @@ pub(crate) fn emit_engine_impl_full(
                 .unwrap_or(&s1_empty_group_members),
             fork_rows,
         );
-        all_prefix_arms.extend(arms);
         all_prefix_helpers.extend(helpers);
+
+        // A category router is a grammar-table lookup layer in the generated
+        // WPDA.  The transition bodies already live in bounded, non-inlined
+        // leaf methods, so keep the complete token match in one router.  This
+        // gives rustc/LLVM the whole discriminant/key decision at once and
+        // avoids a rule-count-dependent chain of chunk calls on a miss while
+        // preserving the former ordered, first-match transition semantics.
+        let category_src_idx = i as u16;
+        let category_router = quote::format_ident!("step_prefix_category_c{category_src_idx}");
+        prefix_category_router_helpers.extend(quote! {
+            #[inline(never)]
+            fn #category_router(
+                &self,
+                pos: &usize,
+                cur_bp: &u8,
+                state_cat_src_idx: u16,
+                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+            ) -> Option<
+                mettail_prattail::wpda_walker::WpdaStepAction<
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                >,
+            > {
+                let _outer_bp = *cur_bp;
+                let __action = match tokens.peek_kind(*pos) {
+                    #( #arms )*
+                    _ => return None,
+                };
+                Some(__action)
+            }
+        });
+        prefix_category_dispatch_arms.extend(quote! {
+            #category_src_idx => self.#category_router(
+                pos,
+                cur_bp,
+                state_cat_src_idx,
+                tokens,
+                frontier_top,
+                frame_ctx,
+            ),
+        });
     }
     // Phase 4: prepend collection open-delimiter arms so they run before
     // generic prefix arms. Open delimiters are typically `Fixed("{")` /
@@ -103,6 +145,8 @@ pub(crate) fn emit_engine_impl_full(
     // bootstrap, and element_src_idx lookup for Unwinding-CollectionMarker.
     let collection_loop_body =
         super::collection::emit_collection_loop_arm(language, categories, per_cat);
+    let collection_element_prefix_predicate =
+        super::collection::emit_collection_element_prefix_predicate(language, categories);
     // Stage 2 consolidation (2026-06-27): the single per-(result_src_idx,
     // rule_idx, slot_idx) → CollectionSpec table. Supersedes the former
     // collection_close_lookup / collection_close_sep_lookup /
@@ -199,8 +243,10 @@ pub(crate) fn emit_engine_impl_full(
     let grouping_arms =
         super::prefix::emit_paren_dispatch_arms(categories, language, per_cat, fork_rows);
 
-    let action_for_body =
-        semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
+    let semantic_actions::PartitionedActionFor {
+        helpers: action_for_helpers,
+        body: action_for_body,
+    } = semantic_actions::emit_partitioned_action_for(language, categories, &per_cat_indexed);
     let chain_atom_rules_for_token_body =
         super::kind_dispatch::emit_chain_atom_rules_for_token_body(language, per_cat);
     let chain_atom_producers_for_token_body =
@@ -306,11 +352,18 @@ pub(crate) fn emit_engine_impl_full(
     // S1-FACTORING AV5: when factored groups exist, the PrefixOp lex-alt
     // weight stamps route through the `__s1_spine_weight_rule` free fn
     // (min-member identity for spine entries; the fn is emitted below).
-    let lex_fork_dispatch =
-        super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx, s1_spine.any_groups());
+    let contextual_keywords = match language.options.get("contextual_keywords") {
+        Some(AttributeValue::StringList(values)) => values.as_slice(),
+        _ => &[],
+    };
+    let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(
+        primary_src_idx,
+        contextual_keywords,
+        s1_spine.any_groups(),
+    );
     // S1-FACTORING F5-2 (plan f5_mixfix_cohorts_plan.md, A-M5): when THIS
     // language has factored mixfix cohorts, the InfixLoop lex-fork's
-    // MixfixFirstTrigger sites route the `lex_w_alt` weight identity AND the
+    // MixfixFirstTrigger sites route the scalar-cost trigger identity and the
     // `LexAltMixfixOp.rule_idx` action-kind field through
     // `__s1_spine_weight_rule` (min member for spine ids, identity
     // otherwise). Gated per language so every no-mixfix-group engine stays
@@ -355,6 +408,76 @@ pub(crate) fn emit_engine_impl_full(
         })
         .collect();
 
+    // Fixed-width accelerator over the exact same tagged stream. The walker
+    // uses this only for bucket selection and always regenerates the complete
+    // `semantic_fingerprint` bytes before folding a candidate, so digest
+    // collisions cannot change the parse result.
+    let semantic_fingerprint_digest_arms: Vec<TokenStream> = categories
+        .iter()
+        .enumerate()
+        .map(|(i, cat_name)| {
+            let cat_ident = quote::format_ident!("{}", cat_name);
+            let cat_disc = i as u16;
+            quote! {
+                if let Some(__t) = (&**term).downcast_ref::<#cat_ident>() {
+                    let mut __hasher =
+                        mettail_prattail::wpda_walker::SemanticFingerprintHasher::default();
+                    std::hash::Hasher::write_u16(&mut __hasher, #cat_disc);
+                    __t.semantic_hash(&mut __hasher);
+                    return Some(__hasher.into_fingerprint());
+                }
+            }
+        })
+        .collect();
+
+    // Persistent exact key over the byte-identical category-tagged semantic
+    // stream. The category method shares cached descendant keys; the prefix is
+    // one local fragment, so neither step flattens a subtree.
+    let semantic_content_key_arms: Vec<TokenStream> = categories
+        .iter()
+        .enumerate()
+        .map(|(i, cat_name)| {
+            let cat_ident = quote::format_ident!("{}", cat_name);
+            let cat_disc = i as u16;
+            quote! {
+                if let Ok(__owner) = term.clone().downcast::<#cat_ident>() {
+                    let __term_key = #cat_ident::semantic_content_key(__owner, cache)?;
+                    let mut __builder =
+                        mettail_runtime::exact_semantic_key::SemanticKeyBuilder::with_max_bytes(
+                            cache.max_key_bytes(),
+                        );
+                    std::hash::Hasher::write_u16(&mut __builder, #cat_disc);
+                    __builder.push_key(__term_key);
+                    return Ok(Some(__builder.into_key()?));
+                }
+            }
+        })
+        .collect();
+
+    // Positive structural equality is a sufficient certificate for exact
+    // semantic-key equality. A negative typed comparison remains
+    // inconclusive because two structurally different terms can be
+    // observationally equal (for example through transparent constructors),
+    // so the walker retains its complete exact-key fallback.
+    let semantic_structural_equality_arms: Vec<TokenStream> = categories
+        .iter()
+        .map(|cat_name| {
+            let cat_ident = quote::format_ident!("{}", cat_name);
+            quote! {
+                if let (Some(__left), Some(__right)) = (
+                    (&**left).downcast_ref::<#cat_ident>(),
+                    (&**right).downcast_ref::<#cat_ident>(),
+                ) {
+                    return if __left == __right {
+                        mettail_prattail::wpda_walker::SemanticEqualityWitness::Equal
+                    } else {
+                        mettail_prattail::wpda_walker::SemanticEqualityWitness::Inconclusive
+                    };
+                }
+            }
+        })
+        .collect();
+
     // S1-FACTORING F1: the spine-bundle streams interpolated below. ALL are
     // empty under `forks::S1_FACTORING == false` (byte-identical output).
     let s1_action_for_prelude = &s1_spine.action_for_prelude;
@@ -390,11 +513,12 @@ pub(crate) fn emit_engine_impl_full(
                 __cands.push(
                     mettail_prattail::wpda_walker::ForkBranch {
                         symbol: StackSymbolV2::mixfix_marker(
-                            result_src, rule_idx, 0,
+                            result_src, rule_idx, 0, *cur_bp,
                         ),
                         weight: lex_w(
                             mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
-                            result_src, rule_idx,
+                            result_src,
+                            rule_idx,
                         ),
                         new_state: WpdaState::MixfixLiteralRun {
                             result_src_idx: result_src,
@@ -524,6 +648,7 @@ pub(crate) fn emit_engine_impl_full(
                             *result_src_idx,
                             *rule_idx,
                             __part_idx,
+                            __mixfix_continuation_bp,
                         ),
                         weight: lex_one(),
                         new_state: WpdaState::MixfixLiteralRun {
@@ -559,6 +684,7 @@ pub(crate) fn emit_engine_impl_full(
                             *result_src_idx,
                             *rule_idx,
                             *completed_idx,
+                            __mixfix_continuation_bp,
                         ),
                         weight: lex_one(),
                         new_state: __next_state,
@@ -573,6 +699,7 @@ pub(crate) fn emit_engine_impl_full(
                                         *result_src_idx,
                                         *rule_idx,
                                         *completed_idx,
+                                        __mixfix_continuation_bp,
                                     ),
                                     weight: lex_one(),
                                     new_state: __next_state.clone(),
@@ -625,8 +752,8 @@ pub(crate) fn emit_engine_impl_full(
         // peeled BinderRule/PrefixDispatch helper methods (in the inherent impl
         // below) resolve the same SHORT names the trait `step` uses via its
         // fn-local `use`s — the relocated arm bodies are byte-for-byte verbatim
-        // and reference `WpdaStepAction`/`WpdaState`/`StackSymbolV2`/`lex_w`/
-        // `lex_one` unqualified. These land at the language module's top level
+        // and reference `WpdaStepAction`/`WpdaState`/`StackSymbolV2` and the
+        // exact scalar-cost constructors unqualified. These land at the language module's top level
         // (where the engine impls sit, alongside `ast`/`language`/… includes).
         // The only sibling generated file with a column-0 `use` is `parser.rs`
         // (a `runtime_types::*` GLOB + an explicit `Cow`); an explicit `use`
@@ -640,6 +767,8 @@ pub(crate) fn emit_engine_impl_full(
         };
         #[allow(unused_imports)]
         use mettail_prattail::wpda_walker::WpdaStepAction;
+        #[allow(unused_imports)]
+        use mettail_prattail::wpda_walker::WpdaEngine as _;
         #[allow(unused_imports)]
         use mettail_prattail::automata::lex_weight::LexicographicWeight;
         #[allow(unused_imports)]
@@ -666,11 +795,46 @@ pub(crate) fn emit_engine_impl_full(
                 }
                 #cat_can_reach_body
             }
+            #collection_element_prefix_predicate
+            // A lexical lattice fork is a transition submachine, not part of
+            // PrefixDispatch's ordinary token router.  Keeping it in its own
+            // non-inlined frame prevents the generated grammar's alternative
+            // constructors from being reserved alongside every normal prefix
+            // arm.  `None` is the exact former fall-through edge; `Some` is the
+            // exact former early-return action.
+            #[inline(never)]
+            fn step_prefix_lex_fork(
+                &self,
+                pos: &usize,
+                cur_bp: &u8,
+                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+            ) -> Option<
+                mettail_prattail::wpda_walker::WpdaStepAction<
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                >,
+            > {
+                #[allow(non_camel_case_types)]
+                type __DwW =
+                    mettail_prattail::automata::lex_weight::LexicographicWeight;
+                #lex_fork_dispatch
+                None
+            }
             // Task #15: peeled BinderRule per-(cat,rule) dispatch helpers
             // (each an `#[inline(never)]` `match (cat,rule,position)` group).
             #binder_rule_helpers
+            // Semantic action construction is likewise routed through one
+            // non-inlined, category-sized helper. The rule arms themselves are
+            // unchanged; this bounds rustc's native frame without adding a
+            // runtime table or dynamic dispatch.
+            #action_for_helpers
             // Task #15: peeled PrefixDispatch per-arm-body helpers.
             #all_prefix_helpers
+            // Stack-bound token routers: category -> token decision ->
+            // transition leaf. All calls are non-recursive; semantic branch
+            // temporaries remain isolated in the leaf methods.
+            #prefix_category_router_helpers
         }
 
         #[allow(unused_variables, unused_braces)]
@@ -701,18 +865,29 @@ pub(crate) fn emit_engine_impl_full(
                 use mettail_prattail::wpda_walker::WpdaStepAction;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 use mettail_prattail::automata::semiring::Semiring;
-                // C11.5 (2026-05-16): unused DerivationWeight + DerivationSnapshot
-                // imports deleted alongside the C10 W revert. The M11.4 weight
-                // wrappers no longer carry a snapshot — `lex_w`/`lex_w_alt`/
-                // `lex_one` directly construct LexicographicWeight values.
                 use mettail_prattail::wpda_runtime::{
                     lex_w, lex_w_alt, lex_w_alt_with_len, lex_w_with_len, lex_one,
                 };
-                // Phase 3.1.7 (C10, 2026-05-15): walker `W` is plain
-                // `LexicographicWeight` — SPPF arena carries derivation
-                // ambiguity; W carries only path-cost tiebreak.
                 #[allow(non_camel_case_types)]
                 type __DwW = LexicographicWeight;
+
+                // Stack-safety partition: generated grammars can have thousands
+                // of transition arms. In an unoptimized build, keeping every
+                // state body in this one function makes rustc reserve the sum of
+                // their branch temporaries in a single native frame. The actual
+                // pushdown store already lives in the walker/GSS; this transparent
+                // wrapper gives each PDA control-state family a named, non-inlined
+                // native frame without adding a runtime state or recursive call.
+                struct __MettailWpdaStepFrame<'a>(&'a #engine_ident);
+                impl std::ops::Deref for __MettailWpdaStepFrame<'_> {
+                    type Target = #engine_ident;
+
+                    #[inline(always)]
+                    fn deref(&self) -> &Self::Target {
+                        self.0
+                    }
+                }
+                let __step_frame = __MettailWpdaStepFrame(self);
 
                 match state {
                     WpdaState::Ready { min_bp } => {
@@ -727,6 +902,24 @@ pub(crate) fn emit_engine_impl_full(
                         }
                     }
                     WpdaState::PrefixDispatch { pos, cur_bp } => {
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_prefix_dispatch(
+                                &self,
+                                pos: &usize,
+                                cur_bp: &u8,
+                                _gss: &mettail_prattail::gss::WpdaGss<
+                                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                                >,
+                                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
+                                #[allow(non_camel_case_types)]
+                                type __DwW = mettail_prattail::automata::lex_weight::LexicographicWeight;
                         // L-substrate Piece #6 (2026-05-13): lex-fork
                         // dispatch BEFORE any other PrefixDispatch
                         // logic. Emits a Fork over `peek_alternatives(*pos)`
@@ -741,7 +934,15 @@ pub(crate) fn emit_engine_impl_full(
                         // `MutableMultiTokenSource` attached (Pieces
                         // #3/#7 facade glue gates the source
                         // selection).
-                        #lex_fork_dispatch
+                        if let Some(__action) = self.step_prefix_lex_fork(
+                            pos,
+                            cur_bp,
+                            frontier_top,
+                            tokens,
+                            frame_ctx,
+                        ) {
+                            return __action;
+                        }
                         // Stage 3.16 invariant (Cluster 1, Mechanism γ,
                         // 2026-05-05): Fork over close + cross-cat-redirect
                         // branches. For shipped grammars the conditions
@@ -775,9 +976,10 @@ pub(crate) fn emit_engine_impl_full(
                                 // runtime accumulator ids flow separately
                                 // through the CollectionId action argument.
                                 let slot_idx = node.symbol.bp.unwrap_or(0u8);
-                                let close_lookup: Option<&'static str> = self
-                                    .collection_spec(result_src_idx, rule_idx, slot_idx)
-                                    .map(|__s| __s.close);
+                                let collection_spec = self
+                                    .collection_spec(result_src_idx, rule_idx, slot_idx);
+                                let close_lookup: Option<&'static str> =
+                                    collection_spec.map(|__s| __s.close);
                                 let token_text = tokens.peek_text(*pos).unwrap_or("");
                                 // #307 ROOT-F G1 site-2 (2026-06-11): the
                                 // empty-collection close detection is edge
@@ -785,19 +987,47 @@ pub(crate) fn emit_engine_impl_full(
                                 // primary-only text equality (the ROOT-A
                                 // primary_equality_loses trap — live for
                                 // multi-char closes like the Bag "}#").
-                                let token_is_close = Some(token_text) == close_lookup
-                                    || close_lookup.is_some_and(|cl| {
+                                let token_is_close = close_lookup.is_some_and(|cl| {
+                                    !cl.is_empty()
+                                        && (token_text == cl
+                                    || {
                                         tokens
                                             .peek_alternatives(*pos)
                                             .iter()
                                             .any(|a| a.text == cl)
-                                    });
+                                    })
+                                });
                                 let element_src_lookup: Option<u16> = self
                                     .collection_spec(result_src_idx, rule_idx, slot_idx)
                                     .and_then(|__s| __s.element_src_idx);
                                 let redirect_src_idx =
                                     element_src_lookup.filter(|&esi| esi != result_src_idx);
-                                if token_is_close || redirect_src_idx.is_some() {
+                                let element_can_start = element_src_lookup.is_some_and(|esi| {
+                                    tokens
+                                        .peek_kind(*pos)
+                                        .as_ref()
+                                        .is_some_and(|kind| {
+                                            self.collection_element_can_start(esi, kind)
+                                        })
+                                        || tokens
+                                            .peek_alternatives(*pos)
+                                            .iter()
+                                            .any(|alternative| {
+                                                self.collection_element_can_start(
+                                                    esi,
+                                                    &alternative.kind,
+                                                )
+                                            })
+                                });
+                                let can_stop_empty = collection_spec.is_some_and(|spec| {
+                                    spec.close.is_empty() && spec.min_elements == 0
+                                });
+                                let redirect_should_parse = redirect_src_idx.is_some()
+                                    && (!can_stop_empty || element_can_start);
+                                if token_is_close
+                                    || redirect_should_parse
+                                    || can_stop_empty
+                                {
                                     let mut __branches: Vec<
                                         mettail_prattail::wpda_walker::ForkBranch<
                                             __DwW,
@@ -833,9 +1063,7 @@ pub(crate) fn emit_engine_impl_full(
                                             __branches.push(
                                                 mettail_prattail::wpda_walker::ForkBranch {
                                                     symbol: StackSymbolV2::category_entry(0),
-                                                    weight: lex_w(
-                                                        0.0, result_src_idx, rule_idx,
-                                                    ),
+                                                    weight: lex_w(0.0, result_src_idx, rule_idx),
                                                     new_state: WpdaState::Unwinding,
                                                     action_kind:
                                                         mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
@@ -846,7 +1074,8 @@ pub(crate) fn emit_engine_impl_full(
                                         }
                                     }
                                     if let Some(element_src_idx) = redirect_src_idx {
-                                        __branches.push(
+                                        if !can_stop_empty || element_can_start {
+                                            __branches.push(
                                             mettail_prattail::wpda_walker::ForkBranch {
                                                 // GEN-1 goal-gate G2 (2026-06-28):
                                                 // strict GOAL = the collection
@@ -864,7 +1093,8 @@ pub(crate) fn emit_engine_impl_full(
                                                 ),
                                                 weight: lex_w(
                                                     mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                    result_src_idx, rule_idx,
+                                                    result_src_idx,
+                                                    rule_idx,
                                                 ),
                                                 new_state: WpdaState::PrefixDispatch {
                                                     pos: *pos,
@@ -872,6 +1102,51 @@ pub(crate) fn emit_engine_impl_full(
                                                 },
                                                 action_kind:
                                                     mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                            },
+                                            );
+                                        }
+                                    }
+                                    if can_stop_empty
+                                        && redirect_src_idx.is_none()
+                                        && element_src_lookup.is_some()
+                                        && element_can_start
+                                    {
+                                        let element_src_idx = element_src_lookup.unwrap_or(0);
+                                        __branches.push(
+                                            mettail_prattail::wpda_walker::ForkBranch {
+                                                symbol: StackSymbolV2::category_entry_goal(
+                                                    element_src_idx,
+                                                ),
+                                                weight: lex_w(
+                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                                    result_src_idx,
+                                                    rule_idx,
+                                                ),
+                                                new_state: WpdaState::PrefixDispatch {
+                                                    pos: *pos,
+                                                    cur_bp: *cur_bp,
+                                                },
+                                                action_kind:
+                                                    mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                            },
+                                        );
+                                    }
+                                    if can_stop_empty {
+                                        let resumes_via_unwinding = collection_spec
+                                            .is_some_and(|spec| {
+                                                spec.close_resumes_via_unwinding
+                                            });
+                                        __branches.push(
+                                            mettail_prattail::wpda_walker::ForkBranch {
+                                                symbol: StackSymbolV2::category_entry(0),
+                                                weight: lex_w(0.0, result_src_idx, rule_idx),
+                                                new_state: if resumes_via_unwinding {
+                                                    WpdaState::Unwinding
+                                                } else {
+                                                    WpdaState::InfixLoop { cur_bp: *cur_bp }
+                                                },
+                                                action_kind:
+                                                    mettail_prattail::wpda_walker::ForkActionKind::Pop,
                                             },
                                         );
                                     }
@@ -903,12 +1178,18 @@ pub(crate) fn emit_engine_impl_full(
                             // `Fixed("list")` — unambiguous in PrefixDispatch
                             // context.
                             #collection_arms
-                            // Generic unified prefix arms. These include
-                            // literal-leading binder/prefix rules; keeping
-                            // them bucketed here prevents first-match-wins
-                            // shadowing of projection alternatives.
-                            #all_prefix_arms
                             _ => {
+                                // Generic unified prefix arms.  They retain
+                                // their original source order, but are routed
+                                // through bounded per-category match chunks so
+                                // grammar growth cannot inflate this state's
+                                // native frame.
+                                if let Some(__action) = match state_cat_src_idx {
+                                    #prefix_category_dispatch_arms
+                                    _ => None,
+                                } {
+                                    return __action;
+                                }
                                 // Stage 3.20 / L12 (Commit D, 2026-05-06):
                                 // WPDS-edge recovery. The wrapper-level
                                 // skip-to-sync loop in facade.rs is replaced
@@ -960,7 +1241,7 @@ pub(crate) fn emit_engine_impl_full(
                                                         state_cat_src_idx,
                                                         *cur_bp,
                                                     );
-                                                    mettail_prattail::recovery_dispatch::emit_recovery_fork_cached_with_config::<__DwW>(
+                                                    mettail_prattail::recovery_dispatch::emit_recovery_fork_cached_with_config(
                                                         view,
                                                         tokens,
                                                         infra,
@@ -979,7 +1260,7 @@ pub(crate) fn emit_engine_impl_full(
                                                     state_cat_src_idx,
                                                     *cur_bp,
                                                 );
-                                                mettail_prattail::recovery_dispatch::emit_recovery_fork_with_config::<__DwW>(
+                                                mettail_prattail::recovery_dispatch::emit_recovery_fork_with_config(
                                                     view,
                                                     tokens,
                                                     infra,
@@ -996,8 +1277,29 @@ pub(crate) fn emit_engine_impl_full(
                                 }
                             }
                         }
+                            }
+                        }
+                        __step_frame.step_prefix_dispatch(
+                            pos,
+                            cur_bp,
+                            _gss,
+                            frontier_top,
+                            _pos,
+                            tokens,
+                            frame_ctx,
+                        )
                     }
                     WpdaState::Unwinding => {
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_unwinding(
+                                &self,
+                                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
                         if let Some(node) = frontier_top {
                             match node.symbol.kind {
                                 mettail_prattail::wpda_runtime::SymbolKind::Return => {
@@ -1133,7 +1435,7 @@ pub(crate) fn emit_engine_impl_full(
                                     let element_src_idx = element_src_lookup.unwrap_or(result_src_idx);
                                     // str-cast collection-infix fix (2026-06-18):
                                     // recover the Pratt dispatch bp captured on the
-                                    // CollectionMarker at open (coll_dispatch_bp =
+                                    // CollectionMarker at open (continuation_bp =
                                     // Some(cur_bp) for Class-5 literals, Some(0) for
                                     // binder-internal collections). It feeds
                                     // CollectionLoop.outer_bp so the G1 close branch
@@ -1141,7 +1443,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // finalized collection joins the enclosing Pratt
                                     // loop exactly as an atomic primary does.
                                     // unwrap_or(0) degrades to the pre-fix behavior.
-                                    let dispatch_bp = node.symbol.coll_dispatch_bp.unwrap_or(0);
+                                    let dispatch_bp = node.symbol.continuation_bp.unwrap_or(0);
                                     // Phase 4 #5b (2026-05-12): emit
                                     // `kv_phase: 0` as the default; the
                                     // walker's `set_cursor_inner_state`
@@ -1437,8 +1739,28 @@ pub(crate) fn emit_engine_impl_full(
                         } else {
                             WpdaStepAction::Accept
                         }
+                            }
+                        }
+                        __step_frame.step_unwinding(frontier_top, _pos, tokens)
                     }
                     WpdaState::InfixLoop { cur_bp } => {
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_infix_loop(
+                                &self,
+                                cur_bp: &u8,
+                                _gss: &mettail_prattail::gss::WpdaGss<
+                                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                                >,
+                                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
+                                #[allow(non_camel_case_types)]
+                                type __DwW = mettail_prattail::automata::lex_weight::LexicographicWeight;
                         // Phase 4/5/B7: if frontier_top is a marker symbol
                         // for a mid-rule context, skip infix dispatch and
                         // fall through to Unwinding. Each marker has its
@@ -1624,7 +1946,7 @@ pub(crate) fn emit_engine_impl_full(
                             } else {
                                 match __goal {
                                     None => true,
-                                    Some(g) => Self::cat_can_reach(result_src, g),
+                                    Some(g) => <#engine_ident>::cat_can_reach(result_src, g),
                                 }
                             }
                         };
@@ -1675,7 +1997,8 @@ pub(crate) fn emit_engine_impl_full(
                                         .with_kind_return(),
                                         weight: lex_w(
                                             mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
-                                            result_src, rule_idx,
+                                            result_src,
+                                            rule_idx,
                                         ),
                                         new_state,
                                         action_kind:
@@ -1709,7 +2032,8 @@ pub(crate) fn emit_engine_impl_full(
                                         .with_kind_return(),
                                         weight: lex_w(
                                             mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
-                                            result_src, rule_idx,
+                                            result_src,
+                                            rule_idx,
                                         ),
                                         new_state: WpdaState::Unwinding,
                                         action_kind:
@@ -2061,6 +2385,16 @@ pub(crate) fn emit_engine_impl_full(
                                 }
                             }
                         }
+                            }
+                        }
+                        __step_frame.step_infix_loop(
+                            cur_bp,
+                            _gss,
+                            frontier_top,
+                            _pos,
+                            tokens,
+                            frame_ctx,
+                        )
                     }
                     WpdaState::InfixChainIterative {
                         result_src_idx: _result_src_idx,
@@ -2123,6 +2457,24 @@ pub(crate) fn emit_engine_impl_full(
                         slot_idx,
                         kv_phase,
                     } => {
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_collection_loop(
+                                &self,
+                                result_src_idx: &u16,
+                                rule_idx: &u16,
+                                _element_src_idx: &u16,
+                                _outer_bp: &u8,
+                                _accumulator_id: &u8,
+                                slot_idx: &u8,
+                                kv_phase: &u8,
+                                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
                         // Phase 4: dispatch on close / sep / element.
                         // Phase 4 #1.B (2026-05-11): slot_idx in scope
                         // for 3-tuple-keyed (close, sep) lookup in
@@ -2130,12 +2482,37 @@ pub(crate) fn emit_engine_impl_full(
                         // Phase 4 #5b (2026-05-12): kv_phase in scope
                         // for HashMap 3-phase dispatch.
                         #collection_loop_body
+                            }
+                        }
+                        __step_frame.step_collection_loop(
+                            result_src_idx,
+                            rule_idx,
+                            _element_src_idx,
+                            _outer_bp,
+                            _accumulator_id,
+                            slot_idx,
+                            kv_phase,
+                            frontier_top,
+                            _pos,
+                            tokens,
+                            frame_ctx,
+                        )
                     }
                     WpdaState::MixfixContinuation {
                         result_src_idx,
                         rule_idx,
                         completed_idx,
                     } => {
+                        let __mixfix_continuation_bp = frontier_top
+                            .filter(|node| {
+                                node.symbol.kind
+                                    == mettail_prattail::wpda_runtime::SymbolKind::MixfixMarker
+                            })
+                            .and_then(|node| node.symbol.continuation_bp)
+                            .expect(
+                                "MixfixContinuation invariant: frontier top must be a \
+                                 MixfixMarker carrying its result continuation floor",
+                            );
                         // B7 Pattern 1: between-operand transition. The
                         // separator was consumed in Unwinding-MixfixMarker;
                         // now ReplaceAndPush so the marker's bp updates to
@@ -2175,6 +2552,7 @@ pub(crate) fn emit_engine_impl_full(
                                         *result_src_idx,
                                         *rule_idx,
                                         *completed_idx,
+                                        __mixfix_continuation_bp,
                                     ),
                                     // GEN-1 goal-gate G1 (2026-06-28): strict
                                     // GOAL = the operand's category, so a
@@ -2206,6 +2584,31 @@ pub(crate) fn emit_engine_impl_full(
                         kind,
                         sub_pos,
                     } => {
+                        let __mixfix_continuation_bp = frontier_top
+                            .filter(|node| {
+                                node.symbol.kind
+                                    == mettail_prattail::wpda_runtime::SymbolKind::MixfixMarker
+                            })
+                            .and_then(|node| node.symbol.continuation_bp)
+                            .expect(
+                                "MixfixLiteralRun invariant: frontier top must be a \
+                                 MixfixMarker carrying its result continuation floor",
+                            );
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_mixfix_literal_run(
+                                &self,
+                                result_src_idx: &u16,
+                                rule_idx: &u16,
+                                completed_idx: &u8,
+                                kind: &u8,
+                                sub_pos: &u8,
+                                __mixfix_continuation_bp: u8,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
                         // L12 follow-up B6 step 3 (2026-05-07): walk
                         // postfix-mixfix per-part literal sequences.
                         // kind=0: consume following_terminals after the
@@ -2377,7 +2780,9 @@ pub(crate) fn emit_engine_impl_full(
                                     // Last operand done; Pop the marker.
                                     WpdaStepAction::Pop {
                                         weight: lex_one(),
-                                        new_state: WpdaState::InfixLoop { cur_bp: 0 },
+                                        new_state: WpdaState::InfixLoop {
+                                            cur_bp: __mixfix_continuation_bp,
+                                        },
                                     }
                                 } else {
                                     // Transition to kind=1 to consume
@@ -2412,7 +2817,9 @@ pub(crate) fn emit_engine_impl_full(
                                 if *completed_idx + 1 == parts_len {
                                     WpdaStepAction::Pop {
                                         weight: lex_one(),
-                                        new_state: WpdaState::InfixLoop { cur_bp: 0 },
+                                        new_state: WpdaState::InfixLoop {
+                                            cur_bp: __mixfix_continuation_bp,
+                                        },
                                     }
                                 } else {
                                     WpdaStepAction::Advance(
@@ -2439,27 +2846,48 @@ pub(crate) fn emit_engine_impl_full(
                                 .is_some() =>
                             {
                                 let rep_idx = *completed_idx;
-                                WpdaStepAction::ReplaceAndPush {
-                                    replace_symbol: StackSymbolV2::mixfix_marker(
-                                        *result_src_idx, *rule_idx, rep_idx,
-                                    ),
-                                    push_symbol: StackSymbolV2::collection_marker(
-                                        *result_src_idx, *rule_idx, rep_idx, 0u8,
-                                    ),
-                                    weight: lex_one(),
-                                    new_state: WpdaState::PrefixDispatch {
-                                        pos: _pos,
-                                        cur_bp: 0,
-                                    },
+                                let (_, preceding, _, _, _) = mixfix_rep(
+                                    *result_src_idx, *rule_idx, rep_idx,
+                                )
+                                .expect("guarded by mixfix_rep.is_some()");
+                                if (*sub_pos as usize) < preceding.len() {
+                                    let expected = preceding[*sub_pos as usize];
+                                    __checked_literal_consume!(
+                                        expected,
+                                        WpdaState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 2,
+                                            sub_pos: sub_pos + 1,
+                                        }
+                                    )
+                                } else {
+                                    WpdaStepAction::ReplaceAndPush {
+                                        replace_symbol: StackSymbolV2::mixfix_marker(
+                                            *result_src_idx,
+                                            *rule_idx,
+                                            rep_idx,
+                                            __mixfix_continuation_bp,
+                                        ),
+                                        push_symbol: StackSymbolV2::collection_marker(
+                                            *result_src_idx, *rule_idx, rep_idx, 0u8,
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: 0,
+                                        },
+                                    }
                                 }
                             }
                             // GEN-1 B-3 (Stage S3): the NEXT part is a `*sep`
                             // repetition (e.g. POutput2Plus's `bs` after `a`). A rep
-                            // part's preceding literals are EMPTY for every shipped
-                            // rep rule (literals before a rep are absorbed into the
-                            // PRIOR part's `following`), so the between-operand run
-                            // goes straight into the rep entry. Bump the marker to
-                            // the rep part index and push its CollectionMarker — the
+                            // part may own preceding literals that are not part of a
+                            // prior operand (for example the `{` in a postfix DDL
+                            // builder). Consume that checked prelude before entering
+                            // the repetition. Then bump the marker to the rep part
+                            // index and push its CollectionMarker — the
                             // runtime's `emit_push_side_effects` allocates the
                             // accumulator and pushes the `CollectionId` arg into THIS
                             // marker's frame; the rule action drains it when the
@@ -2474,18 +2902,39 @@ pub(crate) fn emit_engine_impl_full(
                                 .is_some() =>
                             {
                                 let rep_idx = *completed_idx + 1;
-                                WpdaStepAction::ReplaceAndPush {
-                                    replace_symbol: StackSymbolV2::mixfix_marker(
-                                        *result_src_idx, *rule_idx, rep_idx,
-                                    ),
-                                    push_symbol: StackSymbolV2::collection_marker(
-                                        *result_src_idx, *rule_idx, rep_idx, 0u8,
-                                    ),
-                                    weight: lex_one(),
-                                    new_state: WpdaState::PrefixDispatch {
-                                        pos: _pos,
-                                        cur_bp: 0,
-                                    },
+                                let (_, preceding, _, _, _) = mixfix_rep(
+                                    *result_src_idx, *rule_idx, rep_idx,
+                                )
+                                .expect("guarded by mixfix_rep.is_some()");
+                                if (*sub_pos as usize) < preceding.len() {
+                                    let expected = preceding[*sub_pos as usize];
+                                    __checked_literal_consume!(
+                                        expected,
+                                        WpdaState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 1,
+                                            sub_pos: sub_pos + 1,
+                                        }
+                                    )
+                                } else {
+                                    WpdaStepAction::ReplaceAndPush {
+                                        replace_symbol: StackSymbolV2::mixfix_marker(
+                                            *result_src_idx,
+                                            *rule_idx,
+                                            rep_idx,
+                                            __mixfix_continuation_bp,
+                                        ),
+                                        push_symbol: StackSymbolV2::collection_marker(
+                                            *result_src_idx, *rule_idx, rep_idx, 0u8,
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: 0,
+                                        },
+                                    }
                                 }
                             }
                             (1, _) => {
@@ -2559,6 +3008,7 @@ pub(crate) fn emit_engine_impl_full(
                                                     *result_src_idx,
                                                     *rule_idx,
                                                     *completed_idx + 1,
+                                                    __mixfix_continuation_bp,
                                                 ),
                                                 push_symbol: StackSymbolV2::category_entry_goal(
                                                     operand_src_idx,
@@ -2607,7 +3057,9 @@ pub(crate) fn emit_engine_impl_full(
                                 } else {
                                     WpdaStepAction::Pop {
                                         weight: lex_one(),
-                                        new_state: WpdaState::InfixLoop { cur_bp: 0 },
+                                        new_state: WpdaState::InfixLoop {
+                                            cur_bp: __mixfix_continuation_bp,
+                                        },
                                     }
                                 }
                             }
@@ -2617,6 +3069,18 @@ pub(crate) fn emit_engine_impl_full(
                                 kind, result_src_idx, rule_idx, completed_idx,
                             )),
                         }
+                            }
+                        }
+                        __step_frame.step_mixfix_literal_run(
+                            result_src_idx,
+                            rule_idx,
+                            completed_idx,
+                            kind,
+                            sub_pos,
+                            __mixfix_continuation_bp,
+                            _pos,
+                            tokens,
+                        )
                     }
                     WpdaState::CollectionOpenParen {
                         result_src_idx,
@@ -2659,9 +3123,36 @@ pub(crate) fn emit_engine_impl_full(
                         body_src_idx: _body_src_idx,
                         outer_bp,
                     } => {
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_binder_rule(
+                                &self,
+                                result_src_idx: &u16,
+                                rule_idx: &u16,
+                                _body_src_idx: &u16,
+                                outer_bp: &u8,
+                                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
                         let _ = (result_src_idx, rule_idx, outer_bp);
                         // Phase 5: per-position dispatch for binder rules.
                         #binder_rule_body
+                            }
+                        }
+                        __step_frame.step_binder_rule(
+                            result_src_idx,
+                            rule_idx,
+                            _body_src_idx,
+                            outer_bp,
+                            frontier_top,
+                            _pos,
+                            tokens,
+                            frame_ctx,
+                        )
                     }
                     WpdaState::BinderListLoop {
                         result_src_idx,
@@ -2670,6 +3161,22 @@ pub(crate) fn emit_engine_impl_full(
                         outer_bp,
                         sub_pos,
                     } => {
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_binder_list_loop(
+                                &self,
+                                result_src_idx: &u16,
+                                rule_idx: &u16,
+                                frame_idx: &u32,
+                                outer_bp: &u8,
+                                sub_pos: &u32,
+                                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
                         let _ = (
                             result_src_idx,
                             rule_idx,
@@ -2682,6 +3189,19 @@ pub(crate) fn emit_engine_impl_full(
                         // inner walk for Class 3 ZIP-MAP-SEP. PNew-style
                         // rules dispatch at sub_pos=0 only.
                         #binder_list_loop_body
+                            }
+                        }
+                        __step_frame.step_binder_list_loop(
+                            result_src_idx,
+                            rule_idx,
+                            frame_idx,
+                            outer_bp,
+                            sub_pos,
+                            frontier_top,
+                            _pos,
+                            tokens,
+                            frame_ctx,
+                        )
                     }
                     WpdaState::CrossCatDelegate {
                         source_src_idx,
@@ -2731,6 +3251,22 @@ pub(crate) fn emit_engine_impl_full(
                         sub_pos,
                         outer_bp,
                     } => {
+                        impl __MettailWpdaStepFrame<'_> {
+                            #[inline(never)]
+                            fn step_optional_group(
+                                &self,
+                                result_src_idx: &u16,
+                                rule_idx: &u16,
+                                group_idx: &u32,
+                                sub_pos: &u32,
+                                outer_bp: &u8,
+                                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                                _pos: usize,
+                                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+                            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                            > {
                         // Opt-Group (2026-04-29): per-rule per-group dispatch.
                         // sub_pos=0 peeks the FIRST set and chooses
                         // take-or-skip; sub_pos>0 walks inner positions; the
@@ -2742,6 +3278,19 @@ pub(crate) fn emit_engine_impl_full(
                         // these compile to nothing in optimized builds.
                         let _ = (result_src_idx, rule_idx, group_idx, sub_pos, outer_bp);
                         #optional_group_body
+                            }
+                        }
+                        __step_frame.step_optional_group(
+                            result_src_idx,
+                            rule_idx,
+                            group_idx,
+                            sub_pos,
+                            outer_bp,
+                            frontier_top,
+                            _pos,
+                            tokens,
+                            frame_ctx,
+                        )
                     }
                     WpdaState::GroupingClosePreservingInner { inner_cat_src_idx } => {
                         // Plan A (paren+postfix redesign, 2026-05-11):
@@ -2812,6 +3361,35 @@ pub(crate) fn emit_engine_impl_full(
             ) -> Option<Vec<u8>> {
                 #(#semantic_fingerprint_arms)*
                 None
+            }
+
+            fn semantic_fingerprint_digest(
+                &self,
+                term: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+            ) -> Option<mettail_prattail::wpda_walker::SemanticFingerprintDigest> {
+                #(#semantic_fingerprint_digest_arms)*
+                None
+            }
+
+            fn semantic_content_key(
+                &self,
+                term: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+                cache: &mut mettail_runtime::exact_semantic_key::ContentKeyCache,
+            ) -> Result<
+                Option<mettail_runtime::exact_semantic_key::ContentKey>,
+                mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+            > {
+                #(#semantic_content_key_arms)*
+                Ok(None)
+            }
+
+            fn semantic_structural_equality_witness(
+                &self,
+                left: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+                right: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+            ) -> mettail_prattail::wpda_walker::SemanticEqualityWitness {
+                #(#semantic_structural_equality_arms)*
+                mettail_prattail::wpda_walker::SemanticEqualityWitness::Inconclusive
             }
 
             fn chain_atom_rules_for_token(

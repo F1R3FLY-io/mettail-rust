@@ -136,10 +136,8 @@ pub fn generate_parse_alt_filter_methods(language: &LanguageDef) -> TokenStream 
     // the wrapper Inner enum exists. Single-type languages have no
     // wrapper, and `parse_preserving_vars` for them has no successes
     // loop to filter, so this dispatch is unused.
-    let inner_impl = if language.types.len() > 1 {
-        let inner_arms: Vec<TokenStream> = language
-            .types
-            .iter()
+    let inner_impl = if crate::gen::semantic_types(language).count() > 1 {
+        let inner_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
             .map(|lang_type| {
                 let cat = &lang_type.name;
                 let variant = format_ident!("{}", cat);
@@ -328,6 +326,27 @@ fn generate_arm(
         // literal reading?", which is true of a collection literal as well.
         VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             quote! { #category::#label(_) => { *has_native_lit = true; }, }
+        },
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let recurse = carrier.for_each_borrowed_subterm(
+                &quote! { native },
+                crate::gen::native_carrier::NativeCarrierWalkOrder::Forward,
+                &|child_category, child| {
+                    if child_category != category {
+                        return quote! {};
+                    }
+                    let task = format_ident!("Uniform{}", category);
+                    quote! {
+                        stack.push(UniformTask::#task(#child as *const _));
+                    }
+                },
+            );
+            quote! {
+                #category::#label(native) => {
+                    *has_native_lit = true;
+                    #recurse
+                },
+            }
         },
         VariantKind::Nullary { label } => {
             quote! { #category::#label => {}, }

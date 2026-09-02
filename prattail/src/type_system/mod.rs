@@ -60,7 +60,7 @@ use std::hash::Hash;
 
 #[cfg(test)]
 use crate::lattice_theory::SubtypeConstraint;
-use crate::lattice_theory::{LatticeStore, LatticeTheory, TypeId};
+use crate::lattice_theory::{FrozenLatticeTheory, LatticeStore, LatticeTheory, TypeId};
 use crate::logict::ConstraintTheory;
 
 mod api;

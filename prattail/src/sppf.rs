@@ -87,6 +87,7 @@
 use crate::automata::semiring::SemiringRef;
 use crate::automata::TokenKind;
 use rustc_hash::{FxHashMap, FxHashSet};
+
 use std::hash::{Hash, Hasher};
 
 // ══════════════════════════════════════════════════════════════════════════════

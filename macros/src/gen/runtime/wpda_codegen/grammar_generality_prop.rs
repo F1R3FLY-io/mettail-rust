@@ -128,6 +128,7 @@ fn jrule(label: &str, category: &str, tc: Vec<TermParam>, sp: Vec<SyntaxExpr>) -
 fn lang_type(name: &str, native: Option<&str>) -> LangType {
     LangType {
         name: id(name),
+        role: Default::default(),
         native_type: native.map(|t| syn::parse_str::<syn::Type>(t).expect("native type parses")),
         collection_kind: None,
     }
@@ -1161,7 +1162,7 @@ fn inv3_goal_gate(lang: &LanguageDef) -> Result<(), String> {
 /// keep a suppressed projection alive and re-introduce the futile branch).
 fn inv4_fork_symmetry() -> Result<(), String> {
     // S1-FACTORING F1: OFF-shape lex fork (no factored groups in this probe).
-    let fork_ts = super::forks::emit_lex_fork_at_prefix_dispatch(0u16, false);
+    let fork_ts = super::forks::emit_lex_fork_at_prefix_dispatch(0u16, &[], false);
     let probe: syn::ItemFn = syn::parse2(quote::quote! { fn __probe() { #fork_ts } })
         .expect("fork code parses inside a probe fn");
     let mut inspector = ForkArmInspector { violations: Vec::new() };

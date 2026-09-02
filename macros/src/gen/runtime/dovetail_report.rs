@@ -22,6 +22,7 @@ use mettail_runtime::{LoweredConstructKind, LoweredConstructOrigin, LoweringLane
 pub(crate) mod ac;
 pub(crate) mod op_enum;
 pub(crate) mod reconstruct;
+pub(crate) mod semantic_adapter;
 pub(crate) mod typed_lowering;
 pub(crate) mod typed_report;
 pub(crate) mod withholding;
@@ -151,6 +152,14 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
     // (Ambient/Calculator/Json/Lambda/Monoid/Pi/Rholang/Turing: zero), so this disjunct is
     // `false` throughout the corpus and no language's path assignment moves.
     let has_withheld_congruence = !withholding::classify_withholdings(language).is_empty();
+    // Recursive native carriers require the typed structural operator algebra:
+    // the legacy String e-graph cannot carry exact bytes or typed heterogeneous
+    // children without inventing a second semantic encoding.
+    let has_recursive_native_carrier = crate::gen::semantic_transit_types(language).any(|ty| {
+        collect_category_variants(&ty.name, language)
+            .iter()
+            .any(|variant| matches!(variant, VariantKind::RecursiveNativeLiteral { .. }))
+    });
     has_native_fold
         || has_substitution_rewrite
         || has_native_system_process
@@ -159,6 +168,7 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
         || has_structural_ac_rewrite
         || has_nested_structural_ac_rewrite
         || has_withheld_congruence
+        || has_recursive_native_carrier
 }
 
 /// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
@@ -1176,6 +1186,7 @@ fn coll_type_is_ac_bag(coll_type: Option<&CollectionType>) -> bool {
 }
 
 fn field_child_expr(
+    language: &LanguageDef,
     owner_label: &str,
     field_index: usize,
     field: &FieldInfo,
@@ -1186,6 +1197,10 @@ fn field_child_expr(
     let collection_label = lit(&format!("{owner_label}::field{field_index}::collection"));
     let child_fn = category_lowering_fn(&field.category);
     let field_kind = NonTerminalKind::classify(&field.category.to_string());
+    if field.is_semantic_boundary(language) {
+        let leaf = opaque_leaf_expr(quote! { #opaque_label }, quote! { #field_var });
+        return quote! { #leaf };
+    }
     if field_kind.is_builtin() {
         let leaf = opaque_leaf_expr(quote! { #opaque_label }, quote! { #field_var });
         return quote! { #leaf };
@@ -1269,7 +1284,7 @@ fn regular_arm(
         .iter()
         .zip(field_vars.iter())
         .enumerate()
-        .map(|(i, (field, var))| field_child_expr(&owner, i, field, var))
+        .map(|(i, (field, var))| field_child_expr(language, &owner, i, field, var))
         .collect();
     quote! {
         #category::#label(#(#field_vars),*) => {
@@ -1297,7 +1312,7 @@ fn binder_arm(
         .iter()
         .zip(pre_vars.iter())
         .enumerate()
-        .map(|(i, (field, var))| field_child_expr(&owner, i, field, var))
+        .map(|(i, (field, var))| field_child_expr(language, &owner, i, field, var))
         .collect();
     let body_fn = category_lowering_fn(category);
     // (FIX-A) The binder position is lowered to an ANONYMOUS, arity-only marker
@@ -1359,6 +1374,14 @@ fn category_lowering(language: &LanguageDef, category: &Ident) -> TokenStream {
                     }
                 }
             },
+            VariantKind::RecursiveNativeLiteral { label, .. } => {
+                let message = format!(
+                    "recursive native constructor `{category}::{label}` requires the typed structural Dovetail path"
+                );
+                quote! {
+                    #category::#label(..) => compile_error!(#message)
+                }
+            },
             VariantKind::Nullary { label } => {
                 let owner = lit(&format!("{}::{}::{}", language.name, category, label));
                 quote! {
@@ -1372,7 +1395,9 @@ fn category_lowering(language: &LanguageDef, category: &Ident) -> TokenStream {
             },
             VariantKind::Collection { label, element_cat, coll_type } => {
                 let owner = lit(&format!("{}::{}::{}", language.name, category, label));
-                if coll_type_is_ac_bag(Some(&coll_type)) {
+                if !op_enum::is_closed_data_category(language, &element_cat)
+                    && coll_type_is_ac_bag(Some(&coll_type))
+                {
                     // n-ary AC bag lowering (HashBag). See `ac_bag_lowering`.
                     let element_add = category_lowering_fn(&element_cat);
                     let body = ac_bag_lowering(&owner, &element_add, quote! { values });
@@ -2224,9 +2249,7 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     let language_struct = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
     let language_lit = lit(&name.to_string());
-    let category_fns: Vec<TokenStream> = language
-        .types
-        .iter()
+    let category_fns: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|ty| category_lowering(language, &ty.name))
         .collect();
     // ★ PRODUCTION CONSUMER 1 of 4. This is the ONE site that historically did anything at
@@ -2251,11 +2274,10 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
             .iter()
             .map(|message| lit(message))
             .collect();
-    let primary_type = language
-        .types
-        .first()
+    let primary_type = crate::gen::semantic_types(language)
+        .next()
         .map(|ty| ty.name.clone())
-        .expect("language has at least one type");
+        .expect("category capability validation requires an object category");
     let primary_add = category_lowering_fn(&primary_type);
 
     // Inc 2/3: a host-less language with a binder handler (e.g. Ambient) floats
@@ -2271,10 +2293,10 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         quote! { typed_term.0 }
     };
 
-    let root_block = if language.types.len() > 1 {
+    let root_block = if crate::gen::semantic_types(language).count() > 1 {
         let inner_enum = format_ident!("{}TermInner", name);
         let mut arms = Vec::new();
-        for ty in &language.types {
+        for ty in crate::gen::semantic_types(language) {
             let cat = &ty.name;
             let add_fn = category_lowering_fn(cat);
             arms.push(quote! {

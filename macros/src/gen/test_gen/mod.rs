@@ -679,12 +679,14 @@ fn verify_display_parseability(language: &LanguageDef, pipeline: &PipelineAnalys
     // Check auto-generated variants against dead rules
     for lang_type in &language.types {
         let cat = lang_type.name.to_string();
-        let var_label = crate::gen::generate_var_label(&lang_type.name).to_string();
-        if pipeline.dead_rule_labels.contains(&var_label) {
-            eprintln!(
-                "  ({}) WFST warning: auto-generated {} variable rule is a dead rule",
-                lang_name, cat
-            );
+        if crate::gen::category_emits_implicit_var(&lang_type.name, language) {
+            let var_label = crate::gen::generate_var_label(&lang_type.name).to_string();
+            if pipeline.dead_rule_labels.contains(&var_label) {
+                eprintln!(
+                    "  ({}) WFST warning: auto-generated {} variable rule is a dead rule",
+                    lang_name, cat
+                );
+            }
         }
         if let Some(native_type) = &lang_type.native_type {
             let lit_label = crate::gen::generate_literal_label(native_type).to_string();

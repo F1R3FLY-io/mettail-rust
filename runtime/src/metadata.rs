@@ -46,6 +46,21 @@ pub trait LanguageMetadata: 'static + Send + Sync {
         None
     }
 
+    /// Source-neutral semantic artifacts derived and checked by the language
+    /// generator.  These compact bytes are cache artifacts, not authority;
+    /// consumers must decode and validate them against their committed ABI and
+    /// grammar fingerprint before installation.
+    fn generated_semantic_artifacts_v1(&self) -> Option<GeneratedSemanticArtifactBytesV1> {
+        None
+    }
+
+    /// Stable explanation when this generated language cannot yet be mapped
+    /// exactly into the canonical semantic image.  A refusal is preferable to
+    /// an opaque/debug-text approximation and does not affect parser use.
+    fn generated_semantic_artifact_refusal_v1(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Derived automata-facing model for parser/runtime planning.
     ///
     /// This is the stable metadata boundary that parser tables, Dovetail rule
@@ -231,6 +246,44 @@ pub trait LanguageMetadata: 'static + Send + Sync {
             .iter()
             .filter(|t| t.type_name == type_name)
             .collect()
+    }
+}
+
+/// Compact, build-trusted encoding of the three checked semantic artifacts.
+///
+/// GrammarCore and SemanticSignature use their ABI-pinned postcard encodings;
+/// SemanticMachineImage uses its bounded canonical image encoding.  This
+/// container deliberately carries bytes only: it grants no codec, parser,
+/// evaluator, registry, or installation capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GeneratedSemanticArtifactBytesV1 {
+    /// Exact-key ABI of the generated typed semantic backend.  Consumers must
+    /// include this namespace in persistent/cache keys; identical bare bytes
+    /// from different ABI versions are never interchangeable.
+    pub semantic_key_abi: GeneratedSemanticKeyAbiV1,
+    pub grammar_core_postcard: &'static [u8],
+    pub semantic_signature_postcard: &'static [u8],
+    pub semantic_machine_image: &'static [u8],
+}
+
+/// Versioned identity contract for generated Dovetail semantic keys.
+///
+/// `LegacyRenderedV1` encoded a whole collection coefficient through
+/// reader-facing rendering and is non-injective for term-bearing collections.
+/// `StructuralV2` encodes the constructor, exact element children, map pair
+/// nodes, and the explicit PathMap mode.  This tag is compatibility metadata,
+/// not authority and not a substitute for validating the semantic artifacts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum GeneratedSemanticKeyAbiV1 {
+    LegacyRenderedV1 = 1,
+    StructuralV2 = 2,
+}
+
+impl GeneratedSemanticKeyAbiV1 {
+    #[inline]
+    pub const fn tag(self) -> u8 {
+        self as u8
     }
 }
 

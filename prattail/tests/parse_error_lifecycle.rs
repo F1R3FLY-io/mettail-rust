@@ -67,3 +67,30 @@ fn parse_error_formatting_preserves_compact_contracts() {
         "RecoveryApplied { original_error: UnexpectedEof { expected: \"term\", range: Range { start: Position { byte_offset: 0, line: 0, column: 0 }, end: Position { byte_offset: 0, line: 0, column: 0 }, file_id: None }, hint: Some(\"add a term\") }, repair_description: \"inserted placeholder\", range: Range { start: Position { byte_offset: 0, line: 0, column: 0 }, end: Position { byte_offset: 0, line: 0, column: 0 }, file_id: None } }"
     );
 }
+
+#[test]
+fn realization_failure_remains_distinct_from_invalid_syntax() {
+    let error = ParseError::RealizationFailed {
+        error: mettail_semantic_key::ContentKeyCacheError::ResourceExhausted {
+            limit: 8,
+            requested: 9,
+        },
+        range: range(),
+    };
+
+    assert_eq!(error.range(), range());
+    assert_eq!(
+        error.to_string(),
+        "1:1: parser realization failed: semantic-key cache entry limit 8 exceeded (requested 9)"
+    );
+    assert!(matches!(
+        error.clone(),
+        ParseError::RealizationFailed {
+            error: mettail_semantic_key::ContentKeyCacheError::ResourceExhausted {
+                limit: 8,
+                requested: 9,
+            },
+            ..
+        }
+    ));
+}

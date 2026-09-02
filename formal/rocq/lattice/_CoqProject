@@ -16,3 +16,4 @@
 
 # Source files
 theories/LatticeTheoryCorrectness.v
+theories/FrozenLatticeConstraint.v

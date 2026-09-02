@@ -184,6 +184,23 @@ pub fn unreachable_rule_detection(
         .collect()
 }
 
+/// Whether an RD rule is expected to participate in the terminal-prefix trie
+/// used by D03. Rules dispatched by a dedicated parser lane are deliberately
+/// outside that trie and their absence is not evidence of unreachability.
+pub fn is_trie_reachability_candidate(rule: &RDRuleInfo, category: &str) -> bool {
+    rule.category == category
+        && !rule.is_pure_collection_literal()
+        && rule.prefix_bp.is_none()
+        && !matches!(
+            rule.items.first(),
+            Some(
+                RDSyntaxItem::NonTerminal { .. }
+                    | RDSyntaxItem::IdentCapture { .. }
+                    | RDSyntaxItem::TokenKindCapture { .. }
+            )
+        )
+}
+
 /// Layer 3: Minimum lookahead depth report.
 pub fn min_lookahead_report(
     tree: &CategoryDecisionTree,

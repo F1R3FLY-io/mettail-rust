@@ -40,6 +40,7 @@ fn generate_context_struct(language: &LanguageDef) -> TokenStream {
     let category_fields: Vec<TokenStream> = language
         .types
         .iter()
+        .filter(|lang_type| !lang_type.is_data())
         .map(|lang_type| {
             let cat_name = &lang_type.name;
             let field_name = category_to_field_name(cat_name);
@@ -67,6 +68,7 @@ fn generate_context_impl(language: &LanguageDef) -> TokenStream {
     let new_fields: Vec<TokenStream> = language
         .types
         .iter()
+        .filter(|lang_type| !lang_type.is_data())
         .map(|lang_type| {
             let field_name = category_to_field_name(&lang_type.name);
             quote! {
@@ -78,6 +80,7 @@ fn generate_context_impl(language: &LanguageDef) -> TokenStream {
     let generation_calls: Vec<TokenStream> = language
         .types
         .iter()
+        .filter(|lang_type| !lang_type.is_data())
         .map(|lang_type| {
             let method_name = category_to_generate_method(&lang_type.name);
             quote! {
@@ -89,6 +92,7 @@ fn generate_context_impl(language: &LanguageDef) -> TokenStream {
     let category_methods: Vec<TokenStream> = language
         .types
         .iter()
+        .filter(|lang_type| !lang_type.is_data())
         .map(|lang_type| generate_category_generation_method(lang_type.name.clone(), language))
         .collect();
 
@@ -142,7 +146,10 @@ fn generate_category_generation_method(cat_name: Ident, language: &LanguageDef) 
     let rules: Vec<&GrammarRule> = language
         .terms
         .iter()
-        .filter(|r| r.category == cat_name)
+        .filter(|r| {
+            r.category == cat_name
+                && crate::gen::generatability::term_rule_gap(r, language).is_none()
+        })
         .collect();
 
     let depth_0_cases = generate_depth_0_cases(&cat_name, &rules, language);
@@ -215,6 +222,8 @@ fn generate_depth_0_cases(
                 _ => None,
             })
             .collect();
+        let (optional_term_count, optional_total_count) =
+            count_optional_positions(rule.term_context.as_deref().unwrap_or(&[]));
         if !ident_only_cats.is_empty()
             && ident_only_cats.iter().all(is_ident_position)
             && rule.bindings.is_empty()
@@ -223,6 +232,15 @@ fn generate_depth_0_cases(
                 .iter()
                 .any(|item| matches!(item, GrammarItem::Collection { .. }))
         {
+            let positional_count = ident_only_cats.len().saturating_sub(optional_term_count);
+            let none_args: Vec<TokenStream> =
+                (0..optional_total_count).map(|_| quote! { None }).collect();
+            if positional_count == 0 && optional_total_count != 0 {
+                cases.push(quote! {
+                    terms.push(#cat_name::#label(#(#none_args),*));
+                });
+                continue;
+            }
             // Statement position inside the emitted case body: the refusal takes
             // the case's place, so the generator emits a diagnostic instead of a
             // walk over a pool it could not build.
@@ -233,11 +251,13 @@ fn generate_depth_0_cases(
                     continue;
                 },
             };
-            let vars: Vec<Ident> = (0..ident_only_cats.len())
+            let vars: Vec<Ident> = (0..positional_count)
                 .map(|i| quote::format_ident!("__ident{}", i))
                 .collect();
             let args: Vec<TokenStream> = vars.iter().map(|v| quote! { #v.to_string() }).collect();
-            let mut inner = quote! { terms.push(#cat_name::#label(#(#args),*)); };
+            let mut inner = quote! {
+                terms.push(#cat_name::#label(#(#args,)* #(#none_args),*));
+            };
             for var in vars.iter().rev() {
                 inner = quote! {
                     for #var in [#(#samples),*] {
@@ -1254,7 +1274,7 @@ fn generate_pure_collection_case(
 
 /// Generate public API methods for each category
 fn generate_public_apis(language: &LanguageDef) -> TokenStream {
-    let impls: Vec<TokenStream> = language.types.iter().map(|lang_type| {
+    let impls: Vec<TokenStream> = language.types.iter().filter(|lang_type| !lang_type.is_data()).map(|lang_type| {
         let cat_name = &lang_type.name;
         let field_name = category_to_field_name(cat_name);
 

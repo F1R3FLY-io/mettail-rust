@@ -1186,7 +1186,8 @@ fn emit_mixfix_parts_fn(
         for (part_idx, part) in op.mixfix_parts.iter().enumerate() {
             // GEN-1 B-3 (Stage S3): a `*sep` repetition part emits NO `mixfix_part`
             // arm (so `mixfix_part(..)` returns None for it) but DOES emit a
-            // `mixfix_rep` arm carrying its `(element_src, separator, close, min)`.
+            // `mixfix_rep` arm carrying its
+            // `(element_src, preceding, separator, close, min)`.
             // The walker's MixfixLiteralRun arms detect the rep slot via
             // `mixfix_rep(..).is_some()` and hand it off to the CollectionLoop;
             // `mixfix_parts_len` still counts it (accounting stays accurate).
@@ -1208,12 +1209,18 @@ fn emit_mixfix_parts_fn(
                     rule_span,
                 );
                 let separator = &rep.separator;
+                let preceding_lits: Vec<TokenStream> = part
+                    .preceding_terminals
+                    .iter()
+                    .map(|t| quote! { #t })
+                    .collect();
                 let close_lits: Vec<TokenStream> =
                     rep.close.iter().map(|t| quote! { #t }).collect();
                 let min = rep.min;
                 rep_arms.push(quote! {
                     (#result_src_idx, #rule_idx, #rep_part_idx) => Some((
                         #elem_src_idx,
+                        &[ #( #preceding_lits ),* ][..],
                         #separator,
                         &[ #( #close_lits ),* ][..],
                         #min,
@@ -1413,8 +1420,9 @@ fn emit_mixfix_parts_fn(
 
         /// GEN-1 B-3 (Stage S3): repetition-part metadata. For a `*sep`
         /// repetition `MixfixPart` (e.g. POutput2Plus's `bs.*sep(",")`), returns
-        /// `(element_src_idx, separator, close_terminals, min)`; `None` for an
-        /// ordinary single-operand part and for every non-rep rule. The walker's
+        /// `(element_src_idx, preceding_terminals, separator, close_terminals,
+        /// min)`; `None` for an ordinary single-operand part and for every
+        /// non-rep rule. The walker's
         /// `MixfixLiteralRun` arms use `mixfix_rep(rs, ri, part_idx).is_some()` to
         /// detect a repetition slot and hand it off to the `CollectionLoop`
         /// (replace the marker → push a `CollectionMarker` for `part_idx` →
@@ -1427,7 +1435,13 @@ fn emit_mixfix_parts_fn(
             result_src_idx: u16,
             rule_idx: u16,
             part_idx: u8,
-        ) -> Option<(u16, &'static str, &'static [&'static str], u8)> {
+        ) -> Option<(
+            u16,
+            &'static [&'static str],
+            &'static str,
+            &'static [&'static str],
+            u8,
+        )> {
             match (result_src_idx, rule_idx, part_idx) {
                 #(#rep_arms)*
                 _ => None,
@@ -1551,6 +1565,7 @@ mod tests {
         let mut language = crate::gen::empty_language_for_tests();
         language.types.push(mettail_ast::language::LangType {
             name: Ident::new("Int", Span::call_site()),
+            role: Default::default(),
             native_type: None,
             collection_kind: None,
         });

@@ -21,6 +21,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use std::fs;
 use std::path::{Path, PathBuf};
+use syn::Ident;
 
 /// Write content to a file only if it differs from what is already on disk.
 ///
@@ -136,6 +137,21 @@ pub fn include_stmt(path: &Path) -> TokenStream {
     quote! { include!(#path_lit); }
 }
 
+/// Emit a path-loaded child-module declaration for generated Rust source.
+///
+/// Unlike [`include_stmt`], this preserves a Rust module boundary: the parser
+/// does not splice the generated syntax into the host module's macro-expansion
+/// context.  The generated file must therefore import every parent item it
+/// needs and the caller must explicitly re-export its public interface.
+pub fn path_module_stmt(path: &Path, module_name: &Ident) -> TokenStream {
+    let path_str = path.to_string_lossy().into_owned();
+    let path_lit = syn::LitStr::new(&path_str, Span::call_site());
+    quote! {
+        #[path = #path_lit]
+        mod #module_name;
+    }
+}
+
 /// Format a `TokenStream` as pretty-printed Rust source using `prettyplease`
 /// if available, falling back to `TokenStream::to_string()`.
 ///
@@ -165,6 +181,34 @@ pub fn spill_and_include(lang_name: &str, module_name: &str, tokens: TokenStream
                 lang_name, module_name, e
             );
             tokens
+        },
+    }
+}
+
+/// Write a complete child-module body and return a path-loaded module stub.
+///
+/// `tokens` are the contents of the child module, not items for the caller's
+/// current scope.  On an I/O failure the same module boundary is retained with
+/// an inline `mod`, so fallback changes neither name visibility nor semantics.
+pub fn spill_and_path_module(
+    lang_name: &str,
+    file_stem: &str,
+    module_name: &Ident,
+    tokens: TokenStream,
+) -> TokenStream {
+    let source = format_rust_source(&tokens);
+    match write_lang_module(lang_name, file_stem, &source) {
+        Ok(path) => path_module_stmt(&path, module_name),
+        Err(error) => {
+            eprintln!(
+                "  ({}) WARNING: could not write {}.rs ({}) — falling back to an inline module",
+                lang_name, file_stem, error
+            );
+            quote! {
+                mod #module_name {
+                    #tokens
+                }
+            }
         },
     }
 }

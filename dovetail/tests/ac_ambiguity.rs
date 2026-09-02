@@ -6,10 +6,9 @@
 //! equal-weight pairings survive extraction. Mirrors
 //! `dovetail/src/extract.rs::tests::t2_ambiguous_hand_built_no_miss`.
 
-use std::collections::HashSet;
-
 use dovetail::egraph::{EClassId, EGraph, ENode};
 use dovetail::extract::{ExtractionCompleteness, Extractor};
+use dovetail::key::ContentKeySet;
 use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome};
 use rigail::TropicalWeight;
 
@@ -107,7 +106,7 @@ fn open_rule_two_pairings_both_survive_as_distinct_equal_weight_roots() {
     );
 
     // The shared class must contain BOTH distinct reduced e-nodes (by exact key).
-    let class_keys: HashSet<_> = eg
+    let class_keys: ContentKeySet = eg
         .nodes(eg.find(par))
         .iter()
         .map(|n| n.content_key())

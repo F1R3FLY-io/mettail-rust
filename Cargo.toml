@@ -1,5 +1,5 @@
 [workspace]
-members = ["ast", "grammar-core", "mettail-elab", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "dovetail-runtime", "rigail",
+members = ["ast", "grammar-core", "mettail-elab", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "dovetail-runtime", "rigail", "semantic-key",
     "rholang-codegen", "rholang-runtime", "rholang-adapter",
 ]
 resolver = "2"
@@ -114,11 +114,20 @@ codegen-backend = "llvm"
 # capped local validation envelopes while compiling this generated crate. Keep
 # the rest of the workspace on the fast Cranelift dev loop, but compile the
 # generated aggregation crate through LLVM for the profiles used by cargo test.
+# Its macro expansion is a single multi-megabyte generated unit: a language
+# definition change invalidates nearly all saved queries, while retaining those
+# queries raises the verified Rholang Rho+Dovetail check above the 4 GiB build
+# envelope. A capped comparison measured the combined check below that envelope
+# with incremental state disabled and at the cgroup boundary with it enabled.
+# Keep this exception package-local; ordinary workspace crates retain
+# incremental compilation.
 [profile.dev.package.languages]
 codegen-backend = "llvm"
+incremental = false
 
 [profile.test.package.languages]
 codegen-backend = "llvm"
+incremental = false
 
 [profile.release]
 codegen-backend = "llvm"      # Full LLVM optimization for runtime performance

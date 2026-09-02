@@ -187,6 +187,8 @@ typed-arena = "2.0"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 rand_distr = "0.4"
+mettail-elab = { path = "../mettail-elab" }
+mettail-grammar-core = { path = "../grammar-core" }
 mettail-testkit = { package = "testkit", path = "../testkit" }
 # Lets the GuardedRho Rho-default backend test (guarded_rho_rho_backend.rs) name
 # `LanguageDef` directly when reconstructing the real augmented definition. It is
@@ -338,6 +340,11 @@ harness = false
 [[bench]]
 name = "rho_native_bench"
 harness = false
+
+[[bench]]
+name = "tagged_assembly_bench"
+harness = false
+required-features = ["lambda", "dovetail-codegen"]
 
 [[bench]]
 name = "bench_infix"

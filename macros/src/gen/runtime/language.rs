@@ -29,26 +29,27 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
     let name_str = name.to_string();
     let name_lower = name_str.to_lowercase();
 
-    // Get the primary type (first type in the language)
-    let primary_type = language
-        .types
-        .first()
+    // The runtime language surface exports object categories only. Closed data
+    // categories remain parseable structural transit nodes behind those roots.
+    let primary_type = crate::gen::semantic_types(language)
+        .next()
         .map(|t| &t.name)
-        .expect("Language must have at least one type");
+        .expect("category capability validation requires an object category");
 
-    let (term_wrapper, language_struct, language_trait_impl) = if language.types.len() > 1 {
-        (
-            generate_term_wrapper_multi(name, language),
-            generate_language_struct_multi(name, &name_str, &name_lower, language),
-            generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
-        )
-    } else {
-        (
-            generate_term_wrapper(name, primary_type),
-            generate_language_struct(name, primary_type, &name_str, &name_lower, language),
-            generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language),
-        )
-    };
+    let (term_wrapper, language_struct, language_trait_impl) =
+        if crate::gen::semantic_types(language).count() > 1 {
+            (
+                generate_term_wrapper_multi(name, language),
+                generate_language_struct_multi(name, &name_str, &name_lower, language),
+                generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
+            )
+        } else {
+            (
+                generate_term_wrapper(name, primary_type),
+                generate_language_struct(name, primary_type, &name_str, &name_lower, language),
+                generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language),
+            )
+        };
 
     // Per-concern spill: each of the three big sub-outputs goes to its own
     // file under `target/generated/<lang>/`. Ambient's pre-split language.rs
@@ -91,11 +92,27 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         "rho_net_invocation",
         crate::gen::runtime::rho_invocation::generate_rho_net_invocation(language),
     );
-    let dovetail_report_include = crate::logic::writer::spill_and_include(
+    let dovetail_backend_module = format_ident!("__mettail_{}_dovetail_backend", name_lower);
+    let dovetail_report = crate::gen::runtime::dovetail_report::generate_dovetail_report(language);
+    let dovetail_report_module = crate::logic::writer::spill_and_path_module(
         &lang_key,
         "dovetail_report",
-        crate::gen::runtime::dovetail_report::generate_dovetail_report(language),
+        &dovetail_backend_module,
+        quote! {
+            use super::*;
+            #dovetail_report
+        },
     );
+    let dovetail_public_exports =
+        if crate::gen::runtime::dovetail_report::needs_typed_dovetail_path(language) {
+            let dovetail_op = format_ident!("{}DovetailOp", name);
+            quote! {
+                #[cfg(feature = "dovetail-codegen")]
+                pub use #dovetail_backend_module::#dovetail_op;
+            }
+        } else {
+            TokenStream::new()
+        };
     let numeric_cast_adapter_include = crate::logic::writer::spill_and_include(
         &lang_key,
         "numeric_cast_adapter",
@@ -106,11 +123,22 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         #term_wrapper_include
         #language_struct_include
         #language_trait_impl_include
+
+        // Gate the generated-source loader itself, not merely the generated items.  Macro
+        // expansion otherwise makes an unselected backend contribute syntax and type-checking
+        // work.  Dovetail retains a child-module boundary and explicitly re-exports only its
+        // public operation type; its inherent Language methods remain unchanged.
+        #[cfg(feature = "rho-codegen")]
         #rho_scalar_invocation_include
+        #[cfg(feature = "rho-codegen")]
         #flt_reflect_include
+        #[cfg(feature = "rho-codegen")]
         #rho_fold_dataflow_include
+        #[cfg(feature = "rho-codegen")]
         #rho_net_invocation_include
-        #dovetail_report_include
+        #[cfg(feature = "dovetail-codegen")]
+        #dovetail_report_module
+        #dovetail_public_exports
         #numeric_cast_adapter_include
     }
 }
@@ -170,26 +198,20 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
     let term_name = format_ident!("{}Term", name);
     let inner_enum_name = format_ident!("{}TermInner", name);
 
-    let enum_variants: Vec<TokenStream> = language
-        .types
-        .iter()
+    let enum_variants: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             quote! { #cat(#cat) }
         })
         .collect();
 
-    let display_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let display_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             quote! { #inner_enum_name::#cat(v) => write!(f, "{}", v) }
         })
         .collect();
-    let debug_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let debug_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             quote! { #inner_enum_name::#cat(v) => write!(f, "{:?}", v) }
@@ -197,9 +219,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         .collect();
 
     let env_name = format_ident!("{}Env", name);
-    let substitute_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let substitute_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -209,9 +229,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
     // Structure-preserving (no-normalize) analogue of `substitute_arms`, for
     // `substitute_env_preserve_structure` (REPL `step`). Same per-category dispatch, but to the
     // non-folding `substitute_env_no_normalize`.
-    let substitute_preserve_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let substitute_preserve_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -221,17 +239,14 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
 
     // Cross-category variable resolution: if after substitution we still have a variable,
     // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
-    let var_label_per_cat: Vec<(Ident, Ident)> = language
-        .types
-        .iter()
+    let var_label_per_cat: Vec<(Ident, Ident)> = crate::gen::variable_types(language)
+        .filter(|t| crate::gen::category_has_var_variant(&t.name, language))
         .map(|t| (t.name.clone(), generate_var_label(&t.name)))
         .collect();
     let cross_resolve_arms: Vec<TokenStream> = var_label_per_cat
         .iter()
         .map(|(cat, var_label)| {
-            let other_lookups: Vec<TokenStream> = language
-                .types
-                .iter()
+            let other_lookups: Vec<TokenStream> = crate::gen::variable_types(language)
                 .filter(|t| t.name != *cat)
                 .map(|t| {
                     let variant = format_ident!("{}", t.name);
@@ -259,12 +274,10 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
 
     // Phase F.13 Stage 2.3.1 (2026-05-22): per-variant dispatch arms
     // for `semantic_hash` on the inner enum. Each arm emits a unique
-    // discriminant byte (variant index in language.types) so distinct
+    // discriminant byte (variant index in the semantic-root projection) so distinct
     // categories don't collide, then delegates to the inner Cat's
     // `semantic_hash` (generated by `term_ops::semantic_hash`).
-    let semantic_hash_dispatch_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let semantic_hash_dispatch_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .enumerate()
         .map(|(i, t)| {
             let variant = format_ident!("{}", t.name);
@@ -277,23 +290,20 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             }
         })
         .collect();
-    let extraction_semantic_hash_dispatch_arms: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let variant = format_ident!("{}", t.name);
-            quote! {
-                #inner_enum_name::#variant(inner) => {
-                    inner.semantic_hash(&mut state);
+    let extraction_semantic_hash_dispatch_arms: Vec<TokenStream> =
+        crate::gen::semantic_types(language)
+            .map(|t| {
+                let variant = format_ident!("{}", t.name);
+                quote! {
+                    #inner_enum_name::#variant(inner) => {
+                        inner.semantic_hash(&mut state);
+                    }
                 }
-            }
-        })
-        .collect();
+            })
+            .collect();
 
     // Generate per-variant substitute_env arms for Ambiguous handling
-    let ambiguous_substitute_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let ambiguous_substitute_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -301,9 +311,8 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
     // No-normalize analogue for the Ambiguous branch of `substitute_env_no_normalize`.
-    let ambiguous_substitute_preserve_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let ambiguous_substitute_preserve_arms: Vec<TokenStream> =
+        crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -315,9 +324,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
     let ambiguous_cross_resolve_arms: Vec<TokenStream> = var_label_per_cat
         .iter()
         .map(|(cat, var_label)| {
-            let other_lookups: Vec<TokenStream> = language
-                .types
-                .iter()
+            let other_lookups: Vec<TokenStream> = crate::gen::variable_types(language)
                 .filter(|t| t.name != *cat)
                 .map(|t| {
                     let variant = format_ident!("{}", t.name);
@@ -351,9 +358,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
     // For the `Ambiguous(Vec<Self>)` variant, we iterate the alts with an
     // explicit work stack — no compiler-generated recursion through nested
     // Ambiguous trees. Per the stack-safety mandate.
-    let wrapper_hash_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let wrapper_hash_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .enumerate()
         .map(|(i, t)| {
             let variant = format_ident!("{}", t.name);
@@ -361,10 +366,8 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             quote! { #inner_enum_name::#variant(inner) => { state.write_u8(#idx); inner.hash(state); } }
         })
         .collect();
-    let ambiguous_disc: u8 = language.types.len() as u8 + 1;
-    let wrapper_eq_arms_same: Vec<TokenStream> = language
-        .types
-        .iter()
+    let ambiguous_disc: u8 = crate::gen::semantic_types(language).count() as u8 + 1;
+    let wrapper_eq_arms_same: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let variant = format_ident!("{}", t.name);
             quote! { (#inner_enum_name::#variant(a), #inner_enum_name::#variant(b)) => a == b }
@@ -372,9 +375,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         .collect();
     // Per-category match arms that write an iterative-cloned inner value
     // into a result slot (used by the iterative Ambiguous-walk Clone impl).
-    let wrapper_clone_arms_for_pda: Vec<TokenStream> = language
-        .types
-        .iter()
+    let wrapper_clone_arms_for_pda: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let variant = format_ident!("{}", t.name);
             quote! {
@@ -985,6 +986,8 @@ fn generate_language_struct(
     // Primary type, lowercased (used for WFST prediction accessor names).
     let primary_lower = primary_type.to_string().to_lowercase();
     let _primary_type_str = primary_type.to_string();
+    let primary_type_str = primary_type.to_string();
+    let parse_template_fn = format_ident!("parse_{}_via_wpda", primary_type);
 
     // Generate type inference helper
     let infer_fn = format_ident!("infer_term_type_typed");
@@ -1018,6 +1021,63 @@ fn generate_language_struct(
             /// Parse a term without clearing var cache (for environment sharing)
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
                 #parse_preserving_vars_body
+            }
+
+            /// Parse an FLT from structural text/hole pieces.  Text pieces are
+            /// lexed independently and each hole is injected as exactly one
+            /// identifier terminal, so guest bytes cannot manufacture tokens
+            /// across a host/guest boundary.
+            pub fn parse_template_preserving_vars(
+                template: &mettail_runtime::FltNode,
+            ) -> Result<#term_name, std::string::String> {
+                template.validate().map_err(|error| error.to_string())?;
+                for hole in &template.holes {
+                    if let Some(category) = &hole.category {
+                        if category != #primary_type_str {
+                            return Err(format!(
+                                "FLT hole `{}` declares category `{}`, expected `{}`",
+                                hole.name, category, #primary_type_str,
+                            ));
+                        }
+                    }
+                }
+
+                let mut kinds = Vec::new();
+                let mut texts: Vec<String> = Vec::new();
+                for piece in &template.pieces {
+                    match piece {
+                        mettail_runtime::FltTemplatePiece::Text(text) => {
+                            let lexed = lex(text).map_err(|error| error.to_string())?;
+                            for (token, range) in lexed {
+                                if matches!(token, Token::Eof) {
+                                    continue;
+                                }
+                                kinds.push(token_to_kind(&token));
+                                texts.push(token_text(&token, text, range).to_string());
+                            }
+                        },
+                        mettail_runtime::FltTemplatePiece::Hole(id) => {
+                            let hole = template.hole(*id).ok_or_else(|| {
+                                format!("FLT template refers to unknown hole {id:?}")
+                            })?;
+                            kinds.push(mettail_prattail::automata::TokenKind::Ident);
+                            texts.push(hole.name.clone());
+                        },
+                    }
+                }
+                kinds.push(mettail_prattail::automata::TokenKind::Eof);
+                texts.push(String::new());
+                let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+                let mut position = 0usize;
+                let term = #parse_template_fn(&kinds, &text_refs, &mut position, 0)
+                    .map_err(|error| error.to_string())?;
+                if position + 1 != kinds.len() {
+                    return Err(format!(
+                        "{} template parser left structural terminals unconsumed",
+                        #primary_type_str,
+                    ));
+                }
+                Ok(#term_name(term))
             }
 
             /// Create a new empty environment
@@ -1323,7 +1383,9 @@ fn generate_var_collection_impl(
     language: &LanguageDef,
     _impl_fn_name: &Ident,
 ) -> TokenStream {
-    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
+    let categories: Vec<_> = crate::gen::semantic_types(language)
+        .map(|t| &t.name)
+        .collect();
 
     // Post-HOL-B: only emit Lam{D} / MLam{D} match arms on the primary
     // type for domains D where the HOL variants actually exist (see
@@ -1561,24 +1623,30 @@ fn generate_var_collection_impl(
     // Variable handling for free variables (e.g., PVar for Proc, NVar for Name, TVar for Term)
     let var_label = generate_var_label(primary_type);
     let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
-
-    quote! {
-        #primary_type::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
-            if let Some(name) = &fv.pretty_name {
-                if !seen.contains(name) {
-                    seen.insert(name.clone());
-                    // Try to infer type from usage in root term
-                    let var_type = root_term.infer_var_type(name)
-                        .map(|t| Self::inferred_to_term_type(&t))
-                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#primary_type_lit.to_string()));
-                    result.push(mettail_runtime::VarTypeInfo {
-                        name: name.clone(),
-                        ty: var_type,
-                    });
+    let variable_arms = if crate::gen::category_has_var_variant(primary_type, language) {
+        quote! {
+            #primary_type::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
+                if let Some(name) = &fv.pretty_name {
+                    if !seen.contains(name) {
+                        seen.insert(name.clone());
+                        let var_type = root_term.infer_var_type(name)
+                            .map(|t| Self::inferred_to_term_type(&t))
+                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#primary_type_lit.to_string()));
+                        result.push(mettail_runtime::VarTypeInfo {
+                            name: name.clone(),
+                            ty: var_type,
+                        });
+                    }
                 }
             }
+            #primary_type::#var_label(_) => {}
         }
-        #primary_type::#var_label(_) => {}
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        #variable_arms
         #(#lambda_arms)*
         #(#constructor_arms)*
         _ => {}
@@ -1600,16 +1668,16 @@ fn generate_language_struct_multi(
     // NFA-style multi-category parse: try ALL category parsers and collect successes.
     // Parse order follows declaration order so that Ambiguous alternatives are ordered
     // by the user's declared priority (first-declared category = first alternative).
-    let parse_order: Vec<syn::Ident> = language.types.iter().map(|t| t.name.clone()).collect();
+    let parse_order: Vec<syn::Ident> = crate::gen::semantic_types(language)
+        .map(|t| t.name.clone())
+        .collect();
 
     // Lexer-guided parse filtering: when the language has at least one non-native category
     // (e.g. Proc, Name), skip native-only categories (e.g. Float, Int, Bool, Str) when the
     // first token is an identifier, since identifiers are not native literals.
     // For all-native languages (e.g. Calculator), no filtering is needed.
-    let has_non_native = language.types.iter().any(|t| t.native_type.is_none());
-    let native_cat_names: std::collections::HashSet<String> = language
-        .types
-        .iter()
+    let has_non_native = crate::gen::semantic_types(language).any(|t| t.native_type.is_none());
+    let native_cat_names: std::collections::HashSet<String> = crate::gen::semantic_types(language)
         .filter(|t| t.native_type.is_some())
         .map(|t| t.name.to_string())
         .collect();
@@ -1655,7 +1723,7 @@ fn generate_language_struct_multi(
         // parser prefix arm accepts `Token::Ident`. Such categories MUST be
         // tried even when the top-level first token is Ident — otherwise
         // bare `a + b` fails to parse across ambiguous numeric types.
-        for t in &language.types {
+        for t in crate::gen::semantic_types(language) {
             if t.native_type.is_some() {
                 set.insert(t.name.to_string());
             }
@@ -1773,6 +1841,42 @@ fn generate_language_struct_multi(
             }
         })
         .collect();
+    let template_parse_tries: Vec<TokenStream> = parse_order
+        .iter()
+        .map(|cat| {
+            let variant = format_ident!("{}", cat);
+            let parse_fn = format_ident!("parse_{}_via_wpda_all", cat);
+            quote! {
+                {
+                    let mut __pos = 0usize;
+                    match #parse_fn(&__kinds, &__text_refs, &mut __pos, 0) {
+                        Ok((terms, _weights)) if __pos + 1 == __kinds.len() => {
+                            for term in terms {
+                                successes.push(#inner_enum_name::#variant(term));
+                            }
+                        },
+                        Ok(_) => {
+                            if first_err.is_none() {
+                                first_err = Some(format!(
+                                    "{} template parser left structural terminals unconsumed",
+                                    stringify!(#cat),
+                                ));
+                            }
+                        },
+                        Err(error) => {
+                            if first_err.is_none() {
+                                first_err = Some(error.to_string());
+                            }
+                        },
+                    }
+                }
+            }
+        })
+        .collect();
+    let template_category_names: Vec<String> = parse_order
+        .iter()
+        .map(|category| category.to_string())
+        .collect();
 
     // Lexer probe: only emitted for languages with non-native categories.
     // All-native languages (e.g. Calculator) skip this and try all parsers unconditionally.
@@ -1787,9 +1891,7 @@ fn generate_language_struct_multi(
     };
 
     // Per-category type inference functions
-    let per_cat_type_infer_fns: Vec<TokenStream> = language
-        .types
-        .iter()
+    let per_cat_type_infer_fns: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let fn_name = format_ident!("infer_{}_type", cat.to_string().to_lowercase());
@@ -1806,9 +1908,7 @@ fn generate_language_struct_multi(
     // Generates `prediction_wfst_<cat>()` methods that return a reference to the
     // per-category PREDICTION_Cat static, enabling runtime queries for autocomplete,
     // early error detection, and progress estimation.
-    let per_cat_wfst_accessors: Vec<TokenStream> = language
-        .types
-        .iter()
+    let per_cat_wfst_accessors: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let fn_name = format_ident!("prediction_wfst_{}", cat.to_string().to_lowercase());
@@ -1829,9 +1929,7 @@ fn generate_language_struct_multi(
         .collect();
 
     // Per-category variable collection functions
-    let per_cat_var_collect_fns: Vec<TokenStream> = language
-        .types
-        .iter()
+    let per_cat_var_collect_fns: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let fn_name = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
@@ -1984,6 +2082,72 @@ fn generate_language_struct_multi(
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
                     1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),
                     _ => Ok(#term_name(#inner_enum_name::from_alternatives(successes)))
+                }
+            }
+
+            /// Parse an FLT from structural text/hole pieces. Each text piece is
+            /// lexed independently and each hole is inserted as one Ident
+            /// terminal, so no token can span or be injected through a hole.
+            pub fn parse_template_preserving_vars(
+                template: &mettail_runtime::FltNode,
+            ) -> Result<#term_name, std::string::String> {
+                template.validate().map_err(|error| error.to_string())?;
+                for hole in &template.holes {
+                    if let Some(category) = &hole.category {
+                        if ![#(#template_category_names),*].contains(&category.as_str()) {
+                            return Err(format!(
+                                "FLT hole `{}` declares unknown category `{}`",
+                                hole.name, category,
+                            ));
+                        }
+                    }
+                }
+
+                let mut __kinds = Vec::new();
+                let mut __texts: Vec<String> = Vec::new();
+                for piece in &template.pieces {
+                    match piece {
+                        mettail_runtime::FltTemplatePiece::Text(text) => {
+                            let lexed = lex(text).map_err(|error| error.to_string())?;
+                            for (token, range) in lexed {
+                                if matches!(token, Token::Eof) {
+                                    continue;
+                                }
+                                __kinds.push(token_to_kind(&token));
+                                __texts.push(token_text(&token, text, range).to_string());
+                            }
+                        },
+                        mettail_runtime::FltTemplatePiece::Hole(id) => {
+                            let hole = template.hole(*id).ok_or_else(|| {
+                                format!("FLT template refers to unknown hole {id:?}")
+                            })?;
+                            __kinds.push(mettail_prattail::automata::TokenKind::Ident);
+                            __texts.push(hole.name.clone());
+                        },
+                    }
+                }
+                __kinds.push(mettail_prattail::automata::TokenKind::Eof);
+                __texts.push(String::new());
+                let __text_refs: Vec<&str> = __texts.iter().map(String::as_str).collect();
+
+                let mut successes = Vec::new();
+                let mut first_err = None;
+                #(#template_parse_tries)*
+                if successes.len() > 1 {
+                    let any_non_spurious = successes.iter()
+                        .any(|success| !success.is_uniformly_auto_injected());
+                    if any_non_spurious {
+                        successes.retain(|success| !success.is_uniformly_auto_injected());
+                    }
+                }
+                if successes.len() > 1 {
+                    let mut seen = std::collections::HashSet::new();
+                    successes.retain(|success| seen.insert(success.semantic_fingerprint()));
+                }
+                match successes.len() {
+                    0 => Err(first_err.unwrap_or_else(|| "FLT template parse error".to_string())),
+                    1 => Ok(#term_name(successes.into_iter().next().expect("checked length"))),
+                    _ => Ok(#term_name(#inner_enum_name::from_alternatives(successes))),
                 }
             }
 
@@ -2164,7 +2328,9 @@ fn generate_language_trait_impl(
     let name_lit = LitStr::new(name_str, name.span());
 
     // All categories for environment field access (include native so e.g. Calculator can list/remove Int bindings)
-    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
+    let categories: Vec<_> = crate::gen::semantic_types(language)
+        .map(|t| &t.name)
+        .collect();
 
     // Generate field name for primary type (lowercase)
     let primary_field = format_ident!("{}", primary_type.to_string().to_lowercase());
@@ -2193,7 +2359,9 @@ fn generate_language_trait_impl(
         .collect();
 
     // try_direct_eval: only for single-type languages whose primary type has native_type
-    let primary_lang_type = language.types.first().expect("at least one type");
+    let primary_lang_type = crate::gen::semantic_types(language)
+        .next()
+        .expect("category capability validation requires an object category");
     let try_direct_eval_method: TokenStream = if let Some(ref native_type) =
         primary_lang_type.native_type
     {
@@ -2227,6 +2395,14 @@ fn generate_language_trait_impl(
             fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
                 #language_name::parse_preserving_vars(input)
                     .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
+            }
+
+            fn parse_term_template(
+                &self,
+                template: &mettail_runtime::FltNode,
+            ) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
+                #language_name::parse_template_preserving_vars(template)
+                    .map(|term| Box::new(term) as Box<dyn mettail_runtime::Term>)
             }
 
             #try_direct_eval_method
@@ -2379,7 +2555,9 @@ fn generate_language_trait_impl_multi(
     let env_name = format_ident!("{}Env", name);
     let name_lit = LitStr::new(name_str, name.span());
 
-    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
+    let categories: Vec<_> = crate::gen::semantic_types(language)
+        .map(|t| &t.name)
+        .collect();
     let remove_checks: Vec<TokenStream> = categories
         .iter()
         .map(|cat| {
@@ -2407,11 +2585,9 @@ fn generate_language_trait_impl_multi(
     // every binding. `exec <name>` / env-file loading (which resolve a bound
     // name to its stored term rather than re-parsing it as a bare variable)
     // depend on this, e.g. `rholang_examples_env_file_loads_and_runs`. Category
-    // probe order follows `language.types`; a name is stored in one category per
+    // probe order follows the semantic-root projection; a name is stored in one category per
     // (non-Ambiguous) binding, so first-match is unambiguous.
-    let get_env_term_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let get_env_term_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let field = format_ident!("{}", cat.to_string().to_lowercase());
@@ -2434,9 +2610,7 @@ fn generate_language_trait_impl_multi(
         .collect();
 
     // add_to_env: match on term.0 and set the right env field
-    let add_to_env_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let add_to_env_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let field = format_ident!("{}", cat.to_string().to_lowercase());
@@ -2446,9 +2620,7 @@ fn generate_language_trait_impl_multi(
         .collect();
 
     // infer_term_type: dispatch to per-category type inference
-    let infer_term_type_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let infer_term_type_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -2459,14 +2631,15 @@ fn generate_language_trait_impl_multi(
 
     // Primary category: first type in the language definition (e.g. Proc for rholang, Int for Calculator).
     // Used to prefer the primary category's type when reporting the type of an Ambiguous term.
-    let primary_type = &language.types[0].name;
+    let primary_type = &crate::gen::semantic_types(language)
+        .next()
+        .expect("category capability validation requires an object category")
+        .name;
     let primary_variant = format_ident!("{}", primary_type);
     let primary_type_str = LitStr::new(&primary_type.to_string(), primary_type.span());
 
     // normalize_term for multi-type: normalize the inner variant
-    let normalize_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let normalize_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -2477,9 +2650,7 @@ fn generate_language_trait_impl_multi(
         .collect();
 
     // try_direct_eval for multi-type: only when at least one type has native_type
-    let try_direct_eval_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let try_direct_eval_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .filter_map(|t| {
             let native_ty = t.native_type.as_ref()?;
             let cat = &t.name;
@@ -2520,9 +2691,7 @@ fn generate_language_trait_impl_multi(
     };
 
     // infer_var_types dispatch arms (per-category)
-    let infer_var_types_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let infer_var_types_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -2539,9 +2708,7 @@ fn generate_language_trait_impl_multi(
         .collect();
 
     // infer_var_type dispatch arms (per-category)
-    let infer_var_type_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let infer_var_type_arms: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
@@ -2580,6 +2747,14 @@ fn generate_language_trait_impl_multi(
             fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
                 #language_name::parse_preserving_vars(input)
                     .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
+            }
+
+            fn parse_term_template(
+                &self,
+                template: &mettail_runtime::FltNode,
+            ) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
+                #language_name::parse_template_preserving_vars(template)
+                    .map(|term| Box::new(term) as Box<dyn mettail_runtime::Term>)
             }
 
             #try_direct_eval_method
@@ -2845,6 +3020,65 @@ fn generate_language_trait_impl_multi(
     }
 }
 
+#[cfg(test)]
+mod backend_include_tests {
+    use super::*;
+
+    #[test]
+    fn backend_includes_are_cfg_elided_before_macro_expansion() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: BackendIncludeIsolation,
+                types { Expr }
+                terms { Unit . |- "unit" : Expr ; }
+                equations {}
+                rewrites {}
+            "#,
+        )
+        .expect("backend-isolation fixture must parse");
+
+        let generated = generate_language_impl(&language).to_string();
+        assert_eq!(
+            generated
+                .matches("# [cfg (feature = \"rho-codegen\")] include !")
+                .count(),
+            4,
+            "every Rho backend include must be cfg-elided before include! expansion",
+        );
+        assert!(
+            generated.contains("# [cfg (feature = \"dovetail-codegen\")] # [path ="),
+            "the Dovetail backend must be cfg-elided and loaded as a child module",
+        );
+        assert_eq!(
+            generated
+                .matches("# [cfg (feature = \"dovetail-codegen\")] include !")
+                .count(),
+            0,
+            "the Dovetail backend must not use textual include expansion",
+        );
+    }
+
+    #[test]
+    fn typed_dovetail_module_reexports_only_its_public_operation_type() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: BackendModuleExport,
+                types { ![i32] as Int }
+                terms {
+                    AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+                }
+            "#,
+        )
+        .expect("typed-backend fixture must parse");
+
+        let generated = generate_language_impl(&language).to_string();
+        assert!(generated.contains(
+            "pub use __mettail_backendmoduleexport_dovetail_backend :: BackendModuleExportDovetailOp"
+        ));
+        assert!(!generated.contains("pub use __mettail_backendmoduleexport_dovetail_backend :: *"));
+    }
+}
+
 /// Generate the type inference helper for the primary type
 ///
 /// This handles detecting lambda variants and building the full function type.
@@ -2858,7 +3092,9 @@ fn generate_type_inference_helpers(
     let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
 
     // Get all categories for lambda variant detection (including native, e.g. Int/Bool/Str)
-    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
+    let categories: Vec<_> = crate::gen::semantic_types(language)
+        .map(|t| &t.name)
+        .collect();
 
     // Post-HOL-B: only emit Lam{D} / MLam{D} match arms on the primary
     // type for domains D where the HOL variants actually exist.

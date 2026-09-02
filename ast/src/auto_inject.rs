@@ -659,6 +659,7 @@ mod tests {
     fn lang_type(name: &str, native_ty: syn::Type) -> LangType {
         LangType {
             name: ident(name),
+            role: crate::language::CategoryRole::Object,
             native_type: Some(native_ty),
             collection_kind: None,
         }

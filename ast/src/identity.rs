@@ -19,63 +19,152 @@ use crate::types::{CollectionType, EvalMode, TypeExpr};
 
 /// Versioned stable fingerprint for a macro-expanded [`LanguageDef`].
 pub fn language_definition_fingerprint(language: &LanguageDef) -> String {
-    let mut out = String::new();
+    let mut out = IdentityBuffer::new();
     write_language(language, &mut out);
-    format!("mettail-langdef-v1:{:016x}", fnv1a64(out.as_bytes()))
+    out.fingerprint("language-definition", "mettail-langdef-v2")
 }
 
 /// Canonical, span-independent identity text for one rule-spec pattern.
 pub fn pattern_identity(pattern: &Pattern) -> String {
-    let mut out = String::new();
+    let mut out = IdentityBuffer::new();
     write_pattern(pattern, &mut out);
-    out
+    out.into_plain()
 }
 
 /// Canonical, span-independent identity text for a premise list.
 pub fn premises_identity(premises: &[Premise]) -> String {
-    let mut out = String::new();
+    let mut out = IdentityBuffer::new();
     write_premises(premises, &mut out);
-    out
+    out.into_plain()
 }
 
 /// Canonical, span-independent identity text for a behavioral predicate.
 pub fn behavioral_predicate_identity(pred: &BehavioralPred) -> String {
-    let mut out = String::new();
+    let mut out = IdentityBuffer::new();
     write_behavioral_pred(pred, &mut out);
-    out
+    out.into_plain()
 }
 
 /// Canonical, span-independent identity text for one grammar constructor rule.
 pub fn grammar_rule_identity(rule: &GrammarRule) -> String {
-    let mut out = String::new();
+    let mut out = IdentityBuffer::new();
     write_grammar_rule(rule, &mut out);
-    out
+    out.into_plain()
 }
 
 /// Canonical, span-independent identity text for one equation.
 pub fn equation_identity(equation: &Equation) -> String {
-    let mut out = String::new();
+    let mut out = IdentityBuffer::new();
     write_equation(equation, &mut out);
-    out
+    out.into_plain()
 }
 
 /// Canonical, span-independent identity text for one rewrite rule.
 pub fn rewrite_identity(rewrite: &RewriteRule) -> String {
-    let mut out = String::new();
+    let mut out = IdentityBuffer::new();
     write_rewrite(rewrite, &mut out);
-    out
+    out.into_plain()
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+pub fn pattern_fingerprint(pattern: &Pattern) -> String {
+    let mut out = IdentityBuffer::new();
+    write_pattern(pattern, &mut out);
+    out.fingerprint("pattern", "mettail-fragment-v2")
+}
+
+pub fn premises_fingerprint(premises: &[Premise]) -> String {
+    let mut out = IdentityBuffer::new();
+    write_premises(premises, &mut out);
+    out.fingerprint("premises", "mettail-fragment-v2")
+}
+
+pub fn behavioral_predicate_fingerprint(pred: &BehavioralPred) -> String {
+    let mut out = IdentityBuffer::new();
+    write_behavioral_pred(pred, &mut out);
+    out.fingerprint("behavioral-predicate", "mettail-fragment-v2")
+}
+
+pub fn grammar_rule_fingerprint(rule: &GrammarRule) -> String {
+    let mut out = IdentityBuffer::new();
+    write_grammar_rule(rule, &mut out);
+    out.fingerprint("grammar-rule", "mettail-fragment-v2")
+}
+
+pub fn equation_fingerprint(equation: &Equation) -> String {
+    let mut out = IdentityBuffer::new();
+    write_equation(equation, &mut out);
+    out.fingerprint("equation", "mettail-fragment-v2")
+}
+
+pub fn rewrite_fingerprint(rewrite: &RewriteRule) -> String {
+    let mut out = IdentityBuffer::new();
+    write_rewrite(rewrite, &mut out);
+    out.fingerprint("rewrite", "mettail-fragment-v2")
+}
+
+#[derive(Default)]
+struct IdentityBuffer {
+    plain: String,
+    framed: Vec<u8>,
+}
+
+trait IdentitySink {
+    fn push_str(&mut self, value: &str) {
+        for character in value.chars() {
+            self.push(character);
+        }
     }
-    hash
+
+    fn push(&mut self, value: char);
 }
 
-fn push_ident(out: &mut String, ident: &Ident) {
+impl IdentitySink for String {
+    fn push_str(&mut self, value: &str) {
+        String::push_str(self, value);
+    }
+
+    fn push(&mut self, value: char) {
+        String::push(self, value);
+    }
+}
+
+impl IdentitySink for IdentityBuffer {
+    fn push_str(&mut self, value: &str) {
+        self.plain.push_str(value);
+        self.framed.push(b's');
+        self.framed
+            .extend_from_slice(&(value.len() as u64).to_be_bytes());
+        self.framed.extend_from_slice(value.as_bytes());
+    }
+
+    fn push(&mut self, value: char) {
+        self.plain.push(value);
+        self.framed.push(b'c');
+        self.framed.extend_from_slice(&(value as u32).to_be_bytes());
+    }
+}
+
+impl IdentityBuffer {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn into_plain(self) -> String {
+        self.plain
+    }
+
+    fn fingerprint(&self, domain: &str, prefix: &str) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"MeTTaIL identity\0");
+        hasher.update(&(domain.len() as u64).to_be_bytes());
+        hasher.update(domain.as_bytes());
+        hasher.update(&(self.framed.len() as u64).to_be_bytes());
+        hasher.update(&self.framed);
+        format!("{prefix}:{}", hasher.finalize().to_hex())
+    }
+}
+
+fn push_ident(out: &mut impl IdentitySink, ident: &Ident) {
     out.push_str(&ident.to_string());
 }
 
@@ -102,14 +191,14 @@ fn push_ident(out: &mut String, ident: &Ident) {
 /// verbatim and so are never merged or split. This is what makes
 /// `language_definition_fingerprint(reconstruct_language_def(definition_source()))`
 /// equal the generated `definition_fingerprint()` for standalone languages.
-fn push_tokens<T: ToTokens>(out: &mut String, value: &T) {
+fn push_tokens<T: ToTokens>(out: &mut impl IdentitySink, value: &T) {
     push_token_stream_canonical(out, &value.to_token_stream());
 }
 
 /// Emit a token stream in span/spacing-independent canonical form without
 /// consuming native call-stack space for nested token groups.
 /// See [`push_tokens`] for why this is necessary.
-fn push_token_stream_canonical(out: &mut String, stream: &proc_macro2::TokenStream) {
+fn push_token_stream_canonical(out: &mut impl IdentitySink, stream: &proc_macro2::TokenStream) {
     enum TokenTask {
         Text(&'static str),
         Tree(proc_macro2::TokenTree),
@@ -150,7 +239,7 @@ fn push_token_stream_canonical(out: &mut String, stream: &proc_macro2::TokenStre
     }
 }
 
-fn push_ids(out: &mut String, ids: &[Ident]) {
+fn push_ids(out: &mut impl IdentitySink, ids: &[Ident]) {
     out.push('[');
     for id in ids {
         push_ident(out, id);
@@ -178,7 +267,10 @@ enum IdentityTask<'identity> {
     Ids(&'identity [Ident]),
 }
 
-fn run_identity_tasks<'identity>(out: &mut String, mut tasks: Vec<IdentityTask<'identity>>) {
+fn run_identity_tasks<'identity>(
+    out: &mut impl IdentitySink,
+    mut tasks: Vec<IdentityTask<'identity>>,
+) {
     while let Some(task) = tasks.pop() {
         match task {
             IdentityTask::Str(text) => out.push_str(text),
@@ -296,8 +388,10 @@ fn run_identity_tasks<'identity>(out: &mut String, mut tasks: Vec<IdentityTask<'
                     }
                     out.push(')');
                 },
-                SyntaxExpr::GuestBody { open, close, bind } => {
+                SyntaxExpr::GuestBody { open, close, bind, kind } => {
                     out.push_str("guestbody(");
+                    out.push_str(kind.intrinsic());
+                    out.push(',');
                     push_ident(out, bind);
                     out.push(',');
                     push_ident(out, open);
@@ -707,7 +801,7 @@ fn run_identity_tasks<'identity>(out: &mut String, mut tasks: Vec<IdentityTask<'
     }
 }
 
-fn write_language(language: &LanguageDef, out: &mut String) {
+fn write_language(language: &LanguageDef, out: &mut impl IdentitySink) {
     out.push_str("language(");
     push_ident(out, &language.name);
     out.push_str(");options[");
@@ -729,6 +823,12 @@ fn write_language(language: &LanguageDef, out: &mut String) {
     out.push_str(";types[");
     for ty in &language.types {
         push_ident(out, &ty.name);
+        out.push(':');
+        out.push_str(match ty.role {
+            crate::language::CategoryRole::Object => "object",
+            crate::language::CategoryRole::Data => "data",
+            crate::language::CategoryRole::SpannedData => "spanned-data",
+        });
         out.push(':');
         if let Some(native) = &ty.native_type {
             push_tokens(out, native);
@@ -812,16 +912,26 @@ fn write_language(language: &LanguageDef, out: &mut String) {
     out.push(']');
 }
 
-fn write_attribute_value(value: &AttributeValue, out: &mut String) {
+fn write_attribute_value(value: &AttributeValue, out: &mut impl IdentitySink) {
     match value {
         AttributeValue::Float(value) => out.push_str(&value.to_bits().to_string()),
         AttributeValue::Int(value) => out.push_str(&value.to_string()),
         AttributeValue::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
         AttributeValue::Str(value) | AttributeValue::Keyword(value) => out.push_str(value),
+        AttributeValue::StringList(values) => {
+            out.push('[');
+            for value in values {
+                out.push_str(&value.len().to_string());
+                out.push(':');
+                out.push_str(value);
+                out.push(';');
+            }
+            out.push(']');
+        },
     }
 }
 
-fn write_token_def(token: &TokenDef, out: &mut String) {
+fn write_token_def(token: &TokenDef, out: &mut impl IdentitySink) {
     push_ident(out, &token.name);
     out.push(':');
     out.push_str(&token.pattern);
@@ -855,7 +965,7 @@ fn write_token_def(token: &TokenDef, out: &mut String) {
     });
 }
 
-fn write_sync_constraint(constraint: &SyncConstraint, out: &mut String) {
+fn write_sync_constraint(constraint: &SyncConstraint, out: &mut impl IdentitySink) {
     match constraint {
         SyncConstraint::Align { stream_a, stream_b, boundary_pattern } => {
             out.push_str("align(");
@@ -876,10 +986,10 @@ fn write_sync_constraint(constraint: &SyncConstraint, out: &mut String) {
     }
 }
 
-fn write_tree_constraint_expr(expr: &TreeConstraintExpr, out: &mut String) {
+fn write_tree_constraint_expr(expr: &TreeConstraintExpr, out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::TreeConstraint(expr)]);
 }
-fn write_collection_type(coll_type: &CollectionType, out: &mut String) {
+fn write_collection_type(coll_type: &CollectionType, out: &mut impl IdentitySink) {
     out.push_str(match coll_type {
         CollectionType::HashBag => "HashBag",
         CollectionType::HashSet => "HashSet",
@@ -889,7 +999,7 @@ fn write_collection_type(coll_type: &CollectionType, out: &mut String) {
     });
 }
 
-fn write_collection_category_opt(value: &Option<CollectionCategory>, out: &mut String) {
+fn write_collection_category_opt(value: &Option<CollectionCategory>, out: &mut impl IdentitySink) {
     match value {
         None => out.push_str("none"),
         Some(CollectionCategory::List(delims)) => {
@@ -920,7 +1030,7 @@ fn write_collection_category_opt(value: &Option<CollectionCategory>, out: &mut S
     }
 }
 
-fn write_delimiters(delims: &crate::language::CollectionDelimiters, out: &mut String) {
+fn write_delimiters(delims: &crate::language::CollectionDelimiters, out: &mut impl IdentitySink) {
     out.push_str(&delims.open);
     out.push('|');
     out.push_str(&delims.close);
@@ -932,10 +1042,10 @@ fn write_delimiters(delims: &crate::language::CollectionDelimiters, out: &mut St
     }
 }
 
-fn write_type_expr(ty: &TypeExpr, out: &mut String) {
+fn write_type_expr(ty: &TypeExpr, out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::TypeExpr(ty)]);
 }
-fn write_grammar_rule(rule: &GrammarRule, out: &mut String) {
+fn write_grammar_rule(rule: &GrammarRule, out: &mut impl IdentitySink) {
     push_ident(out, &rule.label);
     out.push(':');
     push_ident(out, &rule.category);
@@ -988,10 +1098,10 @@ fn write_grammar_rule(rule: &GrammarRule, out: &mut String) {
     });
 }
 
-fn write_syntax_exprs(exprs: &[SyntaxExpr], out: &mut String) {
+fn write_syntax_exprs(exprs: &[SyntaxExpr], out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::SyntaxExprs(exprs)]);
 }
-fn write_grammar_item(item: &GrammarItem, out: &mut String) {
+fn write_grammar_item(item: &GrammarItem, out: &mut impl IdentitySink) {
     match item {
         GrammarItem::Terminal(value) => {
             out.push_str("terminal(");
@@ -1033,18 +1143,18 @@ fn write_grammar_item(item: &GrammarItem, out: &mut String) {
     }
 }
 
-fn write_term_params(params: &[TermParam], out: &mut String) {
+fn write_term_params(params: &[TermParam], out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::TermParams(params)]);
 }
 
-fn write_eval_mode(mode: EvalMode, out: &mut String) {
+fn write_eval_mode(mode: EvalMode, out: &mut impl IdentitySink) {
     out.push_str(match mode {
         EvalMode::Fold => "fold",
         EvalMode::Step => "step",
     });
 }
 
-fn write_typed_params(params: &[TypedParam], out: &mut String) {
+fn write_typed_params(params: &[TypedParam], out: &mut impl IdentitySink) {
     out.push('[');
     for param in params {
         push_ident(out, &param.name);
@@ -1055,7 +1165,7 @@ fn write_typed_params(params: &[TypedParam], out: &mut String) {
     out.push(']');
 }
 
-fn write_premises(premises: &[Premise], out: &mut String) {
+fn write_premises(premises: &[Premise], out: &mut impl IdentitySink) {
     out.push('[');
     for premise in premises {
         write_premise(premise, out);
@@ -1064,10 +1174,10 @@ fn write_premises(premises: &[Premise], out: &mut String) {
     out.push(']');
 }
 
-fn write_premise(premise: &Premise, out: &mut String) {
+fn write_premise(premise: &Premise, out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::Premise(premise)]);
 }
-fn write_freshness_target(target: &FreshnessTarget, out: &mut String) {
+fn write_freshness_target(target: &FreshnessTarget, out: &mut impl IdentitySink) {
     match target {
         FreshnessTarget::Var(id) => push_ident(out, id),
         FreshnessTarget::CollectionRest(id) => {
@@ -1077,10 +1187,10 @@ fn write_freshness_target(target: &FreshnessTarget, out: &mut String) {
     }
 }
 
-fn write_pattern(pattern: &Pattern, out: &mut String) {
+fn write_pattern(pattern: &Pattern, out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::Pattern(pattern)]);
 }
-fn write_equation(equation: &Equation, out: &mut String) {
+fn write_equation(equation: &Equation, out: &mut impl IdentitySink) {
     push_ident(out, &equation.name);
     out.push(':');
     write_typed_params(&equation.type_context, out);
@@ -1092,7 +1202,7 @@ fn write_equation(equation: &Equation, out: &mut String) {
     write_pattern(&equation.right, out);
 }
 
-fn write_rewrite(rewrite: &RewriteRule, out: &mut String) {
+fn write_rewrite(rewrite: &RewriteRule, out: &mut impl IdentitySink) {
     push_ident(out, &rewrite.name);
     out.push(':');
     write_typed_params(&rewrite.type_context, out);
@@ -1110,17 +1220,17 @@ fn write_rewrite(rewrite: &RewriteRule, out: &mut String) {
     });
 }
 
-fn write_behavioral_pred(pred: &BehavioralPred, out: &mut String) {
+fn write_behavioral_pred(pred: &BehavioralPred, out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::BehavioralPred(pred)]);
 }
-fn write_quantifier(quantifier: &Quantifier, out: &mut String) {
+fn write_quantifier(quantifier: &Quantifier, out: &mut impl IdentitySink) {
     out.push_str(match quantifier {
         Quantifier::ForAll => "forall",
         Quantifier::Exists => "exists",
     });
 }
 
-fn write_pred_arg(arg: &PredArg, out: &mut String) {
+fn write_pred_arg(arg: &PredArg, out: &mut impl IdentitySink) {
     match arg {
         PredArg::Var(id) => {
             out.push_str("var:");
@@ -1133,11 +1243,11 @@ fn write_pred_arg(arg: &PredArg, out: &mut String) {
     }
 }
 
-fn write_refinement_predicate(pred: &RefinementPredicate, out: &mut String) {
+fn write_refinement_predicate(pred: &RefinementPredicate, out: &mut impl IdentitySink) {
     run_identity_tasks(out, vec![IdentityTask::RefinementPredicate(pred)]);
 }
 
-fn write_guard_config(guards: &GuardConfig, out: &mut String) {
+fn write_guard_config(guards: &GuardConfig, out: &mut impl IdentitySink) {
     if let Some(predicates) = &guards.builtin_predicates {
         out.push_str("predicates[");
         for predicate in predicates {
@@ -1165,7 +1275,7 @@ fn write_guard_config(guards: &GuardConfig, out: &mut String) {
     }
 }
 
-fn write_builtin_predicate(predicate: &BuiltinPredicate, out: &mut String) {
+fn write_builtin_predicate(predicate: &BuiltinPredicate, out: &mut impl IdentitySink) {
     push_ident(out, &predicate.name);
     out.push(':');
     for param in &predicate.params {
@@ -1187,7 +1297,7 @@ fn write_builtin_predicate(predicate: &BuiltinPredicate, out: &mut String) {
     }
 }
 
-fn write_predicate_param(param: &PredicateParam, out: &mut String) {
+fn write_predicate_param(param: &PredicateParam, out: &mut impl IdentitySink) {
     push_ident(out, &param.name);
     out.push(':');
     if let Some(ty) = &param.ty {
@@ -1212,7 +1322,7 @@ fn write_predicate_param(param: &PredicateParam, out: &mut String) {
     }
 }
 
-fn write_connective(connective: &ConnectiveDecl, out: &mut String) {
+fn write_connective(connective: &ConnectiveDecl, out: &mut impl IdentitySink) {
     out.push_str(connective.role.as_str());
     out.push('=');
     for keyword in &connective.keywords {
@@ -1221,7 +1331,7 @@ fn write_connective(connective: &ConnectiveDecl, out: &mut String) {
     }
 }
 
-fn write_theory(theory: &TheoryRegistration, out: &mut String) {
+fn write_theory(theory: &TheoryRegistration, out: &mut impl IdentitySink) {
     push_ident(out, &theory.name);
     out.push('=');
     push_tokens(out, &theory.theory_type);
@@ -1231,7 +1341,7 @@ fn write_theory(theory: &TheoryRegistration, out: &mut String) {
     }
 }
 
-fn write_channels(channels: &ChannelConfig, out: &mut String) {
+fn write_channels(channels: &ChannelConfig, out: &mut impl IdentitySink) {
     out.push_str("channels[");
     for channel in &channels.channel_categories {
         push_ident(out, &channel.category);
@@ -1257,6 +1367,40 @@ fn write_channels(channels: &ChannelConfig, out: &mut String) {
 mod tests {
     use super::*;
     use crate::language::LanguageDef;
+
+    #[test]
+    fn framed_identity_distinguishes_equal_raw_concatenations() {
+        let mut left = IdentityBuffer::new();
+        left.push_str("ab");
+        left.push_str("c");
+        let mut right = IdentityBuffer::new();
+        right.push_str("a");
+        right.push_str("bc");
+
+        assert_eq!(left.plain, right.plain);
+        assert_ne!(
+            left.fingerprint("collision-test", "test"),
+            right.fingerprint("collision-test", "test")
+        );
+    }
+
+    #[test]
+    fn language_fingerprint_is_blake3_256_v2() {
+        let language = syn::parse_str::<LanguageDef>(
+            r#"
+                name: FingerprintShape,
+                types { Proc }
+                terms { Zero . |- "0" : Proc ; }
+            "#,
+        )
+        .expect("language");
+        let fingerprint = language_definition_fingerprint(&language);
+        let digest = fingerprint
+            .strip_prefix("mettail-langdef-v2:")
+            .expect("v2 prefix");
+        assert_eq!(digest.len(), 64);
+        assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
 
     #[test]
     fn fingerprint_is_stable_for_equivalent_parse() {

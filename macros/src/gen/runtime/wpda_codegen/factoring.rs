@@ -193,7 +193,8 @@ pub(crate) enum MemberCommit {
     /// F5-2 (A4-analog, plan §2.2): resume inside the member's existing
     /// generic `MixfixLiteralRun` machinery at the full
     /// `(kind, completed_idx, sub_pos)` coordinate — the commit CAR replaces
-    /// the spine marker with `mixfix_marker(result, rule_idx, completed_idx)`
+    /// the spine marker with
+    /// `mixfix_marker(result, rule_idx, completed_idx, continuation_bp)`
     /// and enters `MixfixLiteralRun { rule_idx, completed_idx, kind,
     /// sub_pos }`. The F0 `Nullary` variant is the `kind: 2, completed: 0`
     /// special case on the PREFIX surface; mixfix-cohort members (including
@@ -1278,7 +1279,7 @@ pub(crate) struct MixfixGroup {
     /// member-uniform by construction).
     pub min_l_bp: u8,
     /// AV5-analog weight/action identity: the MIN member rule idx (never the
-    /// spine id) — stamps the trigger branch weight, the lex-alt `lex_w_alt`
+    /// spine id) — stamps the trigger branch cost, the lex-alt action
     /// wrap, and the `LexAltMixfixOp.rule_idx` action-kind field (A-M5).
     pub min_member_rule_idx: u16,
     /// `(l_bp, rule_idx)` per member in slice order — receipts.
@@ -2386,7 +2387,7 @@ fn child_target_tokens(
             ),
             MemberCommit::Nullary { rule_idx, completed_idx, sub_pos } => (
                 quote! {
-                    StackSymbolV2::mixfix_marker(#cat, #rule_idx, 0u8)
+                    StackSymbolV2::mixfix_marker(#cat, #rule_idx, 0u8, *outer_bp)
                 },
                 quote! {
                     WpdaState::MixfixLiteralRun {
@@ -2442,7 +2443,7 @@ fn child_branch_tokens(cat: u16, spine_id: u16, child: &SpineTree, child_id: u8)
             // fork semantics — binder collection-arm precedent).
             quote! {
                 mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                    symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
                     weight: lex_one(),
                     new_state: WpdaState::PrefixDispatch {
                         pos: _pos,
@@ -2597,7 +2598,7 @@ pub(crate) fn build_spine_emission_from_parts(
                                 quote! {
                                     return WpdaStepAction::ReplaceAndPush {
                                         replace_symbol: #sym,
-                                        push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                        push_symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
                                         weight: lex_one(),
                                         new_state: WpdaState::PrefixDispatch {
                                             pos: _pos,
@@ -2611,9 +2612,18 @@ pub(crate) fn build_spine_emission_from_parts(
                         // Divergence arm: one branch per trie child; literal
                         // branches die on their guards (the shared
                         // evidence-prune, plan §2 item 3).
+                        let branch_count = branches.len();
+                        let branch_pushes = branches.iter().map(|branch| {
+                            quote! {
+                                __spine_branches.push(#branch);
+                            }
+                        });
                         quote! {
+                            let mut __spine_branches =
+                                ::std::vec::Vec::with_capacity(#branch_count);
+                            #( #branch_pushes )*
                             return WpdaStepAction::Fork {
-                                branches: vec![#(#branches),*],
+                                branches: __spine_branches,
                                 consume_trigger: false,
                             };
                         }
@@ -3017,11 +3027,12 @@ fn mixfix_fan_group_arm(dispatch_cat: u16, trigger: &str, group: &MixfixGroup) -
             __cands.push(
                 mettail_prattail::wpda_walker::ForkBranch {
                     symbol: StackSymbolV2::mixfix_marker(
-                        #result_src, #spine_id, 0,
+                        #result_src, #spine_id, 0, *cur_bp,
                     ),
                     weight: lex_w(
                         mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
-                        #result_src, #min_member,
+                        #result_src,
+                        #min_member,
                     ),
                     new_state: WpdaState::MixfixLiteralRun {
                         result_src_idx: #result_src,
@@ -3113,7 +3124,11 @@ fn mixfix_child_target_tokens(
         SpineTree::Interior { .. } => {
             let (k, c, s) = child_after;
             (
-                quote! { StackSymbolV2::mixfix_marker(#result_src, #spine_id, #c) },
+                quote! {
+                    StackSymbolV2::mixfix_marker(
+                        #result_src, #spine_id, #c, __mixfix_continuation_bp,
+                    )
+                },
                 quote! {
                     WpdaState::MixfixLiteralRun {
                         result_src_idx: #result_src,
@@ -3136,7 +3151,10 @@ fn mixfix_child_target_tokens(
             };
             (
                 quote! {
-                    StackSymbolV2::mixfix_marker(#result_src, #rule_idx, #completed_idx)
+                    StackSymbolV2::mixfix_marker(
+                        #result_src, #rule_idx, #completed_idx,
+                        __mixfix_continuation_bp,
+                    )
                 },
                 quote! {
                     WpdaState::MixfixLiteralRun {
@@ -3160,16 +3178,18 @@ fn mixfix_child_target_tokens(
 ///   - 1 Literal child: the `__checked_literal_consume!` chain step
 ///     (0 targets → Error; 1 → self-replace `ConsumeAtAndReplace`; ≥2 →
 ///     Fork of self-replace CARs — the ROOT-A lattice-membership law).
-///   - 1 ParamParse child: the operand descent — same-cat `Advance` into
-///     `PrefixDispatch` under the SPINE marker (the part-0-under-marker
-///     convention) / cross-cat `Push(category_entry_goal)`.
+///   - 1 ParamParse child: the operand descent pushes a strict
+///     `CategoryEntry(goal)` before entering `PrefixDispatch`, exactly like
+///     the unfactored mixfix machine. The frame is required even when source
+///     and result categories coincide: it is the typed boundary that prevents
+///     a nested cross-category continuation from escaping the operand.
 ///   - ≥2 children (divergence): literal children contribute one
 ///     `ConsumeAtAndReplace` branch per lattice target (commit or spine
 ///     continuation); a ParamParse child contributes one UNCONDITIONAL
 ///     branch (descent, or `ReplaceAndPush` commit for an operand-edge
 ///     leaf). Zero live branches → `Error`; exactly one → the equivalent
 ///     NON-FORK action (plan §2.2: "if only A, the single-target
-///     ConsumeAtAndReplace; B alone, emit the Advance"); otherwise a
+///     ConsumeAtAndReplace; B alone, emit the strict Push"); otherwise a
 ///     `Fork { consume_trigger: false }` in trie child order.
 fn mixfix_spine_step_arm(
     result_src: u16,
@@ -3205,15 +3225,8 @@ fn mixfix_spine_step_arm(
                 };
             },
             SpineItem::ParamParse { cat_src_idx, cur_bp } => {
-                let descent = if *cat_src_idx == result_src {
-                    quote! {
-                        return WpdaStepAction::Advance(WpdaState::PrefixDispatch {
-                            pos: _pos,
-                            cur_bp: #cur_bp,
-                        });
-                    }
-                } else {
-                    quote! {
+                return quote! {
+                    #key_pat => {
                         return WpdaStepAction::Push {
                             symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
                             weight: lex_one(),
@@ -3224,7 +3237,6 @@ fn mixfix_spine_step_arm(
                         };
                     }
                 };
-                return quote! { #key_pat => { #descent } };
             },
         }
     }
@@ -3274,68 +3286,40 @@ fn mixfix_spine_step_arm(
             },
             SpineItem::ParamParse { cat_src_idx, cur_bp } => {
                 let (branch, nonfork) = match child {
-                    SpineTree::Interior { .. } => {
-                        if *cat_src_idx == result_src {
-                            (
-                                quote! {
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #sym,
-                                        weight: lex_one(),
-                                        new_state: WpdaState::PrefixDispatch {
-                                            pos: _pos,
-                                            cur_bp: #cur_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::Advance,
-                                    }
+                    SpineTree::Interior { .. } => (
+                        quote! {
+                            mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
+                                weight: lex_one(),
+                                new_state: WpdaState::PrefixDispatch {
+                                    pos: _pos,
+                                    cur_bp: #cur_bp,
                                 },
-                                quote! {
-                                    return WpdaStepAction::Advance(
-                                        WpdaState::PrefixDispatch {
-                                            pos: _pos,
-                                            cur_bp: #cur_bp,
-                                        },
-                                    );
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::Push,
+                            }
+                        },
+                        quote! {
+                            return WpdaStepAction::Push {
+                                symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
+                                weight: lex_one(),
+                                new_state: WpdaState::PrefixDispatch {
+                                    pos: _pos,
+                                    cur_bp: #cur_bp,
                                 },
-                            )
-                        } else {
-                            (
-                                quote! {
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::PrefixDispatch {
-                                            pos: _pos,
-                                            cur_bp: #cur_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                    }
-                                },
-                                quote! {
-                                    return WpdaStepAction::Push {
-                                        symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::PrefixDispatch {
-                                            pos: _pos,
-                                            cur_bp: #cur_bp,
-                                        },
-                                    };
-                                },
-                            )
-                        }
-                    },
+                            };
+                        },
+                    ),
                     SpineTree::Leaf { .. } => {
                         // Operand-edge commit (FS1: consuming via the
                         // sub-parse): replace the SPINE marker with the
-                        // member marker, push the operand entry. Same-cat
-                        // uses the goal-free entry (mirrors the generic
-                        // part-0 Advance admission); cross-cat the strict
-                        // goal entry (the generic kind-1 form).
-                        let entry = if *cat_src_idx == result_src {
-                            quote! { StackSymbolV2::category_entry(#cat_src_idx) }
-                        } else {
-                            quote! { StackSymbolV2::category_entry_goal(#cat_src_idx) }
+                        // member marker, push the operand entry.  The
+                        // nonterminal occurrence is goal-bounded even when
+                        // source and result categories coincide: a nested
+                        // cross-category operator must not escape the typed
+                        // operand merely because the first category matched.
+                        let entry = quote! {
+                            StackSymbolV2::category_entry_goal(#cat_src_idx)
                         };
                         (
                             quote! {
@@ -3984,6 +3968,7 @@ mod tests {
     fn lang_type(name: &str, native: Option<&str>) -> LangType {
         LangType {
             name: id(name),
+            role: Default::default(),
             native_type: native.map(|t| syn::parse_str::<syn::Type>(t).expect("type parses")),
             collection_kind: None,
         }
@@ -5145,22 +5130,11 @@ mod tests {
         assert!(!gated.action_for_prelude.is_empty());
         assert!(!gated.leading_trigger_prelude.is_empty());
         // A3-corrected (F4 round-1 RED-1; f5_accept_continue_plan §RED-TEAM
-        // item 3, 2026-07-12): min_terminal_span rows are emitted ONLY when
-        // the group min is > 0 (the `if v > 0` row-omission in
-        // `build_spine_emission_from`; 0 = the table default = absent), and
-        // `member_min_span` returns 0 for EVERY member of EVERY current
-        // rholang group — each `@`-cohort member's pattern is Op-bearing
-        // (`SyntaxExpr::Op` short-circuits to 0 before literal counting) —
-        // so min = 0 per group ⇒ every span row OMITTED ⇒ the CORRECT
-        // ON-stance `min_span_prelude` is EMPTY (the engine falls through to
-        // the per-rule `min_terminal_span` table default). Re-derived
-        // per-group below once `model` is built (self-adjudicating). The
-        // pre-A3 `!is_empty()` expectation was the F4 round-1 GATE-RED.
-        assert!(
-            gated.min_span_prelude.is_empty(),
-            "min=0 groups must OMIT their span rows (A3); got: {}",
-            gated.min_span_prelude,
-        );
+        // item 3, 2026-07-12): min_terminal_span rows are emitted exactly
+        // when a group's derived minimum is positive. Closed data categories
+        // may add independent positive-span groups, so the invariant is
+        // checked per group below instead of assuming the whole Rholang table
+        // is empty.
         assert!(!gated.spine_weight_rule_fn.is_empty());
         // The const-gated bundle IS the explicit-model bundle — the same
         // wiring fact the dormant pin guarded, inverted. (Streams compare by
@@ -5171,25 +5145,41 @@ mod tests {
         // (self-adjudicating: an F5-era group with min > 0 would emit a span
         // row — this loop fails FIRST naming the exact group, so the
         // emptiness assert above can never go stale silently).
-        let mut groups_seen = 0usize;
+        let proc_src = src_idx(&categories, "Proc");
+        let input_bind_src = src_idx(&categories, "InputBind");
+        let min_span_rows = normalized(&gated.min_span_prelude);
+        let mut legacy_groups_seen = 0usize;
         for cat_fact in &model {
             let rules = &per_cat[cat_fact.category_src_idx as usize];
             for bucket in &cat_fact.buckets {
                 for group in &bucket.groups {
-                    groups_seen += 1;
+                    if matches!(cat_fact.category_src_idx, c if c == proc_src || c == input_bind_src)
+                    {
+                        legacy_groups_seen += 1;
+                    }
                     let min = group
                         .member_rule_idxs()
                         .iter()
                         .map(|&m| member_min_span(&rules[m as usize]))
                         .min()
                         .expect("an eligible group has members");
-                    assert_eq!(
-                        min, 0,
-                        "group (cat {}, spine {:#06x}) has min_terminal_span > 0 — \
-                         it emits a span row; re-derive the min_span_prelude \
-                         expectation (A3)",
-                        cat_fact.category_src_idx, group.spine_id,
+                    let row = format!(
+                        "({}u16,{}u16)=>return{}u32",
+                        cat_fact.category_src_idx, group.spine_id, min,
                     );
+                    if min == 0 {
+                        let key =
+                            format!("({}u16,{}u16)=>", cat_fact.category_src_idx, group.spine_id,);
+                        assert!(
+                            !min_span_rows.contains(&key),
+                            "zero-span group must omit its table row: {key} in {min_span_rows}",
+                        );
+                    } else {
+                        assert!(
+                            min_span_rows.contains(&row),
+                            "positive-span group must emit its exact row {row}: {min_span_rows}",
+                        );
+                    }
                 }
             }
         }
@@ -5205,8 +5195,8 @@ mod tests {
             3
         };
         assert_eq!(
-            groups_seen, expected_groups,
-            "rholang group census follows the S1F5_ACCEPT_CONTINUE stance",
+            legacy_groups_seen, expected_groups,
+            "legacy Proc/InputBind group census follows the S1F5_ACCEPT_CONTINUE stance",
         );
         // F5-2 stance-follow (A3 discipline — no pin edits ride the flip):
         // the const-gated bundle gains the two Name-dispatched send cohorts
@@ -5228,13 +5218,19 @@ mod tests {
                         .map(|&m| member_min_span(&rules[m as usize]))
                         .min()
                         .expect("an eligible mixfix group has members");
-                    assert_eq!(
-                        min, 0,
-                        "mixfix group (result {}, spine {:#06x}) has \
-                         min_terminal_span > 0 — it emits a span row; re-derive \
-                         the min_span_prelude expectation (A3)",
-                        group.result_src_idx, group.spine_id,
-                    );
+                    let key = format!("({}u16,{}u16)=>", group.result_src_idx, group.spine_id);
+                    if min == 0 {
+                        assert!(
+                            !min_span_rows.contains(&key),
+                            "zero-span mixfix group must omit its row: {key} in {min_span_rows}",
+                        );
+                    } else {
+                        let row = format!("{key}return{min}u32");
+                        assert!(
+                            min_span_rows.contains(&row),
+                            "positive-span mixfix group must emit {row}: {min_span_rows}",
+                        );
+                    }
                 }
             }
         }
@@ -5504,7 +5500,7 @@ mod tests {
         let quoted_arm1 = window(&arms, "(0u16,63489u16,1u8)=>", "(0u16,63489u16,2u8)=>");
         assert!(
             quoted_arm1.contains("ReplaceAndPush")
-                && quoted_arm1.contains("category_entry(3u16)")
+                && quoted_arm1.contains("category_entry_goal(3u16)")
                 && quoted_arm1.contains("rule_at(0u16,63489u16,2u8"),
             "Quoted pre-root arm pushes the Name operand: {quoted_arm1}",
         );
@@ -5513,7 +5509,8 @@ mod tests {
         // MixfixLiteralRun tail complete.
         assert!(arms.contains("rule_at(0u16,9u16,6u8"), "rule 9 commit coordinate present",);
         assert!(
-            arms.contains("mixfix_marker(0u16,14u16,0u8)") && arms.contains("sub_pos:4u8"),
+            arms.contains("mixfix_marker(0u16,14u16,0u8,*outer_bp)")
+                && arms.contains("sub_pos:4u8"),
             "rule 14 nullary commit coordinate present",
         );
 
@@ -5551,8 +5548,8 @@ mod tests {
     }
 
     /// The spine trigger branch mirrors the per-rule BinderPrefix fork
-    /// branch byte-for-byte except the three factored fields: SPINE_ID
-    /// coordinates, the group body, and the AV5 min-member weight stamp.
+    /// branch except for its factored SPINE_ID coordinates and group body.
+    /// Scalar cost remains independent of the selected member identity.
     #[test]
     fn spine_trigger_branch_shape_pin() {
         let ts = emit_spine_trigger_branch(0, SPINE_RULE_BASE, 0, 10);
@@ -5629,7 +5626,7 @@ mod tests {
         );
         assert!(
             arm1.contains("ReplaceAndPush")
-                && arm1.contains("category_entry(0u16)")
+                && arm1.contains("category_entry_goal(0u16)")
                 && arm1.contains(&format!("rule_at({ib}u16,{spine}u16,2u8")),
             "pre-root arm pushes the shared Proc operand: {arm1}",
         );
@@ -5661,7 +5658,7 @@ mod tests {
             "arm 3 is the two-branch accept fork: {arm3}",
         );
         assert_eq!(
-            arm3.matches(&format!("category_entry({name_src}u16)"))
+            arm3.matches(&format!("category_entry_goal({name_src}u16)"))
                 .count(),
             2,
             "BOTH branches push the shared CategoryEntry(Name): {arm3}",
@@ -5712,12 +5709,12 @@ mod tests {
         let leads = normalized(&bundle.leading_trigger_prelude);
         assert!(leads.contains(&format!("({ib}u16,{spine}u16)=>returntrue")));
         // A3: r2's Op-bearing pattern short-circuits member_min_span to 0 ⇒
-        // group min 0 ⇒ the (ib, spine) span row is ABSENT — and since every
-        // rholang group is min-0, the whole prelude is EMPTY.
+        // group min 0 ⇒ this specific (ib, spine) span row is absent.
+        // Independent closed-data groups may legitimately contribute rows.
+        let min_span_rows = normalized(&bundle.min_span_prelude);
         assert!(
-            bundle.min_span_prelude.is_empty(),
-            "A3: min=0 ⇒ the span row is omitted; got {}",
-            bundle.min_span_prelude,
+            !min_span_rows.contains(&format!("({ib}u16,{spine}u16)=>")),
+            "A3: the zero-span InputBind group must omit its row; got {min_span_rows}",
         );
         let weights = normalized(&bundle.spine_weight_rule_fn);
         assert!(
@@ -5742,7 +5739,12 @@ mod tests {
         let arm2 =
             window(&arms, &format!("(0u16,{spine}u16,2u8)=>"), &format!("(0u16,{spine}u16,3u8)=>"));
         assert_eq!(arm2.matches("ReplaceAndPush").count(), 2, "{arm2}");
-        assert_eq!(arm2.matches(&format!("category_entry({tee}u16)")).count(), 2, "{arm2}");
+        assert_eq!(
+            arm2.matches(&format!("category_entry_goal({tee}u16)"))
+                .count(),
+            2,
+            "{arm2}",
+        );
         let continue_at = arm2
             .find(&format!("rule_at(0u16,{spine}u16,3u8"))
             .expect("spine-continue branch");
@@ -5786,7 +5788,7 @@ mod tests {
             .find(&format!("rule_at(0u16,{spine}u16,2u8"))
             .expect("spine-continue branch");
         let accept_at = arm1
-            .find("mixfix_marker(0u16,0u16,0u8)")
+            .find("mixfix_marker(0u16,0u16,0u8,*outer_bp)")
             .expect("TShort nullary accept commit branch");
         assert!(continue_at < accept_at, "A1 order at the pre-root: {arm1}");
         assert!(
@@ -5795,7 +5797,8 @@ mod tests {
         );
         let arm2 = window(&arms, &format!("(0u16,{spine}u16,2u8)=>"), "];");
         assert!(
-            arm2.contains("expected_text:\"»\"") && arm2.contains("mixfix_marker(0u16,1u16,0u8)"),
+            arm2.contains("expected_text:\"»\"")
+                && arm2.contains("mixfix_marker(0u16,1u16,0u8,*outer_bp)"),
             "arm 2 commits TLong on the » guard: {arm2}",
         );
     }
@@ -6103,7 +6106,7 @@ mod tests {
     /// flips): the loop-v2 fan arm (D-1 guard on the A-M4 MEMBER id, the
     /// AV5 min-member weight, the spine push + flag), the three prelude
     /// arms per plan §2.2 (chain step via `__checked_literal_consume!`,
-    /// divergence 1 = descent-Advance + rule-5 commit CAR with the
+    /// divergence 1 = strict operand Push + rule-5 commit CAR with the
     /// B-alone/zero short-circuit, divergence 2 = rule-3/rule-7 commit CARs
     /// with the singleton short-circuits + the Error miss shape), and the
     /// engine-table rows (owner/members/H9 union/weight; A7 rows ABSENT).
@@ -6150,13 +6153,16 @@ mod tests {
             "D-1 full-admission guard on the MEMBER id (A-M4): {bang_arm}",
         );
         assert!(
-            bang_arm.contains("mixfix_marker(0u16,63491u16,0,)")
+            bang_arm.contains("mixfix_marker(0u16,63491u16,0,*cur_bp,)")
                 && bang_arm.contains("BP_TIER_MIXFIX,0u16,3u16")
                 && bang_arm.contains("rule_idx:63491u16")
                 && bang_arm.contains("__mixfix_spine_pushed=true"),
             "spine push at the AV5 min-member weight: {bang_arm}",
         );
-        assert!(fan.contains("(3u16,\"!!\")") && fan.contains("mixfix_marker(0u16,63492u16,0,)"));
+        assert!(
+            fan.contains("(3u16,\"!!\")")
+                && fan.contains("mixfix_marker(0u16,63492u16,0,*cur_bp,)")
+        );
         // ── the prelude arms (the ! group; !! isomorphic) ─────────────────
         let prelude = normalized(&bundle.mixfix_prelude_arms);
         let chain =
@@ -6172,14 +6178,14 @@ mod tests {
             "divergence 1 gates the rule-5 commit on the close: {div1}",
         );
         assert!(
-            div1.contains(
-                "if__spine_lit_total==0{returnWpdaStepAction::Advance(WpdaState::PrefixDispatch"
-            ),
+            div1.contains("if__spine_lit_total==0{returnWpdaStepAction::Push")
+                && div1.contains("symbol:StackSymbolV2::category_entry_goal(0u16)"),
             "divergence 1 B-alone short-circuit (descent when no close): {div1}",
         );
         assert!(
-            div1.contains("ForkActionKind::Advance")
-                && div1.contains("mixfix_marker(0u16,5u16,0u8)")
+            div1.contains("ForkActionKind::Push")
+                && div1.contains("category_entry_goal(0u16)")
+                && div1.contains("mixfix_marker(0u16,5u16,0u8,__mixfix_continuation_bp,)")
                 && div1.contains("kind:2u8,sub_pos:2u8"),
             "divergence 1 fork = descent-first + rule-5 commit CAR: {div1}",
         );
@@ -6197,8 +6203,8 @@ mod tests {
         );
         assert!(
             div2.contains("if__spine_lit_total==1")
-                && div2.contains("mixfix_marker(0u16,3u16,0u8)")
-                && div2.contains("mixfix_marker(0u16,7u16,0u8)")
+                && div2.contains("mixfix_marker(0u16,3u16,0u8,__mixfix_continuation_bp,)")
+                && div2.contains("mixfix_marker(0u16,7u16,0u8,__mixfix_continuation_bp,)")
                 && div2.contains("kind:0u8,sub_pos:1u8"),
             "divergence 2 = the two commit CARs with singleton short-circuits: {div2}",
         );
@@ -6239,8 +6245,11 @@ mod tests {
             !leads.contains("63491") && !leads.contains("63492"),
             "mixfix spine ids must NOT appear on the leading-trigger surface: {leads}",
         );
-        // min_span stays EMPTY for rholang (rules 7/8 are Op-bearing ⇒ min 0).
-        assert!(bundle.min_span_prelude.is_empty());
+        // These two rows stay absent (rules 7/8 are Op-bearing ⇒ min 0),
+        // independently of positive-span groups in closed data categories.
+        let min_spans = normalized(&bundle.min_span_prelude);
+        assert!(!min_spans.contains("(0u16,63491u16)=>"));
+        assert!(!min_spans.contains("(0u16,63492u16)=>"));
     }
 
     /// A-M5 operand-absorbability witness: a cohort whose post-operand
@@ -6449,7 +6458,9 @@ mod tests {
         let prelude = normalized(&bundle.mixfix_prelude_arms);
         assert!(
             prelude.contains("ForkActionKind::ReplaceAndPush")
-                && prelude.contains("replace_symbol:StackSymbolV2::mixfix_marker(0u16,1u16,0u8)"),
+                && prelude.contains(
+                    "replace_symbol:StackSymbolV2::mixfix_marker(0u16,1u16,0u8,__mixfix_continuation_bp,)"
+                ),
             "the operand-edge commit rides ReplaceAndPush: {prelude}",
         );
     }

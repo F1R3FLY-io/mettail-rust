@@ -32,7 +32,8 @@
 //! │    └── evaluate()  — check constraint against assignment     │
 //! │                                                             │
 //! │  TheoryAlgebra<T>                                            │
-//! │    └── impl BooleanAlgebra — bridge ConstraintTheory to SFA  │
+//! │    ├── RejectSafeAlgebra — bounded Sat/Unsat/DontKnow        │
+//! │    └── BooleanAlgebra only when T: DecidableConstraintTheory │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -102,6 +103,22 @@ enum Branch<T> {
 pub struct LogicStream<T> {
     /// Branch queue for round-robin fair scheduling.
     branches: VecDeque<Branch<T>>,
+}
+
+/// Values observed from a bounded stream prefix together with evidence about
+/// whether the implementation stream was completely exhausted.
+///
+/// `exhausted == false` means that at least one additional result exists beyond
+/// `values`; it must never be interpreted as semantic unsatisfiability.  Even
+/// `exhausted == true` proves only that this implementation stream ended.  A
+/// constraint theory still needs an independent completeness contract before
+/// absence of a witness can become a classical negative conclusion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundedCollection<T> {
+    /// The prefix retained by the caller, in fair-search order.
+    pub values: Vec<T>,
+    /// Whether the consumed implementation stream had no further result.
+    pub exhausted: bool,
 }
 
 impl<T: fmt::Debug> fmt::Debug for LogicStream<T> {
@@ -352,25 +369,40 @@ impl<T: Send + 'static> LogicStream<T> {
         LogicStream::from_iter(all_values.into_iter().filter(|v| pred(v)))
     }
 
-    /// Collect all results into a Vec (bounded by `limit`).
+    /// Collect a bounded prefix and retain implementation-exhaustion evidence.
     ///
-    /// Consumes the stream, collecting up to `limit` results. This
-    /// prevents unbounded allocation from infinite streams.
-    pub fn collect_bounded(self, limit: usize) -> Vec<T> {
-        let mut results = Vec::with_capacity(limit.min(64));
+    /// The method probes at most one result beyond the retained prefix.  That
+    /// probe is necessary to distinguish a stream containing exactly `limit`
+    /// results from a truncated stream.  The stream is consumed, so the probed
+    /// value is intentionally discarded rather than exposed without budget.
+    pub fn collect_bounded_with_status(self, limit: usize) -> BoundedCollection<T> {
+        let mut values = Vec::with_capacity(limit.min(64));
         let mut stream = self;
 
-        while results.len() < limit {
+        while values.len() < limit {
             match stream.msplit() {
                 Some((value, rest)) => {
-                    results.push(value);
+                    values.push(value);
                     stream = rest;
                 },
-                None => break,
+                None => {
+                    return BoundedCollection { values, exhausted: true };
+                },
             }
         }
 
-        results
+        let exhausted = stream.msplit().is_none();
+        BoundedCollection { values, exhausted }
+    }
+
+    /// Collect all results into a Vec (bounded by `limit`).
+    ///
+    /// Consumes the stream, collecting up to `limit` results. This
+    /// prevents unbounded allocation from infinite streams.  Call
+    /// [`LogicStream::collect_bounded_with_status`] whenever the distinction
+    /// between exhaustion and truncation affects correctness.
+    pub fn collect_bounded(self, limit: usize) -> Vec<T> {
+        self.collect_bounded_with_status(limit).values
     }
 
     /// Collect all results into a Vec.
@@ -455,7 +487,8 @@ impl<T: Send + 'static> IntoIterator for LogicStream<T> {
 /// Theories implement propagation + labeling; LogicT handles search.
 /// This enables any user-defined language to plug in domain-specific
 /// constraint solvers (unification, lattice operations, custom matching)
-/// without requiring changes to the SFA/BooleanAlgebra framework.
+/// through the reject-safe algebra layer. Classical SFA operations additionally
+/// require [`DecidableConstraintTheory`].
 ///
 /// # Design
 ///
@@ -503,6 +536,22 @@ pub trait ConstraintTheory: Clone + fmt::Debug + Send + Sync + 'static {
 
     /// Evaluate whether an assignment satisfies a constraint.
     fn evaluate(&self, c: &Self::Constraint, assignment: &Self::Assignment) -> bool;
+
+    /// Evaluate a constraint without erasing an indeterminate result.
+    ///
+    /// The default is exact for theories whose `evaluate` operation is total.
+    /// Domains with overflow, solver uncertainty, partial observations, or any
+    /// other source of indeterminacy must override this method and return `None`
+    /// rather than choosing a Boolean side.  [`TheoryAlgebra`] composes this
+    /// result through the full predicate before applying the fail-closed policy,
+    /// so `Not(unknown)` remains unknown instead of becoming accepted.
+    fn evaluate_checked(
+        &self,
+        c: &Self::Constraint,
+        assignment: &Self::Assignment,
+    ) -> Option<bool> {
+        Some(self.evaluate(c, assignment))
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -741,8 +790,11 @@ impl fmt::Display for QuantifiedArg {
 /// | `ForAll(var, dom, body)` | `∀ tuple ∈ dom: eval(body[var↦tuple])` |
 /// | `Exists(var, dom, body)` | `∃ tuple ∈ dom: eval(body[var↦tuple])` |
 ///
-/// For `ForAll` with `Bounded` domain, uses `collect_bounded(limit)` on
-/// the domain stream to ensure termination for semi-decidable (T3) theories.
+/// A `Bounded` domain retains whether enumeration was truncated. A witnessed
+/// existential or counterexampled universal may decide early; otherwise
+/// truncation becomes [`TriState::Unknown`]. This Boolean compatibility wrapper
+/// collapses the complete formula only after three-valued evaluation, so an
+/// enclosing negation cannot turn uncertainty into acceptance.
 ///
 /// # Example
 ///
@@ -777,6 +829,28 @@ where
     F: Fn(&str, &[String]) -> bool,
     G: Fn(&str) -> Vec<Vec<String>>,
 {
+    evaluate_quantified_3v(formula, env, relation_query, domain_enumerate, bound).into_safe_bool()
+}
+
+/// Evaluate a quantified formula without erasing bounded-domain truncation.
+///
+/// A finite counterexample decides `forall` as false, and a finite witness
+/// decides `exists` as true.  If the enumerated prefix is truncated before
+/// either event, the result is [`TriState::Unknown`].  Callers that require a
+/// Boolean admission decision must collapse only after evaluating the complete
+/// formula, using [`TriState::into_safe_bool`], so outer negation cannot turn an
+/// unknown subformula into acceptance.
+pub fn evaluate_quantified_3v<F, G>(
+    formula: &QuantifiedFormula,
+    env: &std::collections::HashMap<String, String>,
+    relation_query: &F,
+    domain_enumerate: &G,
+    bound: usize,
+) -> TriState
+where
+    F: Fn(&str, &[String]) -> bool,
+    G: Fn(&str) -> Vec<Vec<String>>,
+{
     evaluate_quantified_pda(formula, env, relation_query, domain_enumerate, bound)
 }
 
@@ -801,51 +875,7 @@ trait QuantifiedTruth: Copy {
     fn quantifier_identity(quantifier: FormulaQuantifier) -> Self;
     fn accumulate(self, value: Self, quantifier: FormulaQuantifier) -> Self;
     fn quantifier_is_decided(self, quantifier: FormulaQuantifier) -> bool;
-}
-
-impl QuantifiedTruth for bool {
-    fn from_bool(value: bool) -> Self {
-        value
-    }
-
-    fn not(self) -> Self {
-        !self
-    }
-
-    fn binary_short_circuit(self, operation: FormulaBinary) -> Option<Self> {
-        match (operation, self) {
-            (FormulaBinary::And, false) => Some(false),
-            (FormulaBinary::Or, true) => Some(true),
-            (FormulaBinary::Implies, false) => Some(true),
-            _ => None,
-        }
-    }
-
-    fn combine(self, right: Self, operation: FormulaBinary) -> Self {
-        match operation {
-            FormulaBinary::And => self && right,
-            FormulaBinary::Or => self || right,
-            FormulaBinary::Implies => !self || right,
-        }
-    }
-
-    fn quantifier_identity(quantifier: FormulaQuantifier) -> Self {
-        matches!(quantifier, FormulaQuantifier::ForAll)
-    }
-
-    fn accumulate(self, value: Self, quantifier: FormulaQuantifier) -> Self {
-        match quantifier {
-            FormulaQuantifier::ForAll => self && value,
-            FormulaQuantifier::Exists => self || value,
-        }
-    }
-
-    fn quantifier_is_decided(self, quantifier: FormulaQuantifier) -> bool {
-        match quantifier {
-            FormulaQuantifier::ForAll => !self,
-            FormulaQuantifier::Exists => self,
-        }
-    }
+    fn finish_quantifier(self, quantifier: FormulaQuantifier, exhausted: bool) -> Self;
 }
 
 fn evaluate_quantified_pda<R, F, G>(
@@ -882,6 +912,7 @@ where
             var: &'formula String,
             body: &'formula QuantifiedFormula,
             tuples: Vec<Vec<String>>,
+            exhausted: bool,
             next_index: usize,
             previous: Option<String>,
             accumulated: R,
@@ -968,22 +999,23 @@ where
                 });
             },
             Task::BeginQuantifier { quantifier, var, domain, body } => {
-                let tuples = enumerate_domain(domain, domain_enumerate, bound);
+                let enumeration = enumerate_domain(domain, domain_enumerate, bound);
                 let accumulated = R::quantifier_identity(quantifier);
-                if tuples.is_empty() {
-                    values.push(accumulated);
+                if enumeration.tuples.is_empty() {
+                    values.push(accumulated.finish_quantifier(quantifier, enumeration.exhausted));
                     continue;
                 }
 
                 let previous = runtime_env.get(var).cloned();
-                if let Some(value) = tuples[0].first() {
+                if let Some(value) = enumeration.tuples[0].first() {
                     runtime_env.insert(var.clone(), value.clone());
                 }
                 tasks.push(Task::QuantifierContinue {
                     quantifier,
                     var,
                     body,
-                    tuples,
+                    tuples: enumeration.tuples,
+                    exhausted: enumeration.exhausted,
                     next_index: 1,
                     previous,
                     accumulated,
@@ -1012,6 +1044,7 @@ where
                 var,
                 body,
                 tuples,
+                exhausted,
                 next_index,
                 previous,
                 accumulated,
@@ -1020,9 +1053,14 @@ where
                     .pop()
                     .expect("quantified evaluator lost quantified body value");
                 let accumulated = accumulated.accumulate(value, quantifier);
-                if accumulated.quantifier_is_decided(quantifier) || next_index == tuples.len() {
+                if accumulated.quantifier_is_decided(quantifier) {
                     finish_binding(&mut runtime_env, var, previous);
                     values.push(accumulated);
+                    continue;
+                }
+                if next_index == tuples.len() {
+                    finish_binding(&mut runtime_env, var, previous);
+                    values.push(accumulated.finish_quantifier(quantifier, exhausted));
                     continue;
                 }
 
@@ -1036,6 +1074,7 @@ where
                     var,
                     body,
                     tuples,
+                    exhausted,
                     next_index: next_index + 1,
                     previous,
                     accumulated,
@@ -1050,21 +1089,34 @@ where
         .expect("quantified formula evaluator produced no value")
 }
 
-/// Enumerate tuples from a domain, respecting bounds for T3 safety.
+struct DomainEnumeration {
+    tuples: Vec<Vec<String>>,
+    exhausted: bool,
+}
+
+/// Enumerate tuples from a domain while retaining whether the declared bound
+/// truncated the finite relation snapshot.
 fn enumerate_domain<G>(
     domain: &QuantifiedDomain,
     domain_enumerate: &G,
     default_bound: usize,
-) -> Vec<Vec<String>>
+) -> DomainEnumeration
 where
     G: Fn(&str) -> Vec<Vec<String>>,
 {
     match domain {
-        QuantifiedDomain::Relation(name) => domain_enumerate(name),
+        QuantifiedDomain::Relation(name) => DomainEnumeration {
+            tuples: domain_enumerate(name),
+            exhausted: true,
+        },
         QuantifiedDomain::Bounded { relation, limit } => {
             let all = domain_enumerate(relation);
             let effective_limit = (*limit).min(default_bound);
-            all.into_iter().take(effective_limit).collect()
+            let exhausted = all.len() <= effective_limit;
+            DomainEnumeration {
+                tuples: all.into_iter().take(effective_limit).collect(),
+                exhausted,
+            }
         },
     }
 }
@@ -1194,6 +1246,14 @@ impl QuantifiedTruth for TriState {
             FormulaQuantifier::Exists => self == TriState::True,
         }
     }
+
+    fn finish_quantifier(self, quantifier: FormulaQuantifier, exhausted: bool) -> Self {
+        if exhausted || self.quantifier_is_decided(quantifier) {
+            self
+        } else {
+            TriState::Unknown
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1211,9 +1271,9 @@ impl QuantifiedTruth for TriState {
 /// [`ConstraintTheory::propagate`]. The `theory` parameter is therefore exercised
 /// once through [`ConstraintTheory::empty_store`] for backend-specific
 /// monomorphization, but atom truth still comes exclusively from `relation_query`.
-/// Because that callback is Boolean, the current API produces `True` or `False`,
-/// not `Unknown`. A caller that needs theory refinement must first lower its
-/// relation atoms into the theory's concrete constraint representation.
+/// Atomic relation answers are Boolean, but a truncated bounded quantifier still
+/// produces `Unknown`. A caller that needs atom-level theory refinement must first
+/// lower its relation atoms into the theory's concrete constraint representation.
 ///
 /// # Returns
 ///
@@ -1243,9 +1303,10 @@ where
 
 /// Boolean combination of constraints from a `ConstraintTheory`.
 ///
-/// This is the `Predicate` type used by `TheoryAlgebra<T>` in its
-/// `BooleanAlgebra` implementation. It wraps theory-specific constraints
-/// in a standard Boolean AST.
+/// This is the predicate type used by [`TheoryAlgebra`]. It wraps
+/// theory-specific constraints in a standard Boolean AST. Every constraint
+/// theory can search it reject-safely; only exact theories expose it through the
+/// classical `BooleanAlgebra` interface.
 pub enum TheoryPred<T: ConstraintTheory> {
     /// Always true (unconstrained).
     True,
@@ -1261,22 +1322,99 @@ pub enum TheoryPred<T: ConstraintTheory> {
     Not(Box<TheoryPred<T>>),
 }
 
+/// An exact satisfiability result produced by a complete decision procedure.
+///
+/// Unlike [`crate::algebra_tower::Sat3`], this type has no undecided case.  A
+/// `Satisfiable` result carries a concrete assignment that can be checked by
+/// [`ConstraintTheory::evaluate`].  Implementations of
+/// [`DecidableConstraintTheory`] are responsible for the complementary proof:
+/// `Unsatisfiable` is returned only when no satisfying assignment exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExactSatisfiability<A> {
+    /// The predicate has a concrete satisfying assignment.
+    Satisfiable(A),
+    /// A complete decision procedure proved the predicate empty.
+    Unsatisfiable,
+}
+
+/// Explicit completeness gate for classical constraint reasoning.
+///
+/// Implementing [`ConstraintTheory`] alone provides bounded, reject-safe
+/// search.  It deliberately does **not** grant classical complement,
+/// determinization, language inclusion, or two-valued satisfiability.  A trusted
+/// native theory may additionally implement this trait when it owns a total,
+/// exact decision procedure for every [`TheoryPred`] over its constraint
+/// language.  Runtime DDL data cannot implement Rust traits and therefore cannot
+/// manufacture this authority.
+///
+/// # Semantic contract
+///
+/// For every `predicate`:
+///
+/// - `Satisfiable(witness)` requires that evaluating `predicate` at `witness`
+///   returns `true`;
+/// - `Unsatisfiable` requires that no assignment satisfies `predicate`;
+/// - the procedure terminates for the theory instance's declared finite or
+///   otherwise decidable domain.
+///
+/// The Rocq model in `formal/rocq/symbolic_algebra/theories/ConstraintDecision.v`
+/// proves why this additional completeness premise is necessary.
+pub trait DecidableConstraintTheory: ConstraintTheory {
+    /// Decide a full Boolean predicate exactly.
+    fn decide_exact(&self, predicate: &TheoryPred<Self>) -> ExactSatisfiability<Self::Assignment>
+    where
+        Self: Sized;
+}
+
+/// Evidence returned by bounded, certificate-checked theory search.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TheoryDecision<A> {
+    /// A concrete assignment was found and rechecked against the full predicate.
+    Proven(A),
+    /// The predicate is structurally false, or an exact theory proved it empty.
+    Refuted,
+    /// No checked witness was found; the Boolean answer is not known.
+    Undetermined {
+        /// Whether all implementation streams explored by this bounded run ended.
+        /// This is operational evidence only, never semantic completeness.
+        implementation_exhausted: bool,
+    },
+}
+
+impl<A> TheoryDecision<A> {
+    /// Erase witness evidence while preserving all three logical outcomes.
+    pub fn satisfiability(&self) -> crate::algebra_tower::Sat3 {
+        match self {
+            TheoryDecision::Proven(_) => crate::algebra_tower::Sat3::Sat,
+            TheoryDecision::Refuted => crate::algebra_tower::Sat3::Unsat,
+            TheoryDecision::Undetermined { .. } => crate::algebra_tower::Sat3::DontKnow,
+        }
+    }
+
+    /// Return the checked witness, if this is a positive decision.
+    pub fn into_witness(self) -> Option<A> {
+        match self {
+            TheoryDecision::Proven(witness) => Some(witness),
+            TheoryDecision::Refuted | TheoryDecision::Undetermined { .. } => None,
+        }
+    }
+}
+
 #[path = "logict/lifecycle.rs"]
 mod lifecycle;
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TheoryAlgebra — Bridge ConstraintTheory to BooleanAlgebra
+// TheoryAlgebra — reject-safe search plus an exact classical gate
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Wraps any `ConstraintTheory` into a `BooleanAlgebra` implementation.
+/// Wraps a [`ConstraintTheory`] in the algebra tower.
 ///
-/// For decidable theories: propagation-only (no search).
-/// For non-decidable theories: LogicT-powered fair search with bounded depth.
-///
-/// This means any user-defined language can plug in a domain-specific
-/// constraint solver by implementing `ConstraintTheory` — they get
-/// `BooleanAlgebra` (and therefore `SymbolicAutomaton` integration,
-/// minterm computation, determinization, lint analysis) for free.
+/// Every theory receives bounded, fair, certificate-checked search through
+/// [`crate::algebra_tower::RejectSafeAlgebra`].  A missing witness is reported as
+/// [`crate::algebra_tower::Sat3::DontKnow`], even when the implementation stream
+/// ended.  Only [`DecidableConstraintTheory`] implementations receive the
+/// classical [`crate::symbolic::BooleanAlgebra`] interface required by SFA
+/// complement, determinization, inclusion, and equivalence.
 #[derive(Clone, Debug)]
 pub struct TheoryAlgebra<T: ConstraintTheory> {
     /// The underlying constraint theory.
@@ -1292,180 +1430,103 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
         TheoryAlgebra { theory, search_bound }
     }
 
-    /// Collect constraints from a `TheoryPred` into a constraint store.
+    fn conjunction(a: &TheoryPred<T>, b: &TheoryPred<T>) -> TheoryPred<T> {
+        match (a, b) {
+            (TheoryPred::True, _) => b.clone(),
+            (_, TheoryPred::True) => a.clone(),
+            (TheoryPred::False, _) | (_, TheoryPred::False) => TheoryPred::False,
+            _ => TheoryPred::And(Box::new(a.clone()), Box::new(b.clone())),
+        }
+    }
+
+    fn disjunction(a: &TheoryPred<T>, b: &TheoryPred<T>) -> TheoryPred<T> {
+        match (a, b) {
+            (TheoryPred::True, _) | (_, TheoryPred::True) => TheoryPred::True,
+            (TheoryPred::False, _) => b.clone(),
+            (_, TheoryPred::False) => a.clone(),
+            _ => TheoryPred::Or(Box::new(a.clone()), Box::new(b.clone())),
+        }
+    }
+
+    fn negation(a: &TheoryPred<T>) -> TheoryPred<T> {
+        match a {
+            TheoryPred::True => TheoryPred::False,
+            TheoryPred::False => TheoryPred::True,
+            TheoryPred::Not(inner) => (**inner).clone(),
+            _ => TheoryPred::Not(Box::new(a.clone())),
+        }
+    }
+
+    /// Evaluate a full theory predicate without collapsing an indeterminate
+    /// atom through negation or another Boolean connective.
     ///
-    /// Returns `None` if the predicate is unsatisfiable (propagation fails).
-    /// For disjunctions, uses LogicT fair search to try alternatives.
-    fn collect_constraints(&self, pred: &TheoryPred<T>, store: &T::Store) -> LogicStream<T::Store>
-    where
-        T::Store: Send + 'static,
-        T::Constraint: Send + 'static,
-    {
+    /// Exact theory implementations use this operation to recheck positive
+    /// certificates before exposing classical decisions.
+    pub fn evaluate_predicate_checked(
+        &self,
+        pred: &TheoryPred<T>,
+        elem: &T::Assignment,
+    ) -> Option<bool> {
         enum Task<'predicate, T: ConstraintTheory> {
-            Visit {
-                predicate: &'predicate TheoryPred<T>,
-                store: T::Store,
-                negated: bool,
-            },
-            InterleaveAfterLeft {
-                right: &'predicate TheoryPred<T>,
-                right_store: T::Store,
-                negated: bool,
-            },
-            Interleave {
-                left: LogicStream<T::Store>,
-            },
-            ConjoinAfterLeft {
-                right: &'predicate TheoryPred<T>,
-                negated: bool,
-            },
-            ConjoinNext {
-                right: &'predicate TheoryPred<T>,
-                negated: bool,
-                stores: std::vec::IntoIter<T::Store>,
-                accumulated: LogicStream<T::Store>,
-            },
-            ConjoinAfterRight {
-                right: &'predicate TheoryPred<T>,
-                negated: bool,
-                stores: std::vec::IntoIter<T::Store>,
-                accumulated: LogicStream<T::Store>,
-            },
+            Visit(&'predicate TheoryPred<T>),
+            Not,
+            And,
+            Or,
         }
 
-        let mut tasks = vec![Task::Visit {
-            predicate: pred,
-            store: store.clone(),
-            negated: false,
-        }];
+        let mut tasks = vec![Task::Visit(pred)];
         let mut values = Vec::new();
         while let Some(task) = tasks.pop() {
             match task {
-                Task::Visit {
-                    predicate: TheoryPred::True,
-                    store,
-                    negated: false,
-                }
-                | Task::Visit {
-                    predicate: TheoryPred::False,
-                    store,
-                    negated: true,
-                } => values.push(LogicStream::unit(store)),
-                Task::Visit {
-                    predicate: TheoryPred::False,
-                    negated: false,
-                    ..
-                }
-                | Task::Visit {
-                    predicate: TheoryPred::True,
-                    negated: true,
-                    ..
-                } => values.push(LogicStream::empty()),
-                Task::Visit {
-                    predicate: TheoryPred::Atom(_),
-                    store,
-                    negated: true,
-                } => {
-                    // ConstraintTheory has no general complement operation. Keep
-                    // negated atoms structural and validate them at witness time.
-                    values.push(LogicStream::unit(store));
+                Task::Visit(TheoryPred::True) => values.push(Some(true)),
+                Task::Visit(TheoryPred::False) => values.push(Some(false)),
+                Task::Visit(TheoryPred::Atom(constraint)) => {
+                    values.push(self.theory.evaluate_checked(constraint, elem));
                 },
-                Task::Visit {
-                    predicate: TheoryPred::Atom(constraint),
-                    store,
-                    negated: false,
-                } => values.push(match self.theory.propagate(&store, constraint) {
-                    Some(store) => LogicStream::unit(store),
-                    None => LogicStream::empty(),
-                }),
-                Task::Visit {
-                    predicate: TheoryPred::Not(inner),
-                    store,
-                    negated,
-                } => tasks.push(Task::Visit {
-                    predicate: inner,
-                    store,
-                    negated: !negated,
-                }),
-                Task::Visit {
-                    predicate: TheoryPred::And(left, right),
-                    store,
-                    negated: false,
-                } => {
-                    tasks.push(Task::ConjoinAfterLeft { right, negated: false });
-                    tasks.push(Task::Visit { predicate: left, store, negated: false });
+                Task::Visit(TheoryPred::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
                 },
-                Task::Visit {
-                    predicate: TheoryPred::Or(left, right),
-                    store,
-                    negated: true,
-                } => {
-                    tasks.push(Task::ConjoinAfterLeft { right, negated: true });
-                    tasks.push(Task::Visit { predicate: left, store, negated: true });
+                Task::Visit(TheoryPred::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
                 },
-                Task::Visit {
-                    predicate: TheoryPred::Or(left, right),
-                    store,
-                    negated: false,
-                } => {
-                    let right_store = store.clone();
-                    tasks.push(Task::InterleaveAfterLeft { right, right_store, negated: false });
-                    tasks.push(Task::Visit { predicate: left, store, negated: false });
+                Task::Visit(TheoryPred::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
                 },
-                Task::Visit {
-                    predicate: TheoryPred::And(left, right),
-                    store,
-                    negated: true,
-                } => {
-                    let right_store = store.clone();
-                    tasks.push(Task::InterleaveAfterLeft { right, right_store, negated: true });
-                    tasks.push(Task::Visit { predicate: left, store, negated: true });
-                },
-                Task::InterleaveAfterLeft { right, right_store, negated } => {
-                    let left = values
+                Task::Not => {
+                    let value = values
                         .pop()
-                        .expect("theory predicate PDA lost disjunction LHS stream");
-                    tasks.push(Task::Interleave { left });
-                    tasks.push(Task::Visit {
-                        predicate: right,
-                        store: right_store,
-                        negated,
-                    });
+                        .expect("theory predicate evaluator lost negand");
+                    values.push(value.map(|value| !value));
                 },
-                Task::Interleave { left } => {
+                Task::And => {
                     let right = values
                         .pop()
-                        .expect("theory predicate PDA lost disjunction RHS stream");
-                    values.push(left.interleave(right));
-                },
-                Task::ConjoinAfterLeft { right, negated } => {
+                        .expect("theory predicate evaluator lost conjunction RHS");
                     let left = values
                         .pop()
-                        .expect("theory predicate PDA lost conjunction LHS stream");
-                    tasks.push(Task::ConjoinNext {
-                        right,
-                        negated,
-                        stores: left.collect_all().into_iter(),
-                        accumulated: LogicStream::empty(),
+                        .expect("theory predicate evaluator lost conjunction LHS");
+                    values.push(match (left, right) {
+                        (Some(false), _) | (_, Some(false)) => Some(false),
+                        (Some(true), Some(true)) => Some(true),
+                        _ => None,
                     });
                 },
-                Task::ConjoinNext { right, negated, mut stores, accumulated } => {
-                    if let Some(store) = stores.next() {
-                        tasks.push(Task::ConjoinAfterRight { right, negated, stores, accumulated });
-                        tasks.push(Task::Visit { predicate: right, store, negated });
-                    } else {
-                        values.push(accumulated);
-                    }
-                },
-                Task::ConjoinAfterRight { right, negated, stores, accumulated } => {
-                    let right_values = values
+                Task::Or => {
+                    let right = values
                         .pop()
-                        .expect("theory predicate PDA lost conjunction RHS stream");
-                    tasks.push(Task::ConjoinNext {
-                        right,
-                        negated,
-                        stores,
-                        accumulated: accumulated.interleave(right_values),
+                        .expect("theory predicate evaluator lost disjunction RHS");
+                    let left = values
+                        .pop()
+                        .expect("theory predicate evaluator lost disjunction LHS");
+                    values.push(match (left, right) {
+                        (Some(true), _) | (_, Some(true)) => Some(true),
+                        (Some(false), Some(false)) => Some(false),
+                        _ => None,
                     });
                 },
             }
@@ -1473,17 +1534,228 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
         debug_assert_eq!(values.len(), 1);
         values
             .pop()
-            .expect("theory predicate constraint PDA produced no stream")
+            .expect("theory predicate evaluator produced no value")
+    }
+
+    fn evaluate_predicate(&self, pred: &TheoryPred<T>, elem: &T::Assignment) -> bool {
+        self.evaluate_predicate_checked(pred, elem).unwrap_or(false)
+    }
+
+    /// Decide whether a predicate is false using only its Boolean constants.
+    /// Atoms remain unknown, so a `true` result is an exact structural
+    /// refutation and never depends on search completeness.
+    fn structurally_refuted(pred: &TheoryPred<T>) -> bool {
+        #[derive(Clone, Copy)]
+        enum PartialTruth {
+            True,
+            False,
+            Unknown,
+        }
+
+        enum Task<'predicate, T: ConstraintTheory> {
+            Visit(&'predicate TheoryPred<T>),
+            Not,
+            And,
+            Or,
+        }
+
+        let mut tasks = vec![Task::Visit(pred)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TheoryPred::True) => values.push(PartialTruth::True),
+                Task::Visit(TheoryPred::False) => values.push(PartialTruth::False),
+                Task::Visit(TheoryPred::Atom(_)) => values.push(PartialTruth::Unknown),
+                Task::Visit(TheoryPred::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(TheoryPred::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TheoryPred::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let value = values.pop().expect("partial truth PDA lost negand");
+                    values.push(match value {
+                        PartialTruth::True => PartialTruth::False,
+                        PartialTruth::False => PartialTruth::True,
+                        PartialTruth::Unknown => PartialTruth::Unknown,
+                    });
+                },
+                Task::And => {
+                    let right = values
+                        .pop()
+                        .expect("partial truth PDA lost conjunction RHS");
+                    let left = values
+                        .pop()
+                        .expect("partial truth PDA lost conjunction LHS");
+                    values.push(match (left, right) {
+                        (PartialTruth::False, _) | (_, PartialTruth::False) => PartialTruth::False,
+                        (PartialTruth::True, PartialTruth::True) => PartialTruth::True,
+                        _ => PartialTruth::Unknown,
+                    });
+                },
+                Task::Or => {
+                    let right = values
+                        .pop()
+                        .expect("partial truth PDA lost disjunction RHS");
+                    let left = values
+                        .pop()
+                        .expect("partial truth PDA lost disjunction LHS");
+                    values.push(match (left, right) {
+                        (PartialTruth::True, _) | (_, PartialTruth::True) => PartialTruth::True,
+                        (PartialTruth::False, PartialTruth::False) => PartialTruth::False,
+                        _ => PartialTruth::Unknown,
+                    });
+                },
+            }
+        }
+        matches!(values.pop(), Some(PartialTruth::False))
+    }
+
+    /// Enumerate propagation-compatible stores using an explicit fair branch
+    /// queue. Deterministic conjunction chains consume no search choices, while
+    /// disjunctions are explored breadth-first and capped by `search_bound`.
+    fn candidate_stores(&self, pred: &TheoryPred<T>) -> BoundedCollection<T::Store> {
+        struct State<'predicate, T: ConstraintTheory> {
+            pending: Vec<(&'predicate TheoryPred<T>, bool)>,
+            store: T::Store,
+        }
+
+        let mut frontier = VecDeque::new();
+        frontier.push_back(State {
+            pending: vec![(pred, false)],
+            store: self.theory.empty_store(),
+        });
+        let mut stores = Vec::new();
+        let mut explored_branches = 0usize;
+
+        'search: while let Some(mut state) = frontier.pop_front() {
+            if explored_branches >= self.search_bound {
+                return BoundedCollection { values: stores, exhausted: false };
+            }
+            explored_branches += 1;
+            let mut rejected = false;
+
+            while let Some((predicate, negated)) = state.pending.pop() {
+                match (predicate, negated) {
+                    (TheoryPred::True, false) | (TheoryPred::False, true) => {},
+                    (TheoryPred::False, false) | (TheoryPred::True, true) => {
+                        rejected = true;
+                        break;
+                    },
+                    (TheoryPred::Atom(_), true) => {
+                        // Complements are retained in the original predicate and
+                        // checked against each concrete witness below.
+                    },
+                    (TheoryPred::Atom(constraint), false) => {
+                        let Some(store) = self.theory.propagate(&state.store, constraint) else {
+                            rejected = true;
+                            break;
+                        };
+                        state.store = store;
+                    },
+                    (TheoryPred::Not(inner), polarity) => {
+                        state.pending.push((inner, !polarity));
+                    },
+                    (TheoryPred::And(left, right), false) | (TheoryPred::Or(left, right), true) => {
+                        state.pending.push((right, negated));
+                        state.pending.push((left, negated));
+                    },
+                    (TheoryPred::Or(left, right), false) | (TheoryPred::And(left, right), true) => {
+                        let mut right_pending = state.pending.clone();
+                        right_pending.push((right, negated));
+                        state.pending.push((left, negated));
+                        let right_store = state.store.clone();
+                        frontier.push_back(state);
+                        frontier.push_back(State {
+                            pending: right_pending,
+                            store: right_store,
+                        });
+                        continue 'search;
+                    },
+                }
+            }
+
+            if !rejected {
+                stores.push(state.store);
+            }
+        }
+
+        BoundedCollection { values: stores, exhausted: true }
+    }
+
+    /// Run bounded, fair, certificate-checked search.
+    pub fn decide_bounded(&self, pred: &TheoryPred<T>) -> TheoryDecision<T::Assignment> {
+        if Self::structurally_refuted(pred) {
+            return TheoryDecision::Refuted;
+        }
+
+        let candidates = self.candidate_stores(pred);
+        let mut implementation_exhausted = candidates.exhausted;
+        let mut frontier: VecDeque<T::Store> = candidates.values.into();
+        let mut labeling_steps = 0usize;
+
+        while let Some(store) = frontier.pop_front() {
+            if let Some(witness) = self.theory.witness(&store) {
+                if self.evaluate_predicate_checked(pred, &witness) == Some(true) {
+                    return TheoryDecision::Proven(witness);
+                }
+            }
+
+            if labeling_steps >= self.search_bound {
+                implementation_exhausted = false;
+                break;
+            }
+
+            let remaining = self.search_bound - labeling_steps;
+            let labels = self
+                .theory
+                .label(&store)
+                .collect_bounded_with_status(remaining);
+            implementation_exhausted &= labels.exhausted;
+            for label in labels.values {
+                labeling_steps += 1;
+                if let Some(next_store) = self.theory.propagate(&store, &label) {
+                    frontier.push_back(next_store);
+                }
+            }
+        }
+
+        if !frontier.is_empty() {
+            implementation_exhausted = false;
+        }
+        TheoryDecision::Undetermined { implementation_exhausted }
+    }
+
+    /// Run an exact theory's decision procedure and recheck every positive
+    /// witness against the complete predicate.
+    pub fn decide_exact_checked(&self, pred: &TheoryPred<T>) -> ExactSatisfiability<T::Assignment>
+    where
+        T: DecidableConstraintTheory,
+    {
+        match self.theory.decide_exact(pred) {
+            ExactSatisfiability::Satisfiable(witness) => {
+                assert!(
+                    self.evaluate_predicate_checked(pred, &witness) == Some(true),
+                    "DecidableConstraintTheory returned an invalid satisfiability witness"
+                );
+                ExactSatisfiability::Satisfiable(witness)
+            },
+            ExactSatisfiability::Unsatisfiable => ExactSatisfiability::Unsatisfiable,
+        }
     }
 }
 
-impl<T> crate::symbolic::BooleanAlgebra for TheoryAlgebra<T>
+impl<T> crate::algebra_tower::RejectSafeAlgebra for TheoryAlgebra<T>
 where
     T: ConstraintTheory,
-    T::Constraint: Hash,
-    T::Store: Send + 'static,
-    T::Constraint: Send + 'static,
-    T::Assignment: Send + 'static,
 {
     type Predicate = TheoryPred<T>;
     type Domain = T::Assignment;
@@ -1497,128 +1769,70 @@ where
     }
 
     fn and(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
-        match (a, b) {
-            (TheoryPred::True, _) => b.clone(),
-            (_, TheoryPred::True) => a.clone(),
-            (TheoryPred::False, _) | (_, TheoryPred::False) => TheoryPred::False,
-            _ => TheoryPred::And(Box::new(a.clone()), Box::new(b.clone())),
-        }
+        Self::conjunction(a, b)
     }
 
     fn or(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
-        match (a, b) {
-            (TheoryPred::True, _) | (_, TheoryPred::True) => TheoryPred::True,
-            (TheoryPred::False, _) => b.clone(),
-            (_, TheoryPred::False) => a.clone(),
-            _ => TheoryPred::Or(Box::new(a.clone()), Box::new(b.clone())),
-        }
+        Self::disjunction(a, b)
     }
 
-    fn not(&self, a: &Self::Predicate) -> Self::Predicate {
-        match a {
-            TheoryPred::True => TheoryPred::False,
-            TheoryPred::False => TheoryPred::True,
-            TheoryPred::Not(inner) => (**inner).clone(),
-            _ => TheoryPred::Not(Box::new(a.clone())),
-        }
+    fn pseudo_complement(&self, a: &Self::Predicate) -> Self::Predicate {
+        Self::negation(a)
     }
 
-    fn is_satisfiable(&self, pred: &Self::Predicate) -> bool {
-        // For predicates containing negation of atoms, collect_constraints
-        // may return stores that are over-approximate (the negation is tracked
-        // structurally, not propagated). We need to validate witnesses.
-        self.witness(pred).is_some()
-    }
-
-    fn witness(&self, pred: &Self::Predicate) -> Option<Self::Domain> {
-        let store = self.theory.empty_store();
-        let stores = self.collect_constraints(pred, &store);
-        let results = stores.collect_bounded(self.search_bound);
-        for s in results {
-            if let Some(w) = self.theory.witness(&s) {
-                // Validate the witness against the full predicate,
-                // including any negated atoms that weren't propagated.
-                if self.evaluate(pred, &w) {
-                    return Some(w);
-                }
-            }
-            // Try labeling if witness wasn't valid or available
-            let labels = self.theory.label(&s);
-            let label_results = labels.collect_bounded(self.search_bound);
-            for label in label_results {
-                if let Some(new_store) = self.theory.propagate(&s, &label) {
-                    if let Some(w) = self.theory.witness(&new_store) {
-                        if self.evaluate(pred, &w) {
-                            return Some(w);
-                        }
-                    }
-                }
-            }
-        }
-        None
+    fn is_satisfiable_3v(&self, pred: &Self::Predicate) -> crate::algebra_tower::Sat3 {
+        self.decide_bounded(pred).satisfiability()
     }
 
     fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
-        enum Task<'predicate, T: ConstraintTheory> {
-            Visit(&'predicate TheoryPred<T>),
-            Not,
-            AndRight(&'predicate TheoryPred<T>),
-            OrRight(&'predicate TheoryPred<T>),
-        }
+        self.evaluate_predicate(pred, elem)
+    }
 
-        let mut tasks = vec![Task::Visit(pred)];
-        let mut values = Vec::new();
-        while let Some(task) = tasks.pop() {
-            match task {
-                Task::Visit(TheoryPred::True) => values.push(true),
-                Task::Visit(TheoryPred::False) => values.push(false),
-                Task::Visit(TheoryPred::Atom(constraint)) => {
-                    values.push(self.theory.evaluate(constraint, elem));
-                },
-                Task::Visit(TheoryPred::And(left, right)) => {
-                    tasks.push(Task::AndRight(right));
-                    tasks.push(Task::Visit(left));
-                },
-                Task::Visit(TheoryPred::Or(left, right)) => {
-                    tasks.push(Task::OrRight(right));
-                    tasks.push(Task::Visit(left));
-                },
-                Task::Visit(TheoryPred::Not(inner)) => {
-                    tasks.push(Task::Not);
-                    tasks.push(Task::Visit(inner));
-                },
-                Task::Not => {
-                    let value = values
-                        .pop()
-                        .expect("theory predicate evaluator lost negand");
-                    values.push(!value);
-                },
-                Task::AndRight(right) => {
-                    if values
-                        .pop()
-                        .expect("theory predicate evaluator lost conjunction LHS")
-                    {
-                        tasks.push(Task::Visit(right));
-                    } else {
-                        values.push(false);
-                    }
-                },
-                Task::OrRight(right) => {
-                    if values
-                        .pop()
-                        .expect("theory predicate evaluator lost disjunction LHS")
-                    {
-                        values.push(true);
-                    } else {
-                        tasks.push(Task::Visit(right));
-                    }
-                },
-            }
+    fn witness(&self, pred: &Self::Predicate) -> Option<Self::Domain> {
+        self.decide_bounded(pred).into_witness()
+    }
+}
+
+impl<T> crate::symbolic::BooleanAlgebra for TheoryAlgebra<T>
+where
+    T: DecidableConstraintTheory,
+{
+    type Predicate = TheoryPred<T>;
+    type Domain = T::Assignment;
+
+    fn true_pred(&self) -> Self::Predicate {
+        TheoryPred::True
+    }
+
+    fn false_pred(&self) -> Self::Predicate {
+        TheoryPred::False
+    }
+
+    fn and(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
+        Self::conjunction(a, b)
+    }
+
+    fn or(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
+        Self::disjunction(a, b)
+    }
+
+    fn not(&self, a: &Self::Predicate) -> Self::Predicate {
+        Self::negation(a)
+    }
+
+    fn is_satisfiable(&self, pred: &Self::Predicate) -> bool {
+        matches!(self.decide_exact_checked(pred), ExactSatisfiability::Satisfiable(_))
+    }
+
+    fn witness(&self, pred: &Self::Predicate) -> Option<Self::Domain> {
+        match self.decide_exact_checked(pred) {
+            ExactSatisfiability::Satisfiable(witness) => Some(witness),
+            ExactSatisfiability::Unsatisfiable => None,
         }
-        debug_assert_eq!(values.len(), 1);
-        values
-            .pop()
-            .expect("theory predicate evaluator produced no value")
+    }
+
+    fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
+        self.evaluate_predicate(pred, elem)
     }
 }
 
@@ -1934,6 +2148,31 @@ mod tests {
     }
 
     #[test]
+    fn collect_bounded_reports_truncation_without_losing_prefix_order() {
+        let report = LogicStream::from_iter(0..6).collect_bounded_with_status(5);
+        assert_eq!(report.values, vec![0, 1, 2, 3, 4]);
+        assert!(!report.exhausted);
+    }
+
+    #[test]
+    fn collect_bounded_reports_exact_exhaustion_at_the_limit() {
+        let report = LogicStream::from_iter(0..5).collect_bounded_with_status(5);
+        assert_eq!(report.values, vec![0, 1, 2, 3, 4]);
+        assert!(report.exhausted);
+    }
+
+    #[test]
+    fn zero_bound_distinguishes_empty_from_nonempty_streams() {
+        let empty = LogicStream::<usize>::empty().collect_bounded_with_status(0);
+        assert!(empty.values.is_empty());
+        assert!(empty.exhausted);
+
+        let nonempty = LogicStream::unit(1usize).collect_bounded_with_status(0);
+        assert!(nonempty.values.is_empty());
+        assert!(!nonempty.exhausted);
+    }
+
+    #[test]
     fn iterator_integration() {
         let stream = LogicStream::from_iter(vec![10, 20, 30]);
         let collected: Vec<i32> = stream.into_iter().collect();
@@ -2087,35 +2326,39 @@ mod tests {
 
     mod theory_algebra_tests {
         use super::*;
-        use crate::symbolic::BooleanAlgebra;
+        use crate::algebra_tower::{RejectSafeAlgebra, Sat3};
 
         #[test]
         fn theory_algebra_true_is_satisfiable() {
             let algebra = TheoryAlgebra::new(PropTheory, 100);
-            assert!(algebra.is_satisfiable(&algebra.true_pred()));
+            assert_eq!(algebra.is_satisfiable_3v(&algebra.true_pred()), Sat3::Sat);
         }
 
         #[test]
         fn theory_algebra_false_is_not_satisfiable() {
             let algebra = TheoryAlgebra::new(PropTheory, 100);
-            assert!(!algebra.is_satisfiable(&algebra.false_pred()));
+            assert_eq!(algebra.is_satisfiable_3v(&algebra.false_pred()), Sat3::Unsat);
         }
 
         #[test]
         fn theory_algebra_atom_satisfiable() {
             let algebra = TheoryAlgebra::new(PropTheory, 100);
             let pred = TheoryPred::Atom(PropConstraint::Assert("x".into()));
-            assert!(algebra.is_satisfiable(&pred));
+            assert_eq!(algebra.is_satisfiable_3v(&pred), Sat3::Sat);
         }
 
         #[test]
-        fn theory_algebra_contradiction_unsatisfiable() {
+        fn generic_theory_exhaustion_does_not_claim_unsatisfiable() {
             let algebra = TheoryAlgebra::new(PropTheory, 100);
             let pred = algebra.and(
                 &TheoryPred::Atom(PropConstraint::Assert("x".into())),
                 &TheoryPred::Atom(PropConstraint::Negate("x".into())),
             );
-            assert!(!algebra.is_satisfiable(&pred));
+            assert_eq!(algebra.is_satisfiable_3v(&pred), Sat3::DontKnow);
+            assert!(matches!(
+                algebra.decide_bounded(&pred),
+                TheoryDecision::Undetermined { implementation_exhausted: true }
+            ));
         }
 
         #[test]
@@ -2129,15 +2372,15 @@ mod tests {
                 ),
                 &TheoryPred::Atom(PropConstraint::Assert("y".into())),
             );
-            assert!(algebra.is_satisfiable(&pred));
+            assert_eq!(algebra.is_satisfiable_3v(&pred), Sat3::Sat);
         }
 
         #[test]
         fn theory_algebra_negation() {
             let algebra = TheoryAlgebra::new(PropTheory, 100);
             let true_pred = algebra.true_pred();
-            let not_true = algebra.not(&true_pred);
-            assert!(!algebra.is_satisfiable(&not_true));
+            let not_true = algebra.pseudo_complement(&true_pred);
+            assert_eq!(algebra.is_satisfiable_3v(&not_true), Sat3::Unsat);
         }
 
         #[test]
@@ -2568,8 +2811,8 @@ mod tests {
     #[test]
     fn evaluate_bounded_domain() {
         // ∃x ∈ items[≤2]. greater_than_two(x)
-        // Only checks first 2 items (1, 2) — neither >2 → false
-        // (If unbounded, item "3" would succeed)
+        // The first two items contain no witness, but item "3" lies beyond the
+        // prefix, so the logical result is Unknown and Boolean admission fails.
         let f = QuantifiedFormula::exists(
             "x",
             QuantifiedDomain::Bounded { relation: "items".into(), limit: 2 },
@@ -2582,6 +2825,49 @@ mod tests {
             &test_relation_query,
             &test_domain_enumerate,
             1000
+        ));
+        assert_eq!(
+            evaluate_quantified_3v(&f, &env, &test_relation_query, &test_domain_enumerate, 1000,),
+            TriState::Unknown
+        );
+    }
+
+    #[test]
+    fn truncated_forall_and_its_negation_both_fail_closed() {
+        let forall = QuantifiedFormula::forall(
+            "x",
+            QuantifiedDomain::Bounded { relation: "items".into(), limit: 2 },
+            QuantifiedFormula::atom("positive", vec![QuantifiedArg::var("x")]),
+        );
+        let negated = QuantifiedFormula::not(forall.clone());
+        let env = std::collections::HashMap::new();
+
+        assert_eq!(
+            evaluate_quantified_3v(
+                &forall,
+                &env,
+                &test_relation_query,
+                &test_domain_enumerate,
+                1000,
+            ),
+            TriState::Unknown
+        );
+        assert_eq!(
+            evaluate_quantified_3v(
+                &negated,
+                &env,
+                &test_relation_query,
+                &test_domain_enumerate,
+                1000,
+            ),
+            TriState::Unknown
+        );
+        assert!(!evaluate_quantified(
+            &negated,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000,
         ));
     }
 

@@ -15,3 +15,4 @@ name = "mettail_elab"
 [dependencies]
 mettail-grammar-core = { path = "../grammar-core" }
 blake3 = "1"
+serde_json = { version = "1", features = ["arbitrary_precision"] }

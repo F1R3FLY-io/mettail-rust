@@ -38,7 +38,7 @@ use std::rc::Rc;
 use rigail::Semiring;
 
 use crate::egraph::{EClassId, EGraph, ENode};
-use crate::key::{ContentKey, SemanticHash};
+use crate::key::{ContentKey, ContentKeySet, SemanticHash};
 
 /// The best-first order on weights: `cmp_best(a, b) == Less` means `a` is the
 /// BETTER (preferred-earlier) derivation weight — "smaller = better". Named
@@ -292,7 +292,7 @@ struct ClassState<L, W> {
     exhausted: bool,
     on_stack: bool,
     built: Vec<Rc<Derivation<L, W>>>,
-    built_keys: HashSet<ContentKey>,
+    built_keys: ContentKeySet,
     cand: BinaryHeap<Reverse<Candidate<L, W>>>,
     pending_expansions: Vec<Candidate<L, W>>,
     seen: HashSet<(usize, Vec<usize>)>,
@@ -350,7 +350,7 @@ impl<L, W> Default for ClassState<L, W> {
             exhausted: false,
             on_stack: false,
             built: Vec::new(),
-            built_keys: HashSet::default(),
+            built_keys: ContentKeySet::default(),
             cand: BinaryHeap::new(),
             pending_expansions: Vec::new(),
             seen: HashSet::default(),
@@ -1064,7 +1064,7 @@ mod tests {
         let ws: Vec<f64> = ds.iter().map(|d| prim(d.weight)).collect();
         // add/mul (1) ⊗ x(1 or 4) ⊗ y(2): {1+1+2, 1+1+2, 1+4+2, 1+4+2} = [4,4,7,7]
         assert_eq!(ws, vec![4.0, 4.0, 7.0, 7.0]);
-        let keys: HashSet<_> = ds.iter().map(|d| d.key.clone()).collect();
+        let keys: ContentKeySet = ds.iter().map(|d| d.key.clone()).collect();
         assert_eq!(keys.len(), 4, "all four derivations distinct, none missed");
         assert!(ex.kth(eg.find(add), 4).value.is_none());
     }

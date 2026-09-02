@@ -41,6 +41,9 @@ pub use lex_weight::LexicographicWeight;
 mod exact_weight;
 pub use exact_weight::ExactLexicographicWeight;
 
+mod parse_cost;
+pub use parse_cost::{ExactParseCost, ParseCostError, TICKS_PER_UNIT};
+
 mod traits;
 pub use traits::*;
 

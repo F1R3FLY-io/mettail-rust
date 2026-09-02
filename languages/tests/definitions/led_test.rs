@@ -46,6 +46,11 @@ language! {
     },
 
     terms {
+        // Equal-surface, semantically distinct leaves used to prove that scalar
+        // min-plus aggregation does not erase declaration-rank alternatives.
+        XFirst . |- "x" : Num ![1];
+        XSecond . |- "x" : Num ![2];
+
         // BP-by-declaration-order convention (per `analyze_binding_powers`):
         // operators declared earlier in the same operand-category get LOWER
         // BPs. For cross-category operators (Num × Num → Pred) to bind LOOSER

@@ -50,7 +50,9 @@ use crate::gen::native::NativeType;
 use crate::gen::term_ops::collection_walk::{
     for_each_owned_subterm, plan_for, CollectionPlan, OrderSensitivity,
 };
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use crate::gen::term_ops::subst::{
+    collect_category_variants, FieldInfo, OpaqueLeafKind, VariantKind,
+};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
@@ -142,13 +144,162 @@ fn generate_drop_task_enum(language: &LanguageDef) -> TokenStream {
 /// exists, otherwise a Literal with default value, otherwise a Var with a
 /// dummy FreeVar.
 fn generate_dummy_functions(language: &LanguageDef) -> TokenStream {
+    // A closed data category has no synthetic Var sentinel. Select a finite,
+    // declared constructor for each such category by least fixed point over
+    // constructor dependencies. Collection and optional fields are productive
+    // at width zero; a scalar data field becomes productive only after its
+    // target category does. This is a finite graph analysis at macro time, not
+    // a recursive runtime search.
+    let data_names: std::collections::BTreeSet<String> = language
+        .types
+        .iter()
+        .filter(|category| category.is_data())
+        .map(|category| category.name.to_string())
+        .collect();
+    let mut selected = std::collections::BTreeMap::<String, VariantKind>::new();
+    loop {
+        let mut changed = false;
+        for category in language.types.iter().filter(|category| category.is_data()) {
+            let name = category.name.to_string();
+            if selected.contains_key(&name) {
+                continue;
+            }
+            if let Some(variant) = collect_category_variants(&category.name, language)
+                .into_iter()
+                .find(|variant| data_variant_is_productive(variant, &data_names, &selected))
+            {
+                selected.insert(name, variant);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     let fns: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|lang_type| generate_dummy_fn(&lang_type.name, language))
+        .map(|lang_type| {
+            if lang_type.is_data() {
+                generate_data_dummy_fn(
+                    &lang_type.name,
+                    selected.get(&lang_type.name.to_string()),
+                    language,
+                )
+            } else {
+                generate_dummy_fn(&lang_type.name, language)
+            }
+        })
         .collect();
 
     quote! { #(#fns)* }
+}
+
+fn data_variant_is_productive(
+    variant: &VariantKind,
+    data_names: &std::collections::BTreeSet<String>,
+    selected: &std::collections::BTreeMap<String, VariantKind>,
+) -> bool {
+    match variant {
+        VariantKind::Nullary { .. }
+        | VariantKind::Literal { .. }
+        | VariantKind::Collection { .. }
+        | VariantKind::CollectionLiteral { .. }
+        | VariantKind::RecursiveNativeLiteral { .. } => true,
+        VariantKind::Regular { fields, .. } => fields.iter().all(|field| {
+            if field.is_optional || field.is_collection {
+                return true;
+            }
+            if field.is_predicate {
+                return false;
+            }
+            match field.opaque_leaf {
+                Some(OpaqueLeafKind::TokenText) => true,
+                Some(OpaqueLeafKind::GuestBody) => false,
+                None => {
+                    let dependency = field.category.to_string();
+                    !data_names.contains(&dependency) || selected.contains_key(&dependency)
+                },
+            }
+        }),
+        VariantKind::Refused { .. }
+        | VariantKind::Var { .. }
+        | VariantKind::Binder { .. }
+        | VariantKind::MultiBinder { .. } => false,
+    }
+}
+
+fn generate_data_dummy_fn(
+    category: &Ident,
+    variant: Option<&VariantKind>,
+    language: &LanguageDef,
+) -> TokenStream {
+    let fn_name = format_ident!("dummy_{}", category.to_string().to_lowercase());
+    let Some(variant) = variant else {
+        let message = format!(
+            "closed data category `{category}` has no finite declared constructor; \
+             iterative destruction requires an inhabited finite replacement"
+        );
+        return quote! {
+            #[inline]
+            #[allow(dead_code)]
+            fn #fn_name() -> #category {
+                compile_error!(#message);
+                unreachable!()
+            }
+        };
+    };
+
+    let constructor = match variant {
+        VariantKind::Nullary { label } => quote! { #category::#label },
+        VariantKind::Literal { label } => {
+            let value = generate_literal_default(category, language);
+            quote! { #category::#label(#value) }
+        },
+        VariantKind::Collection { label, .. } | VariantKind::CollectionLiteral { label, .. } => {
+            quote! { #category::#label(Default::default()) }
+        },
+        VariantKind::RecursiveNativeLiteral { label, .. } => {
+            quote! { #category::#label(Default::default()) }
+        },
+        VariantKind::Regular { label, fields } => {
+            let arguments = fields.iter().map(|field| {
+                if field.is_optional {
+                    return quote! { None };
+                }
+                if field.is_collection {
+                    return quote! { Default::default() };
+                }
+                if matches!(field.opaque_leaf, Some(OpaqueLeafKind::TokenText)) {
+                    return quote! { std::string::String::new() };
+                }
+                let child_fn = format_ident!("dummy_{}", field.category.to_string().to_lowercase());
+                quote! { std::sync::Arc::new(#child_fn()) }
+            });
+            quote! { #category::#label(#(#arguments),*) }
+        },
+        VariantKind::Refused { .. }
+        | VariantKind::Var { .. }
+        | VariantKind::Binder { .. }
+        | VariantKind::MultiBinder { .. } => {
+            let message = format!(
+                "mettail internal error: data productivity selected an unsupported `{category}` constructor shape",
+            );
+            quote! {{
+                compile_error!(#message);
+                loop {}
+            }}
+        },
+    };
+
+    quote! {
+        #[inline]
+        #[allow(dead_code)]
+        fn #fn_name() -> #category {
+            #constructor
+        }
+    }
 }
 
 /// Generate a single `dummy_Cat()` function for one category.
@@ -337,6 +488,45 @@ fn generate_push_children_arm(
                 CollectionPlan::WholeValue { .. } => quote! {
                     #category::#label(_) => {}
                 },
+            }
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let key_task = format_ident!("Drop{}", carrier.key_category());
+            let value_task = format_ident!("Drop{}", carrier.value_category());
+            let drain = quote! {
+                for __native_entry in __native_pathmap.into_iter() {
+                    match __native_entry {
+                        mettail_runtime::PathMapEntry::Set(key) => {
+                            stack.push(DropTask::#key_task(key));
+                        },
+                        mettail_runtime::PathMapEntry::Map(key, value) => {
+                            stack.push(DropTask::#key_task(key));
+                            stack.push(DropTask::#value_task(value));
+                        },
+                    }
+                }
+            };
+            let body = match carrier.storage() {
+                crate::gen::native_carrier::NativeCarrierStorage::Direct => quote! {
+                    let __native_pathmap = std::mem::take(&mut native.0);
+                    #drain
+                },
+                crate::gen::native_carrier::NativeCarrierStorage::Arc => quote! {
+                    let __native_old = std::mem::replace(
+                        native,
+                        std::sync::Arc::new(Default::default()),
+                    );
+                    if let Some(mut __native_owned) = std::sync::Arc::into_inner(__native_old) {
+                        let __native_pathmap = std::mem::take(&mut __native_owned.0);
+                        #drain
+                    }
+                },
+            };
+            quote! {
+                #category::#label(native) => {
+                    #body
+                }
             }
         },
 

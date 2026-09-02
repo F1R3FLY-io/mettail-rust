@@ -1,5 +1,6 @@
 //! Tests for FIRST/FOLLOW set computation and dispatch table generation.
 
+use crate::automata::codegen::terminal_to_variant_name;
 use crate::binding_power::Associativity;
 use crate::grammar::ir::CollectionKind;
 use crate::prediction::{
@@ -47,22 +48,13 @@ fn test_first_sets_simple() {
     let first_sets = compute_first_sets(&rules, &categories);
 
     let int_first = first_sets.get("Int").expect("should have Int FIRST set");
-    // "Integer" terminal maps to "Integer" variant via terminal_to_variant_name...
-    // but FirstItem::Terminal("Integer") is treated as the raw text, and
-    // terminal_to_variant_name is called inside compute_first_sets.
-    // Actually looking at the code, we call terminal_to_variant_name inside compute_first_sets.
-    // "Integer" → terminal_to_variant_name → let's check what it maps to.
-    // It's an alphanumeric string, so it gets "KwInteger".
-    // But wait, we actually want this to be the FIRST set token variant name.
-    // Let me check: FirstItem::Terminal is the terminal text, and in compute_first_sets
-    // we call terminal_to_variant_name on it.
-
-    // In practice, "Integer" as a terminal text becomes "KwInteger" via terminal_to_variant_name.
-    // But for native types, the actual token in the enum is "Integer" (the variant name).
-    // This is a mismatch that needs to be resolved. For now, let's just verify
-    // the FIRST set is non-empty.
+    let integer_keyword = terminal_to_variant_name("Integer");
     assert!(!int_first.is_empty(), "Int FIRST set should not be empty");
     assert!(int_first.contains("Ident"), "Int FIRST set should contain Ident");
+    assert!(
+        int_first.contains(&integer_keyword),
+        "FIRST must use the canonical variant identity for the literal"
+    );
 }
 
 #[test]
@@ -120,7 +112,7 @@ fn test_first_sets_multi_category() {
 
     assert!(int_first.contains("Ident"));
     assert!(bool_first.contains("Ident"));
-    assert!(bool_first.contains("KwTrue")); // "true" → KwTrue via terminal_to_variant_name
+    assert!(bool_first.contains(&terminal_to_variant_name("true")));
 }
 
 #[test]
@@ -131,8 +123,10 @@ fn test_cross_category_overlap_analysis() {
 
     let mut bool_first = FirstSet::new();
     bool_first.insert("Ident");
-    bool_first.insert("KwTrue");
-    bool_first.insert("KwFalse");
+    let true_variant = terminal_to_variant_name("true");
+    let false_variant = terminal_to_variant_name("false");
+    bool_first.insert(&true_variant);
+    bool_first.insert(&false_variant);
 
     let categories = vec!["Int".to_string(), "Bool".to_string()];
     let first_sets = [("Int".to_string(), int_first), ("Bool".to_string(), bool_first)]
@@ -148,7 +142,7 @@ fn test_cross_category_overlap_analysis() {
     let overlap = int_bool.expect("overlap exists");
     assert!(overlap.ambiguous_tokens.contains("Ident"));
     assert!(overlap.unique_to_a.contains("Integer")); // unique to Int
-    assert!(overlap.unique_to_b.contains("KwTrue")); // unique to Bool
+    assert!(overlap.unique_to_b.contains(&true_variant));
 }
 
 #[test]
@@ -414,16 +408,17 @@ fn test_follow_sets_cast_propagation() {
     let bool_follow = follow_sets
         .get("Bool")
         .expect("should have Bool FOLLOW set");
+    let then_variant = terminal_to_variant_name("then");
     assert!(
-        bool_follow.contains("KwThen"),
-        "FOLLOW(Bool) should contain KwThen (from if-then)"
+        bool_follow.contains(&then_variant),
+        "FOLLOW(Bool) should contain the canonical `then` variant"
     );
 
     let int_follow = follow_sets.get("Int").expect("should have Int FOLLOW set");
     // Int can appear as Bool (via cast), so FOLLOW(Int) >= FOLLOW(Bool)
     assert!(
-        int_follow.contains("KwThen"),
-        "FOLLOW(Int) should contain KwThen (propagated from FOLLOW(Bool) via cast)"
+        int_follow.contains(&then_variant),
+        "FOLLOW(Int) should contain the canonical `then` variant propagated from Bool"
     );
     assert!(int_follow.contains("Eof"), "FOLLOW(Int) should contain Eof (primary category)");
 }
@@ -667,7 +662,10 @@ fn test_incremental_first_sets_extends_existing() {
     assert!(!int_first.is_empty(), "Int FIRST set preserved");
 
     let bool_first = merged.get("Bool").expect("Bool");
-    assert!(bool_first.contains("KwTrue"), "Bool FIRST should contain KwTrue");
+    assert!(
+        bool_first.contains(&terminal_to_variant_name("true")),
+        "Bool FIRST should contain the canonical `true` variant"
+    );
 }
 
 #[test]

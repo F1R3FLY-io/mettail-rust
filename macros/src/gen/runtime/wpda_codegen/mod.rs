@@ -117,6 +117,36 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+/// Derive the structural nested-opener token kinds for a typed delimited
+/// region from the lexer-mode graph.
+///
+/// The region's opener enters a mode. A token in that mode is a structural
+/// nested opener exactly when it pushes the same mode again. Pushes into other
+/// modes (for example nested comments) are lexical subregions and must not
+/// affect the captured region's brace depth.
+pub(crate) fn guest_body_nested_open_kinds(language: &LanguageDef, open_kind: &str) -> Vec<String> {
+    let Some(region_mode) = language
+        .token_defs
+        .iter()
+        .find(|token| token.name == open_kind)
+        .and_then(|token| token.push_mode.as_ref())
+    else {
+        return Vec::new();
+    };
+    let Some(mode) = language
+        .mode_defs
+        .iter()
+        .find(|mode| mode.name == *region_mode)
+    else {
+        return Vec::new();
+    };
+    mode.token_defs
+        .iter()
+        .filter(|token| token.push_mode.as_ref() == Some(region_mode))
+        .map(|token| token.name.to_string())
+        .collect()
+}
+
 /// Generate the WPDS-runtime engine module for the given language.
 ///
 /// The emitted code is stand-alone — references only `mettail_prattail`
@@ -496,6 +526,41 @@ mod tests {
         }
     }
 
+    fn prefix_router_scale_language(rule_count: usize) -> LanguageDef {
+        let category = Ident::new("Expr", Span::call_site());
+        let terms = (0..rule_count)
+            .map(|rule_idx| {
+                let terminal = format!("kw_{rule_idx:04}");
+                mettail_ast::grammar::GrammarRule {
+                    items: vec![mettail_ast::grammar::GrammarItem::Terminal(terminal.clone())],
+                    syntax_pattern: Some(vec![mettail_ast::grammar::SyntaxExpr::Literal(terminal)]),
+                    ..mettail_ast::grammar::rule_fixture(
+                        Ident::new(&format!("Keyword{rule_idx}"), Span::call_site()),
+                        category.clone(),
+                    )
+                }
+            })
+            .collect();
+        LanguageDef {
+            name: Ident::new(&format!("ScaleLang{rule_count}"), Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms,
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
     fn var_only_language() -> LanguageDef {
         LanguageDef {
             name: Ident::new("VarLang", Span::call_site()),
@@ -505,6 +570,7 @@ mod tests {
             mixin_names: Vec::new(),
             types: vec![mettail_ast::language::LangType {
                 name: Ident::new("Name", Span::call_site()),
+                role: Default::default(),
                 native_type: None,
                 collection_kind: None,
             }],
@@ -593,6 +659,50 @@ mod tests {
             #ts
         });
         assert!(parsed.is_ok(), "emitted code should parse as a Rust file: {:?}", parsed.err());
+    }
+
+    #[test]
+    fn prefix_router_scale_family_has_fixed_control_depth() {
+        // Straddle the former 24-row chunk boundary and extend well beyond the
+        // largest ordinary unit fixture. Grammar growth may add token-decision
+        // rows and transition leaves, but it must not add another routing layer
+        // or a sequential miss chain to one PrefixDispatch transition.
+        for rule_count in [1usize, 24, 25, 96, 256] {
+            let emitted = generate_wpda_engine_module(&prefix_router_scale_language(rule_count));
+            let rendered = emitted.to_string();
+            syn::parse2::<syn::File>(emitted).unwrap_or_else(|error| {
+                panic!("{rule_count}-rule scale grammar emitted invalid Rust: {error}")
+            });
+
+            assert_eq!(
+                rendered.matches("fn step_prefix_category_c0").count(),
+                1,
+                "{rule_count}-rule grammar must emit exactly one category token router",
+            );
+            assert!(
+                !rendered.contains("step_prefix_category_c0_chunk_"),
+                "{rule_count}-rule grammar reintroduced a rule-count-dependent chunk chain",
+            );
+
+            let mut prior_call = None;
+            for arm_idx in 0..rule_count {
+                let helper = format!("prefix_arm_c0_a{arm_idx}");
+                assert!(
+                    rendered.contains(&format!("fn {helper}")),
+                    "{rule_count}-rule grammar did not isolate transition leaf {helper}",
+                );
+                let call = rendered
+                    .find(&format!("self . {helper}"))
+                    .unwrap_or_else(|| panic!("{rule_count}-rule router does not call {helper}"));
+                if let Some(prior) = prior_call {
+                    assert!(
+                        prior < call,
+                        "{rule_count}-rule router changed declaration-order priority at {helper}",
+                    );
+                }
+                prior_call = Some(call);
+            }
+        }
     }
 
     #[test]
@@ -719,6 +829,29 @@ mod tests {
         assert!(
             !ts.contains("Ok ((typed_terms , weights))"),
             "parse_all must not return root/cursor weights when roots realize to multiple terms",
+        );
+    }
+
+    #[test]
+    fn generated_engine_emits_sound_structural_dedup_witness() {
+        let lang = synthetic_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(
+            ts.contains("fn semantic_structural_equality_witness"),
+            "every generated engine must expose the typed equality certificate",
+        );
+        assert!(
+            ts.contains("downcast_ref :: < Expr >") && ts.contains("downcast_ref :: < Bool >"),
+            "the certificate must be closed over every generated category",
+        );
+        assert!(
+            ts.contains("SemanticEqualityWitness :: Equal")
+                && ts.contains("SemanticEqualityWitness :: Inconclusive"),
+            "only positive typed equality may certify exact-key equality",
+        );
+        assert!(
+            !ts.contains("SemanticEqualityWitness :: Different"),
+            "structural inequality must remain inconclusive for observational equality",
         );
     }
 

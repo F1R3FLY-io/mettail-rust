@@ -28,6 +28,7 @@ pub fn generate_random_generation(language: &LanguageDef) -> TokenStream {
     let category_impls: Vec<TokenStream> = language
         .types
         .iter()
+        .filter(|lang_type| !lang_type.is_data())
         .map(|lang_type| generate_random_for_category(&lang_type.name, language))
         .collect();
 
@@ -41,7 +42,10 @@ fn generate_random_for_category(cat_name: &Ident, language: &LanguageDef) -> Tok
     let rules: Vec<&GrammarRule> = language
         .terms
         .iter()
-        .filter(|r| r.category == *cat_name)
+        .filter(|r| {
+            r.category == *cat_name
+                && crate::gen::generatability::term_rule_gap(r, language).is_none()
+        })
         .collect();
 
     let depth_0_impl = generate_random_depth_0(cat_name, &rules, language);
@@ -305,8 +309,16 @@ fn generate_random_depth_0(
                     // block skipped it, and `generate_random_depth_d`'s
                     // single-builtin-non-terminal guard skips it at every depth > 0 — so the
                     // constructor was generated at NO depth at all, silently.
-                    let text = random_ident_expr(language);
-                    cases.push(quote! { #cat_name::#label(#text) });
+                    let (_, optional_total_count) =
+                        count_optional_positions(rule.term_context.as_deref().unwrap_or(&[]));
+                    if optional_total_count == 0 {
+                        let text = random_ident_expr(language);
+                        cases.push(quote! { #cat_name::#label(#text) });
+                    } else {
+                        let none_args: Vec<TokenStream> =
+                            (0..optional_total_count).map(|_| quote! { None }).collect();
+                        cases.push(quote! { #cat_name::#label(#(#none_args),*) });
+                    }
                 }
             }
         }
@@ -364,12 +376,6 @@ fn generate_random_depth_d(
 
         if is_multi_binder {
             // Handle multi-binder constructors (e.g., ^[x,y].body).
-            // Skip if rule also has collections — that combination requires
-            // Collection+MultiBinder codegen (not yet implemented).
-            let has_collections = rule
-                .items
-                .iter()
-                .any(|item| matches!(item, GrammarItem::Collection { .. }));
             // ★ #150 — the shared classifier decides; the ledger census calls the SAME
             // function. `MultiBinderWithCollection` names what used to be an unlabelled
             // fall-through.

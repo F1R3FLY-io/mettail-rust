@@ -26,6 +26,7 @@ pub mod compose_gen;
 /// generator as a PARAMETER rather than a second implementation.
 pub mod generatability;
 pub mod native;
+pub(crate) mod native_carrier;
 pub mod runtime;
 pub mod syntax;
 pub mod term_gen;
@@ -37,10 +38,141 @@ pub(crate) mod type_expr_walk;
 pub mod types;
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
-use mettail_ast::language::LanguageDef;
+use mettail_ast::language::{CategoryCapability, LangType, LanguageDef};
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::Ident;
+
+/// Categories exposed as independently executable terms by the generated
+/// `Language` implementation. Closed data categories remain in every parser,
+/// structural traversal, clone/hash/drop implementation, and mixed-category
+/// worklist; they are deliberately absent only from this semantic-root view.
+pub(crate) fn semantic_types(language: &LanguageDef) -> impl Iterator<Item = &LangType> {
+    language
+        .types
+        .iter()
+        .filter(|lang_type| lang_type.supports(CategoryCapability::SemanticRoot))
+}
+
+/// Categories traversed by generic object-language semantic machines.
+///
+/// Closed parser data is deliberately excluded. A dedicated structural
+/// projection may traverse it and schedule explicitly embedded object payloads,
+/// but generic substitution, normalization, matching, and executable backends
+/// treat the data field itself as an immutable carrier.
+pub(crate) fn semantic_transit_types(language: &LanguageDef) -> impl Iterator<Item = &LangType> {
+    language
+        .types
+        .iter()
+        .filter(|lang_type| lang_type.supports(CategoryCapability::SemanticTransit))
+}
+
+/// Categories that can introduce free variables and therefore need a generated
+/// environment field or substitution-operation axis.
+pub(crate) fn variable_types(language: &LanguageDef) -> impl Iterator<Item = &LangType> {
+    language
+        .types
+        .iter()
+        .filter(|lang_type| lang_type.supports(CategoryCapability::VariableCarrier))
+}
+
+/// Validate the role/capability boundary before any emitter can manufacture a
+/// dangling semantic reference. A closed data category may contain object-term
+/// fields and may therefore be a traversal frame, but it cannot itself be a
+/// special `Var` constructor or the sort bound by a generated scope.
+fn validate_category_capabilities(language: &LanguageDef) -> Result<(), String> {
+    use term_ops::subst::{collect_category_variants, VariantKind};
+
+    if semantic_types(language).next().is_none() {
+        return Err(format!(
+            "language `{}` declares no object category; at least one semantic root is required",
+            language.name
+        ));
+    }
+
+    for lang_type in &language.types {
+        let variants = collect_category_variants(&lang_type.name, language);
+        for variant in variants {
+            match variant {
+                VariantKind::Var { .. } if lang_type.is_data() => {
+                    return Err(format!(
+                        "closed data category `{}` cannot declare the special variable form; use an ordinary structural constructor carrying token text",
+                        lang_type.name
+                    ));
+                },
+                VariantKind::Binder { binder_cat, .. }
+                | VariantKind::MultiBinder { binder_cat, .. }
+                    if language
+                        .get_type(&binder_cat)
+                        .is_some_and(LangType::is_data) =>
+                {
+                    return Err(format!(
+                        "closed data category `{binder_cat}` cannot be a binder sort; data may structurally contain scopes over object categories but cannot introduce a substitution namespace"
+                    ));
+                },
+                _ => {},
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Spill one self-contained generated concern behind a real Rust module
+/// boundary, importing the parent language types and re-exporting only the
+/// concern's declared free-name interface.
+///
+/// Trait implementations and inherent methods remain attached to their parent
+/// types regardless of the child module that contains the `impl` item.  Free
+/// functions and types are different: callers previously saw them in the
+/// language module because `include!` textually injected them, so any such API
+/// must be listed explicitly in `public_exports`.
+fn spill_generated_concern(
+    lang_name: &str,
+    concern: &str,
+    tokens: TokenStream,
+    public_exports: &[&str],
+) -> TokenStream {
+    let module_name = format_ident!("__mettail_{}_{}", lang_name.to_lowercase(), concern);
+    let module = crate::logic::writer::spill_and_path_module(
+        lang_name,
+        concern,
+        &module_name,
+        quote! {
+            use super::*;
+            #tokens
+        },
+    );
+    let exports: Vec<Ident> = public_exports
+        .iter()
+        .map(|name| format_ident!("{}", name))
+        .collect();
+    let reexports = if exports.is_empty() {
+        TokenStream::new()
+    } else {
+        quote! {
+            pub use #module_name::{#(#exports),*};
+        }
+    };
+
+    quote! {
+        #module
+        #reexports
+    }
+}
+
+const DISPLAY_CONCERN_EXPORTS: &[&str] = &[
+    "__surface_synonymy_normalise",
+    "__SURFACE_SYNONYMY_CLASSES",
+    "__SURFACE_SYNONYMY_SAMPLES",
+    "__SURFACE_INERT_GROUPINGS",
+    "__SIGIL_OPERAND_WRAP_SAMPLES",
+    "__SIGIL_OPERAND_WRAP_TERM_ROWS",
+    "__sigil_term_frame_surface",
+    "__sigil_frame_normalise",
+    "__sigil_operand_wrap_surface",
+];
+
+const VAR_INFERENCE_CONCERN_EXPORTS: &[&str] = &["VarCategory", "InferredType"];
 
 // Re-export main entry points
 pub use blockly::{generate_blockly_definitions, write_blockly_blocks, write_blockly_categories};
@@ -95,10 +227,36 @@ pub fn generate_all(
     use types::enums::generate_ast_enums;
 
     let lang_name = language.name.to_string();
+    let trace = {
+        #[cfg(feature = "walker-trace")]
+        {
+            std::env::var("PRATTAIL_MACRO_TRACE").is_ok()
+        }
+        #[cfg(not(feature = "walker-trace"))]
+        {
+            false
+        }
+    };
+    macro_rules! generate_stage {
+        ($name:literal, $expression:expr) => {{
+            if trace {
+                eprintln!("[macro-trace] {} generate_all.{}.start", lang_name, $name);
+            }
+            let generated = $expression;
+            if trace {
+                eprintln!("[macro-trace] {} generate_all.{}.done", lang_name, $name);
+            }
+            generated
+        }};
+    }
+
+    validate_category_capabilities(language)?;
 
     // Detect cancellation pairs for normalize arm generation
-    let (cancellation_pairs, _cancellation_equations) =
-        mettail_ast::pattern::detect_cancellation_pairs(language);
+    let (cancellation_pairs, _cancellation_equations) = generate_stage!(
+        "cancellation_pairs",
+        mettail_ast::pattern::detect_cancellation_pairs(language)
+    );
 
     // Spill each emitter's output to its own file in `target/generated/<lang>/`
     // and replace it with an `include!` wrapper. Each emitter's TokenStream is dropped
@@ -110,8 +268,17 @@ pub fn generate_all(
     // Emitters are named after their semantic concern (lowercase_snake_case).
     // The corresponding files land at:
     //   <ws>/target/generated/<lang>/<name>.rs
-    let ast_enums = spill_and_include(&lang_name, "ast_enums", generate_ast_enums(language));
-    let debug_impl = spill_and_include(&lang_name, "debug", generate_debug(language));
+    let ast_enums = spill_and_include(
+        &lang_name,
+        "ast_enums",
+        generate_stage!("ast_enums", generate_ast_enums(language)),
+    );
+    let debug_impl = spill_generated_concern(
+        &lang_name,
+        "debug",
+        generate_stage!("debug", generate_debug(language)),
+        &[],
+    );
 
     // The CONSTRUCTOR SCHEMA — `debug`'s inverse, written but deliberately NOT included.
     //
@@ -130,9 +297,10 @@ pub fn generate_all(
     // warning, not an error: a missing schema costs a tool its input, never a build its
     // correctness.
     {
-        let source = crate::logic::writer::format_rust_source(
-            &syntax::rust_ctor::generate_rust_ctor(language),
-        );
+        let source = crate::logic::writer::format_rust_source(&generate_stage!(
+            "rust_ctor",
+            syntax::rust_ctor::generate_rust_ctor(language)
+        ));
         if let Err(e) = crate::logic::writer::write_lang_module(&lang_name, "rust_ctor", &source) {
             eprintln!(
                 "  ({}) WARNING: could not write rust_ctor.rs ({}) — the constructor schema \
@@ -141,51 +309,128 @@ pub fn generate_all(
             );
         }
     }
-    let flatten_helpers =
-        spill_and_include(&lang_name, "flatten", generate_flatten_helpers(language));
+    let flatten_helpers = spill_and_include(
+        &lang_name,
+        "flatten",
+        generate_stage!("flatten", generate_flatten_helpers(language)),
+    );
     let normalize_impl = spill_and_include(
         &lang_name,
         "normalize",
-        generate_normalize_functions(language, &cancellation_pairs),
+        generate_stage!("normalize", generate_normalize_functions(language, &cancellation_pairs)),
     );
-    let subst_impl = spill_and_include(&lang_name, "subst", generate_substitution(language));
-    let env_types = spill_and_include(&lang_name, "env_types", generate_environments(language));
-    let env_subst_impl =
-        spill_and_include(&lang_name, "env_subst", generate_env_substitution(language));
-    let display_impl = spill_and_include(&lang_name, "display", generate_display(language)?);
-    let generation_impl =
-        spill_and_include(&lang_name, "term_generation", generate_term_generation(language));
-    let random_gen_impl =
-        spill_and_include(&lang_name, "random_generation", generate_random_generation(language));
-    let eval_impl = spill_and_include(&lang_name, "eval", generate_eval_method(language));
-    let is_ground_impl =
-        spill_and_include(&lang_name, "is_ground", generate_is_ground_methods(language));
-    let parse_alt_filter_impl = spill_and_include(
+    let subst_impl = spill_and_include(
+        &lang_name,
+        "subst",
+        generate_stage!("subst", generate_substitution(language)),
+    );
+    let env_types = spill_and_include(
+        &lang_name,
+        "env_types",
+        generate_stage!("env_types", generate_environments(language)),
+    );
+    let env_subst_impl = spill_and_include(
+        &lang_name,
+        "env_subst",
+        generate_stage!("env_subst", generate_env_substitution(language)),
+    );
+    let display_impl = spill_generated_concern(
+        &lang_name,
+        "display",
+        generate_stage!("display", generate_display(language))?,
+        DISPLAY_CONCERN_EXPORTS,
+    );
+    let generation_impl = spill_and_include(
+        &lang_name,
+        "term_generation",
+        generate_stage!("term_generation", generate_term_generation(language)),
+    );
+    let random_gen_impl = spill_and_include(
+        &lang_name,
+        "random_generation",
+        generate_stage!("random_generation", generate_random_generation(language)),
+    );
+    let eval_impl = spill_and_include(
+        &lang_name,
+        "eval",
+        generate_stage!("eval", generate_eval_method(language)),
+    );
+    let is_ground_impl = spill_generated_concern(
+        &lang_name,
+        "is_ground",
+        generate_stage!("is_ground", generate_is_ground_methods(language)),
+        &[],
+    );
+    let parse_alt_filter_impl = spill_generated_concern(
         &lang_name,
         "parse_alt_filter",
-        generate_parse_alt_filter_methods(language),
+        generate_stage!("parse_alt_filter", generate_parse_alt_filter_methods(language)),
+        &[],
     );
-    let term_depth_impl =
-        spill_and_include(&lang_name, "term_depth", generate_term_depth_methods(language));
-    let match_pattern_impl =
-        spill_and_include(&lang_name, "match_pattern", generate_match_pattern(language));
-    let iterative_clone_impl =
-        spill_and_include(&lang_name, "iterative_clone", generate_iterative_clone(language));
-    let iterative_cmp_impl =
-        spill_and_include(&lang_name, "iterative_cmp", generate_iterative_cmp(language));
-    let iterative_drop_impl =
-        spill_and_include(&lang_name, "iterative_drop", generate_iterative_drop(language));
-    let iterative_hash_impl =
-        spill_and_include(&lang_name, "iterative_hash", generate_iterative_hash(language));
-    let semantic_hash_impl =
-        spill_and_include(&lang_name, "semantic_hash", generate_semantic_hash(language));
+    let term_depth_impl = spill_generated_concern(
+        &lang_name,
+        "term_depth",
+        generate_stage!("term_depth", generate_term_depth_methods(language)),
+        &[],
+    );
+    let match_pattern_impl = spill_and_include(
+        &lang_name,
+        "match_pattern",
+        generate_stage!("match_pattern", generate_match_pattern(language)),
+    );
+    let iterative_clone_impl = spill_generated_concern(
+        &lang_name,
+        "iterative_clone",
+        generate_stage!("iterative_clone", generate_iterative_clone(language)),
+        &[],
+    );
+    // Hashing intentionally reuses comparison's exhaustive variant-index
+    // functions. Keep both generated files in one child-module environment so
+    // that private contract stays private and exact; widening dozens of helper
+    // functions or regenerating a second index table would create a new API or
+    // a second semantic authority.
+    let iterative_cmp_include = spill_and_include(
+        &lang_name,
+        "iterative_cmp",
+        generate_stage!("iterative_cmp", generate_iterative_cmp(language)),
+    );
+    let iterative_drop_impl = spill_generated_concern(
+        &lang_name,
+        "iterative_drop",
+        generate_stage!("iterative_drop", generate_iterative_drop(language)),
+        &[],
+    );
+    let iterative_hash_include = spill_and_include(
+        &lang_name,
+        "iterative_hash",
+        generate_stage!("iterative_hash", generate_iterative_hash(language)),
+    );
+    let iterative_cmp_hash_impl = spill_generated_concern(
+        &lang_name,
+        "iterative_cmp_hash",
+        quote! {
+            #iterative_cmp_include
+            #iterative_hash_include
+        },
+        &[],
+    );
+    let semantic_hash_impl = spill_generated_concern(
+        &lang_name,
+        "semantic_hash",
+        generate_stage!("semantic_hash", generate_semantic_hash(language)),
+        &[],
+    );
     let guard_codegen_impl = spill_and_include(
         &lang_name,
         "guard_codegen",
-        runtime::guard_codegen::generate_guard_codegen(language),
+        generate_stage!("guard_codegen", runtime::guard_codegen::generate_guard_codegen(language)),
     );
-    let var_inference_impl =
-        spill_and_include(&lang_name, "var_inference", generate_var_category_inference(language));
+    let var_inference_impl = spill_generated_concern(
+        &lang_name,
+        "var_inference",
+        generate_stage!("var_inference", generate_var_category_inference(language)),
+        VAR_INFERENCE_CONCERN_EXPORTS,
+    );
 
     // Binder-congruence NativeHandler (Inc 1) — emitted only for host-less
     // languages with structural-congruence equations (e.g. Ambient); a no-op
@@ -193,10 +438,16 @@ pub fn generate_all(
     // term-level wrapper (`impl {Name}TermInner`).
     let binder_congruence_impl = {
         let inner_enum = quote::format_ident!("{}TermInner", language.name);
-        let float = runtime::binder_congruence::generate_binder_congruence(language);
-        let wrapper = runtime::binder_congruence::generate_binder_congruence_term_wrapper(
-            language,
-            &inner_enum,
+        let float = generate_stage!(
+            "binder_congruence",
+            runtime::binder_congruence::generate_binder_congruence(language)
+        );
+        let wrapper = generate_stage!(
+            "binder_congruence_term_wrapper",
+            runtime::binder_congruence::generate_binder_congruence_term_wrapper(
+                language,
+                &inner_enum,
+            )
         );
         spill_and_include(
             &lang_name,
@@ -211,8 +462,12 @@ pub fn generate_all(
     // Parser code: PraTTaIL (inline) — also captures pipeline analysis.
     // The parser output is large (DFA tables, parse fns per category); spill it.
     let (parser_code, pipeline_analysis) = {
-        let (prattail_parser, analysis) = generate_prattail_parser_with_analysis(language)?;
-        let category_parse_impls = generate_prattail_category_parse_impls(language);
+        let (prattail_parser, analysis) =
+            generate_stage!("prattail_parser", generate_prattail_parser_with_analysis(language))?;
+        let category_parse_impls = generate_stage!(
+            "category_parse_impls",
+            generate_prattail_category_parse_impls(language)
+        );
         let combined = quote! {
             #prattail_parser
             #category_parse_impls
@@ -253,11 +508,9 @@ pub fn generate_all(
 
         #iterative_clone_impl
 
-        #iterative_cmp_impl
+        #iterative_cmp_hash_impl
 
         #iterative_drop_impl
-
-        #iterative_hash_impl
 
         #semantic_hash_impl
 
@@ -560,13 +813,8 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// cost) yields `1.0`; higher path costs (e.g., from lex-min
                 /// disambiguation across alternatives) yield smaller values.
                 ///
-                /// The walker's lex-min cost combines:
-                /// - `primary`: tropical sum of per-step weights along the path
-                /// - `lex_alt_idx`: lex-time disambiguation tiebreak (L1)
-                /// - `src_idx`, `rule_idx`: parser-side tiebreaks
-                ///
-                /// Confidence here reflects the `primary` axis — the dominant
-                /// quality signal. Tiebreaks are diagnostic, not quantitative.
+                /// Confidence reflects the tropical `primary` axis; lexical and
+                /// declaration tiebreaks remain diagnostic rather than quantitative.
                 pub fn parse_with_confidence(input: &str) -> Result<(#cat, f64), ParseError> {
                     let tokens = lex(input)?;
                     let kinds: Vec<mettail_prattail::automata::TokenKind> =
@@ -579,11 +827,8 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     let mut pos = 0usize;
                     match with_weight(&kinds, &texts, &mut pos, 0) {
                         Ok((result, dw)) => {
-                            // Phase 3.1.7 (C10, 2026-05-15): `dw` is plain
-                            // `LexicographicWeight` again after the M11.6b
-                            // D5 revert. Direct field access.
                             let cost = dw.primary.0;
-                            // exp(-cost) ∈ (0, 1]; clamp for NaN/Inf.
+                            // exp(-weight.primary) ∈ (0, 1]; clamp for NaN/Inf.
                             let confidence = (-cost).exp();
                             let confidence = if confidence.is_finite() && confidence > 0.0 {
                                 confidence.min(1.0)
@@ -608,6 +853,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 range,
                                 hint: None,
                             })
+                        }
+                        Err(WpdaParseError::RealizationFailed { error, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, range)| *range)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, range)| *range).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::RealizationFailed { error, range })
                         }
                         Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -724,7 +978,13 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                         )),
                                     });
                                 }
-                                Ok(v)
+                            Ok(v)
+                        }
+                            Err(WpdaParseError::RealizationFailed { error, position }) => {
+                                Err(ParseError::RealizationFailed {
+                                    error,
+                                    range: dag_range(position),
+                                })
                             }
                             Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                                 expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -782,6 +1042,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             }
                             Ok(v)
+                        }
+                        Err(WpdaParseError::RealizationFailed { error, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, range)| *range)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, range)| *range).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::RealizationFailed { error, range })
                         }
                         Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -1237,6 +1506,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 }
                                 Ok((terms, weights))
                             }
+                            Err(WpdaParseError::RealizationFailed { error, position }) => {
+                                Err(ParseError::RealizationFailed {
+                                    error,
+                                    range: dag_range(position),
+                                })
+                            }
                             Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                                 expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                                 range: input_end_range,
@@ -1304,6 +1579,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             }
                             Ok((terms, weights))
+                        }
+                        Err(WpdaParseError::RealizationFailed { error, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, range)| *range)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, range)| *range).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::RealizationFailed { error, range })
                         }
                         Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -1439,6 +1723,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 }
                                 Ok((terms, weights))
                             }
+                            Err(WpdaParseError::RealizationFailed { error, position }) => {
+                                Err(ParseError::RealizationFailed {
+                                    error,
+                                    range: dag_range(position),
+                                })
+                            }
                             Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                                 expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                                 range: input_end_range,
@@ -1510,6 +1800,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             }
                             Ok((terms, weights))
+                        }
+                        Err(WpdaParseError::RealizationFailed { error, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, range)| *range)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, range)| *range).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::RealizationFailed { error, range })
                         }
                         Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -1898,6 +2197,19 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 }
                                 (Some(v), errors)
                             }
+                            Err(WpdaParseError::RealizationFailed { error, position }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, range)| *range)
+                                    .unwrap_or_else(|| {
+                                        tokens
+                                            .last()
+                                            .map(|(_, range)| *range)
+                                            .unwrap_or(Range::zero())
+                                    });
+                                errors.push(ParseError::RealizationFailed { error, range });
+                                (None, errors)
+                            }
                             Err(WpdaParseError::EmptyResult) => {
                                 errors.push(ParseError::UnexpectedEof {
                                     expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -2059,7 +2371,7 @@ pub fn category_emits_parseable_auto_var(category: &Ident, language: &LanguageDe
     let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
         return false;
     };
-    if type_def.native_type.is_some() {
+    if type_def.is_data() {
         return false;
     }
     let has_explicit_var = language
@@ -2067,6 +2379,300 @@ pub fn category_emits_parseable_auto_var(category: &Ident, language: &LanguageDe
         .iter()
         .any(|r| r.category == *category && is_var_rule(r));
     !has_explicit_var
+}
+
+/// Whether `category` receives an implicit variable constructor.
+///
+/// Closed `data` categories have only constructors explicitly declared by the
+/// grammar. Object categories retain the historical implicit-Var behavior.
+pub fn category_emits_implicit_var(category: &Ident, language: &LanguageDef) -> bool {
+    let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
+        return false;
+    };
+    if type_def.is_data() {
+        return false;
+    }
+    !language
+        .terms
+        .iter()
+        .any(|rule| rule.category == *category && is_var_rule(rule))
+}
+
+#[cfg(test)]
+mod category_capability_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn parse(body: &str) -> LanguageDef {
+        syn::parse_str(body).expect("category-capability fixture must parse")
+    }
+
+    fn public_free_names(tokens: TokenStream) -> BTreeSet<String> {
+        let file: syn::File = syn::parse2(tokens).expect("generated concern must be valid Rust");
+        file.items
+            .into_iter()
+            .filter_map(|item| match item {
+                syn::Item::Const(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.ident.to_string())
+                },
+                syn::Item::Enum(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.ident.to_string())
+                },
+                syn::Item::Fn(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.sig.ident.to_string())
+                },
+                syn::Item::Static(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.ident.to_string())
+                },
+                syn::Item::Struct(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.ident.to_string())
+                },
+                syn::Item::Trait(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.ident.to_string())
+                },
+                syn::Item::Type(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.ident.to_string())
+                },
+                syn::Item::Union(item) if matches!(item.vis, syn::Visibility::Public(_)) => {
+                    Some(item.ident.to_string())
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn closed_data_transit_fixture() -> LanguageDef {
+        parse(
+            r#"
+                name: ClosedDataTransit,
+                types {
+                    Proc
+                    data Meta
+                    ![i32] as Int
+                },
+                terms {
+                    PZero . |- "0" : Proc;
+                    PWrap . metadata:Meta, child:Proc |- "wrap" metadata child : Proc;
+                    PBind . metadata:Meta, ^x.body:[Proc -> Proc]
+                        |- "bind" metadata x "." body : Proc;
+                    MProc . value:Proc |- "[" value "]" : Meta;
+                    MEmpty . |- "[]" : Meta;
+                    AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+    }
+
+    fn sigil_free_fixture() -> LanguageDef {
+        parse(
+            r#"
+                name: SigilFree,
+                types { Proc },
+                terms {
+                    Zero . |- "zero" : Proc;
+                    Pair . left:Proc, right:Proc
+                        |- "pair" "(" left "," right ")" : Proc;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+    }
+
+    #[test]
+    fn path_loaded_concerns_have_an_exact_free_name_interface() {
+        let language = closed_data_transit_fixture();
+        let no_exports = [
+            syntax::debug::generate_debug(&language),
+            term_ops::ground::generate_is_ground_methods(&language),
+            term_ops::parse_alt_filter::generate_parse_alt_filter_methods(&language),
+            term_ops::depth::generate_term_depth_methods(&language),
+            term_ops::iterative_clone::generate_iterative_clone(&language),
+            term_ops::iterative_cmp::generate_iterative_cmp(&language),
+            term_ops::iterative_drop::generate_iterative_drop(&language),
+            term_ops::iterative_hash::generate_iterative_hash(&language),
+            term_ops::semantic_hash::generate_semantic_hash(&language),
+        ];
+        for concern in no_exports {
+            assert!(
+                public_free_names(concern).is_empty(),
+                "impl-only concern unexpectedly exposed a free public name"
+            );
+        }
+
+        let display = syntax::display::generate_display(&language)
+            .expect("display concern fixture must generate");
+        assert_eq!(
+            public_free_names(display),
+            DISPLAY_CONCERN_EXPORTS
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect()
+        );
+        assert_eq!(
+            public_free_names(syntax::var_inference::generate_var_category_inference(&language)),
+            VAR_INFERENCE_CONCERN_EXPORTS
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect()
+        );
+    }
+
+    #[test]
+    fn sigil_free_display_concern_still_has_its_complete_inert_interface() {
+        let display = syntax::display::generate_display(&sigil_free_fixture())
+            .expect("sigil-free display concern must generate");
+        assert_eq!(
+            public_free_names(display),
+            DISPLAY_CONCERN_EXPORTS
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect()
+        );
+    }
+
+    #[test]
+    fn data_stays_structural_but_outside_generic_semantic_worklists() {
+        let language = closed_data_transit_fixture();
+        validate_category_capabilities(&language).expect("fixture satisfies the role invariant");
+
+        assert_eq!(
+            semantic_types(&language)
+                .map(|entry| entry.name.to_string())
+                .collect::<Vec<_>>(),
+            ["Proc", "Int"]
+        );
+        assert_eq!(
+            variable_types(&language)
+                .map(|entry| entry.name.to_string())
+                .collect::<Vec<_>>(),
+            ["Proc", "Int"]
+        );
+        assert_eq!(
+            semantic_transit_types(&language)
+                .map(|entry| entry.name.to_string())
+                .collect::<Vec<_>>(),
+            ["Proc", "Int"]
+        );
+
+        let subst = term_ops::subst::generate_substitution(&language)
+            .to_string()
+            .replace(' ', "");
+        assert!(!subst.contains("VisitMeta"), "data is a semantic boundary");
+        assert!(subst.contains("f0_data"), "data is carried as a coefficient");
+        assert!(subst.contains("pf0_data"), "binder data is a coefficient");
+        assert!(subst.contains("VisitProc"), "the object factor still traverses");
+        assert!(!subst.contains("MatchMeta{"), "data must not be a replacement axis");
+        assert!(!subst.contains("implMeta{"), "data must not receive semantic wrappers");
+
+        let env = runtime::environment::generate_environments(&language)
+            .to_string()
+            .replace(' ', "");
+        assert!(env.contains("ProcEnv"));
+        assert!(!env.contains("MetaEnv"));
+
+        let normalized = term_ops::normalize::generate_normalize_functions(&language, &[])
+            .to_string()
+            .replace(' ', "");
+        assert!(!normalized.contains("VisitMeta"));
+        assert!(normalized.contains("f0_data"));
+        assert!(normalized.contains("pf0_data"));
+        assert!(normalized.contains("VisitProc"));
+        assert!(normalized.contains("implProc{"));
+        assert!(!normalized.contains("implMeta{"));
+
+        let matched = term_ops::match_pattern::generate_match_pattern(&language)
+            .to_string()
+            .replace(' ', "");
+        assert!(!matched.contains("MatchMeta("), "data is a semantic boundary");
+        assert!(matched.contains("MatchProc("), "the object factor still matches");
+        assert!(!matched.contains("meta_bindings"));
+        assert!(!matched.contains("implMeta{"));
+
+        let dovetail = runtime::dovetail_report::generate_dovetail_report(&language)
+            .to_string()
+            .replace(' ', "");
+        assert!(!dovetail.contains("VisitMeta"));
+        assert!(!dovetail.contains("__mettail_dovetail_add_meta"));
+        let meta_builder_context = dovetail
+            .find("__mettail_dovetail_build_meta_d")
+            .map(|index| &dovetail[index.saturating_sub(160)..(index + 240).min(dovetail.len())]);
+        assert!(
+            meta_builder_context.is_none(),
+            "data reconstructor leaked into Dovetail: {meta_builder_context:?}"
+        );
+        assert!(dovetail.contains("VisitProc"));
+        assert!(dovetail.contains("__mettail_dovetail_add_proc"));
+        assert!(dovetail.contains("FieldOpaque"));
+
+        let parse_filter = term_ops::parse_alt_filter::generate_parse_alt_filter_methods(&language)
+            .to_string()
+            .replace(' ', "");
+        assert!(parse_filter.contains("UniformMeta"), "parse walk remains structural");
+        assert!(
+            !parse_filter.contains("ClosedDataTransitTermInner::Meta"),
+            "closed data is not an executable wrapper alternative"
+        );
+
+        let rho_support = runtime::rho_invocation::generate_rho_reflection_support(&language);
+        let rho_flt = runtime::rho_invocation::generate_flt_reflect(&language);
+        let rho_reflect = quote::quote! { #rho_support #rho_flt }
+            .to_string()
+            .replace(' ', "");
+        assert!(!rho_reflect.contains("VisitMeta"));
+        assert!(!rho_reflect.contains("ClosedDataTransitTermInner::Meta"));
+        assert!(rho_reflect.contains("non-structuralfield"));
+    }
+
+    #[test]
+    fn data_cannot_declare_the_special_variable_form() {
+        let language = parse(
+            r#"
+                name: ClosedDataVarRefusal,
+                types { Proc data Meta },
+                terms {
+                    PZero . Proc ::= "0";
+                    MetaVar . Meta ::= Var;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        );
+        let error = validate_category_capabilities(&language).expect_err("data Var must refuse");
+        assert!(error.contains("cannot declare the special variable form"));
+    }
+
+    #[test]
+    fn data_cannot_be_a_generated_binder_sort() {
+        let language = parse(
+            r#"
+                name: ClosedDataBinderRefusal,
+                types { Proc data Meta },
+                terms {
+                    PZero . Proc ::= "0";
+                    PBind . Proc ::= <Meta> Proc;
+                    MEmpty . Meta ::= "[]";
+                },
+                equations {},
+                rewrites {},
+            "#,
+        );
+        let error =
+            validate_category_capabilities(&language).expect_err("data binder sort must refuse");
+        assert!(error.contains("cannot be a binder sort"));
+    }
+}
+
+/// Whether the generated enum contains a variable constructor, either because
+/// the grammar declared one or because object-category synthesis supplies it.
+pub fn category_has_var_variant(category: &Ident, language: &LanguageDef) -> bool {
+    category_emits_implicit_var(category, language)
+        || language
+            .terms
+            .iter()
+            .any(|rule| rule.category == *category && is_var_rule(rule))
 }
 
 /// Spec-derived predicate: does this category get a parseable
@@ -2579,31 +3185,37 @@ pub(crate) fn collection_literal_language_for_tests() -> mettail_ast::language::
     language.types = vec![
         LangType {
             name: quote::format_ident!("Proc"),
+            role: Default::default(),
             native_type: None,
             collection_kind: None,
         },
         LangType {
             name: quote::format_ident!("List"),
+            role: Default::default(),
             native_type: native("Vec<Proc>"),
             collection_kind: Some(CollectionCategory::List(delims("[", "]", ",", None))),
         },
         LangType {
             name: quote::format_ident!("Bag"),
+            role: Default::default(),
             native_type: native("mettail_runtime::HashBag<Proc>"),
             collection_kind: Some(CollectionCategory::Bag(delims("{|", "|}", ",", None))),
         },
         LangType {
             name: quote::format_ident!("Set"),
+            role: Default::default(),
             native_type: native("mettail_runtime::HashSetLit<Proc>"),
             collection_kind: Some(CollectionCategory::Set(delims("Set(", ")", ",", None))),
         },
         LangType {
             name: quote::format_ident!("Map"),
+            role: Default::default(),
             native_type: native("mettail_runtime::HashMapLit<Proc, Proc>"),
             collection_kind: Some(CollectionCategory::Map(delims("{", "}", ",", Some(":")))),
         },
         LangType {
             name: quote::format_ident!("Pathmap"),
+            role: Default::default(),
             native_type: native("mettail_runtime::PathMapLit<Proc, Proc>"),
             collection_kind: Some(CollectionCategory::Pathmap(delims(
                 "pathmap(",
@@ -2615,11 +3227,36 @@ pub(crate) fn collection_literal_language_for_tests() -> mettail_ast::language::
         // THE OPAQUE CONTROL — native literal, no collection_kind.
         LangType {
             name: quote::format_ident!("Int"),
+            role: Default::default(),
             native_type: native("i32"),
             collection_kind: None,
         },
     ];
     language
+}
+
+/// A closed data category with exactly one collection-bearing constructor.
+///
+/// Exhaustiveness tests must not use the collection-literal fixture above: its
+/// object categories deliberately receive the generated higher-order
+/// constructors, so they are not singletons. `Meta` is closed by `data`, and
+/// therefore its complete constructor census is exactly `{ MOnly }` while the
+/// `Vec(Proc)` field still exercises collection assembly.
+#[cfg(test)]
+pub(crate) fn singleton_collection_language_for_tests() -> mettail_ast::language::LanguageDef {
+    syn::parse_str(
+        r#"
+            name: SingletonCollection,
+            types { Proc data Meta },
+            terms {
+                PZero . |- "0" : Proc;
+                MOnly . values:Vec(Proc) |- "[" values.*sep(",") "]" : Meta;
+            },
+            equations {},
+            rewrites {},
+        "#,
+    )
+    .expect("singleton-collection fixture must parse")
 }
 
 /// The collection-literal categories declared by

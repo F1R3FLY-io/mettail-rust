@@ -15,6 +15,7 @@ theories/CollectionAlgebraClosure.v
 theories/TreeAlgebraClosure.v
 theories/TheoryCombination.v
 theories/HeytingAlgebra.v
+theories/ConstraintDecision.v
 theories/GuardTierCertificate.v
 theories/BehavioralNegation.v
 # OSLF substrate Phase 1 `.0`-inert: AnyAlgebra carrier projection soundness

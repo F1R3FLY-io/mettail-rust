@@ -57,6 +57,68 @@ mod ledtest;
 
 use ledtest::{Expr, Num, Pred};
 
+#[test]
+fn grouped_cross_category_ambiguity_keeps_cost_and_rank_independent() {
+    use mettail_prattail::automata::TokenKind;
+    use mettail_prattail::derivation_rank::RankDecision;
+    use mettail_prattail::wpda_runtime::{CursorBoundingMode, SliceTokenSource};
+
+    let kinds = [
+        TokenKind::Fixed("(".to_string()),
+        TokenKind::Fixed("x".to_string()),
+        TokenKind::Fixed(")".to_string()),
+        TokenKind::Eof,
+    ];
+    let texts = ["(", "x", ")", ""];
+    let source = SliceTokenSource::with_texts(&kinds, &texts);
+    let mut position = 0usize;
+    let ranked = ledtest::parse_Expr_via_wpda_ranked_prefix_with_source_and_bounding_mode(
+        &source,
+        &mut position,
+        0,
+        8,
+        CursorBoundingMode::Unbounded,
+    )
+    .expect("the grouped cross-category ambiguity parses");
+
+    assert_eq!(position, 3, "the parser must stop at the canonical EOF token");
+    assert_eq!(ranked.len(), 2, "both equal-cost source rules must survive");
+    assert_eq!(
+        ranked
+            .iter()
+            .map(|(_, cost, _)| cost.ticks())
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(1)],
+        "transparent cross-category grouping charges one exact tick per derivation",
+    );
+    assert_eq!(
+        ranked
+            .iter()
+            .map(|(term, _, _)| format!("{term:?}"))
+            .collect::<Vec<_>>(),
+        vec!["CastNum(XFirst)", "CastNum(XSecond)"],
+        "declaration rank elects the earlier rule without discarding the later reading",
+    );
+
+    let source_rule_traces: Vec<Vec<_>> = ranked
+        .iter()
+        .map(|(_, _, rank)| {
+            rank.events()
+                .iter()
+                .filter_map(|event| match event.decision {
+                    RankDecision::SourceRule(source_rule) => Some(source_rule),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
+    assert_ne!(
+        source_rule_traces[0], source_rule_traces[1],
+        "the SPPF must retain the two actual source/rule witnesses",
+    );
+    assert!(ranked[0].2 < ranked[1].2, "the earlier declaration must have the lower rank");
+}
+
 /// `{:?}` of the parsed term, or `Err(..)`.
 fn pred(src: &str) -> String {
     mettail_runtime::clear_var_cache();

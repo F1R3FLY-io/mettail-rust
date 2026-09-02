@@ -84,9 +84,9 @@ pub(super) fn walk_pattern<'a>(
             SyntaxExpr::Param(id) => {
                 push_named_param(id.to_string(), term_context, abstraction_names, out);
             },
-            SyntaxExpr::GuestBody { open, close, bind } => out.push(FieldSlot {
+            SyntaxExpr::GuestBody { open, close, bind, kind } => out.push(FieldSlot {
                 name: bind.to_string(),
-                source: FieldSlotSource::GuestBody { open, close },
+                source: FieldSlotSource::GuestBody { open, close, kind: *kind },
                 optional,
             }),
             SyntaxExpr::Op(PatternOp::Opt { inner }) => {

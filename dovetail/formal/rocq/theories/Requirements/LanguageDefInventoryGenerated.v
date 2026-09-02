@@ -77,7 +77,7 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("optsmoke", [ReqFoldNativeHandler; ReqCollectionPattern]);
   ("pi", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFreshnessPremise; ReqCollectionPattern; ReqBinderPattern; ReqSubstitutionPattern]);
   ("refinementsmoke", [ReqEnvRelationPremise]);
-  ("rholang", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler; ReqFreshnessPremise; ReqEnvRelationPremise; ReqBehavioralGuard; ReqSyntheticInjectionGuard; ReqCollectionPattern; ReqMapPattern; ReqBinderPattern; ReqSubstitutionPattern; ReqRhoCommHandlerContract; ReqRhoResourceGuardContract]);
+  ("rholang", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler; ReqFreshnessPremise; ReqEnvRelationPremise; ReqBehavioralGuard; ReqSyntheticInjectionGuard; ReqCollectionPattern; ReqMapPattern; ReqZipPattern; ReqBinderPattern; ReqSubstitutionPattern; ReqRhoCommHandlerContract; ReqRhoResourceGuardContract]);
   ("seqcarrierdemo", [ReqFoldNativeHandler; ReqCollectionPattern]);
   ("swapdemo", [ReqDirectionalRewrite]);
   ("tokentextleafdemo", [ReqFoldNativeHandler; ReqBinderPattern]);

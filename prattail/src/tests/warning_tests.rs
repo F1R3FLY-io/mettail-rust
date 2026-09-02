@@ -1369,6 +1369,21 @@ mod dead_rule_tests {
                 prefix_bp: None,
                 eval_mode: None,
             },
+            RDRuleInfo {
+                label: "CapturedRegion".to_string(),
+                category: "Expr".to_string(),
+                items: vec![RDSyntaxItem::TokenKindCapture {
+                    param_name: "region".to_string(),
+                    kind_name: "RegionOpen".to_string(),
+                }],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
+            },
         ];
 
         let rule_infos = vec![
@@ -1396,6 +1411,16 @@ mod dead_rule_tests {
                 label: "Stale".to_string(),
                 category: "Expr".to_string(),
                 first_items: vec![FirstItem::Terminal("stale".to_string())],
+                is_infix: false,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: false,
+            },
+            RuleInfo {
+                label: "CapturedRegion".to_string(),
+                category: "Expr".to_string(),
+                first_items: vec![FirstItem::Terminal("RegionOpen".to_string())],
                 is_infix: false,
                 is_var: false,
                 is_literal: false,

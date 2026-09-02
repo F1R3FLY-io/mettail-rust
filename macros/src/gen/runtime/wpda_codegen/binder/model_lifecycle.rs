@@ -45,10 +45,12 @@ impl Clone for BinderPosition {
                 },
                 BinderCloneTask::Visit(BinderPosition::GuestBodyCapture {
                     open_kind,
+                    nested_open_kinds,
                     close_kind,
                     param_name,
                 }) => values.push(BinderPosition::GuestBodyCapture {
                     open_kind: open_kind.clone(),
+                    nested_open_kinds: nested_open_kinds.clone(),
                     close_kind: close_kind.clone(),
                     param_name: param_name.clone(),
                 }),
@@ -158,8 +160,11 @@ impl Clone for ActionArgKind {
                 ActionCloneTask::Visit(ActionArgKind::IdentText { param_name }) => {
                     values.push(ActionArgKind::IdentText { param_name: param_name.clone() });
                 },
-                ActionCloneTask::Visit(ActionArgKind::GuestBody { param_name }) => {
-                    values.push(ActionArgKind::GuestBody { param_name: param_name.clone() });
+                ActionCloneTask::Visit(ActionArgKind::GuestBody { param_name, kind }) => {
+                    values.push(ActionArgKind::GuestBody {
+                        param_name: param_name.clone(),
+                        kind: *kind,
+                    });
                 },
                 ActionCloneTask::Visit(ActionArgKind::Term(category)) => {
                     values.push(ActionArgKind::Term(category.clone()));
@@ -297,11 +302,12 @@ impl fmt::Debug for BinderPosition {
                 },
                 BinderDebugTask::Visit(BinderPosition::GuestBodyCapture {
                     open_kind,
+                    nested_open_kinds,
                     close_kind,
                     param_name,
                 }) => write!(
                     formatter,
-                    "GuestBodyCapture {{ open_kind: {open_kind:?}, close_kind: {close_kind:?}, param_name: {param_name:?} }}"
+                    "GuestBodyCapture {{ open_kind: {open_kind:?}, nested_open_kinds: {nested_open_kinds:?}, close_kind: {close_kind:?}, param_name: {param_name:?} }}"
                 )?,
                 BinderDebugTask::Visit(BinderPosition::BinderIdent) => {
                     formatter.write_str("BinderIdent")?;
@@ -371,8 +377,11 @@ impl fmt::Debug for ActionArgKind {
                 ActionDebugTask::Visit(ActionArgKind::IdentText { param_name }) => {
                     write!(formatter, "IdentText {{ param_name: {param_name:?} }}")?;
                 },
-                ActionDebugTask::Visit(ActionArgKind::GuestBody { param_name }) => {
-                    write!(formatter, "GuestBody {{ param_name: {param_name:?} }}")?;
+                ActionDebugTask::Visit(ActionArgKind::GuestBody { param_name, kind }) => {
+                    write!(
+                        formatter,
+                        "GuestBody {{ param_name: {param_name:?}, kind: {kind:?} }}",
+                    )?;
                 },
                 ActionDebugTask::Visit(ActionArgKind::Term(category)) => {
                     write!(formatter, "Term({category:?})")?;

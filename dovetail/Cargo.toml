@@ -18,6 +18,7 @@ default = []
 # — the single source of truth, shared with prattail. dovetail stays
 # substrate-agnostic: this is its ONLY workspace dependency.
 rigail = { path = "../rigail" }
+mettail-semantic-key = { path = "../semantic-key" }
 
 [dev-dependencies]
 proptest = "1"

@@ -1,8 +1,8 @@
 //! Integration tests for the full parser generation pipeline.
 
 use crate::{
-    binding_power::Associativity, generate_parser, BeamWidthConfig, CategorySpec, LanguageSpec,
-    LiteralPatterns, RuleSpec, SyntaxItemSpec,
+    automata::codegen::terminal_to_variant_name, binding_power::Associativity, generate_parser,
+    BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
 
 /// Helper: extract category names from a slice of `CategorySpec`.
@@ -219,8 +219,13 @@ fn test_generate_parser_with_optional() {
     // Walker's WPDS rule table represents this as `(rule_idx, position)` stack
     // states (see `wpda_codegen/tables.rs`). The Optional-syntax FEATURE survives
     // via Walker emission and is asserted in `macros/src/gen/runtime/wpda_codegen/tests/*`.
-    // Pipeline still emits the KwIf Token (lexer side).
-    assert!(code_str.contains("KwIf"), "should contain KwIf token dispatch for IfExpr rule");
+    // The lexer and parser analysis must derive the same injective variant
+    // identity from the source literal rather than duplicating its spelling.
+    let if_variant = terminal_to_variant_name("if");
+    assert!(
+        code_str.contains(&if_variant),
+        "generated parser should contain the canonical `if` token dispatch"
+    );
 }
 
 // Stage 10.5r migration (2026-05-04): the following 3 tests MOVED to

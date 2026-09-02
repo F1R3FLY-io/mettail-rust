@@ -270,6 +270,107 @@ fn a2_mixed_variant_reconstructs_category_child_and_text_together() {
     );
 }
 
+/// Exact optional token text must distinguish `Some(text)` from indexed
+/// absence and deliver both cases to the fold body without reparsing text.
+#[test]
+fn a2_optional_token_text_round_trips_present_and_absent() {
+    for (term, expected) in [
+        (Proc::MaybeNamed(Some("zero".to_string())), "optional-token-present"),
+        (Proc::MaybeNamed(None), "optional-token-absent"),
+    ] {
+        let probe = Proc::Probe(std::sync::Arc::new(term.clone()));
+        let report = reduce(&probe);
+        assert!(
+            report.rule_firings.iter().any(|f| {
+                f.label.as_deref() == Some("TokenTextLeafDemo::fold::Proc_Probe") && f.count >= 1
+            }),
+            "the inverse-probe fold must fire for {term:?}: {report:#?}",
+        );
+        assert!(
+            report.terms.iter().any(|t| t.op_display.contains(expected)),
+            "the optional-token fold must preserve the present/absent case `{expected}`: \
+             {report:#?}",
+        );
+    }
+}
+
+/// Exact optional category children use the ordinary child derivation when
+/// present and the indexed absence carrier when omitted.
+#[test]
+fn a2_optional_category_child_round_trips_present_and_absent() {
+    for (term, expected) in [
+        (Proc::MaybeProc(Some(std::sync::Arc::new(Proc::Nil))), "optional-child-present"),
+        (Proc::MaybeProc(None), "optional-child-absent"),
+    ] {
+        let probe = Proc::Probe(std::sync::Arc::new(term.clone()));
+        let report = reduce(&probe);
+        assert!(
+            report.rule_firings.iter().any(|f| {
+                f.label.as_deref() == Some("TokenTextLeafDemo::fold::Proc_Probe") && f.count >= 1
+            }),
+            "the inverse-probe fold must fire for {term:?}: {report:#?}",
+        );
+        assert!(
+            report.terms.iter().any(|t| t.op_display.contains(expected)),
+            "the optional-child fold must preserve the present/absent case `{expected}`: \
+             {report:#?}",
+        );
+    }
+}
+
+/// A required category child followed by an optional category child must be
+/// reconstructed in field order. In particular, absence is a deferred PDA
+/// action rather than an eager value-stack mutation that can overtake `head`.
+#[test]
+fn a2_mixed_required_and_optional_children_preserve_field_order() {
+    for (term, expected) in [
+        (
+            Proc::MixedMaybe(std::sync::Arc::new(Proc::Nil), None),
+            "mixed-required-then-absent",
+        ),
+        (
+            Proc::MixedMaybe(std::sync::Arc::new(Proc::Nil), Some(std::sync::Arc::new(Proc::Nil))),
+            "mixed-required-then-present",
+        ),
+    ] {
+        let probe = Proc::Probe(std::sync::Arc::new(term.clone()));
+        let report = reduce(&probe);
+        assert!(
+            report.rule_firings.iter().any(|f| {
+                f.label.as_deref() == Some("TokenTextLeafDemo::fold::Proc_Probe") && f.count >= 1
+            }),
+            "the inverse-probe fold must fire for {term:?}: {report:#?}",
+        );
+        assert!(
+            report.terms.iter().any(|t| t.op_display.contains(expected)),
+            "mixed required/optional reconstruction must preserve `{expected}`: {report:#?}",
+        );
+    }
+}
+
+/// Exact optional ordered sequences preserve the Option boundary and the
+/// element order carried by the labelled sequence leaf.
+#[test]
+fn a2_optional_ordered_sequence_round_trips_present_and_absent() {
+    for (term, expected) in [
+        (Proc::MaybeMany(Some(vec![Proc::Nil])), "optional-sequence-present"),
+        (Proc::MaybeMany(None), "optional-sequence-absent"),
+    ] {
+        let probe = Proc::Probe(std::sync::Arc::new(term.clone()));
+        let report = reduce(&probe);
+        assert!(
+            report.rule_firings.iter().any(|f| {
+                f.label.as_deref() == Some("TokenTextLeafDemo::fold::Proc_Probe") && f.count >= 1
+            }),
+            "the inverse-probe fold must fire for {term:?}: {report:#?}",
+        );
+        assert!(
+            report.terms.iter().any(|t| t.op_display.contains(expected)),
+            "the optional sequence inverse must preserve `{expected}`: {report:#?}",
+        );
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // A-3 — the fold gate ADMITS `Ident`, and still declines what it should
 // ─────────────────────────────────────────────────────────────────────────────
@@ -457,8 +558,6 @@ fn a5_distinct_names_are_distinct_terms_under_eq_hash_ord() {
 /// equally untouched — so "nothing changed" is not an artifact of the term being trivial.
 #[test]
 fn a5_a_binder_in_scope_does_not_capture_an_ident_field() {
-    use mettail_runtime::Term;
-
     for name in ["x", "foo", "nth"] {
         let body = Proc::Named(name.to_string());
         let binder = mettail_runtime::Binder(mettail_runtime::FreeVar::fresh_named(name));

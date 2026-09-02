@@ -79,7 +79,7 @@
 //! [`CaptureLayout`] vocabulary. There is exactly one walk; `capture_layout`
 //! is a view of it, never a parallel derivation.
 
-use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
+use mettail_ast::grammar::{DelimitedRegionKind, PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::types::TypeExpr;
 use std::collections::HashSet;
 
@@ -112,6 +112,7 @@ pub(crate) enum CaptureFieldKind<'a> {
     GuestBody {
         open: &'a syn::Ident,
         close: &'a syn::Ident,
+        kind: DelimitedRegionKind,
     },
     /// A `Simple` term-param at this syntax position → its declared type.
     Term(&'a TypeExpr),
@@ -145,6 +146,7 @@ pub(crate) enum FieldSlotSource<'a> {
     GuestBody {
         open: &'a syn::Ident,
         close: &'a syn::Ident,
+        kind: DelimitedRegionKind,
     },
     /// A term-context parameter, placed at its SYNTAX position. Never
     /// [`TermParam::Optional`] — an opt-group is flattened, one slot per inner
@@ -310,8 +312,8 @@ pub(crate) fn capture_layout<'a>(
     for slot in layout.slots {
         let kind = match slot.source {
             FieldSlotSource::TokenText => CaptureFieldKind::TokenText,
-            FieldSlotSource::GuestBody { open, close } => {
-                CaptureFieldKind::GuestBody { open, close }
+            FieldSlotSource::GuestBody { open, close, kind } => {
+                CaptureFieldKind::GuestBody { open, close, kind }
             },
             FieldSlotSource::Param(TermParam::Simple { ty, .. }) => CaptureFieldKind::Term(ty),
             FieldSlotSource::Param(TermParam::GuardBody { .. }) => CaptureFieldKind::Predicate,
@@ -401,12 +403,12 @@ fn walk_pattern<'a>(
             SyntaxExpr::Param(id) => {
                 push_named_param(id.to_string(), term_context, abstraction_names, out);
             },
-            SyntaxExpr::GuestBody { open, close, bind } => {
+            SyntaxExpr::GuestBody { open, close, bind, kind } => {
                 // L9-4: a `*flt(bind, open, close)` guest-body capture → an
                 // `Arc<FltNode>` leaf named `bind`.
                 out.push(FieldSlot {
                     name: bind.to_string(),
-                    source: FieldSlotSource::GuestBody { open, close },
+                    source: FieldSlotSource::GuestBody { open, close, kind: *kind },
                     optional,
                 });
             },
@@ -586,14 +588,20 @@ mod tests {
             match (&actual.source, &expected.source) {
                 (FieldSlotSource::TokenText, FieldSlotSource::TokenText) => {},
                 (
-                    FieldSlotSource::GuestBody { open: actual_open, close: actual_close },
+                    FieldSlotSource::GuestBody {
+                        open: actual_open,
+                        close: actual_close,
+                        kind: actual_kind,
+                    },
                     FieldSlotSource::GuestBody {
                         open: expected_open,
                         close: expected_close,
+                        kind: expected_kind,
                     },
                 ) => {
                     assert_eq!(*actual_open, *expected_open);
                     assert_eq!(*actual_close, *expected_close);
+                    assert_eq!(*actual_kind, *expected_kind);
                 },
                 (FieldSlotSource::Param(actual), FieldSlotSource::Param(expected)) => {
                     assert!(ptr::eq(*actual, *expected));
@@ -666,6 +674,7 @@ mod tests {
                         open: id("Open"),
                         close: id("Close"),
                         bind: id("guest"),
+                        kind: DelimitedRegionKind::Flt,
                     },
                 ],
             }),
@@ -783,15 +792,17 @@ mod tests {
             open: id("FltOpenBacktick"),
             close: id("FltCloseBacktick"),
             bind: id("node"),
+            kind: DelimitedRegionKind::Flt,
         }];
         let layout = capture_layout(&[], &sp).expect("has a capture");
         assert!(layout.scope.is_none());
         assert_eq!(layout.non_scope.len(), 1);
         assert_eq!(layout.non_scope[0].name, "node");
         match &layout.non_scope[0].kind {
-            CaptureFieldKind::GuestBody { open, close } => {
+            CaptureFieldKind::GuestBody { open, close, kind } => {
                 assert_eq!(open.to_string(), "FltOpenBacktick");
                 assert_eq!(close.to_string(), "FltCloseBacktick");
+                assert_eq!(*kind, DelimitedRegionKind::Flt);
             },
             _ => panic!("expected GuestBody kind"),
         }

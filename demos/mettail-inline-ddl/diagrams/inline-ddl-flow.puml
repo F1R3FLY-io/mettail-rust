@@ -1,0 +1,40 @@
+@startuml
+title Inline MeTTaIL DDL Application — Authority and Failure Boundaries
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam ArrowColor #334155
+skinparam defaultFontColor #0F172A
+
+actor "Rholang application" as app #DBEAFE
+component "Generated nouveau\nRholang parser" as host #BFDBFE
+component "Structural DDL\nelaboration" as ddl #DDD6FE
+component "Atomic verified\nparser installation" as install #A7F3D0
+collections "Opaque handles\nLeft · Right" as handles #FBCFE8
+component "Bounded parser\nport" as parser #FEF3C7
+database "Installed-language\ntable" as table #DCFCE7
+rectangle "OUT\naccepted · rejected\natomic error" as out #E0E7FF
+rectangle "Invalid two-theory batch" as invalid #FEE2E2
+
+app --> host : parse complete source once
+host --> ddl : DdlModule / DdlTheory AST
+ddl --> install : canonical LanguageCore batch
+install --> table : one all-or-none commit
+install --> handles : mint only after commit
+handles --> parser : handle + explicit category + text
+parser --> table : authorize Parse before and after
+parser --> out : classified result; no reflected AST
+app --> invalid : submit valid prefix + invalid suffix
+invalid -[#DC2626]-> install : validation refusal
+install -[#DC2626,dashed]-> out : error; publish no prefix
+
+legend right
+  |= Color |= Meaning |
+  |<#BFDBFE>| host-language parsing |
+  |<#DDD6FE>| structural canonicalization |
+  |<#A7F3D0>| atomic admission |
+  |<#FBCFE8>| unforgeable authority |
+  |<#FEF3C7>| bounded recognition |
+  |<#FEE2E2>| rejected batch |
+endlegend
+@enduml

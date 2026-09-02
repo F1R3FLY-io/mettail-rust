@@ -1,4 +1,5 @@
 use super::*;
+use crate::grammar::DelimitedRegionKind;
 use proc_macro2::{Delimiter, Ident, Span, TokenStream, TokenTree};
 
 fn ident(name: &str) -> Ident {
@@ -342,8 +343,10 @@ fn recursive_syntax_exprs(exprs: &[SyntaxExpr], out: &mut String) {
                 }
                 out.push(')');
             },
-            SyntaxExpr::GuestBody { open, close, bind } => {
+            SyntaxExpr::GuestBody { open, close, bind, kind } => {
                 out.push_str("guestbody(");
+                out.push_str(kind.intrinsic());
+                out.push(',');
                 push_ident(out, bind);
                 out.push(',');
                 push_ident(out, open);
@@ -774,6 +777,7 @@ fn iterative_identity_matches_recursive_oracles() {
                     open: ident("Open"),
                     close: ident("Close"),
                     bind: ident("guest"),
+                    kind: DelimitedRegionKind::Flt,
                 },
                 SyntaxExpr::Op(PatternOp::Opt {
                     inner: vec![SyntaxExpr::Param(ident("k"))],

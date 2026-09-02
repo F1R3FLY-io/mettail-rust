@@ -14,7 +14,7 @@ use mettail_ast::{
 };
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::LitStr;
+use syn::{LitByteStr, LitStr};
 
 fn collection_type_name(coll_type: &CollectionType) -> &'static str {
     match coll_type {
@@ -105,6 +105,7 @@ pub fn generate_metadata(
     // derivation every lowering consumer shares.
     let lowering_disposition_defs =
         crate::gen::runtime::disposition::emit_disposition_defs(lowering_dispositions);
+    let semantic_artifact_methods = generate_semantic_artifact_methods(language);
 
     Ok(quote! {
         /// Static metadata for the #name language
@@ -120,6 +121,8 @@ pub fn generate_metadata(
             fn definition_source(&self) -> Option<&'static str> {
                 Some(#source_lit)
             }
+
+            #semantic_artifact_methods
 
             fn types(&self) -> &'static [mettail_runtime::TypeDef] {
                 #type_defs
@@ -176,6 +179,92 @@ pub fn generate_metadata(
             }
         }
     })
+}
+
+fn generate_semantic_artifact_methods(language: &LanguageDef) -> TokenStream {
+    use crate::gen::runtime::dovetail_report::semantic_adapter::{
+        derive_semantic_artifacts, SemanticAdapterLayout,
+    };
+
+    let result = SemanticAdapterLayout::derive(language)
+        .and_then(|layout| derive_semantic_artifacts(language, &layout));
+    let artifacts = match result {
+        Ok(artifacts) => artifacts,
+        Err(error) => {
+            let refusal = LitStr::new(&error.to_string(), Span::call_site());
+            return quote! {
+                fn generated_semantic_artifact_refusal_v1(&self) -> Option<&'static str> {
+                    Some(#refusal)
+                }
+            };
+        },
+    };
+
+    let grammar = match postcard::to_allocvec(artifacts.grammar()) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let refusal = LitStr::new(
+                &format!("GrammarCore artifact encoding failed: {error}"),
+                Span::call_site(),
+            );
+            return quote! {
+                fn generated_semantic_artifact_refusal_v1(&self) -> Option<&'static str> {
+                    Some(#refusal)
+                }
+            };
+        },
+    };
+    let signature = match postcard::to_allocvec(artifacts.signature()) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let refusal = LitStr::new(
+                &format!("semantic-signature artifact encoding failed: {error}"),
+                Span::call_site(),
+            );
+            return quote! {
+                fn generated_semantic_artifact_refusal_v1(&self) -> Option<&'static str> {
+                    Some(#refusal)
+                }
+            };
+        },
+    };
+    let bindings = mettail_grammar_core::RuntimeCapabilityBindings::default();
+    let machine = match artifacts.machine().encode(
+        artifacts.signature(),
+        artifacts.grammar(),
+        &bindings,
+        mettail_grammar_core::SemanticMachineAdmissionLimits::default(),
+    ) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let refusal = LitStr::new(
+                &format!("semantic-machine artifact encoding failed: {error:?}"),
+                Span::call_site(),
+            );
+            return quote! {
+                fn generated_semantic_artifact_refusal_v1(&self) -> Option<&'static str> {
+                    Some(#refusal)
+                }
+            };
+        },
+    };
+
+    let grammar = LitByteStr::new(&grammar, Span::call_site());
+    let signature = LitByteStr::new(&signature, Span::call_site());
+    let machine = LitByteStr::new(&machine, Span::call_site());
+    quote! {
+        fn generated_semantic_artifacts_v1(
+            &self,
+        ) -> Option<mettail_runtime::GeneratedSemanticArtifactBytesV1> {
+            Some(mettail_runtime::GeneratedSemanticArtifactBytesV1 {
+                semantic_key_abi:
+                    mettail_runtime::GeneratedSemanticKeyAbiV1::StructuralV2,
+                grammar_core_postcard: #grammar,
+                semantic_signature_postcard: #signature,
+                semantic_machine_image: #machine,
+            })
+        }
+    }
 }
 
 /// Build the reflection's binding-power table, or REFUSE.
@@ -392,8 +481,10 @@ fn append_syntax_string(result: &mut String, mut jobs: Vec<SyntaxStringJob<'_>>)
                 }
                 result.push_str(&name.to_string());
             },
-            SyntaxStringJob::Expr(SyntaxExpr::GuestBody { open, close, bind }) => {
-                result.push_str("*flt(");
+            SyntaxStringJob::Expr(SyntaxExpr::GuestBody { open, close, bind, kind }) => {
+                result.push('*');
+                result.push_str(kind.intrinsic());
+                result.push('(');
                 result.push_str(&bind.to_string());
                 result.push(',');
                 result.push_str(&open.to_string());
@@ -1726,8 +1817,8 @@ fn syntax_expr_to_display(expr: &SyntaxExpr) -> String {
             Some(b) => format!("{}@{}", b, name),
             None => name.to_string(),
         },
-        SyntaxExpr::GuestBody { open, close, bind } => {
-            format!("*flt({},{},{})", bind, open, close)
+        SyntaxExpr::GuestBody { open, close, bind, kind } => {
+            format!("*{}({},{},{})", kind.intrinsic(), bind, open, close)
         },
     }
 }
@@ -1900,6 +1991,30 @@ mod tests {
             element: Box::new(TypeExpr::Base(elem)),
         };
         assert_eq!(type_expr_to_string(&ty), "HashMap(Proc)");
+    }
+
+    #[test]
+    fn metadata_embeds_checked_source_neutral_semantic_artifacts() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: MetadataArtifact,
+                types { Proc },
+                terms {
+                    Zero . |- "0" : Proc;
+                    Pair . left:Proc, right:Proc |- "(" left "," right ")" : Proc;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("metadata artifact fixture must parse");
+        let methods = generate_semantic_artifact_methods(&language).to_string();
+        assert!(methods.contains("generated_semantic_artifacts_v1"));
+        assert!(methods.contains("grammar_core_postcard"));
+        assert!(methods.contains("semantic_signature_postcard"));
+        assert!(methods.contains("semantic_machine_image"));
+        assert!(methods.contains("GeneratedSemanticKeyAbiV1 :: StructuralV2"));
+        assert!(!methods.contains("generated_semantic_artifact_refusal_v1"));
     }
 
     #[test]

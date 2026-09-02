@@ -1,4 +1,5 @@
 use super::*;
+use crate::automata::codegen::terminal_to_variant_name;
 
 #[test]
 fn test_prediction_wfst_builder_basic() {
@@ -1899,11 +1900,12 @@ fn test_enrich_terminal_second_items() {
         },
     ];
 
+    let if_variant = terminal_to_variant_name("if");
     let token_map =
-        TokenIdMap::from_names(vec!["KwIf", "LParen", "Bang"].into_iter().map(String::from));
+        TokenIdMap::from_names(vec![if_variant.clone(), "LParen".to_string(), "Bang".to_string()]);
     let mut builder = PredictionWfstBuilder::new("Stmt", token_map);
     builder.add_action(
-        "KwIf",
+        &if_variant,
         DispatchAction::Direct {
             rule_label: "IfThen".to_string(),
             parse_fn: "p1".to_string(),
@@ -1911,7 +1913,7 @@ fn test_enrich_terminal_second_items() {
         TropicalWeight::new(0.0),
     );
     builder.add_action(
-        "KwIf",
+        &if_variant,
         DispatchAction::Direct {
             rule_label: "IfNot".to_string(),
             parse_fn: "p2".to_string(),
@@ -1930,12 +1932,12 @@ fn test_enrich_terminal_second_items() {
 
     let wfst = wfsts.get("Stmt").expect("Stmt WFST exists");
     // Should be able to resolve via two-token query
-    let results = wfst.predict_two_token("KwIf", "LParen");
-    assert_eq!(results.len(), 1, "KwIf + LParen should resolve to IfThen");
+    let results = wfst.predict_two_token(&if_variant, "LParen");
+    assert_eq!(results.len(), 1, "`if` + LParen should resolve to IfThen");
     assert_eq!(results[0].action.rule_label(), "IfThen");
 
-    let results = wfst.predict_two_token("KwIf", "Bang");
-    assert_eq!(results.len(), 1, "KwIf + Bang should resolve to IfNot");
+    let results = wfst.predict_two_token(&if_variant, "Bang");
+    assert_eq!(results.len(), 1, "`if` + Bang should resolve to IfNot");
     assert_eq!(results[0].action.rule_label(), "IfNot");
 }
 
@@ -1997,10 +1999,11 @@ fn test_enrich_nonterminal_first_set_expansion() {
     list_first.insert("Ident"); // overlaps with Expr
     first_sets_overlapping.insert("List".to_string(), list_first);
 
-    let token_map = TokenIdMap::from_names(vec!["KwFloat"].into_iter().map(String::from));
+    let float_variant = terminal_to_variant_name("float");
+    let token_map = TokenIdMap::from_names(vec![float_variant.clone()]);
     let mut builder = PredictionWfstBuilder::new("Val", token_map);
     builder.add_action(
-        "KwFloat",
+        &float_variant,
         DispatchAction::Direct {
             rule_label: "FloatExpr".to_string(),
             parse_fn: "p1".to_string(),
@@ -2008,7 +2011,7 @@ fn test_enrich_nonterminal_first_set_expansion() {
         TropicalWeight::new(0.0),
     );
     builder.add_action(
-        "KwFloat",
+        &float_variant,
         DispatchAction::Direct {
             rule_label: "FloatList".to_string(),
             parse_fn: "p2".to_string(),
@@ -2079,10 +2082,10 @@ fn test_enrich_nonterminal_first_set_expansion() {
     list_first2.insert("Ident");
     first_sets_disjoint.insert("List".to_string(), list_first2);
 
-    let token_map2 = TokenIdMap::from_names(vec!["KwFloat"].into_iter().map(String::from));
+    let token_map2 = TokenIdMap::from_names(vec![float_variant.clone()]);
     let mut builder2 = PredictionWfstBuilder::new("Val", token_map2);
     builder2.add_action(
-        "KwFloat",
+        &float_variant,
         DispatchAction::Direct {
             rule_label: "FloatExpr".to_string(),
             parse_fn: "p1".to_string(),
@@ -2090,7 +2093,7 @@ fn test_enrich_nonterminal_first_set_expansion() {
         TropicalWeight::new(0.0),
     );
     builder2.add_action(
-        "KwFloat",
+        &float_variant,
         DispatchAction::Direct {
             rule_label: "FloatList".to_string(),
             parse_fn: "p2".to_string(),
@@ -2110,11 +2113,11 @@ fn test_enrich_nonterminal_first_set_expansion() {
 
     // Verify: Integer → FloatExpr, LParen → FloatExpr, LBracket → FloatList, Ident → FloatList
     let wfst = wfsts_disjoint.get("Val").expect("Val WFST exists");
-    let r = wfst.predict_two_token("KwFloat", "Integer");
+    let r = wfst.predict_two_token(&float_variant, "Integer");
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].action.rule_label(), "FloatExpr");
 
-    let r = wfst.predict_two_token("KwFloat", "LBracket");
+    let r = wfst.predict_two_token(&float_variant, "LBracket");
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].action.rule_label(), "FloatList");
 }
@@ -2122,7 +2125,7 @@ fn test_enrich_nonterminal_first_set_expansion() {
 #[test]
 fn test_enrich_mixed_terminal_nonterminal() {
     // Mix of terminal and nonterminal second items
-    // terminal_to_variant_name("cmd") = "KwCmd"
+    // The dispatch identity is derived from the source literal.
     use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
     use crate::prediction::FirstSet;
 
@@ -2170,11 +2173,11 @@ fn test_enrich_mixed_terminal_nonterminal() {
     expr_first.insert("Integer");
     first_sets.insert("Expr".to_string(), expr_first);
 
-    // terminal_to_variant_name("cmd") = "KwCmd"
-    let token_map = TokenIdMap::from_names(vec!["KwCmd"].into_iter().map(String::from));
+    let cmd_variant = terminal_to_variant_name("cmd");
+    let token_map = TokenIdMap::from_names(vec![cmd_variant.clone()]);
     let mut builder = PredictionWfstBuilder::new("Cmd", token_map);
     builder.add_action(
-        "KwCmd",
+        &cmd_variant,
         DispatchAction::Direct {
             rule_label: "CmdParen".to_string(),
             parse_fn: "p1".to_string(),
@@ -2182,7 +2185,7 @@ fn test_enrich_mixed_terminal_nonterminal() {
         TropicalWeight::new(0.0),
     );
     builder.add_action(
-        "KwCmd",
+        &cmd_variant,
         DispatchAction::Direct {
             rule_label: "CmdExpr".to_string(),
             parse_fn: "p2".to_string(),
@@ -2197,11 +2200,11 @@ fn test_enrich_mixed_terminal_nonterminal() {
     assert_eq!(added, 2, "mixed terminal+nonterminal should add 2 paths");
 
     let wfst = wfsts.get("Cmd").expect("Cmd WFST exists");
-    let r = wfst.predict_two_token("KwCmd", "LParen");
+    let r = wfst.predict_two_token(&cmd_variant, "LParen");
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].action.rule_label(), "CmdParen");
 
-    let r = wfst.predict_two_token("KwCmd", "Integer");
+    let r = wfst.predict_two_token(&cmd_variant, "Integer");
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].action.rule_label(), "CmdExpr");
 }

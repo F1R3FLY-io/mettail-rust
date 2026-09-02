@@ -31,6 +31,7 @@
 //! function calls.
 
 use crate::gen::native::native_type_to_string;
+use crate::gen::native_carrier::{NativeCarrierStorage, NativeRecursiveCarrier};
 use crate::gen::term_ops::subst::{rule_to_variant_kind, FieldInfo, VariantKind};
 use crate::gen::{generate_literal_label, generate_var_label};
 use mettail_ast::language::LanguageDef;
@@ -502,9 +503,10 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                     // every slot. `{:?}` on the message renders it as an escaped Rust
                     // string literal, which the pattern's `Debug` form needs.
                     let args: Vec<String> = match crate::gen::term_gen::ident_samples(language) {
-                        Ok(samples) => (0..fields.len())
-                            .map(|_| {
-                                format!(
+                        Ok(samples) => fields
+                            .iter()
+                            .map(|field| {
+                                let sample = format!(
                                     "[{}][(reader.next_byte() as usize) % {}].to_string()",
                                     samples
                                         .iter()
@@ -512,7 +514,14 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                                         .collect::<Vec<_>>()
                                         .join(", "),
                                     samples.len(),
-                                )
+                                );
+                                if field.is_optional {
+                                    format!(
+                                        "if reader.next_byte() & 1 == 0 {{ None }} else {{ Some({sample}) }}"
+                                    )
+                                } else {
+                                    sample
+                                }
                             })
                             .collect(),
                         Err(message) => (0..fields.len())
@@ -544,6 +553,11 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                     &element_cat.to_string(),
                     coll_type,
                 );
+                recursive.push((label_str, code));
+            },
+            VariantKind::RecursiveNativeLiteral { label, carrier } => {
+                let label_str = label.to_string();
+                let code = generate_recursive_native_direct_build(&cat, &label_str, carrier);
                 recursive.push((label_str, code));
             },
             VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
@@ -1027,6 +1041,7 @@ fn generate_direct_recursive_build(
     let variant = variants.iter().find(|v| match v {
         VariantKind::Regular { label: l, .. }
         | VariantKind::Collection { label: l, .. }
+        | VariantKind::RecursiveNativeLiteral { label: l, .. }
         | VariantKind::Binder { label: l, .. }
         | VariantKind::MultiBinder { label: l, .. } => l.to_string() == label,
         _ => false,
@@ -1049,6 +1064,15 @@ fn generate_direct_recursive_build(
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
             let mut code = String::new();
+            let token_text_field_count = fields
+                .iter()
+                .filter(|field| {
+                    field.opaque_leaf
+                        == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+                })
+                .count();
+            let all_token_text_fields_are_ident_params =
+                ident_param_count_for(cat, &label.to_string(), language) == token_text_field_count;
 
             let mut field_exprs = Vec::new();
             for (i, field) in fields.iter().enumerate() {
@@ -1208,6 +1232,29 @@ fn generate_direct_recursive_build(
                         i = i,
                     ));
                     field_exprs.push(format!("f{}", i));
+                } else if field.is_optional
+                    && field.opaque_leaf
+                        == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+                    && all_token_text_fields_are_ident_params
+                {
+                    let initializer = match crate::gen::term_gen::ident_samples(language) {
+                        Ok(samples) => {
+                            let pool = samples
+                                .iter()
+                                .map(|s| format!("{s:?}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!(
+                                "[{pool}][(reader.next_byte() as usize) % {n}].to_string()",
+                                n = samples.len(),
+                            )
+                        },
+                        Err(message) => format!("compile_error!({message:?})"),
+                    };
+                    code.push_str(&format!(
+                        "            let f{i}: Option<String> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some({initializer}) }};\n"
+                    ));
+                    field_exprs.push(format!("f{}", i));
                 } else if field.is_optional {
                     // F7: Opt-Group — Optional fields visit BOTH None
                     // and Some(...) arms based on a tape byte. Spec
@@ -1223,7 +1270,7 @@ fn generate_direct_recursive_build(
                     field_exprs.push(format!("f{}", i));
                 } else if field.opaque_leaf
                     == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
-                    && ident_param_count_for(cat, &label.to_string(), language) > 0
+                    && all_token_text_fields_are_ident_params
                 {
                     // (A4) A token-text leaf (`m:Ident`, `v@Tok`) is a BARE `String`, never
                     // `Arc<Cat>`, and there is no `build_<cat>_from_tape` for it — it is not
@@ -1345,6 +1392,10 @@ fn generate_direct_recursive_build(
             }
         },
 
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            generate_recursive_native_direct_build(cat, &label.to_string(), carrier)
+        },
+
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_binder_direct_build(
                 cat,
@@ -1371,6 +1422,50 @@ fn generate_direct_recursive_build(
             format!("            build_{}_from_tape(reader, 0)\n", cat_lower)
         },
     }
+}
+
+fn generate_recursive_native_direct_build(
+    cat: &str,
+    label: &str,
+    carrier: &NativeRecursiveCarrier,
+) -> String {
+    let key_lower = carrier.key_category().to_string().to_lowercase();
+    let value_lower = carrier.value_category().to_string().to_lowercase();
+    let constructor = carrier.runtime_constructor_name();
+    let payload = match carrier.storage() {
+        NativeCarrierStorage::Direct => format!("mettail_runtime::{constructor}(pathmap, focus)"),
+        NativeCarrierStorage::Arc => {
+            format!("std::sync::Arc::new(mettail_runtime::{constructor}(pathmap, focus))")
+        },
+    };
+
+    format!(
+        r#"            let entry_count = (reader.next_byte() % 4) as usize;
+            let pathmap = match reader.next_byte() % 3 {{
+                0 => mettail_runtime::PathMapLit::Empty,
+                1 => {{
+                    let mut entries = mettail_runtime::HashMapLit::new();
+                    for _ in 0..entry_count {{
+                        entries.insert(build_{key_lower}_from_tape(reader, child_depth), ());
+                    }}
+                    mettail_runtime::PathMapLit::Set(entries)
+                }},
+                _ => {{
+                    let mut entries = mettail_runtime::HashMapLit::new();
+                    for _ in 0..entry_count {{
+                        entries.insert(
+                            build_{key_lower}_from_tape(reader, child_depth),
+                            build_{value_lower}_from_tape(reader, child_depth),
+                        );
+                    }}
+                    mettail_runtime::PathMapLit::Map(entries)
+                }},
+            }};
+            let focus_len = (reader.next_byte() % 8) as usize;
+            let focus = (0..focus_len).map(|_| reader.next_byte()).collect();
+            {cat}::{label}({payload})
+"#,
+    )
 }
 
 /// Generate direct build code for a binder variant.
@@ -2200,6 +2295,7 @@ mod tests {
                 terms {
                     Nil . |- "0" : Proc ;
                     Named . m:Ident |- "tag" m : Proc ;
+                    MaybeNamed . *opt(m:Ident) |- "maybe" *opt(m) : Proc ;
                     Call . recv:Proc, m:Ident |- "call" "(" recv "," m ")" : Proc ;
                     Guest . |- *flt(node, FltOpenBrace, FltCloseBrace) : Proc ;
                 }
@@ -2224,6 +2320,11 @@ mod tests {
             code.contains("Proc::Named("),
             "an ident-only constructor must be generated as a leaf rather than dropped:\n\
              {code}",
+        );
+        assert!(
+            code.contains("Proc::MaybeNamed(")
+                && code.contains("None } else { Some("),
+            "an optional ident-only constructor must be tape-generated as Option<String> in both arms:\n{code}",
         );
         // CONTROL: the guest-body variant stays out.
         assert!(

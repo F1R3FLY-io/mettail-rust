@@ -90,6 +90,8 @@ pub mod ast;
 pub mod backend;
 pub mod dataflow;
 pub mod deadlock;
+mod dynamic_admission;
+mod dynamic_reflection;
 pub mod flip;
 /// Guard CLOSEDNESS — the two pure `Par` predicates (`is_binder_closed`, `all_operands_ground`)
 /// that gate compile-time guard discharge. They live here, at the bottom of the one-way crate
@@ -181,6 +183,10 @@ pub use dataflow::{
 pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,
     ContractFlow,
+};
+pub use dynamic_admission::{DynamicAdmissionCompileError, DynamicSyntaxAdmission};
+pub use dynamic_reflection::{
+    dynamic_syntax_to_ground_term, dynamic_template_hole_categories, DynamicReflectionError,
 };
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use guard_closure::{all_operands_ground, is_binder_closed};
@@ -308,7 +314,10 @@ pub use rho_net_subst_trs::{
 };
 pub use system_process_band::{
     check_body_refs_pairwise_distinct, fingerprint_digest, BandAllocationError, SystemProcessBand,
-    HELD_FOLD_BAND, LOOKAHEAD_BAND, MTL_FOLD_CHANNEL_TAG, MTL_LOOKAHEAD_CHANNEL_TAG,
+    HELD_FOLD_BAND, LANGUAGE_FLT_CONSTRUCT_BAND, LANGUAGE_FLT_PATTERN_BAND, LANGUAGE_INSTALL_BAND,
+    LANGUAGE_PARSE_BAND, LOOKAHEAD_BAND, MTL_FOLD_CHANNEL_TAG,
+    MTL_LANGUAGE_FLT_CONSTRUCT_CHANNEL_TAG, MTL_LANGUAGE_FLT_PATTERN_CHANNEL_TAG,
+    MTL_LANGUAGE_INSTALL_CHANNEL_TAG, MTL_LANGUAGE_PARSE_CHANNEL_TAG, MTL_LOOKAHEAD_CHANNEL_TAG,
     MTL_NATIVE_CHANNEL_TAG, MTL_NATIVE_SHIFT_CHANNEL_TAG, NATIVE_HANDLER_BAND, NATIVE_SHIFT_BAND,
 };
 pub use validate::{

@@ -44,21 +44,33 @@ pub fn build_nfa_with_custom(
     patterns: &LiteralPatterns,
     custom_tokens: &[CustomTokenSpec],
 ) -> Nfa {
+    let trace = std::env::var_os("PRATTAIL_MACRO_TRACE").is_some();
+    macro_rules! stage {
+        ($name:expr) => {
+            if trace {
+                eprintln!("[macro-trace] lexer:nfa:{}", $name);
+            }
+        };
+    }
     let mut nfa = Nfa::new();
     let global_start = nfa.start;
 
     // Build keyword/operator trie (prefix-sharing)
     if !terminals.is_empty() {
+        stage!("keyword_trie.start");
         let trie_root = build_keyword_trie(&mut nfa, terminals);
         nfa.add_epsilon(global_start, trie_root);
+        stage!("keyword_trie.done");
     }
 
     // Build built-in character class patterns from configurable regex patterns
     let mut fragments: Vec<NfaFragment> = Vec::new();
     if needs.ident {
+        stage!("builtin.ident.start");
         let frag = regex::compile_regex(&patterns.ident, &mut nfa, TokenKind::Ident)
             .expect("ident pattern should be a valid regex");
         fragments.push(frag);
+        stage!("builtin.ident.done");
     }
     if needs.integer {
         if patterns.integer_by_category.is_empty() {
@@ -112,6 +124,9 @@ pub fn build_nfa_with_custom(
         if spec.is_builtin_override {
             continue; // Already handled via LiteralPatterns
         }
+        if trace {
+            eprintln!("[macro-trace] lexer:nfa:custom.{}.start", spec.name);
+        }
         let kind = TokenKind::Custom(spec.name.clone());
         let frag = regex::compile_regex(&spec.pattern, &mut nfa, kind).unwrap_or_else(|e| {
             panic!("custom token '{}': invalid regex '{}': {}", spec.name, spec.pattern, e)
@@ -120,6 +135,9 @@ pub fn build_nfa_with_custom(
         let accept_state = &mut nfa.states[frag.accept as usize];
         accept_state.weight = TropicalWeight::from_priority(spec.priority);
         fragments.push(frag);
+        if trace {
+            eprintln!("[macro-trace] lexer:nfa:custom.{}.done", spec.name);
+        }
     }
 
     // Combine character-class fragments via alternation

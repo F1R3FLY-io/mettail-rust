@@ -25,7 +25,25 @@ mod acdemo;
 acdemo::acdemo_generated_tests!(crate::acdemo);
 
 use acdemo::{AcDemoLanguage, AcDemoTerm, AcDemoTermInner, Proc};
-use mettail_runtime::RuntimeReflectedSubterm;
+use mettail_runtime::{GeneratedSemanticKeyAbiV1, Language, RuntimeReflectedSubterm};
+
+#[test]
+fn acdemo_embeds_checked_semantic_artifacts_for_whole_bag_map_and_pathmap_constructors() {
+    let metadata = AcDemoLanguage.metadata();
+    let artifacts = metadata
+        .generated_semantic_artifacts_v1()
+        .unwrap_or_else(|| {
+            panic!(
+                "the whole-bag, whole-map, and mode-preserving PathMap projections must be exactly representable: {:?}",
+                metadata.generated_semantic_artifact_refusal_v1()
+            )
+        });
+    assert!(!artifacts.grammar_core_postcard.is_empty());
+    assert!(!artifacts.semantic_signature_postcard.is_empty());
+    assert!(!artifacts.semantic_machine_image.is_empty());
+    assert_eq!(artifacts.semantic_key_abi, GeneratedSemanticKeyAbiV1::StructuralV2);
+    assert_eq!(metadata.generated_semantic_artifact_refusal_v1(), None);
+}
 
 /// A σ sub-term is a "bare element" iff it is a nullary constructor whose label is one of the
 /// AcDemo `Proc` operands `A`/`B`/`C` (the leaves the bag holds).

@@ -99,6 +99,8 @@ pub mod cursor_id;
 /// log32 N) without sweeping the visited set at Fork. Substage 1 is
 /// dead code; Substage 2 introduces mirror-write feature gate.
 pub mod cursor_store;
+/// Deterministic final-election evidence, kept separate from semiring cost.
+pub mod derivation_rank;
 /// Phase F.13 H12 Tomita-GLR dispatch-cohort sharing. Shares
 /// cross-cat-projection sub-parse work across cohort members at the
 /// same `(pos, source_src_idx, inner_cur_bp)` key. Each cohort member
@@ -213,6 +215,7 @@ pub mod behavioral_pred;
 
 /// Railroad diagram generation from grammar specifications.
 pub mod railroad;
+pub mod runtime_backend;
 
 /// Graph-Structured Stack for GLL parsing.
 pub mod gss;
@@ -418,7 +421,9 @@ pub mod predicate_dispatch;
 /// LogicT fair backtracking search framework and ConstraintTheory trait.
 /// Implements msplit-based LogicT (Kiselyov et al., ICFP 2005) for fair
 /// disjunction and conjunction. Provides the ConstraintTheory trait for
-/// pluggable constraint domains and TheoryAlgebra bridge to BooleanAlgebra.
+/// pluggable constraint domains, a reject-safe `TheoryAlgebra` with explicit
+/// exhaustion evidence, and a classical bridge gated by
+/// `DecidableConstraintTheory`.
 pub mod logict;
 
 /// OSLF Phase 8: SMT-backed [`ConstraintTheory`](logict::ConstraintTheory) via the
@@ -1128,9 +1133,9 @@ pub enum SyntaxItemSpec {
     NonTerminal { category: String, param_name: String },
     /// An identifier to capture.
     IdentCapture { param_name: String },
-    /// L9-3: consume ONE token of a specific custom KIND, binding its text.
-    /// `kind_name` is the declared token kind (matched via `token_to_kind ==
-    /// TokenKind::Custom(kind_name)`); `param_name` is the capture slot (a
+    /// L9-3: consume one token from a named builtin/custom token family, binding its text.
+    /// `kind_name` is matched through the runtime token-family predicate;
+    /// `param_name` is the capture slot (a
     /// synthesized `__tok_<name>` when the source had no `@`-bind). Parallel to
     /// `IdentCapture` (a terminal-ish leaf — no nonterminal target, no field
     /// sort), but gated on a specific kind rather than the generic `Ident`.
@@ -1560,4 +1565,18 @@ pub fn generate_parser_with_analysis(
     spec: &LanguageSpec,
 ) -> Result<(TokenStream, PipelineAnalysis), String> {
     pipeline::run_pipeline_with_analysis(spec)
+}
+
+/// Generate a complete parser while exporting prediction-WFST tooling only
+/// for the named categories.
+///
+/// The filter does not remove categories, productions, parse tables, recovery
+/// data, or analysis. It solely omits otherwise-unreferenced
+/// `PREDICTION_<Category>` static data from the generated public surface.
+#[inline]
+pub fn generate_parser_with_analysis_for_prediction_exports(
+    spec: &LanguageSpec,
+    exported_categories: &[String],
+) -> Result<(TokenStream, PipelineAnalysis), String> {
+    pipeline::run_pipeline_with_analysis_for_prediction_exports(spec, Some(exported_categories))
 }

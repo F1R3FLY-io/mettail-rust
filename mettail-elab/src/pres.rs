@@ -20,8 +20,11 @@
 //! shared rather than duplicated.
 
 use crate::ast::*;
+use crate::canonical::RhoValue;
 use crate::diag::{Diag, DiagKind};
 use crate::lex::Span;
+use mettail_grammar_core::LanguageCoreV1;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct ElemId(pub u64);
@@ -52,6 +55,12 @@ pub struct RwEntry {
     pub rw: RewriteDecl,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CanonicalFragment {
+    pub id: ElemId,
+    pub value: RhoValue,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Presentation {
     pub types: Vec<CatEntry>,
@@ -60,6 +69,16 @@ pub struct Presentation {
     pub terms: Vec<TermEntry>,
     pub equations: Vec<EqEntry>,
     pub rewrites: Vec<RwEntry>,
+    pub(crate) export_origins: Vec<ElemId>,
+    pub(crate) canonical_fragments: Vec<CanonicalFragment>,
+    pub(crate) data_derived: BTreeSet<ElemId>,
+    pub(crate) data_derived_exports: BTreeSet<ElemId>,
+    pub(crate) opaque_categories: BTreeSet<String>,
+    pub(crate) opaque_labels: BTreeSet<String>,
+    /// A completed language embedded by the closed exact-core `Data(v)` arm.
+    /// It is an object boundary, not an open fragment: builders and unequal
+    /// theory algebra cannot inspect or silently rewrite it.
+    pub(crate) completed_core: Option<LanguageCoreV1>,
 }
 
 impl Presentation {
@@ -67,11 +86,29 @@ impl Presentation {
         Presentation::default()
     }
 
+    pub(crate) fn is_initial_open(&self) -> bool {
+        self.completed_core.is_none()
+            && self.types.is_empty()
+            && self.exports.is_empty()
+            && self.terms.is_empty()
+            && self.equations.is_empty()
+            && self.rewrites.is_empty()
+            && self.canonical_fragments.is_empty()
+            && self.data_derived.is_empty()
+            && self.data_derived_exports.is_empty()
+            && self.opaque_categories.is_empty()
+            && self.opaque_labels.is_empty()
+    }
+
+    pub(crate) fn completed_core(&self) -> Option<&LanguageCoreV1> {
+        self.completed_core.as_ref()
+    }
+
     pub fn has_cat(&self, c: &str) -> bool {
-        self.types.iter().any(|e| e.cat == c)
+        self.types.iter().any(|e| e.cat == c) || self.opaque_categories.contains(c)
     }
     pub fn has_label(&self, l: &str) -> bool {
-        self.terms.iter().any(|e| e.rule.label == l)
+        self.terms.iter().any(|e| e.rule.label == l) || self.opaque_labels.contains(l)
     }
     pub fn term(&self, l: &str) -> Option<&TermEntry> {
         self.terms.iter().find(|e| e.rule.label == l)
@@ -83,6 +120,14 @@ impl Presentation {
     /// Categories visible to a consumer, under their exported names. A theory
     /// with no `Exports` block exports everything `Types` declares (G1).
     pub fn visible_cats(&self) -> Vec<Cat> {
+        if let Some(core) = &self.completed_core {
+            return core
+                .grammar
+                .categories
+                .iter()
+                .map(|category| category.name.clone())
+                .collect();
+        }
         if self.exports.is_empty() {
             self.types.iter().map(|e| e.cat.clone()).collect()
         } else {
@@ -94,6 +139,19 @@ impl Presentation {
 
     /// D3 join: union, identifying elements that share an `ElemId`.
     pub fn join(&self, other: &Presentation, span: Span) -> Result<Presentation, Diag> {
+        match (&self.completed_core, &other.completed_core) {
+            (Some(left), Some(right)) if left == right => return Ok(self.clone()),
+            (Some(_), None) if other.is_initial_open() => return Ok(self.clone()),
+            (None, Some(_)) if self.is_initial_open() => return Ok(other.clone()),
+            (Some(_), _) | (_, Some(_)) => {
+                return Err(Diag::new(
+                    DiagKind::JoinCollision,
+                    "a completed LanguageCore may join only with itself or Empty",
+                    span,
+                ))
+            },
+            (None, None) => {},
+        }
         let mut out = self.clone();
 
         for c in &other.types {
@@ -158,21 +216,82 @@ impl Presentation {
             }
         }
         for ex in &other.exports {
+            let index = other
+                .exports
+                .iter()
+                .position(|value| value == ex)
+                .unwrap_or(0);
+            let origin = other
+                .export_origins
+                .get(index)
+                .copied()
+                .unwrap_or(ElemId(0));
+            if let Some(existing) = out.exports.iter().position(|value| value == ex) {
+                if out.export_origins.get(existing).copied() == Some(origin) {
+                    continue;
+                }
+            }
             if !out.exports.contains(ex) {
                 out.exports.push(ex.clone());
+                out.export_origins.push(origin);
             }
         }
+        for fragment in &other.canonical_fragments {
+            match out
+                .canonical_fragments
+                .iter()
+                .find(|value| value.id == fragment.id)
+            {
+                Some(existing) if existing.value == fragment.value => {},
+                Some(_) => {
+                    return Err(Diag::new(
+                        DiagKind::JoinCollision,
+                        format!(
+                            "canonical fragment {:?} differs along the two join paths",
+                            fragment.id
+                        ),
+                        span,
+                    ))
+                },
+                None => out.canonical_fragments.push(fragment.clone()),
+            }
+        }
+        out.data_derived.extend(other.data_derived.iter().copied());
+        out.data_derived_exports
+            .extend(other.data_derived_exports.iter().copied());
+        out.opaque_categories
+            .extend(other.opaque_categories.iter().cloned());
+        out.opaque_labels
+            .extend(other.opaque_labels.iter().cloned());
         Ok(out)
     }
 
     /// Meet: the common fragment, by origin.
-    pub fn meet(&self, other: &Presentation) -> Presentation {
+    pub fn meet(&self, other: &Presentation, span: Span) -> Result<Presentation, Diag> {
+        match (&self.completed_core, &other.completed_core) {
+            (Some(left), Some(right)) if left == right => return Ok(self.clone()),
+            (Some(_), None) if other.is_initial_open() => return Ok(Presentation::empty()),
+            (None, Some(_)) if self.is_initial_open() => return Ok(Presentation::empty()),
+            (Some(_), _) | (_, Some(_)) => {
+                return Err(Diag::new(
+                    DiagKind::JoinCollision,
+                    "a completed LanguageCore has a meet only with itself or Empty",
+                    span,
+                ))
+            },
+            (None, None) => {},
+        }
         let keep = |id: ElemId, ids: &[ElemId]| ids.contains(&id);
         let ot: Vec<ElemId> = other.types.iter().map(|e| e.id).collect();
         let om: Vec<ElemId> = other.terms.iter().map(|e| e.id).collect();
         let oe: Vec<ElemId> = other.equations.iter().map(|e| e.id).collect();
         let orw: Vec<ElemId> = other.rewrites.iter().map(|e| e.id).collect();
-        Presentation {
+        let fragments: Vec<ElemId> = other
+            .canonical_fragments
+            .iter()
+            .map(|entry| entry.id)
+            .collect();
+        Ok(Presentation {
             types: self
                 .types
                 .iter()
@@ -203,16 +322,67 @@ impl Presentation {
                 .filter(|x| other.exports.contains(x))
                 .cloned()
                 .collect(),
-        }
+            export_origins: self
+                .export_origins
+                .iter()
+                .copied()
+                .filter(|id| other.export_origins.contains(id))
+                .collect(),
+            canonical_fragments: self
+                .canonical_fragments
+                .iter()
+                .filter(|entry| fragments.contains(&entry.id))
+                .cloned()
+                .collect(),
+            data_derived: self
+                .data_derived
+                .intersection(&other.data_derived)
+                .copied()
+                .collect(),
+            data_derived_exports: self
+                .data_derived_exports
+                .intersection(&other.data_derived_exports)
+                .copied()
+                .collect(),
+            opaque_categories: self
+                .opaque_categories
+                .intersection(&other.opaque_categories)
+                .cloned()
+                .collect(),
+            opaque_labels: self
+                .opaque_labels
+                .intersection(&other.opaque_labels)
+                .cloned()
+                .collect(),
+            completed_core: None,
+        })
     }
 
     /// Difference: everything in `self` whose origin is not in `other`.
-    pub fn diff(&self, other: &Presentation) -> Presentation {
+    pub fn diff(&self, other: &Presentation, span: Span) -> Result<Presentation, Diag> {
+        match (&self.completed_core, &other.completed_core) {
+            (Some(left), Some(right)) if left == right => return Ok(Presentation::empty()),
+            (Some(_), None) if other.is_initial_open() => return Ok(self.clone()),
+            (None, Some(_)) if self.is_initial_open() => return Ok(Presentation::empty()),
+            (Some(_), _) | (_, Some(_)) => {
+                return Err(Diag::new(
+                    DiagKind::JoinCollision,
+                    "a completed LanguageCore has a difference only with itself or Empty",
+                    span,
+                ))
+            },
+            (None, None) => {},
+        }
         let ot: Vec<ElemId> = other.types.iter().map(|e| e.id).collect();
         let om: Vec<ElemId> = other.terms.iter().map(|e| e.id).collect();
         let oe: Vec<ElemId> = other.equations.iter().map(|e| e.id).collect();
         let orw: Vec<ElemId> = other.rewrites.iter().map(|e| e.id).collect();
-        Presentation {
+        let fragments: Vec<ElemId> = other
+            .canonical_fragments
+            .iter()
+            .map(|entry| entry.id)
+            .collect();
+        Ok(Presentation {
             types: self
                 .types
                 .iter()
@@ -243,7 +413,40 @@ impl Presentation {
                 .filter(|x| !other.exports.contains(x))
                 .cloned()
                 .collect(),
-        }
+            export_origins: self
+                .export_origins
+                .iter()
+                .copied()
+                .filter(|id| !other.export_origins.contains(id))
+                .collect(),
+            canonical_fragments: self
+                .canonical_fragments
+                .iter()
+                .filter(|entry| !fragments.contains(&entry.id))
+                .cloned()
+                .collect(),
+            data_derived: self
+                .data_derived
+                .difference(&other.data_derived)
+                .copied()
+                .collect(),
+            data_derived_exports: self
+                .data_derived_exports
+                .difference(&other.data_derived_exports)
+                .copied()
+                .collect(),
+            opaque_categories: self
+                .opaque_categories
+                .difference(&other.opaque_categories)
+                .cloned()
+                .collect(),
+            opaque_labels: self
+                .opaque_labels
+                .difference(&other.opaque_labels)
+                .cloned()
+                .collect(),
+            completed_core: None,
+        })
     }
 
     // ------------------------------------------------------------ rendering
@@ -314,24 +517,56 @@ pub fn render_rule(r: &TermRule) -> String {
 }
 
 pub fn render_ast(a: &Ast) -> String {
-    match a {
-        Ast::Var(n, _) => n.clone(),
-        Ast::Remainder(n, _) => format!("...{n}"),
-        Ast::Abs(b, body, _) => format!("^{b}.{}", render_ast(body)),
-        Ast::Subst(abs, arg, _) => format!("(subst {} {})", render_ast(abs), render_ast(arg)),
-        Ast::Coll(xs, _) => {
-            let parts: Vec<String> = xs.iter().map(render_ast).collect();
-            format!("{{{}}}", parts.join(", "))
-        },
-        Ast::SExp(l, args, _) => {
-            if args.is_empty() {
-                format!("({l})")
-            } else {
-                let parts: Vec<String> = args.iter().map(render_ast).collect();
-                format!("({l} {})", parts.join(" "))
-            }
-        },
+    enum Task<'a> {
+        Ast(&'a Ast),
+        Text(&'a str),
     }
+
+    let mut output = String::new();
+    let mut tasks = vec![Task::Ast(a)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Text(text) => output.push_str(text),
+            Task::Ast(Ast::Var(name, _)) => output.push_str(name),
+            Task::Ast(Ast::Remainder(name, _)) => {
+                output.push_str("...");
+                output.push_str(name);
+            },
+            Task::Ast(Ast::Abs(binder, body, _)) => {
+                output.push('^');
+                output.push_str(binder);
+                output.push('.');
+                tasks.push(Task::Ast(body));
+            },
+            Task::Ast(Ast::Subst(abstraction, argument, _)) => {
+                output.push_str("(subst ");
+                tasks.push(Task::Text(")"));
+                tasks.push(Task::Ast(argument));
+                tasks.push(Task::Text(" "));
+                tasks.push(Task::Ast(abstraction));
+            },
+            Task::Ast(Ast::Coll(elements, _)) => {
+                output.push('{');
+                tasks.push(Task::Text("}"));
+                for (index, element) in elements.iter().enumerate().rev() {
+                    tasks.push(Task::Ast(element));
+                    if index > 0 {
+                        tasks.push(Task::Text(", "));
+                    }
+                }
+            },
+            Task::Ast(Ast::SExp(label, arguments, _)) => {
+                output.push('(');
+                output.push_str(label);
+                tasks.push(Task::Text(")"));
+                for argument in arguments.iter().rev() {
+                    tasks.push(Task::Ast(argument));
+                    tasks.push(Task::Text(" "));
+                }
+            },
+        }
+    }
+    output
 }
 
 fn same_rule(a: &TermRule, b: &TermRule) -> bool {

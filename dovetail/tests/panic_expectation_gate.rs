@@ -441,7 +441,7 @@ fn every_unwind_interceptor_is_allowlisted_with_a_reason() {
 
     // A stale entry is as much a defect as a missing one: it means the allowlist is
     // no longer a description of the tree.
-    for (path, _) in &allowed {
+    for path in allowed.keys() {
         if !observed.contains_key(path) {
             problems.push(format!(
                 "  ★ STALE ENTRY — {path} is allowlisted but no longer contains the \

@@ -1603,7 +1603,7 @@ mod dv0_probe {
 
     use crate::egraph::{EClassId, EGraph, ENode};
     use crate::extract::{Derivation, Extractor};
-    use crate::key::ContentKey;
+    use crate::key::{ContentKey, ContentKeySet};
     use crate::rules::{Pattern, RewriteRule};
 
     /// Cost model: leaf digits cost their value, structural ops a flat 1, and the
@@ -1639,7 +1639,7 @@ mod dv0_probe {
     fn mark_derivation(
         eg: &EGraph<String>,
         d: &Derivation<String, TropicalWeight>,
-        marked: &mut HashSet<ContentKey>,
+        marked: &mut ContentKeySet,
     ) {
         let child_classes: Vec<EClassId> = d.children.iter().map(|c| eg.find(c.class)).collect();
         marked.insert(node_key(&d.op, &child_classes));
@@ -1658,8 +1658,8 @@ mod dv0_probe {
     /// equals what a real constant-zero `collect_checked` marks.
     /// Every canonical node key currently live in the e-graph (across all classes).
     /// Used to isolate the SATURATION-ADDED population: `added = after \ seed`.
-    fn all_node_keys(eg: &EGraph<String>) -> HashSet<ContentKey> {
-        let mut keys: HashSet<ContentKey> = HashSet::default();
+    fn all_node_keys(eg: &EGraph<String>) -> ContentKeySet {
+        let mut keys = ContentKeySet::default();
         for cls in eg.classes() {
             for n in eg.nodes(cls) {
                 let child_classes: Vec<EClassId> = n.children.iter().map(|&c| eg.find(c)).collect();
@@ -1669,8 +1669,8 @@ mod dv0_probe {
         keys
     }
 
-    fn reachable_node_keys(eg: &EGraph<String>, roots: &[EClassId]) -> HashSet<ContentKey> {
-        let mut marked: HashSet<ContentKey> = HashSet::default();
+    fn reachable_node_keys(eg: &EGraph<String>, roots: &[EClassId]) -> ContentKeySet {
+        let mut marked = ContentKeySet::default();
         let mut seen_classes: HashSet<EClassId> = HashSet::default();
         let mut stack: Vec<EClassId> = roots.iter().map(|&r| eg.find(r)).collect();
         while let Some(cls) = stack.pop() {
@@ -1773,14 +1773,14 @@ mod dv0_probe {
         //    All untouched-shares below are set-differences over THIS set, so a node
         //    counts as "untouched" iff it was added by saturation AND no extraction
         //    derivation reaches it — no count/clamp imprecision, no seed contamination.
-        let added_keys: HashSet<ContentKey> =
+        let added_keys: ContentKeySet =
             all_node_keys(&eg).difference(&seed_keys).cloned().collect();
         let added = added_keys.len();
 
         // ── 1-best/k-best EXTRACTION (timed): the INFLATED legacy measure. The
         //    admissible 0̄-inside skip + a real cost weight make `kth` stop early.
         let t1 = Instant::now();
-        let mut marked: HashSet<ContentKey> = HashSet::default();
+        let mut marked = ContentKeySet::default();
         let mut nf_count = 0usize;
         {
             let mut ex = Extractor::new(&eg, weigh).with_heuristic();
@@ -1810,7 +1810,7 @@ mod dv0_probe {
         // reachability as a faithful production-shape proxy (not an over/under-count).
         let prod_chkd_in_added = if depth_terms <= 4 {
             let mut prod_ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(0.0));
-            let mut pm: HashSet<ContentKey> = HashSet::default();
+            let mut pm = ContentKeySet::default();
             for &root in &roots {
                 let checked = prod_ex.derivations(eg.find(root)).collect_checked();
                 for d in &checked.value {
@@ -1884,12 +1884,12 @@ mod dv0_probe {
         let _report = eg.saturate(&rules, 6);
         let sat_ns = t0.elapsed().as_nanos();
 
-        let added_keys: HashSet<ContentKey> =
+        let added_keys: ContentKeySet =
             all_node_keys(&eg).difference(&seed_keys).cloned().collect();
         let added = added_keys.len();
 
         let t1 = Instant::now();
-        let mut marked: HashSet<ContentKey> = HashSet::default();
+        let mut marked = ContentKeySet::default();
         let mut nf_count = 0usize;
         {
             // Flat weight: every node costs 1 (no arithmetic leaf values here).
@@ -1911,7 +1911,7 @@ mod dv0_probe {
         // Full-stream constant-zero collect_checked cross-check (bags are bounded here).
         let prod_chkd_in_added = {
             let mut prod_ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(0.0));
-            let mut pm: HashSet<ContentKey> = HashSet::default();
+            let mut pm = ContentKeySet::default();
             for &root in &roots {
                 let checked = prod_ex.derivations(eg.find(root)).collect_checked();
                 for d in &checked.value {

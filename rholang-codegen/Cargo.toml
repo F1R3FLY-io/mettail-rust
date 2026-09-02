@@ -16,6 +16,7 @@ description = "M-RHO bridge: COMPILE-TIME lowering of a MeTTaIL GSLT (LanguageDe
 name = "mettail_rholang_codegen"
 
 [dependencies]
+blake3 = "1"
 mettail-ast = { package = "ast", path = "../ast" }
 # The runtime `Language`/`Term` trait surface. codegen → runtime is ACYCLIC (runtime
 # does not depend on rholang-codegen — the one-way direction BridgeInertness.v records
@@ -24,6 +25,7 @@ mettail-ast = { package = "ast", path = "../ast" }
 # the home `mettail_runtime::Language` itself CANNOT be, since it may not name the
 # codegen-owned `GroundTerm` (that reverse edge would cycle).
 mettail-runtime = { package = "runtime", path = "../runtime" }
+mettail-grammar-core = { path = "../grammar-core" }
 syn = { workspace = true }
 models = { workspace = true }
 prost = "0.14"

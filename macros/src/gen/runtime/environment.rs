@@ -45,8 +45,10 @@ use mettail_ast::language::LanguageDef;
 pub fn generate_environments(language: &LanguageDef) -> TokenStream {
     let language_name = &language.name;
 
-    // Include all categories (terms can have variables via IVar etc. even when native_type is set)
-    let categories: Vec<_> = language.types.iter().collect();
+    // Native object categories can still carry generated variables. Closed
+    // structural data categories cannot, so giving them environment namespaces
+    // would expose a substitution operation that has no inhabitant to target.
+    let categories: Vec<_> = crate::gen::variable_types(language).collect();
 
     if categories.is_empty() {
         return quote! {};

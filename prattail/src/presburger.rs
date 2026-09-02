@@ -47,7 +47,9 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 
-use crate::logict::{ConstraintTheory, LogicStream};
+use crate::logict::{
+    ConstraintTheory, DecidableConstraintTheory, ExactSatisfiability, LogicStream, TheoryPred,
+};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Types — Sprint 4
@@ -1695,6 +1697,83 @@ impl ConstraintTheory for PresburgerTheory {
     fn evaluate(&self, c: &Self::Constraint, assignment: &Self::Assignment) -> bool {
         c.evaluate(assignment)
     }
+
+    fn evaluate_checked(
+        &self,
+        c: &Self::Constraint,
+        assignment: &Self::Assignment,
+    ) -> Option<bool> {
+        c.evaluate_checked(assignment)
+    }
+}
+
+impl DecidableConstraintTheory for PresburgerTheory {
+    fn decide_exact(&self, predicate: &TheoryPred<Self>) -> ExactSatisfiability<Self::Assignment> {
+        enum Task<'predicate> {
+            Visit(&'predicate TheoryPred<PresburgerTheory>),
+            Not,
+            And,
+            Or,
+        }
+
+        let mut tasks = vec![Task::Visit(predicate)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TheoryPred::True) => values.push(PresburgerPred::True),
+                Task::Visit(TheoryPred::False) => values.push(PresburgerPred::False),
+                Task::Visit(TheoryPred::Atom(constraint)) => {
+                    values.push(PresburgerPred::Atom(constraint.clone()));
+                },
+                Task::Visit(TheoryPred::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Visit(TheoryPred::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TheoryPred::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Not => {
+                    let inner = values.pop().expect("Presburger lowering lost negand");
+                    values.push(PresburgerPred::Not(Box::new(inner)));
+                },
+                Task::And => {
+                    let right = values
+                        .pop()
+                        .expect("Presburger lowering lost conjunction RHS");
+                    let left = values
+                        .pop()
+                        .expect("Presburger lowering lost conjunction LHS");
+                    values.push(PresburgerPred::And(Box::new(left), Box::new(right)));
+                },
+                Task::Or => {
+                    let right = values
+                        .pop()
+                        .expect("Presburger lowering lost disjunction RHS");
+                    let left = values
+                        .pop()
+                        .expect("Presburger lowering lost disjunction LHS");
+                    values.push(PresburgerPred::Or(Box::new(left), Box::new(right)));
+                },
+            }
+        }
+
+        let predicate = values
+            .pop()
+            .expect("Presburger lowering produced no predicate");
+        debug_assert!(values.is_empty());
+        let algebra = PresburgerAlgebra::new(self.bit_width);
+        match crate::symbolic::BooleanAlgebra::witness(&algebra, &predicate) {
+            Some(witness) => ExactSatisfiability::Satisfiable(witness),
+            None => ExactSatisfiability::Unsatisfiable,
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2986,23 +3065,10 @@ mod tests {
         }
 
         #[test]
-        fn cross_validate_negation_known_divergence() {
-            // KNOWN DIVERGENCE: TheoryAlgebra's negation handling uses
-            // negation-as-failure (NAF) semantics from LogicT's gnot()
-            // operation. This differs from classical first-order negation:
-            //
-            // - Classical: NOT(P) is satisfiable iff there exists an
-            //   assignment where P does not hold.
-            // - NAF: NOT(P) succeeds iff P produces no solutions.
-            //
-            // For some predicates (e.g., NOT(x<=5)):
-            // - PresburgerAlgebra (classical NFA complement): correctly SAT
-            // - TheoryAlgebra (NAF): may agree or disagree depending on
-            //   the specific interaction between gnot and store propagation.
-            //
-            // We verify both algebras produce the same result for this specific
-            // case. If they diverge on future predicates, this test documents
-            // the expected behavior.
+        fn cross_validate_negation_exact_agreement() {
+            // PresburgerTheory implements DecidableConstraintTheory by lowering
+            // the complete TheoryPred into the same exact NFA semantics. Negation
+            // therefore must agree with the direct PresburgerAlgebra path.
             let c = LinearConstraint::new(vec![(0, 1)], 5);
             let direct = PresburgerAlgebra::new(8);
             let theory: TheoryAlgebra<PresburgerTheory> =
@@ -3011,26 +3077,11 @@ mod tests {
             let dp = direct.not(&PresburgerPred::Atom(c.clone()));
             let tp = theory.not(&TheoryPred::Atom(c));
 
-            // Direct algebra correctly identifies NOT(x<=5) as satisfiable.
             let direct_sat = direct.is_satisfiable(&dp);
             let theory_sat = theory.is_satisfiable(&tp);
 
             assert!(direct_sat, "PresburgerAlgebra should find NOT(x<=5) satisfiable");
-
-            // Document the actual behavior of the TheoryAlgebra:
-            // Due to NAF semantics, the result may differ from classical logic.
-            // We record but do not assert a specific result for the theory path.
-            if direct_sat == theory_sat {
-                // Both agree — ideal case.
-            } else {
-                // Known divergence between classical and NAF semantics.
-                // This is expected and documented.
-                eprintln!(
-                    "NOTE: PresburgerAlgebra (classical) and TheoryAlgebra (NAF) \
-                     disagree on NOT(x<=5): direct={}, theory={}",
-                    direct_sat, theory_sat
-                );
-            }
+            assert_eq!(theory_sat, direct_sat);
         }
 
         #[test]

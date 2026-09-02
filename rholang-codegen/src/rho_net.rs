@@ -9,8 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::identity::{
-    behavioral_predicate_identity, equation_identity, grammar_rule_identity,
-    language_definition_fingerprint, pattern_identity, premises_identity, rewrite_identity,
+    behavioral_predicate_fingerprint, equation_fingerprint, grammar_rule_fingerprint,
+    language_definition_fingerprint, pattern_fingerprint, premises_fingerprint,
+    rewrite_fingerprint,
 };
 use mettail_ast::language::{
     BehavioralPred, ChannelConfig, Equation, GuardConfig, LanguageDef, Premise, RewriteRule,
@@ -379,7 +380,7 @@ impl RhoNetProgram {
                 format!(
                     "{}:{}",
                     self.language_fingerprint,
-                    fingerprint_fragment("term", &grammar_rule_identity(term))
+                    fingerprint_fragment("term", &grammar_rule_fingerprint(term))
                 ),
             );
             let mut inputs = vec![syntax.name.clone()];
@@ -430,7 +431,7 @@ impl RhoNetProgram {
                 format!(
                     "{}:{}",
                     self.language_fingerprint,
-                    fingerprint_fragment("native", &grammar_rule_identity(term))
+                    fingerprint_fragment("native", &grammar_rule_fingerprint(term))
                 ),
             );
             let rule = RhoNetRule::new(
@@ -560,7 +561,7 @@ impl RhoNetProgram {
                 format!(
                     "{}:{}",
                     self.language_fingerprint,
-                    fingerprint_fragment("equation", &equation_identity(equation))
+                    fingerprint_fragment("equation", &equation_fingerprint(equation))
                 ),
             );
 
@@ -613,7 +614,7 @@ impl RhoNetProgram {
                 format!(
                     "{}:{}",
                     self.language_fingerprint,
-                    fingerprint_fragment("rewrite", &rewrite_identity(rewrite))
+                    fingerprint_fragment("rewrite", &rewrite_fingerprint(rewrite))
                 ),
             );
             let kind = if rewrite.is_congruence_rule() {
@@ -845,7 +846,7 @@ impl RhoNetProgram {
                                 "{owner_kind}/{owner_name}/structural-guard/{index}/{}",
                                 fingerprint_fragment(
                                     "behavioral",
-                                    &behavioral_predicate_identity(pred)
+                                    &behavioral_predicate_fingerprint(pred)
                                 )
                             ),
                         );
@@ -875,7 +876,10 @@ impl RhoNetProgram {
             format!(
                 "{}/{}",
                 name,
-                fingerprint_fragment("premise", &premises_identity(std::slice::from_ref(premise)))
+                fingerprint_fragment(
+                    "premise",
+                    &premises_fingerprint(std::slice::from_ref(premise)),
+                )
             ),
         );
         inputs.push(channel.name.clone());
@@ -1105,7 +1109,7 @@ pub(crate) fn lhs_pattern_trace_channel(
 ) -> RhoNetChannel {
     RhoNetChannel::set_automaton_trace(
         language_fingerprint,
-        format!("pattern/{}", fingerprint_fragment("lhs", &pattern_identity(pattern))),
+        format!("pattern/{}", fingerprint_fragment("lhs", &pattern_fingerprint(pattern))),
     )
 }
 
@@ -1136,16 +1140,13 @@ pub fn rescope_channel_fingerprint(
 }
 
 fn fingerprint_fragment(prefix: &str, text: &str) -> String {
-    format!("{prefix}:{:016x}", fnv1a64(text.as_bytes()))
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"MeTTaIL RhoNet fragment\0");
+    hasher.update(&(prefix.len() as u64).to_be_bytes());
+    hasher.update(prefix.as_bytes());
+    hasher.update(&(text.len() as u64).to_be_bytes());
+    hasher.update(text.as_bytes());
+    format!("{prefix}:{}", hasher.finalize().to_hex())
 }
 
 pub(crate) fn behavioral_predicate_has_structural_component(pred: &BehavioralPred) -> bool {

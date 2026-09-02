@@ -1056,10 +1056,10 @@ fn collect_terminals_flat(items: &[SyntaxItemSpec]) -> Vec<String> {
         match item {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
             SyntaxItemSpec::Collection { separator, .. }
-            | SyntaxItemSpec::BinderCollection { separator, .. } => {
-                terminals.push(separator.clone());
-            },
-            SyntaxItemSpec::Sep { separator, .. } => {
+            | SyntaxItemSpec::BinderCollection { separator, .. }
+            | SyntaxItemSpec::Sep { separator, .. }
+                if !separator.is_empty() =>
+            {
                 terminals.push(separator.clone());
             },
             _ => {},

@@ -64,6 +64,8 @@ dstage-instrumentation = ["runtime-report"]
 rholang-runtime = [
     "runtime-report",
     "dep:mettail-ast",
+    "dep:mettail-elab",
+    "dep:mettail-grammar-core",
     "dep:mettail-languages",
     "dep:syn",
     "mettail-languages/rholang",
@@ -414,6 +416,9 @@ mettail-runtime = { package = "runtime", path = "../runtime" }
 # the dual-path shape this tree forbids.
 mettail-prattail = { package = "prattail", path = "../prattail" }
 mettail-ast = { package = "ast", path = "../ast", optional = true }
+mettail-elab = { path = "../mettail-elab", optional = true }
+mettail-grammar-core = { path = "../grammar-core", optional = true }
+blake3 = "1"
 syn = { workspace = true, optional = true }
 # Reactive single-step COMM stepper (step.rs): a lock-free bounded channel carries the RAW COMM
 # payload (Pars) from the worker thread's observer to the REPL driver (no rendering under the
@@ -807,6 +812,16 @@ required-features = ["rholang-runtime"]
 name = "rholang"
 path = "src/bin/rholang.rs"
 required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
+
+# Executable contract for `demos/mettail-inline-ddl/inline-ddl.rho`. The test
+# runs that committed Rholang application through the generated nouveau parser,
+# structural DDL lowering, real reducer, atomic installer, and handle-scoped
+# runtime parsers; it also observes the installed table to prove the invalid
+# multi-theory batch published no prefix.
+[[test]]
+name = "inline_ddl_demo"
+path = "tests/inline_ddl_demo.rs"
+required-features = ["rholang-runtime"]
 
 # CI gate for the CHURCH DESK demo (`demos/flt-church-desk/`): drives the built `rholang` binary
 # with the run sheet's own command lines and asserts, per beat, what the audience sees — the

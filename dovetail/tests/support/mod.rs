@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use dovetail::egraph::{EClassId, EGraph, EGraphConfig, ENode};
 use dovetail::extract::{Derivation, ExtractionCompleteness, Extractor};
-use dovetail::key::{write_ordered_framed, ContentKey, SemanticHash};
+use dovetail::key::{write_ordered_framed, ContentKey, ContentKeyMap, SemanticHash};
 use rigail::{Semiring, TropicalWeight};
 
 #[derive(Clone, Debug)]
@@ -277,11 +277,11 @@ fn oracle_class(
         return Vec::new();
     }
 
-    let mut by_key: BTreeMap<ContentKey, OracleDerivation> = BTreeMap::new();
+    let mut by_key = ContentKeyMap::default();
     for node in eg.nodes(class) {
         for derivation in oracle_node(eg, node, stack) {
-            if !derivation.weight.is_zero() {
-                by_key.entry(derivation.key.clone()).or_insert(derivation);
+            if !derivation.weight.is_zero() && by_key.get(&derivation.key).is_none() {
+                by_key.insert(derivation.key.clone(), derivation);
             }
         }
     }

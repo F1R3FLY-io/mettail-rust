@@ -73,6 +73,7 @@ use quote::quote;
 use mettail_ast::language::LanguageDef;
 
 use crate::gen::native::native_type_to_full_string;
+use crate::gen::native_carrier::NativeCarrierStorage;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 
 /// Marker opening the machine-readable schema inside the emitted file.
@@ -108,8 +109,8 @@ pub fn generate_rust_ctor(language: &LanguageDef) -> TokenStream {
          V    <Category> <Label> <kind> <field>*\n\
          ```\n\
          \n\
-         `<kind>` is one of `nullary`, `literal`, `collit`, `var`, `regular`, `coll`,\n\
-         `binder`, `multibinder`. Each `<field>` is a type descriptor:\n\
+         `<kind>` is one of `nullary`, `literal`, `collit`, `nativezipper`, `var`,\n\
+         `regular`, `coll`, `binder`, `multibinder`. Each `<field>` is a type descriptor:\n\
          \n\
          | descriptor                     | Rust field type              | Debug shape |\n\
          |--------------------------------|------------------------------|-------------|\n\
@@ -118,6 +119,7 @@ pub fn generate_rust_ctor(language: &LanguageDef) -> TokenStream {
          | `native:<T>`                   | `<T>`                        | that type's own Debug |\n\
          | `coll:<Kind>:<Elem>`           | `HashBag<Arc<E>>` etc.       | container Debug |\n\
          | `collit:<Kind>:<Elem>`         | `HashSetLit<E>` etc.         | container Debug |\n\
+         | `zipper:<Storage>:<Ctor>:<K>:<V>` | structural zipper payload | `<Ctor>(PathMapLit<K,V>, [u8])` |\n\
          | `scope1:<BinderCat>:<BodyCat>` | `Scope<Binder<String>, Arc<B>>` | `Scope {{ pattern: Binder(..), body: .. }}` |\n\
          | `scopeN:<BinderCat>:<BodyCat>` | `Scope<Vec<Binder<String>>, Arc<B>>` | `Scope {{ pattern: [Binder(..)], body: .. }}` |\n\
          | `pred`                         | `BehavioralPred`             | its own Debug |\n\
@@ -241,6 +243,19 @@ fn variant_line(category: &str, variant: &VariantKind, language: &LanguageDef) -
 
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
             format!("V {category} {label} collit collit:{:?}:{element_cat}\n", coll_type)
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let storage = match carrier.storage() {
+                NativeCarrierStorage::Direct => "Direct",
+                NativeCarrierStorage::Arc => "Arc",
+            };
+            let constructor = carrier.runtime_constructor_name();
+            let key = carrier.key_category();
+            let value = carrier.value_category();
+            format!(
+                "V {category} {label} nativezipper zipper:{storage}:{constructor}:{key}:{value}\n"
+            )
         },
 
         VariantKind::Var { label } => format!("V {category} {label} var var\n"),

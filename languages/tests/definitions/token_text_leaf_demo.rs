@@ -108,6 +108,56 @@ language! {
             }
         }] fold;
 
+        // Exact optional token text uses the same verbatim token leaf when
+        // present and the field-indexed absence leaf when omitted. Both cases
+        // must reach the fold body without parsing a display representation.
+        MaybeNamed . *opt(m:Ident) |- "maybe-tag" *opt(m) : Proc ;
+
+        // The category-child analogue. A present child remains a typed child
+        // derivation; absence is `FieldNone` at this constructor field's exact
+        // index. The inverse must preserve the Option boundary in both cases.
+        MaybeProc . *opt(p:Proc) |- "maybe-proc" *opt(p) : Proc ;
+
+        // Required and absent-optional category fields deliberately share one
+        // constructor. Reconstruction schedules both as deferred actions so
+        // the value stack retains declaration order under the LIFO worklist.
+        MixedMaybe . head:Proc, *opt(tail:Proc)
+            |- "mixed-maybe" "(" head *opt("," tail) ")" : Proc ;
+
+        // Ordered optional containers retain both the Option boundary and
+        // element order in their category-labelled sequence leaf.
+        MaybeMany . *opt(ps:Vec(Proc))
+            |- "maybe-many" *opt("[" ps.*sep(",") "]") : Proc ;
+
+        // A required object parameter makes the fold dispatcher reconstruct
+        // its complete child through the generated inverse PDA.  Matching the
+        // optional constructors here observes their exact Some/None carriers
+        // without pretending optional groups are themselves fold parameters.
+        Probe . p:Proc |- "probe" "(" p ")" : Proc ![{
+            match p {
+                Proc::MaybeNamed(Some(text)) if text == "zero" =>
+                    Proc::Named("optional-token-present".to_string()),
+                Proc::MaybeNamed(None) =>
+                    Proc::Named("optional-token-absent".to_string()),
+                Proc::MaybeProc(Some(child)) if matches!(child.as_ref(), Proc::Nil) =>
+                    Proc::Named("optional-child-present".to_string()),
+                Proc::MaybeProc(None) =>
+                    Proc::Named("optional-child-absent".to_string()),
+                Proc::MixedMaybe(head, None) if matches!(head.as_ref(), Proc::Nil) =>
+                    Proc::Named("mixed-required-then-absent".to_string()),
+                Proc::MixedMaybe(head, Some(tail))
+                    if matches!(head.as_ref(), Proc::Nil)
+                        && matches!(tail.as_ref(), Proc::Nil) =>
+                    Proc::Named("mixed-required-then-present".to_string()),
+                Proc::MaybeMany(Some(values))
+                    if values.len() == 1 && matches!(values.first(), Some(Proc::Nil)) =>
+                    Proc::Named("optional-sequence-present".to_string()),
+                Proc::MaybeMany(None) =>
+                    Proc::Named("optional-sequence-absent".to_string()),
+                other => other.clone(),
+            }
+        }] fold;
+
         // The MIXED variant: a category child beside a token-text leaf. Its reconstruction
         // needs `Arc::new(build_proc_d(child0)?)` for field 0 and the UNWRAPPED
         // `build_token_text_d(child1)?` for field 1 — the two shapes the per-field builder

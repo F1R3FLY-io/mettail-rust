@@ -25,8 +25,8 @@ use crate::language::GuardSlotDecl;
 use syn::Ident;
 
 use super::language::{
-    BuiltinPredicate, Equation, GuardConfig, LangType, LanguageDef, LogicBlock, ModeDef,
-    PredicateAnnotations, RewriteRule, TheoryRegistration, TokenDef,
+    BuiltinPredicate, CategoryRole, Equation, GuardConfig, LangType, LanguageDef, LogicBlock,
+    ModeDef, PredicateAnnotations, RewriteRule, TheoryRegistration, TokenDef,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -41,6 +41,13 @@ pub enum MergeError {
         category: String,
         type_a: Option<String>,
         type_b: Option<String>,
+    },
+
+    /// Two categories share a name but disagree about object/data semantics.
+    CategoryRoleMismatch {
+        category: String,
+        role_a: CategoryRole,
+        role_b: CategoryRole,
     },
 
     /// Two rules share a label (constructor name) and the strategy is `Error`.
@@ -88,6 +95,13 @@ impl fmt::Display for MergeError {
                     f,
                     "category '{}' has conflicting native types: {:?} vs {:?}",
                     category, type_a, type_b
+                )
+            },
+            MergeError::CategoryRoleMismatch { category, role_a, role_b } => {
+                write!(
+                    f,
+                    "category '{}' has conflicting roles: {:?} vs {:?}",
+                    category, role_a, role_b
                 )
             },
             MergeError::DuplicateRuleLabel { label, category_a, category_b } => {
@@ -451,6 +465,13 @@ fn merge_types(
     for t in extension {
         let name = t.name.to_string();
         if let Some(existing) = by_name.get(&name) {
+            if existing.role != t.role {
+                errors.push(MergeError::CategoryRoleMismatch {
+                    category: name.clone(),
+                    role_a: existing.role,
+                    role_b: t.role,
+                });
+            }
             // Category exists — verify native type matches
             let existing_native = existing
                 .native_type
@@ -942,6 +963,7 @@ mod tests {
     fn make_type(name: &str) -> LangType {
         LangType {
             name: Ident::new(name, Span::call_site()),
+            role: crate::language::CategoryRole::Object,
             native_type: None,
             collection_kind: None,
         }
@@ -991,6 +1013,7 @@ mod tests {
         let mut a = make_lang("A");
         a.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
+            role: crate::language::CategoryRole::Object,
             native_type: Some(syn::parse_quote!(i32)),
             collection_kind: None,
         });
@@ -998,6 +1021,7 @@ mod tests {
         let mut b = make_lang("B");
         b.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
+            role: crate::language::CategoryRole::Object,
             native_type: Some(syn::parse_quote!(i64)),
             collection_kind: None,
         });

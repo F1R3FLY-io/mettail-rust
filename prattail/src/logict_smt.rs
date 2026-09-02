@@ -29,8 +29,9 @@
 //!   `DontKnow` never fabricates a witness.
 //!
 //! [`Z3Theory`] implements **only** [`ConstraintTheory`]. It is deliberately **not**
-//! a [`BooleanAlgebra`] / `RejectSafeAlgebra` / `HeytingAlgebra`, and no shipping
-//! path constructs a `TheoryAlgebra<Z3Theory>`. The verified deciders
+//! an exact/decidable theory, so the generic [`crate::logict::TheoryAlgebra`]
+//! exposes only its reject-safe three-valued behavior, never a classical
+//! [`BooleanAlgebra`](crate::symbolic::BooleanAlgebra). The verified deciders
 //! (Presburger, the ordered-field / string SFAs, the behavioral algebra) remain the
 //! **primary** guard deciders; Z3 is a *secondary gap-filler* invoked only where
 //! those return `DontKnow` (e.g. mixed numeric/bitvector guards), and its verdict is
@@ -65,9 +66,14 @@
 //! check, so no Z3 AST (which borrows its `Context`) is ever stored in a `Store` —
 //! keeping [`SmtStore`] `Clone + Send + Sync` and lifetime-free.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::num::NonZeroU32;
+use std::str::FromStr;
 use std::sync::OnceLock;
 
+use num_bigint::{BigInt, BigUint, Sign};
+use num_traits::One;
 use z3::ast::Ast; // brings `_eq` into scope for Int/BV
 
 use crate::algebra_tower::Sat3;
@@ -83,12 +89,13 @@ use crate::logict::{ConstraintTheory, LogicStream};
 /// `ConstraintTheory::Constraint: Clone + Eq + Hash`; translated to a fresh Z3 AST at
 /// solve time by [`Z3Env`].
 pub enum SmtTerm {
-    /// Integer literal.
-    IntLit(i64),
+    /// Mathematical integer literal (arbitrary precision).
+    IntLit(BigInt),
     /// Integer variable (by name).
     IntVar(String),
-    /// Bitvector literal `(value, width)`.
-    BvLit(u64, u32),
+    /// Bitvector literal `(value, width)`. Validation rejects width zero and
+    /// interpretation normalizes `value` modulo `2^width`.
+    BvLit(BigUint, u32),
     /// Bitvector variable `(name, width)`.
     BvVar(String, u32),
     /// `a + b`.
@@ -96,7 +103,27 @@ pub enum SmtTerm {
     /// `a - b`.
     Sub(Box<SmtTerm>, Box<SmtTerm>),
     /// `k · a` (linear: integer/bitvector coefficient).
-    Scale(i64, Box<SmtTerm>),
+    Scale(BigInt, Box<SmtTerm>),
+}
+
+impl SmtTerm {
+    /// Construct an arbitrary-precision mathematical integer literal.
+    pub fn int(value: impl Into<BigInt>) -> Self {
+        Self::IntLit(value.into())
+    }
+
+    /// Construct a raw fixed-width bitvector literal.
+    ///
+    /// Width validation is deliberately performed at the checked boundary so an
+    /// untrusted decoded AST cannot bypass the same validation as programmatic input.
+    pub fn bit_vector(value: impl Into<BigUint>, width: u32) -> Self {
+        Self::BvLit(value.into(), width)
+    }
+
+    /// Construct a scalar multiplication.
+    pub fn scale(coefficient: impl Into<BigInt>, term: SmtTerm) -> Self {
+        Self::Scale(coefficient.into(), Box::new(term))
+    }
 }
 
 /// A guard constraint over [`SmtTerm`]s: booleans + (in)equalities. Boolean
@@ -130,15 +157,406 @@ pub enum SmtConstraint {
 #[path = "logict_smt/lifecycle.rs"]
 mod lifecycle;
 
+/// Sorts admitted by the checked SMT boundary.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SmtSort {
+    /// Boolean proposition.
+    Bool,
+    /// Mathematical (unbounded) integer.
+    Int,
+    /// Unsigned fixed-width bitvector. A checked sort always has positive width.
+    BitVector(u32),
+}
+
+/// Why an untrusted SMT AST or model could not be admitted as a typed formula.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SmtValidationError {
+    /// Z3 and the mathematical model do not define a zero-width bitvector.
+    ZeroBitVectorWidth,
+    /// One variable name was reused at two incompatible sorts.
+    VariableSortConflict {
+        name: String,
+        first: SmtSort,
+        second: SmtSort,
+    },
+    /// An arithmetic operator was applied to terms of different sorts.
+    ArithmeticSortMismatch {
+        operation: &'static str,
+        left: SmtSort,
+        right: SmtSort,
+    },
+    /// A comparison related terms of different sorts.
+    ComparisonSortMismatch { left: SmtSort, right: SmtSort },
+    /// The supplied model omitted a variable required by the formula.
+    MissingModelBinding { name: String, expected: SmtSort },
+    /// A bitvector model value carried a different width from its use site.
+    ModelBitVectorWidthMismatch { name: String, expected: u32, actual: u32 },
+    /// A raw model value was not normalized to its declared bitvector width.
+    ModelBitVectorOutOfRange { name: String, width: u32 },
+    /// A checked mathematical numeral could not be represented by the Z3 API.
+    SolverNumeralEncoding,
+    /// A Z3 model numeral could not be extracted exactly.
+    SolverModelNumeral { name: String, expected: SmtSort },
+    /// An internal typed translation result contradicted prior validation.
+    InternalSortInvariant { operation: &'static str },
+    /// Deterministic preflight demand exceeded an explicit work limit.
+    WorkBudgetExceeded {
+        resource: SmtWorkResource,
+        required: u64,
+        limit: u64,
+    },
+}
+
+impl fmt::Display for SmtValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for SmtValidationError {}
+
+/// Deterministic variable-sort environment produced by validation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SmtSignature {
+    /// One globally consistent sort for every variable name.
+    pub variables: BTreeMap<String, SmtSort>,
+}
+
+/// Independently charged resources at the SMT validation/translation boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmtWorkResource {
+    /// Raw AST constructors visited by the iterative validator.
+    AstNodes,
+    /// Sum of binary digits across literal and scale numerals.
+    NumeralBits,
+    /// Largest fixed-width bitvector sort requested by the formula.
+    BitVectorWidth,
+}
+
+/// Deterministic work demand measured before allocation-heavy Z3 translation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SmtWorkDemand {
+    /// Raw AST constructors visited.
+    pub ast_nodes: u64,
+    /// Total binary numeral digits.
+    pub numeral_bits: u64,
+    /// Largest requested bitvector width.
+    pub max_bitvector_width: u32,
+}
+
+/// Explicit, versionable resource policy for one SMT classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SmtWorkBudget {
+    /// Maximum raw AST constructors accepted by preflight.
+    pub max_ast_nodes: u64,
+    /// Maximum total binary digits across input numerals.
+    pub max_numeral_bits: u64,
+    /// Maximum individual bitvector width.
+    pub max_bitvector_width: u32,
+    /// Z3 deterministic resource-limit counter (`rlimit`).
+    pub solver_rlimit: u32,
+}
+
+impl Default for SmtWorkBudget {
+    fn default() -> Self {
+        Self {
+            max_ast_nodes: 100_000,
+            max_numeral_bits: 1_048_576,
+            max_bitvector_width: 65_536,
+            solver_rlimit: 10_000_000,
+        }
+    }
+}
+
+/// Result of the single iterative type-and-resource preflight pass.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmtValidationReport {
+    /// Globally consistent variable sorts.
+    pub signature: SmtSignature,
+    /// Deterministic charged input demand.
+    pub demand: SmtWorkDemand,
+}
+
+/// An unsigned bitvector value paired with the width that determines its modulus.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmtBitVector {
+    /// Canonical unsigned representative in `[0, 2^width)`.
+    pub value: BigUint,
+    /// Positive bit width.
+    pub width: u32,
+}
+
+impl SmtBitVector {
+    /// Construct and normalize a bitvector value, rejecting width zero.
+    pub fn new(value: impl Into<BigUint>, width: u32) -> Result<Self, SmtValidationError> {
+        Self::new_with_budget(value, width, &SmtWorkBudget::default())
+    }
+
+    /// Construct under an explicit resource policy.
+    pub fn new_with_budget(
+        value: impl Into<BigUint>,
+        width: u32,
+        budget: &SmtWorkBudget,
+    ) -> Result<Self, SmtValidationError> {
+        let value = value.into();
+        ensure_width_within_budget(width, budget)?;
+        ensure_numeral_within_budget(value.bits().max(1), budget)?;
+        let width = checked_width(width)?;
+        let modulus = bitvector_modulus(width);
+        Ok(Self {
+            value: value % modulus,
+            width: width.get(),
+        })
+    }
+}
+
 /// A satisfying assignment extracted from a [`Sat3::Sat`] store.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SmtModel {
     /// Integer variable assignments.
-    pub ints: HashMap<String, i64>,
-    /// Bitvector variable assignments (value masked to width).
-    pub bvs: HashMap<String, u64>,
+    pub ints: BTreeMap<String, BigInt>,
+    /// Bitvector variable assignments with explicit, checked widths.
+    pub bvs: BTreeMap<String, SmtBitVector>,
     /// Boolean variable assignments.
-    pub bools: HashMap<String, bool>,
+    pub bools: BTreeMap<String, bool>,
+}
+
+fn bitvector_modulus(width: NonZeroU32) -> BigUint {
+    BigUint::one() << width.get()
+}
+
+fn checked_width(width: u32) -> Result<NonZeroU32, SmtValidationError> {
+    NonZeroU32::new(width).ok_or(SmtValidationError::ZeroBitVectorWidth)
+}
+
+fn ensure_width_within_budget(
+    width: u32,
+    budget: &SmtWorkBudget,
+) -> Result<(), SmtValidationError> {
+    if width > budget.max_bitvector_width {
+        return Err(SmtValidationError::WorkBudgetExceeded {
+            resource: SmtWorkResource::BitVectorWidth,
+            required: u64::from(width),
+            limit: u64::from(budget.max_bitvector_width),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_numeral_within_budget(
+    bits: u64,
+    budget: &SmtWorkBudget,
+) -> Result<(), SmtValidationError> {
+    if bits > budget.max_numeral_bits {
+        return Err(SmtValidationError::WorkBudgetExceeded {
+            resource: SmtWorkResource::NumeralBits,
+            required: bits,
+            limit: budget.max_numeral_bits,
+        });
+    }
+    Ok(())
+}
+
+fn charge_node(
+    demand: &mut SmtWorkDemand,
+    budget: &SmtWorkBudget,
+) -> Result<(), SmtValidationError> {
+    demand.ast_nodes =
+        demand
+            .ast_nodes
+            .checked_add(1)
+            .ok_or(SmtValidationError::WorkBudgetExceeded {
+                resource: SmtWorkResource::AstNodes,
+                required: u64::MAX,
+                limit: budget.max_ast_nodes,
+            })?;
+    if demand.ast_nodes > budget.max_ast_nodes {
+        return Err(SmtValidationError::WorkBudgetExceeded {
+            resource: SmtWorkResource::AstNodes,
+            required: demand.ast_nodes,
+            limit: budget.max_ast_nodes,
+        });
+    }
+    Ok(())
+}
+
+fn charge_numeral(
+    demand: &mut SmtWorkDemand,
+    bits: u64,
+    budget: &SmtWorkBudget,
+) -> Result<(), SmtValidationError> {
+    demand.numeral_bits =
+        demand
+            .numeral_bits
+            .checked_add(bits)
+            .ok_or(SmtValidationError::WorkBudgetExceeded {
+                resource: SmtWorkResource::NumeralBits,
+                required: u64::MAX,
+                limit: budget.max_numeral_bits,
+            })?;
+    ensure_numeral_within_budget(demand.numeral_bits, budget)
+}
+
+fn charge_width(
+    demand: &mut SmtWorkDemand,
+    width: u32,
+    budget: &SmtWorkBudget,
+) -> Result<(), SmtValidationError> {
+    checked_width(width)?;
+    ensure_width_within_budget(width, budget)?;
+    demand.max_bitvector_width = demand.max_bitvector_width.max(width);
+    Ok(())
+}
+
+fn register_variable(
+    signature: &mut SmtSignature,
+    name: &str,
+    sort: SmtSort,
+) -> Result<(), SmtValidationError> {
+    if let Some(first) = signature.variables.get(name) {
+        if first != &sort {
+            return Err(SmtValidationError::VariableSortConflict {
+                name: name.to_string(),
+                first: first.clone(),
+                second: sort,
+            });
+        }
+        return Ok(());
+    }
+    signature.variables.insert(name.to_string(), sort);
+    Ok(())
+}
+
+fn infer_term_sort(
+    term: &SmtTerm,
+    signature: &mut SmtSignature,
+    demand: &mut SmtWorkDemand,
+    budget: &SmtWorkBudget,
+) -> Result<SmtSort, SmtValidationError> {
+    enum Task<'term> {
+        Visit(&'term SmtTerm),
+        Binary(&'static str),
+    }
+
+    let mut tasks = vec![Task::Visit(term)];
+    let mut sorts = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(term) => {
+                charge_node(demand, budget)?;
+                match term {
+                    SmtTerm::IntLit(value) => {
+                        charge_numeral(demand, value.bits().max(1), budget)?;
+                        sorts.push(SmtSort::Int);
+                    },
+                    SmtTerm::IntVar(name) => {
+                        register_variable(signature, name, SmtSort::Int)?;
+                        sorts.push(SmtSort::Int);
+                    },
+                    SmtTerm::BvLit(value, width) => {
+                        charge_numeral(demand, value.bits().max(1), budget)?;
+                        charge_width(demand, *width, budget)?;
+                        sorts.push(SmtSort::BitVector(*width));
+                    },
+                    SmtTerm::BvVar(name, width) => {
+                        charge_width(demand, *width, budget)?;
+                        let sort = SmtSort::BitVector(*width);
+                        register_variable(signature, name, sort.clone())?;
+                        sorts.push(sort);
+                    },
+                    SmtTerm::Add(left, right) => {
+                        tasks.push(Task::Binary("addition"));
+                        tasks.push(Task::Visit(right));
+                        tasks.push(Task::Visit(left));
+                    },
+                    SmtTerm::Sub(left, right) => {
+                        tasks.push(Task::Binary("subtraction"));
+                        tasks.push(Task::Visit(right));
+                        tasks.push(Task::Visit(left));
+                    },
+                    SmtTerm::Scale(coefficient, inner) => {
+                        charge_numeral(demand, coefficient.bits().max(1), budget)?;
+                        tasks.push(Task::Visit(inner));
+                    },
+                }
+            },
+            Task::Binary(operation) => {
+                let right = sorts
+                    .pop()
+                    .ok_or(SmtValidationError::InternalSortInvariant { operation })?;
+                let left = sorts
+                    .pop()
+                    .ok_or(SmtValidationError::InternalSortInvariant { operation })?;
+                if left != right {
+                    return Err(SmtValidationError::ArithmeticSortMismatch {
+                        operation,
+                        left,
+                        right,
+                    });
+                }
+                sorts.push(left);
+            },
+        }
+    }
+    if sorts.len() != 1 {
+        return Err(SmtValidationError::InternalSortInvariant { operation: "term validation" });
+    }
+    Ok(sorts.pop().expect("length checked"))
+}
+
+fn validate_constraints(
+    asserts: &[SmtConstraint],
+    budget: &SmtWorkBudget,
+) -> Result<SmtValidationReport, SmtValidationError> {
+    let mut signature = SmtSignature::default();
+    let mut demand = SmtWorkDemand::default();
+    let mut tasks: Vec<&SmtConstraint> = asserts.iter().rev().collect();
+    while let Some(constraint) = tasks.pop() {
+        charge_node(&mut demand, budget)?;
+        match constraint {
+            SmtConstraint::True | SmtConstraint::False => {},
+            SmtConstraint::BoolVar(name) => {
+                register_variable(&mut signature, name, SmtSort::Bool)?;
+            },
+            SmtConstraint::Eq(left, right)
+            | SmtConstraint::Le(left, right)
+            | SmtConstraint::Lt(left, right)
+            | SmtConstraint::Ge(left, right)
+            | SmtConstraint::Gt(left, right) => {
+                let left_sort = infer_term_sort(left, &mut signature, &mut demand, budget)?;
+                let right_sort = infer_term_sort(right, &mut signature, &mut demand, budget)?;
+                if left_sort != right_sort {
+                    return Err(SmtValidationError::ComparisonSortMismatch {
+                        left: left_sort,
+                        right: right_sort,
+                    });
+                }
+            },
+            SmtConstraint::Not(inner) => tasks.push(inner),
+            SmtConstraint::And(left, right) | SmtConstraint::Or(left, right) => {
+                tasks.push(right);
+                tasks.push(left);
+            },
+        }
+    }
+    Ok(SmtValidationReport { signature, demand })
+}
+
+/// Validate one untrusted formula and return its deterministic variable signature.
+///
+/// This pass is iterative, so adversarially deep terms and constraints consume heap
+/// worklists rather than the native call stack.
+pub fn validate_constraint(constraint: &SmtConstraint) -> Result<SmtSignature, SmtValidationError> {
+    validate_constraint_with_budget(constraint, &SmtWorkBudget::default())
+        .map(|report| report.signature)
+}
+
+/// Validate and charge one formula under an explicit resource policy.
+pub fn validate_constraint_with_budget(
+    constraint: &SmtConstraint,
+    budget: &SmtWorkBudget,
+) -> Result<SmtValidationReport, SmtValidationError> {
+    validate_constraints(std::slice::from_ref(constraint), budget)
 }
 
 /// Accumulated assertions plus the tri-state of the last check.
@@ -164,11 +582,16 @@ pub struct SmtStore {
 pub struct Z3Theory {
     /// Per-check solver timeout in milliseconds (`0` = no timeout).
     pub timeout_ms: u32,
+    /// Deterministic preflight and solver resource policy.
+    pub work_budget: SmtWorkBudget,
 }
 
 impl Default for Z3Theory {
     fn default() -> Self {
-        Z3Theory { timeout_ms: 5_000 }
+        Z3Theory {
+            timeout_ms: 5_000,
+            work_budget: SmtWorkBudget::default(),
+        }
     }
 }
 
@@ -194,15 +617,26 @@ impl Z3Theory {
 
     /// Solve `asserts` for satisfiability, optionally extracting a model on `Sat`.
     fn solve(&self, asserts: &[SmtConstraint], want_model: bool) -> (Sat3, Option<SmtModel>) {
+        let validation = match validate_constraints(asserts, &self.work_budget) {
+            Ok(validation) => validation,
+            Err(_) => return (Sat3::DontKnow, None),
+        };
         let mut cfg = z3::Config::new();
         if self.timeout_ms > 0 {
             cfg.set_timeout_msec(self.timeout_ms as u64);
         }
         let ctx = z3::Context::new(&cfg);
         let solver = z3::Solver::new(&ctx);
+        if self.work_budget.solver_rlimit > 0 {
+            let mut parameters = z3::Params::new(&ctx);
+            parameters.set_u32("rlimit", self.work_budget.solver_rlimit);
+            solver.set_params(&parameters);
+        }
         let mut env = Z3Env::new(&ctx);
         for c in asserts {
-            let b = env.constraint(c);
+            let Ok(b) = env.constraint(c) else {
+                return (Sat3::DontKnow, None);
+            };
             solver.assert(&b);
         }
         match solver.check() {
@@ -210,7 +644,10 @@ impl Z3Theory {
             z3::SatResult::Unknown => (Sat3::DontKnow, None),
             z3::SatResult::Sat => {
                 let model = if want_model {
-                    solver.get_model().map(|m| env.extract_model(&m))
+                    solver.get_model().and_then(|model| {
+                        env.extract_model(&model, &validation.signature, &self.work_budget)
+                            .ok()
+                    })
                 } else {
                     None
                 };
@@ -265,6 +702,14 @@ impl ConstraintTheory for Z3Theory {
     fn evaluate(&self, c: &Self::Constraint, assignment: &Self::Assignment) -> bool {
         eval_constraint(c, assignment)
     }
+
+    fn evaluate_checked(
+        &self,
+        c: &Self::Constraint,
+        assignment: &Self::Assignment,
+    ) -> Option<bool> {
+        eval_constraint_checked_with_budget(c, assignment, &self.work_budget).ok()
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -301,7 +746,9 @@ pub fn checked_witness(theory: &Z3Theory, c: &SmtConstraint) -> Option<SmtModel>
             let m = model?;
             // Certificate check: the model must re-satisfy the constraint under the
             // independent pure evaluator before we trust it.
-            eval_constraint(c, &m).then_some(m)
+            eval_constraint_checked_with_budget(c, &m, &theory.work_budget)
+                .ok()?
+                .then_some(m)
         },
         Sat3::Unsat | Sat3::DontKnow => None,
     }
@@ -311,28 +758,94 @@ pub fn checked_witness(theory: &Z3Theory, c: &SmtConstraint) -> Option<SmtModel>
 // Pure evaluator (model checking a constraint under an assignment)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Evaluate an [`SmtTerm`] under an assignment. Unbound variables default to `0`
-/// (a satisfying model from Z3 binds every relevant variable, so this only affects
-/// terms over variables outside the witness).
-fn eval_term(t: &SmtTerm, m: &SmtModel) -> i64 {
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SmtValue {
+    Int(BigInt),
+    BitVector(SmtBitVector),
+}
+
+fn bigint_modulus(value: &BigInt, modulus: &BigUint) -> BigUint {
+    let modulus = BigInt::from(modulus.clone());
+    let mut remainder = value % &modulus;
+    if remainder.sign() == Sign::Minus {
+        remainder += &modulus;
+    }
+    remainder
+        .to_biguint()
+        .expect("non-negative residue must convert to BigUint")
+}
+
+fn checked_model_bitvector(
+    name: &str,
+    expected_width: u32,
+    value: &SmtBitVector,
+    budget: &SmtWorkBudget,
+) -> Result<SmtBitVector, SmtValidationError> {
+    let width = checked_width(expected_width)?;
+    ensure_width_within_budget(expected_width, budget)?;
+    ensure_numeral_within_budget(value.value.bits().max(1), budget)?;
+    if value.width != expected_width {
+        return Err(SmtValidationError::ModelBitVectorWidthMismatch {
+            name: name.to_string(),
+            expected: expected_width,
+            actual: value.width,
+        });
+    }
+    if value.value >= bitvector_modulus(width) {
+        return Err(SmtValidationError::ModelBitVectorOutOfRange {
+            name: name.to_string(),
+            width: expected_width,
+        });
+    }
+    Ok(value.clone())
+}
+
+/// Evaluate a validated [`SmtTerm`] under an assignment without truncation,
+/// signedness confusion, implicit zero bindings, or native-stack recursion.
+fn eval_term_checked(
+    t: &SmtTerm,
+    m: &SmtModel,
+    budget: &SmtWorkBudget,
+) -> Result<SmtValue, SmtValidationError> {
     enum Task<'term> {
         Visit(&'term SmtTerm),
         Add,
         Sub,
-        Scale(i64),
+        Scale(&'term BigInt),
     }
 
     let mut tasks = vec![Task::Visit(t)];
     let mut values = Vec::new();
     while let Some(task) = tasks.pop() {
         match task {
-            Task::Visit(SmtTerm::IntLit(value)) => values.push(*value),
+            Task::Visit(SmtTerm::IntLit(value)) => values.push(SmtValue::Int(value.clone())),
             Task::Visit(SmtTerm::IntVar(name)) => {
-                values.push(m.ints.get(name).copied().unwrap_or(0));
+                let value = m.ints.get(name).cloned().ok_or_else(|| {
+                    SmtValidationError::MissingModelBinding {
+                        name: name.clone(),
+                        expected: SmtSort::Int,
+                    }
+                })?;
+                values.push(SmtValue::Int(value));
             },
-            Task::Visit(SmtTerm::BvLit(value, _)) => values.push(*value as i64),
-            Task::Visit(SmtTerm::BvVar(name, _)) => {
-                values.push(m.bvs.get(name).copied().unwrap_or(0) as i64);
+            Task::Visit(SmtTerm::BvLit(value, width)) => {
+                values.push(SmtValue::BitVector(SmtBitVector::new_with_budget(
+                    value.clone(),
+                    *width,
+                    budget,
+                )?));
+            },
+            Task::Visit(SmtTerm::BvVar(name, width)) => {
+                let value =
+                    m.bvs
+                        .get(name)
+                        .ok_or_else(|| SmtValidationError::MissingModelBinding {
+                            name: name.clone(),
+                            expected: SmtSort::BitVector(*width),
+                        })?;
+                values.push(SmtValue::BitVector(checked_model_bitvector(
+                    name, *width, value, budget,
+                )?));
             },
             Task::Visit(SmtTerm::Add(left, right)) => {
                 tasks.push(Task::Add);
@@ -345,31 +858,141 @@ fn eval_term(t: &SmtTerm, m: &SmtModel) -> i64 {
                 tasks.push(Task::Visit(left));
             },
             Task::Visit(SmtTerm::Scale(coefficient, term)) => {
-                tasks.push(Task::Scale(*coefficient));
+                tasks.push(Task::Scale(coefficient));
                 tasks.push(Task::Visit(term));
             },
             Task::Add => {
-                let right = values.pop().expect("SMT evaluator lost addition RHS");
-                let left = values.pop().expect("SMT evaluator lost addition LHS");
-                values.push(left.wrapping_add(right));
+                let right = values
+                    .pop()
+                    .ok_or(SmtValidationError::InternalSortInvariant {
+                        operation: "evaluation addition RHS",
+                    })?;
+                let left = values
+                    .pop()
+                    .ok_or(SmtValidationError::InternalSortInvariant {
+                        operation: "evaluation addition LHS",
+                    })?;
+                values.push(match (left, right) {
+                    (SmtValue::Int(left), SmtValue::Int(right)) => SmtValue::Int(left + right),
+                    (SmtValue::BitVector(left), SmtValue::BitVector(right))
+                        if left.width == right.width =>
+                    {
+                        let width = checked_width(left.width)?;
+                        SmtValue::BitVector(SmtBitVector {
+                            value: (left.value + right.value) % bitvector_modulus(width),
+                            width: left.width,
+                        })
+                    },
+                    _ => {
+                        return Err(SmtValidationError::InternalSortInvariant {
+                            operation: "evaluation addition",
+                        });
+                    },
+                });
             },
             Task::Sub => {
-                let right = values.pop().expect("SMT evaluator lost subtraction RHS");
-                let left = values.pop().expect("SMT evaluator lost subtraction LHS");
-                values.push(left.wrapping_sub(right));
+                let right = values
+                    .pop()
+                    .ok_or(SmtValidationError::InternalSortInvariant {
+                        operation: "evaluation subtraction RHS",
+                    })?;
+                let left = values
+                    .pop()
+                    .ok_or(SmtValidationError::InternalSortInvariant {
+                        operation: "evaluation subtraction LHS",
+                    })?;
+                values.push(match (left, right) {
+                    (SmtValue::Int(left), SmtValue::Int(right)) => SmtValue::Int(left - right),
+                    (SmtValue::BitVector(left), SmtValue::BitVector(right))
+                        if left.width == right.width =>
+                    {
+                        let width = checked_width(left.width)?;
+                        let modulus = bitvector_modulus(width);
+                        SmtValue::BitVector(SmtBitVector {
+                            value: (left.value + &modulus - right.value) % &modulus,
+                            width: left.width,
+                        })
+                    },
+                    _ => {
+                        return Err(SmtValidationError::InternalSortInvariant {
+                            operation: "evaluation subtraction",
+                        });
+                    },
+                });
             },
             Task::Scale(coefficient) => {
-                let value = values.pop().expect("SMT evaluator lost scale operand");
-                values.push(coefficient.wrapping_mul(value));
+                let value = values
+                    .pop()
+                    .ok_or(SmtValidationError::InternalSortInvariant {
+                        operation: "evaluation scale operand",
+                    })?;
+                values.push(match value {
+                    SmtValue::Int(value) => SmtValue::Int(coefficient * value),
+                    SmtValue::BitVector(value) => {
+                        let width = checked_width(value.width)?;
+                        let modulus = bitvector_modulus(width);
+                        let coefficient = bigint_modulus(coefficient, &modulus);
+                        SmtValue::BitVector(SmtBitVector {
+                            value: (coefficient * value.value) % modulus,
+                            width: value.width,
+                        })
+                    },
+                });
             },
         }
     }
-    debug_assert_eq!(values.len(), 1);
-    values.pop().expect("SMT term evaluator produced no value")
+    if values.len() != 1 {
+        return Err(SmtValidationError::InternalSortInvariant { operation: "term evaluation" });
+    }
+    Ok(values.pop().expect("length checked"))
 }
 
-/// Evaluate an [`SmtConstraint`] under an assignment.
-pub fn eval_constraint(c: &SmtConstraint, m: &SmtModel) -> bool {
+fn compare_values(
+    left: SmtValue,
+    right: SmtValue,
+    comparison: Cmp,
+) -> Result<bool, SmtValidationError> {
+    match (left, right) {
+        (SmtValue::Int(left), SmtValue::Int(right)) => Ok(match comparison {
+            Cmp::Eq => left == right,
+            Cmp::Le => left <= right,
+            Cmp::Lt => left < right,
+            Cmp::Ge => left >= right,
+            Cmp::Gt => left > right,
+        }),
+        (SmtValue::BitVector(left), SmtValue::BitVector(right)) if left.width == right.width => {
+            Ok(match comparison {
+                Cmp::Eq => left.value == right.value,
+                Cmp::Le => left.value <= right.value,
+                Cmp::Lt => left.value < right.value,
+                Cmp::Ge => left.value >= right.value,
+                Cmp::Gt => left.value > right.value,
+            })
+        },
+        _ => Err(SmtValidationError::InternalSortInvariant { operation: "comparison evaluation" }),
+    }
+}
+
+/// Evaluate an [`SmtConstraint`] under an assignment with explicit malformed and
+/// incomplete-model errors.
+pub fn eval_constraint_checked(
+    c: &SmtConstraint,
+    m: &SmtModel,
+) -> Result<bool, SmtValidationError> {
+    eval_constraint_checked_with_budget(c, m, &SmtWorkBudget::default())
+}
+
+/// Checked independent model evaluation under an explicit work budget.
+pub fn eval_constraint_checked_with_budget(
+    c: &SmtConstraint,
+    m: &SmtModel,
+    budget: &SmtWorkBudget,
+) -> Result<bool, SmtValidationError> {
+    // Validate the complete formula before short-circuiting. Therefore an invalid
+    // right branch cannot be hidden behind `false && _` or `true || _`, and negating
+    // malformed syntax remains malformed rather than becoming accepted.
+    validate_constraint_with_budget(c, budget)?;
+
     enum Task<'constraint> {
         Visit(&'constraint SmtConstraint),
         Not,
@@ -384,22 +1007,47 @@ pub fn eval_constraint(c: &SmtConstraint, m: &SmtModel) -> bool {
             Task::Visit(SmtConstraint::True) => values.push(true),
             Task::Visit(SmtConstraint::False) => values.push(false),
             Task::Visit(SmtConstraint::BoolVar(name)) => {
-                values.push(m.bools.get(name).copied().unwrap_or(false));
+                values.push(m.bools.get(name).copied().ok_or_else(|| {
+                    SmtValidationError::MissingModelBinding {
+                        name: name.clone(),
+                        expected: SmtSort::Bool,
+                    }
+                })?);
             },
             Task::Visit(SmtConstraint::Eq(left, right)) => {
-                values.push(eval_term(left, m) == eval_term(right, m));
+                values.push(compare_values(
+                    eval_term_checked(left, m, budget)?,
+                    eval_term_checked(right, m, budget)?,
+                    Cmp::Eq,
+                )?);
             },
             Task::Visit(SmtConstraint::Le(left, right)) => {
-                values.push(eval_term(left, m) <= eval_term(right, m));
+                values.push(compare_values(
+                    eval_term_checked(left, m, budget)?,
+                    eval_term_checked(right, m, budget)?,
+                    Cmp::Le,
+                )?);
             },
             Task::Visit(SmtConstraint::Lt(left, right)) => {
-                values.push(eval_term(left, m) < eval_term(right, m));
+                values.push(compare_values(
+                    eval_term_checked(left, m, budget)?,
+                    eval_term_checked(right, m, budget)?,
+                    Cmp::Lt,
+                )?);
             },
             Task::Visit(SmtConstraint::Ge(left, right)) => {
-                values.push(eval_term(left, m) >= eval_term(right, m));
+                values.push(compare_values(
+                    eval_term_checked(left, m, budget)?,
+                    eval_term_checked(right, m, budget)?,
+                    Cmp::Ge,
+                )?);
             },
             Task::Visit(SmtConstraint::Gt(left, right)) => {
-                values.push(eval_term(left, m) > eval_term(right, m));
+                values.push(compare_values(
+                    eval_term_checked(left, m, budget)?,
+                    eval_term_checked(right, m, budget)?,
+                    Cmp::Gt,
+                )?);
             },
             Task::Visit(SmtConstraint::Not(inner)) => {
                 tasks.push(Task::Not);
@@ -433,10 +1081,19 @@ pub fn eval_constraint(c: &SmtConstraint, m: &SmtModel) -> bool {
             },
         }
     }
-    debug_assert_eq!(values.len(), 1);
-    values
-        .pop()
-        .expect("SMT constraint evaluator produced no value")
+    if values.len() != 1 {
+        return Err(SmtValidationError::InternalSortInvariant {
+            operation: "constraint evaluation",
+        });
+    }
+    Ok(values.pop().expect("length checked"))
+}
+
+/// Compatibility projection for Boolean-only callers. Any malformed formula or
+/// incomplete/ill-typed assignment fails closed. Security-sensitive callers should
+/// use [`eval_constraint_checked`] so they retain the reason for indeterminacy.
+pub fn eval_constraint(c: &SmtConstraint, m: &SmtModel) -> bool {
+    eval_constraint_checked(c, m).unwrap_or(false)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -453,18 +1110,18 @@ enum Z3Num<'ctx> {
 /// so repeated occurrences share one Z3 constant.
 struct Z3Env<'ctx> {
     ctx: &'ctx z3::Context,
-    ints: HashMap<String, z3::ast::Int<'ctx>>,
-    bvs: HashMap<String, (z3::ast::BV<'ctx>, u32)>,
-    bools: HashMap<String, z3::ast::Bool<'ctx>>,
+    ints: BTreeMap<String, z3::ast::Int<'ctx>>,
+    bvs: BTreeMap<String, (z3::ast::BV<'ctx>, u32)>,
+    bools: BTreeMap<String, z3::ast::Bool<'ctx>>,
 }
 
 impl<'ctx> Z3Env<'ctx> {
     fn new(ctx: &'ctx z3::Context) -> Self {
         Z3Env {
             ctx,
-            ints: HashMap::new(),
-            bvs: HashMap::new(),
-            bools: HashMap::new(),
+            ints: BTreeMap::new(),
+            bvs: BTreeMap::new(),
+            bools: BTreeMap::new(),
         }
     }
 
@@ -490,12 +1147,12 @@ impl<'ctx> Z3Env<'ctx> {
             .clone()
     }
 
-    fn term(&mut self, t: &SmtTerm) -> Z3Num<'ctx> {
+    fn term(&mut self, t: &SmtTerm) -> Result<Z3Num<'ctx>, SmtValidationError> {
         enum Task<'term> {
             Visit(&'term SmtTerm),
             Add,
             Sub,
-            Scale(i64),
+            Scale(&'term BigInt),
         }
 
         let mut tasks = vec![Task::Visit(t)];
@@ -503,13 +1160,19 @@ impl<'ctx> Z3Env<'ctx> {
         while let Some(task) = tasks.pop() {
             match task {
                 Task::Visit(SmtTerm::IntLit(value)) => {
-                    values.push(Z3Num::Int(z3::ast::Int::from_i64(self.ctx, *value)));
+                    let value = z3::ast::Int::from_str(self.ctx, &value.to_string())
+                        .ok_or(SmtValidationError::SolverNumeralEncoding)?;
+                    values.push(Z3Num::Int(value));
                 },
                 Task::Visit(SmtTerm::IntVar(name)) => {
                     values.push(Z3Num::Int(self.int_var(name)));
                 },
                 Task::Visit(SmtTerm::BvLit(value, width)) => {
-                    values.push(Z3Num::Bv(z3::ast::BV::from_u64(self.ctx, *value, *width)));
+                    let width = checked_width(*width)?;
+                    let value = value % bitvector_modulus(width);
+                    let value = z3::ast::BV::from_str(self.ctx, width.get(), &value.to_string())
+                        .ok_or(SmtValidationError::SolverNumeralEncoding)?;
+                    values.push(Z3Num::Bv(value));
                 },
                 Task::Visit(SmtTerm::BvVar(name, width)) => {
                     values.push(Z3Num::Bv(self.bv_var(name, *width)));
@@ -525,20 +1188,34 @@ impl<'ctx> Z3Env<'ctx> {
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SmtTerm::Scale(coefficient, term)) => {
-                    tasks.push(Task::Scale(*coefficient));
+                    tasks.push(Task::Scale(coefficient));
                     tasks.push(Task::Visit(term));
                 },
                 Task::Add | Task::Sub => {
-                    let right = values.pop().expect("SMT Z3 translation lost binary RHS");
-                    let left = values.pop().expect("SMT Z3 translation lost binary LHS");
+                    let right = values
+                        .pop()
+                        .ok_or(SmtValidationError::InternalSortInvariant {
+                            operation: "Z3 binary RHS",
+                        })?;
+                    let left = values
+                        .pop()
+                        .ok_or(SmtValidationError::InternalSortInvariant {
+                            operation: "Z3 binary LHS",
+                        })?;
                     let result = match (task, left, right) {
                         (Task::Add, Z3Num::Int(x), Z3Num::Int(y)) => Z3Num::Int(x + y),
                         (Task::Sub, Z3Num::Int(x), Z3Num::Int(y)) => Z3Num::Int(x - y),
-                        (Task::Add, Z3Num::Bv(x), Z3Num::Bv(y)) => Z3Num::Bv(x.bvadd(&y)),
-                        (Task::Sub, Z3Num::Bv(x), Z3Num::Bv(y)) => Z3Num::Bv(x.bvsub(&y)),
-                        // Preserve the historical mixed-sort fallback: the left AST
-                        // survives unchanged and determines the result sort.
-                        (_, left @ Z3Num::Int(_), _) | (_, left @ Z3Num::Bv(_), _) => left,
+                        (Task::Add, Z3Num::Bv(x), Z3Num::Bv(y)) if x.get_size() == y.get_size() => {
+                            Z3Num::Bv(x.bvadd(&y))
+                        },
+                        (Task::Sub, Z3Num::Bv(x), Z3Num::Bv(y)) if x.get_size() == y.get_size() => {
+                            Z3Num::Bv(x.bvsub(&y))
+                        },
+                        _ => {
+                            return Err(SmtValidationError::InternalSortInvariant {
+                                operation: "Z3 binary translation",
+                            });
+                        },
                     };
                     values.push(result);
                 },
@@ -546,27 +1223,37 @@ impl<'ctx> Z3Env<'ctx> {
                     let value = values.pop().expect("SMT Z3 translation lost scale operand");
                     let result = match value {
                         Z3Num::Int(value) => {
-                            Z3Num::Int(z3::ast::Int::from_i64(self.ctx, coefficient) * value)
+                            let coefficient =
+                                z3::ast::Int::from_str(self.ctx, &coefficient.to_string())
+                                    .ok_or(SmtValidationError::SolverNumeralEncoding)?;
+                            Z3Num::Int(coefficient * value)
                         },
                         Z3Num::Bv(value) => {
-                            let width = value.get_size();
-                            Z3Num::Bv(
-                                z3::ast::BV::from_u64(self.ctx, coefficient as u64, width)
-                                    .bvmul(&value),
+                            let width = checked_width(value.get_size())?;
+                            let modulus = bitvector_modulus(width);
+                            let coefficient = bigint_modulus(coefficient, &modulus);
+                            let coefficient = z3::ast::BV::from_str(
+                                self.ctx,
+                                width.get(),
+                                &coefficient.to_string(),
                             )
+                            .ok_or(SmtValidationError::SolverNumeralEncoding)?;
+                            Z3Num::Bv(coefficient.bvmul(&value))
                         },
                     };
                     values.push(result);
                 },
             }
         }
-        debug_assert_eq!(values.len(), 1);
-        values
-            .pop()
-            .expect("SMT term Z3 translation produced no value")
+        if values.len() != 1 {
+            return Err(SmtValidationError::InternalSortInvariant {
+                operation: "Z3 term translation",
+            });
+        }
+        Ok(values.pop().expect("length checked"))
     }
 
-    fn constraint(&mut self, c: &SmtConstraint) -> z3::ast::Bool<'ctx> {
+    fn constraint(&mut self, c: &SmtConstraint) -> Result<z3::ast::Bool<'ctx>, SmtValidationError> {
         enum Task<'constraint> {
             Visit(&'constraint SmtConstraint),
             Not,
@@ -590,19 +1277,19 @@ impl<'ctx> Z3Env<'ctx> {
                 },
                 Task::Visit(SmtConstraint::BoolVar(name)) => values.push(self.bool_var(name)),
                 Task::Visit(SmtConstraint::Eq(left, right)) => {
-                    values.push(self.compare(left, right, Cmp::Eq));
+                    values.push(self.compare(left, right, Cmp::Eq)?);
                 },
                 Task::Visit(SmtConstraint::Le(left, right)) => {
-                    values.push(self.compare(left, right, Cmp::Le));
+                    values.push(self.compare(left, right, Cmp::Le)?);
                 },
                 Task::Visit(SmtConstraint::Lt(left, right)) => {
-                    values.push(self.compare(left, right, Cmp::Lt));
+                    values.push(self.compare(left, right, Cmp::Lt)?);
                 },
                 Task::Visit(SmtConstraint::Ge(left, right)) => {
-                    values.push(self.compare(left, right, Cmp::Ge));
+                    values.push(self.compare(left, right, Cmp::Ge)?);
                 },
                 Task::Visit(SmtConstraint::Gt(left, right)) => {
-                    values.push(self.compare(left, right, Cmp::Gt));
+                    values.push(self.compare(left, right, Cmp::Gt)?);
                 },
                 Task::Visit(SmtConstraint::Not(inner)) => {
                     tasks.push(Task::Not);
@@ -633,14 +1320,21 @@ impl<'ctx> Z3Env<'ctx> {
                 },
             }
         }
-        debug_assert_eq!(values.len(), 1);
-        values
-            .pop()
-            .expect("SMT constraint Z3 translation produced no value")
+        if values.len() != 1 {
+            return Err(SmtValidationError::InternalSortInvariant {
+                operation: "Z3 constraint translation",
+            });
+        }
+        Ok(values.pop().expect("length checked"))
     }
 
-    fn compare(&mut self, a: &SmtTerm, b: &SmtTerm, cmp: Cmp) -> z3::ast::Bool<'ctx> {
-        match (self.term(a), self.term(b)) {
+    fn compare(
+        &mut self,
+        a: &SmtTerm,
+        b: &SmtTerm,
+        cmp: Cmp,
+    ) -> Result<z3::ast::Bool<'ctx>, SmtValidationError> {
+        let comparison = match (self.term(a)?, self.term(b)?) {
             (Z3Num::Int(x), Z3Num::Int(y)) => match cmp {
                 Cmp::Eq => x._eq(&y),
                 Cmp::Le => x.le(&y),
@@ -648,38 +1342,100 @@ impl<'ctx> Z3Env<'ctx> {
                 Cmp::Ge => x.ge(&y),
                 Cmp::Gt => x.gt(&y),
             },
-            (Z3Num::Bv(x), Z3Num::Bv(y)) => match cmp {
+            (Z3Num::Bv(x), Z3Num::Bv(y)) if x.get_size() == y.get_size() => match cmp {
                 Cmp::Eq => x._eq(&y),
                 Cmp::Le => x.bvule(&y),
                 Cmp::Lt => x.bvult(&y),
                 Cmp::Ge => x.bvuge(&y),
                 Cmp::Gt => x.bvugt(&y),
             },
-            // Mismatched sorts: an ill-typed guard — treat as unconstrained `true`
-            // rather than abort. (The constraint builder upstream keeps sorts aligned.)
-            _ => z3::ast::Bool::from_bool(self.ctx, true),
-        }
+            _ => {
+                return Err(SmtValidationError::InternalSortInvariant {
+                    operation: "Z3 comparison translation",
+                });
+            },
+        };
+        Ok(comparison)
     }
 
-    fn extract_model(&self, model: &z3::Model<'ctx>) -> SmtModel {
+    fn extract_model(
+        &self,
+        model: &z3::Model<'ctx>,
+        signature: &SmtSignature,
+        budget: &SmtWorkBudget,
+    ) -> Result<SmtModel, SmtValidationError> {
         let mut out = SmtModel::default();
-        for (name, ast) in &self.ints {
-            if let Some(v) = model.eval(ast, true).and_then(|a| a.as_i64()) {
-                out.ints.insert(name.clone(), v);
+        for (name, sort) in &signature.variables {
+            match sort {
+                SmtSort::Bool => {
+                    let value = self
+                        .bools
+                        .get(name)
+                        .and_then(|ast| model.eval(ast, true))
+                        .and_then(|ast| ast.as_bool())
+                        .ok_or_else(|| SmtValidationError::SolverModelNumeral {
+                            name: name.clone(),
+                            expected: SmtSort::Bool,
+                        })?;
+                    out.bools.insert(name.clone(), value);
+                },
+                SmtSort::Int => {
+                    let rendered = self
+                        .ints
+                        .get(name)
+                        .and_then(|ast| model.eval(ast, true))
+                        .map(|ast| ast.to_string())
+                        .ok_or_else(|| SmtValidationError::SolverModelNumeral {
+                            name: name.clone(),
+                            expected: SmtSort::Int,
+                        })?;
+                    let value = parse_z3_integer_numeral(&rendered).ok_or_else(|| {
+                        SmtValidationError::SolverModelNumeral {
+                            name: name.clone(),
+                            expected: SmtSort::Int,
+                        }
+                    })?;
+                    ensure_numeral_within_budget(value.bits().max(1), budget)?;
+                    out.ints.insert(name.clone(), value);
+                },
+                SmtSort::BitVector(width) => {
+                    let ast = self.bvs.get(name).map(|(ast, _)| ast).ok_or_else(|| {
+                        SmtValidationError::SolverModelNumeral {
+                            name: name.clone(),
+                            expected: sort.clone(),
+                        }
+                    })?;
+                    let rendered = model
+                        .eval(&ast.to_int(false), true)
+                        .map(|ast| ast.to_string())
+                        .ok_or_else(|| SmtValidationError::SolverModelNumeral {
+                            name: name.clone(),
+                            expected: sort.clone(),
+                        })?;
+                    let value = parse_z3_integer_numeral(&rendered)
+                        .and_then(|value| value.to_biguint())
+                        .ok_or_else(|| SmtValidationError::SolverModelNumeral {
+                            name: name.clone(),
+                            expected: sort.clone(),
+                        })?;
+                    out.bvs.insert(
+                        name.clone(),
+                        SmtBitVector::new_with_budget(value, *width, budget)?,
+                    );
+                },
             }
         }
-        for (name, (ast, _w)) in &self.bvs {
-            if let Some(v) = model.eval(ast, true).and_then(|a| a.as_u64()) {
-                out.bvs.insert(name.clone(), v);
-            }
-        }
-        for (name, ast) in &self.bools {
-            if let Some(v) = model.eval(ast, true).and_then(|a| a.as_bool()) {
-                out.bools.insert(name.clone(), v);
-            }
-        }
-        out
+        Ok(out)
     }
+}
+
+fn parse_z3_integer_numeral(rendered: &str) -> Option<BigInt> {
+    let rendered = rendered.trim();
+    if let Ok(value) = BigInt::from_str(rendered) {
+        return Some(value);
+    }
+    let inner = rendered.strip_prefix("(- ")?.strip_suffix(')')?.trim();
+    BigInt::from_str(inner).ok().map(|value| -value)
 }
 
 /// Comparison operator selector for [`Z3Env::compare`].
@@ -700,7 +1456,7 @@ mod tests {
         SmtTerm::IntVar(s.to_string())
     }
     fn ilit(n: i64) -> SmtTerm {
-        SmtTerm::IntLit(n)
+        SmtTerm::int(n)
     }
 
     #[test]
@@ -723,8 +1479,8 @@ mod tests {
         assert_eq!(s.status, Sat3::Sat);
         assert!(th.is_consistent(&s));
         let m = th.witness(&s).expect("witness on Sat");
-        let x = m.ints.get("x").copied().unwrap_or_default();
-        assert!((4..=6).contains(&x), "x = {x} not in (3,7)");
+        let x = m.ints.get("x").cloned().unwrap_or_default();
+        assert!((BigInt::from(4)..=BigInt::from(6)).contains(&x), "x = {x} not in (3,7)");
         // The witness re-satisfies the guard under the pure evaluator.
         assert!(th.evaluate(&SmtConstraint::Gt(ivar("x"), ilit(3)), &m));
         assert!(th.evaluate(&SmtConstraint::Lt(ivar("x"), ilit(7)), &m));
@@ -747,14 +1503,14 @@ mod tests {
         let th = Z3Theory::new().expect("z3 available");
         // (bv8 a) + 1 = 0  is satisfiable at a = 255 (wraparound).
         let a = SmtTerm::BvVar("a".to_string(), 8);
-        let sum = SmtTerm::Add(Box::new(a), Box::new(SmtTerm::BvLit(1, 8)));
+        let sum = SmtTerm::Add(Box::new(a), Box::new(SmtTerm::bit_vector(1u8, 8)));
         let s = th.empty_store();
         let s = th
-            .propagate(&s, &SmtConstraint::Eq(sum, SmtTerm::BvLit(0, 8)))
+            .propagate(&s, &SmtConstraint::Eq(sum, SmtTerm::bit_vector(0u8, 8)))
             .expect("wraparound is sat");
         assert_eq!(s.status, Sat3::Sat);
         let m = th.witness(&s).expect("witness");
-        assert_eq!(m.bvs.get("a").copied(), Some(255));
+        assert_eq!(m.bvs.get("a"), Some(&SmtBitVector::new(255u16, 8).expect("valid width")));
     }
 
     #[test]
@@ -805,7 +1561,7 @@ mod tests {
             Box::new(SmtConstraint::Gt(ivar("x"), ilit(100))),
             Box::new(SmtConstraint::Lt(ivar("x"), ilit(0))),
         );
-        let tight = Z3Theory { timeout_ms: 1 };
+        let tight = Z3Theory { timeout_ms: 1, ..Z3Theory::default() };
         let verdict = is_satisfiable_3v(&tight, &hard);
         assert_ne!(
             verdict,
@@ -814,5 +1570,247 @@ mod tests {
         );
         // A witness is produced ONLY on a checked `Sat`; never on `Unsat`/`DontKnow`.
         assert!(checked_witness(&tight, &hard).is_none(), "no witness for a non-Sat verdict");
+    }
+
+    #[test]
+    fn malformed_sorts_are_undetermined_and_fail_closed_even_under_negation() {
+        let theory = Z3Theory::new().expect("z3 available");
+        let malformed = SmtConstraint::Eq(
+            SmtTerm::Add(Box::new(ivar("x")), Box::new(SmtTerm::bit_vector(1u8, 8))),
+            ilit(0),
+        );
+        assert!(matches!(
+            validate_constraint(&malformed),
+            Err(SmtValidationError::ArithmeticSortMismatch { .. })
+        ));
+        assert_eq!(is_satisfiable_3v(&theory, &malformed), Sat3::DontKnow);
+        assert!(checked_witness(&theory, &malformed).is_none());
+        assert!(!eval_constraint(&malformed, &SmtModel::default()));
+
+        let negated = SmtConstraint::Not(Box::new(malformed));
+        assert_eq!(is_satisfiable_3v(&theory, &negated), Sat3::DontKnow);
+        assert!(checked_witness(&theory, &negated).is_none());
+        assert!(!eval_constraint(&negated, &SmtModel::default()));
+    }
+
+    #[test]
+    fn bitvector_width_and_variable_sort_conflicts_are_rejected() {
+        let theory = Z3Theory::new().expect("z3 available");
+        let width_mismatch =
+            SmtConstraint::Eq(SmtTerm::BvVar("word".into(), 8), SmtTerm::bit_vector(0u8, 16));
+        assert!(matches!(
+            validate_constraint(&width_mismatch),
+            Err(SmtValidationError::ComparisonSortMismatch { .. })
+        ));
+        assert_eq!(is_satisfiable_3v(&theory, &width_mismatch), Sat3::DontKnow);
+
+        let zero_width =
+            SmtConstraint::Eq(SmtTerm::BvVar("empty".into(), 0), SmtTerm::bit_vector(0u8, 0));
+        assert_eq!(validate_constraint(&zero_width), Err(SmtValidationError::ZeroBitVectorWidth));
+        assert_eq!(is_satisfiable_3v(&theory, &zero_width), Sat3::DontKnow);
+
+        let reused_name = SmtConstraint::And(
+            Box::new(SmtConstraint::BoolVar("shared".into())),
+            Box::new(SmtConstraint::Eq(SmtTerm::IntVar("shared".into()), ilit(0))),
+        );
+        assert!(matches!(
+            validate_constraint(&reused_name),
+            Err(SmtValidationError::VariableSortConflict { .. })
+        ));
+        assert_eq!(is_satisfiable_3v(&theory, &reused_name), Sat3::DontKnow);
+
+        let reused_bitvector_name = SmtConstraint::And(
+            Box::new(SmtConstraint::Eq(
+                SmtTerm::BvVar("sized".into(), 8),
+                SmtTerm::bit_vector(0u8, 8),
+            )),
+            Box::new(SmtConstraint::Eq(
+                SmtTerm::BvVar("sized".into(), 16),
+                SmtTerm::bit_vector(0u8, 16),
+            )),
+        );
+        assert!(matches!(
+            validate_constraint(&reused_bitvector_name),
+            Err(SmtValidationError::VariableSortConflict { .. })
+        ));
+        assert_eq!(is_satisfiable_3v(&theory, &reused_bitvector_name), Sat3::DontKnow);
+    }
+
+    #[test]
+    fn mathematical_integers_and_wide_bitvectors_round_trip_exactly() {
+        let theory = Z3Theory::new().expect("z3 available");
+        let beyond_i64 = BigInt::from(i64::MAX) + BigInt::one();
+        let integer_formula =
+            SmtConstraint::Eq(SmtTerm::IntVar("large".into()), SmtTerm::int(beyond_i64.clone()));
+        let integer_model = checked_witness(&theory, &integer_formula)
+            .expect("arbitrary-precision integer witness");
+        assert_eq!(integer_model.ints.get("large"), Some(&beyond_i64));
+        assert_eq!(eval_constraint_checked(&integer_formula, &integer_model), Ok(true));
+
+        let below_i64 = BigInt::from(i64::MIN) - BigInt::one();
+        let negative_formula =
+            SmtConstraint::Eq(SmtTerm::IntVar("negative".into()), SmtTerm::int(below_i64.clone()));
+        let negative_model = checked_witness(&theory, &negative_formula)
+            .expect("negative arbitrary-precision integer witness");
+        assert_eq!(negative_model.ints.get("negative"), Some(&below_i64));
+        assert_eq!(eval_constraint_checked(&negative_formula, &negative_model), Ok(true));
+
+        let wide_value = (BigUint::one() << 100usize) + BigUint::from(17u8);
+        let bitvector_formula = SmtConstraint::Eq(
+            SmtTerm::BvVar("wide".into(), 130),
+            SmtTerm::bit_vector(wide_value.clone(), 130),
+        );
+        let bitvector_model =
+            checked_witness(&theory, &bitvector_formula).expect("wide bitvector witness");
+        assert_eq!(
+            bitvector_model.bvs.get("wide"),
+            Some(&SmtBitVector::new(wide_value, 130).expect("positive width"))
+        );
+        assert_eq!(eval_constraint_checked(&bitvector_formula, &bitvector_model), Ok(true));
+    }
+
+    #[test]
+    fn bitvector_comparison_is_unsigned_and_arithmetic_is_modular() {
+        let unsigned =
+            SmtConstraint::Gt(SmtTerm::bit_vector(255u16, 8), SmtTerm::bit_vector(1u8, 8));
+        assert_eq!(eval_constraint_checked(&unsigned, &SmtModel::default()), Ok(true));
+
+        let wraps = SmtConstraint::Eq(
+            SmtTerm::Add(
+                Box::new(SmtTerm::bit_vector(255u16, 8)),
+                Box::new(SmtTerm::bit_vector(1u8, 8)),
+            ),
+            SmtTerm::bit_vector(0u8, 8),
+        );
+        assert_eq!(eval_constraint_checked(&wraps, &SmtModel::default()), Ok(true));
+    }
+
+    #[test]
+    fn incomplete_or_width_inconsistent_models_never_validate_certificates() {
+        let formula = SmtConstraint::Eq(SmtTerm::IntVar("x".into()), ilit(0));
+        assert!(matches!(
+            eval_constraint_checked(&formula, &SmtModel::default()),
+            Err(SmtValidationError::MissingModelBinding { .. })
+        ));
+        assert!(!eval_constraint(&formula, &SmtModel::default()));
+
+        let bitvector_formula =
+            SmtConstraint::Eq(SmtTerm::BvVar("byte".into(), 8), SmtTerm::bit_vector(0u8, 8));
+        let mut wrong_width = SmtModel::default();
+        wrong_width
+            .bvs
+            .insert("byte".into(), SmtBitVector::new(0u8, 16).expect("positive width"));
+        assert!(matches!(
+            eval_constraint_checked(&bitvector_formula, &wrong_width),
+            Err(SmtValidationError::ModelBitVectorWidthMismatch { .. })
+        ));
+        assert!(!eval_constraint(&bitvector_formula, &wrong_width));
+    }
+
+    #[test]
+    fn preflight_charges_exact_demand_before_translation() {
+        let formula = SmtConstraint::Eq(
+            SmtTerm::Add(Box::new(SmtTerm::int(1)), Box::new(ivar("x"))),
+            SmtTerm::int(2),
+        );
+        let budget = SmtWorkBudget {
+            max_ast_nodes: 5,
+            max_numeral_bits: 3,
+            max_bitvector_width: 8,
+            solver_rlimit: 1_000,
+        };
+        let report = validate_constraint_with_budget(&formula, &budget)
+            .expect("the exact preflight demand fits");
+        assert_eq!(
+            report.demand,
+            SmtWorkDemand {
+                ast_nodes: 5,
+                numeral_bits: 3,
+                max_bitvector_width: 0
+            }
+        );
+        assert_eq!(report.signature.variables.get("x"), Some(&SmtSort::Int));
+
+        let larger = SmtWorkBudget {
+            max_ast_nodes: 50,
+            max_numeral_bits: 30,
+            max_bitvector_width: 80,
+            solver_rlimit: 10_000,
+        };
+        assert_eq!(
+            validate_constraint_with_budget(&formula, &larger)
+                .expect("larger budget preserves validation")
+                .demand,
+            report.demand
+        );
+    }
+
+    #[test]
+    fn every_preflight_exhaustion_mode_is_undetermined_and_fails_closed() {
+        let formula =
+            SmtConstraint::Eq(SmtTerm::BvVar("word".into(), 16), SmtTerm::bit_vector(0x1ffu16, 16));
+        let baseline = SmtWorkBudget {
+            max_ast_nodes: 3,
+            max_numeral_bits: 9,
+            max_bitvector_width: 16,
+            solver_rlimit: 10_000,
+        };
+        validate_constraint_with_budget(&formula, &baseline).expect("baseline fits exactly");
+
+        let exhausted = [
+            (SmtWorkBudget { max_ast_nodes: 2, ..baseline }, SmtWorkResource::AstNodes),
+            (SmtWorkBudget { max_numeral_bits: 8, ..baseline }, SmtWorkResource::NumeralBits),
+            (
+                SmtWorkBudget { max_bitvector_width: 15, ..baseline },
+                SmtWorkResource::BitVectorWidth,
+            ),
+        ];
+
+        for (work_budget, expected_resource) in exhausted {
+            assert!(matches!(
+                validate_constraint_with_budget(&formula, &work_budget),
+                Err(SmtValidationError::WorkBudgetExceeded { resource, .. })
+                    if resource == expected_resource
+            ));
+            let theory = Z3Theory { timeout_ms: 5_000, work_budget };
+            assert_eq!(is_satisfiable_3v(&theory, &formula), Sat3::DontKnow);
+            assert!(checked_witness(&theory, &formula).is_none());
+            assert!(matches!(
+                eval_constraint_checked_with_budget(
+                    &SmtConstraint::Not(Box::new(formula.clone())),
+                    &SmtModel::default(),
+                    &work_budget,
+                ),
+                Err(SmtValidationError::WorkBudgetExceeded { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn excessive_width_is_rejected_before_modulus_allocation() {
+        let budget = SmtWorkBudget {
+            max_bitvector_width: 256,
+            ..SmtWorkBudget::default()
+        };
+        assert!(matches!(
+            SmtBitVector::new_with_budget(0u8, u32::MAX, &budget),
+            Err(SmtValidationError::WorkBudgetExceeded {
+                resource: SmtWorkResource::BitVectorWidth,
+                required,
+                limit: 256,
+            }) if required == u64::from(u32::MAX)
+        ));
+
+        let formula = SmtConstraint::Eq(
+            SmtTerm::BvVar("hostile".into(), u32::MAX),
+            SmtTerm::BvVar("hostile".into(), u32::MAX),
+        );
+        assert!(matches!(
+            validate_constraint_with_budget(&formula, &budget),
+            Err(SmtValidationError::WorkBudgetExceeded {
+                resource: SmtWorkResource::BitVectorWidth,
+                ..
+            })
+        ));
     }
 }

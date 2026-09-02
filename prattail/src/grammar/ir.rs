@@ -41,6 +41,37 @@ pub struct RDRuleInfo {
     pub eval_mode: Option<String>,
 }
 
+impl RDRuleInfo {
+    /// Return whether this rule has a nonterminal operand at any structural
+    /// depth. The explicit worklist keeps the analysis independent of native
+    /// call-stack depth for generated `Map`, `Optional`, `Sep`, and `Zip`
+    /// shapes.
+    pub fn contains_nonterminal_operand(&self) -> bool {
+        let mut pending: Vec<&RDSyntaxItem> = self.items.iter().collect();
+        while let Some(item) = pending.pop() {
+            match item {
+                RDSyntaxItem::NonTerminal { .. } => return true,
+                RDSyntaxItem::Sep { body, .. } | RDSyntaxItem::Zip { body, .. } => {
+                    pending.push(body.as_ref());
+                },
+                RDSyntaxItem::Map { body_items } | RDSyntaxItem::Optional { inner: body_items } => {
+                    pending.extend(body_items);
+                },
+                _ => {},
+            }
+        }
+        false
+    }
+
+    /// A collection field does not make the whole rule a collection literal.
+    /// The dedicated collection lane owns only collection-bearing rules with
+    /// no nonterminal operand; mixed rules stay in their ordinary dispatch
+    /// lane.
+    pub fn is_pure_collection_literal(&self) -> bool {
+        self.is_collection && !self.contains_nonterminal_operand()
+    }
+}
+
 /// A syntax item in a rule's concrete syntax.
 ///
 /// Originally defined in `prattail/src/recursive.rs:40`. Migrated here

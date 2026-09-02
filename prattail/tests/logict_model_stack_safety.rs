@@ -2,11 +2,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use mettail_prattail::algebra_tower::RejectSafeAlgebra;
 use mettail_prattail::logict::{
     evaluate_quantified, evaluate_quantified_with_theory, ConstraintTheory, LogicStream,
     QuantifiedArg, QuantifiedDomain, QuantifiedFormula, TheoryAlgebra, TheoryPred, TriState,
 };
-use mettail_prattail::symbolic::BooleanAlgebra;
 
 const DEPTH: usize = 20_000;
 const STACK_BYTES: usize = 256 * 1024;

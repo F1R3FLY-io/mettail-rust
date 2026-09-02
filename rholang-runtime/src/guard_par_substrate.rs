@@ -1071,6 +1071,10 @@ pub struct SubstrateGuardMatcher {
     spatial: Matcher,
     /// Retained positional FLT automaton and matcher-owned stack-safe PDA.
     flt: FltAutomatonMatcher,
+    /// Capability directory for pre-publication run-time FLT patterns. Absent
+    /// on builds/runners that install no Rholang-authored languages.
+    #[cfg(feature = "rholang-runtime")]
+    language_runtime: Option<Arc<crate::language_install::RholangLanguageRuntime>>,
     /// ★ Where a guard that produced NO VERDICT is written down. See [`GuardRefusalLedger`].
     refusals: GuardRefusalLedger,
 }
@@ -1086,7 +1090,19 @@ impl SubstrateGuardMatcher {
         SubstrateGuardMatcher {
             spatial: Matcher,
             flt: FltAutomatonMatcher::default(),
+            #[cfg(feature = "rholang-runtime")]
+            language_runtime: None,
             refusals: GuardRefusalLedger::new(),
+        }
+    }
+
+    #[cfg(feature = "rholang-runtime")]
+    pub fn with_language_runtime(
+        runtime: Arc<crate::language_install::RholangLanguageRuntime>,
+    ) -> Self {
+        SubstrateGuardMatcher {
+            language_runtime: Some(runtime),
+            ..Self::new()
         }
     }
 
@@ -1122,6 +1138,20 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuar
     /// Positional reflected FLT matching through the retained automaton; every
     /// non-admitted pattern delegates verbatim to f1r3node's spatial matcher.
     fn get(&self, pattern: &BindPattern, data: &ListParWithRandom) -> Option<ListParWithRandom> {
+        #[cfg(feature = "rholang-runtime")]
+        if let Some(token) = crate::language_install::dynamic_flt_pattern_token(pattern) {
+            let runtime = self.language_runtime.as_ref()?;
+            let prepared = runtime.resolve_prepared_pattern(token).ok()?;
+            if prepared.pattern().free_count != pattern.free_count {
+                return None;
+            }
+            let matched = match self.flt.get(prepared.pattern(), data) {
+                FltMatchDecision::Declined => self.spatial.get(prepared.pattern(), data),
+                FltMatchDecision::Miss => None,
+                FltMatchDecision::Match(matched) => Some(matched),
+            };
+            return matched.filter(|captures| prepared.admits(captures));
+        }
         match self.flt.get(pattern, data) {
             FltMatchDecision::Declined => self.spatial.get(pattern, data),
             FltMatchDecision::Miss => None,
@@ -1183,7 +1213,6 @@ pub fn substrate_guard_passes(condition: &Par, bound_pars: &[Par]) -> bool {
         // `dont_know_policy` is visible here rather than silent.
         Sat3::DontKnow => match dont_know_policy(GuardSiteKind::ReceiveWhere) {
             DontKnowPolicy::FailClosedBlock => false,
-            DontKnowPolicy::FailOpenFire => true,
         },
     }
 }

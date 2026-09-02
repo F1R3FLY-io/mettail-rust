@@ -106,6 +106,65 @@ impl TokenKind {
     }
 }
 
+/// Return whether `kind` belongs to the lexer token family named by a
+/// `name@Kind` syntax capture.
+///
+/// Grammar syntax names token families, while the lexer carries their runtime
+/// representation in [`TokenKind`]. Most declared token names map one-to-one
+/// to [`TokenKind::Custom`], but built-in families do not: identifiers,
+/// strings, booleans, and numeric families have dedicated variants. Keeping
+/// this conversion as a predicate (instead of synthesizing one expected kind)
+/// is necessary for families such as `Boolean`, which has three runtime
+/// variants, and preserves the actual lattice alternative in the SPPF.
+pub fn token_kind_matches_capture_name(name: &str, kind: &TokenKind) -> bool {
+    match name {
+        "Eof" => matches!(kind, TokenKind::Eof),
+        "Ident" | "Identifier" => matches!(kind, TokenKind::Ident),
+        "Integer" => matches!(kind, TokenKind::Integer),
+        "IntegerLit" => matches!(kind, TokenKind::IntegerLit(_)),
+        "Rational" | "RationalLit" => matches!(kind, TokenKind::RationalLit(_)),
+        "FixedPoint" | "FixedPointLit" => matches!(kind, TokenKind::FixedPointLit(_)),
+        "Float" | "FloatLiteral" => matches!(kind, TokenKind::Float),
+        "Boolean" => {
+            matches!(kind, TokenKind::True | TokenKind::False | TokenKind::BooleanLit)
+        },
+        "True" => matches!(kind, TokenKind::True),
+        "False" => matches!(kind, TokenKind::False),
+        "BooleanLit" => matches!(kind, TokenKind::BooleanLit),
+        "String" | "StringLit" | "StringLiteral" => matches!(kind, TokenKind::StringLit),
+        "Dollar" => matches!(kind, TokenKind::Dollar),
+        "DoubleDollar" => matches!(kind, TokenKind::DoubleDollar),
+        expected => matches!(kind, TokenKind::Custom(actual) if expected == actual),
+    }
+}
+
+#[cfg(test)]
+mod capture_name_tests {
+    use super::{token_kind_matches_capture_name, TokenKind};
+
+    #[test]
+    fn builtin_capture_names_match_their_runtime_families() {
+        assert!(token_kind_matches_capture_name("Ident", &TokenKind::Ident));
+        assert!(token_kind_matches_capture_name("Identifier", &TokenKind::Ident));
+        assert!(token_kind_matches_capture_name("StringLiteral", &TokenKind::StringLit));
+        assert!(token_kind_matches_capture_name("String", &TokenKind::StringLit));
+        assert!(token_kind_matches_capture_name("Boolean", &TokenKind::True));
+        assert!(token_kind_matches_capture_name("Boolean", &TokenKind::False));
+        assert!(token_kind_matches_capture_name("Boolean", &TokenKind::BooleanLit));
+        assert!(token_kind_matches_capture_name(
+            "Rational",
+            &TokenKind::RationalLit("BigRat".into()),
+        ));
+    }
+
+    #[test]
+    fn declared_capture_names_remain_exact_custom_matches() {
+        assert!(token_kind_matches_capture_name("Word", &TokenKind::Custom("Word".into()),));
+        assert!(!token_kind_matches_capture_name("Word", &TokenKind::Custom("Digits".into()),));
+        assert!(!token_kind_matches_capture_name("Ident", &TokenKind::Custom("Ident".into()),));
+    }
+}
+
 // ─── Token family classification ────────────────────────────────────────────
 //
 // `TokenFamily` provides typed dispatch for token variant names, eliminating

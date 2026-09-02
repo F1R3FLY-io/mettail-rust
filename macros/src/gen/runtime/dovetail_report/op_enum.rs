@@ -6,12 +6,21 @@
 //! body cannot run on the reduced children, and (a latent bug) two `Eq`-equal `Map`/`Bag`
 //! values can stringify differently and fail to dedup.
 //!
-//! For fold-bearing languages we instead carry a generated `<Lang>DovetailOp` enum: one
-//! variant per `(category, constructor)` with literal/var **payloads inline** (lossless), so
-//! reconstruction is total and the fold body runs on typed children. This module emits the
-//! enum, its `unsafe impl ::dovetail::key::SemanticHash` (the exact, `Eq`-agreeing e-graph
-//! content key — framed discriminant + framed payload bytes), and its `Display` (the
-//! runtime-report projection label).
+//! For fold-bearing languages we instead carry a generated `<Lang>DovetailOp`: typed enum
+//! variants retain scalar literal/var **payloads inline** (lossless), while payload-free constructors
+//! use one opaque stable-discriminant carrier exposed through associated constants bearing the
+//! original `(category, constructor)` names. Reconstruction remains total and fold bodies run on
+//! typed children without making rustc instantiate thousands of equivalent unit variants. This
+//! module emits that representation, its `unsafe impl ::dovetail::key::SemanticHash` (the exact,
+//! `Eq`-agreeing e-graph content key — framed discriminant + framed payload bytes), and its
+//! `Display` (the runtime-report projection label).
+//!
+//! Term-bearing collection literals are payload-free constructor nodes whose
+//! exact children are emitted by the shared structural lowering PDA.  Only a
+//! collection of non-category scalars remains an inline payload: it has no
+//! recursive semantic children and its native carrier is already its exact
+//! scalar codec.  This is the StructuralV2 key ABI; reader-facing `Display` and
+//! `Debug` are never semantic identity for term-bearing collections.
 //!
 //! Step B emits the enum + impls but does NOT wire them into `dovetail_report_for` (Step F).
 //! The op-enum is generic substrate; the engine (`EGraph<L>`, `Extractor`, `report`) is
@@ -27,11 +36,21 @@ use quote::{format_ident, quote};
 use syn::Ident;
 
 use crate::gen::native::NativeType;
-use crate::gen::term_ops::subst::{collect_category_variants, rule_to_variant_kind, VariantKind};
+use crate::gen::term_ops::subst::VariantKind;
+
+use super::semantic_adapter::{SemanticAdapterLayout, SemanticSentinelIdentity};
 
 /// The generated op-enum identifier for a language (e.g. `RholangDovetailOp`).
 pub(crate) fn op_enum_ident(language: &LanguageDef) -> Ident {
     format_ident!("{}DovetailOp", language.name)
+}
+
+/// Private stable-discriminant accessor shared by generated table consumers.
+pub(crate) fn op_discriminant_method_ident(language: &LanguageDef) -> Ident {
+    format_ident!(
+        "__mettail_{}_dovetail_stable_discriminant",
+        super::to_snake(&language.name.to_string())
+    )
 }
 
 /// The op-enum variant identifier for a `(category, constructor-label)` pair, e.g.
@@ -40,6 +59,13 @@ pub(crate) fn op_enum_ident(language: &LanguageDef) -> Ident {
 /// prefix disambiguates) and lets reconstruction recover BOTH the AST enum and the variant.
 pub(crate) fn op_variant_ident(category: &Ident, label: &Ident) -> Ident {
     format_ident!("{}_{}", category, label)
+}
+
+/// Whether `category` is closed parser data rather than an object-language
+/// semantic node.  Dovetail emits operators only for semantic categories;
+/// object constructors may retain data fields as opaque coefficients.
+pub(crate) fn is_closed_data_category(language: &LanguageDef, category: &Ident) -> bool {
+    super::semantic_adapter::is_closed_data_category(language, category)
 }
 
 /// The element category of a collection native type (`Vec<Proc>` → `Proc`,
@@ -183,33 +209,36 @@ struct OpVariant {
 /// to go and the build would fail instead with a cascade of "no variant named …"
 /// errors pointing away from the cause. EMPTY for every grammar whose rules
 /// classify, which is every shipped one.
-fn collect_op_variants(language: &LanguageDef) -> (Vec<OpVariant>, Vec<TokenStream>) {
-    // ★ (#195) The categories some `| S ~/> T |-` declaration severs. Computed ONCE here
-    // and read below, from the SAME derivation `typed_lowering` and `reconstruct` read.
-    let withheld = super::withholding::classify_withholdings(language).earned_categories();
-    let mut variants = Vec::new();
-    let mut refusals: Vec<TokenStream> = Vec::new();
-    let mut disc: u32 = 0;
-    let mut push = |ident: Ident,
-                    payload: Option<TokenStream>,
-                    write_payload: TokenStream,
-                    display: String| {
-        let v = OpVariant {
+fn collect_op_variants(
+    language: &LanguageDef,
+    layout: &SemanticAdapterLayout,
+) -> (Vec<OpVariant>, Vec<TokenStream>) {
+    fn push_variant(
+        variants: &mut Vec<OpVariant>,
+        disc: u32,
+        ident: Ident,
+        payload: Option<TokenStream>,
+        write_payload: TokenStream,
+        display: String,
+    ) {
+        variants.push(OpVariant {
             ident,
             payload,
             disc,
             write_payload,
             display,
-        };
-        disc += 1;
-        variants.push(v);
-    };
+        });
+    }
+
+    let mut variants = Vec::new();
+    let mut refusals: Vec<TokenStream> = Vec::new();
 
     let lang = language.name.to_string();
-    for lang_type in &language.types {
-        let category = &lang_type.name;
+    for category_layout in layout.categories() {
+        let category = category_layout.category();
         let cat = category.to_string();
-        for variant in collect_category_variants(category, language) {
+        for variant_layout in category_layout.variants() {
+            let variant = variant_layout.kind().clone();
             match variant {
                 // ★ #141 G5. A classification that refuses declares no op-enum
                 // variant; the diagnostic is emitted beside the enum instead, so
@@ -219,9 +248,14 @@ fn collect_op_variants(language: &LanguageDef) -> (Vec<OpVariant>, Vec<TokenStre
                     refusals.push(quote! { compile_error!(#message); });
                 },
                 VariantKind::Var { label } => {
+                    let disc = variant_layout
+                        .operator_discriminant()
+                        .expect("accepted semantic variant must have an operator discriminant");
                     let ident = op_variant_ident(category, &label);
                     let display = format!("{lang}::{cat}::{label}");
-                    push(
+                    push_variant(
+                        &mut variants,
+                        disc,
                         ident,
                         Some(quote! { ::mettail_runtime::OrdVar }),
                         // OrdVar Debug agrees with Eq (it includes the variable identity) and
@@ -230,149 +264,149 @@ fn collect_op_variants(language: &LanguageDef) -> (Vec<OpVariant>, Vec<TokenStre
                         display,
                     );
                 },
-                // Stage 0 identity — STAYS.
-                VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+                VariantKind::Literal { label } => {
+                    let disc = variant_layout
+                        .operator_discriminant()
+                        .expect("accepted semantic variant must have an operator discriminant");
                     let ident = op_variant_ident(category, &label);
                     let payload = literal_payload_type(language, category);
                     let write_payload = literal_payload_write_content(language, category);
                     let display = format!("{lang}::{cat}::{label}");
-                    push(ident, payload, write_payload, display);
+                    push_variant(&mut variants, disc, ident, payload, write_payload, display);
+                },
+                VariantKind::CollectionLiteral { label, element_cat, .. } => {
+                    let disc = variant_layout
+                        .operator_discriminant()
+                        .expect("accepted semantic variant must have an operator discriminant");
+                    let ident = op_variant_ident(category, &label);
+                    let display = format!("{lang}::{cat}::{label}");
+                    if layout.category(&element_cat).is_some() {
+                        // StructuralV2: recursive elements are exact child nodes.
+                        push_variant(&mut variants, disc, ident, None, quote! {}, display);
+                    } else {
+                        // A collection of closed Rust scalars has no category task to visit.
+                        // Its exact native carrier remains one scalar coefficient.
+                        let payload = literal_payload_type(language, category);
+                        let write_payload = literal_payload_write_content(language, category);
+                        push_variant(&mut variants, disc, ident, payload, write_payload, display);
+                    }
                 },
                 VariantKind::Nullary { label }
+                | VariantKind::RecursiveNativeLiteral { label, .. }
                 | VariantKind::Regular { label, .. }
                 | VariantKind::Collection { label, .. }
                 | VariantKind::Binder { label, .. }
                 | VariantKind::MultiBinder { label, .. } => {
+                    let disc = variant_layout
+                        .operator_discriminant()
+                        .expect("accepted semantic variant must have an operator discriminant");
                     let ident = op_variant_ident(category, &label);
                     let display = format!("{lang}::{cat}::{label}");
                     // Children are EClassIds (Regular/Binder) or AC bag members (Collection);
                     // the op carries only its identity (the framed discriminant).
-                    push(ident, None, quote! {}, display);
+                    push_variant(&mut variants, disc, ident, None, quote! {}, display);
                 },
             }
         }
     }
+    let sentinels = layout.sentinels();
+    debug_assert_eq!(variants.len(), sentinels.first_operator_discriminant() as usize);
 
-    // Spine sentinels (not (cat, ctor) variants): a binder-position arity marker (FIX-A
-    // alpha-canonical: contributes arity only), an absent optional field, and an opaque
-    // builtin/predicate field leaf. These are leaves of the spine, never a category root.
-    push(
-        format_ident!("BinderArity"),
-        Some(quote! { u32 }),
-        quote! { ::dovetail::key::write_framed(out, &__p.to_le_bytes()); },
-        "<binder-arity>".to_string(),
-    );
-    push(
-        format_ident!("FieldNone"),
-        Some(quote! { u32 }),
-        quote! { ::dovetail::key::write_framed(out, &__p.to_le_bytes()); },
-        "<field-none>".to_string(),
-    );
-    push(
-        format_ident!("FieldOpaque"),
-        Some(quote! { ::std::string::String }),
-        quote! { ::dovetail::key::write_framed(out, __p.as_bytes()); },
-        "<field-opaque>".to_string(),
-    );
-    // (A4) The LABELLED, INVERTIBLE token-text leaf. Appended AFTER `FieldOpaque` so no
-    // existing discriminant moves — every other language's op-enum key bytes are unchanged
-    // — and emitted ONLY for a language that actually has an `OpaqueLeafKind::TokenText`
-    // field, so a language without one produces byte-identical output.
-    //
-    // ★ WHAT THIS ADDS, given the text was ALREADY in the key. `opaque_leaf_typed` writes
-    // `FieldOpaque(format!("{:?}", payload))`, and for a token-text field the payload IS the
-    // `String`, so `l.foo()` and `l.bar()` already hash-cons to DIFFERENT e-classes today.
-    // What was missing is (i) a LABEL — `FieldOpaque` is shared with builtin ints, `Vec`
-    // payloads, predicates and guest bodies, so provenance is unrecoverable — and (ii) an
-    // INVERSE. This variant supplies both: the discriminant names the kind, and the payload
-    // is the text VERBATIM (not `Debug`-escaped), so `reconstruct`'s
-    // `__mettail_dovetail_build_token_text_d` is a total, lossless inverse with no
-    // unescaping parser anywhere.
-    if language_has_token_text_leaf(language) {
-        push(
-            format_ident!("FieldTokenText"),
-            Some(quote! { ::std::string::String }),
-            // The text VERBATIM. `String: Eq` is byte equality, so framed UTF-8 bytes are
-            // exactly `Eq`-agreeing — the `SemanticHash` contract this enum's `unsafe impl`
-            // states. (`FieldOpaque` frames `Debug` bytes for the same reason: `Debug` on a
-            // `String` is injective, just lossy to invert.)
-            quote! { ::dovetail::key::write_framed(out, __p.as_bytes()); },
-            "<field-token-text>".to_string(),
-        );
+    // These are leaves of the Dovetail spine rather than category roots.  The
+    // shared layout has already paired every identity with its checked stable
+    // discriminant, so this emitter does no counting or ordering of its own.
+    for sentinel in sentinels.entries() {
+        let disc = sentinel.operator_discriminant();
+        let (ident, payload, write_payload, display) = match sentinel.identity() {
+            SemanticSentinelIdentity::BinderArity => (
+                format_ident!("BinderArity"),
+                Some(quote! { u32 }),
+                quote! { ::dovetail::key::write_framed(out, &__p.to_le_bytes()); },
+                "<binder-arity>".to_string(),
+            ),
+            SemanticSentinelIdentity::FieldNone => (
+                format_ident!("FieldNone"),
+                Some(quote! { u32 }),
+                quote! { ::dovetail::key::write_framed(out, &__p.to_le_bytes()); },
+                "<field-none>".to_string(),
+            ),
+            SemanticSentinelIdentity::FieldOpaque => (
+                format_ident!("FieldOpaque"),
+                Some(quote! { ::std::string::String }),
+                quote! { ::dovetail::key::write_framed(out, __p.as_bytes()); },
+                "<field-opaque>".to_string(),
+            ),
+            SemanticSentinelIdentity::FieldTokenText => (
+                format_ident!("FieldTokenText"),
+                Some(quote! { ::std::string::String }),
+                quote! { ::dovetail::key::write_framed(out, __p.as_bytes()); },
+                "<field-token-text>".to_string(),
+            ),
+            SemanticSentinelIdentity::FieldBytes => (
+                format_ident!("FieldBytes"),
+                Some(quote! { ::std::vec::Vec<u8> }),
+                quote! { ::dovetail::key::write_framed(out, __p); },
+                "<field-bytes>".to_string(),
+            ),
+            SemanticSentinelIdentity::OrderedSequence { element_category } => (
+                field_seq_variant_ident(element_category),
+                Some(quote! { ::std::vec::Vec<#element_category> }),
+                quote! {
+                    ::dovetail::key::write_framed(out, format!("{:?}", __p).as_bytes());
+                },
+                format!("<field-seq-{element_category}>"),
+            ),
+            SemanticSentinelIdentity::Withheld { category } => (
+                field_withheld_variant_ident(category),
+                Some(quote! { ::std::sync::Arc<#category> }),
+                quote! {
+                    let mut __hasher = ::mettail_runtime::FramedSemanticKeyHasher::default();
+                    __p.semantic_hash(&mut __hasher);
+                    ::dovetail::key::write_framed(out, &__hasher.into_key());
+                },
+                format!("<field-withheld-{category}>"),
+            ),
+            SemanticSentinelIdentity::Variable { category } => (
+                field_variable_variant_ident(category),
+                Some(quote! { ::std::vec::Vec<u8> }),
+                quote! { ::dovetail::key::write_framed(out, __p); },
+                format!("<field-variable-{category}>"),
+            ),
+            SemanticSentinelIdentity::CollectionPair { kind, element_category } => (
+                collection_pair_variant_ident(*kind, element_category),
+                None,
+                quote! {},
+                format!("<collection-pair-{kind:?}-{element_category}>"),
+            ),
+            SemanticSentinelIdentity::PathMapMode { element_category } => (
+                pathmap_mode_variant_ident(element_category),
+                Some(quote! { u8 }),
+                quote! { ::dovetail::key::write_framed(out, &[*__p]); },
+                format!("<pathmap-mode-{element_category}>"),
+            ),
+            SemanticSentinelIdentity::PathMapPair { element_category } => (
+                pathmap_pair_variant_ident(element_category),
+                None,
+                quote! {},
+                format!("<pathmap-pair-{element_category}>"),
+            ),
+            SemanticSentinelIdentity::NativePathMapMode { key_category, value_category } => (
+                native_pathmap_mode_variant_ident(key_category, value_category),
+                Some(quote! { u8 }),
+                quote! { ::dovetail::key::write_framed(out, &[*__p]); },
+                format!("<native-pathmap-mode-{key_category}-{value_category}>"),
+            ),
+            SemanticSentinelIdentity::NativePathMapPair { key_category, value_category } => (
+                native_pathmap_pair_variant_ident(key_category, value_category),
+                None,
+                quote! {},
+                format!("<native-pathmap-pair-{key_category}-{value_category}>"),
+            ),
+        };
+        push_variant(&mut variants, disc, ident, payload, write_payload, display);
     }
 
-    // (#101) The LABELLED, INVERTIBLE ORDERED-SEQUENCE leaf, one variant per element category
-    // that actually occurs as a `Vec` element. Appended AFTER `FieldTokenText` so **no existing
-    // discriminant moves** — a language with no `Vec`-bearing constructor produces byte-identical
-    // output — and emitted from [`ordered_seq_element_categories`], the same derivation
-    // `typed_lowering` and `reconstruct` read, so the variant, the lowering and the inverse can
-    // never disagree about existence.
-    //
-    // ★ WHAT THIS ADDS, GIVEN THE BYTES ARE ALREADY THERE. `typed_lowering::opaque_leaf_typed`
-    // writes `FieldOpaque(format!("{:?}", values))` today, and `write_content` then frames those
-    // Debug bytes — so `[0,1]` and `[1,0]` ALREADY hash-cons to different e-classes. What was
-    // missing is (i) a LABEL — one `FieldOpaque` discriminant is shared across `Vec` payloads,
-    // builtin ints, predicates and guest bodies, so provenance is unrecoverable — and (ii) an
-    // INVERSE. This supplies both, and it strictly REDUCES aliasing: each element category now
-    // has its own discriminant. The payload bytes are byte-for-byte what `FieldOpaque` wrote
-    // (`format!("{:?}", …)` on the same value), so the equivalence relation over collection
-    // values is UNCHANGED; only the label and the inverse are new.
-    //
-    // ⚠ ORDERED ONLY. `HashSet`/`HashMap`/`PathMap` are NOT here: their `Debug` does not agree
-    // with `Eq` (which is why the collection-LITERAL writer above routes them through sorted
-    // `Display`), so there is no order to invert to. See [`super::CollectionCarrier`].
-    for element_cat in ordered_seq_element_categories(language) {
-        let display = format!("<field-seq-{element_cat}>");
-        push(
-            field_seq_variant_ident(&element_cat),
-            Some(quote! { ::std::vec::Vec<#element_cat> }),
-            // The ordered `Debug` of the whole `Vec` — EXACTLY the bytes `FieldOpaque` frames
-            // for this same payload today. `Vec<E>: Eq` is elementwise equality in order and the
-            // generated `Debug` is an in-order rendering of the same elements, so the framed
-            // bytes are `Eq`-agreeing — the `SemanticHash` contract this enum's `unsafe impl`
-            // states.
-            quote! { ::dovetail::key::write_framed(out, format!("{:?}", __p).as_bytes()); },
-            display,
-        );
-    }
-
-    // ★★★ (#195) The LABELLED, INVERTIBLE **WITHHELD-POSITION** leaf, one variant per
-    // category that some `| S ~/> T |-` declaration severs. Appended AFTER `FieldSeq*` so
-    // **no existing discriminant moves** — a language declaring no withholding produces
-    // byte-identical output, which is the change's strongest control — and emitted from
-    // [`super::withholding::WithholdingSet::earned_categories`], the same derivation the
-    // lowering and the inverse read, so the variant, the leaf and the inverse can never
-    // disagree about existence.
-    //
-    // ★ WHY THIS VARIANT MUST EXIST AT ALL (Theorem W1). An e-graph's e-node identity is
-    // `(operator, canonical child e-class ids)`. If a position holds a child e-class id
-    // then, the moment two children merge, the two parent e-nodes become the SAME hashcons
-    // key and inhabit the same e-class — so propagation through that position is not a
-    // policy the engine applies, it is an identity the data structure IS. Withholding is
-    // therefore realizable only by taking the position OUT of the child-e-class world: the
-    // field's value travels whole, inside one nullary leaf. See
-    // `dovetail/formal/rocq/theories/Lowering/CongruenceWithholding.v`.
-    //
-    // ⚠ THE PAYLOAD IS THE VALUE, and its content bytes are the category's own
-    // ALPHA-CANONICAL `semantic_hash` write stream — not `format!("{:?}", …)`. `Debug`
-    // prints a `Scope`'s raw binder names, so it distinguishes α-equivalent terms that `Eq`
-    // identifies; framing `Debug` bytes for a category payload would therefore VIOLATE the
-    // `SemanticHash` contract this enum's `unsafe impl` states (two values write the same
-    // bytes iff they are observationally equal). `FramedSemanticKeyHasher` records the exact
-    // framed stream rather than reducing it to a `u64`, so the key stays collision-free.
-    for category in withheld.iter() {
-        let display = format!("<field-withheld-{category}>");
-        push(
-            field_withheld_variant_ident(category),
-            Some(quote! { ::std::sync::Arc<#category> }),
-            quote! {
-                let mut __hasher = ::mettail_runtime::FramedSemanticKeyHasher::default();
-                __p.semantic_hash(&mut __hasher);
-                ::dovetail::key::write_framed(out, &__hasher.into_key());
-            },
-            display,
-        );
-    }
+    debug_assert_eq!(variants.len(), sentinels.end_operator_discriminant() as usize);
 
     (variants, refusals)
 }
@@ -399,6 +433,53 @@ pub(crate) fn field_seq_variant_ident(element_cat: &Ident) -> Ident {
     format_ident!("FieldSeq{}", element_cat)
 }
 
+/// Canonical variable-leaf identifier for one semantic category.  These
+/// machine-only leaves are appended after every legacy sentinel, so adding the
+/// canonical image projection cannot renumber an existing operator.
+pub(crate) fn field_variable_variant_ident(category: &Ident) -> Ident {
+    format_ident!("FieldVariable{}", category)
+}
+
+/// Canonical payload-free operator for one homogeneous map pair role. Both
+/// dimensions are present in the Rust identifier because the semantic-machine
+/// validator forbids reusing one auxiliary discriminant for incompatible
+/// `(collection kind, key category, value category)` roles.
+pub(crate) fn collection_pair_variant_ident(
+    kind: mettail_grammar_core::CollectionKind,
+    element_category: &Ident,
+) -> Ident {
+    let kind = match kind {
+        mettail_grammar_core::CollectionKind::Bag => "Bag",
+        mettail_grammar_core::CollectionKind::Set => "Set",
+        mettail_grammar_core::CollectionKind::List => "List",
+        mettail_grammar_core::CollectionKind::Map => "Map",
+        mettail_grammar_core::CollectionKind::PathMap => "PathMap",
+    };
+    format_ident!("CollectionPair{}{}", kind, element_category)
+}
+
+pub(crate) fn pathmap_mode_variant_ident(element_category: &Ident) -> Ident {
+    format_ident!("PathMapMode{}", element_category)
+}
+
+pub(crate) fn pathmap_pair_variant_ident(element_category: &Ident) -> Ident {
+    format_ident!("PathMapPair{}", element_category)
+}
+
+pub(crate) fn native_pathmap_mode_variant_ident(
+    key_category: &Ident,
+    value_category: &Ident,
+) -> Ident {
+    format_ident!("NativePathMapMode{}{}", key_category, value_category)
+}
+
+pub(crate) fn native_pathmap_pair_variant_ident(
+    key_category: &Ident,
+    value_category: &Ident,
+) -> Ident {
+    format_ident!("NativePathMapPair{}{}", key_category, value_category)
+}
+
 /// (#101) Every element category that EARNS the ordered-sequence carrier, in a DETERMINISTIC,
 /// deduplicated order.
 ///
@@ -414,8 +495,8 @@ pub(crate) fn field_seq_variant_ident(element_cat: &Ident) -> Ident {
 /// [`crate::gen::term_ops::subst::rule_to_variant_kind`]), in exactly the three positions the
 /// typed lowering emits a sequence leaf at:
 ///
-///  1. a NON-OPTIONAL `Vec` field of a `Regular` constructor;
-///  2. a NON-OPTIONAL `Vec` field in a `Binder`/`MultiBinder`'s pre-scope fields;
+///  1. a required or optional `Vec` field of a `Regular` constructor;
+///  2. a required or optional `Vec` field in a `Binder`/`MultiBinder`'s pre-scope fields;
 ///  3. a `VariantKind::Collection` constructor whose container is `Vec`.
 ///
 /// ⚠ WHY DECLARED RULES AND NOT `collect_category_variants` — MEASURED, NOT STYLISTIC.
@@ -431,59 +512,14 @@ pub(crate) fn field_seq_variant_ident(element_cat: &Ident) -> Ident {
 /// those synthesized fields on the `FieldOpaque` leaf they already used — zero behavioural
 /// change for them, since they were `NotInvertible` before and stay so.
 ///
-/// ⚠ OPTIONAL collection fields are EXCLUDED, deliberately: `field_child_expr_typed` keeps them
-/// on the lossy `FieldOpaque` leaf (an absent collection is a `FieldNone` sentinel, and #94
-/// found zero corpus instances of `#opt(xs:Vec(T))`), so admitting them here would emit a
-/// variant nothing writes and an inverse nothing calls.
+/// Exact optional ordered-sequence fields are included: their present arm uses
+/// the same labelled `FieldSeq*` leaf and their absent arm uses the indexed
+/// `FieldNone` leaf. Unordered optional collections remain opaque and therefore
+/// do not earn a carrier.
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn ordered_seq_element_categories(language: &LanguageDef) -> Vec<Ident> {
-    fn ordered_field_element(field: &crate::gen::term_ops::subst::FieldInfo) -> Option<Ident> {
-        if field.is_optional || !field.is_collection {
-            return None;
-        }
-        match super::collection_carrier(field.coll_type.as_ref()) {
-            super::CollectionCarrier::OrderedSeq => Some(field.category.clone()),
-            super::CollectionCarrier::AcBag | super::CollectionCarrier::Opaque => None,
-        }
-    }
-
-    let mut out: Vec<Ident> = Vec::new();
-    let mut push_unique = |cat: Ident| {
-        if !out.iter().any(|seen| *seen == cat) {
-            out.push(cat);
-        }
-    };
-    for rule in &language.terms {
-        match rule_to_variant_kind(rule, language) {
-            // ★ #141 G5. This walk collects the element CATEGORIES a lowering
-            // needs; a rule whose classification refuses contributes none, and
-            // the refusal itself is emitted by `op_enum_variants` from the same
-            // classification. See `VariantKind::Refused`.
-            VariantKind::Refused { .. } => {},
-            VariantKind::Regular { fields, .. } => {
-                for cat in fields.iter().filter_map(ordered_field_element) {
-                    push_unique(cat);
-                }
-            },
-            VariantKind::Binder { pre_scope_fields, .. }
-            | VariantKind::MultiBinder { pre_scope_fields, .. } => {
-                for cat in pre_scope_fields.iter().filter_map(ordered_field_element) {
-                    push_unique(cat);
-                }
-            },
-            VariantKind::Collection { element_cat, ref coll_type, .. } => {
-                if super::collection_carrier(Some(coll_type))
-                    == super::CollectionCarrier::OrderedSeq
-                {
-                    push_unique(element_cat);
-                }
-            },
-            VariantKind::Var { .. }
-            | VariantKind::Literal { .. }
-            | VariantKind::CollectionLiteral { .. }
-            | VariantKind::Nullary { .. } => {},
-        }
-    }
-    out
+    super::semantic_adapter::derive_ordered_sequence_elements(language)
 }
 
 /// Whether ANY constructor of `language` carries an [`OpaqueLeafKind::TokenText`] field — a
@@ -499,31 +535,10 @@ pub(crate) fn ordered_seq_element_categories(language: &LanguageDef) -> Vec<Iden
 ///
 /// It walks `collect_category_variants` — the SAME derivation every emitter consumes — rather
 /// than re-deriving field kinds from `LanguageDef`, so it cannot drift from what is emitted.
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn language_has_token_text_leaf(language: &LanguageDef) -> bool {
-    fn is_token_text(field: &crate::gen::term_ops::subst::FieldInfo) -> bool {
-        field.opaque_leaf == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
-    }
-    language.types.iter().any(|lang_type| {
-        collect_category_variants(&lang_type.name, language)
-            .iter()
-            .any(|variant| match variant {
-                VariantKind::Regular { fields, .. } => fields.iter().any(is_token_text),
-                VariantKind::Binder { pre_scope_fields, .. }
-                | VariantKind::MultiBinder { pre_scope_fields, .. } => {
-                    pre_scope_fields.iter().any(is_token_text)
-                },
-                // ★ #141 G5. The predicate asks "does any variant carry a
-                // token-text field?"; a refusal carries no fields, so the honest
-                // answer is `false` and the refusal is reported by the emitter
-                // that owns it. See `VariantKind::Refused`.
-                VariantKind::Refused { .. }
-                | VariantKind::Var { .. }
-                | VariantKind::Literal { .. }
-                | VariantKind::CollectionLiteral { .. }
-                | VariantKind::Nullary { .. }
-                | VariantKind::Collection { .. } => false,
-            })
-    })
+    super::semantic_adapter::derive_token_text(language)
 }
 
 /// Generate the typed op-enum + its `SemanticHash` + `Display` for a language (Step B).
@@ -531,67 +546,127 @@ pub(crate) fn language_has_token_text_leaf(language: &LanguageDef) -> bool {
 /// The `SemanticHash` writes a framed discriminant (cross-variant injectivity — two variants
 /// never alias) followed by the framed, `Eq`-agreeing payload bytes; this is the exact e-graph
 /// content key (`unsafe` trait: a key disagreeing with `Eq` would silently fail dedup).
+#[cfg(test)]
 pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
-    let enum_ident = op_enum_ident(language);
-    let (variants, op_variant_refusals) = collect_op_variants(language);
+    let layout = match SemanticAdapterLayout::derive(language) {
+        Ok(layout) => layout,
+        Err(error) => {
+            let message = error.to_string();
+            return quote! { compile_error!(#message); };
+        },
+    };
+    generate_dovetail_op_enum_from_layout(language, &layout)
+}
 
-    let enum_variants = variants.iter().map(|v| {
+pub(crate) fn generate_dovetail_op_enum_from_layout(
+    language: &LanguageDef,
+    layout: &SemanticAdapterLayout,
+) -> TokenStream {
+    let enum_ident = op_enum_ident(language);
+    let discriminant_method = op_discriminant_method_ident(language);
+    let (variants, op_variant_refusals) = collect_op_variants(language, layout);
+    let constructor_id_ident = format_ident!("__{}DovetailConstructorId", language.name);
+    let label_table_ident =
+        format_ident!("__METTAIL_{}_DOVETAIL_OP_LABELS", language.name.to_string().to_uppercase());
+
+    let payload_variants = variants.iter().filter(|variant| variant.payload.is_some());
+    let enum_variants = payload_variants.clone().map(|v| {
         let ident = &v.ident;
-        match &v.payload {
-            Some(ty) => quote! { #ident(#ty) },
-            None => quote! { #ident },
-        }
+        let ty = v.payload.as_ref().expect("filtered payload variant");
+        quote! { #ident(#ty) }
     });
 
-    let sh_arms = variants.iter().map(|v| {
+    let constructor_constants = variants
+        .iter()
+        .filter(|variant| variant.payload.is_none())
+        .map(|v| {
+            let ident = &v.ident;
+            let disc = v.disc;
+            quote! {
+                pub const #ident: Self = Self::__GeneratedConstructor(#constructor_id_ident(#disc));
+            }
+        });
+
+    let discriminant_arms = variants
+        .iter()
+        .filter(|variant| variant.payload.is_some())
+        .map(|variant| {
+            let ident = &variant.ident;
+            let disc = variant.disc;
+            quote! { Self::#ident(..) => #disc, }
+        });
+
+    let sh_arms = payload_variants.clone().map(|v| {
         let ident = &v.ident;
         let disc = v.disc;
-        if v.payload.is_some() {
-            let write_payload = &v.write_payload;
-            quote! {
-                Self::#ident(__p) => {
-                    ::dovetail::key::write_framed(out, &#disc.to_le_bytes());
-                    #write_payload
-                }
-            }
-        } else {
-            quote! {
-                Self::#ident => {
-                    ::dovetail::key::write_framed(out, &#disc.to_le_bytes());
-                }
+        let write_payload = &v.write_payload;
+        quote! {
+            Self::#ident(__p) => {
+                ::dovetail::key::write_framed(out, &#disc.to_le_bytes());
+                #write_payload
             }
         }
     });
 
-    let display_arms = variants.iter().map(|v| {
+    let display_arms = payload_variants.map(|v| {
         let ident = &v.ident;
         let display = &v.display;
-        if v.payload.is_some() {
-            quote! { Self::#ident(__p) => write!(f, "{}({:?})", #display, __p), }
-        } else {
-            quote! { Self::#ident => write!(f, "{}", #display), }
-        }
+        quote! { Self::#ident(__p) => write!(f, "{}({:?})", #display, __p), }
     });
+    let labels = variants.iter().map(|variant| &variant.display);
 
-    // Every emitted item is gated on `dovetail-codegen` (it references `::dovetail`): a
-    // `#[cfg]` attribute applies only to the NEXT item, so each of the three carries its own.
+    // Every emitted item is gated on `dovetail-codegen` (it references `::dovetail`): a `#[cfg]`
+    // attribute applies only to the NEXT item, so each item carries its own. The constructor-id
+    // tuple field is private. Because its public type is not re-exported from the generated
+    // concern module, downstream code can pattern-match the associated constants but cannot
+    // forge a discriminant that collides with a typed payload variant.
     quote! {
+        #[cfg(feature = "dovetail-codegen")]
+        #[doc(hidden)]
+        #[derive(::core::clone::Clone, ::core::marker::Copy, ::core::cmp::PartialEq,
+                 ::core::cmp::Eq, ::core::hash::Hash)]
+        pub struct #constructor_id_ident(u32);
+
         #[cfg(feature = "dovetail-codegen")]
         #[derive(::core::clone::Clone, ::core::cmp::PartialEq, ::core::cmp::Eq, ::core::hash::Hash)]
         #[allow(non_camel_case_types)]
         pub enum #enum_ident {
+            #[doc(hidden)]
+            __GeneratedConstructor(#constructor_id_ident),
             #(#enum_variants),*
         }
 
-        // SAFETY: `write_content` writes a framed discriminant unique per variant followed by
-        // the framed, `Eq`-agreeing payload bytes (integers two's-complement LE; floats and
-        // big-numerics via `to_canonical_bytes`; Map/Bag via sorted `Display`; vars/Vec via
-        // `Debug`). Two values produce identical bytes iff they are `Eq`-equal, and the
-        // framing makes the composite injective — satisfying the `SemanticHash` contract.
+        #[cfg(feature = "dovetail-codegen")]
+        #[allow(non_upper_case_globals)]
+        impl #enum_ident {
+            #(#constructor_constants)*
+
+            #[inline]
+            pub(crate) fn #discriminant_method(&self) -> u32 {
+                match self {
+                    Self::__GeneratedConstructor(__id) => __id.0,
+                    #(#discriminant_arms)*
+                }
+            }
+        }
+
+        #[cfg(feature = "dovetail-codegen")]
+        const #label_table_ident: &[&str] = &[#(#labels),*];
+
+        // SAFETY: the opaque constructor id and every typed payload variant retain their original
+        // stable discriminant. `write_content` writes that framed discriminant followed, for a
+        // payload, by the same framed Eq-agreeing bytes as before (integers two's-complement LE;
+        // floats and big-numerics via `to_canonical_bytes`; Map/Bag via sorted `Display`; vars/Vec
+        // via `Debug`). The constructor-id field is private and its type is sealed inside this
+        // concern, so no caller can forge an id that collides with a payload discriminant. Two
+        // constructible values therefore produce identical bytes iff they are Eq-equal.
         #[cfg(feature = "dovetail-codegen")]
         unsafe impl ::dovetail::key::SemanticHash for #enum_ident {
             fn write_content(&self, out: &mut ::std::vec::Vec<u8>) {
                 match self {
+                    Self::__GeneratedConstructor(__id) => {
+                        ::dovetail::key::write_framed(out, &__id.0.to_le_bytes());
+                    }
                     #(#sh_arms)*
                 }
             }
@@ -601,6 +676,13 @@ pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
         impl ::core::fmt::Display for #enum_ident {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 match self {
+                    Self::__GeneratedConstructor(__id) => {
+                        let __label = #label_table_ident
+                            .get(__id.0 as usize)
+                            .copied()
+                            .ok_or(::core::fmt::Error)?;
+                        f.write_str(__label)
+                    }
                     #(#display_arms)*
                 }
             }
@@ -609,5 +691,284 @@ pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
         // ★ #141 G5 — the classification refusals. EMPTY for every grammar whose
         // rules classify; non-empty, each is a `compile_error!` naming the rule.
         #(#op_variant_refusals)*
+    }
+}
+
+#[cfg(test)]
+mod compact_encoding_tests {
+    use super::*;
+
+    fn fixture() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: CompactOp,
+                types { Proc ![i64] as Int },
+                terms {
+                    PZero . |- "0" : Proc;
+                    AddInt . left:Int, right:Int |- left "+" right : Int ![left + right] fold;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("compact-op fixture must parse")
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct ExampleId(u32);
+
+    #[derive(Clone, PartialEq, Eq, Hash)]
+    enum ExampleOp {
+        Constructor(ExampleId),
+        Payload(String),
+    }
+
+    #[allow(non_upper_case_globals)]
+    impl ExampleOp {
+        const Unit: Self = Self::Constructor(ExampleId(7));
+    }
+
+    #[test]
+    fn an_associated_constant_preserves_borrowed_unit_pattern_matching() {
+        let unit = ExampleOp::Unit;
+        let payload = ExampleOp::Payload("x".to_owned());
+        assert!(matches!(&unit, &ExampleOp::Unit));
+        assert!(!matches!(&payload, &ExampleOp::Unit));
+    }
+
+    #[test]
+    fn generated_enum_keeps_payloads_typed_and_compacts_unit_operators() {
+        let generated = generate_dovetail_op_enum(&fixture());
+        let file: syn::File = syn::parse2(generated).expect("generated op items must parse");
+        let op_enum = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(item) if item.ident == "CompactOpDovetailOp" => Some(item),
+                _ => None,
+            })
+            .expect("generated op enum must exist");
+        let enum_variants: std::collections::BTreeSet<_> = op_enum
+            .variants
+            .iter()
+            .map(|variant| variant.ident.to_string())
+            .collect();
+
+        assert!(enum_variants.contains("__GeneratedConstructor"));
+        assert!(enum_variants.contains("Proc_PVar"));
+        assert!(enum_variants.contains("Int_NumLit"));
+        assert!(!enum_variants.contains("Proc_PZero"));
+        assert!(!enum_variants.contains("Int_AddInt"));
+
+        let associated_constants: std::collections::BTreeSet<_> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Impl(item) => Some(item),
+                _ => None,
+            })
+            .flat_map(|item| item.items.iter())
+            .filter_map(|item| match item {
+                syn::ImplItem::Const(item) => Some(item.ident.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(associated_constants.contains("Proc_PZero"));
+        assert!(associated_constants.contains("Int_AddInt"));
+        assert!(!associated_constants.contains("Proc_PVar"));
+        assert!(!associated_constants.contains("Int_NumLit"));
+
+        let discriminant_method = op_discriminant_method_ident(&fixture()).to_string();
+        assert!(file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Impl(item) => Some(item),
+                _ => None,
+            })
+            .flat_map(|item| item.items.iter())
+            .any(|item| {
+                matches!(item, syn::ImplItem::Fn(method)
+                if method.sig.ident.to_string() == discriminant_method)
+            }));
+    }
+
+    #[test]
+    fn constructor_identifier_field_is_not_publicly_forgeable() {
+        let generated = generate_dovetail_op_enum(&fixture());
+        let file: syn::File = syn::parse2(generated).expect("generated op items must parse");
+        let id_struct = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item)
+                    if item.ident.to_string().ends_with("DovetailConstructorId") =>
+                {
+                    Some(item)
+                },
+                _ => None,
+            })
+            .expect("opaque constructor id must exist");
+        let field = id_struct
+            .fields
+            .iter()
+            .next()
+            .expect("constructor id has one field");
+        assert!(matches!(field.vis, syn::Visibility::Inherited));
+    }
+
+    #[test]
+    fn stable_discriminants_and_labels_remain_one_shared_census() {
+        let language = fixture();
+        let layout = SemanticAdapterLayout::derive(&language).expect("layout must derive");
+        let (variants, refusals) = collect_op_variants(&language, &layout);
+        assert!(refusals.is_empty());
+        let mut discriminants = std::collections::BTreeSet::new();
+        for (ordinal, variant) in variants.iter().enumerate() {
+            assert_eq!(variant.disc as usize, ordinal);
+            assert!(discriminants.insert(variant.disc));
+            assert!(!variant.display.is_empty());
+        }
+        for sentinel in layout.sentinels().entries() {
+            let emitted = &variants[sentinel.operator_discriminant() as usize];
+            assert_eq!(emitted.disc, sentinel.operator_discriminant());
+            let expected_ident = match sentinel.identity() {
+                SemanticSentinelIdentity::BinderArity => format_ident!("BinderArity"),
+                SemanticSentinelIdentity::FieldNone => format_ident!("FieldNone"),
+                SemanticSentinelIdentity::FieldOpaque => format_ident!("FieldOpaque"),
+                SemanticSentinelIdentity::FieldTokenText => format_ident!("FieldTokenText"),
+                SemanticSentinelIdentity::FieldBytes => format_ident!("FieldBytes"),
+                SemanticSentinelIdentity::OrderedSequence { element_category } => {
+                    field_seq_variant_ident(element_category)
+                },
+                SemanticSentinelIdentity::Withheld { category } => {
+                    field_withheld_variant_ident(category)
+                },
+                SemanticSentinelIdentity::Variable { category } => {
+                    field_variable_variant_ident(category)
+                },
+                SemanticSentinelIdentity::CollectionPair { kind, element_category } => {
+                    collection_pair_variant_ident(*kind, element_category)
+                },
+                SemanticSentinelIdentity::PathMapMode { element_category } => {
+                    pathmap_mode_variant_ident(element_category)
+                },
+                SemanticSentinelIdentity::PathMapPair { element_category } => {
+                    pathmap_pair_variant_ident(element_category)
+                },
+                SemanticSentinelIdentity::NativePathMapMode { key_category, value_category } => {
+                    native_pathmap_mode_variant_ident(key_category, value_category)
+                },
+                SemanticSentinelIdentity::NativePathMapPair { key_category, value_category } => {
+                    native_pathmap_pair_variant_ident(key_category, value_category)
+                },
+            };
+            assert_eq!(emitted.ident, expected_ident);
+        }
+    }
+
+    #[test]
+    fn map_pair_sentinel_is_emitted_from_the_shared_collection_census() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let layout = SemanticAdapterLayout::derive(&language).expect("layout must derive");
+        let proc_category: Ident = syn::parse_str("Proc").expect("identifier");
+        let sentinel = layout
+            .sentinels()
+            .collection_pair(mettail_grammar_core::CollectionKind::Map, &proc_category)
+            .expect("Map/Proc pair sentinel");
+        let (variants, refusals) = collect_op_variants(&language, &layout);
+        assert!(refusals.is_empty());
+        let emitted = &variants[sentinel.operator_discriminant() as usize];
+        assert_eq!(
+            emitted.ident,
+            collection_pair_variant_ident(
+                mettail_grammar_core::CollectionKind::Map,
+                &proc_category,
+            )
+        );
+        assert!(emitted.payload.is_none());
+    }
+
+    #[test]
+    fn term_bearing_collection_literals_are_payload_free_structural_operators() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let layout = SemanticAdapterLayout::derive(&language).expect("layout must derive");
+        let (variants, refusals) = collect_op_variants(&language, &layout);
+        assert!(refusals.is_empty());
+
+        for (category_name, label_name) in crate::gen::COLLECTION_LITERAL_TEST_CATEGORIES {
+            let category: Ident = syn::parse_str(category_name).expect("category identifier");
+            let label: Ident = syn::parse_str(label_name).expect("literal identifier");
+            let variant = layout
+                .category(&category)
+                .and_then(|category| category.variant(&label))
+                .expect("collection literal must be in the shared census");
+            let emitted = &variants[variant
+                .operator_discriminant()
+                .expect("collection literal has a stable operator")
+                as usize];
+            assert!(
+                emitted.payload.is_none(),
+                "{category_name}::{label_name} must carry elements as structural children",
+            );
+        }
+    }
+
+    #[test]
+    fn non_category_scalar_collection_retains_its_exact_inline_codec() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: ScalarCollectionOp,
+                types { Proc ![Vec<u8>] as Bytes },
+                terms { PZero . |- "0" : Proc; },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("scalar collection fixture must parse");
+        let layout = SemanticAdapterLayout::derive(&language).expect("layout must derive");
+        let (variants, refusals) = collect_op_variants(&language, &layout);
+        assert!(refusals.is_empty());
+        let bytes: Ident = syn::parse_str("Bytes").expect("identifier");
+        let lit: Ident = syn::parse_str("BytesLit").expect("identifier");
+        let variant = layout
+            .category(&bytes)
+            .and_then(|category| category.variant(&lit))
+            .expect("Bytes literal must be in the shared census");
+        let emitted = &variants[variant
+            .operator_discriminant()
+            .expect("Bytes literal has a stable operator")
+            as usize];
+        assert!(emitted.payload.is_some());
+    }
+
+    #[test]
+    fn pathmap_mode_and_pair_sentinels_are_emitted_from_the_shared_collection_census() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let layout = SemanticAdapterLayout::derive(&language).expect("layout must derive");
+        let proc_category: Ident = syn::parse_str("Proc").expect("identifier");
+        let mode = layout
+            .sentinels()
+            .pathmap_mode(&proc_category)
+            .expect("PathMap/Proc mode sentinel");
+        let pair = layout
+            .sentinels()
+            .pathmap_pair(&proc_category)
+            .expect("PathMap/Proc pair sentinel");
+        let (variants, refusals) = collect_op_variants(&language, &layout);
+        assert!(refusals.is_empty());
+        let emitted_mode = &variants[mode.operator_discriminant() as usize];
+        assert_eq!(emitted_mode.ident, pathmap_mode_variant_ident(&proc_category));
+        assert_eq!(
+            emitted_mode
+                .payload
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("u8")
+        );
+        let emitted_pair = &variants[pair.operator_discriminant() as usize];
+        assert_eq!(emitted_pair.ident, pathmap_pair_variant_ident(&proc_category));
+        assert!(emitted_pair.payload.is_none());
     }
 }

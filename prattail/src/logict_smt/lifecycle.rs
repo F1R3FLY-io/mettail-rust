@@ -3,6 +3,9 @@ use std::hash::{Hash, Hasher};
 use std::mem::{self, ManuallyDrop};
 use std::ptr;
 
+use num_bigint::BigInt;
+use num_traits::Zero;
+
 use super::{SmtConstraint, SmtTerm};
 
 impl Clone for SmtTerm {
@@ -10,7 +13,7 @@ impl Clone for SmtTerm {
         enum Task<'term> {
             Visit(&'term SmtTerm),
             Binary(Binary),
-            Scale(i64),
+            Scale(&'term BigInt),
         }
 
         enum Binary {
@@ -22,10 +25,12 @@ impl Clone for SmtTerm {
         let mut values = Vec::new();
         while let Some(task) = tasks.pop() {
             match task {
-                Task::Visit(SmtTerm::IntLit(value)) => values.push(SmtTerm::IntLit(*value)),
+                Task::Visit(SmtTerm::IntLit(value)) => {
+                    values.push(SmtTerm::IntLit(value.clone()));
+                },
                 Task::Visit(SmtTerm::IntVar(name)) => values.push(SmtTerm::IntVar(name.clone())),
                 Task::Visit(SmtTerm::BvLit(value, width)) => {
-                    values.push(SmtTerm::BvLit(*value, *width));
+                    values.push(SmtTerm::BvLit(value.clone(), *width));
                 },
                 Task::Visit(SmtTerm::BvVar(name, width)) => {
                     values.push(SmtTerm::BvVar(name.clone(), *width));
@@ -41,7 +46,7 @@ impl Clone for SmtTerm {
                     tasks.push(Task::Visit(left));
                 },
                 Task::Visit(SmtTerm::Scale(coefficient, term)) => {
-                    tasks.push(Task::Scale(*coefficient));
+                    tasks.push(Task::Scale(coefficient));
                     tasks.push(Task::Visit(term));
                 },
                 Task::Binary(binary) => {
@@ -54,7 +59,7 @@ impl Clone for SmtTerm {
                 },
                 Task::Scale(coefficient) => {
                     let term = values.pop().expect("SMT term clone PDA lost scale operand");
-                    values.push(SmtTerm::Scale(coefficient, Box::new(term)));
+                    values.push(SmtTerm::Scale(coefficient.clone(), Box::new(term)));
                 },
             }
         }
@@ -169,20 +174,24 @@ impl Hash for SmtTerm {
 
 impl Drop for SmtTerm {
     fn drop(&mut self) {
-        let root = mem::replace(self, SmtTerm::IntLit(0));
+        let root = mem::replace(self, SmtTerm::IntLit(BigInt::zero()));
         let mut work = vec![root];
         while let Some(term) = work.pop() {
             let mut term = ManuallyDrop::new(term);
             unsafe {
                 match &mut *term {
-                    SmtTerm::IntLit(_) | SmtTerm::BvLit(_, _) => {},
+                    SmtTerm::IntLit(value) => std::mem::drop(ptr::read(value)),
+                    SmtTerm::BvLit(value, _) => std::mem::drop(ptr::read(value)),
                     SmtTerm::IntVar(name) => std::mem::drop(ptr::read(name)),
                     SmtTerm::BvVar(name, _) => std::mem::drop(ptr::read(name)),
                     SmtTerm::Add(left, right) | SmtTerm::Sub(left, right) => {
                         work.push(*ptr::read(left));
                         work.push(*ptr::read(right));
                     },
-                    SmtTerm::Scale(_, inner) => work.push(*ptr::read(inner)),
+                    SmtTerm::Scale(coefficient, inner) => {
+                        std::mem::drop(ptr::read(coefficient));
+                        work.push(*ptr::read(inner));
+                    },
                 }
             }
         }

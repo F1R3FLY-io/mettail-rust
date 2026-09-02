@@ -59,6 +59,16 @@ language! {
         //      so `query_receive_sugar_with_arithmetic_guard` / `_with_string_guard`
         //      unify regardless of which reading each context elects.
         reserved_keywords: auto,
+        // Only spellings introduced by the DDL, plus the explicit `PPar`
+        // constructor-label exception, retain an identifier co-reading here.
+        // `in` is an inherited fixed Rholang binder-list terminator and is also
+        // fixed in DDL `let`; contextualizing it changes the legacy token DAG.
+        contextual_keywords: [
+            "Module", "Theory", "theory", "import", "as", "from", "Empty",
+            "free", "let", "Types", "Exports", "Replacements", "Terms",
+            "Equations", "Rewrites", "Data", "HashBag", "Set", "List", "sep",
+            "subst", "PPar",
+        ],
     },
 
     types {
@@ -74,6 +84,11 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        // URI literals are binder annotations, not string-valued processes.
+        // `Uri` is intentionally not a native string category: its sole
+        // constructor captures the declared UriLiteral token verbatim, keeping
+        // URI syntax disjoint from GString and from modal FLT backticks.
+        Uri
         // ★★ `Bytes` IS A BYTE ARRAY, NOT A STRING — LANDED 2026-07-30 (ruled 2026-07-29).
         //
         // This was `![String] as Bytes`. Both `Str` and `Bytes` were therefore STRING-SHAPED, so
@@ -176,8 +191,36 @@ language! {
             close_parts: ["|}"],
             sep: ",",
         }
-        ![std::sync::Arc<crate::rholang::zipper::ReadZipperLit>] as ReadZipper
-        ![std::sync::Arc<crate::rholang::zipper::WriteZipperLit>] as WriteZipper
+        // Closed metasyntax used by Greg/Mike's in-Rholang MeTTaIL DDL.
+        // `data` categories have only the constructors declared below: they do
+        // not acquire Rholang variables, HOL application/abstraction variants,
+        // or object-language auto-injections. This keeps the existing Rholang
+        // category/HOL roster and ordinary parser hot path unchanged.
+        data DdlImports
+        data DdlImport
+        data DdlModuleItem
+        data DdlParam
+        data DdlPath
+        data DdlTheoryExpr
+        data DdlCatDecl
+        data DdlExport
+        data DdlReplacement
+        data DdlTermRule
+        data DdlBinding
+        data DdlSort
+        data DdlSyntaxItem
+        data DdlEquation
+        data DdlFreshnesses
+        data DdlFreshness
+        data DdlRewrite
+        data DdlPremises
+        data DdlPremise
+        data DdlRuleAstItems
+        data DdlRuleAstRemainderTail
+        data DdlRuleAst
+
+        ![std::sync::Arc<mettail_runtime::ReadZipperLit<Proc, Proc>>] as ReadZipper
+        ![std::sync::Arc<mettail_runtime::WriteZipperLit<Proc, Proc>>] as WriteZipper
     },
 
     // ── Divergence I (2026-07-25): the integer-literal DOMAINS PARTITION ────────────
@@ -523,6 +566,14 @@ language! {
     // lowercase IDENT; the brace tag is the reserved keyword `box` (D-1), so it
     // never collides with PPar's `{ … }`.
     tokens {
+        // DDL keywords are ordinary grammar literals listed in
+        // `contextual_keywords`: their fixed-token reading is available in DDL
+        // positions while the Ident co-reading remains available elsewhere.
+        // Empty URIs are invalid authority names.  Requiring at least one byte
+        // also keeps this token's language disjoint from the doubled suffix of
+        // an FLT fence; modal delimiters therefore retain a unique scan.
+        UriLiteral = "`[^`]+`" ;
+
         // ── Comments — routed to the retained `COMMENTS` channel (task #18) ──────────────
         //
         // A `-> CHANNEL` token is TRIVIA: the lexer resolves it by the same MAXIMAL MUNCH
@@ -1169,6 +1220,15 @@ language! {
         PNew . ^[xs].p:[Name* -> Proc]
         |- "new" xs.*sep(",") "in" "{" p "}" : Proc;
 
+        // Official URI-bound names. URI binders form one normalized `New`:
+        // f1r3node requires its `New.uri` suffix to be lexicographically sorted,
+        // so lowering sorts `(uri,binder)` pairs before extending the de Bruijn
+        // environment. Ordinary fresh names can be nested around this form;
+        // nesting is the capability-safe normal form because it cannot blur
+        // random-name allocation with system-URI authority.
+        PNewUris . uris:Vec(Uri), ^[xs].p:[Name* -> Proc]
+        |- "new" *zip(uris,xs).*map(|u,x| x "(" u ")").*sep(",") "in" "{" p "}" : Proc;
+
         // customize error handling
         // (e.g. filter results by =/= Err)
         Err . |- "error" : Proc;
@@ -1528,16 +1588,14 @@ language! {
         // consumes no infix precedence slot: it cannot perturb the relative order
         // of any existing operator.
         //
-        // ⚠ `"PPar"` becomes a RESERVED word. Rholang sets
-        // `options { reserved_keywords: auto }` (above), which reserves every
-        // identifier-shaped literal terminal, so after this declaration `PPar` can
-        // no longer name a variable. That is the whole point — reservation is what
-        // makes the leading literal unable to fork against the lowercase call-forms
-        // (`int(…)`, `bool(…)`, a user method) — and it is affordable because the
-        // name is unused: no `.rho` demo, corpus program, or Rholang test binds
-        // `PPar`. The idiomatic host spelling `{ φ | ψ }` (an ordinary `PPar`
-        // literal) remains available and compiles to the SAME par-pattern, so a
-        // program that wants the connective without the keyword still has it.
+        // `PPar` is contextual, rather than globally reserved. Greg/Mike DDLs use
+        // constructor labels such as `PPar` in identifier positions, while this
+        // host form uses the same spelling as a leading literal. The generalized
+        // parser therefore retains both lexical readings and selects the fixed
+        // reading only in this self-delimiting `PPar(φ, ψ)` context. This is the
+        // same context-sensitive keyword discipline used by the DDL's own words;
+        // it keeps the embedded language's identifier namespace intact without a
+        // source rewrite or a second parser.
         SpatialPPar . a:Proc, b:Proc |- "PPar" "(" a "," b ")" : Proc ;
 
         Eq . a:Proc, b:Proc |- a "==" b : Proc ![
@@ -2495,6 +2553,15 @@ language! {
             }}
         ] fold;
 
+        // Keep newly introduced categories additive to the legacy generated
+        // parser ABI. Category indices are derived from the term dependency
+        // order, so placing UriText before PZero would renumber Proc,
+        // InputBind, ForRow, and Name even though URI syntax does not alter
+        // their grammar. Token-text capture preserves the complete framed URI
+        // without routing its bytes through the string-literal family or an
+        // FLT mode.
+        UriText . |- raw@UriLiteral : Uri;
+
         // L9-5: FLT guest-body captures. Each `*flt(node, open, close)` consumes a
         // delimited foreign-language region and assembles an opaque native
         // `FltNode { tag, body_src, holes[{name,category,offset}], position }` (an
@@ -2508,6 +2575,148 @@ language! {
         PFlt . |- *flt(node, FltOpenBacktick, FltCloseBacktick) : Proc;
         PFltFence . |- *flt(node, FltOpenFence, FltCloseFence) : Proc;
         PFltBrace . |- *flt(node, FltOpenBrace, FltCloseBrace) : Proc;
+
+        // Greg/Mike MeTTaIL DDL declarations are first-class forms of this
+        // existing Rholang Proc. Every field below is parsed structurally by
+        // this generated parser. No declaration source is captured or parsed a
+        // second time.
+
+        // Theory algebra, loosest to tightest. Postfix builders are classified
+        // separately and bind tighter than these left-associative infixes.
+        DdlTheoryDiff . left:DdlTheoryExpr, right:DdlTheoryExpr
+            |- left "\\" right : DdlTheoryExpr;
+        DdlTheoryJoin . left:DdlTheoryExpr, right:DdlTheoryExpr
+            |- left "\\/" right : DdlTheoryExpr;
+        DdlTheoryMeet . left:DdlTheoryExpr, right:DdlTheoryExpr
+            |- left "/\\" right : DdlTheoryExpr;
+
+        DdlTheoryTypes . base:DdlTheoryExpr, entries:Vec(DdlCatDecl)
+            |- base "Types" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryExports . base:DdlTheoryExpr, entries:Vec(DdlExport)
+            |- base "Exports" "{" entries.*sep("") "}" : DdlTheoryExpr same;
+        DdlTheoryReplacements . base:DdlTheoryExpr, entries:Vec(DdlReplacement)
+            |- base "Replacements" "{" entries.*sep("") "}" : DdlTheoryExpr same;
+        DdlTheoryTerms . base:DdlTheoryExpr, entries:Vec(DdlTermRule)
+            |- base "Terms" "{" entries.*sep("") "}" : DdlTheoryExpr same;
+        DdlTheoryEquations . base:DdlTheoryExpr, entries:Vec(DdlEquation)
+            |- base "Equations" "{" entries.*sep("") "}" : DdlTheoryExpr same;
+        DdlTheoryRewrites . base:DdlTheoryExpr, entries:Vec(DdlRewrite)
+            |- base "Rewrites" "{" entries.*sep("") "}" : DdlTheoryExpr same;
+        DdlTheoryData . base:DdlTheoryExpr, value:Proc
+            |- base "Data" "(" value ")" : DdlTheoryExpr same;
+
+        DdlTheoryEmpty . |- "Empty" : DdlTheoryExpr;
+        DdlTheoryFree . path:DdlPath
+            |- "free" "(" path ")" : DdlTheoryExpr;
+        DdlTheoryLet . bound:DdlTheoryExpr, body:DdlTheoryExpr
+            |- "let" name@Ident "=" bound "in" "(" body ")" : DdlTheoryExpr;
+        DdlTheoryBraceGroup . body:DdlTheoryExpr |- "{" body "}" : DdlTheoryExpr;
+        DdlTheoryParenGroup . body:DdlTheoryExpr |- "(" body ")" : DdlTheoryExpr;
+        DdlTheoryApply . path:DdlPath, arguments:Vec(DdlTheoryExpr)
+            |- path "(" arguments.*sep(",") ")" : DdlTheoryExpr;
+        DdlTheoryRef . path:DdlPath |- path : DdlTheoryExpr;
+
+        // G5: a leading builder has an implicit Empty base.
+        DdlTheoryTypesImplicit . entries:Vec(DdlCatDecl)
+            |- "Types" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryExportsImplicit . entries:Vec(DdlExport)
+            |- "Exports" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryReplacementsImplicit . entries:Vec(DdlReplacement)
+            |- "Replacements" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryTermsImplicit . entries:Vec(DdlTermRule)
+            |- "Terms" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryEquationsImplicit . entries:Vec(DdlEquation)
+            |- "Equations" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryRewritesImplicit . entries:Vec(DdlRewrite)
+            |- "Rewrites" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryDataImplicit . value:Proc
+            |- "Data" "(" value ")" : DdlTheoryExpr;
+
+        DdlPathQualified . tail:DdlPath |- head@Ident "." tail : DdlPath;
+        DdlPathName . |- name@Ident : DdlPath;
+        DdlParamDecl . theory:DdlPath |- name@Ident ":" theory : DdlParam;
+
+        DdlImportModuleAs .
+            |- "import" raw@StringLiteral "as" alias@Ident : DdlImport;
+        DdlImportFromModule .
+            |- "import" name@Ident "from" raw@StringLiteral : DdlImport;
+        DdlImportsNonEmpty . head:DdlImport, tail:Vec(DdlImport)
+            |- head tail.*sep("") : DdlImports;
+
+        // BNFC's `ProgTheoryInst ::= "theory" TheoryInst` consumes the complete
+        // `TheoryInst` entrypoint. This is not a tight unary operator. The zero
+        // Pratt floor is the exact translation: it admits the constructor and
+        // theory-algebra continuations belonging to the selected expression.
+        DdlModuleTheoryItem . expression:DdlTheoryExpr
+            |- "theory" expression : DdlModuleItem prefix(0);
+        DdlModuleProcItem . process:Proc |- process : DdlModuleItem;
+
+        DdlModule . items:Vec(DdlModuleItem)
+            |- "Module" name@Ident "{" items.*sep("") "}" : Proc;
+        DdlModuleImported . imports:DdlImports, items:Vec(DdlModuleItem)
+            |- imports "Module" name@Ident "{" items.*sep("") "}" : Proc;
+        DdlTheory . parameters:Vec(DdlParam), body:DdlTheoryExpr
+            |- "Theory" name@Ident "(" parameters.*sep(",") ")" "{" body "}" : Proc;
+
+        DdlCategory . |- name@Ident ";" : DdlCatDecl;
+        DdlExportDirect . |- name@Ident ";" : DdlExport;
+        DdlExportRename .
+            |- name@Ident "=>" replacement@Ident ";" : DdlExport;
+        DdlReplacementRule . rule:DdlTermRule
+            |- target@Ident "=>" rule : DdlReplacement;
+
+        DdlTerm . bindings:Vec(DdlBinding), syntax:Vec(DdlSyntaxItem)
+            |- label@Ident "." bindings.*sep(",") "|-" syntax.*sep("") ":" result@Ident ";" : DdlTermRule;
+        DdlBindingPlain . sort:DdlSort |- name@Ident ":" sort : DdlBinding;
+        DdlBindingBinder .
+            |- "^" binder@Ident "." body@Ident ":" "[" from@Ident "->" to@Ident "]" : DdlBinding;
+
+        DdlSortHashBag . |- "HashBag" "(" of@Ident ")" : DdlSort;
+        DdlSortSet . |- "Set" "(" of@Ident ")" : DdlSort;
+        DdlSortList . |- "List" "(" of@Ident ")" : DdlSort;
+        DdlSortCategory . |- name@Ident : DdlSort;
+
+        DdlSyntaxProjection .
+            |- argument@Ident "." "*" "sep" "(" raw@StringLiteral ")" : DdlSyntaxItem;
+        DdlSyntaxTerminal . |- raw@StringLiteral : DdlSyntaxItem;
+        DdlSyntaxArgument . |- argument@Ident : DdlSyntaxItem;
+
+        DdlFreshness .
+            |- "if" left@Ident "#" right@Ident "then" : DdlFreshness;
+        DdlFreshnessOne . condition:DdlFreshness |- condition : DdlFreshnesses;
+        DdlFreshnessMore . condition:DdlFreshness, rest:DdlFreshnesses
+            |- condition rest : DdlFreshnesses;
+        DdlEquationDirect . left:DdlRuleAst, right:DdlRuleAst
+            |- left "==" right ";" : DdlEquation;
+        DdlEquationConditional . freshness:DdlFreshnesses, left:DdlRuleAst, right:DdlRuleAst
+            |- freshness left "==" right ";" : DdlEquation;
+
+        DdlPremise .
+            |- "if" left@Ident "~>" right@Ident "then" : DdlPremise;
+        DdlPremiseOne . premise:DdlPremise |- premise : DdlPremises;
+        DdlPremiseMore . premise:DdlPremise, rest:DdlPremises |- premise rest : DdlPremises;
+        DdlRewriteDirect . left:DdlRuleAst, right:DdlRuleAst
+            |- name@Ident ":" left "~>" right ";" : DdlRewrite;
+        DdlRewriteConditional . premises:DdlPremises, left:DdlRuleAst, right:DdlRuleAst
+            |- name@Ident ":" premises left "~>" right ";" : DdlRewrite;
+
+        DdlRuleAstSubst . abstraction:DdlRuleAst, argument:DdlRuleAst
+            |- "(" "subst" abstraction argument ")" : DdlRuleAst;
+        DdlRuleAstSExp . arguments:Vec(DdlRuleAst)
+            |- "(" label@Ident arguments.*sep("") ")" : DdlRuleAst;
+        DdlRuleAstAbs . body:DdlRuleAst |- "^" binder@Ident "." body : DdlRuleAst;
+        DdlRuleAstCollectionEmpty . |- "{" "}" : DdlRuleAst;
+        DdlRuleAstCollection . items:DdlRuleAstItems |- "{" items "}" : DdlRuleAst;
+        DdlRuleAstRemainderOnly . |- "{" "..." remainder@Ident "}" : DdlRuleAst;
+        DdlRuleAstCollectionRemainder . first:DdlRuleAst, tail:DdlRuleAstRemainderTail
+            |- "{" first "," tail "}" : DdlRuleAst;
+        DdlRuleAstVar . |- name@Ident : DdlRuleAst;
+        DdlRuleAstItemOne . item:DdlRuleAst |- item : DdlRuleAstItems;
+        DdlRuleAstItemMore . item:DdlRuleAst, rest:DdlRuleAstItems
+            |- item "," rest : DdlRuleAstItems;
+        DdlRuleAstTailRemainder . |- "..." remainder@Ident : DdlRuleAstRemainderTail;
+        DdlRuleAstTailMore . item:DdlRuleAst, rest:DdlRuleAstRemainderTail
+            |- item "," rest : DdlRuleAstRemainderTail;
 
         // ★ THE LOOKAHEAD SUFFIX — `P[n]` and `P[*]` (FIPS `2026-01-08-Lookahead`).
         //

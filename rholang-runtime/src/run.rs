@@ -163,7 +163,65 @@ async fn build_runtime() -> Result<(impl RhoRuntime, SubstrateGuardMatcher), Str
 /// [`NativeHandlerSpec`](mettail_rholang_codegen::NativeHandlerSpec)s themselves — can thread
 /// them without relying on same-thread thread-local discipline.
 async fn build_runtime_with_definitions(
+    extra_system_processes: Vec<Definition>,
+) -> Result<(impl RhoRuntime, SubstrateGuardMatcher), String> {
+    #[cfg(feature = "rholang-runtime")]
+    {
+        build_runtime_with_language_runtime(extra_system_processes, None).await
+    }
+    #[cfg(not(feature = "rholang-runtime"))]
+    {
+        build_runtime_with_matcher(extra_system_processes, SubstrateGuardMatcher::new()).await
+    }
+}
+
+#[cfg(feature = "rholang-runtime")]
+async fn build_runtime_with_language_runtime(
     mut extra_system_processes: Vec<Definition>,
+    mut matcher_language_runtime: Option<Arc<crate::language_install::RholangLanguageRuntime>>,
+) -> Result<(impl RhoRuntime, SubstrateGuardMatcher), String> {
+    // The installation URI is part of nouveau Rholang's standard capability
+    // surface. In-memory runners receive a process-local, registry-empty
+    // instance unless their caller supplied a Definition with the same URN.
+    // Node integration supplies its own definition backed by a pinned Registry
+    // snapshot through `language_install_definition`; neither path has ambient
+    // filesystem authority.
+    let has_language_install = extra_system_processes
+        .iter()
+        .any(|definition| definition.urn == crate::language_install::LANGUAGE_INSTALL_URN);
+    let has_language_parse = extra_system_processes
+        .iter()
+        .any(|definition| definition.urn == crate::language_install::LANGUAGE_PARSE_URN);
+    let has_flt_construct = extra_system_processes
+        .iter()
+        .any(|definition| definition.urn == crate::language_install::LANGUAGE_FLT_CONSTRUCT_URN);
+    let has_flt_pattern = extra_system_processes
+        .iter()
+        .any(|definition| definition.urn == crate::language_install::LANGUAGE_FLT_PATTERN_URN);
+    if !has_language_install && !has_language_parse && !has_flt_construct && !has_flt_pattern {
+        let service = Arc::new(crate::language_install::LanguageInstallService::new(
+            Arc::new(crate::language_install::EmptyRegistrySnapshot),
+            crate::language_install::LanguageInstallPolicy::default(),
+        ));
+        let language_runtime =
+            Arc::new(crate::language_install::RholangLanguageRuntime::new(service));
+        extra_system_processes.extend(crate::language_install::language_runtime_definitions(
+            language_runtime.clone(),
+        ));
+        matcher_language_runtime = Some(language_runtime);
+    }
+    let guards = matcher_language_runtime.map_or_else(SubstrateGuardMatcher::new, |runtime| {
+        SubstrateGuardMatcher::with_language_runtime(runtime)
+    });
+    build_runtime_with_matcher(extra_system_processes, guards).await
+}
+
+/// Feature-neutral RSpace construction. Language installation is resolved before this boundary;
+/// builds without nouveau-Rholang support therefore carry neither installer types nor dead
+/// conditional branches into the common execution path.
+async fn build_runtime_with_matcher(
+    mut extra_system_processes: Vec<Definition>,
+    guards: SubstrateGuardMatcher,
 ) -> Result<(impl RhoRuntime, SubstrateGuardMatcher), String> {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm
@@ -175,7 +233,6 @@ async fn build_runtime_with_definitions(
     // `Match::check_commit`), so the decider is chosen HERE, by whoever constructs the space —
     // no f1r3node change. `SubstrateGuardMatcher` delegates `get` to f1r3node's `Matcher`
     // verbatim (spatial matching is untouched) and decides `check_commit` with the substrate.
-    let guards = SubstrateGuardMatcher::new();
     // The handle is taken BEFORE the decider is boxed into the space, which is the only moment
     // it is reachable: `RSpace` keeps an `Arc<Box<dyn Match<…>>>` and the trait exposes no way
     // back to the concrete type.
@@ -1685,6 +1742,55 @@ pub async fn run_normalized_par_for_oracle_and_read_par_channels(
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<Par>>, String> {
     let runtime = evaluate_par(program).await?;
+    let mut result = HashMap::with_capacity(out_channels.len());
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+        );
+    }
+    Ok(result)
+}
+
+/// Execute one normalized program with an explicit set of capability-bearing
+/// system-process definitions, then read arbitrary result values verbatim.
+///
+/// Definitions must be installed while the runtime is constructed: adding a
+/// URI mapping after reduction starts would split the authority seen by `new`
+/// from the dispatch table used by COMM.  This entry point keeps those two
+/// views atomic and is the node/test seam for registry-backed services.
+pub async fn run_normalized_par_with_definitions_and_read_par_channels(
+    program: &Par,
+    definitions: Vec<Definition>,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<Par>>, String> {
+    let (mut runtime, matcher) = build_runtime_with_definitions(definitions).await?;
+    inj_on_runtime(&mut runtime, program.clone(), &matcher).await?;
+    let mut result = HashMap::with_capacity(out_channels.len());
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+        );
+    }
+    Ok(result)
+}
+
+/// Execute with one installed-language runtime shared by its system-process
+/// definitions and the RSpace matcher. This is required for prepared dynamic
+/// FLT pattern tokens; construction-only callers may use the definitions-only
+/// entry point above.
+#[cfg(feature = "rholang-runtime")]
+pub async fn run_normalized_par_with_language_runtime_and_read_par_channels(
+    program: &Par,
+    language_runtime: Arc<crate::language_install::RholangLanguageRuntime>,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<Par>>, String> {
+    let definitions =
+        crate::language_install::language_runtime_definitions(language_runtime.clone());
+    let (mut runtime, matcher) =
+        build_runtime_with_language_runtime(definitions, Some(language_runtime)).await?;
+    inj_on_runtime(&mut runtime, program.clone(), &matcher).await?;
     let mut result = HashMap::with_capacity(out_channels.len());
     for channel in out_channels {
         result.insert(

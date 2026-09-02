@@ -19,11 +19,45 @@ pub type Cat = String;
 pub struct ModuleFile {
     pub imports: Vec<Import>,
     pub name: Ident,
-    pub decls: Vec<TheoryDecl>,
-    /// Every `theory <expr>` statement, in source order. The last one is the
-    /// entry point (plan §3.2).
-    pub instantiations: Vec<TheoryExpr>,
+    /// Declarations and `theory <expr>` entries in their exact source order.
+    /// This order is semantically relevant: a local theory is visible only to
+    /// later items, and exported languages retain entry order.
+    pub items: Vec<ModuleItem>,
     pub span: Span,
+}
+
+impl ModuleFile {
+    pub fn declarations(&self) -> impl DoubleEndedIterator<Item = &TheoryDecl> {
+        self.items.iter().filter_map(|item| match item {
+            ModuleItem::TheoryDecl(declaration) => Some(declaration),
+            ModuleItem::TheoryEntry(_) | ModuleItem::Program(_) => None,
+        })
+    }
+
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &TheoryExpr> {
+        self.items.iter().filter_map(|item| match item {
+            ModuleItem::TheoryDecl(_) => None,
+            ModuleItem::TheoryEntry(expression) => Some(expression),
+            ModuleItem::Program(_) => None,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum ModuleItem {
+    TheoryDecl(TheoryDecl),
+    TheoryEntry(TheoryExpr),
+    /// Ordinal reference to an ordinary Rholang process extracted from the
+    /// structural wire envelope. The neutral elaborator preserves its place in
+    /// source order but never executes it and never includes it in language
+    /// identity.
+    Program(StagedProgramRef),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StagedProgramRef {
+    pub slot: usize,
+    pub source_ordinal: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +151,32 @@ impl TheoryExpr {
             | TheoryExpr::Meet(_, _, s)
             | TheoryExpr::Join(_, _, s)
             | TheoryExpr::Diff(_, _, s) => *s,
+        }
+    }
+
+    /// The stable exported-language name carried by a top-level `theory`
+    /// entry expression.
+    ///
+    /// Greg and Mike's surface deliberately has no second `as Name` syntax.
+    /// Consequently an entry is named only when its outer expression denotes
+    /// a declared theory (`theory T(...)` or `theory free(T)`). Postfix
+    /// builders preserve that name. Compound algebra and `let` expressions do
+    /// not invent names; an author exports one by wrapping the compound in a
+    /// declaration, `Theory N() { e }`, and writing `theory N()`.
+    pub fn export_name(&self) -> Option<&str> {
+        let mut expression = self;
+        loop {
+            match expression {
+                TheoryExpr::Apply { head, .. } | TheoryExpr::Free(head, _) => {
+                    return Some(head.last())
+                },
+                TheoryExpr::Build { base, .. } => expression = base,
+                TheoryExpr::Empty(_)
+                | TheoryExpr::Let { .. }
+                | TheoryExpr::Meet(..)
+                | TheoryExpr::Join(..)
+                | TheoryExpr::Diff(..) => return None,
+            }
         }
     }
 }
@@ -322,24 +382,21 @@ impl Ast {
 
     /// Every constructor label mentioned anywhere in this AST.
     pub fn labels(&self, out: &mut Vec<Label>) {
-        match self {
-            Ast::SExp(l, args, _) => {
-                out.push(l.clone());
-                for a in args {
-                    a.labels(out);
-                }
-            },
-            Ast::Subst(a, b, _) => {
-                a.labels(out);
-                b.labels(out);
-            },
-            Ast::Abs(_, b, _) => b.labels(out),
-            Ast::Coll(xs, _) => {
-                for a in xs {
-                    a.labels(out);
-                }
-            },
-            Ast::Var(..) | Ast::Remainder(..) => {},
+        let mut work = vec![self];
+        while let Some(ast) = work.pop() {
+            match ast {
+                Ast::SExp(label, arguments, _) => {
+                    out.push(label.clone());
+                    work.extend(arguments.iter().rev());
+                },
+                Ast::Subst(abstraction, argument, _) => {
+                    work.push(argument);
+                    work.push(abstraction);
+                },
+                Ast::Abs(_, body, _) => work.push(body),
+                Ast::Coll(elements, _) => work.extend(elements.iter().rev()),
+                Ast::Var(..) | Ast::Remainder(..) => {},
+            }
         }
     }
 }

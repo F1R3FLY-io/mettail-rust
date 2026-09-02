@@ -2758,7 +2758,16 @@ fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
 /// - `"=="` → `EqEq`
 /// - `"{}"` → `EmptyBraces`
 /// - `"("` → `LParen`
-/// - `"error"` → `KwError`
+/// - `"error"` → `Kw_65_72_72_6f_72`
+/// - `"Theory"` → `Kw_54_68_65_6f_72_79`
+/// - `"theory"` → `Kw_74_68_65_6f_72_79`
+///
+/// Word-like and dollar-prefixed terminals are byte-encoded rather than
+/// case-normalized. Rust variant names are an internal identity boundary: a
+/// merely readable but non-injective spelling would make case-distinct grammar
+/// literals share one token variant, causing one exact literal to be silently
+/// converted into the other. Hex-encoding the UTF-8 bytes is injective over
+/// terminal strings and produces portable Rust identifiers.
 pub fn terminal_to_variant_name(terminal: &str) -> String {
     match terminal {
         "+" => "Plus".to_string(),
@@ -2806,52 +2815,24 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
         ">>" => "GtGt".to_string(),
         ">>>" => "GtGtGt".to_string(),
         _ => {
-            // $-prefixed terminals: "$proc" → "DollarProc", "$$name(" → "DdollarNameLp"
+            // Dollar-prefixed terminals retain an informative namespace while
+            // encoding their payload exactly. This distinguishes `$Proc` from
+            // `$proc` and remains injective for Unicode payloads.
             if terminal.starts_with("$$") && terminal.ends_with('(') {
                 let inner = &terminal[2..terminal.len() - 1];
                 if !inner.is_empty() && inner.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    let mut result = String::from("Ddollar");
-                    let mut capitalize_next = true;
-                    for c in inner.chars() {
-                        if capitalize_next {
-                            result.extend(c.to_uppercase());
-                            capitalize_next = false;
-                        } else {
-                            result.push(c);
-                        }
-                    }
-                    result.push_str("Lp");
-                    return result;
+                    return format!("Ddollar_{}_Lp", encode_terminal_bytes(inner));
                 }
             } else if let Some(inner) = terminal.strip_prefix('$') {
                 if !inner.is_empty() && inner.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    let mut result = String::from("Dollar");
-                    let mut capitalize_next = true;
-                    for c in inner.chars() {
-                        if capitalize_next {
-                            result.extend(c.to_uppercase());
-                            capitalize_next = false;
-                        } else {
-                            result.push(c);
-                        }
-                    }
-                    return result;
+                    return format!("Dollar_{}", encode_terminal_bytes(inner));
                 }
             }
-            // For keywords and other multi-character terminals,
-            // capitalize the first letter and prefix with Kw
+            // Exact word-like keywords. Encoding all bytes, rather than only
+            // suffixing colliding values, makes the mapping deterministic and
+            // independent of the other terminals present in a grammar.
             if terminal.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                let mut result = String::from("Kw");
-                let mut capitalize_next = true;
-                for c in terminal.chars() {
-                    if capitalize_next {
-                        result.extend(c.to_uppercase());
-                        capitalize_next = false;
-                    } else {
-                        result.push(c);
-                    }
-                }
-                result
+                format!("Kw_{}", encode_terminal_bytes(terminal))
             } else {
                 // Fallback: encode each character
                 let mut result = String::from("Tok");
@@ -2862,6 +2843,15 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
             }
         },
     }
+}
+
+fn encode_terminal_bytes(terminal: &str) -> String {
+    terminal
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 /// BP03: Write a `token_variant_id()` helper function that maps each Token variant
@@ -3968,6 +3958,7 @@ mod tests {
         subset::subset_construction,
         DfaState, TerminalPattern,
     };
+    use proptest::prelude::*;
 
     #[test]
     fn test_terminal_to_variant_name() {
@@ -3976,23 +3967,49 @@ mod tests {
         assert_eq!(terminal_to_variant_name("=="), "EqEq");
         assert_eq!(terminal_to_variant_name("{}"), "EmptyBraces");
         assert_eq!(terminal_to_variant_name("("), "LParen");
-        assert_eq!(terminal_to_variant_name("error"), "KwError");
-        assert_eq!(terminal_to_variant_name("true"), "KwTrue");
+        assert_eq!(terminal_to_variant_name("error"), "Kw_65_72_72_6f_72");
+        assert_eq!(terminal_to_variant_name("true"), "Kw_74_72_75_65");
+        assert_eq!(terminal_to_variant_name("Theory"), "Kw_54_68_65_6f_72_79");
+        assert_eq!(terminal_to_variant_name("theory"), "Kw_74_68_65_6f_72_79");
+        assert_ne!(terminal_to_variant_name("Theory"), terminal_to_variant_name("theory"));
     }
 
     #[test]
     fn test_terminal_to_variant_name_dollar() {
         // Single-dollar: $cat → DollarCat
-        assert_eq!(terminal_to_variant_name("$proc"), "DollarProc");
-        assert_eq!(terminal_to_variant_name("$name"), "DollarName");
-        assert_eq!(terminal_to_variant_name("$int"), "DollarInt");
-        assert_eq!(terminal_to_variant_name("$term"), "DollarTerm");
+        assert_eq!(terminal_to_variant_name("$proc"), "Dollar_70_72_6f_63");
+        assert_eq!(terminal_to_variant_name("$name"), "Dollar_6e_61_6d_65");
+        assert_eq!(terminal_to_variant_name("$int"), "Dollar_69_6e_74");
+        assert_eq!(terminal_to_variant_name("$term"), "Dollar_74_65_72_6d");
+        assert_ne!(terminal_to_variant_name("$Proc"), terminal_to_variant_name("$proc"));
 
         // Double-dollar with opening paren: $$cat( → DdollarCatLp
-        assert_eq!(terminal_to_variant_name("$$proc("), "DdollarProcLp");
-        assert_eq!(terminal_to_variant_name("$$name("), "DdollarNameLp");
-        assert_eq!(terminal_to_variant_name("$$int("), "DdollarIntLp");
-        assert_eq!(terminal_to_variant_name("$$term("), "DdollarTermLp");
+        assert_eq!(terminal_to_variant_name("$$proc("), "Ddollar_70_72_6f_63_Lp");
+        assert_eq!(terminal_to_variant_name("$$name("), "Ddollar_6e_61_6d_65_Lp");
+        assert_eq!(terminal_to_variant_name("$$int("), "Ddollar_69_6e_74_Lp");
+        assert_eq!(terminal_to_variant_name("$$term("), "Ddollar_74_65_72_6d_Lp");
+    }
+
+    fn arbitrary_terminal_text() -> impl Strategy<Value = String> {
+        proptest::collection::vec(any::<char>(), 0..24)
+            .prop_map(|characters| characters.into_iter().collect())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn terminal_variant_names_are_injective(
+            left in arbitrary_terminal_text(),
+            right in arbitrary_terminal_text(),
+        ) {
+            prop_assume!(left != right);
+            prop_assert_ne!(
+                terminal_to_variant_name(&left),
+                terminal_to_variant_name(&right),
+                "distinct terminal texts must never share a generated token identity"
+            );
+        }
     }
 
     #[test]

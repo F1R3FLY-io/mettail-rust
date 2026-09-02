@@ -1,17 +1,19 @@
 use super::*;
+
+fn keyword_variant(terminal: &str) -> String {
+    crate::automata::codegen::terminal_to_variant_name(terminal)
+}
+
 fn make_token_ids() -> TokenIdMap {
     let mut map = TokenIdMap::new();
-    /* terminal_to_variant_name maps:
-     *   "float" → "KwFloat", "if" → "KwIf", "then" → "KwThen",
-     *   "else" → "KwElse", "let" → "KwLet", "in" → "KwIn",
-     *   "(" → "LParen", ")" → "RParen", "=" → "Eq",
-     *   "+" → "Plus", "-" → "Minus", "*" → "Star", "/" → "Slash"
-     */
     for name in &[
-        "KwFloat", "LParen", "RParen", "Plus", "Minus", "Star", "Slash", "Ident", "Integer",
-        "Comma", "Colon", "Semi", "KwIf", "KwThen", "KwElse", "KwLet", "KwIn", "Eq",
+        "LParen", "RParen", "Plus", "Minus", "Star", "Slash", "Ident", "Integer", "Comma", "Colon",
+        "Semi", "Eq",
     ] {
         map.get_or_insert(name);
+    }
+    for terminal in ["float", "if", "then", "else", "let", "in"] {
+        map.get_or_insert(&keyword_variant(terminal));
     }
     map
 }
@@ -71,13 +73,13 @@ fn test_pattern_encoding_terminal_only() {
     let pattern = builder.pattern_from_rd_rule(&rule);
     assert_eq!(pattern.len(), 3);
     assert!(
-        matches!(pattern[0], PatternElement::Terminal { ref variant, .. } if variant == "KwIf")
+        matches!(pattern[0], PatternElement::Terminal { ref variant, .. } if variant == &keyword_variant("if"))
     );
     assert!(
-        matches!(pattern[1], PatternElement::Terminal { ref variant, .. } if variant == "KwThen")
+        matches!(pattern[1], PatternElement::Terminal { ref variant, .. } if variant == &keyword_variant("then"))
     );
     assert!(
-        matches!(pattern[2], PatternElement::Terminal { ref variant, .. } if variant == "KwElse")
+        matches!(pattern[2], PatternElement::Terminal { ref variant, .. } if variant == &keyword_variant("else"))
     );
 
     let (bytes, boundary) = DecisionTreeBuilder::encode_terminal_prefix(&pattern);
@@ -424,7 +426,7 @@ fn test_dispatch_strategy_singleton() {
     builder.insert_rd_rules(&rules);
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
-    match tree.dispatch_strategy("KwIf", &token_ids) {
+    match tree.dispatch_strategy(&keyword_variant("if"), &token_ids) {
         DispatchStrategy::Singleton { rule_label } => {
             assert_eq!(rule_label, "IfThenElse");
         },
@@ -531,7 +533,7 @@ fn test_dispatch_strategy_includes_nonterminal_boundary_rules() {
 
     // (b) boundary-only at KwIf: a fanout carrying the boundary's rule,
     // never NotPresent (nfa_fallback_nonlossy).
-    match tree.dispatch_strategy("KwIf", &token_ids) {
+    match tree.dispatch_strategy(&keyword_variant("if"), &token_ids) {
         DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
             assert!(
                 rule_labels.iter().any(|l| l == "IfInt")
@@ -584,7 +586,7 @@ fn test_dispatch_strategy_disjoint_suffix() {
     builder.insert_rd_rules(&rules);
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
-    match tree.dispatch_strategy("KwIf", &token_ids) {
+    match tree.dispatch_strategy(&keyword_variant("if"), &token_ids) {
         DispatchStrategy::DisjointSuffix { shared_prefix_len, suffix_map, .. } => {
             assert_eq!(shared_prefix_len, 0); // no shared terminals beyond dispatch token
             assert_eq!(suffix_map.len(), 2);
@@ -635,7 +637,7 @@ fn test_dispatch_strategy_shared_prefix_disjoint() {
     builder.insert_rd_rules(&rules);
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
-    match tree.dispatch_strategy("KwIf", &token_ids) {
+    match tree.dispatch_strategy(&keyword_variant("if"), &token_ids) {
         DispatchStrategy::DisjointSuffix {
             shared_prefix_len,
             shared_terminals,
@@ -696,7 +698,7 @@ fn test_dispatch_strategy_nfa_tryall() {
     /* After "float" "(" the next items are IdentCapture (0x80) and
      * NonTerminal (encoded at NT boundary). Since IdentCapture is > MAX_TERMINAL_ID,
      * the suffix disjointness check should fail → AmbiguousFanout. */
-    match tree.dispatch_strategy("KwFloat", &token_ids) {
+    match tree.dispatch_strategy(&keyword_variant("float"), &token_ids) {
         DispatchStrategy::AmbiguousFanout { rule_labels, shared_prefix_len, .. } => {
             assert!(shared_prefix_len >= 1); // "(" is shared
             assert!(rule_labels.len() >= 1); // at least one rule
@@ -743,8 +745,8 @@ fn test_dispatch_tokens() {
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
     let tokens = tree.dispatch_tokens(&token_ids);
-    assert!(tokens.contains(&"KwIf".to_string()));
-    assert!(tokens.contains(&"KwLet".to_string()));
+    assert!(tokens.contains(&keyword_variant("if")));
+    assert!(tokens.contains(&keyword_variant("let")));
     assert_eq!(tokens.len(), 2);
 }
 
@@ -897,6 +899,23 @@ fn test_d03_unreachable_rule() {
     assert_eq!(diags.len(), 1);
     assert_eq!(diags[0].id, DiagnosticId::D03);
     assert!(diags[0].message.contains("GhostRule"));
+}
+
+#[test]
+fn test_d03_excludes_dedicated_custom_token_capture_dispatch() {
+    let terminal =
+        make_rd_rule("TerminalRule", "Int", vec![RDSyntaxItem::Terminal("if".to_string())]);
+    let capture = make_rd_rule(
+        "CapturedRegion",
+        "Int",
+        vec![RDSyntaxItem::TokenKindCapture {
+            param_name: "region".to_string(),
+            kind_name: "RegionOpen".to_string(),
+        }],
+    );
+
+    assert!(is_trie_reachability_candidate(&terminal, "Int"));
+    assert!(!is_trie_reachability_candidate(&capture, "Int"));
 }
 
 #[test]
@@ -1648,10 +1667,12 @@ fn test_query_dispatch_token_found() {
     builder.insert_rd_rules(&rules);
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
-    let action = query_dispatch_token(tree, "KwIf", &token_ids).expect("KwIf should be found");
+    let action = query_dispatch_token(tree, &keyword_variant("if"), &token_ids)
+        .expect("if keyword should be found");
     assert_commit(action, "JustIf");
 
-    let action2 = query_dispatch_token(tree, "KwLet", &token_ids).expect("KwLet should be found");
+    let action2 = query_dispatch_token(tree, &keyword_variant("let"), &token_ids)
+        .expect("let keyword should be found");
     assert_commit(action2, "JustLet");
 }
 
@@ -1692,7 +1713,7 @@ fn test_is_token_deterministic_fn() {
     builder.insert_rd_rules(&rules);
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
-    assert!(is_token_deterministic(tree, "KwIf", &token_ids));
+    assert!(is_token_deterministic(tree, &keyword_variant("if"), &token_ids));
     assert!(!is_token_deterministic(tree, "Plus", &token_ids));
 }
 
@@ -1712,7 +1733,7 @@ fn test_rules_for_token_fn() {
     builder.insert_rd_rules(&rules);
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
-    let labels = rules_for_token(tree, "KwIf", &token_ids);
+    let labels = rules_for_token(tree, &keyword_variant("if"), &token_ids);
     assert_eq!(labels, vec!["OnlyIf"]);
 
     let empty = rules_for_token(tree, "Plus", &token_ids);
@@ -1756,10 +1777,10 @@ fn test_shared_prefix_and_suffix_dispatch() {
     builder.insert_rd_rules(&rules);
 
     let tree = builder.get_tree("Int").expect("should have Int tree");
-    let depth = shared_prefix_depth(tree, "KwIf", &token_ids);
+    let depth = shared_prefix_depth(tree, &keyword_variant("if"), &token_ids);
     assert_eq!(depth, 1, "shared prefix should be 1 (the '(' byte)");
 
-    let disjoint = suffix_disjoint_dispatch(tree, "KwIf", &token_ids);
+    let disjoint = suffix_disjoint_dispatch(tree, &keyword_variant("if"), &token_ids);
     let map = disjoint.expect("should be disjoint");
     assert_eq!(map.len(), 2);
     assert_eq!(map.get("Plus").expect("Plus"), "IfPlus");
@@ -1783,7 +1804,7 @@ fn test_pattern_single_terminal() {
     assert_eq!(pattern.len(), 1);
     assert!(matches!(
         pattern[0],
-        PatternElement::Terminal { ref variant, .. } if variant == "KwIf"
+        PatternElement::Terminal { ref variant, .. } if variant == &keyword_variant("if")
     ));
 
     let (bytes, boundary) = DecisionTreeBuilder::encode_terminal_prefix(&pattern);
@@ -1927,6 +1948,90 @@ fn test_d06_consistent() {
     // "if" maps to KwIf which is in the trie at single-byte path → no D06
     let d06s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D06).collect();
     assert!(d06s.is_empty(), "D06 should not fire when consistent: {:?}", d06s);
+}
+
+#[test]
+fn test_d06_collection_field_rule_stays_in_terminal_trie() {
+    use crate::automata::semiring::TropicalWeight;
+    use crate::grammar::ir::CollectionKind;
+    use crate::prediction::DispatchAction;
+    use crate::wfst::PredictionWfstBuilder;
+
+    let token_ids = make_token_ids();
+    let first_sets = make_first_sets();
+    let mut builder = DecisionTreeBuilder::new(
+        token_ids.clone(),
+        first_sets,
+        vec!["Int".to_string()],
+        HashSet::new(),
+    );
+
+    let mut mixed = make_rd_rule(
+        "MixedCollectionField",
+        "Int",
+        vec![
+            RDSyntaxItem::Terminal("(".to_string()),
+            RDSyntaxItem::Collection {
+                param_name: "items".to_string(),
+                element_category: "Int".to_string(),
+                separator: ",".to_string(),
+                kind: CollectionKind::Vec,
+                key_val_separator: None,
+            },
+            RDSyntaxItem::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "body".to_string(),
+            },
+        ],
+    );
+    mixed.is_collection = true;
+
+    assert!(!mixed.is_pure_collection_literal());
+    assert!(is_trie_reachability_candidate(&mixed, "Int"));
+    builder.build_all(std::slice::from_ref(&mixed), &[], &[]);
+    let tree = builder
+        .get_tree("Int")
+        .expect("mixed rule should have a trie");
+
+    let mut wfst_builder = PredictionWfstBuilder::new("Int", token_ids.clone());
+    wfst_builder.add_action(
+        "(",
+        DispatchAction::Direct {
+            rule_label: mixed.label.clone(),
+            parse_fn: "parse_mixed_collection_field".to_string(),
+        },
+        TropicalWeight(0.0),
+    );
+    let wfst = wfst_builder.build();
+    let d06s: Vec<_> = wfst_consistency_check(tree, &wfst, &token_ids, "test")
+        .into_iter()
+        .filter(|diagnostic| diagnostic.id == DiagnosticId::D06)
+        .collect();
+    assert!(d06s.is_empty(), "mixed collection rule lost trie ownership: {d06s:?}");
+}
+
+#[test]
+fn test_pure_collection_literal_stays_out_of_terminal_trie() {
+    use crate::grammar::ir::CollectionKind;
+
+    let mut pure = make_rd_rule(
+        "PureCollection",
+        "Int",
+        vec![
+            RDSyntaxItem::Terminal("(".to_string()),
+            RDSyntaxItem::Collection {
+                param_name: "items".to_string(),
+                element_category: "Int".to_string(),
+                separator: ",".to_string(),
+                kind: CollectionKind::Vec,
+                key_val_separator: None,
+            },
+        ],
+    );
+    pure.is_collection = true;
+
+    assert!(pure.is_pure_collection_literal());
+    assert!(!is_trie_reachability_candidate(&pure, "Int"));
 }
 
 #[test]
@@ -2845,7 +2950,9 @@ fn test_cd02_segment_merging_disjoint_nt_suffixes() {
     let colon_id = token_ids
         .get("Colon")
         .expect("Colon should be in token IDs");
-    let kwif_id = token_ids.get("KwIf").expect("KwIf should be in token IDs");
+    let kwif_id = token_ids
+        .get(&keyword_variant("if"))
+        .expect("if keyword should be in token IDs");
     let lparen_id = token_ids
         .get("LParen")
         .expect("LParen should be in token IDs");
@@ -3592,8 +3699,8 @@ fn test_cd05_display_trait() {
         nonterminal: "Expr".to_string(),
         rules: vec!["IfThen".to_string(), "IfThenElse".to_string()],
         discriminating_tokens: HashMap::from([
-            ("IfThen".to_string(), vec!["KwThen".to_string()]),
-            ("IfThenElse".to_string(), vec!["KwElse".to_string()]),
+            ("IfThen".to_string(), vec![keyword_variant("then")]),
+            ("IfThenElse".to_string(), vec![keyword_variant("else")]),
         ]),
         all_disjoint: true,
     };

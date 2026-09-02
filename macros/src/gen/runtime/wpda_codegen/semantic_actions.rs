@@ -21,19 +21,14 @@ use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
 use super::refinement::lookup_refinement_type;
 use crate::gen::native::NativeType;
 
-/// Emit the body of `action_for` — a `match (src_idx, rule_idx)` with
-/// one arm per rule that has a semantic action.
-///
-/// `per_cat` is the pre-built combined user + synthetic rule list built
-/// by `synthetic::build_per_category_rules`, converted to
-/// `Vec<Vec<(rule_idx, &rule)>>` in the caller.
-pub fn emit_action_for_body(
+fn collect_action_arms_by_category(
     language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<(u16, &GrammarRule)>],
-) -> TokenStream {
-    let mut arms = Vec::new();
+) -> Vec<Vec<TokenStream>> {
+    let mut arms_by_category: Vec<Vec<TokenStream>> = per_cat.iter().map(|_| Vec::new()).collect();
     for (cat_i, rules) in per_cat.iter().enumerate() {
+        let arms = &mut arms_by_category[cat_i];
         // Look up the Rust ident for this category's AST enum — needed to
         // construct wrapper variants like `Int::NumLit(v)`.
         let cat_name = &categories[cat_i];
@@ -121,6 +116,21 @@ pub fn emit_action_for_body(
         }
     }
 
+    arms_by_category
+}
+
+/// Emit the monolithic `action_for` body retained as a codegen oracle and for
+/// focused generator tests. Production uses [`emit_partitioned_action_for`]
+/// so rustc type-checks one category-sized dispatch frame at a time.
+pub fn emit_action_for_body(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    let arms: Vec<TokenStream> = collect_action_arms_by_category(language, categories, per_cat)
+        .into_iter()
+        .flatten()
+        .collect();
     if arms.is_empty() {
         quote! { None }
     } else {
@@ -131,6 +141,60 @@ pub fn emit_action_for_body(
             }
         }
     }
+}
+
+pub struct PartitionedActionFor {
+    pub helpers: TokenStream,
+    pub body: TokenStream,
+}
+
+/// Partition `action_for` by its already-disjoint category route. The helper
+/// arms are byte-identical to the monolithic oracle and retain declaration
+/// order within each category; only the native Rust frame boundary moves.
+/// `WpdaDispatchPartition.direct_router_relocation_equivalent` and
+/// `route_disjoint` are the corresponding Rocq obligations.
+pub fn emit_partitioned_action_for(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> PartitionedActionFor {
+    let mut helpers = Vec::new();
+    let mut routes = Vec::new();
+    for (cat_i, arms) in collect_action_arms_by_category(language, categories, per_cat)
+        .into_iter()
+        .enumerate()
+    {
+        if arms.is_empty() {
+            continue;
+        }
+        let cat_idx = cat_i as u16;
+        let helper = format_ident!("__mettail_action_for_category_{cat_i}");
+        helpers.push(quote! {
+            #[inline(never)]
+            fn #helper(
+                &self,
+                rule_idx: u16,
+            ) -> Option<&mettail_prattail::wpda_runtime::ActionEntry> {
+                match (#cat_idx, rule_idx) {
+                    #(#arms)*
+                    _ => None,
+                }
+            }
+        });
+        routes.push(quote! { #cat_idx => self.#helper(rule_idx), });
+    }
+
+    let body = if routes.is_empty() {
+        quote! { None }
+    } else {
+        quote! {
+            match src_idx {
+                #(#routes)*
+                _ => None,
+            }
+        }
+    };
+    PartitionedActionFor { helpers: quote! { #(#helpers)* }, body }
 }
 
 /// Pass-2c token-soundness backstop (2026-05-30): emit the body of
@@ -2301,6 +2365,7 @@ mod tests {
         let mut lang = lang_with_rules(Vec::new());
         lang.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
+            role: Default::default(),
             native_type: Some(parse_quote!(i32)),
             collection_kind: None,
         });
@@ -2377,6 +2442,33 @@ mod tests {
     }
 
     #[test]
+    fn partitioned_action_dispatch_routes_each_category_once() {
+        let rules = vec![
+            rule("IntLit", "Int", NonTerminalKind::Integer),
+            rule("BoolLit", "Bool", NonTerminalKind::Boolean),
+        ];
+        let lang = lang_with_rules(rules.clone());
+        let per_cat = vec![vec![rules[0].clone()], vec![rules[1].clone()]];
+        let idx = indexed(&per_cat);
+        let monolithic =
+            emit_action_for_body(&lang, &["Int".to_string(), "Bool".to_string()], &idx).to_string();
+        let partitioned =
+            emit_partitioned_action_for(&lang, &["Int".to_string(), "Bool".to_string()], &idx);
+        let helpers = partitioned.helpers.to_string();
+        let body = partitioned.body.to_string();
+
+        for key in ["(0u16 , 0u16)", "(1u16 , 0u16)"] {
+            assert_eq!(monolithic.matches(key).count(), 1, "oracle owns {key} once");
+            assert_eq!(helpers.matches(key).count(), 1, "partition owns {key} once");
+        }
+        assert!(helpers.contains("__mettail_action_for_category_0"));
+        assert!(helpers.contains("__mettail_action_for_category_1"));
+        assert_eq!(body.matches("__mettail_action_for_category_0").count(), 1);
+        assert_eq!(body.matches("__mettail_action_for_category_1").count(), 1);
+        assert!(helpers.contains("inline (never)"));
+    }
+
+    #[test]
     fn terminal_keyword_emits_action_pushing_nullary_variant() {
         let r = terminal_rule("Err", "Int", "error");
         let lang = lang_with_rules(vec![r.clone()]);
@@ -2410,6 +2502,7 @@ mod tests {
         let mut lang = lang_with_rules(Vec::new());
         lang.types.push(LangType {
             name: Ident::new(cat, Span::call_site()),
+            role: Default::default(),
             native_type: Some(native),
             collection_kind: None,
         });

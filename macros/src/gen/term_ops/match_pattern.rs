@@ -153,9 +153,7 @@ pub fn generate_match_pattern(language: &LanguageDef) -> TokenStream {
     let match_task_enum = generate_match_task_enum(language);
     let iterative_engine = generate_iterative_engine(language);
 
-    let impls: Vec<TokenStream> = language
-        .types
-        .iter()
+    let impls: Vec<TokenStream> = crate::gen::semantic_types(language)
         .map(|lang_type| generate_category_match_pattern(&lang_type.name, language))
         .collect();
 
@@ -177,9 +175,7 @@ pub fn generate_match_pattern(language: &LanguageDef) -> TokenStream {
 /// matching across all categories. Each category gets its own binding vector.
 fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
     // Generate one Vec field per category: name_bindings, proc_bindings, etc.
-    let fields: Vec<TokenStream> = language
-        .types
-        .iter()
+    let fields: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let cat = &t.name;
             let field_name = format_ident!("{}_bindings", cat.to_string().to_lowercase());
@@ -190,9 +186,7 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
         .collect();
 
     // Generate `empty()` — all fields are empty Vecs
-    let empty_fields: Vec<TokenStream> = language
-        .types
-        .iter()
+    let empty_fields: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let field_name = format_ident!("{}_bindings", t.name.to_string().to_lowercase());
             quote! { #field_name: Vec::new() }
@@ -200,9 +194,7 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
         .collect();
 
     // Generate per-category constructor: `MatchBindings::proc(name, val)`
-    let category_constructors: Vec<TokenStream> = language
-        .types
-        .iter()
+    let category_constructors: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let cat = &t.name;
             let cat_lower = cat.to_string().to_lowercase();
@@ -210,9 +202,7 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
             let target_field = format_ident!("{}_bindings", cat_lower);
 
             // All other fields start empty
-            let other_fields: Vec<TokenStream> = language
-                .types
-                .iter()
+            let other_fields: Vec<TokenStream> = crate::gen::variable_types(language)
                 .filter(|other| other.name != *cat)
                 .map(|other| {
                     let field_name =
@@ -234,9 +224,7 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
         .collect();
 
     // Generate `merge()` — extend each field from other
-    let merge_fields: Vec<TokenStream> = language
-        .types
-        .iter()
+    let merge_fields: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let field_name = format_ident!("{}_bindings", t.name.to_string().to_lowercase());
             quote! {
@@ -246,9 +234,7 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
         .collect();
 
     // Generate `get_{cat}()` — look up a binding by variable name in a specific category
-    let get_methods: Vec<TokenStream> = language
-        .types
-        .iter()
+    let get_methods: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let cat = &t.name;
             let cat_lower = cat.to_string().to_lowercase();
@@ -307,9 +293,7 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
 /// cross-category recursion (Proc → Name → Proc) via a single heterogeneous
 /// work stack.
 fn generate_match_task_enum(language: &LanguageDef) -> TokenStream {
-    let variants: Vec<TokenStream> = language
-        .types
-        .iter()
+    let variants: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|t| {
             let cat = &t.name;
             let variant_name = format_ident!("Match{}", cat);
@@ -373,14 +357,10 @@ fn generate_match_task_enum(language: &LanguageDef) -> TokenStream {
 /// escape via `return None`/`continue`), not the "pure code motion" the
 /// escape-free normalize/subst families use.
 fn generate_iterative_engine(language: &LanguageDef) -> TokenStream {
-    let visit_helper_fns: Vec<TokenStream> = language
-        .types
-        .iter()
+    let visit_helper_fns: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|lang_type| generate_match_visit_helper(&lang_type.name, language))
         .collect();
-    let category_arms: Vec<TokenStream> = language
-        .types
-        .iter()
+    let category_arms: Vec<TokenStream> = crate::gen::semantic_transit_types(language)
         .map(|lang_type| generate_iterative_category_dispatch(&lang_type.name))
         .collect();
 
@@ -440,6 +420,23 @@ fn generate_match_visit_helper(category: &Ident, language: &LanguageDef) -> Toke
         .iter()
         .map(|v| generate_iterative_variant_arm(category, v, language))
         .collect();
+    let variable_pattern = if crate::gen::category_has_var_variant(category, language) {
+        quote! {
+            if let #category::#var_label(mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(ref fv)
+            )) = pattern {
+                if let Some(ref pretty_name) = fv.pretty_name {
+                    bindings.merge(MatchBindings::#cat_binding_method(
+                        pretty_name.clone(),
+                        ground.clone(),
+                    ));
+                    return Some(());
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     // PRE-PEEL body (residual #11-2, 2026-07-14): the FreeVar check + structural
     // match inlined the whole category into `match_pattern_iterative`.
@@ -482,20 +479,7 @@ fn generate_match_visit_helper(category: &Ident, language: &LanguageDef) -> Toke
             ground: #category,
             pattern: #category,
         ) -> Option<()> {
-            // Variable pattern: bind the entire ground term
-            if let #category::#var_label(mettail_runtime::OrdVar(
-                mettail_runtime::Var::Free(ref fv)
-            )) = pattern {
-                if let Some(ref pretty_name) = fv.pretty_name {
-                    bindings.merge(MatchBindings::#cat_binding_method(
-                        pretty_name.clone(),
-                        ground.clone(),
-                    ));
-                    // Was `continue` in the driver loop: this task is done and
-                    // the match is still viable — hand control back to the driver.
-                    return Some(());
-                }
-            }
+            #variable_pattern
             // Structural matching per variant
             match (&ground, &pattern) {
                 #(#variant_arms,)*
@@ -542,6 +526,78 @@ fn generate_iterative_variant_arm(
         VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             quote! {
                 (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {}
+            }
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let ground_pathmap = carrier.pathmap_ref(&quote! { ground_native });
+            let pattern_pathmap = carrier.pathmap_ref(&quote! { pattern_native });
+            let ground_focus = carrier.focus_ref(&quote! { ground_native });
+            let pattern_focus = carrier.focus_ref(&quote! { pattern_native });
+            let key_category = carrier.key_category();
+            let value_category = carrier.value_category();
+            let key_task = format_ident!("Match{}", carrier.key_category());
+            let value_task = format_ident!("Match{}", carrier.value_category());
+            quote! {
+                (
+                    #category::#label(ground_native),
+                    #category::#label(pattern_native),
+                ) => {
+                    if (#ground_pathmap).mode() != (#pattern_pathmap).mode()
+                        || (#ground_pathmap).len() != (#pattern_pathmap).len()
+                        || #ground_focus != #pattern_focus
+                    {
+                        return None;
+                    }
+
+                    // PathMap is semantically unordered.  Canonicalize both
+                    // borrowed entry views before scheduling typed recursive
+                    // matches so insertion order cannot affect the result.
+                    let mut ground_entries: Vec<_> = (#ground_pathmap).iter().collect();
+                    let mut pattern_entries: Vec<_> = (#pattern_pathmap).iter().collect();
+                    let compare_entries = |left: &mettail_runtime::PathMapEntryRef<
+                                               '_,
+                                               #key_category,
+                                               #value_category,
+                                           >,
+                                           right: &mettail_runtime::PathMapEntryRef<
+                                               '_,
+                                               #key_category,
+                                               #value_category,
+                                           >| {
+                        left.key().cmp(right.key()).then_with(|| {
+                            match (left.value(), right.value()) {
+                                (None, None) => std::cmp::Ordering::Equal,
+                                (None, Some(_)) => std::cmp::Ordering::Less,
+                                (Some(_), None) => std::cmp::Ordering::Greater,
+                                (Some(left), Some(right)) => left.cmp(right),
+                            }
+                        })
+                    };
+                    ground_entries.sort_by(&compare_entries);
+                    pattern_entries.sort_by(&compare_entries);
+
+                    for (ground_entry, pattern_entry) in ground_entries
+                        .into_iter()
+                        .zip(pattern_entries.into_iter())
+                        .rev()
+                    {
+                        match (ground_entry.value(), pattern_entry.value()) {
+                            (None, None) => {},
+                            (Some(ground_value), Some(pattern_value)) => {
+                                stack.push(MatchTask::#value_task(
+                                    ground_value.clone(),
+                                    pattern_value.clone(),
+                                ));
+                            },
+                            _ => return None,
+                        }
+                        stack.push(MatchTask::#key_task(
+                            ground_entry.key().clone(),
+                            pattern_entry.key().clone(),
+                        ));
+                    }
+                }
             }
         },
 
@@ -604,7 +660,7 @@ fn generate_iterative_regular_arm(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     // If any field is a collection, return None (same as before).
     if fields.iter().any(|f| f.is_collection) {
@@ -639,7 +695,10 @@ fn generate_iterative_regular_arm(
             // L9-3: token-text captures compare structurally (String: Eq) — a
             // ground COMM guard/pattern requires byte-equal token text; no
             // MatchTask descent (mirrors the predicate leaf).
-            if field.is_predicate || field.is_opaque_leaf() {
+            if field.is_predicate
+                || field.is_opaque_leaf()
+                || field.is_semantic_boundary(language)
+            {
                 return quote! {
                     if #gname != #pname { return None; }
                 };
@@ -1020,9 +1079,7 @@ fn generate_category_match_pattern(category: &Ident, language: &LanguageDef) -> 
     let task_variant = format_ident!("Match{}", category);
 
     // Cross-category methods: types don't match so we always return None.
-    let cross_methods: Vec<TokenStream> = language
-        .types
-        .iter()
+    let cross_methods: Vec<TokenStream> = crate::gen::semantic_types(language)
         .filter(|t| t.name != *category)
         .map(|t| {
             let other_cat = &t.name;
@@ -1075,6 +1132,33 @@ fn generate_category_match_pattern(category: &Ident, language: &LanguageDef) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn compact(tokens: TokenStream) -> String {
+        tokens.to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn recursive_native_entry_comparator_has_exact_key_and_value_types() {
+        use crate::gen::native_carrier::{
+            NativeCarrierStorage, NativeRecursiveCarrier, ZipperAccess,
+        };
+
+        let language = crate::gen::empty_language_for_tests();
+        let category = format_ident!("ReadZipper");
+        let variant = VariantKind::RecursiveNativeLiteral {
+            label: format_ident!("Lit"),
+            carrier: NativeRecursiveCarrier::Zipper {
+                storage: NativeCarrierStorage::Arc,
+                access: ZipperAccess::Read,
+                key_category: format_ident!("Proc"),
+                value_category: format_ident!("Name"),
+            },
+        };
+        let arm = compact(generate_iterative_variant_arm(&category, &variant, &language));
+
+        assert!(arm.contains("PathMapEntryRef<'_,Proc,Name,>"), "{arm}");
+        assert!(!arm.contains("PathMapEntryRef<'_,_,_>"), "{arm}");
+    }
 
     #[test]
     fn regular_arm_pred_compares_structurally() {

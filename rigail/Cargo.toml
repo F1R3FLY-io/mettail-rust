@@ -9,6 +9,7 @@ description = "Substrate-agnostic weight algebra (semirings, star-semirings, wei
 # Lower crate: depends on nothing prattail-specific so it stays extractable.
 [dependencies]
 num-complex = { version = "0.4" }
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1"

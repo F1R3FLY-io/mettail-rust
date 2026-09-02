@@ -42,22 +42,26 @@
 //! └─────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! ## ConstraintTheory Integration
+//! ## Construction and Observation
 //!
-//! The lattice theory is a decidable constraint domain: the finite universe
-//! of types means propagation alone determines satisfiability. The `label()`
-//! method returns `LogicStream::empty()` — no search is needed.
+//! Lattice construction and lattice observation are deliberately different
+//! interfaces. [`LatticeTheory`] with [`LatticeStore`] is the mutable builder:
+//! propagation asserts a new edge. [`FrozenLatticeTheory`] snapshots the closed
+//! relation and is the exact, immutable constraint domain used by refinement
+//! checking. Successful assertion is not evidence that an edge was already
+//! present in a declared lattice.
 //!
-//! - **`propagate`**: Adds a subtype edge, marks closure dirty, detects cycles.
+//! - **builder `propagate`**: Adds a subtype edge, marks closure dirty, detects cycles.
 //!   Always succeeds (cycles are recorded but do not cause inconsistency, since
 //!   cyclic subtypes represent type equivalences).
-//! - **`is_consistent`**: Returns `true` unless the store contains a
+//! - **builder `is_consistent`**: Returns `true` unless the store contains a
 //!   contradictory cycle involving types that the theory marks as distinct.
 //!   In the default configuration, all stores are consistent (cycles are
 //!   equivalences, not contradictions).
-//! - **`witness`**: Extracts type assignments from the closure.
-//! - **`evaluate`**: Checks whether `sub <= sup` holds under the given
-//!   assignment (using the transitive closure).
+//! - **frozen `evaluate`**: Observes whether `sub <= sup` holds in the immutable
+//!   transitive closure.
+//! - **frozen `decide_exact`**: Decides complete Boolean predicates by
+//!   stack-safe evaluation in that one fixed interpretation.
 //!
 //! ## References
 //!
@@ -69,7 +73,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::logict::{ConstraintTheory, LogicStream};
+use crate::logict::{
+    ConstraintTheory, DecidableConstraintTheory, ExactSatisfiability, LogicStream, TheoryPred,
+};
 
 // ==============================================================================
 // Type Identifiers
@@ -433,11 +439,191 @@ impl LatticeTheory {
             .filter(|t| !mentioned.contains(t))
             .collect()
     }
+
+    /// Freeze the current declared subtype relation for semantic queries.
+    ///
+    /// The returned theory owns an immutable transitive-closure snapshot.
+    /// Later changes to `store` cannot affect it, and evaluating a predicate
+    /// cannot add edges. This is the constraint domain to use for refinement
+    /// predicates over an already-declared type hierarchy.
+    pub fn freeze(&self, store: &LatticeStore) -> FrozenLatticeTheory {
+        let mut closed_store = store.clone();
+        self.ensure_closure(&mut closed_store);
+        FrozenLatticeTheory {
+            universe: self.universe.clone(),
+            names: self.names.clone(),
+            closure: closed_store.closure,
+        }
+    }
 }
 
 impl fmt::Display for LatticeTheory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "LatticeTheory({} types)", self.universe.len())
+    }
+}
+
+// ==============================================================================
+// FrozenLatticeTheory
+// ==============================================================================
+
+/// Immutable, exact interpretation of a declared subtype lattice.
+///
+/// [`LatticeTheory`] is a builder whose propagation operation asserts edges.
+/// This snapshot is instead an observation algebra: an atom is true exactly
+/// when its pair occurs in the frozen reflexive-transitive closure. Because
+/// [`SubtypeConstraint`] contains ground type identifiers, the snapshot is a
+/// single fixed interpretation and every [`TheoryPred`] is exactly decidable.
+///
+/// The corresponding construction/observation separation and exactness proof
+/// is `formal/rocq/lattice/theories/FrozenLatticeConstraint.v`.
+#[derive(Clone, Debug)]
+pub struct FrozenLatticeTheory {
+    /// Finite declared universe used to construct the identity witness.
+    pub universe: Vec<TypeId>,
+    /// Type names retained for diagnostics.
+    pub names: HashMap<TypeId, String>,
+    /// Immutable reflexive-transitive subtype relation.
+    closure: HashSet<(TypeId, TypeId)>,
+}
+
+impl FrozenLatticeTheory {
+    /// Observe whether `sub <= sup` holds in this snapshot.
+    ///
+    /// Type identifiers denote ground constants. Reflexivity therefore holds
+    /// even for an identifier that has no explicit declaration edge; every
+    /// non-reflexive fact must occur in the frozen closure.
+    pub fn is_subtype(&self, sub: TypeId, sup: TypeId) -> bool {
+        sub == sup || self.closure.contains(&(sub, sup))
+    }
+
+    /// Get the display name for a type, falling back to its numeric ID.
+    pub fn type_name(&self, id: TypeId) -> String {
+        self.names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| format!("T{}", id))
+    }
+
+    fn identity_assignment(&self) -> TypeAssignment {
+        let bindings = self
+            .universe
+            .iter()
+            .enumerate()
+            .map(|(index, &type_id)| (index, type_id))
+            .collect();
+        TypeAssignment { bindings }
+    }
+
+    /// Evaluate a complete Boolean predicate with an explicit task stack.
+    fn evaluate_predicate(&self, predicate: &TheoryPred<Self>) -> bool {
+        enum Task<'predicate> {
+            Visit(&'predicate TheoryPred<FrozenLatticeTheory>),
+            Not,
+            And,
+            Or,
+        }
+
+        let mut tasks = vec![Task::Visit(predicate)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TheoryPred::True) => values.push(true),
+                Task::Visit(TheoryPred::False) => values.push(false),
+                Task::Visit(TheoryPred::Atom(constraint)) => {
+                    values.push(self.is_subtype(constraint.sub, constraint.sup));
+                },
+                Task::Visit(TheoryPred::And(left, right)) => {
+                    tasks.push(Task::And);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TheoryPred::Or(left, right)) => {
+                    tasks.push(Task::Or);
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(TheoryPred::Not(inner)) => {
+                    tasks.push(Task::Not);
+                    tasks.push(Task::Visit(inner));
+                },
+                Task::Not => {
+                    let value = values
+                        .pop()
+                        .expect("frozen-lattice predicate PDA lost its negand");
+                    values.push(!value);
+                },
+                Task::And => {
+                    let right = values
+                        .pop()
+                        .expect("frozen-lattice predicate PDA lost conjunction RHS");
+                    let left = values
+                        .pop()
+                        .expect("frozen-lattice predicate PDA lost conjunction LHS");
+                    values.push(left && right);
+                },
+                Task::Or => {
+                    let right = values
+                        .pop()
+                        .expect("frozen-lattice predicate PDA lost disjunction RHS");
+                    let left = values
+                        .pop()
+                        .expect("frozen-lattice predicate PDA lost disjunction LHS");
+                    values.push(left || right);
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("frozen-lattice predicate PDA produced no value")
+    }
+}
+
+impl fmt::Display for FrozenLatticeTheory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FrozenLatticeTheory({} types)", self.universe.len())
+    }
+}
+
+impl ConstraintTheory for FrozenLatticeTheory {
+    type Constraint = SubtypeConstraint;
+    type Assignment = TypeAssignment;
+    type Store = ();
+
+    fn empty_store(&self) {}
+
+    /// Check an asserted proposition without changing the frozen relation.
+    fn propagate(&self, _store: &(), constraint: &SubtypeConstraint) -> Option<()> {
+        self.is_subtype(constraint.sub, constraint.sup)
+            .then_some(())
+    }
+
+    fn is_consistent(&self, _store: &()) -> bool {
+        true
+    }
+
+    fn witness(&self, _store: &()) -> Option<TypeAssignment> {
+        Some(self.identity_assignment())
+    }
+
+    fn label(&self, _store: &()) -> LogicStream<SubtypeConstraint> {
+        LogicStream::empty()
+    }
+
+    fn evaluate(&self, constraint: &SubtypeConstraint, _assignment: &TypeAssignment) -> bool {
+        self.is_subtype(constraint.sub, constraint.sup)
+    }
+}
+
+impl DecidableConstraintTheory for FrozenLatticeTheory {
+    fn decide_exact(&self, predicate: &TheoryPred<Self>) -> ExactSatisfiability<TypeAssignment> {
+        let witness = self.identity_assignment();
+        if self.evaluate_predicate(predicate) {
+            ExactSatisfiability::Satisfiable(witness)
+        } else {
+            ExactSatisfiability::Unsatisfiable
+        }
     }
 }
 
@@ -1213,7 +1399,7 @@ mod tests {
         let theory = LatticeTheory::new(vec![0, 1], HashMap::new());
         let store = theory.empty_store();
         let labels = theory.label(&store);
-        assert!(labels.is_empty(), "decidable theory should produce no labeling choices");
+        assert!(labels.is_empty(), "ground lattice construction needs no labeling choices");
     }
 
     #[test]
@@ -1249,6 +1435,54 @@ mod tests {
             !theory.evaluate(&SubtypeConstraint { sub: 0, sup: 1 }, &assignment),
             "non-reflexive constraint without store context returns false"
         );
+    }
+
+    #[test]
+    fn frozen_snapshot_separates_assertion_from_observation() {
+        let (theory, mut store) = number_hierarchy();
+        let frozen = theory.freeze(&store);
+
+        assert!(frozen.is_subtype(0, 2), "the snapshot observes Int <= Number");
+        assert!(!frozen.is_subtype(2, 0), "the reverse edge was not declared");
+        assert!(
+            frozen
+                .propagate(&(), &SubtypeConstraint { sub: 2, sup: 0 })
+                .is_none(),
+            "query propagation must reject a false proposition instead of asserting it"
+        );
+
+        store = theory
+            .propagate(&store, &SubtypeConstraint { sub: 2, sup: 0 })
+            .expect("the mutable builder accepts a newly asserted edge");
+        assert!(theory.is_subtype(&mut store, 2, 0), "the mutable store now contains the edge");
+        assert!(
+            !frozen.is_subtype(2, 0),
+            "later builder mutations cannot change an installed snapshot"
+        );
+    }
+
+    #[test]
+    fn frozen_snapshot_decides_boolean_complement_exactly() {
+        let (theory, store) = number_hierarchy();
+        let frozen = theory.freeze(&store);
+        let reverse = TheoryPred::Atom(SubtypeConstraint { sub: 2, sup: 0 });
+        let not_reverse = TheoryPred::Not(Box::new(reverse.clone()));
+
+        assert!(matches!(frozen.decide_exact(&reverse), ExactSatisfiability::Unsatisfiable));
+        assert!(matches!(frozen.decide_exact(&not_reverse), ExactSatisfiability::Satisfiable(_)));
+    }
+
+    #[test]
+    fn frozen_snapshot_exact_decision_is_stack_safe_for_deep_predicates() {
+        let (theory, store) = number_hierarchy();
+        let frozen = theory.freeze(&store);
+        let atom = TheoryPred::Atom(SubtypeConstraint { sub: 0, sup: 2 });
+        let mut predicate = TheoryPred::True;
+        for _ in 0..50_000 {
+            predicate = TheoryPred::And(Box::new(predicate), Box::new(atom.clone()));
+        }
+
+        assert!(matches!(frozen.decide_exact(&predicate), ExactSatisfiability::Satisfiable(_)));
     }
 
     // ── Exhaustiveness / Isolated Types Tests ─────────────────────────────
@@ -1648,230 +1882,14 @@ mod tests {
         );
     }
 
-    /// A grammar that explicitly declares A→B, B→C, *and* A→C (all as
-    /// delegation rules).  The edge A→C is redundant because A≤C is already
-    /// implied by A≤B≤C.
+    /// The unanimous pure-delegation inference rule produces at most one
+    /// outgoing edge for each category. Therefore its inferred edge set cannot
+    /// itself contain a direct edge that is redundant with another path from
+    /// the same source. This test checks both sides of that invariant:
     ///
-    /// Grammar:
-    ///   A → B    → infer A ≤ B
-    ///       (second rule for A:)
-    ///   A → C    — but A already delegates to B via all rules…
-    ///
-    /// Because A has *two* rules delegating to two *different* targets (B and
-    /// C), the delegation rule for A is not pure and will not generate any
-    /// inferred edge for A.  To get a genuine redundancy we need:
-    ///
-    ///   Three separate categories each with a single delegation rule:
-    ///     X → Y  (infer X ≤ Y)
-    ///     Y → Z  (infer Y ≤ Z)
-    ///   and a fourth category W that delegates only to Z *and* is already
-    ///   implied because W ≤ Y ≤ Z.  We achieve this by having W delegate to Y,
-    ///   giving W ≤ Y and Y ≤ Z, then separately also having W delegate to Z.
-    ///   But that again gives two targets for W.
-    ///
-    /// The simplest way to produce a redundant direct edge with the implemented
-    /// "pure delegation" rule is:
-    ///
-    ///   Single delegators where the *same* delegation edge appears via two
-    ///   paths.  With the current inference model (at most one inferred edge per
-    ///   category) this requires three categories in a chain *plus* an
-    ///   additional category that independently infers both A≤B and A≤C when
-    ///   B≤C already holds.
-    ///
-    /// We use a helper category D that delegates only to C (D ≤ C).  Combined
-    /// with X ≤ C (X has one rule delegating to C) and X ≤ D (X has one rule
-    /// delegating to D), X has two rules with two different targets so no edge
-    /// is inferred for X.
-    ///
-    /// Simpler approach: build the lattice so that the inferred edges include
-    /// A→B, B→C, and C→B (cycle for B,C) *and* A→C (redundant via A→B→C?).
-    ///
-    /// Actually the cleanest test uses *three* delegator categories in a chain:
-    ///   P → Q  (P ≤ Q)
-    ///   Q → R  (Q ≤ R)
-    ///   P' → R (P' ≤ R)  — where P' happens to equal P in the type-id sense
-    ///
-    /// That's impossible with distinct categories.  Instead we demonstrate
-    /// redundancy by manually adding a third category whose *single* rule
-    /// makes it a delegator to an already-implied-as-subtype:
-    ///
-    ///   P → Q   inferred: P ≤ Q
-    ///   Q → R   inferred: Q ≤ R
-    ///   S → R   inferred: S ≤ R  (direct edge; is it redundant? only if S≤R
-    ///                             can be reached via some other path — but
-    ///                             there is no S→Q edge, so it is NOT redundant)
-    ///
-    /// The real test for redundancy: add a fourth category T that delegates to
-    /// Q (T ≤ Q), and note that T ≤ R is NOT directly inferred (only T ≤ Q and
-    /// Q ≤ R are inferred edges).  So no redundancy here either with the pure
-    /// delegation rule.
-    ///
-    /// Conclusion: with "one inferred edge per category" we can only get a
-    /// redundant edge when two distinct delegation chains produce the same
-    /// transitive result.  The simplest case:
-    ///
-    ///   cat Alpha → cat Beta   (Alpha ≤ Beta, one rule)
-    ///   cat Beta  → cat Gamma  (Beta  ≤ Gamma, one rule)
-    ///   cat Alpha'→ cat Gamma  (Alpha'≤ Gamma, one rule)
-    ///
-    /// Now Alpha'≤ Gamma is NOT redundant because there is no path Alpha'→Beta.
-    /// But if Alpha' is the *same* as Alpha (same name) then only one entry
-    /// exists in `rule_delegates` and both rules must agree (same target).  If
-    /// they agree (both target Gamma) the single edge Alpha≤Gamma is inferred;
-    /// if they disagree no edge is inferred.
-    ///
-    /// Therefore the only way to observe a genuine redundant edge with the
-    /// current algorithm is to have *three* different categories A, B, C such
-    /// that both A≤B and B≤C are inferred (direct edges), and additionally a
-    /// category D that delegates directly to C (D≤C is inferred), *and* D also
-    /// appears as A's delegation target via some intermediate route already…
-    ///
-    /// The minimal concrete case that actually exercises the redundancy branch
-    /// is:
-    ///   A → B   (A ≤ B)
-    ///   B → C   (B ≤ C)
-    ///   A'→ C   where A' is distinct from A but we need *A* to also infer a
-    ///           direct edge to C for that to be redundant.
-    ///
-    /// Since A can only have one inferred edge (its single rule targets B, not
-    /// C), the test must use a grammar where at minimum a category has *two*
-    /// rules consistently targeting the *same* category — that gives one edge
-    /// and is not inherently redundant.
-    ///
-    /// The ACTUAL redundancy we can test: A→B and B→C are inferred.  We also
-    /// make a category X whose sole rule targets B (X ≤ B) and make X appear
-    /// as the sole non-terminal in A's rule *instead of* B… but that changes A.
-    ///
-    /// Let me just use the simplest topology that works:
-    ///   - Three categories: Sub, Mid, Top
-    ///   - Sub has TWO rules, both delegating to Mid  → infer Sub ≤ Mid
-    ///   - Mid has ONE rule delegating to Top          → infer Mid ≤ Top
-    ///   - Additionally: Sub has ONE more rule delegating to Top
-    ///     BUT that makes Sub's rules target {Mid, Top} → no edge inferred for Sub.
-    ///
-    /// **Final strategy**: explicitly add a "direct" edge that turns out to be
-    /// redundant by using a second delegator category whose sole target is the
-    /// transitive super-type already reachable via the chain.
-    ///
-    ///   D1 → Mid    (D1 ≤ Mid)
-    ///   D2 → Top    (D2 ≤ Top)      ← redundant only if D2 ≤ Mid ≤ Top already
-    ///   Mid → Top   (Mid ≤ Top)     ← but D2 has no edge to Mid
-    ///
-    /// So D2 ≤ Top is NOT redundant without D2 ≤ Mid.
-    ///
-    /// The ONLY way to get a redundant inferred direct edge is to have a
-    /// category with a single-rule delegation that could be reached via the
-    /// transitive closure of OTHER inferred edges *starting from that category*.
-    /// That requires two paths from the same source:
-    ///
-    ///   source → mid → target  (inferred edges from two different categories)
-    ///   source → target        (second inferred direct edge from source)
-    ///
-    /// But source can only have ONE inferred edge (its rules must all agree on
-    /// the target for any edge to be inferred).  Two inferred edges from the
-    /// same source are impossible under the current algorithm.
-    ///
-    /// **Resolution**: we demonstrate redundancy at the *mid* level.  If we
-    /// have:
-    ///   A → B    (A ≤ B)
-    ///   B → C    (B ≤ C)
-    ///   A → C    — we cannot have this *and* A→B simultaneously under pure
-    ///              delegation (A would need both B and C as sole targets).
-    ///
-    /// **Actual minimal test**: use THREE categories in a chain but arrange for
-    /// the middle step to be both a direct edge AND implied.  With two
-    /// categories only:
-    ///   X → Y   infer X ≤ Y           — not redundant, no path exists otherwise
-    ///
-    /// There is genuinely NO way to produce a redundant inferred edge when each
-    /// category has at most one inferred outgoing edge.  The redundancy check
-    /// exists to catch cases where the grammar author *explicitly* supplied
-    /// edges (e.g., via future API) that are implied, not from inferred edges.
-    ///
-    /// However, the test exercise is still valid: we can construct a scenario
-    /// where redundancy IS detected by having the same category appear in two
-    /// rules that consistently delegate to the same non-terminal AND that
-    /// non-terminal is already reachable via the transitive closure of other
-    /// edges.  This requires the category to also appear *as* a sub-type of
-    /// something that already implies the target.
-    ///
-    /// Concrete example:
-    ///   Sub1 → Mid    infer Sub1 ≤ Mid
-    ///   Sub2 → Mid    infer Sub2 ≤ Mid   (both rules for Sub2 delegate to Mid)
-    ///   Mid  → Top    infer Mid  ≤ Top
-    ///   Sub1 → Top    WAIT — Sub1 only has one rule (→ Mid), not two rules.
-    ///
-    /// If Sub1 has TWO rules both delegating to Mid, the inferred edge is still
-    /// only Sub1 ≤ Mid (not Sub1 ≤ Top directly).  No redundancy.
-    ///
-    /// **True fix**: We need to allow the test to exercise redundancy by
-    /// feeding a grammar that has two rules for the *same* delegating category
-    /// where one rule delegates to Mid and another rule delegates to Top (both
-    /// are present), BUT the delegate-all-same-target rule kicks in ONLY when
-    /// ALL rules agree.  If they disagree → no edge inferred.
-    ///
-    /// **Conclusion**: Under the implemented inference model (pure delegation =
-    /// all rules for a category unanimously agree on one target), it is
-    /// impossible to infer two outgoing edges from the same category — thus
-    /// inferred redundancy can never occur.  The redundancy check is meaningful
-    /// for future extensions or for edges fed via other means.
-    ///
-    /// For the purposes of this test we construct an alternative scenario:
-    ///   Use three categories where the intermediate category's delegation edge
-    ///   creates a chain A ≤ B ≤ C, and a *fourth* category D that delegates
-    ///   to B (D ≤ B).  The edge D ≤ C is only in the closure, not in
-    ///   `inferred_edges` — so no redundancy is reported for D.
-    ///   Then we deliberately add a second category E that delegates directly
-    ///   to C while also being a sub-type of B (E ≤ B, B ≤ C → E ≤ C
-    ///   transitively).  But E can only have one inferred edge.
-    ///
-    /// The test simply verifies:
-    ///   - A linear chain A ≤ B ≤ C produces NO redundant constraints (the
-    ///     inferred edges are exactly the minimal set).
-    ///   - When we manually build a store with the redundant edge A→C added on
-    ///     top of A→B and B→C, the function logic correctly identifies A→C as
-    ///     redundant (tested inline here using the store directly, separate from
-    ///     `analyze_from_bundle` which cannot produce that topology).
-    ///
-    /// Since the user specifically requested a test named
-    /// `test_analyze_from_bundle_redundant_edge` that exercises `analyze_from_bundle`,
-    /// we construct a grammar where a category has two rules that BOTH delegate
-    /// to the same target, making that inferred edge a candidate, and verify
-    /// that the edge A→C inferred directly is flagged redundant when A→B and
-    /// B→C also exist as inferred edges — but that requires A to simultaneously
-    /// infer A→B *and* A→C which the pure-delegation rule prevents.
-    ///
-    /// **Pragmatic resolution**: we achieve redundancy detection by constructing
-    /// a grammar topology where THREE delegation steps exist and the middle step
-    /// creates a two-hop path, *and* we introduce a second category "Sub2" that
-    /// delegates to "Top" directly (Sub2 ≤ Top) while Sub2 also delegates via
-    /// Sub2 → Mid (Sub2 ≤ Mid) → but that's two rules with two targets again.
-    ///
-    /// After careful analysis: the test `test_analyze_from_bundle_redundant_edge`
-    /// will verify that when a category's sole non-terminal is a target that
-    /// can be reached via the closure anyway, the direct inferred edge is NOT
-    /// doubly-reported (i.e., redundancy is only for edges that are strictly
-    /// implied by *other* inferred edges that bypass the direct edge).
-    ///
-    /// The only achievable redundant scenario with the current algorithm:
-    /// Have three categories X, Y, Z forming a chain (X ≤ Y, Y ≤ Z), PLUS
-    /// a category W with a single rule delegating to Z (W ≤ Z).  Now if W
-    /// also had an inferred edge to Y (W ≤ Y), then W ≤ Z would be redundant.
-    /// We can engineer this by giving W two consistent delegation rules that
-    /// both target Z — but then W ≤ Z is a direct inferred edge (not redundant
-    /// unless W ≤ Y is also inferred).  Since W has no rules targeting Y, no
-    /// W ≤ Y edge is inferred, so W ≤ Z is NOT redundant.
-    ///
-    /// **Final resolution**: It is provably impossible to generate a redundant
-    /// inferred edge with the "all rules must unanimously agree on one target"
-    /// inference rule, since each category can have at most one outgoing
-    /// inferred edge and you need at least two outgoing edges from the same
-    /// source for one to be redundant.
-    ///
-    /// The test therefore verifies the redundancy CHECK works correctly by:
-    /// 1. Using `analyze_from_bundle` on a linear chain (no redundancy).
-    /// 2. Using the lower-level store API to add a genuinely redundant edge
-    ///    and verifying the check correctly identifies it.
+    /// 1. bundle analysis of `A -> B -> C` reports no redundant direct edge;
+    /// 2. the lower-level closure detects that explicitly adding `A -> C` to
+    ///    `A -> B -> C` does not enlarge the relation.
     #[test]
     fn test_analyze_from_bundle_redundant_edge() {
         // Part A: verify analyze_from_bundle on a linear chain A→B→C

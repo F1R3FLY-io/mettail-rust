@@ -54,6 +54,18 @@ language! {
             close_parts: ["}#"],
             sep: "|",
         }
+        ![mettail_runtime::HashMapLit<Proc, Proc>] as Map {
+            open_parts: ["{"],
+            close_parts: ["}"],
+            sep: ",",
+            key_val_sep: ":",
+        }
+        ![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap {
+            open_parts: ["pathmap("],
+            close_parts: [")"],
+            sep: ",",
+            key_val_sep: ":",
+        }
     },
 
     terms {

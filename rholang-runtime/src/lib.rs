@@ -48,6 +48,8 @@ pub mod backend;
 /// No production metering/budget surface: budgets are F1r3node's (wallet.txt).
 #[cfg(feature = "bench-naive-baseline")]
 pub mod bench_support;
+#[cfg(feature = "rholang-runtime")]
+mod ddl_ast;
 /// E-6a (pgmcp experiment 145): PathMap-backed SUBJECT INDEXING for in-Rho
 /// matching — BENCHMARK-ONLY treatment-arm support, quarantined behind
 /// `bench-naive-baseline` exactly like `bench_support`. No production surface.
@@ -72,6 +74,10 @@ pub mod guard_discharge;
 /// vocabulary the surface encoder (`mettail_languages::rholang::guard_substrate`) does, so both
 /// legs of a guard's life ask the same procedures.
 pub mod guard_par_substrate;
+/// Atomic installation of Rholang-authored MeTTaIL specifications. Both Greg/Mike
+/// DDL nodes and ordinary `language/2` values cross the same canonical boundary.
+#[cfg(feature = "rholang-runtime")]
+pub mod language_install;
 /// The `[*]` / `[n]` lookahead **ABI** — the seam between the lowered surface (`rholang_ast`'s
 /// `PLookahead*` arms) and the branching engine ([`speculation`]). Owns the reserved request /
 /// result channel names, the two request-seed builders, and the fail-closed unserved-request
@@ -112,6 +118,11 @@ pub mod speculation;
 /// Reactive single-step COMM stepper (the `step` command's live Rho-machine evidence).
 #[cfg(feature = "runtime-report")]
 pub mod step;
+/// Structural Rholang adapter for theorem-indexed FLT channels.  Persistent
+/// RSpace storage remains downstream; this module supplies its checked atomic
+/// transaction boundary.
+#[cfg(feature = "rholang-runtime")]
+pub mod theorem_channel;
 #[cfg(feature = "dstage-instrumentation")]
 pub use backend::dstage_instrumentation;
 #[cfg(feature = "runtime-report")]
@@ -155,6 +166,21 @@ pub use guard_discharge::{
     GuardDischarge, GuardDischargeReport, GuardRouting, GuardStaticallyFalse, LoweringOptions,
     GUARD_DISCHARGE_TARGET,
 };
+#[cfg(feature = "rholang-runtime")]
+pub use language_install::{
+    decode_ddl_envelope, language_flt_construct_definition, language_flt_pattern_definition,
+    language_install_definition, language_parse_definition, language_runtime_definitions,
+    par_to_canonical_value, CanonicalValueError, CanonicalValueLimits, EmptyRegistrySnapshot,
+    InstallCandidate, InstallServiceError, InstalledLanguageBatchReceipt,
+    InstalledLanguageExportReceipt, InstalledLanguageReceipt, LanguageFltConstructionError,
+    LanguageInstallPolicy, LanguageInstallService, LanguageParseExhaustion, LanguageParseOutcome,
+    LanguageParseRejection, LanguageRuntimeError, NamedRuntimeTemplateHole, RegistrySnapshot,
+    RholangInstalledBatch, RholangInstalledExport, RholangLanguageRuntime, DDL_AST_ENVELOPE_V2,
+    DYNAMIC_FLT_PATTERN_ENVELOPE_V1, LANGUAGE_CAPABILITY_ABI_V1, LANGUAGE_FLT_CONSTRUCT_ABI_V1,
+    LANGUAGE_FLT_CONSTRUCT_URN, LANGUAGE_FLT_PATTERN_ABI_V1, LANGUAGE_FLT_PATTERN_URN,
+    LANGUAGE_INSTALL_URN, LANGUAGE_PARSE_ABI_V1, LANGUAGE_PARSE_URN,
+    REGISTRY_LANGUAGE_REFERENCE_V1, REGISTRY_MODULE_REFERENCE_V1,
+};
 pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOLANG_BAG_ABI_TAG};
 pub use native_contract::{
     native_definition, native_definitions_for, par_to_ground_term, NativeContractError,
@@ -195,7 +221,8 @@ pub use run::{
     run_normalized_par_for_oracle_and_read_par_channels,
     run_normalized_par_for_oracle_and_read_string_channels,
     run_normalized_par_for_oracle_and_read_string_tuples,
-    run_normalized_par_for_oracle_and_read_strings, run_validated_program,
+    run_normalized_par_for_oracle_and_read_strings,
+    run_normalized_par_with_definitions_and_read_par_channels, run_validated_program,
     run_validated_program_and_read_bools, run_validated_program_and_read_ints,
     run_validated_program_and_read_string_channels, run_validated_program_and_read_strings,
     run_validated_program_with_call, run_validated_program_with_call_and_read_bools,
@@ -215,3 +242,8 @@ pub use run::{
 pub use shift_contract::{native_shift_definition, native_shift_definitions_for};
 #[cfg(feature = "runtime-report")]
 pub use step::{StepSession, TauChannelClassifier};
+#[cfg(feature = "rholang-runtime")]
+pub use theorem_channel::{
+    AdmittedRholangMessage, CheckedRholangMatch, PreparedRholangConsume, PreparedRholangProduce,
+    RholangTheoremChannel, RholangTheoremChannelError,
+};

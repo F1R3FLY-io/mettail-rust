@@ -752,6 +752,14 @@ pub trait FltReflect: mettail_runtime::Language {
     /// structurally un-reflectable subterm (a native/optional/predicate field with no positional
     /// ground image — the same fail-closed reflection contract the in-Rho match path uses).
     fn parse_and_reflect_flt(&self, body: &str) -> Result<GroundTerm, String>;
+
+    /// Parse a structural host FLT without reconstructing guest source. Text
+    /// pieces and hole terminals remain separate through guest lexing and WPDA
+    /// parsing.
+    fn parse_and_reflect_flt_template(
+        &self,
+        template: &mettail_runtime::FltNode,
+    ) -> Result<GroundTerm, String>;
 }
 
 // ── FltResolve — the FLT tag → guest-reflector registry (L9-6) ─────────────────────────────────

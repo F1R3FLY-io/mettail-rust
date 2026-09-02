@@ -290,7 +290,7 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
     // Dispatch on the term's root category. Multi-type languages match the `TermInner` enum (with an
     // `Ambiguous` find-first-Run arm); a single-type language's `.0` IS the category.
     let root_categories: BTreeSet<&str> = category_scalar.keys().map(|s| s.as_str()).collect();
-    let dispatch_body = if language.types.len() > 1 {
+    let dispatch_body = if crate::gen::semantic_types(language).count() > 1 {
         let inner_enum = format_ident!("{}TermInner", name);
         let inner_arms: Vec<TokenStream> = root_categories
             .iter()

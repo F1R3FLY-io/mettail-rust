@@ -87,7 +87,7 @@ fn recursive_add_premise_input(
                     &program.language_fingerprint,
                     format!(
                         "{owner_kind}/{owner_name}/structural-guard/{index}/{}",
-                        fingerprint_fragment("behavioral", &behavioral_predicate_identity(pred))
+                        fingerprint_fragment("behavioral", &behavioral_predicate_fingerprint(pred),)
                     ),
                 );
                 inputs.push(channel.name.clone());

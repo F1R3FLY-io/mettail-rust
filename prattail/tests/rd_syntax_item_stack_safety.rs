@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use mettail_prattail::automata::codegen::terminal_to_variant_name;
 use mettail_prattail::decision_tree::{DecisionTreeBuilder, PatternElement};
 use mettail_prattail::grammar::ir::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 use mettail_prattail::prediction::first_of_rd_suffix;
@@ -174,7 +175,8 @@ fn rd_pattern_and_first_set_walkers_are_stack_safe_at_depth_20k() {
         .stack_size(STACK_BYTES)
         .spawn(|| {
             let mut token_ids = TokenIdMap::new();
-            token_ids.get_or_insert("KwLeaf");
+            let leaf_variant = terminal_to_variant_name("leaf");
+            token_ids.get_or_insert(&leaf_variant);
             let builder =
                 DecisionTreeBuilder::new(token_ids, HashMap::new(), Vec::new(), HashSet::new());
             let rule = RDRuleInfo {
@@ -208,10 +210,57 @@ fn rd_pattern_and_first_set_walkers_are_stack_safe_at_depth_20k() {
             );
 
             let (first, nullable) = first_of_rd_suffix(&rule.items, &HashMap::new());
-            assert!(first.contains("KwLeaf"));
+            assert!(first.contains(&leaf_variant));
             assert!(nullable);
         })
         .expect("spawn RD walker depth-gate thread")
         .join()
         .expect("RD walker stack-safety gate");
+}
+
+#[test]
+fn collection_lane_classification_is_stack_safe_at_depth_20k() {
+    std::thread::Builder::new()
+        .stack_size(STACK_BYTES)
+        .spawn(|| {
+            let pure = RDRuleInfo {
+                label: "DeepPureCollection".into(),
+                category: "Proc".into(),
+                items: vec![nested_optional(DEPTH)],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: true,
+                collection_type: Some(CollectionKind::Vec),
+                separator: Some(",".into()),
+                prefix_bp: None,
+                eval_mode: None,
+            };
+            assert!(!pure.contains_nonterminal_operand());
+            assert!(pure.is_pure_collection_literal());
+
+            let mut nested_nonterminal = RDSyntaxItem::NonTerminal {
+                category: "Proc".into(),
+                param_name: "body".into(),
+            };
+            for _ in 0..DEPTH {
+                nested_nonterminal = RDSyntaxItem::Optional { inner: vec![nested_nonterminal] };
+            }
+            let mixed = RDRuleInfo {
+                label: "DeepMixedCollection".into(),
+                category: "Proc".into(),
+                items: vec![nested_nonterminal],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: true,
+                collection_type: Some(CollectionKind::Vec),
+                separator: Some(",".into()),
+                prefix_bp: None,
+                eval_mode: None,
+            };
+            assert!(mixed.contains_nonterminal_operand());
+            assert!(!mixed.is_pure_collection_literal());
+        })
+        .expect("spawn collection-lane depth-gate thread")
+        .join()
+        .expect("collection-lane stack-safety gate");
 }

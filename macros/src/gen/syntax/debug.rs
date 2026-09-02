@@ -62,12 +62,19 @@ pub fn generate_debug(language: &LanguageDef) -> TokenStream {
 
 fn generate_debug_collection_helpers(language: &LanguageDef) -> TokenStream {
     let mut uses = Vec::<(Ident, CollectionType)>::new();
+    let mut native_pathmaps = Vec::<(Ident, Ident)>::new();
     for lang_type in &language.types {
         for variant in collect_category_variants(&lang_type.name, language) {
             match variant {
                 VariantKind::CollectionLiteral { element_cat, coll_type, .. }
                 | VariantKind::Collection { element_cat, coll_type, .. } => {
                     record_debug_collection_use(&mut uses, element_cat, coll_type, language);
+                },
+                VariantKind::RecursiveNativeLiteral { carrier, .. } => {
+                    let pair = (carrier.key_category().clone(), carrier.value_category().clone());
+                    if !native_pathmaps.iter().any(|seen| seen == &pair) {
+                        native_pathmaps.push(pair);
+                    }
                 },
                 VariantKind::Regular { fields, .. } => {
                     record_debug_field_collection_uses(&mut uses, &fields, language);
@@ -87,7 +94,19 @@ fn generate_debug_collection_helpers(language: &LanguageDef) -> TokenStream {
     let helpers = uses
         .iter()
         .map(|(cat, coll_type)| generate_debug_collection_helper(cat, coll_type));
-    quote! { #(#helpers)* }
+    let native_helpers = native_pathmaps.iter().map(|(key, value)| {
+        let helper = native_pathmap_debug_helper_ident(key, value);
+        generate_debug_native_pathmap_helper(&helper, key, value)
+    });
+    quote! { #(#helpers)* #(#native_helpers)* }
+}
+
+fn native_pathmap_debug_helper_ident(key: &Ident, value: &Ident) -> Ident {
+    format_ident!(
+        "debug_push_native_pathmap_{}_{}",
+        key.to_string().to_lowercase(),
+        value.to_string().to_lowercase(),
+    )
 }
 
 fn record_debug_field_collection_uses(
@@ -454,6 +473,124 @@ fn generate_debug_collection_helper(cat: &Ident, coll_type: &CollectionType) -> 
     }
 }
 
+fn generate_debug_native_pathmap_helper(helper: &Ident, key: &Ident, value: &Ident) -> TokenStream {
+    let key_task = format_ident!("Debug{}", key);
+    let value_task = format_ident!("Debug{}", value);
+    quote! {
+        #[inline(never)]
+        fn #helper(
+            stack: &mut Vec<DebugTask>,
+            collection: &mettail_runtime::PathMapLit<#key, #value>,
+            depth: usize,
+            alternate: bool,
+        ) {
+            match collection {
+                mettail_runtime::PathMapLit::Empty => {
+                    stack.push(DebugTask::WriteStr("Empty"));
+                },
+                mettail_runtime::PathMapLit::Set(entries) => {
+                    let items: Vec<_> = entries.keys().collect();
+                    if alternate {
+                        stack.push(DebugTask::WriteStr(")"));
+                        stack.push(DebugTask::Indent(depth));
+                        stack.push(DebugTask::WriteStr(",\n"));
+                        stack.push(DebugTask::WriteStr(")"));
+                        stack.push(DebugTask::Indent(depth + 1));
+                        stack.push(DebugTask::WriteStr(",\n"));
+                        if items.is_empty() {
+                            stack.push(DebugTask::WriteStr("{}"));
+                        } else {
+                            stack.push(DebugTask::WriteStr("}"));
+                            stack.push(DebugTask::Indent(depth + 2));
+                            for key in items.into_iter().rev() {
+                                stack.push(DebugTask::WriteStr(",\n"));
+                                stack.push(DebugTask::WriteStr("()"));
+                                stack.push(DebugTask::WriteStr(": "));
+                                stack.push(DebugTask::#key_task {
+                                    value: key as *const _,
+                                    depth: depth + 3,
+                                });
+                                stack.push(DebugTask::Indent(depth + 3));
+                            }
+                            stack.push(DebugTask::WriteStr("{\n"));
+                        }
+                        stack.push(DebugTask::Indent(depth + 2));
+                        stack.push(DebugTask::WriteStr("HashMapLit(\n"));
+                        stack.push(DebugTask::Indent(depth + 1));
+                        stack.push(DebugTask::WriteStr("Set(\n"));
+                    } else {
+                        stack.push(DebugTask::WriteStr("}))"));
+                        for (index, key) in items.into_iter().enumerate().rev() {
+                            stack.push(DebugTask::WriteStr("()"));
+                            stack.push(DebugTask::WriteStr(": "));
+                            stack.push(DebugTask::#key_task {
+                                value: key as *const _,
+                                depth,
+                            });
+                            if index > 0 {
+                                stack.push(DebugTask::WriteStr(", "));
+                            }
+                        }
+                        stack.push(DebugTask::WriteStr("Set(HashMapLit({"));
+                    }
+                },
+                mettail_runtime::PathMapLit::Map(entries) => {
+                    let items: Vec<_> = entries.iter().collect();
+                    if alternate {
+                        stack.push(DebugTask::WriteStr(")"));
+                        stack.push(DebugTask::Indent(depth));
+                        stack.push(DebugTask::WriteStr(",\n"));
+                        stack.push(DebugTask::WriteStr(")"));
+                        stack.push(DebugTask::Indent(depth + 1));
+                        stack.push(DebugTask::WriteStr(",\n"));
+                        if items.is_empty() {
+                            stack.push(DebugTask::WriteStr("{}"));
+                        } else {
+                            stack.push(DebugTask::WriteStr("}"));
+                            stack.push(DebugTask::Indent(depth + 2));
+                            for (key, value) in items.into_iter().rev() {
+                                stack.push(DebugTask::WriteStr(",\n"));
+                                stack.push(DebugTask::#value_task {
+                                    value: value as *const _,
+                                    depth: depth + 3,
+                                });
+                                stack.push(DebugTask::WriteStr(": "));
+                                stack.push(DebugTask::#key_task {
+                                    value: key as *const _,
+                                    depth: depth + 3,
+                                });
+                                stack.push(DebugTask::Indent(depth + 3));
+                            }
+                            stack.push(DebugTask::WriteStr("{\n"));
+                        }
+                        stack.push(DebugTask::Indent(depth + 2));
+                        stack.push(DebugTask::WriteStr("HashMapLit(\n"));
+                        stack.push(DebugTask::Indent(depth + 1));
+                        stack.push(DebugTask::WriteStr("Map(\n"));
+                    } else {
+                        stack.push(DebugTask::WriteStr("}))"));
+                        for (index, (key, value)) in items.into_iter().enumerate().rev() {
+                            stack.push(DebugTask::#value_task {
+                                value: value as *const _,
+                                depth,
+                            });
+                            stack.push(DebugTask::WriteStr(": "));
+                            stack.push(DebugTask::#key_task {
+                                value: key as *const _,
+                                depth,
+                            });
+                            if index > 0 {
+                                stack.push(DebugTask::WriteStr(", "));
+                            }
+                        }
+                        stack.push(DebugTask::WriteStr("Map(HashMapLit({"));
+                    }
+                },
+            }
+        }
+    }
+}
+
 // =============================================================================
 // DebugTask Enum + TLS Pool
 // =============================================================================
@@ -771,6 +908,44 @@ fn generate_debug_variant_arm(
                         f.write_str("(")?;
                         stack.push(DebugTask::WriteStr(")"));
                         #compact
+                    }
+                }
+            }
+        },
+
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let label_str = label.to_string();
+            let constructor = carrier.runtime_constructor_name();
+            let pathmap = carrier.pathmap_ref(&quote! { val });
+            let focus = carrier.focus_ref(&quote! { val });
+            let helper =
+                native_pathmap_debug_helper_ident(carrier.key_category(), carrier.value_category());
+            quote! {
+                #category::#label(val) => {
+                    f.write_str(#label_str)?;
+                    if f.alternate() {
+                        f.write_str("(\n")?;
+                        stack.push(DebugTask::WriteStr(")"));
+                        stack.push(DebugTask::Indent(depth));
+                        stack.push(DebugTask::WriteStr(",\n"));
+
+                        stack.push(DebugTask::WriteStr(")"));
+                        stack.push(DebugTask::Indent(depth + 1));
+                        stack.push(DebugTask::WriteStr(",\n"));
+                        stack.push(debug_opaque_task(#focus, depth + 2));
+                        stack.push(DebugTask::Indent(depth + 2));
+                        stack.push(DebugTask::WriteStr(",\n"));
+                        #helper(stack, #pathmap, depth + 2, true);
+                        stack.push(DebugTask::Indent(depth + 2));
+                        stack.push(DebugTask::WriteStr(concat!(#constructor, "(\n")));
+                        stack.push(DebugTask::Indent(depth + 1));
+                    } else {
+                        f.write_str("(")?;
+                        stack.push(DebugTask::WriteStr("))"));
+                        stack.push(debug_opaque_task(#focus, depth));
+                        stack.push(DebugTask::WriteStr(", "));
+                        #helper(stack, #pathmap, depth, false);
+                        stack.push(DebugTask::WriteStr(concat!(#constructor, "(")));
                     }
                 }
             }
@@ -1218,6 +1393,7 @@ mod tests {
         let mut language = crate::gen::empty_language_for_tests();
         language.types.push(mettail_ast::language::LangType {
             name: format_ident!("Term"),
+            role: Default::default(),
             native_type: None,
             collection_kind: None,
         });

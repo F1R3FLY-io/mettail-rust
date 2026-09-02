@@ -123,6 +123,37 @@ fn iterative_type_emitters_match_recursive_equations() {
 }
 
 #[test]
+fn optional_ident_field_uses_the_exact_token_text_carrier() {
+    let ident_param = TermParam::Simple {
+        name: ident("name"),
+        ty: TypeExpr::Base(ident("Ident")),
+    };
+    assert_eq!(
+        optional_param_field(&ident_param)
+            .into_iter()
+            .next()
+            .unwrap()
+            .to_string(),
+        quote! { Option<std::string::String> }.to_string(),
+        "an optional builtin Ident is token text, never an Arc to an invented category",
+    );
+
+    let category_param = TermParam::Simple {
+        name: ident("child"),
+        ty: TypeExpr::Base(ident("Proc")),
+    };
+    assert_eq!(
+        optional_param_field(&category_param)
+            .into_iter()
+            .next()
+            .unwrap()
+            .to_string(),
+        quote! { Option<std::sync::Arc<Proc>> }.to_string(),
+        "ordinary optional categories retain their typed Arc carrier",
+    );
+}
+
+#[test]
 fn iterative_type_emitters_handle_20k_nesting_on_a_256k_stack() {
     std::thread::Builder::new()
         .stack_size(256 * 1024)

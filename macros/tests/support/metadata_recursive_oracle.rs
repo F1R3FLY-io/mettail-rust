@@ -148,8 +148,8 @@ fn recursive_syntax_pattern_to_string(pattern: &[SyntaxExpr]) -> String {
                 }
                 result.push_str(&name.to_string());
             },
-            SyntaxExpr::GuestBody { open, close, bind } => {
-                result.push_str(&format!("*flt({bind},{open},{close})"));
+            SyntaxExpr::GuestBody { open, close, bind, kind } => {
+                result.push_str(&format!("*{}({bind},{open},{close})", kind.intrinsic()));
             },
         }
     }

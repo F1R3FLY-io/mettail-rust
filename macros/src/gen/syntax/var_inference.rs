@@ -3,10 +3,12 @@
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeSet;
 
 use crate::gen::capture::capture_layout;
 use crate::gen::term_ops::collection_walk::{for_each_subterm, WalkOrder};
-use crate::gen::{generate_var_label, is_var_rule};
+use crate::gen::term_ops::subst::collect_category_variants;
+use crate::gen::{category_has_var_variant, generate_var_label, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
     types::{CollectionType, TypeExpr},
@@ -236,18 +238,28 @@ fn generate_category_handler(
         .iter()
         .filter(|rule| rule.category == *cat_name)
         .collect();
+    let mut coverage = GeneratedPatternCoverage::default();
     let mut arms: Vec<TokenStream> = rules
         .iter()
-        .filter_map(|rule| generate_var_inference_arm(rule, cat_names, language))
+        .filter_map(|rule| {
+            generate_var_inference_arm(rule, cat_names, language).inspect(|_| {
+                coverage.mark_total(&rule.label);
+            })
+        })
         .collect();
-    let var_label = generate_var_label(cat_name);
-    arms.push(quote! {
-        #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
-            (fv.pretty_name.as_deref() == Some(var_name))
-                .then_some(VarCategory::#cat_name)
-        }
-    });
-    arms.push(quote! { _ => None });
+    if category_has_var_variant(cat_name, language) {
+        let var_label = generate_var_label(cat_name);
+        coverage.mark_partial(&var_label);
+        arms.push(quote! {
+            #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
+                (fv.pretty_name.as_deref() == Some(var_name))
+                    .then_some(VarCategory::#cat_name)
+            }
+        });
+    }
+    if generated_category_has_uncovered_pattern(cat_name, language, &coverage) {
+        arms.push(quote! { _ => None });
+    }
     let handler = format_ident!("infer_category_handle_{}", cat_name.to_string().to_lowercase());
     quote! {
         #[inline(never)]
@@ -273,17 +285,25 @@ fn generate_type_handler(
         .iter()
         .filter(|rule| rule.category == *cat_name)
         .collect();
+    let mut coverage = GeneratedPatternCoverage::default();
     let mut arms: Vec<TokenStream> = rules
         .iter()
-        .filter_map(|rule| generate_var_type_inference_arm(rule, cat_names))
+        .filter_map(|rule| {
+            generate_var_type_inference_arm(rule, cat_names).inspect(|_| {
+                coverage.mark_total(&rule.label);
+            })
+        })
         .collect();
     let var_label = generate_var_label(cat_name);
-    arms.push(quote! {
-        #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
-            (fv.pretty_name.as_deref() == Some(var_name))
-                .then_some(InferredType::Base(VarCategory::#cat_name))
-        }
-    });
+    if category_has_var_variant(cat_name, language) {
+        coverage.mark_partial(&var_label);
+        arms.push(quote! {
+            #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
+                (fv.pretty_name.as_deref() == Some(var_name))
+                    .then_some(InferredType::Base(VarCategory::#cat_name))
+            }
+        });
+    }
 
     let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
     let cat_string = cat_name.to_string();
@@ -295,6 +315,9 @@ fn generate_type_handler(
         let multi_apply = format_ident!("MApply{}", domain);
         let lambda = format_ident!("Lam{}", domain);
         let multi_lambda = format_ident!("MLam{}", domain);
+        for label in [&apply, &multi_apply, &lambda, &multi_lambda] {
+            coverage.mark_total(label);
+        }
         let task = format_ident!("Infer{}", cat_name);
         let argument_task = format_ident!("Infer{}", domain);
         arms.push(quote! {
@@ -343,7 +366,9 @@ fn generate_type_handler(
             });
         }
     }
-    arms.push(quote! { _ => None });
+    if generated_category_has_uncovered_pattern(cat_name, language, &coverage) {
+        arms.push(quote! { _ => None });
+    }
 
     let handler = format_ident!("infer_type_handle_{}", cat_name.to_string().to_lowercase());
     quote! {
@@ -358,6 +383,51 @@ fn generate_type_handler(
             match value { #(#arms),* }
         }
     }
+}
+
+/// Coverage of the generated value space, not merely its outer enum labels.
+///
+/// A total arm such as `Ctor(..)` covers every payload of its constructor. A
+/// partial arm such as `Var(Free(..))` names the constructor but leaves other
+/// payloads (notably `Var(Bound(..))`) uncovered. Keeping those states distinct
+/// is the executable counterpart of `ExhaustiveGeneratedMatch.v`'s
+/// pattern-space counterexample.
+#[derive(Default)]
+struct GeneratedPatternCoverage {
+    total_labels: BTreeSet<String>,
+    partial_labels: BTreeSet<String>,
+}
+
+impl GeneratedPatternCoverage {
+    fn mark_total(&mut self, label: &syn::Ident) {
+        let label = label.to_string();
+        self.partial_labels.remove(&label);
+        self.total_labels.insert(label);
+    }
+
+    fn mark_partial(&mut self, label: &syn::Ident) {
+        let label = label.to_string();
+        if !self.total_labels.contains(&label) {
+            self.partial_labels.insert(label);
+        }
+    }
+
+    fn is_total(&self, label: &syn::Ident) -> bool {
+        self.total_labels.contains(&label.to_string())
+    }
+}
+
+/// Return `true` when the emitted arm census leaves any generated value
+/// pattern uncovered. A fallback is omitted only when every constructor has a
+/// total arm; constructor-label presence alone is deliberately insufficient.
+fn generated_category_has_uncovered_pattern(
+    category: &syn::Ident,
+    language: &LanguageDef,
+    coverage: &GeneratedPatternCoverage,
+) -> bool {
+    collect_category_variants(category, language)
+        .iter()
+        .any(|variant| !coverage.is_total(variant.label()))
 }
 
 /// Field kind for inference generation
@@ -910,6 +980,54 @@ fn extract_base_cat(ty: &TypeExpr) -> syn::Ident {
             TypeExpr::Refined { base, .. } => base,
             TypeExpr::Map { value, .. } => value,
         };
+    }
+}
+
+#[cfg(test)]
+mod exhaustive_match_tests {
+    use super::*;
+
+    fn fixture() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: InferenceCoverage,
+                types { data Meta ![i32] as Int },
+                terms {
+                    MEmpty . |- "[]" : Meta;
+                    MOne . value:Meta |- "[" value "]" : Meta;
+                    AddInt . left:Int, right:Int |- left "+" right : Int ![left + right] fold;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("inference-coverage fixture must parse")
+    }
+
+    #[test]
+    fn exhaustive_match_codegen_retains_fallback_for_uncovered_patterns() {
+        let language = fixture();
+        let meta = syn::parse_str("Meta").expect("identifier must parse");
+        let int = syn::parse_str("Int").expect("identifier must parse");
+        let mut meta_coverage = GeneratedPatternCoverage::default();
+        meta_coverage.mark_total(&syn::parse_str("MEmpty").expect("label must parse"));
+        meta_coverage.mark_total(&syn::parse_str("MOne").expect("label must parse"));
+        let mut int_coverage = GeneratedPatternCoverage::default();
+        int_coverage.mark_total(&syn::parse_str("AddInt").expect("label must parse"));
+
+        assert!(!generated_category_has_uncovered_pattern(&meta, &language, &meta_coverage,));
+        assert!(generated_category_has_uncovered_pattern(&int, &language, &int_coverage,));
+    }
+
+    #[test]
+    fn a_free_variable_arm_does_not_cover_the_bound_payload() {
+        let language = crate::gen::singleton_collection_language_for_tests();
+        let proc = syn::parse_str("Proc").expect("identifier must parse");
+        let mut coverage = GeneratedPatternCoverage::default();
+        coverage.mark_total(&syn::parse_str("PZero").expect("label must parse"));
+        coverage.mark_partial(&generate_var_label(&proc));
+
+        assert!(generated_category_has_uncovered_pattern(&proc, &language, &coverage,));
     }
 }
 

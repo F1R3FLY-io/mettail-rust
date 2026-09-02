@@ -11,7 +11,8 @@ use std::collections::BTreeSet;
 /// `Apply{Domain}` / `MApply{Domain}`.
 ///
 /// **Demand-driven (work item #98).** A language that declares a binder gets the full
-/// cross-product of (category × domain) over its declared types. A language that
+/// cross-product of (category × domain) over its declared object types. Closed
+/// `data` categories are parser metasyntax and are excluded from both axes. A language that
 /// declares none gets the EMPTY set, and therefore no HOL family at all.
 ///
 /// The demand signal is [`mettail_ast::grammar_shapes::declares_binder`] — read there,
@@ -67,7 +68,12 @@ pub fn compute_hol_domain_pairs(language: &LanguageDef) -> BTreeSet<(String, Str
         return BTreeSet::new();
     }
 
-    let all_types: Vec<String> = language.types.iter().map(|t| t.name.to_string()).collect();
+    let all_types: Vec<String> = language
+        .types
+        .iter()
+        .filter(|t| !t.is_data())
+        .map(|t| t.name.to_string())
+        .collect();
     let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
     for cat in &all_types {
         for domain in &all_types {
@@ -290,14 +296,22 @@ mod tests {
                     entry.declares_binder,
                 );
                 if entry.declares_binder {
+                    let open_category_count = def
+                        .types
+                        .iter()
+                        .filter(|category| !category.is_data())
+                        .count();
+                    let closed_category_count = def.types.len() - open_category_count;
                     assert_eq!(
                         pairs.len(),
-                        entry.category_count * entry.category_count,
-                        "{} declares {} categories, so the full cross-product is {}² pairs, \
-                         but {} were produced.",
+                        open_category_count * open_category_count,
+                        "{} declares {} categories ({} open, {} closed data), so the HOL \
+                         cross-product is {}² open-category pairs, but {} were produced.",
                         entry.name,
                         entry.category_count,
-                        entry.category_count,
+                        open_category_count,
+                        closed_category_count,
+                        open_category_count,
                         pairs.len(),
                     );
                 }

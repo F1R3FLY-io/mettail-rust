@@ -2282,6 +2282,17 @@ pub trait Language: Send + Sync {
     /// Parse a term for environment storage (does NOT clear var cache)
     fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String>;
 
+    /// Parse a structural FLT template. Implementations must feed text pieces
+    /// and hole terminals separately to their lexer/parser; reconstructing a
+    /// source string is outside this contract.
+    fn parse_term_template(
+        &self,
+        template: &crate::flt_node::FltNode,
+    ) -> Result<Box<dyn Term>, String> {
+        template.validate().map_err(|error| error.to_string())?;
+        Err(format!("language `{}` does not provide structural FLT parsing", self.name(),))
+    }
+
     /// Parse a term and return weighted rewrite seeds for lazy evaluation.
     ///
     /// The default falls back to neutral weights for languages whose generated

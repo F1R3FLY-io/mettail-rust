@@ -1,0 +1,360 @@
+(**
+   Canonical derivation rank for the generated and runtime WPDA parsers.
+
+   This model deliberately separates quantitative path cost from deterministic
+   derivation order.  A rank is indexed by logical input position.  Each
+   position has two non-interchangeable traces:
+
+   - lexical choices, in surface order; and
+   - completed grammar productions, in parse-tree preorder.
+
+   Composition appends each trace pointwise.  The representation therefore
+   orders every lexical choice before every production choice at the same
+   logical position, while parent-before-child production order follows from
+   assembling a completed production before its children.  Parser transition
+   timing is absent from the model: a closing delimiter may commit a rule, but
+   the completed packing owns that rule's rank.
+
+   A factored spine is administrative.  It contributes zero scalar cost and
+   the empty rank; only the committed real production contributes declaration
+   evidence.  These laws are the refinement contract for the Rust
+   implementation.
+*)
+
+module DerivationRank
+
+  use int.Int
+  use list.List
+  use list.Append
+  use map.Map
+  use map.MapExt
+
+  type lexical_decision = {
+    extent : int;
+    alternative : int
+  }
+
+  type source_rule = {
+    source_category : int;
+    declaration : int
+  }
+
+  type position_bucket = {
+    lexical : list lexical_decision;
+    productions : list source_rule
+  }
+
+  type rank = map int position_bucket
+
+  (** Larger lexical extent wins; ties use the smaller alternative ordinal.
+      This is a total preorder over one lexical choice. *)
+  predicate lexical_le (left right : lexical_decision) =
+    left.extent > right.extent
+    \/ (left.extent = right.extent /\
+        left.alternative <= right.alternative)
+
+  predicate lexical_lt (left right : lexical_decision) =
+    left.extent > right.extent
+    \/ (left.extent = right.extent /\
+        left.alternative < right.alternative)
+
+  lemma lexical_le_reflexive:
+    forall choice : lexical_decision. lexical_le choice choice
+
+  lemma lexical_le_total:
+    forall left right : lexical_decision.
+      lexical_le left right \/ lexical_le right left
+
+  lemma lexical_le_antisymmetric:
+    forall left right : lexical_decision.
+      lexical_le left right -> lexical_le right left -> left = right
+
+  lemma lexical_le_transitive:
+    forall first second third : lexical_decision.
+      lexical_le first second -> lexical_le second third ->
+      lexical_le first third
+
+  (** Grammar declaration order is category-major and then rule-major. *)
+  predicate production_le (left right : source_rule) =
+    left.source_category < right.source_category
+    \/ (left.source_category = right.source_category /\
+        left.declaration <= right.declaration)
+
+  predicate production_lt (left right : source_rule) =
+    left.source_category < right.source_category
+    \/ (left.source_category = right.source_category /\
+        left.declaration < right.declaration)
+
+  lemma production_le_reflexive:
+    forall rule : source_rule. production_le rule rule
+
+  lemma production_le_total:
+    forall left right : source_rule.
+      production_le left right \/ production_le right left
+
+  lemma production_le_antisymmetric:
+    forall left right : source_rule.
+      production_le left right -> production_le right left -> left = right
+
+  lemma production_le_transitive:
+    forall first second third : source_rule.
+      production_le first second -> production_le second third ->
+      production_le first third
+
+  predicate lexical_trace_le
+      (left right : list lexical_decision) =
+    match left, right with
+    | Nil, _ -> true
+    | Cons _ _, Nil -> false
+    | Cons left_head left_tail, Cons right_head right_tail ->
+        lexical_lt left_head right_head
+        \/ (left_head = right_head /\
+            lexical_trace_le left_tail right_tail)
+    end
+
+  predicate production_trace_le
+      (left right : list source_rule) =
+    match left, right with
+    | Nil, _ -> true
+    | Cons _ _, Nil -> false
+    | Cons left_head left_tail, Cons right_head right_tail ->
+        production_lt left_head right_head
+        \/ (left_head = right_head /\
+            production_trace_le left_tail right_tail)
+    end
+
+  let rec lemma lexical_trace_total
+      (left right : list lexical_decision) : unit
+    ensures {
+      lexical_trace_le left right \/ lexical_trace_le right left
+    }
+    variant { left }
+  = match left, right with
+    | Nil, _ -> ()
+    | Cons _ _, Nil -> ()
+    | Cons left_head left_tail, Cons right_head right_tail ->
+        if left_head.extent > right_head.extent then ()
+        else if left_head.extent < right_head.extent then ()
+        else if left_head.alternative < right_head.alternative then ()
+        else if left_head.alternative > right_head.alternative then ()
+        else lexical_trace_total left_tail right_tail
+    end
+
+  let rec lemma production_trace_total
+      (left right : list source_rule) : unit
+    ensures {
+      production_trace_le left right \/ production_trace_le right left
+    }
+    variant { left }
+  = match left, right with
+    | Nil, _ -> ()
+    | Cons _ _, Nil -> ()
+    | Cons left_head left_tail, Cons right_head right_tail ->
+        if left_head.source_category < right_head.source_category then ()
+        else if left_head.source_category > right_head.source_category then ()
+        else if left_head.declaration < right_head.declaration then ()
+        else if left_head.declaration > right_head.declaration then ()
+        else production_trace_total left_tail right_tail
+    end
+
+  predicate bucket_le (left right : position_bucket) =
+    lexical_trace_le left.lexical right.lexical
+    /\ (left.lexical = right.lexical ->
+        production_trace_le left.productions right.productions)
+
+  lemma bucket_order_total:
+    forall left right : position_bucket.
+      bucket_le left right \/ bucket_le right left
+
+  let function empty_bucket : position_bucket =
+    { lexical = Nil; productions = Nil }
+
+  let function empty_rank : rank = fun _ -> empty_bucket
+
+  let function combine_bucket
+      (left right : position_bucket) : position_bucket =
+    { lexical = left.lexical ++ right.lexical;
+      productions = left.productions ++ right.productions }
+
+  let function combine_rank (left right : rank) : rank =
+    fun position -> combine_bucket left[position] right[position]
+
+  lemma combine_bucket_left_identity:
+    forall bucket : position_bucket.
+      combine_bucket empty_bucket bucket = bucket
+
+  lemma combine_bucket_right_identity:
+    forall bucket : position_bucket.
+      combine_bucket bucket empty_bucket = bucket
+
+  lemma combine_bucket_associative:
+    forall first second third : position_bucket.
+      combine_bucket (combine_bucket first second) third =
+      combine_bucket first (combine_bucket second third)
+
+  lemma combine_rank_left_identity:
+    forall value : rank. combine_rank empty_rank value = value
+
+  lemma combine_rank_right_identity:
+    forall value : rank. combine_rank value empty_rank = value
+
+  lemma combine_rank_associative:
+    forall first second third : rank.
+      combine_rank (combine_rank first second) third =
+      combine_rank first (combine_rank second third)
+
+  let function lexical_rank
+      (origin : int) (choice : lexical_decision) : rank =
+    fun position ->
+      if position = origin
+      then { lexical = Cons choice Nil; productions = Nil }
+      else empty_bucket
+
+  let function production_rank
+      (origin : int) (rule : source_rule) : rank =
+    fun position ->
+      if position = origin
+      then { lexical = Nil; productions = Cons rule Nil }
+      else empty_bucket
+
+  let function complete_production
+      (origin : int) (rule : source_rule) (payload : rank) : rank =
+    combine_rank (production_rank origin rule) payload
+
+  lemma lexical_phase_precedes_production_phase:
+    forall origin : int, choice : lexical_decision,
+           rule : source_rule, payload : rank.
+      let completed =
+        complete_production origin rule
+          (combine_rank (lexical_rank origin choice) payload) in
+      completed[origin].lexical =
+        Cons choice payload[origin].lexical
+      /\ completed[origin].productions =
+        Cons rule payload[origin].productions
+
+  lemma outer_production_precedes_child_at_shared_origin:
+    forall origin : int, outer inner : source_rule, payload : rank.
+      let child = complete_production origin inner payload in
+      (complete_production origin outer child)[origin].productions =
+      Cons outer (Cons inner payload[origin].productions)
+
+  let rec function children_rank (children : list rank) : rank =
+    match children with
+    | Nil -> empty_rank
+    | Cons child rest -> combine_rank child (children_rank rest)
+    end
+
+  let function assemble
+      (origin : int) (rule : source_rule)
+      (local_lexical : rank) (children : list rank) : rank =
+    complete_production origin rule
+      (combine_rank local_lexical (children_rank children))
+
+  (** A delayed transition and an eager transition refine to the same
+      completed packing because transition time does not contribute a
+      production decision. *)
+  let function eager_commit
+      (origin : int) (rule : source_rule)
+      (local_lexical child : rank) : rank =
+    assemble origin rule local_lexical (Cons child Nil)
+
+  let function delayed_commit
+      (origin : int) (rule : source_rule)
+      (local_lexical child : rank) : rank =
+    assemble origin rule local_lexical (Cons child Nil)
+
+  lemma delayed_commit_refines_completed_packing:
+    forall origin : int, rule : source_rule, local_lexical child : rank.
+      delayed_commit origin rule local_lexical child =
+      eager_commit origin rule local_lexical child
+
+  (** Runtime completion order cannot alter grammatical child order.  The
+      scheduler may finish either child first; assembly consumes the indexed
+      child slots in grammar order. *)
+  let function schedule_left_first
+      (origin : int) (rule : source_rule)
+      (local_lexical left right : rank) : rank =
+    assemble origin rule local_lexical (Cons left (Cons right Nil))
+
+  let function schedule_right_first
+      (origin : int) (rule : source_rule)
+      (local_lexical left right : rank) : rank =
+    assemble origin rule local_lexical (Cons left (Cons right Nil))
+
+  lemma schedule_independence:
+    forall origin : int, rule : source_rule,
+           local_lexical left right : rank.
+      schedule_left_first origin rule local_lexical left right =
+      schedule_right_first origin rule local_lexical left right
+
+  (** Synthetic trie/spine states have neither language meaning nor ranking
+      authority. *)
+  let function synthetic_spine_rank : rank = empty_rank
+
+  let function unfactored
+      (origin : int) (rule : source_rule)
+      (local_lexical : rank) (children : list rank) : rank =
+    assemble origin rule local_lexical children
+
+  let function factored
+      (origin : int) (rule : source_rule)
+      (local_lexical : rank) (children : list rank) : rank =
+    combine_rank synthetic_spine_rank
+      (assemble origin rule local_lexical children)
+
+  lemma factorization_rank_transparency:
+    forall origin : int, rule : source_rule,
+           local_lexical : rank, children : list rank.
+      factored origin rule local_lexical children =
+      unfactored origin rule local_lexical children
+
+  (** Quantitative cost is an exact integer projection.  Rank composition is
+      independent and cannot fabricate, erase, or perturb cost. *)
+  type candidate = {
+    cost : int;
+    derivation_rank : rank
+  }
+
+  let function identity_candidate : candidate =
+    { cost = 0; derivation_rank = empty_rank }
+
+  let function extend_candidate (left right : candidate) : candidate =
+    { cost = left.cost + right.cost;
+      derivation_rank = combine_rank left.derivation_rank right.derivation_rank }
+
+  lemma candidate_left_identity:
+    forall value : candidate.
+      extend_candidate identity_candidate value = value
+
+  lemma candidate_right_identity:
+    forall value : candidate.
+      extend_candidate value identity_candidate = value
+
+  lemma candidate_extend_associative:
+    forall first second third : candidate.
+      extend_candidate (extend_candidate first second) third =
+      extend_candidate first (extend_candidate second third)
+
+  lemma scalar_projection_homomorphism:
+    forall left right : candidate.
+      (extend_candidate left right).cost = left.cost + right.cost
+
+  let function unfactored_candidate
+      (path_cost origin : int) (rule : source_rule)
+      (local_lexical : rank) (children : list rank) : candidate =
+    { cost = path_cost;
+      derivation_rank = unfactored origin rule local_lexical children }
+
+  let function factored_candidate
+      (path_cost origin : int) (rule : source_rule)
+      (local_lexical : rank) (children : list rank) : candidate =
+    extend_candidate identity_candidate
+      (unfactored_candidate path_cost origin rule local_lexical children)
+
+  lemma factorization_preserves_cost_and_rank:
+    forall path_cost origin : int, rule : source_rule,
+           local_lexical : rank, children : list rank.
+      factored_candidate path_cost origin rule local_lexical children =
+      unfactored_candidate path_cost origin rule local_lexical children
+
+end

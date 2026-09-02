@@ -19,6 +19,7 @@ DEFAULT_ROOTS = [
 ]
 DEFAULT_COQ_PROJECTS = [
     "formal/rocq/prattail_wpda_runtime/_CoqProject",
+    "formal/rocq/runtime_grammar/_CoqProject",
 ]
 BANNED_COMMAND = re.compile(
     r"^\s*(?:Local\s+|Global\s+|Polymorphic\s+|Monomorphic\s+)*"

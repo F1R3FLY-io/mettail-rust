@@ -284,24 +284,23 @@ This is the **fast path**: no constraint store, no LogicT search. The entire dec
 `PresburgerTheory` implements `ConstraintTheory`, using a constraint store (`PresburgerStore`) that accumulates linear constraints:
 
 ```rust
-impl ConstraintTheory for PresburgerTheory {
-    type Constraint = LinearConstraint;
-    type Store = PresburgerStore;
+use mettail_prattail::logict::{DecidableConstraintTheory, TheoryAlgebra};
+use mettail_prattail::presburger::PresburgerTheory;
 
-    fn propagate(&self, store: &Store, c: &LinearConstraint) -> Option<Store> {
-        // Add constraint to store, check feasibility via NFA
-        let mut new_store = store.clone();
-        new_store.add_constraint(c.clone());
-        if new_store.is_feasible(self.bit_width) { Some(new_store) } else { None }
-    }
+fn requires_exact_theory<T: DecidableConstraintTheory>(_theory: &T) {}
 
-    fn label(&self, _store: &Store) -> LogicStream<LinearConstraint> {
-        LogicStream::empty()  // Decidable: no labeling needed
-    }
+fn main() {
+    let theory = PresburgerTheory::new(8);
+    requires_exact_theory(&theory);
+    let _algebra = TheoryAlgebra::new(theory, 100);
 }
 ```
 
-When wrapped in `TheoryAlgebra<PresburgerTheory>`, this provides a second `BooleanAlgebra` implementation that can be cross-validated against the direct path.
+`PresburgerTheory` implements both `ConstraintTheory` and the stronger
+`DecidableConstraintTheory`. Its exact method lowers the complete `TheoryPred`
+iteratively into `PresburgerPred` and uses NFA emptiness/witness extraction.
+Consequently `TheoryAlgebra<PresburgerTheory>` implements `BooleanAlgebra` and
+can be cross-validated against the direct path.
 
 ### Cross-Validation
 
@@ -319,7 +318,9 @@ fn cross_validate(direct_pred: &PresburgerPred, theory_pred: &TheoryPred<Presbur
 }
 ```
 
-One known divergence: atomic negation. `PresburgerAlgebra` uses classical NFA complement (`NOT(x <= 5)` = `x > 5`, which is satisfiable). `TheoryAlgebra` uses negation-as-failure (NAF), which may disagree depending on the store state. This is documented in the cross-validation tests.
+Negation is part of the exact lowering and must agree with the direct NFA
+complement path. The cross-validation suite asserts that agreement; it no longer
+permits a negation-as-failure divergence.
 
 ---
 

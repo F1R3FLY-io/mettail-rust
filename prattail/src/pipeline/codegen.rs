@@ -23,8 +23,9 @@ pub(crate) fn generate_parser_code_with_analysis(
     bundle: &ParserBundle,
     variant_map: &TokenVariantMap,
     ambiguity_info: &LexerAmbiguityInfo,
+    exported_prediction_categories: Option<&[String]>,
 ) -> (String, crate::PipelineAnalysis) {
-    generate_parser_code(bundle, variant_map, ambiguity_info)
+    generate_parser_code(bundle, variant_map, ambiguity_info, exported_prediction_categories)
 }
 
 /// Generate parser code from the parser bundle.
@@ -42,6 +43,7 @@ fn generate_parser_code(
     bundle: &ParserBundle,
     variant_map: &TokenVariantMap,
     ambiguity_info: &LexerAmbiguityInfo,
+    exported_prediction_categories: Option<&[String]>,
 ) -> (String, crate::PipelineAnalysis) {
     let category_names: Vec<String> = bundle.categories.iter().map(|c| c.name.clone()).collect();
     let primary_category = category_names.first().map(|s| s.as_str()).unwrap_or("");
@@ -144,15 +146,15 @@ fn generate_parser_code(
         }
     }
 
-    // Augment FIRST sets with Ident for all categories.
-    // Every category has auto-generated Var rules (e.g., IVar, BVar, FVar, SVar)
+    // Augment FIRST sets with Ident for variable-bearing categories.
+    // Object categories have auto-generated Var rules (e.g., IVar, BVar, FVar, SVar)
     // that accept Token::Ident as a prefix. These rules are synthesized by the
     // macros crate during code generation (not in LanguageSpec.rules), so the
     // fixed-point FIRST set computation doesn't see them. Without this, cross-
     // category dispatch never generates arms for Ident tokens, causing expressions
     // like `x >= 1` to fall through to the own-category parser and fail.
-    for cat_name in &category_names {
-        if let Some(first_set) = first_sets.get_mut(cat_name) {
+    for category in bundle.categories.iter().filter(|category| category.has_var) {
+        if let Some(first_set) = first_sets.get_mut(&category.name) {
             first_set.insert("Ident");
         }
     }
@@ -176,12 +178,16 @@ fn generate_parser_code(
     if bundle.has_binders {
         if let Some(first_set) = first_sets.get_mut(primary_category) {
             first_set.insert("Caret");
-            // Add dollar tokens: DollarProc, DdollarProcLp, etc.
-            for cat in &bundle.categories {
+            // Add exact dollar-application terminals using the same injective
+            // mapping as the lexer token enum.
+            for cat in bundle.categories.iter().filter(|category| category.has_var) {
                 let cat_lower = cat.name.to_lowercase();
-                let capitalized = capitalize_first(&cat_lower);
-                first_set.insert(&format!("Dollar{}", capitalized));
-                first_set.insert(&format!("Ddollar{}Lp", capitalized));
+                first_set.insert(&crate::automata::codegen::terminal_to_variant_name(&format!(
+                    "${cat_lower}"
+                )));
+                first_set.insert(&crate::automata::codegen::terminal_to_variant_name(&format!(
+                    "$${cat_lower}("
+                )));
             }
         }
     }
@@ -480,7 +486,7 @@ fn generate_parser_code(
     // This makes the WFST data available at runtime for dynamic prediction
     // (e.g., with trained model weights overriding heuristic weights).
     let mut buf = String::with_capacity(8192);
-    emit_prediction_wfst_static(&mut buf, &prediction_wfsts);
+    emit_prediction_wfst_static(&mut buf, &prediction_wfsts, exported_prediction_categories);
     // Stage 10.5r-d (2026-05-05): emit_recovery_wfst_static + emit_parse_simulator_static
     // calls DELETED. Both emit data structures consumed only by the dead
     // `wfst_recover_<Cat>` function (also deleted). RECOVERY_BEAM_WIDTH constant
@@ -756,15 +762,8 @@ fn generate_parser_code(
                     let all_labels: std::collections::HashSet<String> = bundle
                         .rd_rules
                         .iter()
-                        .filter(|r| {
-                            r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none()
-                        })
-                        .filter(|r| {
-                            !matches!(
-                                r.items.first(),
-                                Some(crate::grammar::ir::RDSyntaxItem::NonTerminal { .. })
-                                    | Some(crate::grammar::ir::RDSyntaxItem::IdentCapture { .. })
-                            )
+                        .filter(|rule| {
+                            crate::decision_tree::is_trie_reachability_candidate(rule, cat_name)
                         })
                         .map(|r| r.label.clone())
                         .collect();
@@ -1780,7 +1779,7 @@ fn generate_parser_code(
             terminals.insert("^".to_string());
             terminals.insert(".".to_string());
             // Dollar terminals for function application syntax
-            for cat in &bundle.categories {
+            for cat in bundle.categories.iter().filter(|category| category.has_var) {
                 let cat_lower = cat.name.to_lowercase();
                 terminals.insert(format!("${}", cat_lower));
                 terminals.insert(format!("$${}(", cat_lower));

@@ -30,8 +30,9 @@ A D03 diagnostic is emitted when **all** of the following hold:
    - Belong to the category (`r.category == cat_name`).
    - Are not collection rules (`!r.is_collection`).
    - Have no prefix binding power (`r.prefix_bp.is_none()`).
-   - Do not start with a nonterminal or ident capture (first item is a
-     terminal).
+   - Do not start with a nonterminal, identifier capture, or custom-token
+     capture. Custom-token captures use a dedicated weighted pushdown automaton
+     dispatch lane and therefore do not participate in the terminal trie.
 3. The function `unreachable_rule_detection()` computes the set difference
    between the eligible rule labels and the labels found in the trie (across all
    segments, in both `Commit` and `Ambiguous` actions).
@@ -51,6 +52,9 @@ will **not** trigger D03, even if absent from the trie:
   terminal matching.
 - **Ident-leading rules** (first item is `IdentCapture`) -- not inserted into
   the trie because ident captures match any identifier token.
+- **Custom-token-leading rules** (first item is `TokenKindCapture`) -- dispatched
+  by the dedicated weighted pushdown automaton lane rather than the terminal
+  trie. This includes typed balanced-region captures.
 
 ## 3 Output Format
 
@@ -163,11 +167,7 @@ for cat_name in &category_names {
         let all_labels: std::collections::HashSet<String> = bundle.rd_rules
             .iter()
             .filter(|r| r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none())
-            .filter(|r| !matches!(
-                r.items.first(),
-                Some(crate::recursive::RDSyntaxItem::NonTerminal { .. }) |
-                Some(crate::recursive::RDSyntaxItem::IdentCapture { .. })
-            ))
+            .filter(|r| crate::decision_tree::is_trie_reachability_candidate(r, cat_name))
             .map(|r| r.label.clone())
             .collect();
         for diag in crate::decision_tree::unreachable_rule_detection(tree, &all_labels) {

@@ -417,7 +417,8 @@ fn type_algebra_and_or_not() {
 fn refinement_base_subtype() {
     let (theory, store) = test_lattice();
     let base_sys = LatticeTypeSystem::new(theory.clone(), store.clone(), HashMap::new());
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let env = ref_sys.empty_env();
     let int_base: RefType<TypeId, SubtypeConstraint> = RefType::Base(2);
@@ -433,7 +434,8 @@ fn refinement_base_subtype() {
 fn refinement_refined_to_base() {
     let (theory, store) = test_lattice();
     let base_sys = LatticeTypeSystem::new(theory.clone(), store.clone(), HashMap::new());
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let env = ref_sys.empty_env();
     // { x: Int | Int <: Number } — a satisfied predicate
@@ -452,7 +454,8 @@ fn refinement_refined_to_base() {
 fn refinement_inhabited() {
     let (theory, store) = test_lattice();
     let base_sys = LatticeTypeSystem::new(theory.clone(), store.clone(), HashMap::new());
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let env = ref_sys.empty_env();
 
@@ -473,7 +476,8 @@ fn refinement_inhabited() {
 fn refinement_join_drops_predicate() {
     let (theory, store) = test_lattice();
     let base_sys = LatticeTypeSystem::new(theory.clone(), store.clone(), HashMap::new());
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let env = ref_sys.empty_env();
     let int_base: RefType<TypeId, SubtypeConstraint> = RefType::Base(2);
@@ -489,7 +493,8 @@ fn refinement_top_bottom() {
     let (theory, store) = test_lattice();
     let base_sys =
         LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     assert_eq!(ref_sys.top(), Some(RefType::Base(0))); // Top
     assert_eq!(ref_sys.bottom(), Some(RefType::Base(6))); // Bottom
@@ -502,7 +507,8 @@ fn apply_substitution_base_type_passthrough() {
     let (theory, store) = test_lattice();
     let base_sys =
         LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let base_ty: RefType<TypeId, SubtypeConstraint> = RefType::Base(2); // Int
     let constraint = SubtypeConstraint { sub: 2, sup: 1 }; // Int <: Number
@@ -516,7 +522,8 @@ fn apply_substitution_mismatched_var() {
     let (theory, store) = test_lattice();
     let base_sys =
         LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let refined = RefType::Refined(RefinedType {
         base: 2, // Int
@@ -535,7 +542,8 @@ fn apply_substitution_matching_var_satisfiable() {
     let (theory, store) = test_lattice();
     let base_sys =
         LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let refined = RefType::Refined(RefinedType {
         base: 2, // Int
@@ -555,7 +563,8 @@ fn value_satisfies_refinement_base_always_true() {
     let (theory, store) = test_lattice();
     let base_sys =
         LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let base_ty: RefType<TypeId, SubtypeConstraint> = RefType::Base(2);
     let constraint = SubtypeConstraint { sub: 999, sup: 888 };
@@ -571,7 +580,8 @@ fn value_satisfies_refinement_consistent() {
     let (theory, store) = test_lattice();
     let base_sys =
         LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
-    let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
+    let predicate_theory = base_sys.frozen_constraint_theory();
+    let ref_sys = RefinementTypeSystem::new_exact(base_sys, predicate_theory, 100);
 
     let refined = RefType::Refined(RefinedType {
         base: 2,

@@ -11,6 +11,7 @@ use crate::gen::term_ops::subst::{FieldInfo, VariantKind};
 use crate::gen::{generate_literal_label, generate_var_label};
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
+use quote::quote;
 
 /// Generate per-constructor unit tests for all categories.
 ///
@@ -114,6 +115,23 @@ pub fn generate_unit_tests(language: &LanguageDef, _pipeline: &PipelineAnalysis)
                      \x20   let displayed = format!(\"{{}}\", term);\n\
                      \x20   assert!(!displayed.is_empty(), \"Display should produce non-empty output for {}\");\n",
                     cat, lbl_str, var_name, lbl_str
+                ))
+            },
+            VariantKind::RecursiveNativeLiteral { label: lbl, carrier } => {
+                let category = &rule.category;
+                let payload = carrier.construct(
+                    &quote! { mettail_runtime::PathMapLit::Empty },
+                    &quote! { vec![0_u8, 127_u8, 128_u8, 255_u8] },
+                );
+                let construct = quote! { #category::#lbl(#payload) }.to_string();
+                Some(format!(
+                    "    let term = {construct};\n\
+                     \x20   let displayed = format!(\"{{}}\", &term);\n\
+                     \x20   assert!(!displayed.is_empty(), \"Display should produce non-empty output for {lbl}\");\n\
+                     \x20   let debug = format!(\"{{:?}}\", &term);\n\
+                     \x20   assert!(debug.contains(\"[0, 127, 128, 255]\"),\n\
+                     \x20       \"recursive-native Debug must preserve exact focus bytes: {{debug}}\");\n\
+                     \x20   assert_eq!(term, term.clone(), \"recursive-native clone must preserve structure\");\n"
                 ))
             },
             VariantKind::Regular { label: lbl, fields } => {

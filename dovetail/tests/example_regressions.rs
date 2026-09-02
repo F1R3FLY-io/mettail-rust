@@ -1,10 +1,8 @@
 mod support;
 
-use std::collections::HashSet;
-
 use dovetail::egraph::{EGraph, EGraphConfig, ENode};
 use dovetail::extract::{Derivation, ExtractionCompleteness, Extractor};
-use dovetail::key::ContentKey;
+use dovetail::key::ContentKeySet;
 use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome};
 use rigail::TropicalWeight;
 
@@ -22,7 +20,7 @@ fn app(
     eg.add(ENode::new(op.to_string(), children))
 }
 
-fn mark_derivation_keys(d: &Derivation<String, TropicalWeight>, out: &mut HashSet<ContentKey>) {
+fn mark_derivation_keys(d: &Derivation<String, TropicalWeight>, out: &mut ContentKeySet) {
     out.insert(d.key.clone());
     for child in &d.children {
         mark_derivation_keys(child, out);
@@ -135,7 +133,7 @@ fn exact_marking_distinguishes_same_operator_with_different_child_choices() {
         "pair({{a,b}},{{a,b}}) must enumerate the full cartesian product"
     );
 
-    let mut marked = HashSet::new();
+    let mut marked = ContentKeySet::default();
     for derivation in &derivations {
         mark_derivation_keys(derivation, &mut marked);
     }

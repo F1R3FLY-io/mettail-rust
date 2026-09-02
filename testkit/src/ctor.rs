@@ -111,6 +111,14 @@ pub enum FieldSpec {
     Coll { kind: String, elem: String },
     /// A native collection-literal wrapper, e.g. `HashSetLit<Proc>`.
     CollLit { kind: String, elem: String },
+    /// A closed recursive-native zipper payload with heterogeneous PathMap
+    /// key/value categories and exact focus bytes.
+    NativeZipper {
+        storage: ZipperStorage,
+        access: ZipperAccess,
+        key: String,
+        value: String,
+    },
     /// `Scope<Binder<String>, Arc<B>>`.
     Scope1 { binder: String, body: String },
     /// `Scope<Vec<Binder<String>>, Arc<B>>`.
@@ -123,6 +131,18 @@ pub enum FieldSpec {
     OpaqueGuest,
     /// `Option<inner>`.
     Opt(Box<FieldSpec>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZipperStorage {
+    Direct,
+    Arc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZipperAccess {
+    Read,
+    Write,
 }
 
 mod lifecycle;
@@ -274,6 +294,28 @@ fn parse_field_spec(descriptor: &str) -> Result<FieldSpec, String> {
         FieldSpec::Cat(cat.to_string())
     } else if let Some(ty) = descriptor.strip_prefix("native:") {
         FieldSpec::Native(ty.to_string())
+    } else if let Some(rest) = descriptor.strip_prefix("zipper:") {
+        let parts: Vec<_> = rest.split(':').collect();
+        let [storage, constructor, key, value] = parts.as_slice() else {
+            return Err("`zipper:` needs storage, constructor, key category, and value category"
+                .to_string());
+        };
+        let storage = match *storage {
+            "Direct" => ZipperStorage::Direct,
+            "Arc" => ZipperStorage::Arc,
+            other => return Err(format!("unknown zipper storage `{other}`")),
+        };
+        let access = match *constructor {
+            "ReadZipperLit" => ZipperAccess::Read,
+            "WriteZipperLit" => ZipperAccess::Write,
+            other => return Err(format!("unknown zipper constructor `{other}`")),
+        };
+        FieldSpec::NativeZipper {
+            storage,
+            access,
+            key: (*key).to_string(),
+            value: (*value).to_string(),
+        }
     } else {
         let mut parsed = None;
         for (prefix, build) in
@@ -1008,6 +1050,23 @@ pub fn emit_category(
             node: &'node DebugNode,
             is_literal: bool,
         },
+        NativePathMap {
+            key: &'schema str,
+            value: &'schema str,
+            node: &'node DebugNode,
+        },
+        NativeSetEntries {
+            key: &'schema str,
+            entries: &'node [(DebugNode, DebugNode)],
+            index: usize,
+        },
+        NativeMapEntries {
+            key: &'schema str,
+            value: &'schema str,
+            entries: &'node [(DebugNode, DebugNode)],
+            index: usize,
+        },
+        ByteVector(&'node DebugNode),
         Fields {
             specs: &'schema [FieldSpec],
             args: &'node [DebugNode],
@@ -1169,6 +1228,38 @@ pub fn emit_category(
                 FieldSpec::CollLit { kind, elem } => {
                     tasks.push(EmitTask::Collection { kind, elem, node, is_literal: true })
                 },
+                FieldSpec::NativeZipper { storage, access, key, value } => {
+                    let constructor = match access {
+                        ZipperAccess::Read => "ReadZipperLit",
+                        ZipperAccess::Write => "WriteZipperLit",
+                    };
+                    let DebugNode::Call { head, args } = node else {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: format!("`{constructor}(PathMapLit, [u8])`"),
+                            found: describe(node),
+                        });
+                    };
+                    if head != constructor || args.len() != 2 {
+                        return Err(EmitError::ShapeMismatch {
+                            expected: format!("`{constructor}(PathMapLit, [u8])`"),
+                            found: describe(node),
+                        });
+                    }
+                    if matches!(storage, ZipperStorage::Arc) {
+                        output.push_str("std::sync::Arc::new(");
+                    }
+                    output.push_str("mettail_runtime::");
+                    output.push_str(constructor);
+                    output.push('(');
+                    tasks.push(EmitTask::Text(if matches!(storage, ZipperStorage::Arc) {
+                        "))"
+                    } else {
+                        ")"
+                    }));
+                    tasks.push(EmitTask::ByteVector(&args[1]));
+                    tasks.push(EmitTask::Text(", "));
+                    tasks.push(EmitTask::NativePathMap { key, value, node: &args[0] });
+                },
                 FieldSpec::Scope1 { body, .. } => match node {
                     DebugNode::Struct { head, fields } if head == "Scope" => {
                         let pattern = field_named(fields, "pattern")?;
@@ -1248,6 +1339,124 @@ pub fn emit_category(
                     }
                     tasks.push(EmitTask::Fields { specs, args, index: index + 1 });
                     tasks.push(EmitTask::Field { spec: &specs[index], node: &args[index] });
+                }
+            },
+
+            EmitTask::ByteVector(node) => match node {
+                DebugNode::List(bytes) => {
+                    output.push_str("vec![");
+                    for (index, byte) in bytes.iter().enumerate() {
+                        let DebugNode::Int(byte) = byte else {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "a byte integer in `0..=255`".to_string(),
+                                found: describe(byte),
+                            });
+                        };
+                        let byte = u8::try_from(*byte).map_err(|_| EmitError::ShapeMismatch {
+                            expected: "a byte integer in `0..=255`".to_string(),
+                            found: byte.to_string(),
+                        })?;
+                        if index != 0 {
+                            output.push_str(", ");
+                        }
+                        output.push_str(&format!("{byte}_u8"));
+                    }
+                    output.push(']');
+                },
+                other => {
+                    return Err(EmitError::ShapeMismatch {
+                        expected: "a `[u8, ..]` focus vector".to_string(),
+                        found: describe(other),
+                    })
+                },
+            },
+
+            EmitTask::NativePathMap { key, value, node } => match node {
+                DebugNode::Ident(mode) if mode == "Empty" => {
+                    output.push_str("mettail_runtime::PathMapLit::Empty");
+                },
+                DebugNode::Call { head: mode, args } if mode == "Set" && args.len() == 1 => {
+                    let inner = unwrap_lit_container(&args[0], "HashMapLit");
+                    let entries = match inner {
+                        DebugNode::Map(entries) => entries.as_slice(),
+                        DebugNode::Set(items) if items.is_empty() => &[],
+                        other => {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "`Set(HashMapLit({key: (), ..}))`".to_string(),
+                                found: describe(other),
+                            })
+                        },
+                    };
+                    for (_, unit) in entries {
+                        if !matches!(unit, DebugNode::Tuple(items) if items.is_empty()) {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "the unit marker `()` for set-mode path membership"
+                                    .to_string(),
+                                found: describe(unit),
+                            });
+                        }
+                    }
+                    output.push_str(
+                        "mettail_runtime::PathMapLit::Set(mettail_runtime::HashMapLit::from_iter(vec![",
+                    );
+                    tasks.push(EmitTask::Text("]))"));
+                    tasks.push(EmitTask::NativeSetEntries { key, entries, index: 0 });
+                },
+                DebugNode::Call { head: mode, args } if mode == "Map" && args.len() == 1 => {
+                    let inner = unwrap_lit_container(&args[0], "HashMapLit");
+                    let entries = match inner {
+                        DebugNode::Map(entries) => entries.as_slice(),
+                        DebugNode::Set(items) if items.is_empty() => &[],
+                        other => {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "`Map(HashMapLit({key: value, ..}))`".to_string(),
+                                found: describe(other),
+                            })
+                        },
+                    };
+                    output.push_str(
+                        "mettail_runtime::PathMapLit::Map(mettail_runtime::HashMapLit::from_iter(vec![",
+                    );
+                    tasks.push(EmitTask::Text("]))"));
+                    tasks.push(EmitTask::NativeMapEntries { key, value, entries, index: 0 });
+                },
+                other => {
+                    return Err(EmitError::ShapeMismatch {
+                        expected: "`Empty`, `Set(HashMapLit(..))`, or `Map(HashMapLit(..))`"
+                            .to_string(),
+                        found: describe(other),
+                    })
+                },
+            },
+
+            EmitTask::NativeSetEntries { key, entries, index } => {
+                if let Some((entry_key, _)) = entries.get(index) {
+                    if index != 0 {
+                        output.push_str(", ");
+                    }
+                    output.push('(');
+                    tasks.push(EmitTask::NativeSetEntries { key, entries, index: index + 1 });
+                    tasks.push(EmitTask::Text(", ())"));
+                    tasks.push(EmitTask::Category { category: key, node: entry_key });
+                }
+            },
+
+            EmitTask::NativeMapEntries { key, value, entries, index } => {
+                if let Some((entry_key, entry_value)) = entries.get(index) {
+                    if index != 0 {
+                        output.push_str(", ");
+                    }
+                    output.push('(');
+                    tasks.push(EmitTask::NativeMapEntries {
+                        key,
+                        value,
+                        entries,
+                        index: index + 1,
+                    });
+                    tasks.push(EmitTask::Text(")"));
+                    tasks.push(EmitTask::Category { category: value, node: entry_value });
+                    tasks.push(EmitTask::Text(", "));
+                    tasks.push(EmitTask::Category { category: key, node: entry_key });
                 }
             },
 
@@ -1336,7 +1545,7 @@ pub fn emit_category(
                 },
                 "PathMap" => match node {
                     DebugNode::Ident(mode) if mode == "Empty" => {
-                        output.push_str("mettail_runtime::PathMapLit::new()");
+                        output.push_str("mettail_runtime::PathMapLit::Empty");
                     },
                     DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Set" => {
                         let inner = unwrap_lit_container(&args[0], "HashMapLit");
@@ -1359,8 +1568,10 @@ pub fn emit_category(
                                 });
                             }
                         }
-                        output.push_str("mettail_runtime::PathMapLit::from_set_iter(vec![");
-                        tasks.push(EmitTask::Text("])"));
+                        output.push_str(
+                            "mettail_runtime::PathMapLit::Set(mettail_runtime::HashMapLit::from_iter(vec![",
+                        );
+                        tasks.push(EmitTask::Text("]))"));
                         tasks.push(EmitTask::PathSetEntries { category: elem, entries, index: 0 });
                     },
                     DebugNode::Call { head: mode, args } if args.len() == 1 && mode == "Map" => {
@@ -1375,8 +1586,10 @@ pub fn emit_category(
                                 })
                             },
                         };
-                        output.push_str("mettail_runtime::PathMapLit::from_map_iter(vec![");
-                        tasks.push(EmitTask::Text("])"));
+                        output.push_str(
+                            "mettail_runtime::PathMapLit::Map(mettail_runtime::HashMapLit::from_iter(vec![",
+                        );
+                        tasks.push(EmitTask::Text("]))"));
                         tasks.push(EmitTask::MapEntries { category: elem, entries, index: 0 });
                     },
                     other => {

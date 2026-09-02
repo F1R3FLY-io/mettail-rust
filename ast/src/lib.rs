@@ -12,6 +12,7 @@
 pub mod auto_inject;
 pub mod binder_census;
 pub mod compose;
+pub mod ddl_migration_inventory;
 pub mod fragment;
 pub mod grammar;
 pub mod grammar_shapes;

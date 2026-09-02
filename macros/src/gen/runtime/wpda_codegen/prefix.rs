@@ -757,40 +757,44 @@ fn collect_first_set(
         // caused FIRST(Int) etc. to omit Ident even though `gen/types/enums.rs`
         // unconditionally emits `Int::IVar(...)` AST variants. Now the FIRST
         // set mirrors the AST surface for every category.
-        if let Some(_lang_type) = language
+        if let Some(lang_type) = language
             .types
             .iter()
             .find(|t| t.name.to_string() == current_cat_name)
         {
-            // Has-user-var-rule check: if any user rule for this cat matches
-            // NonTerminal(Var), don't add (the user rule covers it).
-            let has_user_var = language.terms.iter().any(|r| {
-                r.category.to_string() == current_cat_name
-                    && r.items
-                        .first()
-                        .map(|item| {
-                            matches!(
-                                item,
-                                mettail_ast::grammar::GrammarItem::NonTerminal {
-                                    kind: mettail_ast::grammar::NonTerminalKind::Var,
-                                    ..
-                                }
-                            )
-                        })
-                        .unwrap_or(false)
-            });
-            if !has_user_var {
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::Ident)
-                    },
-                    extra_guard: None,
-                    leading_literal: None,
-                    // CROSSCAT_LEX_COMPAT_GATE: the synthetic Var rule's `Ident`
-                    // is a VAR CONTRIBUTION (the category begins with an Ident
-                    // ONLY because it is a variable, not a literal).
-                    is_var_contribution: true,
+            // Closed data categories do not receive the synthetic Var
+            // constructor, so Ident must not appear in their FIRST sets.
+            if !lang_type.is_data() {
+                // Has-user-var-rule check: if any user rule for this cat matches
+                // NonTerminal(Var), don't add (the user rule covers it).
+                let has_user_var = language.terms.iter().any(|r| {
+                    r.category.to_string() == current_cat_name
+                        && r.items
+                            .first()
+                            .map(|item| {
+                                matches!(
+                                    item,
+                                    mettail_ast::grammar::GrammarItem::NonTerminal {
+                                        kind: mettail_ast::grammar::NonTerminalKind::Var,
+                                        ..
+                                    }
+                                )
+                            })
+                            .unwrap_or(false)
                 });
+                if !has_user_var {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::Ident)
+                        },
+                        extra_guard: None,
+                        leading_literal: None,
+                        // CROSSCAT_LEX_COMPAT_GATE: the synthetic Var rule's
+                        // `Ident` is a VAR CONTRIBUTION (the category begins
+                        // with an Ident only because it is a variable).
+                        is_var_contribution: true,
+                    });
+                }
             }
         }
         // B7 Pattern 3 fix: synthetic collection-literal rules (`ListLit`,
@@ -942,20 +946,64 @@ fn collect_first_set(
                                 acc.push(FirstToken::fixed_leading(text));
                             },
                             Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
-                                // First syntactic item is a param ref.
-                                // Look up the corresponding NonTerminal in
-                                // rule.items[0] and queue its category's
-                                // FIRST if it's a different cat.
-                                if let Some(mettail_ast::grammar::GrammarItem::NonTerminal {
-                                    ident: nt_ident,
-                                    kind: mettail_ast::grammar::NonTerminalKind::Category,
-                                }) = rule.items.first()
-                                {
-                                    let nt_cat = nt_ident.to_string();
+                                // Prefer the judgement-style term context: it
+                                // remains authoritative even when `items` is
+                                // empty. Legacy BNF rules retain the items
+                                // fallback.
+                                let leading_cat = super::binder::classify_binder_in(rule, language)
+                                    .and_then(|shape| shape.leading_category)
+                                    .or_else(|| match rule.items.first() {
+                                        Some(mettail_ast::grammar::GrammarItem::NonTerminal {
+                                            ident,
+                                            kind: mettail_ast::grammar::NonTerminalKind::Category,
+                                        }) => Some(ident.to_string()),
+                                        _ => None,
+                                    });
+                                if let Some(nt_cat) = leading_cat {
                                     if nt_cat != current_cat_name {
                                         pending.push_back(nt_cat);
                                     }
                                 }
+                            },
+                            // A leading named token-family capture is a real
+                            // FIRST terminal.  Home-category prefix dispatch
+                            // has always recognized this shape, but omitting it
+                            // here made the same rule unreachable whenever the
+                            // category was entered through a cross-category
+                            // infix/projection edge.  Keep the predicate shared
+                            // with the lexer and consuming walker so builtin,
+                            // custom, and future token families agree exactly.
+                            Some(mettail_ast::grammar::SyntaxExpr::TokenKind { name, .. }) => {
+                                let kind_name = name.to_string();
+                                acc.push(FirstToken {
+                                    pattern: quote! { Some(ref __kind) },
+                                    extra_guard: Some(quote! {
+                                        mettail_prattail::automata::token_kind_matches_capture_name(
+                                            #kind_name,
+                                            __kind,
+                                        )
+                                    }),
+                                    leading_literal: None,
+                                    // This is syntax supplied by the rule, not
+                                    // an automatically injected Var reading.
+                                    is_var_contribution: false,
+                                });
+                            },
+                            // A delimited guest-body capture begins with its
+                            // declared opener token.  Propagating that opener
+                            // makes FIRST complete for structural FLT rules
+                            // reached through another category while retaining
+                            // the same closed Custom-kind test as home dispatch.
+                            Some(mettail_ast::grammar::SyntaxExpr::GuestBody { open, .. }) => {
+                                let open_kind = open.to_string();
+                                acc.push(FirstToken {
+                                    pattern: quote! {
+                                        Some(mettail_prattail::automata::TokenKind::Custom(ref __k))
+                                    },
+                                    extra_guard: Some(quote! { __k == #open_kind }),
+                                    leading_literal: None,
+                                    is_var_contribution: false,
+                                });
                             },
                             _ => {},
                         }
@@ -1128,9 +1176,11 @@ fn grouping_source_categories_for_result(
 /// use `lex_one()` (max src/rule indices) so any concrete binder rule beats
 /// them on lex-min ties.
 ///
-/// Verified empirically across `target/generated/*/wpds.rs`: only Lambda
-/// has a `(`-triggered binder rule; for all other shipped grammars this emits
-/// the direct grouping arm.
+/// A source category's concrete `(`-led rules are preserved when that source
+/// is entered through a cross-category infix/projection edge.  Treating the
+/// source merely as a grouping target is incomplete: it would consume the
+/// opener and then parse only the text *inside* the parentheses, making an
+/// S-expression-style source rule unreachable from the enclosing category.
 pub fn emit_paren_dispatch_arms(
     categories: &[String],
     language: &mettail_ast::language::LanguageDef,
@@ -1151,8 +1201,11 @@ pub fn emit_paren_dispatch_arms(
         let result_src_idx = cat_i as u16;
         let grouping_source_indices =
             grouping_source_categories_for_result(categories, language, per_cat, cat_i);
-        // Find binder rules in this category with `(` first trigger.
-        let paren_binder_rules: Vec<(u16, super::binder::BinderShape)> = per_cat[cat_i]
+        // Find binder rules owned by this result category with `(` first
+        // trigger.  This local set controls the historical PInputs gate below;
+        // source-category rules are collected after that gate has selected the
+        // admissible grouping sources.
+        let local_paren_binder_rules: Vec<(u16, super::binder::BinderShape)> = per_cat[cat_i]
             .iter()
             .enumerate()
             .filter_map(|(rule_i, rule)| {
@@ -1166,7 +1219,7 @@ pub fn emit_paren_dispatch_arms(
                 }
             })
             .collect();
-        if paren_binder_rules.is_empty() && grouping_source_indices.len() == 1 {
+        if local_paren_binder_rules.is_empty() && grouping_source_indices.len() == 1 {
             // No conflict: emit the simple grouping arm.
             let grouping_src_idx = grouping_source_indices[0];
             arms.push(quote! {
@@ -1210,7 +1263,7 @@ pub fn emit_paren_dispatch_arms(
         // needs the source-cat branches, so only drop them when a `(`-binder is
         // present; the result-category grouping branch plus the binder branch
         // fully cover the binder category's `(` interpretations.
-        let grouping_source_indices: Vec<u16> = if paren_binder_rules.is_empty() {
+        let grouping_source_indices: Vec<u16> = if local_paren_binder_rules.is_empty() {
             grouping_source_indices
         } else {
             vec![result_src_idx]
@@ -1218,9 +1271,17 @@ pub fn emit_paren_dispatch_arms(
         for grouping_src_idx in &grouping_source_indices {
             let is_cross_cat = *grouping_src_idx != result_src_idx;
             let action_kind = if is_cross_cat {
-                quote! { mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs }
+                quote! {
+                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPushCrossCatLhs {
+                        trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
+                    }
+                }
             } else {
-                quote! { mettail_prattail::wpda_walker::ForkActionKind::Push }
+                quote! {
+                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                        trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
+                    }
+                }
             };
             // ── Divergence I / Stage D (2026-07-25): PAY FOR THE PROJECTION HERE ──
             //
@@ -1259,9 +1320,7 @@ pub fn emit_paren_dispatch_arms(
             //   three tiebreak components; `is_one()` (:536-538) keys PURELY on
             //   `primary.is_one()` — i.e. on tropical cost 0.0, nothing else.
             //
-            //   `lex_w(BP_TIER_CROSSCAT_PROJECTION, …)` has primary = 0.025, so it
-            //   is NOT the identity. The walker composes a branch weight as the
-            //   RIGHT operand (`cursor.weight.times(&branch.weight)`), and at a
+            //   `lex_w(BP_TIER_CROSSCAT_PROJECTION, grouping_src_idx, 0)`), and at a
             //   fresh group-open the cursor weight IS the identity — so the cursor
             //   becomes exactly this weight, and every subsequent `times` inside
             //   the group left-projects ITS triple `(lex_alt_idx = 0,
@@ -1307,7 +1366,8 @@ pub fn emit_paren_dispatch_arms(
                 quote! {
                     lex_w(
                         mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
-                        #grouping_src_idx, 0u16,
+                        #grouping_src_idx,
+                        0u16,
                     )
                 }
             } else {
@@ -1327,46 +1387,120 @@ pub fn emit_paren_dispatch_arms(
                 }
             });
         }
-        // Branches 1..N: each binder rule with `(` trigger.
-        for (paren_binder_position, (rule_idx, shape)) in paren_binder_rules.iter().enumerate() {
+        // Concrete `(`-led rules from every admitted grouping source.  The
+        // owner category is carried explicitly: a source rule completes in
+        // its own category and the cross-category boundary then resumes the
+        // enclosing infix/projection context.  Omitting these branches reduced
+        // a source category to generic parenthesized grouping and made rules
+        // such as `(Ctor arg)` unavailable whenever they occurred as another
+        // category's operand.
+        let paren_binder_rules: Vec<(u16, u16, super::binder::BinderShape)> =
+            grouping_source_indices
+                .iter()
+                .flat_map(|&owner_src_idx| {
+                    per_cat[owner_src_idx as usize]
+                        .iter()
+                        .enumerate()
+                        .filter_map(move |(rule_i, rule)| {
+                            let shape = super::binder::classify_binder_in(rule, language)?;
+                            let first_trigger = rule.syntax_pattern.as_ref()?.first()?;
+                            match first_trigger {
+                                mettail_ast::grammar::SyntaxExpr::Literal(text) if text == "(" => {
+                                    Some((owner_src_idx, rule_i as u16, shape))
+                                },
+                                _ => None,
+                            }
+                        })
+                })
+                .collect();
+        for (paren_binder_position, (owner_src_idx, rule_idx, shape)) in
+            paren_binder_rules.iter().enumerate()
+        {
             let body_src_idx = super::binder::binder_initial_body_cat(shape)
                 .and_then(|name| super::binder::lookup_src_idx(name, categories))
-                .unwrap_or(result_src_idx);
+                .unwrap_or(*owner_src_idx);
+            let owner_src_idx_lit = *owner_src_idx;
             let rule_idx_lit = *rule_idx;
             // Task #10 item 1: the binder branch's STATIC position = after
             // ALL grouping branches (grouping-first layout), in declaration
             // order.
             fork_rows.record_site2_row(
-                result_src_idx,
+                owner_src_idx_lit,
                 rule_idx_lit,
                 (grouping_source_indices.len() + paren_binder_position) as u16,
                 "paren-dispatch \"(\"",
             );
+            let (branch_symbol, action_kind) = if owner_src_idx_lit == result_src_idx {
+                (
+                    quote! {
+                        StackSymbolV2::rule_at(
+                            #owner_src_idx_lit, #rule_idx_lit, 1u8, Some(_outer_bp),
+                        )
+                    },
+                    quote! {
+                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                            trigger_mode:
+                                mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                        }
+                    },
+                )
+            } else {
+                // Preserve the ordinary cross-category LHS stack shape:
+                // target caller -> source CategoryEntry -> selected RuleAt.
+                // BinderRule recognizes the intermediate CategoryEntry as a
+                // trigger prelude, consumes this rule's declared leading
+                // literal, and pushes RuleAt with the TriggerTerminal as its
+                // initial SPPF leaf.
+                (
+                    quote! { StackSymbolV2::category_entry(#owner_src_idx_lit) },
+                    quote! { mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs },
+                )
+            };
+            let branch_weight = if owner_src_idx_lit == result_src_idx {
+                quote! { lex_w(0.0, #owner_src_idx_lit, #rule_idx_lit) }
+            } else {
+                quote! {
+                    lex_w(
+                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
+                        #owner_src_idx_lit,
+                        #rule_idx_lit,
+                    )
+                }
+            };
             branches.push(quote! {
                 mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: StackSymbolV2::rule_at(
-                        #result_src_idx, #rule_idx_lit, 1u8, Some(_outer_bp),
-                    ),
-                    weight: lex_w(
-                        0.0, #result_src_idx, #rule_idx_lit,
-                    ),
+                    symbol: #branch_symbol,
+                    weight: #branch_weight,
                     new_state: WpdaState::BinderRule {
-                        result_src_idx: #result_src_idx,
+                        result_src_idx: #owner_src_idx_lit,
                         rule_idx: #rule_idx_lit,
                         body_src_idx: #body_src_idx,
                         outer_bp: _outer_bp,
                     },
-                    action_kind:
-                        mettail_prattail::wpda_walker::ForkActionKind::PushWithTriggerTerminal,
+                    action_kind: #action_kind,
                 }
             });
         }
+        let branch_count = branches.len();
+        let branch_pushes = branches.iter().map(|branch| {
+            quote! {
+                __paren_branches.push(#branch);
+            }
+        });
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                 if __open == "(" && state_cat_src_idx == #result_src_idx => {
+                let mut __paren_branches = ::std::vec::Vec::with_capacity(#branch_count);
+                #( #branch_pushes )*
                 return WpdaStepAction::Fork {
-                    branches: vec![ #( #branches ),* ],
-                    consume_trigger: true,
+                    branches: __paren_branches,
+                    // Each branch owns its consume semantics.  Grouping and
+                    // same-category rules consume immediately; a
+                    // cross-category concrete rule first pushes its source
+                    // CategoryEntry, then consumes through BinderRule's
+                    // trigger prelude.  A fork-global consume would erase
+                    // that required intermediate continuation frame.
+                    consume_trigger: false,
                 };
             }
         });
@@ -1467,7 +1601,8 @@ fn literal_family_for(kind: &NativeKind) -> Option<LiteralFamily> {
 /// cross-cat projection? True iff the category either has an explicit user Var
 /// rule (a `language.terms` rule whose first item is `NonTerminal{kind:Var}`) OR
 /// receives the synthetic Var rule (the `!has_user_var` branch of
-/// `collect_first_set`, which every declared `language.types` category takes).
+/// `collect_first_set`, which every open declared `language.types` category
+/// takes). Closed `data` categories receive no synthetic Var constructor.
 /// Grammar-derived, mirrors `collect_first_set`'s Var logic EXACTLY so the gate
 /// is precise. When true, a bare Ident in `cat_name` is already covered by the
 /// home Var reading, so a cross-cat cast delegate `source : cat_name` on the
@@ -1475,19 +1610,17 @@ fn literal_family_for(kind: &NativeKind) -> Option<LiteralFamily> {
 /// (the source cannot begin with a LITERAL Ident) — is a proven over-generation
 /// (it duplicates the home var reading via a spurious ∅-realizing cast path).
 fn result_has_home_var_reading(cat_name: &str, language: &LanguageDef) -> bool {
-    // Must be a declared category to receive the synthetic Var rule.
-    let is_declared = language
+    // A category must be declared. Open categories receive a synthetic Var
+    // when they lack a user Var rule; closed data categories do not.
+    let Some(lang_type) = language
         .types
         .iter()
-        .any(|t| t.name.to_string() == cat_name);
-    if !is_declared {
+        .find(|t| t.name.to_string() == cat_name)
+    else {
         return false;
-    }
-    // Either takes the synthetic Var (always, when declared and lacking a user
-    // Var rule) or already has an explicit user Var rule → in BOTH cases a bare
-    // Ident reads as a home `cat_name` var. (The disjunction collapses to
-    // `true` for any declared category, but is written out to track the exact
-    // grammar provenance and stay correct if the synthetic-Var policy changes.)
+    };
+    // An explicit user Var rule contributes Ident even for a closed category;
+    // otherwise only an open category receives the synthetic constructor.
     let has_user_var = language.terms.iter().any(|r| {
         r.category.to_string() == cat_name
             && r.items
@@ -1503,8 +1636,7 @@ fn result_has_home_var_reading(cat_name: &str, language: &LanguageDef) -> bool {
                 })
                 .unwrap_or(false)
     });
-    // Synthetic Var applies when !has_user_var; either branch yields a home var.
-    has_user_var || !has_user_var
+    has_user_var || !lang_type.is_data()
 }
 
 /// CROSSCAT_LEX_COMPAT_GATE (2026-07-03): is a bare `Ident` reading of the
@@ -1692,6 +1824,10 @@ fn ident_first_categories(language: &LanguageDef) -> std::collections::HashSet<S
     let mut reached: std::collections::HashSet<String> = language
         .types
         .iter()
+        // This seed is exactly the synthetic-Var contribution. Explicit user
+        // Var rules, including any declared on a closed data category, enter
+        // through the `AtomicShape::VarRule` arm below.
+        .filter(|ty| !ty.is_data())
         .map(|ty| ty.name.to_string())
         .collect();
     let mut reverse: std::collections::HashMap<String, Vec<String>> =
@@ -1789,7 +1925,7 @@ pub fn emit_prefix_arms_for_category(
     // PrefixDispatch `match peek` arms (each `#pat if #guard => self.prefix_arm_
     // c{cat}_a{ord}(..)`), `helpers` are the per-arm `#[inline(never)]` body
     // methods that get emitted into the sibling inherent `impl #engine_ident`.
-) -> (TokenStream, TokenStream) {
+) -> (Vec<TokenStream>, TokenStream) {
     let mut arms = Vec::new();
     // Stage 1.2: cross-cat infix LHS delegation. Walk all infix rules
     // (not just rules in this category) whose result_cat == this category
@@ -1811,6 +1947,7 @@ pub fn emit_prefix_arms_for_category(
         }
     }
     let categories = super::collect_category_names_with_literals(language);
+    let bp_table = super::infix::build_bp_table(language);
     // B4 fix (2026-05-07): cross-cat infix LHS delegation with
     // bucket-then-Fork emission. Pre-fix the per-source loop emitted
     // duplicate Rust match arms with identical (pat, guard) keys when
@@ -1949,7 +2086,6 @@ pub fn emit_prefix_arms_for_category(
                 .position(|c| c == source_cat_name)
                 .map(|i| i as u16)
                 .unwrap_or(category_src_idx);
-            let bp_table = super::infix::build_bp_table(language);
             let operand_bp = compute_prefix_bp(source_cat_name, rule.prefix_bp, &bp_table);
             insert_unified_descriptor(
                 &mut unified_buckets,
@@ -1996,16 +2132,21 @@ pub fn emit_prefix_arms_for_category(
                         UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx },
                     );
                 },
-                // L9-3: a LEADING custom-kind capture — dispatch on the specific
-                // custom kind (guard-based, mirroring the Fixed trigger path;
-                // TokenKind::Custom(String) has no bare-literal pattern).
+                // L9-3: a LEADING builtin/custom token-family capture. Dispatch
+                // through the shared runtime predicate so this path and the
+                // consuming walker agree on the named family.
                 Some(mettail_ast::grammar::SyntaxExpr::TokenKind { name, .. }) => {
                     let kind_name = name.to_string();
                     insert_unified_descriptor(
                         &mut unified_buckets,
                         &mut unified_order,
-                        quote! { Some(mettail_prattail::automata::TokenKind::Custom(ref __k)) },
-                        Some(quote! { __k == #kind_name }),
+                        quote! { Some(ref __kind) },
+                        Some(quote! {
+                            mettail_prattail::automata::token_kind_matches_capture_name(
+                                #kind_name,
+                                __kind,
+                            )
+                        }),
                         UnifiedDescriptor::LeadingTokenKindCapture {
                             rule_idx,
                             body_src_idx,
@@ -2019,6 +2160,8 @@ pub fn emit_prefix_arms_for_category(
                 // emission PUSHES the RuleAt frame + assembles the FltNode.
                 Some(mettail_ast::grammar::SyntaxExpr::GuestBody { open, close, .. }) => {
                     let open_kind = open.to_string();
+                    let nested_open_kinds =
+                        super::guest_body_nested_open_kinds(language, &open_kind);
                     let close_kind = close.to_string();
                     insert_unified_descriptor(
                         &mut unified_buckets,
@@ -2029,9 +2172,54 @@ pub fn emit_prefix_arms_for_category(
                             rule_idx,
                             body_src_idx,
                             open_kind,
+                            nested_open_kinds,
                             close_kind,
                         },
                     );
+                },
+                Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
+                    if shape.leading_ident_capture.is_some() {
+                        insert_unified_descriptor(
+                            &mut unified_buckets,
+                            &mut unified_order,
+                            quote! {
+                                Some(mettail_prattail::automata::TokenKind::Ident)
+                            },
+                            None,
+                            UnifiedDescriptor::LeadingTokenKindCapture {
+                                rule_idx,
+                                body_src_idx,
+                                kind_name: "Ident".to_string(),
+                            },
+                        );
+                        continue;
+                    }
+                    let Some(source_cat_name) = shape.leading_category.as_deref() else {
+                        continue;
+                    };
+                    let Some(source_src_idx) = categories
+                        .iter()
+                        .position(|category| category == source_cat_name)
+                        .map(|index| index as u16)
+                    else {
+                        continue;
+                    };
+                    // Same-category led rules belong exclusively to
+                    // InfixLoop. Routing one through the generic
+                    // category-leading continuation would parse its right
+                    // operand at the prefix floor and bypass `right_bp`.
+                    if same_category_led_left_bp(rule, category_name, &bp_table).is_some() {
+                        continue;
+                    }
+                    for first in first_set_of_category(source_cat_name, language) {
+                        insert_unified_descriptor(
+                            &mut unified_buckets,
+                            &mut unified_order,
+                            first.pattern,
+                            first.extra_guard,
+                            UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx },
+                        );
+                    }
                 },
                 _ => continue,
             }
@@ -2179,7 +2367,7 @@ pub fn emit_prefix_arms_for_category(
             > #body
         });
     }
-    (quote! { #(#arms)* }, quote! { #(#helpers)* })
+    (arms, quote! { #(#helpers)* })
 }
 
 // B10 / Option κ Fix B (2026-05-07): `emit_cross_cat_projection_arms_bucketed`
@@ -2290,6 +2478,27 @@ fn atomic_arm_descriptors(
         .collect()
 }
 
+/// Return the ordinary led-dispatch floor for a rule that is represented in
+/// the binding-power table as a same-category operator. The table is the
+/// authoritative classifier: the prefix and led surfaces therefore cannot
+/// disagree about whether a rule is precedence-gated or about its power.
+pub(crate) fn same_category_led_left_bp(
+    rule: &GrammarRule,
+    result_category: &str,
+    bp_table: &mettail_prattail::binding_power::BindingPowerTable,
+) -> Option<u8> {
+    let label = rule.label.to_string();
+    bp_table
+        .operators
+        .iter()
+        .find(|operator| {
+            operator.label == label
+                && operator.result_category == result_category
+                && operator.category == operator.result_category
+        })
+        .map(|operator| operator.left_bp)
+}
+
 /// B7 (2026-05-07) — unified descriptor for the merged Pass 0/Pass 1
 /// bucket map. Each bucket entry is a list of these; singleton buckets
 /// emit a direct arm matching their kind; mixed buckets emit a Fork.
@@ -2324,6 +2533,16 @@ enum UnifiedDescriptor {
     /// Literal-leading binder/prefix rule. Consumes its own trigger token,
     /// pushes `RuleAt(slot=1)`, and enters `BinderRule`.
     BinderPrefix { rule_idx: u16, body_src_idx: u16 },
+    /// Category-leading composite. The dispatch does not consume a token: it
+    /// replaces the requested category entry with this rule's continuation,
+    /// pushes the leading child category, and lets that child parse the same
+    /// token position.
+    ///
+    /// Same-category Pratt led rules are excluded from this descriptor and
+    /// emitted only through InfixLoop. Category-changing closed primaries stay
+    /// here because their source attachment and result continuation are
+    /// independently typed.
+    LeadingCategory { rule_idx: u16, source_src_idx: u16 },
     /// L9-3: a rule whose FIRST syntax element is a custom-kind capture
     /// (`b@GuestChunk …`). The prefix dispatch consumes+captures the leading
     /// token via `GuardedConsumeTokenKindAndReplace` (gated on
@@ -2346,6 +2565,7 @@ enum UnifiedDescriptor {
         rule_idx: u16,
         body_src_idx: u16,
         open_kind: String,
+        nested_open_kinds: Vec<String>,
         close_kind: String,
     },
     /// Cross-category prefix-unary rule. Consumes its own trigger token,
@@ -2365,7 +2585,7 @@ enum UnifiedDescriptor {
     /// GAP-3 (2026-06-28): 0-operand multi-literal keyword-prefix rule
     /// (`Map ()`, `Pathmap ()`, `@ Nil`). Consumes its own trigger token
     /// (mirrored to the SPPF as a `TriggerTerminal` for span anchoring),
-    /// pushes `mixfix_marker(cat, rule_idx, 0)`, and enters
+    /// pushes `mixfix_marker(cat, rule_idx, 0, continuation_bp)`, and enters
     /// `MixfixLiteralRun { kind: 2, completed_idx: 0 }` — whose `parts_len
     /// == 0` arm consumes the trailing literals then pops the marker, firing
     /// the arity-0 action. Per-tier weight `0.0` (atomic-home) so a unique
@@ -2630,15 +2850,39 @@ fn emit_unified_arm(
                     },
                 )
             },
+            UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx } => {
+                let rule_idx = *rule_idx;
+                let source_src_idx = *source_src_idx;
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
+                        return WpdaStepAction::ReplaceAndPush {
+                            replace_symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                            ),
+                            push_symbol: StackSymbolV2::category_entry(#source_src_idx),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::PrefixDispatch {
+                                pos: *pos,
+                                cur_bp: 0,
+                            },
+                        };
+                        }
+                    },
+                )
+            },
             UnifiedDescriptor::LeadingTokenKindCapture { rule_idx, body_src_idx, kind_name } => {
                 let rule_idx = *rule_idx;
                 let body_src_idx = *body_src_idx;
-                // L9-3: leading custom-kind capture — never S1-grouped (it
+                // L9-3: leading builtin/custom token-family capture — never S1-grouped (it
                 // terminates mergeability), so it always reaches the singleton
                 // path. Emit a single-branch Fork carrying
                 // GuardedConsumeTokenKindAndPush (a ForkActionKind — hence a
                 // Fork rather than the non-capturing ConsumeAndPush the Literal
-                // trigger uses): the walker gates peek_kind == Custom(kind_name),
+                // trigger uses): the walker gates the actual token through the
+                // shared named-family predicate,
                 // captures the token as an ActionArg::Token leaf, PUSHES
                 // RuleAt(slot=1) (the leading token is the trigger — there is no
                 // prior literal trigger to push the frame, unlike the mid-rule
@@ -2704,10 +2948,15 @@ fn emit_unified_arm(
                 rule_idx,
                 body_src_idx,
                 open_kind,
+                nested_open_kinds,
                 close_kind,
             } => {
                 let rule_idx = *rule_idx;
                 let body_src_idx = *body_src_idx;
+                let nested_open_kinds = nested_open_kinds
+                    .iter()
+                    .map(|kind| quote! { #kind.to_string() })
+                    .collect::<Vec<_>>();
                 // L9-4: leading guest body — never S1-grouped (a guest body
                 // terminates mergeability), so always the singleton path. Emit a
                 // single-branch Fork carrying ConsumeGuestBodyAndPush: the walker
@@ -2762,6 +3011,7 @@ fn emit_unified_arm(
                                 action_kind:
                                     mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndPush {
                                         open_kind: #open_kind.to_string(),
+                                        nested_open_kinds: vec![#(#nested_open_kinds),*],
                                         close_kind: #close_kind.to_string(),
                                     },
                             }],
@@ -2821,9 +3071,7 @@ fn emit_unified_arm(
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
-                            weight: lex_w(
-                                0.0, #category_src_idx, #rule_idx,
-                            ),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
                             new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #source_src_idx,
                                 inner_cur_bp: *cur_bp,
@@ -2882,7 +3130,7 @@ fn emit_unified_arm(
                         // then pops the marker to fire the arity-0 action.
                         return WpdaStepAction::ConsumeAndPush {
                             symbol: StackSymbolV2::mixfix_marker(
-                                #category_src_idx, #rule_idx, 0u8,
+                                #category_src_idx, #rule_idx, 0u8, *cur_bp,
                             ),
                             weight: lex_w(0.0, #category_src_idx, #rule_idx),
                             new_state: WpdaState::MixfixLiteralRun {
@@ -2970,7 +3218,8 @@ fn emit_unified_arm(
                                 symbol: StackSymbolV2::category_entry(#src_idx),
                                 weight: lex_w(
                                     mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
-                                    #category_src_idx, #src_idx,
+                                    #category_src_idx,
+                                    #src_idx,
                                 ),
                                 new_state: WpdaState::PrefixDispatch {
                                     pos: *pos,
@@ -2997,9 +3246,7 @@ fn emit_unified_arm(
                             symbol: StackSymbolV2::rule_at(
                                 #csi, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
-                            weight: lex_w(
-                                0.0, #csi, #rule_idx,
-                            ),
+                            weight: lex_w(0.0, #csi, #rule_idx),
                             new_state: WpdaState::Unwinding,
                             action_kind: mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndCaptureAndPush,
                         });
@@ -3061,10 +3308,39 @@ fn emit_unified_arm(
                     };
                     quote! { #rows_refusal #branch }
                 }
+                UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx } => {
+                    let rule_idx = *rule_idx;
+                    let source_src_idx = *source_src_idx;
+                    fork_rows.record_site2_row(
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        &fork_bucket_tag,
+                    );
+                    quote! {
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                            symbol: StackSymbolV2::category_entry(#source_src_idx),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::PrefixDispatch {
+                                pos: *pos,
+                                cur_bp: 0,
+                            },
+                            action_kind:
+                                mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
+                                    replace_symbol: StackSymbolV2::rule_at(
+                                        #category_src_idx,
+                                        #rule_idx,
+                                        1u8,
+                                        Some(_outer_bp),
+                                    ),
+                                },
+                        });
+                    }
+                }
                 UnifiedDescriptor::LeadingTokenKindCapture { rule_idx, body_src_idx, kind_name } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
-                    // L9-3: leading custom-kind capture in a Fork bucket (a
+                    // L9-3: leading builtin/custom token-family capture in a Fork bucket (a
                     // co-bucketed same-kind sibling, or shared with other
                     // descriptors on the same (pat,guard)). Never S1-grouped ⇒
                     // a plain row + a capturing branch. Uses
@@ -3101,9 +3377,19 @@ fn emit_unified_arm(
                         });
                     }
                 }
-                UnifiedDescriptor::LeadingGuestBody { rule_idx, body_src_idx, open_kind, close_kind } => {
+                UnifiedDescriptor::LeadingGuestBody {
+                    rule_idx,
+                    body_src_idx,
+                    open_kind,
+                    nested_open_kinds,
+                    close_kind,
+                } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
+                    let nested_open_kinds = nested_open_kinds
+                        .iter()
+                        .map(|kind| quote! { #kind.to_string() })
+                        .collect::<Vec<_>>();
                     // L9-4: leading guest body in a Fork bucket — the ConsumeGuestBodyAndPush
                     // twin of the singleton path (PUSHES the RuleAt frame).
                     let rows_refusal = record_initiating_rule_rows(
@@ -3131,6 +3417,7 @@ fn emit_unified_arm(
                             action_kind:
                                 mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndPush {
                                     open_kind: #open_kind.to_string(),
+                                    nested_open_kinds: vec![#(#nested_open_kinds),*],
                                     close_kind: #close_kind.to_string(),
                                 },
                         });
@@ -3198,7 +3485,8 @@ fn emit_unified_arm(
                             ).with_kind_return(),
                             weight: lex_w(
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
-                                #category_src_idx, #rule_idx,
+                                #category_src_idx,
+                                #rule_idx,
                             ),
                             new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #src_idx,
@@ -3267,7 +3555,7 @@ fn emit_unified_arm(
                             // (declared before NQuoteShort) wins for `@Nil`.
                             __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: StackSymbolV2::mixfix_marker(
-                                    #category_src_idx, #rule_idx, 0u8,
+                                    #category_src_idx, #rule_idx, 0u8, *cur_bp,
                                 ),
                                 weight: lex_w(0.0, #category_src_idx, #rule_idx),
                                 new_state: WpdaState::MixfixLiteralRun {
@@ -3484,8 +3772,10 @@ fn literal_patterned_pattern_and_guard_for_kind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::grammar::{rule_fixture, GrammarItem, SyntaxExpr, TermParam};
-    use mettail_ast::language::{LangType, TokenDef};
+    use mettail_ast::grammar::{
+        rule_fixture, DelimitedRegionKind, GrammarItem, SyntaxExpr, TermParam,
+    };
+    use mettail_ast::language::{CategoryRole, LangType, TokenDef};
     use mettail_ast::types::TypeExpr;
     use proc_macro2::Span;
     use syn::{parse_quote, Ident};
@@ -3563,6 +3853,7 @@ mod tests {
         let mut lang = empty_lang();
         lang.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
+            role: CategoryRole::Object,
             native_type: Some(parse_quote!(i32)),
             collection_kind: None,
         });
@@ -3584,6 +3875,7 @@ mod tests {
         let mut lang = empty_lang();
         lang.types.push(LangType {
             name: Ident::new("Bool", Span::call_site()),
+            role: CategoryRole::Object,
             native_type: Some(parse_quote!(bool)),
             collection_kind: None,
         });
@@ -3599,6 +3891,154 @@ mod tests {
             from_literals: true,
         });
         lang
+    }
+
+    #[test]
+    fn first_set_includes_leading_structural_capture_terminals() {
+        let mut lang = empty_lang();
+        lang.types.push(LangType {
+            name: Ident::new("Captured", Span::call_site()),
+            role: CategoryRole::Data,
+            native_type: None,
+            collection_kind: None,
+        });
+        lang.types.push(LangType {
+            name: Ident::new("Guest", Span::call_site()),
+            role: CategoryRole::Data,
+            native_type: None,
+            collection_kind: None,
+        });
+        lang.terms.push(judgement_rule(
+            "CapturedIdent",
+            "Captured",
+            &[],
+            vec![SyntaxExpr::TokenKind {
+                name: Ident::new("Ident", Span::call_site()),
+                bind: Some(Ident::new("name", Span::call_site())),
+            }],
+        ));
+        lang.terms.push(judgement_rule(
+            "GuestRegion",
+            "Guest",
+            &[],
+            vec![SyntaxExpr::GuestBody {
+                open: Ident::new("GuestOpen", Span::call_site()),
+                close: Ident::new("GuestClose", Span::call_site()),
+                bind: Ident::new("body", Span::call_site()),
+                kind: DelimitedRegionKind::Flt,
+            }],
+        ));
+
+        let captured = first_set_of_category("Captured", &lang);
+        assert_eq!(captured.len(), 1, "closed data category has one declared FIRST terminal");
+        let captured_pattern = captured[0].pattern.to_string();
+        let captured_guard = captured[0]
+            .extra_guard
+            .as_ref()
+            .expect("named token capture has a family guard")
+            .to_string();
+        assert!(captured_pattern.contains("ref __kind"), "{captured_pattern}");
+        assert!(captured_guard.contains("token_kind_matches_capture_name"), "{captured_guard}");
+        assert!(captured_guard.contains("\"Ident\""), "{captured_guard}");
+        assert!(!captured[0].is_var_contribution);
+
+        let guest = first_set_of_category("Guest", &lang);
+        assert_eq!(guest.len(), 1, "closed data category has one declared FIRST terminal");
+        let guest_pattern = guest[0].pattern.to_string();
+        let guest_guard = guest[0]
+            .extra_guard
+            .as_ref()
+            .expect("guest-body opener has a kind guard")
+            .to_string();
+        assert!(guest_pattern.contains("TokenKind :: Custom"), "{guest_pattern}");
+        assert!(guest_guard.contains("\"GuestOpen\""), "{guest_guard}");
+        assert!(!guest[0].is_var_contribution);
+    }
+
+    #[test]
+    fn ident_first_seed_excludes_closed_data_categories() {
+        let mut lang = empty_lang();
+        lang.types.push(LangType {
+            name: Ident::new("Open", Span::call_site()),
+            role: CategoryRole::Object,
+            native_type: None,
+            collection_kind: None,
+        });
+        lang.types.push(LangType {
+            name: Ident::new("Closed", Span::call_site()),
+            role: CategoryRole::Data,
+            native_type: None,
+            collection_kind: None,
+        });
+
+        let ident_first = ident_first_categories(&lang);
+        assert!(ident_first.contains("Open"));
+        assert!(!ident_first.contains("Closed"));
+        assert!(result_has_home_var_reading("Open", &lang));
+        assert!(!result_has_home_var_reading("Closed", &lang));
+
+        let open_first = first_set_of_category("Open", &lang);
+        assert_eq!(open_first.len(), 1);
+        assert!(open_first[0].is_var_contribution);
+        assert!(first_set_of_category("Closed", &lang).is_empty());
+    }
+
+    #[test]
+    fn cross_category_paren_dispatch_preserves_source_rules() {
+        let mut lang = empty_lang();
+        for name in ["Equation", "Ast"] {
+            lang.types.push(LangType {
+                name: Ident::new(name, Span::call_site()),
+                role: CategoryRole::Data,
+                native_type: None,
+                collection_kind: None,
+            });
+        }
+
+        let equation = judgement_rule(
+            "Equation",
+            "Equation",
+            &[("left", "Ast"), ("right", "Ast")],
+            vec![
+                SyntaxExpr::Param(Ident::new("left", Span::call_site())),
+                SyntaxExpr::Literal("==".into()),
+                SyntaxExpr::Param(Ident::new("right", Span::call_site())),
+            ],
+        );
+        let sexp = judgement_rule(
+            "SExp",
+            "Ast",
+            &[("body", "Ast")],
+            vec![
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Param(Ident::new("body", Span::call_site())),
+                SyntaxExpr::Literal(")".into()),
+            ],
+        );
+        lang.terms.extend([equation.clone(), sexp.clone()]);
+
+        let categories = vec!["Equation".to_string(), "Ast".to_string()];
+        let per_cat = vec![vec![equation], vec![sexp]];
+        let mut fork_rows = super::super::fork_emission::ForkEmissionOrdinalModel::new();
+        let emitted =
+            emit_paren_dispatch_arms(&categories, &lang, &per_cat, &mut fork_rows).to_string();
+
+        assert!(
+            emitted.contains("StackSymbolV2 :: category_entry (1u16)"),
+            "the Equation dispatch must retain Ast's source continuation: {emitted}"
+        );
+        assert!(
+            emitted.contains("result_src_idx : 1u16 , rule_idx : 0u16"),
+            "the delegated branch must select the source rule identity: {emitted}"
+        );
+        assert!(
+            emitted.contains("BP_TIER_CROSSCAT_LHS"),
+            "the delegated rule must carry its cross-category transition cost: {emitted}"
+        );
+        assert!(
+            emitted.contains("consume_trigger : false"),
+            "heterogeneous paren branches must use branch-local consumption: {emitted}"
+        );
     }
 
     #[test]
@@ -3713,7 +4153,7 @@ mod tests {
     #[test]
     fn empty_rule_list_emits_no_arms() {
         let lang = empty_lang();
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+        let (arms, __ts_helpers) = emit_prefix_arms_for_category(
             &lang,
             0,
             "Int",
@@ -3723,6 +4163,7 @@ mod tests {
             &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
         );
         // Task #15 peel: combine arms + helpers (both empty for no rules).
+        let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         assert!(ts.to_string().trim().is_empty());
     }
@@ -3731,7 +4172,7 @@ mod tests {
     fn atomic_integer_rule_emits_an_arm() {
         let lang = empty_lang();
         let rule = atomic_rule("IntLit", "Int", NonTerminalKind::Integer);
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+        let (arms, __ts_helpers) = emit_prefix_arms_for_category(
             &lang,
             2,
             "Int",
@@ -3741,6 +4182,7 @@ mod tests {
             &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
         );
         // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
@@ -3804,7 +4246,7 @@ mod tests {
     fn terminal_keyword_emits_fixed_match_guard() {
         let lang = empty_lang();
         let rule = terminal_rule("Err", "Int", "error");
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+        let (arms, __ts_helpers) = emit_prefix_arms_for_category(
             &lang,
             2,
             "Int",
@@ -3814,6 +4256,7 @@ mod tests {
             &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
         );
         // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
@@ -3826,7 +4269,7 @@ mod tests {
     fn literal_patterned_int_emits_integer_lit_guard() {
         let lang = lang_with_int_literal();
         let rule = category_rule("IntLit", "Int", "Int");
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+        let (arms, __ts_helpers) = emit_prefix_arms_for_category(
             &lang,
             2,
             "Int",
@@ -3836,6 +4279,7 @@ mod tests {
             &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
         );
         // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
@@ -3845,15 +4289,75 @@ mod tests {
     }
 
     #[test]
+    fn same_category_led_rule_is_excluded_from_prefix_dispatch() {
+        let atom = terminal_rule("Atom", "Expr", "a");
+        let par = judgement_rule(
+            "Par",
+            "Expr",
+            &[("left", "Expr"), ("right", "Expr")],
+            vec![
+                SyntaxExpr::Param(Ident::new("left", Span::call_site())),
+                SyntaxExpr::Literal("|".into()),
+                SyntaxExpr::Param(Ident::new("right", Span::call_site())),
+            ],
+        );
+        let mut lang = empty_lang();
+        lang.terms = vec![atom.clone(), par.clone()];
+        let bp_table = super::super::infix::build_bp_table(&lang);
+        assert_eq!(same_category_led_left_bp(&par, "Expr", &bp_table), Some(2));
+
+        let (arms, helpers) = emit_prefix_arms_for_category(
+            &lang,
+            0,
+            "Expr",
+            &[(0, &atom), (1, &par)],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
+        );
+        let mut emitted: TokenStream = arms.into_iter().collect();
+        emitted.extend(helpers);
+        let emitted = emitted.to_string();
+        assert!(
+            !emitted.contains("ReplaceAndPush"),
+            "same-category led rule leaked into generic prefix descent: {emitted}",
+        );
+    }
+
+    #[test]
+    fn cross_category_closed_prefix_seed_does_not_consume_the_result_floor() {
+        let name_atom = terminal_rule("NameAtom", "Name", "n");
+        let proc_atom = terminal_rule("ProcAtom", "Proc", "p");
+        let send = judgement_rule(
+            "Send",
+            "Proc",
+            &[("name", "Name"), ("body", "Proc")],
+            vec![
+                SyntaxExpr::Param(Ident::new("name", Span::call_site())),
+                SyntaxExpr::Literal("!".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Param(Ident::new("body", Span::call_site())),
+                SyntaxExpr::Literal(")".into()),
+            ],
+        );
+        let mut lang = empty_lang();
+        lang.terms = vec![name_atom, proc_atom, send.clone()];
+        let bp_table = super::super::infix::build_bp_table(&lang);
+        assert_eq!(same_category_led_left_bp(&send, "Proc", &bp_table), None);
+    }
+
+    #[test]
     fn prefix_operator_and_projection_share_one_ambiguity_bucket() {
         let mut lang = empty_lang();
         lang.types.push(LangType {
             name: Ident::new("UInt32", Span::call_site()),
+            role: CategoryRole::Object,
             native_type: Some(parse_quote!(u32)),
             collection_kind: None,
         });
         lang.types.push(LangType {
             name: Ident::new("Bool", Span::call_site()),
+            role: CategoryRole::Object,
             native_type: Some(parse_quote!(bool)),
             collection_kind: None,
         });
@@ -3893,7 +4397,7 @@ mod tests {
         // 0 = the trait default, zero K-C movement), while the direct
         // prefix (single-bucket) keeps its derived position.
         let mut fork_model = super::super::fork_emission::ForkEmissionOrdinalModel::new();
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+        let (arms, __ts_helpers) = emit_prefix_arms_for_category(
             &lang,
             0,
             "UInt32",
@@ -3920,6 +4424,7 @@ mod tests {
         // the WpdaStepAction::Fork / ForkActionKind assertions still see it.
         // The guard (with `__kw == "bitnot"`) stays in the arm, so its
         // single-occurrence count is unchanged.
+        let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         let s = ts.to_string();
         let guard = "__kw == \"bitnot\" && state_cat_src_idx == 0u16";

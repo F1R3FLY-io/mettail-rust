@@ -41,7 +41,10 @@ use crate::grammar::ir::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 /// Complex collections (Sep rules with binders like PInputs) require their
 /// standalone parse functions and are excluded.
 pub(crate) fn is_simple_collection(rule: &RDRuleInfo) -> bool {
-    rule.is_collection && !rule.has_binder && !rule.has_multi_binder && !has_complex_sep(rule)
+    rule.is_pure_collection_literal()
+        && !rule.has_binder
+        && !rule.has_multi_binder
+        && !has_complex_sep(rule)
 }
 
 /// Check if a rule has any Sep syntax items.

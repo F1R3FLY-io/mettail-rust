@@ -14,6 +14,7 @@ use std::fmt::Write;
 /// Content between `(* ` and ` *)` has `EBNF_LINE_WIDTH - 6` = 54 usable characters.
 const EBNF_LINE_WIDTH: usize = 60;
 
+use crate::automata::codegen::terminal_to_variant_name;
 use crate::binding_power::{Associativity, BindingPowerTable, InfixOperator};
 use crate::grammar::ir::{CastRule, CollectionKind, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
 use crate::lint::DiagnosticId;
@@ -48,30 +49,23 @@ pub fn format_ebnf(spec: &LanguageSpec, bundle: &ParserBundle) -> String {
         let primary_category = category_names.first().map(|s| s.as_str()).unwrap_or("");
         if let Some(first_set) = first_sets.get_mut(primary_category) {
             first_set.insert("Caret");
-            for cat in &bundle.categories {
+            for cat in bundle.categories.iter().filter(|category| category.has_var) {
                 let cat_lower = cat.name.to_lowercase();
-                let capitalized = {
-                    let mut s = String::with_capacity(cat_lower.len());
-                    let mut chars = cat_lower.chars();
-                    if let Some(first) = chars.next() {
-                        s.extend(first.to_uppercase());
-                    }
-                    s.extend(chars);
-                    s
-                };
-                first_set.insert(&format!("Dollar{}", capitalized));
-                first_set.insert(&format!("Ddollar{}Lp", capitalized));
+                first_set.insert(&terminal_to_variant_name(&format!("${cat_lower}")));
+                first_set.insert(&terminal_to_variant_name(&format!("$${cat_lower}(")));
             }
         }
     }
 
     // Augment FIRST sets with implicit production tokens:
     // - "LParen" from implicit grouping: "(" Cat ")"
-    // - "Ident" from implicit Var fallback: <ident>
+    // - "Ident" from implicit Var fallback: <ident>, when the category has Var
     for cat in &bundle.categories {
         if let Some(first_set) = first_sets.get_mut(&cat.name) {
             first_set.insert("LParen");
-            first_set.insert("Ident");
+            if cat.has_var {
+                first_set.insert("Ident");
+            }
         }
     }
 
@@ -646,7 +640,7 @@ fn write_category(
         ));
 
         // Dollar application productions: $dom(f, x) and $$dom(f, x1, x2, ...)
-        for dom_cat in all_categories {
+        for dom_cat in all_categories.iter().filter(|category| category.has_var) {
             let dom_lower = dom_cat.name.to_lowercase();
             let dom_name = &dom_cat.name;
             productions.push((
@@ -1091,21 +1085,21 @@ fn format_token_name_for_ebnf(token: &str) -> String {
         "LtLt" => "\"<<\"".to_string(),
         "GtGt" => "\">>\"".to_string(),
         "GtGtGt" => "\">>>\"".to_string(),
-        // Dollar tokens: DollarProc → "$proc", DdollarProcLp → "$$proc("
-        other if other.starts_with("Ddollar") && other.ends_with("Lp") => {
-            let inner = &other[7..other.len() - 2]; // strip "Ddollar" and "Lp"
-            format!("\"$${}(\"", inner.to_lowercase())
+        // Exact byte-encoded dollar tokens.
+        other if other.starts_with("Ddollar_") && other.ends_with("_Lp") => {
+            decode_terminal_bytes(&other[8..other.len() - 3])
+                .map(|inner| format!("\"$${inner}(\""))
+                .unwrap_or_else(|| format!("?{other}?"))
         },
-        other if other.starts_with("Dollar") => {
-            let inner = &other[6..]; // strip "Dollar"
-            format!("\"${}\"", inner.to_lowercase())
+        other if let Some(encoded) = other.strip_prefix("Dollar_") => {
+            decode_terminal_bytes(encoded)
+                .map(|inner| format!("\"${inner}\""))
+                .unwrap_or_else(|| format!("?{other}?"))
         },
-        // Keywords: KwFoo → "foo" (lowercase)
-        other if other.starts_with("Kw") => {
-            let keyword = &other[2..];
-            let lower = keyword.to_lowercase();
-            format!("\"{}\"", lower)
-        },
+        // Exact byte-encoded keywords preserve case and Unicode.
+        other if let Some(encoded) = other.strip_prefix("Kw_") => decode_terminal_bytes(encoded)
+            .map(|keyword| format!("\"{keyword}\""))
+            .unwrap_or_else(|| format!("?{other}?")),
         // Hex-encoded terminals: Tok_6c_61_6d_20 → decode bytes to string
         other if other.starts_with("Tok_") => {
             let hex_part = &other[4..]; // skip "Tok_"
@@ -1124,6 +1118,15 @@ fn format_token_name_for_ebnf(token: &str) -> String {
         // Fallback: show as-is with special sequence markers
         other => format!("?{}?", other),
     }
+}
+
+fn decode_terminal_bytes(encoded: &str) -> Option<String> {
+    let bytes = encoded
+        .split('_')
+        .map(|hex| u8::from_str_radix(hex, 16))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    String::from_utf8(bytes).ok()
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2088,6 +2091,19 @@ mod tests {
             .find(|l| l.contains("FIRST(Int)"))
             .expect("should have FIRST(Int) line");
         assert!(first_line.contains("FIRST(Int)"), "should contain FIRST(Int): {}", first_line);
+    }
+
+    #[test]
+    fn exact_encoded_terminal_names_round_trip_to_ebnf() {
+        for terminal in ["Theory", "theory", "λ"] {
+            let variant = terminal_to_variant_name(terminal);
+            assert_eq!(format_token_name_for_ebnf(&variant), format!("\"{terminal}\""));
+        }
+
+        for terminal in ["$Proc", "$proc", "$$Proc(", "$$proc("] {
+            let variant = terminal_to_variant_name(terminal);
+            assert_eq!(format_token_name_for_ebnf(&variant), format!("\"{terminal}\""));
+        }
     }
 
     // ── Wrapped comment helper unit tests ────────────────────────────────

@@ -8,6 +8,7 @@ mod random;
 pub use exhaustive::*;
 pub use random::*;
 
+use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use mettail_ast::grammar::{NonTerminalKind, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
@@ -124,8 +125,10 @@ pub(crate) fn ident_samples(language: &LanguageDef) -> Result<Vec<String>, Strin
 /// samples each capture's OWN declared kind.
 pub(crate) fn ident_param_count(rule: &mettail_ast::grammar::GrammarRule) -> usize {
     rule.term_context.as_deref().map_or(0, |ctx| {
-        ctx.iter()
-            .filter(|p| matches!(p, TermParam::Simple { ty, .. } if ty.is_ident_text()))
+        TermParamLeaves::new(ctx, false)
+            .filter(|leaf| {
+                matches!(leaf.kind, TermParamLeafKind::Simple { ty, .. } if ty.is_ident_text())
+            })
             .count()
     })
 }
@@ -226,7 +229,7 @@ pub fn capture_only_construction(
                 let sample = deterministic_sample(&pattern).unwrap_or_default();
                 args.push(quote! { #sample.to_string() });
             },
-            SyntaxExpr::GuestBody { open, close, .. } => {
+            SyntaxExpr::GuestBody { open, close, kind, .. } => {
                 // L9-4: synthesize a minimal, roundtrip-valid `Arc<FltNode>`.
                 // Display renders `<tag><open_delim><body_src><close_delim>`
                 // (see `generate_capture_display_arm`); with an EMPTY body and
@@ -246,6 +249,7 @@ pub fn capture_only_construction(
                     .strip_suffix(open_delim)
                     .unwrap_or(&opener_sample)
                     .to_string();
+                let mettail_ast::grammar::DelimitedRegionKind::Flt = kind;
                 args.push(quote! {
                     std::sync::Arc::new(mettail_runtime::FltNode::new(
                         #tag.to_string(),

@@ -203,8 +203,23 @@ pub fn repository_rust_files(workspace_root: &Path) -> Vec<PathBuf> {
 /// debug test binary is slow enough on that to dominate a run. The gate admits 57 files
 /// totalling 1.1 MB.
 pub fn mentions_language_invocation(source: &str) -> bool {
+    mentions_macro_invocation(source, "language!")
+}
+
+/// Whether `source` could contain either a complete `language!` declaration or
+/// a reusable `language_fragment!` declaration.
+///
+/// Migration and module-composition inventories use this broader gate;
+/// language-only audits retain [`mentions_language_invocation`]. Like the
+/// language-only gate, this deliberately over-approximates before a structural
+/// parser makes the actual declaration decision.
+pub fn mentions_grammar_invocation(source: &str) -> bool {
+    mentions_language_invocation(source) || mentions_macro_invocation(source, "language_fragment!")
+}
+
+fn mentions_macro_invocation(source: &str, spelling: &str) -> bool {
     let bytes = source.as_bytes();
-    source.match_indices("language!").any(|(at, needle)| {
+    source.match_indices(spelling).any(|(at, needle)| {
         let mut index = at + needle.len();
         loop {
             match bytes.get(index) {
@@ -265,6 +280,13 @@ mod tests {
         assert!(mentions_language_invocation("language!\n    {"));
         assert!(mentions_language_invocation("language! // why\n{"));
         assert!(mentions_language_invocation("language! /* why */ {"));
+    }
+
+    #[test]
+    fn the_grammar_gate_adds_fragments_without_widening_the_language_gate() {
+        let source = "language_fragment! { name: Reusable }";
+        assert!(mentions_grammar_invocation(source));
+        assert!(!mentions_language_invocation(source));
     }
 
     /// The gate over-approximates ON PURPOSE: a doc comment that SHOWS an invocation

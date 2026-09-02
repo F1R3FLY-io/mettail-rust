@@ -30,7 +30,7 @@ use mettail_testkit::corpus_migration::{
 };
 use mettail_testkit::ctor::{
     emit_category, normalize_unique_ids, parse_shrinks_to, render_bindings, DebugNode, EmitError,
-    FieldSpec, Schema,
+    FieldSpec, Schema, ZipperAccess, ZipperStorage,
 };
 
 fn repo_root() -> PathBuf {
@@ -38,6 +38,62 @@ fn repo_root() -> PathBuf {
         .parent()
         .expect("`testkit` is a workspace member, so its manifest dir has a parent")
         .to_path_buf()
+}
+
+#[test]
+fn recursive_native_zipper_schema_preserves_modes_categories_and_exact_bytes() {
+    let schema = Schema::parse(
+        "@@ METTAIL-RUST-CTOR-SCHEMA v1 BEGIN @@\n\
+         LANG Demo\n\
+         CAT Key -\n\
+         CAT Value -\n\
+         CAT Zip std::sync::Arc<mettail_runtime::ReadZipperLit<Key,Value>>\n\
+         V Key K nullary\n\
+         V Value V nullary\n\
+         V Zip Z nativezipper zipper:Arc:ReadZipperLit:Key:Value\n\
+         @@ METTAIL-RUST-CTOR-SCHEMA v1 END @@",
+    )
+    .expect("closed recursive-native schema must parse");
+
+    assert_eq!(
+        schema
+            .variants
+            .get(&("Zip".to_string(), "Z".to_string()))
+            .expect("zipper variant must be present")
+            .fields,
+        vec![FieldSpec::NativeZipper {
+            storage: ZipperStorage::Arc,
+            access: ZipperAccess::Read,
+            key: "Key".to_string(),
+            value: "Value".to_string(),
+        }],
+    );
+
+    let map = mettail_testkit::ctor::parse_debug_value(
+        "Z(ReadZipperLit(Map(HashMapLit({K: V})), [0, 127, 128, 255]))",
+    )
+    .expect("zipper debug value must parse");
+    assert_eq!(
+        emit_category(&schema, "Zip", &map).expect("zipper map must emit"),
+        concat!(
+            "Zip::Z(std::sync::Arc::new(mettail_runtime::ReadZipperLit(",
+            "mettail_runtime::PathMapLit::Map(",
+            "mettail_runtime::HashMapLit::from_iter(vec![(Key::K, Value::V)])), ",
+            "vec![0_u8, 127_u8, 128_u8, 255_u8])))",
+        ),
+    );
+
+    let set_empty =
+        mettail_testkit::ctor::parse_debug_value("Z(ReadZipperLit(Set(HashMapLit({})), [255]))")
+            .expect("set-empty zipper debug value must parse");
+    let map_empty =
+        mettail_testkit::ctor::parse_debug_value("Z(ReadZipperLit(Map(HashMapLit({})), [255]))")
+            .expect("map-empty zipper debug value must parse");
+    let set_source = emit_category(&schema, "Zip", &set_empty).expect("set-empty must emit");
+    let map_source = emit_category(&schema, "Zip", &map_empty).expect("map-empty must emit");
+    assert!(set_source.contains("PathMapLit::Set"));
+    assert!(map_source.contains("PathMapLit::Map"));
+    assert_ne!(set_source, map_source, "empty PathMap modes must remain distinct");
 }
 
 /// Every `(language, seed, recorded-text)` the repository records, layout B.

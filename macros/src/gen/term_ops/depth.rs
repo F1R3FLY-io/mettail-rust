@@ -344,6 +344,29 @@ fn generate_depth_arm(
             }
         },
 
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            let own = record_own_contribution(1);
+            let pushes = carrier.for_each_borrowed_subterm(
+                &quote! { native },
+                crate::gen::native_carrier::NativeCarrierWalkOrder::Forward,
+                &|child_category, child| {
+                    let task = format_ident!("Depth{}", child_category);
+                    quote! {
+                        stack.push(DepthTask::#task(
+                            #child as *const _,
+                            dist.saturating_add(1),
+                        ));
+                    }
+                },
+            );
+            quote! {
+                #category::#label(native) => {
+                    #own
+                    #pushes
+                }
+            }
+        },
+
         VariantKind::Regular { label, fields } => {
             generate_regular_depth_arm(category, label, fields, language)
         },

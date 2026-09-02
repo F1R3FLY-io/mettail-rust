@@ -18,6 +18,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+use crate::gen::native_carrier::NativeRecursiveCarrier;
+
 #[derive(Clone, Copy)]
 enum CollectionSurface {
     Direct,
@@ -103,6 +105,12 @@ fn generate_assemble_task(category: &Ident, variant: &VariantKind) -> Option<Tok
                 #task { src: *const #category, slot: usize, elements_start: usize }
             });
         },
+        VariantKind::RecursiveNativeLiteral { label, .. } => {
+            let task = format_ident!("Assemble{}_{}", category, label);
+            return Some(quote! {
+                #task { src: *const #category, slot: usize, elements_start: usize }
+            });
+        },
         VariantKind::Refused { .. }
         | VariantKind::Var { .. }
         | VariantKind::Literal { .. }
@@ -161,8 +169,11 @@ fn generate_engine(language: &LanguageDef) -> TokenStream {
     let mut assemblies = Vec::new();
     for ty in &language.types {
         let category = &ty.name;
-        for variant in collect_category_variants(category, language) {
-            if let Some(arm) = generate_assemble_arm(category, &variant) {
+        let variants = collect_category_variants(category, language);
+        let destructure_is_irrefutable = variants.len() == 1;
+        for variant in variants {
+            if let Some(arm) = generate_assemble_arm(category, &variant, destructure_is_irrefutable)
+            {
                 assemblies.push(arm);
             }
         }
@@ -224,6 +235,51 @@ fn generate_visit_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
                 CollectionSurface::Literal,
             )
         },
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            generate_recursive_native_visit(category, label, carrier)
+        },
+    }
+}
+
+fn generate_recursive_native_visit(
+    category: &Ident,
+    label: &Ident,
+    carrier: &NativeRecursiveCarrier,
+) -> TokenStream {
+    let task = format_ident!("Assemble{}_{}", category, label);
+    let pathmap = carrier.pathmap_ref(&quote! { native });
+    let pushes = carrier.for_each_borrowed_subterm(
+        &quote! { native },
+        crate::gen::native_carrier::NativeCarrierWalkOrder::ReverseForLifo,
+        &|child_category, child| {
+            let visit = format_ident!("Clone{}", child_category);
+            quote! {
+                __native_next_slot -= 1;
+                stack.push(CloneTask::#visit {
+                    src: #child as *const _,
+                    slot: __native_next_slot,
+                });
+            }
+        },
+    );
+    quote! {
+        #category::#label(native) => {
+            let __native_count = match (#pathmap).mode() {
+                mettail_runtime::PathMapMode::Empty => 0,
+                mettail_runtime::PathMapMode::Set => (#pathmap).len(),
+                mettail_runtime::PathMapMode::Map => (#pathmap).len().saturating_mul(2),
+            };
+            let __native_start = results.len();
+            results.resize_with(__native_start + __native_count, || None);
+            stack.push(CloneTask::#task {
+                src: source as *const _,
+                slot,
+                elements_start: __native_start,
+            });
+            let mut __native_next_slot = __native_start + __native_count;
+            #pushes
+            debug_assert_eq!(__native_next_slot, __native_start);
+        }
     }
 }
 
@@ -422,16 +478,32 @@ fn generate_collection_push(
     }
 }
 
-fn generate_assemble_arm(category: &Ident, variant: &VariantKind) -> Option<TokenStream> {
+fn generate_assemble_arm(
+    category: &Ident,
+    variant: &VariantKind,
+    destructure_is_irrefutable: bool,
+) -> Option<TokenStream> {
     match variant {
         VariantKind::Regular { label, fields } if fields.iter().any(|f| f.is_collection) => {
-            Some(generate_structured_assemble(category, label, fields, false))
+            Some(generate_structured_assemble(
+                category,
+                label,
+                fields,
+                false,
+                destructure_is_irrefutable,
+            ))
         },
         VariantKind::Binder { label, pre_scope_fields, .. }
         | VariantKind::MultiBinder { label, pre_scope_fields, .. }
             if pre_scope_fields.iter().any(|f| f.is_collection) =>
         {
-            Some(generate_structured_assemble(category, label, pre_scope_fields, true))
+            Some(generate_structured_assemble(
+                category,
+                label,
+                pre_scope_fields,
+                true,
+                destructure_is_irrefutable,
+            ))
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
             Some(generate_collection_assemble(
@@ -440,6 +512,7 @@ fn generate_assemble_arm(category: &Ident, variant: &VariantKind) -> Option<Toke
                 element_cat,
                 coll_type,
                 CollectionSurface::Direct,
+                destructure_is_irrefutable,
             ))
         },
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
@@ -449,6 +522,15 @@ fn generate_assemble_arm(category: &Ident, variant: &VariantKind) -> Option<Toke
                 element_cat,
                 coll_type,
                 CollectionSurface::Literal,
+                destructure_is_irrefutable,
+            ))
+        },
+        VariantKind::RecursiveNativeLiteral { label, carrier } => {
+            Some(generate_recursive_native_assemble(
+                category,
+                label,
+                carrier,
+                destructure_is_irrefutable,
             ))
         },
         VariantKind::Refused { .. }
@@ -461,11 +543,92 @@ fn generate_assemble_arm(category: &Ident, variant: &VariantKind) -> Option<Toke
     }
 }
 
+fn generate_recursive_native_assemble(
+    category: &Ident,
+    label: &Ident,
+    carrier: &NativeRecursiveCarrier,
+    destructure_is_irrefutable: bool,
+) -> TokenStream {
+    let task = format_ident!("Assemble{}_{}", category, label);
+    let wrap = format_ident!("Wrap{}", category);
+    let key_wrap = format_ident!("Wrap{}", carrier.key_category());
+    let value_wrap = format_ident!("Wrap{}", carrier.value_category());
+    let pathmap = carrier.pathmap_ref(&quote! { native });
+    let focus = carrier.focus_ref(&quote! { native });
+    let payload = carrier.construct(&quote! { rebuilt }, &quote! { (*#focus).clone() });
+    let destructure = if destructure_is_irrefutable {
+        quote! { let #category::#label(ref native) = source; }
+    } else {
+        quote! {
+            let #category::#label(ref native) = source else {
+                unreachable!("iterative clone: recursive-native assemble/source mismatch")
+            };
+        }
+    };
+
+    quote! {
+        CloneTask::#task { src, slot, elements_start } => {
+            #[inline(never)]
+            fn assemble(
+                results: &mut Vec<Option<AnyClonedTerm>>,
+                src: *const #category,
+                slot: usize,
+                elements_start: usize,
+            ) {
+                let source = unsafe { &*src };
+                #destructure
+                let rebuilt = match (#pathmap).mode() {
+                    mettail_runtime::PathMapMode::Empty => {
+                        mettail_runtime::PathMapLit::Empty
+                    },
+                    mettail_runtime::PathMapMode::Set => {
+                        let mut entries = mettail_runtime::HashMapLit::new();
+                        for index in 0..(#pathmap).len() {
+                            let key = match results[elements_start + index].take()
+                                .expect("iterative clone: missing zipper set key")
+                            {
+                                AnyClonedTerm::#key_wrap(value) => value,
+                                _ => unreachable!("iterative clone: zipper set-key category mismatch"),
+                            };
+                            entries.insert(key, ());
+                        }
+                        mettail_runtime::PathMapLit::Set(entries)
+                    },
+                    mettail_runtime::PathMapMode::Map => {
+                        let mut entries = mettail_runtime::HashMapLit::new();
+                        for index in 0..(#pathmap).len() {
+                            let key = match results[elements_start + index * 2].take()
+                                .expect("iterative clone: missing zipper map key")
+                            {
+                                AnyClonedTerm::#key_wrap(value) => value,
+                                _ => unreachable!("iterative clone: zipper map-key category mismatch"),
+                            };
+                            let value = match results[elements_start + index * 2 + 1].take()
+                                .expect("iterative clone: missing zipper map value")
+                            {
+                                AnyClonedTerm::#value_wrap(value) => value,
+                                _ => unreachable!("iterative clone: zipper map-value category mismatch"),
+                            };
+                            entries.insert(key, value);
+                        }
+                        mettail_runtime::PathMapLit::Map(entries)
+                    },
+                };
+                results[slot] = Some(AnyClonedTerm::#wrap(
+                    #category::#label(#payload)
+                ));
+            }
+            assemble(results, src, slot, elements_start);
+        },
+    }
+}
+
 fn generate_structured_assemble(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
     has_scope: bool,
+    destructure_is_irrefutable: bool,
 ) -> TokenStream {
     let task = format_ident!("Assemble{}_{}", category, label);
     let wrap = format_ident!("Wrap{}", category);
@@ -518,6 +681,18 @@ fn generate_structured_assemble(
         constructed.push(quote! { #scope.clone() });
     }
 
+    let destructure = if destructure_is_irrefutable {
+        quote! {
+            let #category::#label(#(ref #names),*) = source;
+        }
+    } else {
+        quote! {
+            let #category::#label(#(ref #names),*) = source else {
+                unreachable!("iterative clone: assemble task/source variant mismatch")
+            };
+        }
+    };
+
     quote! {
         CloneTask::#task { src, slot, #(#starts),* } => {
             // Keep container reconstruction out of the dispatch loop's native
@@ -532,9 +707,7 @@ fn generate_structured_assemble(
                 #(#starts: usize),*
             ) {
                 let source = unsafe { &*src };
-                let #category::#label(#(ref #names),*) = source else {
-                    unreachable!("iterative clone: assemble task/source variant mismatch")
-                };
+                #destructure
                 #(#extracts)*
                 results[slot] = Some(AnyClonedTerm::#wrap(
                     #category::#label(#(#constructed),*)
@@ -551,6 +724,7 @@ fn generate_collection_assemble(
     element_cat: &Ident,
     coll_type: &CollectionType,
     surface: CollectionSurface,
+    destructure_is_irrefutable: bool,
 ) -> TokenStream {
     let task = format_ident!("Assemble{}_{}", category, label);
     let wrap = format_ident!("Wrap{}", category);
@@ -566,6 +740,18 @@ fn generate_collection_assemble(
     let rebuilt =
         generate_collection_rebuild(&field, surface, &quote! { collection }, &elements_start);
 
+    let destructure = if destructure_is_irrefutable {
+        quote! {
+            let #category::#label(ref collection) = source;
+        }
+    } else {
+        quote! {
+            let #category::#label(ref collection) = source else {
+                unreachable!("iterative clone: collection assemble/source mismatch")
+            };
+        }
+    };
+
     quote! {
         CloneTask::#task { src, slot, elements_start } => {
             #[inline(never)]
@@ -576,9 +762,7 @@ fn generate_collection_assemble(
                 elements_start: usize,
             ) {
                 let source = unsafe { &*src };
-                let #category::#label(ref collection) = source else {
-                    unreachable!("iterative clone: collection assemble/source mismatch")
-                };
+                #destructure
                 let cloned = #rebuilt;
                 results[slot] =
                     Some(AnyClonedTerm::#wrap(#category::#label(cloned)));
@@ -763,5 +947,13 @@ mod tests {
         assert!(generated.contains(
             "CloneTask::AssemblePathmap_PathmapLit{src,slot,elements_start}=>{#[inline(never)]fnassemble"
         ));
+    }
+
+    #[test]
+    fn exhaustive_match_codegen_omits_singleton_clone_fallbacks() {
+        let language = crate::gen::singleton_collection_language_for_tests();
+        let generated = compact(generate_iterative_clone(&language));
+        assert!(generated.contains("letMeta::MOnly(refcollection)=source;"));
+        assert!(!generated.contains("letMeta::MOnly(refcollection)=sourceelse"));
     }
 }

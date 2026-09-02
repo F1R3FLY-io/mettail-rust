@@ -7,14 +7,13 @@
 //! exact [`ContentKey`] identity, deterministic root order, derivation-tree
 //! structure, and terminal [`ExtractionCompleteness`].
 
-use crate::hash::HashMap;
 use std::rc::Rc;
 
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::extract::{
     Derivation, Extraction, ExtractionCompleteness, Extractor, MonotoneBestOrder,
 };
-use crate::key::{ContentKey, SemanticHash};
+use crate::key::{ContentKey, ContentKeyMap, SemanticHash};
 use crate::rules::{RewriteJustification, RuleFiring};
 
 /// One unique derivation node in a Dovetail report.
@@ -253,7 +252,7 @@ where
         rewrite_justifications: Vec::new(),
         completeness: extraction.completeness,
     };
-    let mut seen: HashMap<ContentKey, usize> = HashMap::default();
+    let mut seen: ContentKeyMap<usize> = ContentKeyMap::default();
 
     for root in &extraction.value {
         report.roots.push(root.key.clone());
@@ -268,7 +267,7 @@ fn record_derivation<L, W>(
     derivation: &Rc<Derivation<L, W>>,
     is_root: bool,
     report: &mut DovetailRunReport<L, W>,
-    seen: &mut HashMap<ContentKey, usize>,
+    seen: &mut ContentKeyMap<usize>,
 ) -> usize
 where
     L: Clone,
@@ -438,7 +437,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use crate::key::ContentKeySet;
 
     use rigail::TropicalWeight;
 
@@ -485,7 +484,8 @@ mod tests {
         assert!(report.derivation_edges.is_empty());
         assert!(report.terms.iter().all(|term| term.is_root));
 
-        let distinct_keys: HashSet<_> = report.terms.iter().map(|term| term.key.clone()).collect();
+        let distinct_keys: ContentKeySet =
+            report.terms.iter().map(|term| term.key.clone()).collect();
         assert_eq!(distinct_keys.len(), report.terms.len());
         for root_key in &report.roots {
             assert_eq!(

@@ -43,10 +43,13 @@ mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-code
 # edge direct so `gen::runtime::disposition` can name the types.
 mettail-runtime = { package = "runtime", path = "../runtime" }
 mettail-prattail = { package = "prattail", path = "../prattail" }
+mettail-grammar-core = { path = "../grammar-core" }
 ascent_syntax_export = { workspace = true }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
 rustc-hash = "1.1"
+postcard = { version = "1", features = ["alloc"] }
 
 [dev-dependencies]
 trybuild = "1.0"
 proptest = "1"
+mettail-elab = { path = "../mettail-elab" }

@@ -621,10 +621,11 @@ pub fn compute_prefix_bp(
 /// # Precedence levels
 ///
 /// Precedence is assigned by declaration order: the first-declared infix operator of a
-/// category gets the loosest level, and each subsequent rule opens the next tighter one —
-/// UNLESS it is marked `same` ([`InfixRuleInfo::shares_level_with_previous`]), in which
-/// case it joins its predecessor's level instead. The counter therefore advances once per
-/// LEVEL, not once per rule.
+/// category gets the loosest level, and each subsequent rule of the same fixity class
+/// opens the next tighter one — UNLESS it is marked `same`
+/// ([`InfixRuleInfo::shares_level_with_previous`]), in which case it joins its predecessor's
+/// level instead. Infix/mixfix and postfix operators are separate fixity classes. Each
+/// counter therefore advances once per LEVEL, not once per rule.
 ///
 /// This is the repair of a defect that made equal precedence unrepresentable. Both
 /// associativity arms below used to advance the counter, so rule `i` of a category
@@ -730,7 +731,16 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
             precedence
         };
         let mut postfix_prec = first_free_bp + 2;
+        // `same` has the same relative-level meaning in the postfix pass as it does in
+        // the infix/mixfix pass. Keeping a separate open-level bit is essential: the
+        // first postfix operator cannot share the final infix level, because postfix
+        // lives above the reserved prefix gap.
+        let mut postfix_level_is_open = false;
         for rule in cat_rules.iter().filter(|r| r.is_postfix) {
+            if postfix_level_is_open && !rule.shares_level_with_previous {
+                postfix_prec += 2;
+            }
+            postfix_level_is_open = true;
             table.operators.push(InfixOperator {
                 terminal: rule.terminal.clone(),
                 category: rule.category.clone(),
@@ -744,7 +754,6 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
                 mixfix_parts: Vec::new(),
                 nullary_literals: Vec::new(),
             });
-            postfix_prec += 2;
         }
     }
 
@@ -766,13 +775,12 @@ pub struct InfixRuleInfo {
     /// Associativity (default: Left).
     pub associativity: Associativity,
     /// ★ PRECEDENCE LEVELS (2026-07-28): share the PRECEDENCE LEVEL of the preceding
-    /// non-postfix rule of this category rather than opening a new, tighter one.
+    /// operator in this category and fixity class rather than opening a new, tighter one.
     ///
     /// Carries the grammar DSL's `same` annotation
     /// (`mettail_ast::grammar::GrammarRule::shares_level_with_previous`) into
-    /// [`analyze_binding_powers`], which is the ONLY consumer. Ignored on the first
-    /// non-postfix rule of a category (nothing to share with) and on every postfix rule
-    /// (postfix operators are laid out in a separate pass, above the whole infix range).
+    /// [`analyze_binding_powers`], which is the ONLY consumer. Ignored on the first rule
+    /// of either fixity-class pass because there is nothing in that class to share with.
     ///
     /// This is deliberately NOT an absolute level number: declaration order remains the
     /// single source of truth for the ORDER, and this flag supplies only the missing
@@ -1212,6 +1220,42 @@ mod tests {
             fact.left_bp,
             max_infix_bp
         );
+    }
+
+    #[test]
+    fn test_same_shares_only_the_preceding_postfix_level() {
+        let rules = vec![
+            make_rule("Add", "+", "Int", Associativity::Left),
+            {
+                let mut r = make_rule("First", "!", "Int", Associativity::Left);
+                r.is_postfix = true;
+                r
+            },
+            {
+                let mut r = make_rule("Sibling", "?", "Int", Associativity::Left);
+                r.is_postfix = true;
+                r.shares_level_with_previous = true;
+                r
+            },
+            {
+                let mut r = make_rule("Tighter", "++", "Int", Associativity::Left);
+                r.is_postfix = true;
+                r
+            },
+        ];
+        let table = analyze_binding_powers(&rules);
+        let bp = |label: &str| {
+            table
+                .operators
+                .iter()
+                .find(|op| op.label == label)
+                .expect("operator should be present")
+                .left_bp
+        };
+
+        assert_eq!(bp("First"), bp("Sibling"));
+        assert!(bp("Tighter") > bp("Sibling"));
+        assert!(bp("First") > bp("Add"));
     }
 
     #[test]

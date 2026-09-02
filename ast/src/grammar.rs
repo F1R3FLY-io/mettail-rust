@@ -468,16 +468,37 @@ pub enum SyntaxExpr {
     /// declared token name and NOT a term-context param) — never written as a
     /// bare literal.
     TokenKind { name: Ident, bind: Option<Ident> },
-    /// L9-4: a guest-body FLT capture, written `*flt(bind, open, close)`. The
-    /// walker consumes the `open` opener token (a mode-pushing `FltOpen*` kind
-    /// carrying the tag), then the guest body (`GuestChunk` / `${…}` `Hole`
-    /// tokens), then the `close` closer token (a `pop` `FltClose*` kind), and
-    /// ASSEMBLES a `mettail_runtime::FltNode` (tag, ONE verbatim `body_src`
-    /// slice, holes, position) bound to `bind` as an `Arc<FltNode>` opaque
-    /// leaf. Its variant field rides the L9-3 capture machinery
-    /// (`capture_layout` → `OpaqueLeafKind::GuestBody`), NOT a term-context
-    /// param — `bind` is bound by `*flt`, not declared before `|-`.
-    GuestBody { open: Ident, close: Ident, bind: Ident },
+    /// A typed balanced-region capture. `*flt(bind, open, close)` produces an
+    /// opaque `Arc<FltNode>`. The iterative walker consumes the opener, balances
+    /// arbitrarily nested delimiters, and consumes the closer. It carries only
+    /// neutral source primitives; generated host code performs the total
+    /// conversion. The field rides the capture machinery rather than the term
+    /// context because `bind` is introduced by this intrinsic.
+    GuestBody {
+        open: Ident,
+        close: Ident,
+        bind: Ident,
+        kind: DelimitedRegionKind,
+    },
+}
+
+/// The typed host value assembled from a balanced delimited source region.
+///
+/// The walker always carries neutral source primitives. This discriminator is
+/// consumed only by generated host code, where it selects the opaque leaf type
+/// and its total constructor. Keeping the set closed prevents a grammar from
+/// injecting an arbitrary Rust conversion at a parsing boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DelimitedRegionKind {
+    Flt,
+}
+
+impl DelimitedRegionKind {
+    pub const fn intrinsic(self) -> &'static str {
+        match self {
+            Self::Flt => "flt",
+        }
+    }
 }
 
 /// Pattern operation (compile-time meta-syntax)
@@ -571,11 +592,12 @@ fn clone_syntax_graph(
                     expressions
                         .push(SyntaxExpr::TokenKind { name: name.clone(), bind: bind.clone() });
                 },
-                SyntaxExpr::GuestBody { open, close, bind } => {
+                SyntaxExpr::GuestBody { open, close, bind, kind } => {
                     expressions.push(SyntaxExpr::GuestBody {
                         open: open.clone(),
                         close: close.clone(),
                         bind: bind.clone(),
+                        kind: *kind,
                     });
                 },
             },
@@ -899,7 +921,7 @@ fn fmt_syntax_node(
                 tasks.push(SyntaxDebugTask::FieldIdent("name", name, indent + 1));
             },
             SyntaxDebugTask::Node(
-                SyntaxNode::Expr(SyntaxExpr::GuestBody { open, close, bind }),
+                SyntaxNode::Expr(SyntaxExpr::GuestBody { open, close, bind, kind }),
                 indent,
             ) if pretty => {
                 formatter.write_str("GuestBody {\n")?;
@@ -907,6 +929,8 @@ fn fmt_syntax_node(
                 tasks.push(SyntaxDebugTask::FieldIdent("bind", bind, indent + 1));
                 tasks.push(SyntaxDebugTask::FieldIdent("close", close, indent + 1));
                 tasks.push(SyntaxDebugTask::FieldIdent("open", open, indent + 1));
+                write_grammar_debug_indent(formatter, indent + 1)?;
+                writeln!(formatter, "kind: {kind:?},")?;
             },
             SyntaxDebugTask::Node(
                 SyntaxNode::Op(PatternOp::Sep { collection, separator, source }),
@@ -973,11 +997,14 @@ fn fmt_syntax_node(
                 tasks.push(SyntaxDebugTask::Ident(name, 0));
             },
             SyntaxDebugTask::Node(
-                SyntaxNode::Expr(SyntaxExpr::GuestBody { open, close, bind }),
+                SyntaxNode::Expr(SyntaxExpr::GuestBody { open, close, bind, kind }),
                 _,
             ) => {
                 formatter.write_str("GuestBody { open: ")?;
                 tasks.push(SyntaxDebugTask::Text(" }"));
+                tasks.push(SyntaxDebugTask::Text(match kind {
+                    DelimitedRegionKind::Flt => ", kind: Flt",
+                }));
                 tasks.push(SyntaxDebugTask::Ident(bind, 0));
                 tasks.push(SyntaxDebugTask::Text(", bind: "));
                 tasks.push(SyntaxDebugTask::Ident(close, 0));
@@ -1130,9 +1157,10 @@ pub struct GrammarRule {
     /// Annotated with `right` keyword after eval mode in the DSL.
     pub is_right_assoc: bool,
     /// ★ PRECEDENCE LEVELS (2026-07-28): this rule shares the PRECEDENCE LEVEL of the
-    /// preceding non-postfix infix rule of the same category, instead of opening a new
-    /// (tighter) one. Annotated with the bare `same` keyword after the eval mode,
-    /// alongside `right`, `prefix(N)`, and `canonical`.
+    /// preceding operator in the same category and fixity class, instead of opening a
+    /// new (tighter) one. Infix/mixfix and postfix operators are separate classes.
+    /// Annotated with the bare `same` keyword after the eval mode, alongside `right`,
+    /// `prefix(N)`, and `canonical`.
     ///
     /// # Why a marker and not a number
     ///
@@ -1162,10 +1190,10 @@ pub struct GrammarRule {
     ///
     /// # Meaning when there is no previous rule
     ///
-    /// `same` on the first non-postfix infix rule of a category has nothing to share with
-    /// and is ignored (the rule opens the category's first level). It is not an error,
-    /// because rules reach the analyzer from several synthesis paths whose relative order
-    /// is not author-visible; a hard failure there would be a trap rather than a guard.
+    /// `same` on the first rule in either fixity-class pass has nothing to share with and
+    /// is ignored (the rule opens that class's first level). It is not an error, because
+    /// rules reach the analyzer from several synthesis paths whose relative order is not
+    /// author-visible; a hard failure there would be a trap rather than a guard.
     pub shares_level_with_previous: bool,
     /// Explicit prefix binding power for unary prefix operators.
     /// Annotated with `prefix(N)` after eval mode and `right` in the DSL.
@@ -2035,7 +2063,7 @@ enum RawSyntax {
     Param(Ident),
     TokenKind { name: Ident, bind: Ident },
     Literal(String),
-    GuestBody(proc_macro2::TokenStream),
+    GuestBody(DelimitedRegionKind, proc_macro2::TokenStream),
     Op(RawOp),
 }
 
@@ -2061,8 +2089,12 @@ fn parse_raw_syntax(input: ParseStream) -> SynResult<RawSyntax> {
     if input.peek(Token![*]) {
         let op = parse_raw_named_op(input)?;
         if let RawOpRoot::Named { name, content } = &op.root {
-            if name == "flt" {
-                return Ok(RawSyntax::GuestBody(content.clone()));
+            let kind = match name.to_string().as_str() {
+                "flt" => Some(DelimitedRegionKind::Flt),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                return Ok(RawSyntax::GuestBody(kind, content.clone()));
             }
         }
         return Ok(RawSyntax::Op(op));
@@ -2251,7 +2283,7 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
             Task::Syntax(RawSyntax::Literal(value)) => {
                 syntax_values.push(SyntaxExpr::Literal(value));
             },
-            Task::Syntax(RawSyntax::GuestBody(content)) => {
+            Task::Syntax(RawSyntax::GuestBody(kind, content)) => {
                 struct FltContent {
                     bind: Ident,
                     open: Ident,
@@ -2271,6 +2303,7 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                     open: parsed.open,
                     close: parsed.close,
                     bind: parsed.bind,
+                    kind,
                 });
             },
             Task::Syntax(RawSyntax::Op(op)) => {

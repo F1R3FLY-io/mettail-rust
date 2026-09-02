@@ -15,3 +15,4 @@
 
 # Source files
 theories/LogicTFairness.v
+theories/TypedSmtCertificates.v

@@ -1,5 +1,5 @@
 use mettail_ast::{
-    grammar::{PatternOp, SyntaxExpr, TermParam},
+    grammar::{DelimitedRegionKind, PatternOp, SyntaxExpr, TermParam},
     types::TypeExpr,
 };
 use proc_macro2::{Ident, Span};
@@ -104,6 +104,7 @@ fn grammar_lifecycle_debug_preserves_derived_shapes() {
                 open: ident("Open"),
                 close: ident("Close"),
                 bind: ident("guest"),
+                kind: DelimitedRegionKind::Flt,
             },
         ],
     };

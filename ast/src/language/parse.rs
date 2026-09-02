@@ -497,6 +497,33 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
     let mut types = Vec::new();
     let mut refinement_types = Vec::new();
     while !content.is_empty() {
+        // Closed parser-data categories are structural metasyntax, not object-
+        // language sorts. The modifiers are contextual inside `types {}` only.
+        let role = if content.peek(Ident) {
+            let fork = content.fork();
+            let first = fork.parse::<Ident>()?;
+            match first.to_string().as_str() {
+                "data" => {
+                    let _ = content.parse::<Ident>()?;
+                    CategoryRole::Data
+                },
+                "spanned" => {
+                    let _ = content.parse::<Ident>()?;
+                    let data = content.parse::<Ident>()?;
+                    if data != "data" {
+                        return Err(syn::Error::new(
+                            data.span(),
+                            "expected 'data' after 'spanned'",
+                        ));
+                    }
+                    CategoryRole::SpannedData
+                },
+                _ => CategoryRole::Object,
+            }
+        } else {
+            CategoryRole::Object
+        };
+
         // Check for native type syntax: ![Type] as Name
         if content.peek(Token![!]) {
             let _ = content.parse::<Token![!]>()?;
@@ -597,6 +624,7 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
 
             types.push(LangType {
                 name,
+                role,
                 native_type: Some(native_type),
                 collection_kind,
             });
@@ -615,6 +643,7 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                 let ref_def = parse_refinement_type_body(&content, name.clone())?;
                 types.push(LangType {
                     name,
+                    role,
                     native_type: None,
                     collection_kind: None,
                 });
@@ -630,7 +659,12 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                 } else {
                     None
                 };
-                types.push(LangType { name, native_type: None, collection_kind });
+                types.push(LangType {
+                    name,
+                    role,
+                    native_type: None,
+                    collection_kind,
+                });
             }
         }
 
@@ -2485,7 +2519,7 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
         let key = key_ident.to_string();
         let _ = content.parse::<Token![:]>()?;
 
-        // Parse value: float, integer, boolean, string literal, or keyword identifier
+        // Parse value: scalar, ordered string list, or keyword identifier.
         let value = if content.peek(syn::LitFloat) {
             let lit = content.parse::<syn::LitFloat>()?;
             let f: f64 = lit
@@ -2504,6 +2538,15 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
         } else if content.peek(syn::LitStr) {
             let lit = content.parse::<syn::LitStr>()?;
             AttributeValue::Str(lit.value())
+        } else if content.peek(syn::token::Bracket) {
+            let values;
+            syn::bracketed!(values in content);
+            let values = values
+                .parse_terminated(|input| input.parse::<syn::LitStr>(), Token![,])?
+                .into_iter()
+                .map(|value| value.value())
+                .collect();
+            AttributeValue::StringList(values)
         } else if content.peek(Ident::peek_any) {
             let ident = content.call(Ident::parse_any)?;
             AttributeValue::Keyword(ident.to_string())
@@ -2714,11 +2757,36 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                     ));
                 },
             },
+            "contextual_keywords" => match &value {
+                AttributeValue::StringList(values) => {
+                    let mut unique = std::collections::BTreeSet::new();
+                    for value in values {
+                        if value.is_empty() {
+                            return Err(syn::Error::new(
+                                key_ident.span(),
+                                "contextual_keywords cannot contain an empty spelling",
+                            ));
+                        }
+                        if !unique.insert(value) {
+                            return Err(syn::Error::new(
+                                key_ident.span(),
+                                format!("duplicate contextual keyword `{value}`"),
+                            ));
+                        }
+                    }
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "contextual_keywords must be a list of strings",
+                    ));
+                },
+            },
             unknown => {
                 return Err(syn::Error::new(
                     key_ident.span(),
                     format!(
-                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, hosted_in, case_insensitive, unicode_normalization, reserved_keywords, parse_only",
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, hosted_in, case_insensitive, unicode_normalization, reserved_keywords, contextual_keywords, parse_only",
                         unknown
                     ),
                 ));

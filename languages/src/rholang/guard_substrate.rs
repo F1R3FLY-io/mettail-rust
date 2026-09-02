@@ -766,9 +766,6 @@ pub fn eval_guard_disposition_via_substrate(cond: &Proc) -> GuardDisposition {
                 mettail_prattail::guard_formula::DontKnowPolicy::FailClosedBlock => {
                     GuardDisposition::Declines
                 },
-                mettail_prattail::guard_formula::DontKnowPolicy::FailOpenFire => {
-                    GuardDisposition::Fires
-                },
             }
         },
     }

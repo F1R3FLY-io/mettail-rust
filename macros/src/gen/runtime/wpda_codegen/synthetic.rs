@@ -81,6 +81,9 @@ pub(crate) fn build_per_category_rules(
     // `eval: ![ { ... } ]` block; for case (b) it's a synthesized default
     // matching the trampoline's behavior.
     for type_def in &language.types {
+        if type_def.is_data() {
+            continue;
+        }
         let cat_name = type_def.name.to_string();
         let Some(&i) = cat_idx.get(cat_name.as_str()) else {
             continue;
@@ -147,6 +150,9 @@ pub(crate) fn build_per_category_rules(
     // `syntax_pattern = [Literal(open), Op(Sep{elems, sep}), Literal(close)]`
     // so that `classify_collection` picks them up.
     for type_def in &language.types {
+        if type_def.is_data() {
+            continue;
+        }
         let cat_name = type_def.name.to_string();
         let Some(&i) = cat_idx.get(cat_name.as_str()) else {
             continue;
@@ -236,6 +242,13 @@ pub(crate) fn build_per_category_rules(
     //    - Category does not already have a user rule whose `items[0] =
     //      NonTerminal { kind: Var, .. }`.
     for type_def in &language.types {
+        // Closed data categories contain only their declared constructors.
+        // In particular, they do not receive the object-language variable
+        // sentinel that makes ordinary syntactic categories open under
+        // substitution.
+        if type_def.is_data() {
+            continue;
+        }
         let cat_name = type_def.name.to_string();
         let Some(&i) = cat_idx.get(cat_name.as_str()) else {
             continue;
@@ -333,8 +346,12 @@ pub(crate) fn build_per_category_rules(
     //    a term context is present — two cases the inlined copy answered `false` for.
     let has_binders = mettail_ast::grammar_shapes::declares_binder(language);
     if has_binders {
-        let category_names: Vec<String> =
-            language.types.iter().map(|t| t.name.to_string()).collect();
+        let category_names: Vec<String> = language
+            .types
+            .iter()
+            .filter(|category| !category.is_data())
+            .map(|category| category.name.to_string())
+            .collect();
         // For each (home, dom) pair: synthesize Apply{Dom} and MApply{Dom}.
         for home in &category_names {
             let Some(&home_i) = cat_idx.get(home.as_str()) else {
@@ -540,11 +557,13 @@ mod tests {
             types: vec![
                 LangType {
                     name: Ident::new("Int", Span::call_site()),
+                    role: Default::default(),
                     native_type: Some(parse_quote!(i32)),
                     collection_kind: None,
                 },
                 LangType {
                     name: Ident::new("Bool", Span::call_site()),
+                    role: Default::default(),
                     native_type: Some(parse_quote!(bool)),
                     collection_kind: None,
                 },

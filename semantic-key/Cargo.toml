@@ -1,0 +1,16 @@
+[package]
+name = "mettail-semantic-key"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Persistent exact semantic keys and collision-safe indexes for MeTTaIL"
+publish = false
+
+[lib]
+name = "mettail_semantic_key"
+
+[dependencies]
+rustc-hash = "2"

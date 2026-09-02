@@ -8,15 +8,205 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 /// The subset of ordinary Rholang values used by the `language/2` schema.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RhoValue {
     Map(BTreeMap<String, RhoValue>),
     List(Vec<RhoValue>),
     String(String),
+    Bytes(Vec<u8>),
     Integer(i128),
+    FloatBits(u64),
     Boolean(bool),
     Nil,
 }
+
+impl Clone for RhoValue {
+    fn clone(&self) -> Self {
+        enum Task<'a> {
+            Visit(&'a RhoValue),
+            FinishList(usize),
+            FinishMap(Vec<&'a str>),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(RhoValue::Map(map)) => {
+                    let keys: Vec<_> = map.keys().map(String::as_str).collect();
+                    tasks.push(Task::FinishMap(keys));
+                    tasks.extend(map.values().rev().map(Task::Visit));
+                },
+                Task::Visit(RhoValue::List(list)) => {
+                    tasks.push(Task::FinishList(list.len()));
+                    tasks.extend(list.iter().rev().map(Task::Visit));
+                },
+                Task::Visit(RhoValue::String(value)) => {
+                    values.push(RhoValue::String(value.clone()));
+                },
+                Task::Visit(RhoValue::Bytes(value)) => values.push(RhoValue::Bytes(value.clone())),
+                Task::Visit(RhoValue::Integer(value)) => values.push(RhoValue::Integer(*value)),
+                Task::Visit(RhoValue::FloatBits(bits)) => values.push(RhoValue::FloatBits(*bits)),
+                Task::Visit(RhoValue::Boolean(value)) => values.push(RhoValue::Boolean(*value)),
+                Task::Visit(RhoValue::Nil) => values.push(RhoValue::Nil),
+                Task::FinishList(length) => {
+                    let start = values.len() - length;
+                    let children = values.drain(start..).collect();
+                    values.push(RhoValue::List(children));
+                },
+                Task::FinishMap(keys) => {
+                    let start = values.len() - keys.len();
+                    let children: Vec<_> = values.drain(start..).collect();
+                    values.push(RhoValue::Map(
+                        keys.into_iter().map(str::to_string).zip(children).collect(),
+                    ));
+                },
+            }
+        }
+        values
+            .pop()
+            .expect("RhoValue clone machine produces one value")
+    }
+}
+
+impl PartialEq for RhoValue {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some((left, right)) = work.pop() {
+            match (left, right) {
+                (RhoValue::Map(left), RhoValue::Map(right)) => {
+                    if left.len() != right.len() {
+                        return false;
+                    }
+                    for ((left_key, left_value), (right_key, right_value)) in
+                        left.iter().zip(right.iter()).rev()
+                    {
+                        if left_key != right_key {
+                            return false;
+                        }
+                        work.push((left_value, right_value));
+                    }
+                },
+                (RhoValue::List(left), RhoValue::List(right)) => {
+                    if left.len() != right.len() {
+                        return false;
+                    }
+                    work.extend(left.iter().zip(right.iter()).rev());
+                },
+                (RhoValue::String(left), RhoValue::String(right)) if left == right => {},
+                (RhoValue::Bytes(left), RhoValue::Bytes(right)) if left == right => {},
+                (RhoValue::Integer(left), RhoValue::Integer(right)) if left == right => {},
+                (RhoValue::FloatBits(left), RhoValue::FloatBits(right)) if left == right => {},
+                (RhoValue::Boolean(left), RhoValue::Boolean(right)) if left == right => {},
+                (RhoValue::Nil, RhoValue::Nil) => {},
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for RhoValue {}
+
+impl Ord for RhoValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.canonical_bytes().cmp(&other.canonical_bytes())
+    }
+}
+
+impl PartialOrd for RhoValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Debug for RhoValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Task<'a> {
+            Value(&'a RhoValue),
+            Key(&'a str),
+            Text(&'static str),
+        }
+
+        let mut tasks = vec![Task::Value(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::Key(key) => write!(formatter, "{key:?}")?,
+                Task::Value(RhoValue::Map(values)) => {
+                    formatter.write_str("Map({")?;
+                    tasks.push(Task::Text("})"));
+                    for (index, (key, value)) in values.iter().enumerate().rev() {
+                        tasks.push(Task::Value(value));
+                        tasks.push(Task::Text(": "));
+                        tasks.push(Task::Key(key));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                },
+                Task::Value(RhoValue::List(values)) => {
+                    formatter.write_str("List([")?;
+                    tasks.push(Task::Text("])"));
+                    for (index, value) in values.iter().enumerate().rev() {
+                        tasks.push(Task::Value(value));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                },
+                Task::Value(RhoValue::String(value)) => {
+                    write!(formatter, "String({value:?})")?;
+                },
+                Task::Value(RhoValue::Bytes(value)) => {
+                    write!(formatter, "Bytes({value:?})")?;
+                },
+                Task::Value(RhoValue::Integer(value)) => {
+                    write!(formatter, "Integer({value:?})")?;
+                },
+                Task::Value(RhoValue::FloatBits(value)) => {
+                    write!(formatter, "FloatBits({value:?})")?;
+                },
+                Task::Value(RhoValue::Boolean(value)) => {
+                    write!(formatter, "Boolean({value:?})")?;
+                },
+                Task::Value(RhoValue::Nil) => formatter.write_str("Nil")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for RhoValue {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        detach_rho_children(self, &mut work);
+        while let Some(mut value) = work.pop() {
+            detach_rho_children(&mut value, &mut work);
+        }
+    }
+}
+
+fn detach_rho_children(value: &mut RhoValue, work: &mut Vec<RhoValue>) {
+    match value {
+        RhoValue::Map(values) => {
+            work.extend(std::mem::take(values).into_values());
+        },
+        RhoValue::List(values) => work.append(values),
+        RhoValue::String(_)
+        | RhoValue::Bytes(_)
+        | RhoValue::Integer(_)
+        | RhoValue::FloatBits(_)
+        | RhoValue::Boolean(_)
+        | RhoValue::Nil => {},
+    }
+}
+
+pub const MAX_CANONICAL_VALUE_NODES: usize = 1_000_000;
+pub const MAX_CANONICAL_COLLECTION_ITEMS: usize = 1_000_000;
+pub const MAX_CANONICAL_STRING_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_CANONICAL_TOTAL_STRING_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_CANONICAL_BYTE_ARRAY_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_CANONICAL_TOTAL_BYTE_ARRAY_BYTES: usize = 64 * 1024 * 1024;
 
 impl RhoValue {
     pub fn canonical_bytes(&self) -> Vec<u8> {
@@ -31,33 +221,189 @@ impl RhoValue {
 }
 
 fn encode_value(value: &RhoValue, output: &mut Vec<u8>) {
-    match value {
-        RhoValue::Map(values) => {
-            output.push(b'm');
-            put_len(values.len(), output);
-            for (key, value) in values {
-                put_string(key, output);
-                encode_value(value, output);
-            }
-        },
-        RhoValue::List(values) => {
-            output.push(b'l');
-            put_len(values.len(), output);
-            for value in values {
-                encode_value(value, output);
-            }
-        },
-        RhoValue::String(value) => {
-            output.push(b's');
-            put_string(value, output);
-        },
-        RhoValue::Integer(value) => {
-            output.push(b'i');
-            output.extend_from_slice(&value.to_be_bytes());
-        },
-        RhoValue::Boolean(value) => output.push(if *value { b't' } else { b'f' }),
-        RhoValue::Nil => output.push(b'n'),
+    enum Task<'a> {
+        Value(&'a RhoValue),
+        Key(&'a str),
     }
+
+    let mut tasks = vec![Task::Value(value)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Key(key) => put_string(key, output),
+            Task::Value(RhoValue::Map(values)) => {
+                output.push(b'm');
+                put_len(values.len(), output);
+                for (key, value) in values.iter().rev() {
+                    tasks.push(Task::Value(value));
+                    tasks.push(Task::Key(key));
+                }
+            },
+            Task::Value(RhoValue::List(values)) => {
+                output.push(b'l');
+                put_len(values.len(), output);
+                tasks.extend(values.iter().rev().map(Task::Value));
+            },
+            Task::Value(RhoValue::String(value)) => {
+                output.push(b's');
+                put_string(value, output);
+            },
+            Task::Value(RhoValue::Bytes(value)) => {
+                output.push(b'b');
+                put_len(value.len(), output);
+                output.extend_from_slice(value);
+            },
+            Task::Value(RhoValue::Integer(value)) => {
+                output.push(b'i');
+                output.extend_from_slice(&value.to_be_bytes());
+            },
+            Task::Value(RhoValue::FloatBits(bits)) => {
+                output.push(b'd');
+                output.extend_from_slice(&bits.to_be_bytes());
+            },
+            Task::Value(RhoValue::Boolean(value)) => {
+                output.push(if *value { b't' } else { b'f' });
+            },
+            Task::Value(RhoValue::Nil) => output.push(b'n'),
+        }
+    }
+}
+
+/// Admit an ordinary Rholang value before any schema-specific traversal.
+/// This is shared by direct values, `Data(v)`, and Registry-resolved values.
+pub fn admit_canonical_value(value: &RhoValue) -> Result<(), ValueDecodeError> {
+    admit_canonical_value_impl(value, true)
+}
+
+/// Charge every resource in a structural DDL envelope without treating its
+/// fixed ABI lists and tags as recursive grammar constructors.
+///
+/// The wire decoder must subsequently enforce the semantic DDL depth and call
+/// [`admit_canonical_value`] for every opaque `Data(v)` payload. Keeping this
+/// function crate-private prevents schema decoders from accidentally bypassing
+/// canonical-value depth admission.
+pub(crate) fn admit_canonical_value_resources(value: &RhoValue) -> Result<(), ValueDecodeError> {
+    admit_canonical_value_impl(value, false)
+}
+
+fn admit_canonical_value_impl(
+    value: &RhoValue,
+    enforce_canonical_depth: bool,
+) -> Result<(), ValueDecodeError> {
+    let mut work = vec![(value, 1usize)];
+    let mut nodes = 0usize;
+    let mut collection_items = 0usize;
+    let mut total_string_bytes = 0usize;
+    let mut total_byte_array_bytes = 0usize;
+    while let Some((value, depth)) = work.pop() {
+        nodes = nodes
+            .checked_add(1)
+            .ok_or_else(|| ValueDecodeError::new("$", "canonical value node count overflowed"))?;
+        if nodes > MAX_CANONICAL_VALUE_NODES {
+            return Err(ValueDecodeError::new(
+                "$",
+                format!("canonical value exceeds {MAX_CANONICAL_VALUE_NODES} nodes"),
+            ));
+        }
+        if enforce_canonical_depth && depth > crate::parse::MAX_DDL_STRUCTURAL_DEPTH {
+            return Err(ValueDecodeError::new(
+                "$",
+                format!(
+                    "canonical value nesting exceeds {}",
+                    crate::parse::MAX_DDL_STRUCTURAL_DEPTH
+                ),
+            ));
+        }
+        match value {
+            RhoValue::Map(values) => {
+                collection_items = collection_items.checked_add(values.len()).ok_or_else(|| {
+                    ValueDecodeError::new("$", "canonical collection item count overflowed")
+                })?;
+                let child_depth = depth.checked_add(1).ok_or_else(|| {
+                    ValueDecodeError::new("$", "canonical value depth overflowed")
+                })?;
+                for (key, value) in values.iter().rev() {
+                    account_canonical_string(key, &mut total_string_bytes)?;
+                    work.push((value, child_depth));
+                }
+            },
+            RhoValue::List(values) => {
+                collection_items = collection_items.checked_add(values.len()).ok_or_else(|| {
+                    ValueDecodeError::new("$", "canonical collection item count overflowed")
+                })?;
+                let child_depth = depth.checked_add(1).ok_or_else(|| {
+                    ValueDecodeError::new("$", "canonical value depth overflowed")
+                })?;
+                work.extend(values.iter().rev().map(|value| (value, child_depth)));
+            },
+            RhoValue::String(value) => {
+                account_canonical_string(value, &mut total_string_bytes)?;
+            },
+            RhoValue::Bytes(value) => {
+                account_canonical_bytes(value, &mut total_byte_array_bytes)?;
+            },
+            RhoValue::Integer(_)
+            | RhoValue::FloatBits(_)
+            | RhoValue::Boolean(_)
+            | RhoValue::Nil => {},
+        }
+        if collection_items > MAX_CANONICAL_COLLECTION_ITEMS {
+            return Err(ValueDecodeError::new(
+                "$",
+                format!(
+                    "canonical value exceeds {MAX_CANONICAL_COLLECTION_ITEMS} collection items"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn account_canonical_bytes(
+    value: &[u8],
+    total_byte_array_bytes: &mut usize,
+) -> Result<(), ValueDecodeError> {
+    if value.len() > MAX_CANONICAL_BYTE_ARRAY_BYTES {
+        return Err(ValueDecodeError::new(
+            "$",
+            format!("canonical byte array exceeds {MAX_CANONICAL_BYTE_ARRAY_BYTES} bytes"),
+        ));
+    }
+    *total_byte_array_bytes = total_byte_array_bytes
+        .checked_add(value.len())
+        .ok_or_else(|| {
+            ValueDecodeError::new("$", "canonical total byte-array byte count overflowed")
+        })?;
+    if *total_byte_array_bytes > MAX_CANONICAL_TOTAL_BYTE_ARRAY_BYTES {
+        return Err(ValueDecodeError::new(
+            "$",
+            format!(
+                "canonical byte arrays exceed {MAX_CANONICAL_TOTAL_BYTE_ARRAY_BYTES} total bytes"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn account_canonical_string(
+    value: &str,
+    total_string_bytes: &mut usize,
+) -> Result<(), ValueDecodeError> {
+    if value.len() > MAX_CANONICAL_STRING_BYTES {
+        return Err(ValueDecodeError::new(
+            "$",
+            format!("canonical string exceeds {MAX_CANONICAL_STRING_BYTES} bytes"),
+        ));
+    }
+    *total_string_bytes = total_string_bytes.checked_add(value.len()).ok_or_else(|| {
+        ValueDecodeError::new("$", "canonical total string byte count overflowed")
+    })?;
+    if *total_string_bytes > MAX_CANONICAL_TOTAL_STRING_BYTES {
+        return Err(ValueDecodeError::new(
+            "$",
+            format!("canonical strings exceed {MAX_CANONICAL_TOTAL_STRING_BYTES} total bytes"),
+        ));
+    }
+    Ok(())
 }
 
 fn put_len(value: usize, output: &mut Vec<u8>) {
@@ -87,49 +433,60 @@ fn string(value: impl Into<String>) -> RhoValue {
 }
 
 /// Normalize an elaborated surface module to the data-structure-faithful
-/// `language/2` value. Replacements and theory composition have already been
-/// applied by elaboration, so the value contains their semantic result.
-pub fn presentation_to_value(name: &str, presentation: &Presentation) -> RhoValue {
+/// `language/2` or `language/3` value. Replacements and theory composition have
+/// already been applied by elaboration, so the value contains their semantic
+/// result. An OSLF `Data(v)` fragment promotes the result to `language/3`.
+pub fn presentation_to_value(
+    name: &str,
+    presentation: &Presentation,
+) -> Result<RhoValue, ValueDecodeError> {
+    if let Some(core) = presentation.completed_core() {
+        if core.grammar.name != name {
+            return Err(ValueDecodeError::new(
+                "$.name",
+                format!(
+                    "Theory name `{name}` does not match completed GrammarCore name `{}`",
+                    core.grammar.name
+                ),
+            ));
+        }
+        return crate::core_value::language_core_to_value(core);
+    }
     let mut spec = BTreeMap::new();
     spec.insert("mettail".into(), string("language/2"));
     spec.insert("name".into(), string(name));
-    spec.insert(
-        "types".into(),
-        list(
-            presentation
-                .types
-                .iter()
-                .map(|entry| string(entry.cat.clone())),
-        ),
-    );
-    spec.insert(
-        "exports".into(),
-        list(
-            presentation
-                .exports
-                .iter()
-                .map(|(from, to)| list([string(from.clone()), string(to.clone())])),
-        ),
-    );
-    spec.insert(
-        "terms".into(),
-        list(
-            presentation
-                .terms
-                .iter()
-                .map(|entry| term_to_value(&entry.rule)),
-        ),
-    );
-    spec.insert(
-        "equations".into(),
-        list(
-            presentation
-                .equations
-                .iter()
-                .enumerate()
-                .map(|(ordinal, entry)| {
-                    map([
-                        ("name", string(format!("equation/{ordinal}"))),
+    let mut events = Vec::new();
+    for entry in &presentation.types {
+        if !presentation.data_derived.contains(&entry.id) {
+            events.push((entry.id, map([("types", list([string(entry.cat.clone())]))])));
+        }
+    }
+    for (index, (from, to)) in presentation.exports.iter().enumerate() {
+        let id = presentation
+            .export_origins
+            .get(index)
+            .copied()
+            .unwrap_or(ElemId(u64::MAX - index as u64));
+        if !presentation.data_derived_exports.contains(&id) {
+            events.push((
+                id,
+                map([("exports", list([list([string(from.clone()), string(to.clone())])]))]),
+            ));
+        }
+    }
+    for entry in &presentation.terms {
+        if !presentation.data_derived.contains(&entry.id) {
+            events.push((entry.id, map([("terms", list([term_to_value(&entry.rule)]))])));
+        }
+    }
+    for entry in &presentation.equations {
+        if !presentation.data_derived.contains(&entry.id) {
+            events.push((
+                entry.id,
+                map([(
+                    "equations",
+                    list([map([
+                        ("name", string(format!("Equation{}", entry.id.0))),
                         (
                             "premises",
                             list(entry.eq.freshness.iter().map(|(left, right)| {
@@ -138,27 +495,154 @@ pub fn presentation_to_value(name: &str, presentation: &Presentation) -> RhoValu
                         ),
                         ("left", ast_to_value(&entry.eq.lhs)),
                         ("right", ast_to_value(&entry.eq.rhs)),
-                    ])
-                }),
-        ),
+                    ])]),
+                )]),
+            ));
+        }
+    }
+    for entry in &presentation.rewrites {
+        if !presentation.data_derived.contains(&entry.id) {
+            events.push((
+                entry.id,
+                map([(
+                    "rewrites",
+                    list([map([
+                        ("name", string(entry.rw.name.clone())),
+                        (
+                            "premises",
+                            list(entry.rw.premises.iter().map(|(left, right)| {
+                                list([string("~>"), string(left.clone()), string(right.clone())])
+                            })),
+                        ),
+                        ("left", ast_to_value(&entry.rw.lhs)),
+                        ("right", ast_to_value(&entry.rw.rhs)),
+                    ])]),
+                )]),
+            ));
+        }
+    }
+    events.extend(
+        presentation
+            .canonical_fragments
+            .iter()
+            .map(|fragment| (fragment.id, fragment.value.clone())),
     );
-    spec.insert(
-        "rewrites".into(),
-        list(presentation.rewrites.iter().map(|entry| {
-            map([
-                ("name", string(entry.rw.name.clone())),
-                (
-                    "premises",
-                    list(entry.rw.premises.iter().map(|(left, right)| {
-                        list([string("~>"), string(left.clone()), string(right.clone())])
-                    })),
-                ),
-                ("left", ast_to_value(&entry.rw.lhs)),
-                ("right", ast_to_value(&entry.rw.rhs)),
-            ])
-        })),
-    );
-    RhoValue::Map(spec)
+    events.sort_by_key(|(id, _)| *id);
+    let mut composed = RhoValue::Map(BTreeMap::new());
+    for (_, fragment) in events {
+        merge_values(&mut composed, fragment, "$")?;
+    }
+    let RhoValue::Map(composed_values) = &mut composed else {
+        unreachable!()
+    };
+    let composed = std::mem::take(composed_values);
+    spec.extend(composed);
+    if spec.contains_key("oslf") {
+        spec.insert("mettail".into(), string("language/3"));
+    }
+    Ok(RhoValue::Map(spec))
+}
+
+fn merge_values(
+    target: &mut RhoValue,
+    incoming: RhoValue,
+    path: &str,
+) -> Result<(), ValueDecodeError> {
+    enum Job {
+        Merge {
+            target: RhoValue,
+            incoming: RhoValue,
+            path: String,
+        },
+        ContinueMap {
+            target: BTreeMap<String, RhoValue>,
+            incoming: std::collections::btree_map::IntoIter<String, RhoValue>,
+            path: String,
+        },
+        InsertMerged {
+            target: BTreeMap<String, RhoValue>,
+            incoming: std::collections::btree_map::IntoIter<String, RhoValue>,
+            path: String,
+            key: String,
+        },
+    }
+
+    let original = std::mem::replace(target, RhoValue::Nil);
+    let mut jobs = vec![Job::Merge {
+        target: original,
+        incoming,
+        path: path.to_owned(),
+    }];
+    let mut values = Vec::new();
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Merge { mut target, mut incoming, path } => {
+                let both_maps =
+                    matches!(&target, RhoValue::Map(_)) && matches!(&incoming, RhoValue::Map(_));
+                let both_lists =
+                    matches!(&target, RhoValue::List(_)) && matches!(&incoming, RhoValue::List(_));
+                if both_maps {
+                    let RhoValue::Map(target) = &mut target else {
+                        unreachable!()
+                    };
+                    let RhoValue::Map(incoming) = &mut incoming else {
+                        unreachable!()
+                    };
+                    jobs.push(Job::ContinueMap {
+                        target: std::mem::take(target),
+                        incoming: std::mem::take(incoming).into_iter(),
+                        path,
+                    });
+                } else if both_lists {
+                    let RhoValue::List(target) = &mut target else {
+                        unreachable!()
+                    };
+                    let RhoValue::List(incoming) = &mut incoming else {
+                        unreachable!()
+                    };
+                    target.append(incoming);
+                    values.push(RhoValue::List(std::mem::take(target)));
+                } else if target == incoming {
+                    values.push(target);
+                } else {
+                    return Err(ValueDecodeError::new(
+                        path,
+                        "unequal scalar collision during Data(v) composition",
+                    ));
+                }
+            },
+            Job::ContinueMap { mut target, mut incoming, path } => {
+                let Some((key, value)) = incoming.next() else {
+                    values.push(RhoValue::Map(target));
+                    continue;
+                };
+                if let Some(existing) = target.remove(&key) {
+                    let child_path = format!("{path}.{key}");
+                    jobs.push(Job::InsertMerged { target, incoming, path, key });
+                    jobs.push(Job::Merge {
+                        target: existing,
+                        incoming: value,
+                        path: child_path,
+                    });
+                } else {
+                    target.insert(key, value);
+                    jobs.push(Job::ContinueMap { target, incoming, path });
+                }
+            },
+            Job::InsertMerged { mut target, incoming, path, key } => {
+                let merged = values
+                    .pop()
+                    .expect("a nested map merge result is scheduled");
+                target.insert(key, merged);
+                jobs.push(Job::ContinueMap { target, incoming, path });
+            },
+        }
+    }
+    if values.len() != 1 {
+        return Err(ValueDecodeError::new(path, "Data(v) merge produced an invalid value stack"));
+    }
+    *target = values.pop().expect("checked one merged value");
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,7 +652,7 @@ pub struct ValueDecodeError {
 }
 
 impl ValueDecodeError {
-    fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             path: path.into(),
             message: message.into(),
@@ -185,7 +669,12 @@ impl fmt::Display for ValueDecodeError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValueToCoreError {
     Decode(ValueDecodeError),
+    Resolve { language: String, message: String },
     Lower(LoweringError),
+}
+
+pub trait LanguageValueResolver {
+    fn resolve_language(&self, name: &str) -> Result<Option<RhoValue>, String>;
 }
 
 /// Decode the canonical ordinary-Rholang representation back to a
@@ -193,6 +682,38 @@ pub enum ValueToCoreError {
 /// than ignored, so programmatically constructed grammars use the same closed
 /// schema as the surface elaborator.
 pub fn value_to_presentation(value: &RhoValue) -> Result<(String, Presentation), ValueDecodeError> {
+    admit_canonical_value(value)?;
+    let schema = crate::schema::decode(value)?;
+    let spec = expect_map(value, "$".into())?;
+    let mut legacy = BTreeMap::from([
+        ("mettail".into(), string("language/2")),
+        ("name".into(), string(schema.name.clone())),
+        ("types".into(), list([])),
+        ("exports".into(), list([])),
+        ("terms".into(), list([])),
+        ("equations".into(), list([])),
+        ("rewrites".into(), list([])),
+    ]);
+    for key in ["types", "exports", "terms", "equations", "rewrites"] {
+        if let Some(value) = spec.get(key) {
+            legacy.insert(key.into(), value.clone());
+        }
+    }
+    legacy_value_to_presentation(&RhoValue::Map(legacy)).or_else(|_| {
+        let mut projection = Presentation::default();
+        projection
+            .opaque_categories
+            .extend(schema.category_names().map(str::to_string));
+        projection
+            .opaque_labels
+            .extend(schema.term_labels().map(str::to_string));
+        Ok((schema.name, projection))
+    })
+}
+
+fn legacy_value_to_presentation(
+    value: &RhoValue,
+) -> Result<(String, Presentation), ValueDecodeError> {
     let spec = expect_map(value, "$".into())?;
     const KEYS: &[&str] =
         &["mettail", "name", "types", "exports", "terms", "equations", "rewrites"];
@@ -302,31 +823,65 @@ pub fn value_to_presentation(value: &RhoValue) -> Result<(String, Presentation),
             terms,
             equations,
             rewrites,
+            ..Presentation::default()
         },
     ))
 }
 
 pub fn value_to_core(value: &RhoValue) -> Result<core::GrammarCoreV1, ValueToCoreError> {
-    let (name, presentation) = value_to_presentation(value).map_err(ValueToCoreError::Decode)?;
-    let mut core = presentation_to_core(&name, &presentation).map_err(ValueToCoreError::Lower)?;
-    core.provenance.frontend = "rholang-language/2".into();
-    Ok(core)
+    Ok(value_to_language_core(value)?.grammar)
+}
+
+pub fn value_to_language_core(value: &RhoValue) -> Result<core::LanguageCoreV1, ValueToCoreError> {
+    if crate::core_value::is_language_core_value(value) {
+        return crate::core_value::decode_language_core_value(value)
+            .map_err(ValueToCoreError::Decode)?
+            .ok_or_else(|| {
+                ValueToCoreError::Decode(ValueDecodeError::new(
+                    "$.core",
+                    "structural LanguageCore arm disappeared during decoding",
+                ))
+            });
+    }
+    admit_canonical_value(value).map_err(ValueToCoreError::Decode)?;
+    let schema = crate::schema::decode_composed(value, None).map_err(ValueToCoreError::Decode)?;
+    schema.lower_language().map_err(ValueToCoreError::Decode)
+}
+
+pub fn value_to_core_with_resolver(
+    value: &RhoValue,
+    resolver: &dyn LanguageValueResolver,
+) -> Result<core::GrammarCoreV1, ValueToCoreError> {
+    Ok(value_to_language_core_with_resolver(value, resolver)?.grammar)
+}
+
+pub fn value_to_language_core_with_resolver(
+    value: &RhoValue,
+    resolver: &dyn LanguageValueResolver,
+) -> Result<core::LanguageCoreV1, ValueToCoreError> {
+    if crate::core_value::is_language_core_value(value) {
+        return crate::core_value::decode_language_core_value(value)
+            .map_err(ValueToCoreError::Decode)?
+            .ok_or_else(|| {
+                ValueToCoreError::Decode(ValueDecodeError::new(
+                    "$.core",
+                    "structural LanguageCore arm disappeared during decoding",
+                ))
+            });
+    }
+    admit_canonical_value(value).map_err(ValueToCoreError::Decode)?;
+    let schema =
+        crate::schema::decode_composed(value, Some(resolver)).map_err(ValueToCoreError::Decode)?;
+    schema.lower_language().map_err(ValueToCoreError::Decode)
 }
 
 /// Decode a `Data(v)` fragment through the canonical schema. The two
 /// whole-language identity keys are forbidden; all other supported fields are
 /// decoded exactly as they are on the direct registry-value path.
 pub fn partial_value_to_presentation(value: &RhoValue) -> Result<Presentation, ValueDecodeError> {
+    admit_canonical_value(value)?;
+    let schema = crate::schema::validate_fragment(value)?;
     let fragment = expect_map(value, "Data".into())?;
-    if let Some(key) = fragment
-        .keys()
-        .find(|key| matches!(key.as_str(), "mettail" | "name"))
-    {
-        return Err(ValueDecodeError::new(
-            format!("Data.{key}"),
-            "whole-language identity keys are not permitted in Data(v)",
-        ));
-    }
     let mut complete = BTreeMap::from([
         ("mettail".into(), string("language/2")),
         ("name".into(), string("DataFragment")),
@@ -337,12 +892,20 @@ pub fn partial_value_to_presentation(value: &RhoValue) -> Result<Presentation, V
         ("rewrites".into(), list([])),
     ]);
     for (key, value) in fragment {
-        if !complete.contains_key(key) {
-            return Err(ValueDecodeError::new(format!("Data.{key}"), "unknown key"));
+        if complete.contains_key(key) {
+            complete.insert(key.clone(), value.clone());
         }
-        complete.insert(key.clone(), value.clone());
     }
-    value_to_presentation(&RhoValue::Map(complete)).map(|(_, presentation)| presentation)
+    let mut presentation = legacy_value_to_presentation(&RhoValue::Map(complete))
+        .map(|(_, presentation)| presentation)
+        .unwrap_or_default();
+    presentation
+        .opaque_categories
+        .extend(schema.category_names().map(str::to_string));
+    presentation
+        .opaque_labels
+        .extend(schema.term_labels().map(str::to_string));
+    Ok(presentation)
 }
 
 fn decode_term(value: &RhoValue, path: &str) -> Result<TermRule, ValueDecodeError> {
@@ -471,63 +1034,115 @@ fn decode_pairs(
 }
 
 fn decode_ast(value: &RhoValue, path: &str) -> Result<Ast, ValueDecodeError> {
+    enum Task<'a> {
+        Visit { value: &'a RhoValue, path: String },
+        FinishSubst,
+        FinishAbs(String),
+        FinishColl { count: usize, remainder: Option<String> },
+        FinishSExp { label: String, count: usize },
+    }
+
     let span = Span { line: 0, col: 0 };
-    if let RhoValue::String(name) = value {
-        return Ok(Ast::Var(name.clone(), span));
+    let mut tasks = vec![Task::Visit { value, path: path.into() }];
+    let mut output = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit { value: RhoValue::String(name), .. } => {
+                output.push(Ast::Var(name.clone(), span));
+            },
+            Task::Visit { value, path } => {
+                let values = expect_list(value, path.clone())?;
+                let tag = expect_string(
+                    values
+                        .first()
+                        .ok_or_else(|| ValueDecodeError::new(&path, "empty AST node"))?,
+                    format!("{path}[0]"),
+                )?;
+                match tag {
+                    "eval" => {
+                        require_len(values, 3, &path)?;
+                        tasks.push(Task::FinishSubst);
+                        tasks.push(Task::Visit {
+                            value: &values[2],
+                            path: format!("{path}[2]"),
+                        });
+                        tasks.push(Task::Visit {
+                            value: &values[1],
+                            path: format!("{path}[1]"),
+                        });
+                    },
+                    "^" => {
+                        require_len(values, 3, &path)?;
+                        let binder = expect_string(&values[1], format!("{path}[1]"))?.to_string();
+                        tasks.push(Task::FinishAbs(binder));
+                        tasks.push(Task::Visit {
+                            value: &values[2],
+                            path: format!("{path}[2]"),
+                        });
+                    },
+                    "coll" => {
+                        require_len(values, 3, &path)?;
+                        let elements = expect_list(&values[1], format!("{path}[1]"))?;
+                        let remainder = match &values[2] {
+                            RhoValue::Nil => None,
+                            RhoValue::String(name) => Some(name.clone()),
+                            _ => {
+                                return Err(ValueDecodeError::new(
+                                    format!("{path}[2]"),
+                                    "expected remainder name or Nil",
+                                ))
+                            },
+                        };
+                        tasks.push(Task::FinishColl { count: elements.len(), remainder });
+                        for (index, element) in elements.iter().enumerate().rev() {
+                            tasks.push(Task::Visit {
+                                value: element,
+                                path: format!("{path}[1][{index}]"),
+                            });
+                        }
+                    },
+                    label => {
+                        tasks.push(Task::FinishSExp {
+                            label: label.to_string(),
+                            count: values.len() - 1,
+                        });
+                        for (index, argument) in values[1..].iter().enumerate().rev() {
+                            tasks.push(Task::Visit {
+                                value: argument,
+                                path: format!("{path}[{}]", index + 1),
+                            });
+                        }
+                    },
+                }
+            },
+            Task::FinishSubst => {
+                let argument = output.pop().expect("substitution argument is scheduled");
+                let abstraction = output.pop().expect("substitution abstraction is scheduled");
+                output.push(Ast::Subst(Box::new(abstraction), Box::new(argument), span));
+            },
+            Task::FinishAbs(binder) => {
+                let body = output.pop().expect("abstraction body is scheduled");
+                output.push(Ast::Abs(binder, Box::new(body), span));
+            },
+            Task::FinishColl { count, remainder } => {
+                let start = output.len() - count;
+                let mut elements = output.drain(start..).collect::<Vec<_>>();
+                if let Some(name) = remainder {
+                    elements.push(Ast::Remainder(name, span));
+                }
+                output.push(Ast::Coll(elements, span));
+            },
+            Task::FinishSExp { label, count } => {
+                let start = output.len() - count;
+                let arguments = output.drain(start..).collect();
+                output.push(Ast::SExp(label, arguments, span));
+            },
+        }
     }
-    let values = expect_list(value, path.into())?;
-    let tag = expect_string(
-        values
-            .first()
-            .ok_or_else(|| ValueDecodeError::new(path, "empty AST node"))?,
-        format!("{path}[0]"),
-    )?;
-    match tag {
-        "eval" => {
-            require_len(values, 3, path)?;
-            Ok(Ast::Subst(
-                Box::new(decode_ast(&values[1], &format!("{path}[1]"))?),
-                Box::new(decode_ast(&values[2], &format!("{path}[2]"))?),
-                span,
-            ))
-        },
-        "^" => {
-            require_len(values, 3, path)?;
-            Ok(Ast::Abs(
-                expect_string(&values[1], format!("{path}[1]"))?.to_string(),
-                Box::new(decode_ast(&values[2], &format!("{path}[2]"))?),
-                span,
-            ))
-        },
-        "coll" => {
-            require_len(values, 3, path)?;
-            let mut elements = expect_list(&values[1], format!("{path}[1]"))?
-                .iter()
-                .enumerate()
-                .map(|(index, value)| decode_ast(value, &format!("{path}[1][{index}]")))
-                .collect::<Result<Vec<_>, _>>()?;
-            match &values[2] {
-                RhoValue::Nil => {},
-                RhoValue::String(name) => elements.push(Ast::Remainder(name.clone(), span)),
-                _ => {
-                    return Err(ValueDecodeError::new(
-                        format!("{path}[2]"),
-                        "expected remainder name or Nil",
-                    ))
-                },
-            }
-            Ok(Ast::Coll(elements, span))
-        },
-        label => Ok(Ast::SExp(
-            label.to_string(),
-            values[1..]
-                .iter()
-                .enumerate()
-                .map(|(index, value)| decode_ast(value, &format!("{path}[{}]", index + 1)))
-                .collect::<Result<Vec<_>, _>>()?,
-            span,
-        )),
+    if output.len() != 1 {
+        return Err(ValueDecodeError::new(path, "AST decoder produced an invalid value stack"));
     }
+    Ok(output.pop().expect("checked one AST value"))
 }
 
 fn field<'a>(
@@ -634,27 +1249,69 @@ fn item_to_value(item: &Item) -> RhoValue {
 }
 
 fn ast_to_value(ast: &Ast) -> RhoValue {
-    match ast {
-        Ast::Var(name, _) => string(name.clone()),
-        Ast::SExp(label, arguments, _) => {
-            let mut node = Vec::with_capacity(arguments.len() + 1);
-            node.push(string(label.clone()));
-            node.extend(arguments.iter().map(ast_to_value));
-            list(node)
-        },
-        Ast::Subst(abstraction, argument, _) => {
-            list([string("eval"), ast_to_value(abstraction), ast_to_value(argument)])
-        },
-        Ast::Abs(binder, body, _) => {
-            list([string("^"), string(binder.clone()), ast_to_value(body)])
-        },
-        Ast::Coll(elements, _) => {
-            list([string("coll"), list(elements.iter().map(ast_to_value)), RhoValue::Nil])
-        },
-        Ast::Remainder(name, _) => {
-            list([string("coll"), list(std::iter::empty()), string(name.clone())])
-        },
+    enum Task<'a> {
+        Visit(&'a Ast),
+        FinishSExp { label: &'a str, count: usize },
+        FinishSubst,
+        FinishAbs(&'a str),
+        FinishColl { count: usize, remainder: Option<&'a str> },
     }
+
+    let mut tasks = vec![Task::Visit(ast)];
+    let mut output = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Ast::Var(name, _)) => output.push(string(name.clone())),
+            Task::Visit(Ast::Remainder(name, _)) => {
+                output.push(list([string("coll"), list(std::iter::empty()), string(name.clone())]))
+            },
+            Task::Visit(Ast::SExp(label, arguments, _)) => {
+                tasks.push(Task::FinishSExp { label, count: arguments.len() });
+                tasks.extend(arguments.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(Ast::Subst(abstraction, argument, _)) => {
+                tasks.push(Task::FinishSubst);
+                tasks.push(Task::Visit(argument));
+                tasks.push(Task::Visit(abstraction));
+            },
+            Task::Visit(Ast::Abs(binder, body, _)) => {
+                tasks.push(Task::FinishAbs(binder));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(Ast::Coll(elements, _)) => {
+                let remainder = elements.last().and_then(|element| match element {
+                    Ast::Remainder(name, _) => Some(name.as_str()),
+                    _ => None,
+                });
+                let count = elements.len() - usize::from(remainder.is_some());
+                tasks.push(Task::FinishColl { count, remainder });
+                tasks.extend(elements[..count].iter().rev().map(Task::Visit));
+            },
+            Task::FinishSExp { label, count } => {
+                let start = output.len() - count;
+                let mut node = Vec::with_capacity(count + 1);
+                node.push(string(label));
+                node.extend(output.drain(start..));
+                output.push(list(node));
+            },
+            Task::FinishSubst => {
+                let argument = output.pop().expect("substitution argument is scheduled");
+                let abstraction = output.pop().expect("substitution abstraction is scheduled");
+                output.push(list([string("eval"), abstraction, argument]));
+            },
+            Task::FinishAbs(binder) => {
+                let body = output.pop().expect("abstraction body is scheduled");
+                output.push(list([string("^"), string(binder), body]));
+            },
+            Task::FinishColl { count, remainder } => {
+                let start = output.len() - count;
+                let elements = list(output.drain(start..));
+                let remainder = remainder.map(string).unwrap_or(RhoValue::Nil);
+                output.push(list([string("coll"), elements, remainder]));
+            },
+        }
+    }
+    output.pop().expect("AST encoder produces one value")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -663,11 +1320,24 @@ pub enum LoweringError {
     UnknownArgument { rule: String, argument: String },
     ProjectionOfNonCollection { rule: String, argument: String },
     DuplicateArgument { rule: String, argument: String },
+    InvalidCanonical(ValueDecodeError),
     InvalidCore(Vec<core::ValidationError>),
 }
 
 /// Lower an elaborated presentation into the backend-neutral parser IR.
 pub fn presentation_to_core(
+    name: &str,
+    presentation: &Presentation,
+) -> Result<core::GrammarCoreV1, LoweringError> {
+    let value =
+        presentation_to_value(name, presentation).map_err(LoweringError::InvalidCanonical)?;
+    let schema =
+        crate::schema::decode_composed(&value, None).map_err(LoweringError::InvalidCanonical)?;
+    schema.lower().map_err(LoweringError::InvalidCanonical)
+}
+
+#[allow(dead_code)]
+fn presentation_to_core_legacy(
     name: &str,
     presentation: &Presentation,
 ) -> Result<core::GrammarCoreV1, LoweringError> {
@@ -703,6 +1373,8 @@ pub fn presentation_to_core(
         id: core::TokenId(0),
         name: "Identifier".into(),
         pattern: core::TokenPattern::Builtin(core::BuiltinToken::Identifier),
+        category: None,
+        evaluation: None,
         priority: 0,
         mode: core::ModeId(0),
         channel: "main".into(),
@@ -718,6 +1390,8 @@ pub fn presentation_to_core(
             id,
             name: format!("literal/{text}"),
             pattern: core::TokenPattern::Literal(text),
+            category: None,
+            evaluation: None,
             priority: 1,
             mode: core::ModeId(0),
             channel: "main".into(),
@@ -757,6 +1431,7 @@ pub fn presentation_to_core(
                         },
                         Argument::Collection { element, kind } => core::SyntaxItem::Collection {
                             slot: argument.clone(),
+                            key: None,
                             element: *element,
                             separator: String::new(),
                             kind: *kind,
@@ -779,6 +1454,7 @@ pub fn presentation_to_core(
                     };
                     syntax.push(core::SyntaxItem::Collection {
                         slot: arg.clone(),
+                        key: None,
                         element: *element,
                         separator: sep.clone(),
                         kind: *kind,
@@ -794,6 +1470,9 @@ pub fn presentation_to_core(
             constructor,
             input_arity,
             fields: (0..input_arity).map(core::FieldSource::Input).collect(),
+            evaluation: None,
+            evaluation_mode: None,
+            tier: None,
         });
         output.productions.push(core::Production {
             id: core::ProductionId(index as u32),
@@ -939,18 +1618,80 @@ mod tests {
             }],
             ..Presentation::default()
         };
-        let value = presentation_to_value("Tiny", &presentation);
-        let RhoValue::Map(map) = value else {
+        let value = presentation_to_value("Tiny", &presentation).expect("canonical value");
+        let RhoValue::Map(map) = &value else {
             panic!("spec must be a map")
         };
         assert_eq!(map.get("mettail"), Some(&string("language/2")));
         let core = presentation_to_core("Tiny", &presentation).expect("valid core");
-        let value = presentation_to_value("Tiny", &presentation);
+        let value = presentation_to_value("Tiny", &presentation).expect("canonical value");
         let decoded = value_to_core(&value).expect("canonical value lowers");
         assert_eq!(
             core.fingerprint().expect("surface fingerprint"),
             decoded.fingerprint().expect("value fingerprint")
         );
         assert_eq!(core.productions.len(), 1);
+    }
+
+    #[test]
+    fn rho_value_lifecycle_is_stack_safe_beyond_the_admission_bound() {
+        std::thread::Builder::new()
+            .name("rho-value-lifecycle-small-stack".into())
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut value = RhoValue::Nil;
+                for _ in 0..20_000 {
+                    value = RhoValue::List(vec![value]);
+                }
+                let cloned = value.clone();
+                assert_eq!(value, cloned);
+                assert_eq!(value.cmp(&cloned), std::cmp::Ordering::Equal);
+                assert_eq!(value.fingerprint(), cloned.fingerprint());
+                assert!(format!("{value:?}").starts_with("List([List(["));
+                let error = admit_canonical_value(&value).expect_err("depth must be rejected");
+                assert!(error.message.contains("nesting exceeds"));
+                drop(cloned);
+                drop(value);
+            })
+            .expect("spawn lifecycle worker")
+            .join()
+            .expect("lifecycle operations must not overflow or panic");
+    }
+
+    #[test]
+    fn canonical_data_merge_is_stack_safe_beyond_the_admission_bound() {
+        std::thread::Builder::new()
+            .name("rho-value-merge-small-stack".into())
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut target = RhoValue::String("leaf".into());
+                let mut incoming = RhoValue::String("leaf".into());
+                for _ in 0..20_000 {
+                    target = RhoValue::Map(BTreeMap::from([("next".into(), target)]));
+                    incoming = RhoValue::Map(BTreeMap::from([("next".into(), incoming)]));
+                }
+                merge_values(&mut target, incoming, "$").expect("equal maps merge");
+                let error = admit_canonical_value(&target).expect_err("depth must be rejected");
+                assert!(error.message.contains("nesting exceeds"));
+            })
+            .expect("spawn merge worker")
+            .join()
+            .expect("canonical merge must not overflow or panic");
+    }
+
+    #[test]
+    fn collection_remainder_uses_the_canonical_remainder_slot() {
+        let span = Span { line: 1, col: 1 };
+        let ast = Ast::Coll(
+            vec![Ast::SExp("PZero".into(), Vec::new(), span), Ast::Remainder("rest".into(), span)],
+            span,
+        );
+        let value = ast_to_value(&ast);
+        let RhoValue::List(fields) = &value else {
+            panic!("collection is a tagged list")
+        };
+        assert_eq!(fields.get(2), Some(&RhoValue::String("rest".into())));
+        let decoded = decode_ast(&value, "$.ast").expect("canonical collection decodes");
+        assert_eq!(crate::pres::render_ast(&decoded), "{(PZero), ...rest}");
     }
 }

@@ -369,6 +369,16 @@ jobs:
       - name: rholang parser/runtime corpus gate
         run: cargo test -j1 -p languages --no-default-features --features rholang --test rholang_tests
 
+      - name: In-Rholang MeTTaIL DDL and bounded-WPDA gate
+        run: >-
+          cargo test -j1 -p languages --no-default-features --features rholang
+          --test rholang_mettail_ddl
+
+      - name: Generated Rholang WPDA native-frame budget
+        run: |
+          scripts/verify-wpda-stack-sizes.sh
+          WPDA_STACK_PROFILE=release scripts/verify-wpda-stack-sizes.sh
+
       # The three gates above run doctests as a side effect of plain `cargo test -p …`.
       # The step above them does NOT: `--test rholang_tests` selects exactly that one
       # target, so `languages`' doctests were run by no job on x86 — only by the ARM64
@@ -425,6 +435,10 @@ jobs:
       - name: Rho bridge Rocq gate
         run: |
           opam exec -- sh -lc 'ulimit -Sv 6291456; FORMAL_CAPPED_RUN=1 make -C formal -j1 rocq-rho-bridge'
+
+      - name: Runtime grammar and WPDA dispatch Rocq gate
+        run: |
+          opam exec -- sh -lc 'ulimit -Sv 6291456; FORMAL_CAPPED_RUN=1 make -C formal -j1 rocq-runtime-grammar'
 
       - name: Dovetail Rocq gate
         run: |

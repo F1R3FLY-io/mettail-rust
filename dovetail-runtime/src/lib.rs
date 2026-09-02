@@ -8,6 +8,10 @@
 
 #![forbid(unsafe_code)]
 
+mod semantic_machine_projection;
+
+pub use semantic_machine_projection::*;
+
 use std::any::Any;
 // FxHash (via dovetail's inline hasher) for the per-report root-dedup set: the keys
 // are internal `ExactTermKey`s, so SipHash's DoS resistance is pointless overhead
@@ -333,6 +337,10 @@ impl<F> DovetailCompilerStage<F> {
     }
 }
 
+/// Concrete generated-language compiler stage accepted by [`dovetail_backed`].
+pub type RuntimeDovetailCompilerStage =
+    DovetailCompilerStage<fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String>>;
+
 /// Failure installing a Dovetail backend runner on a generated language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DovetailRuntimeBackedLanguageError {
@@ -417,7 +425,7 @@ where
 /// fingerprint, so a stage built for a different definition is rejected.
 pub fn dovetail_backed<L>(
     inner: L,
-    stage: DovetailCompilerStage<fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String>>,
+    stage: RuntimeDovetailCompilerStage,
 ) -> Result<Box<dyn Language>, DovetailRuntimeBackedLanguageError>
 where
     L: Language + 'static,

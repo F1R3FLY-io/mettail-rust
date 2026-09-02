@@ -1,0 +1,78 @@
+new install(`rho:mettail:install`) in {
+  new parse(`rho:mettail:parse`) in {
+    new installed in {
+      install!(
+        Module InlineDemo {
+          Theory Left() {
+            Types { LeftExpr; }
+            Terms { LeftLiteral . |- "left" : LeftExpr; }
+          }
+          Theory Right() {
+            Types { RightExpr; }
+            Terms { RightLiteral . |- "right" : RightExpr; }
+          }
+          theory Left()
+          theory Right()
+        },
+        *installed
+      ) |
+      for(@{
+        "ok": {
+          "module": "InlineDemo",
+          "exports": [
+            {"name": "Left", "handle": left},
+            {"name": "Right", "handle": right}
+          ],
+          "programs": []
+        }
+      } <- installed) {
+        new leftPositive, leftNegative, leftCrossfire,
+            rightPositive, rightNegative, rightCrossfire,
+            failedInstall in {
+          parse!(["mettail-language-parse/1", left, "left", "LeftExpr", *leftPositive]) |
+          parse!(["mettail-language-parse/1", left, "not-left", "LeftExpr", *leftNegative]) |
+          parse!(["mettail-language-parse/1", left, "right", "LeftExpr", *leftCrossfire]) |
+          parse!(["mettail-language-parse/1", right, "right", "RightExpr", *rightPositive]) |
+          parse!(["mettail-language-parse/1", right, "not-right", "RightExpr", *rightNegative]) |
+          parse!(["mettail-language-parse/1", right, "left", "RightExpr", *rightCrossfire]) |
+          install!(
+            Module MustFailAtomically {
+              Theory ValidPrefix() {
+                Types { PrefixExpr; }
+                Terms { PrefixLiteral . |- "prefix" : PrefixExpr; }
+              }
+              Theory InvalidSuffix() {
+                Types { SuffixExpr; }
+                Terms { InvalidLiteral . |- "suffix" : MissingCategory; }
+              }
+              theory ValidPrefix()
+              theory InvalidSuffix()
+            },
+            *failedInstall
+          ) |
+          for(@result <- leftPositive) {
+            @"OUT"!(["left-positive", result])
+          } |
+          for(@result <- leftNegative) {
+            @"OUT"!(["left-negative", result])
+          } |
+          for(@result <- leftCrossfire) {
+            @"OUT"!(["left-crossfire", result])
+          } |
+          for(@result <- rightPositive) {
+            @"OUT"!(["right-positive", result])
+          } |
+          for(@result <- rightNegative) {
+            @"OUT"!(["right-negative", result])
+          } |
+          for(@result <- rightCrossfire) {
+            @"OUT"!(["right-crossfire", result])
+          } |
+          for(@result <- failedInstall) {
+            @"OUT"!(["atomic-failure", result])
+          }
+        }
+      }
+    }
+  }
+}

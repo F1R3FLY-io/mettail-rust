@@ -141,6 +141,7 @@ pub fn emit_lex_alt_rule_for_fn(
     // src_idx lookup (used by PrefixOp's `body_src_idx` resolution
     // and later by InfixOp's `result_src_idx` etc.).
     let mut prefix_pushes: Vec<TokenStream> = Vec::new();
+    let bp_table = build_bp_table(_language);
     for (cat_src_idx, rules) in per_cat.iter().enumerate() {
         let cat_src_idx_u16 = cat_src_idx as u16;
         for (rule_idx, rule) in rules.iter().enumerate() {
@@ -227,6 +228,8 @@ pub fn emit_lex_alt_rule_for_fn(
                 continue;
             }
             emit_prefix_pushes_for_shape(
+                _language,
+                rule,
                 &shape,
                 cat_src_idx_u16,
                 rule_idx_u16,
@@ -240,6 +243,7 @@ pub fn emit_lex_alt_rule_for_fn(
                     cat_src_idx_u16,
                     rule_idx_u16,
                     categories,
+                    &bp_table,
                     &mut prefix_pushes,
                 );
             }
@@ -289,6 +293,38 @@ pub fn emit_lex_alt_rule_for_fn(
         }
     };
     let infix_arms = emit_infix_lex_alt_rule_arms(_language, per_cat, categories, s1);
+
+    // Native-stack bound: a large grammar can contribute hundreds of prefix
+    // evidence rows.  Emitting all row constructors into one unoptimized Rust
+    // function makes rustc reserve their aggregate temporaries in one native
+    // frame, even though the logical transition is an iterative table scan.
+    // Keep source-order accumulation exactly as before, but compile it as a
+    // fixed-depth sequence of bounded, non-recursive table chunks.  Twenty-four
+    // rows keeps each generated helper comfortably below the engine's 32-KiB
+    // debug-frame budget for the largest shipped grammar.
+    const PREFIX_LEX_ALT_ROWS_PER_CHUNK: usize = 24;
+    let mut prefix_lex_alt_chunk_defs = Vec::<TokenStream>::new();
+    let mut prefix_lex_alt_chunk_calls = Vec::<TokenStream>::new();
+    for (chunk_idx, rows) in prefix_pushes
+        .chunks(PREFIX_LEX_ALT_ROWS_PER_CHUNK)
+        .enumerate()
+    {
+        let helper = quote::format_ident!("__lex_alt_rules_for_prefix_chunk_{chunk_idx}");
+        prefix_lex_alt_chunk_defs.push(quote! {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
+            fn #helper(
+                cat_src_idx: u16,
+                kind: &mettail_prattail::automata::TokenKind,
+                out: &mut Vec<mettail_prattail::wpda_runtime::LexAltRuleInfo>,
+            ) {
+                #( #rows )*
+            }
+        });
+        prefix_lex_alt_chunk_calls.push(quote! {
+            #helper(cat_src_idx, kind, &mut out);
+        });
+    }
 
     // GEN-1 GAP-2 (2026-06-28): spec-derived structural-delimiter + row-separator
     // tables for `prefix_crosscat_lhs_trigger_ahead_scoped`, replacing the
@@ -473,6 +509,8 @@ pub fn emit_lex_alt_rule_for_fn(
             quote! {}
         };
     quote! {
+        #( #prefix_lex_alt_chunk_defs )*
+
         /// M6c.6.4.b (2026-05-14): map `(cat_src_idx, kind)` at
         /// `LexForkSite::PrefixDispatch` to every `LexAltRuleInfo`
         /// carrying the rule index AND a `LexAltRuleKind`
@@ -496,7 +534,7 @@ pub fn emit_lex_alt_rule_for_fn(
             kind: &mettail_prattail::automata::TokenKind,
         ) -> Vec<mettail_prattail::wpda_runtime::LexAltRuleInfo> {
             let mut out = Vec::new();
-            #( #prefix_pushes )*
+            #( #prefix_lex_alt_chunk_calls )*
             out
         }
 
@@ -1604,6 +1642,8 @@ fn emit_prefix_crosscat_lhs_pushes(
 /// `categories` is used for codegen-time category name → src_idx
 /// lookup (e.g., PrefixOp's `body_src_idx`).
 fn emit_prefix_pushes_for_shape(
+    language: &LanguageDef,
+    rule: &GrammarRule,
     shape: &AtomicShape,
     cat_src_idx: u16,
     rule_idx: u16,
@@ -1826,6 +1866,35 @@ fn emit_prefix_pushes_for_shape(
                 }
             });
         },
+        AtomicShape::CrossCatPrefixUnary { trigger, source_cat_name, .. } => {
+            let source_src_idx = categories
+                .iter()
+                .position(|category| category == source_cat_name)
+                .map(|index| index as u16)
+                .unwrap_or(cat_src_idx);
+            let bp_table = build_bp_table(language);
+            let operand_bp = mettail_prattail::binding_power::compute_prefix_bp(
+                source_cat_name,
+                rule.prefix_bp,
+                &bp_table,
+            );
+            let trigger_lit = trigger.as_str();
+            prefix_pushes.push(quote! {
+                match (cat_src_idx, kind) {
+                    (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                        if __t == #trigger_lit => out.push(
+                            mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                rule_idx: #rule_idx,
+                                kind: mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatPrefixUnary {
+                                    source_src_idx: #source_src_idx,
+                                    operand_bp: #operand_bp,
+                                },
+                            }
+                        ),
+                    _ => {},
+                }
+            });
+        },
         // The remaining shapes don't directly consume a single TokenKind
         // via this AtomicShape path. TerminalKeyword's `Fixed(text)` is
         // never a lex-DAG ambiguity producer (terminals are exact byte
@@ -1922,9 +1991,7 @@ fn emit_prefix_pushes_for_shape(
         },
         // CrossCat* delegate via cross-cat dispatch; NonAtomic literal-leading
         // binders go through `emit_binder_prefix_pushes_for_rule` below.
-        AtomicShape::CrossCatProjection { .. }
-        | AtomicShape::CrossCatPrefixUnary { .. }
-        | AtomicShape::NonAtomic => {},
+        AtomicShape::CrossCatProjection { .. } | AtomicShape::NonAtomic => {},
     }
 }
 
@@ -1946,6 +2013,7 @@ fn emit_binder_prefix_pushes_for_rule(
     result_src_idx: u16,
     rule_idx: u16,
     categories: &[String],
+    bp_table: &mettail_prattail::binding_power::BindingPowerTable,
     prefix_pushes: &mut Vec<TokenStream>,
 ) {
     let Some(shape) = classify_binder_in(rule, language) else {
@@ -1977,7 +2045,8 @@ fn emit_binder_prefix_pushes_for_rule(
                 }
             });
         },
-        // L9-3 — a LEADING `b@Tok` custom-kind capture. The opener kind IS the
+        // L9-3 — a LEADING `b@Tok` builtin/custom token-family capture. The
+        // matching kind IS the
         // trigger; register it so the modern lattice prefix dispatch explores
         // the capture reading (the legacy peek-arm only fires on fall-through,
         // which a lex-ambiguous opener suppresses).
@@ -1985,8 +2054,11 @@ fn emit_binder_prefix_pushes_for_rule(
             let kind_name = name.to_string();
             prefix_pushes.push(quote! {
                 match (cat_src_idx, kind) {
-                    (#result_src_idx, mettail_prattail::automata::TokenKind::Custom(ref __k))
-                        if __k == #kind_name => out.push(
+                    (#result_src_idx, __kind)
+                        if mettail_prattail::automata::token_kind_matches_capture_name(
+                            #kind_name,
+                            __kind,
+                        ) => out.push(
                             mettail_prattail::wpda_runtime::LexAltRuleInfo {
                                 rule_idx: #rule_idx,
                                 kind: mettail_prattail::wpda_runtime::LexAltRuleKind::LeadingTokenKindCapture {
@@ -2005,6 +2077,7 @@ fn emit_binder_prefix_pushes_for_rule(
         // opener (e.g. `` lam` `` also lexing as `Ident`).
         Some(SyntaxExpr::GuestBody { open, close, .. }) => {
             let open_kind = open.to_string();
+            let nested_open_kinds = super::guest_body_nested_open_kinds(language, &open_kind);
             let close_kind = close.to_string();
             prefix_pushes.push(quote! {
                 match (cat_src_idx, kind) {
@@ -2015,6 +2088,7 @@ fn emit_binder_prefix_pushes_for_rule(
                                 kind: mettail_prattail::wpda_runtime::LexAltRuleKind::LeadingGuestBody {
                                     body_src_idx: #body_src_idx,
                                     open_kind: #open_kind,
+                                    nested_open_kinds: &[#(#nested_open_kinds),*],
                                     close_kind: #close_kind,
                                 },
                             }
@@ -2022,6 +2096,44 @@ fn emit_binder_prefix_pushes_for_rule(
                     _ => {},
                 }
             });
+        },
+        Some(SyntaxExpr::Param(_)) => {
+            let Some(source_cat_name) = shape.leading_category.as_deref() else {
+                return;
+            };
+            let Some(source_src_idx) = categories
+                .iter()
+                .position(|category| category == source_cat_name)
+                .map(|index| index as u16)
+            else {
+                return;
+            };
+            let result_category = rule.category.to_string();
+            // Same-category led rules are represented by the infix lexical
+            // table and InfixLoop only. Publishing them as prefix lexical
+            // alternatives would recreate the generic-continuation bypass of
+            // their Pratt right power.
+            if super::prefix::same_category_led_left_bp(rule, &result_category, bp_table).is_some()
+            {
+                return;
+            }
+            for first in first_set_of_category(source_cat_name, language) {
+                let pattern = first.pattern;
+                let guard = first.extra_guard.unwrap_or_else(|| quote! { true });
+                prefix_pushes.push(quote! {
+                    match Some(kind.clone()) {
+                        #pattern if cat_src_idx == #result_src_idx && (#guard) => out.push(
+                            mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                rule_idx: #rule_idx,
+                                kind: mettail_prattail::wpda_runtime::LexAltRuleKind::LeadingCategory {
+                                    source_src_idx: #source_src_idx,
+                                },
+                            }
+                        ),
+                        _ => {},
+                    }
+                });
+            }
         },
         _ => {},
     }
@@ -2159,9 +2271,20 @@ fn emit_infix_lex_alt_rule_arms(
                     Some(emit_infix_lex_alt_info(g))
                 })
                 .collect();
+            let info_count = infos.len();
+            let info_pushes = infos.iter().map(|info| {
+                quote! {
+                    __lex_alt_infos.push(#info);
+                }
+            });
             quote! {
                 (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
-                    if __t == #terminal => vec![ #( #infos ),* ],
+                    if __t == #terminal => {
+                        let mut __lex_alt_infos =
+                            ::std::vec::Vec::with_capacity(#info_count);
+                        #( #info_pushes )*
+                        __lex_alt_infos
+                    },
             }
         })
         .collect()
@@ -2207,5 +2330,157 @@ fn emit_infix_lex_alt_info(g: &GroupedOp<'_>) -> TokenStream {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_ast::grammar::{rule_fixture, GrammarItem, SyntaxExpr, TermParam};
+    use mettail_ast::types::TypeExpr;
+    use proc_macro2::Span;
+    use syn::Ident;
+
+    fn empty_lang() -> LanguageDef {
+        LanguageDef {
+            name: Ident::new("LexAltPhaseTest", Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
+    fn terminal_rule(label: &str, category: &str, text: &str) -> GrammarRule {
+        GrammarRule {
+            items: vec![GrammarItem::Terminal(text.into())],
+            ..rule_fixture(
+                Ident::new(label, Span::call_site()),
+                Ident::new(category, Span::call_site()),
+            )
+        }
+    }
+
+    fn judgment_rule(
+        label: &str,
+        category: &str,
+        params: &[(&str, &str)],
+        syntax: Vec<SyntaxExpr>,
+    ) -> GrammarRule {
+        GrammarRule {
+            term_context: Some(
+                params
+                    .iter()
+                    .map(|(name, ty)| TermParam::Simple {
+                        name: Ident::new(name, Span::call_site()),
+                        ty: TypeExpr::Base(Ident::new(ty, Span::call_site())),
+                    })
+                    .collect(),
+            ),
+            syntax_pattern: Some(syntax),
+            ..rule_fixture(
+                Ident::new(label, Span::call_site()),
+                Ident::new(category, Span::call_site()),
+            )
+        }
+    }
+
+    fn emitted_lex_alt_tables(
+        mut language: LanguageDef,
+        categories: Vec<String>,
+        per_cat: Vec<Vec<GrammarRule>>,
+    ) -> String {
+        language.terms = per_cat.iter().flatten().cloned().collect();
+        let spine = super::super::factoring::build_spine_emission(&language, &categories, &per_cat);
+        emit_lex_alt_rule_for_fn(&language, &per_cat, &categories, &spine).to_string()
+    }
+
+    fn lex_alt_surfaces(emitted: &str) -> (&str, &str) {
+        emitted
+            .split_once("fn lex_alt_rules_for_infix")
+            .expect("generator must emit distinct prefix and infix lexical tables")
+    }
+
+    #[test]
+    fn same_category_led_rule_exists_only_on_the_lex_alt_infix_surface() {
+        let atom = terminal_rule("Atom", "Expr", "a");
+        let parallel = judgment_rule(
+            "Parallel",
+            "Expr",
+            &[("left", "Expr"), ("right", "Expr")],
+            vec![
+                SyntaxExpr::Param(Ident::new("left", Span::call_site())),
+                SyntaxExpr::Literal("|".into()),
+                SyntaxExpr::Param(Ident::new("right", Span::call_site())),
+            ],
+        );
+        let emitted = emitted_lex_alt_tables(
+            empty_lang(),
+            vec!["Expr".to_string()],
+            vec![vec![atom, parallel]],
+        );
+
+        let (prefix_surface, infix_surface) = lex_alt_surfaces(&emitted);
+
+        assert_eq!(
+            prefix_surface.matches("rule_idx : 1u16").count(),
+            0,
+            "same-category led rule leaked into prefix lexical dispatch: {prefix_surface}",
+        );
+        assert_eq!(
+            infix_surface.matches("rule_idx : 1u16").count(),
+            1,
+            "same-category led rule must have one infix lexical entry: {infix_surface}",
+        );
+        assert!(infix_surface.contains("LexAltRuleKind :: InfixOp"), "{infix_surface}",);
+    }
+
+    #[test]
+    fn cross_category_closed_rule_remains_on_the_lex_alt_prefix_surface() {
+        let proc_atom = terminal_rule("ProcAtom", "Proc", "p");
+        let send = judgment_rule(
+            "Send",
+            "Proc",
+            &[("name", "Name"), ("body", "Proc")],
+            vec![
+                SyntaxExpr::Param(Ident::new("name", Span::call_site())),
+                SyntaxExpr::Literal("!".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Param(Ident::new("body", Span::call_site())),
+                SyntaxExpr::Literal(")".into()),
+            ],
+        );
+        let name_atom = terminal_rule("NameAtom", "Name", "n");
+        let emitted = emitted_lex_alt_tables(
+            empty_lang(),
+            vec!["Proc".to_string(), "Name".to_string()],
+            vec![vec![proc_atom, send], vec![name_atom]],
+        );
+
+        let (prefix_surface, infix_surface) = lex_alt_surfaces(&emitted);
+
+        assert!(
+            prefix_surface.contains("rule_idx : 1u16"),
+            "cross-category closed rule was lost from prefix lexical dispatch: {prefix_surface}",
+        );
+        assert!(
+            prefix_surface.contains("LexAltRuleKind :: LeadingCategory"),
+            "cross-category closed delegate was lost from prefix lexical dispatch: {prefix_surface}",
+        );
+        assert!(
+            infix_surface.contains("rule_idx : 1u16"),
+            "source-category led dispatch was accidentally removed: {infix_surface}",
+        );
     }
 }

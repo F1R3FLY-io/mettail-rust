@@ -183,26 +183,30 @@ pub fn run_pipeline(spec: &LanguageSpec) -> Result<TokenStream, String> {
 pub fn run_pipeline_with_analysis(
     spec: &LanguageSpec,
 ) -> Result<(TokenStream, crate::PipelineAnalysis), String> {
+    run_pipeline_with_analysis_for_prediction_exports(spec, None)
+}
+
+/// Run the full pipeline while restricting emitted prediction-WFST statics to
+/// an explicit public category projection.
+///
+/// Recognition, recovery, ambiguity analysis, and [`PipelineAnalysis`] still
+/// use every grammar category.  This parameter controls only the runtime
+/// tooling symbols written into generated Rust. `None` preserves the historical
+/// all-category API; `Some(exports)` emits exactly the named category statics.
+pub(crate) fn run_pipeline_with_analysis_for_prediction_exports(
+    spec: &LanguageSpec,
+    exported_prediction_categories: Option<&[String]>,
+) -> Result<(TokenStream, crate::PipelineAnalysis), String> {
     // Validate the currently projected common GrammarCore subset while the
     // typed Rust emitter continues to read `LanguageSpec`. Expanding this
     // projection to every LanguageSpec field is a parity gate before the core
     // becomes authoritative for compile-time grammar analysis.
     let _grammar_core = spec.to_grammar_core()?;
-    // Stage tracer gated by the `walker-trace` feature + `PRATTAIL_MACRO_TRACE`;
-    // the env read compiles out on the default build (feature off ⇒ `trace` is a
-    // constant `false` and every `stage!` body is dead-stripped). See
-    // `crate::trace` module docs for why a `let` initializer uses this
-    // `#[cfg]`/off-value idiom rather than `trace_diag!`.
-    let trace = {
-        #[cfg(feature = "walker-trace")]
-        {
-            std::env::var("PRATTAIL_MACRO_TRACE").is_ok()
-        }
-        #[cfg(not(feature = "walker-trace"))]
-        {
-            false
-        }
-    };
+    // This pipeline executes in the proc-macro dependency graph, whose feature
+    // set is independent of the generated language crate.  The explicit
+    // environment switch is therefore the authoritative diagnostic gate; a
+    // crate feature here can silently hide the very stage being diagnosed.
+    let trace = std::env::var_os("PRATTAIL_MACRO_TRACE").is_some();
     macro_rules! stage {
         ($name:literal) => {
             if trace {
@@ -229,8 +233,12 @@ pub fn run_pipeline_with_analysis(
     stage!("generate_lexer_code.done");
 
     stage!("generate_parser_code.start");
-    let (parser_code, analysis) =
-        generate_parser_code_with_analysis(&parser_bundle, &variant_map, &ambiguity_info);
+    let (parser_code, analysis) = generate_parser_code_with_analysis(
+        &parser_bundle,
+        &variant_map,
+        &ambiguity_info,
+        exported_prediction_categories,
+    );
     stage!("generate_parser_code.done");
 
     // Finalize: concatenate and parse into TokenStream
@@ -330,7 +338,15 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
         .iter()
         .any(|r| r.has_binder || r.has_multi_binder);
 
-    let lexer_category_names: Vec<String> = spec.types.iter().map(|t| t.name.clone()).collect();
+    // Dollar-application terminals belong only to object categories. Closed
+    // data categories do not participate in the HOL family and therefore must
+    // not acquire `$data`/`$$data(` lexer spellings.
+    let lexer_category_names: Vec<String> = spec
+        .types
+        .iter()
+        .filter(|category| category.has_var)
+        .map(|category| category.name.clone())
+        .collect();
     let lexer_bundle = LexerBundle {
         grammar_rules,
         type_infos,
@@ -590,24 +606,6 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
     (lexer_bundle, parser_bundle)
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Helper functions (moved from lib.rs — only used by the pipeline)
-// ══════════════════════════════════════════════════════════════════════════════
-
-/// Capitalize the first letter of a string.
-pub(crate) fn capitalize_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => {
-            let mut result = String::with_capacity(s.len());
-            result.extend(first.to_uppercase());
-            result.extend(chars);
-            result
-        },
-    }
-}
-
 // Stage 10.5 (2026-05-04): `compute_led_delegation` and `detect_projection_rules`
 // DELETED. Both fed `TrampolineConfig::led_delegation` (Block 4) and were the only
 // callers. Walker (WPDS) handles cross-category LED naturally via Fork+AmbiguityFanout
@@ -623,15 +621,19 @@ pub(crate) fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<Strin
         match item {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
             SyntaxItemSpec::Collection { separator, key_val_separator, .. } => {
-                terminals.push(separator.clone());
+                if !separator.is_empty() {
+                    terminals.push(separator.clone());
+                }
                 if let Some(kv) = key_val_separator {
                     terminals.push(kv.clone());
                 }
             },
             SyntaxItemSpec::BinderCollection { separator, .. } => {
-                terminals.push(separator.clone());
+                if !separator.is_empty() {
+                    terminals.push(separator.clone());
+                }
             },
-            SyntaxItemSpec::Sep { separator, .. } => {
+            SyntaxItemSpec::Sep { separator, .. } if !separator.is_empty() => {
                 terminals.push(separator.clone());
             },
             _ => {},
@@ -734,6 +736,24 @@ pub(crate) fn format_f64(v: f64) -> String {
         "f64::NAN".to_string()
     } else {
         format!("{:?}_f64", v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epsilon_collection_separator_is_not_a_lexer_terminal() {
+        let syntax = vec![SyntaxItemSpec::Collection {
+            param_name: "items".into(),
+            element_category: "Item".into(),
+            separator: String::new(),
+            kind: crate::grammar::ir::CollectionKind::Vec,
+            key_val_separator: None,
+        }];
+
+        assert!(collect_terminals_recursive(&syntax).is_empty());
     }
 }
 

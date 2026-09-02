@@ -400,12 +400,22 @@ fn propagate_follow_from_items(
                 }
             },
             crate::SyntaxItemSpec::Collection { element_category, separator, .. } => {
-                // Inside a collection, the separator follows each element
-                changed |= add_token_to_follow(
-                    follow_sets,
-                    element_category,
-                    &terminal_to_variant_name(separator),
-                );
+                // A separated collection continues with its separator. An
+                // epsilon-separated collection continues directly with the
+                // FIRST set of another element; epsilon is a grammar edge, not
+                // a lexer token.
+                if separator.is_empty() {
+                    if let Some(element_first) = first_sets.get(element_category) {
+                        changed |=
+                            add_first_to_follow(follow_sets, element_category, element_first);
+                    }
+                } else {
+                    changed |= add_token_to_follow(
+                        follow_sets,
+                        element_category,
+                        &terminal_to_variant_name(separator),
+                    );
+                }
                 // After the last element, the closing delimiter (FIRST of suffix) follows
                 let (suffix_first, suffix_nullable) = first_of_suffix(suffix, first_sets);
                 changed |= add_first_to_follow(follow_sets, element_category, &suffix_first);
@@ -418,7 +428,13 @@ fn propagate_follow_from_items(
                 // either the separator (another iteration) or the closing delimiter
                 let (suffix_first, _) = first_of_suffix(suffix, first_sets);
                 let mut body_tail = FirstSet::new();
-                body_tail.insert(&terminal_to_variant_name(separator));
+                if separator.is_empty() {
+                    let (body_first, _) =
+                        first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
+                    body_tail.union(&body_first);
+                } else {
+                    body_tail.insert(&terminal_to_variant_name(separator));
+                }
                 body_tail.union(&suffix_first);
 
                 // Propagate through the body (which may be Zip(Map(...)) or Map(...))
@@ -1793,26 +1809,9 @@ pub fn build_dispatch_action_tables(
             // Unary prefix rules are parsed by the Pratt binding-power path;
             // collection rules are parsed by collection-specific machinery.
             //
-            // Bug fix (2026-06-30): `is_collection` is set for ANY rule with a
-            // collection (`.*sep()`/`Vec`) FIELD, not only for pure collection
-            // LITERALS. The collection-specific machinery, however, only handles
-            // pure literals — a delimited collection surface (`[items]`, `{k:v}`,
-            // `Set(xs)`, …) with no other operands. A normal terminal-first rule
-            // that merely HAS a collection field — e.g. the query receive
-            // `InputBindEmptyQuery : "<-" n "!" "?" "(" args.*sep ")"` (which has a
-            // `NonTerminal(n)` operand before the collection) — is dispatched by
-            // NEITHER path if skipped here (the collection machinery is keyed on a
-            // collection-open token, not `<-`), so it becomes silently unparseable
-            // (`for(<- c!?(a)){…}` → "no accepting branch"). Only skip a rule when
-            // it is a PURE collection literal: `is_collection` AND it has no
-            // `NonTerminal` operand. Otherwise it must go through the prefix
-            // dispatcher on its leading terminal like any other rule.
-            let is_pure_collection_literal = rd_rule.is_collection
-                && !rd_rule
-                    .items
-                    .iter()
-                    .any(|it| matches!(it, crate::grammar::ir::RDSyntaxItem::NonTerminal { .. }));
-            if is_pure_collection_literal || rd_rule.prefix_bp.is_some() {
+            // `is_collection` means that the rule contains a collection field;
+            // only a pure collection literal belongs to the dedicated lane.
+            if rd_rule.is_pure_collection_literal() || rd_rule.prefix_bp.is_some() {
                 continue;
             }
 
@@ -2097,7 +2096,8 @@ pub fn generate_first_set_check(first_set: &FirstSet, token_var: &str) -> TokenS
 pub struct ComposedEntry {
     /// Compact ID of the token kind (from `TokenVariantMap`).
     pub token_kind_id: u8,
-    /// Token variant name (e.g., "KwError", "Ident").
+    /// Canonical token variant name (for example the result of
+    /// `terminal_to_variant_name("error")`, or `Ident`).
     pub token_variant_name: String,
     /// Rule label (e.g., "CompareProc", "VarProc").
     pub rule_label: String,
@@ -2506,9 +2506,14 @@ mod dispatch_action_table_tests {
         );
         let expr = tables.get("Expr").expect("Expr table");
 
-        assert!(expr.contains_key("KwIf"), "ordinary terminal-first RD rule should be included");
+        let if_variant = terminal_to_variant_name("if");
+        let list_variant = terminal_to_variant_name("list");
+        assert!(
+            expr.contains_key(&if_variant),
+            "ordinary terminal-first RD rule should be included"
+        );
         assert!(!expr.contains_key("Minus"), "prefix-BP rule should not be in trie WFST");
-        assert!(!expr.contains_key("KwList"), "collection rule should not be in trie WFST");
+        assert!(!expr.contains_key(&list_variant), "collection rule should not be in trie WFST");
     }
 
     #[test]
@@ -2607,8 +2612,9 @@ mod composed_dispatch_tests {
         let rule_infos = make_rule_infos();
 
         let mut first_sets = HashMap::new();
+        let error_variant = terminal_to_variant_name("error");
         let mut proc_first = FirstSet::new();
-        proc_first.insert("KwError");
+        proc_first.insert(&error_variant);
         proc_first.insert("Ident");
         first_sets.insert("Proc".to_string(), proc_first);
 
@@ -2654,7 +2660,7 @@ mod composed_dispatch_tests {
             "should have composed entry for (Int, 7)"
         );
 
-        // (Proc, 7): should have entries for both KwError→CompareProc and Ident→VarProc
+        // (Proc, 7): both the exact `error` keyword and Ident remain viable.
         let proc_entries = &table[&("Proc".to_string(), 7)];
         assert!(proc_entries.len() >= 2, "Proc should have at least 2 entries");
         // Best entry should be the one with lowest weight
@@ -2838,8 +2844,9 @@ mod composed_dispatch_tests {
         let rule_infos = make_rule_infos();
 
         let mut first_sets = HashMap::new();
+        let error_variant = terminal_to_variant_name("error");
         let mut proc_first = FirstSet::new();
-        proc_first.insert("KwError");
+        proc_first.insert(&error_variant);
         proc_first.insert("Ident");
         first_sets.insert("Proc".to_string(), proc_first);
 
@@ -2852,13 +2859,13 @@ mod composed_dispatch_tests {
 
         // Build a PredictionWfst for "Proc" that assigns specific weights
         let token_map = TokenIdMap::from_names(vec![
-            "KwError".to_string(),
+            error_variant.clone(),
             "Ident".to_string(),
             "Integer".to_string(),
         ]);
         let mut proc_builder = PredictionWfstBuilder::new("Proc", token_map.clone());
         proc_builder.add_action(
-            "KwError",
+            &error_variant,
             crate::prediction::DispatchAction::Direct {
                 rule_label: "CompareProc".to_string(),
                 parse_fn: "parse_CompareProc".to_string(),
@@ -2898,7 +2905,7 @@ mod composed_dispatch_tests {
             "TestGrammar",
         );
 
-        // (Proc, 7): should use WFST weights (0.0+0.5=0.5 for CompareProc via KwError,
+        // (Proc, 7): should use WFST weights (0.0+0.5=0.5 for CompareProc via `error`,
         // 9.0+1.0=10.0 for VarProc via Ident)
         let proc_entries = &table[&("Proc".to_string(), 7)];
         assert!(

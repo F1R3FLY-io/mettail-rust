@@ -7,7 +7,8 @@ use crate::gen::native::{native_type_to_string, NativeType};
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
 use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::{
-    generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
+    category_has_var_variant, generate_literal_label, generate_var_label, is_literal_rule,
+    literal_rule_nonterminal,
 };
 /// Generate eval() method for native types
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
@@ -390,9 +391,11 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             });
         }
         // PDA Var arm: eagerly bail via `return None`.
-        pda_visit_arms.push(quote! {
-            #category::#var_label(_) => return None,
-        });
+        if category_has_var_variant(category, language) {
+            pda_visit_arms.push(quote! {
+                #category::#var_label(_) => return None,
+            });
+        }
 
         // Collection categories delegate all per-rule evaluation to the Ascent
         // fold pipeline, which runs with different param types than `.eval()`
@@ -557,16 +560,15 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         },
                                     ));
                                 },
-                                CaptureFieldKind::GuestBody { .. } => {
+                                CaptureFieldKind::GuestBody { kind, .. } => {
                                     pats.push(quote! { #name });
+                                    let mettail_ast::grammar::DelimitedRegionKind::Flt = kind;
+                                    let storage = quote! {
+                                        ::std::sync::Arc<::mettail_runtime::FltNode>
+                                    };
                                     fields.push((
                                         name,
-                                        CapturePdaKind::Opaque {
-                                            storage: quote! {
-                                                ::std::sync::Arc<::mettail_runtime::FltNode>
-                                            },
-                                            optional: f.optional,
-                                        },
+                                        CapturePdaKind::Opaque { storage, optional: f.optional },
                                     ));
                                 },
                                 CaptureFieldKind::Term(ty) => {

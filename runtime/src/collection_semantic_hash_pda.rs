@@ -1,13 +1,19 @@
-use rustc_hash::FxHasher;
-use std::hash::{Hash, Hasher};
+use mettail_semantic_key::{ContentKey, ContentKeyCacheError, SemanticKeyBuilder};
 
-/// The exact per-element hasher used by the collection semantic-hash contract.
+/// Structural collection-key ABI emitted by this machine.
 ///
-/// Generated term drivers borrow this state through a stable raw pointer while
-/// a [`CollectionSemanticHashPda`] is suspended on their explicit work stack.
-/// The pointer remains valid because the hasher is boxed and the box allocation
-/// does not move when the surrounding PDA frame moves.
-pub type CollectionSemanticHasher = FxHasher;
+/// Version 1 reduced recursive children to finite `u64` digests before sorting
+/// or combining them. Version 2 carries complete exact child keys through the
+/// collection PDA and uses the digest embedded in [`ContentKey`] only as an
+/// accelerator with mandatory exact fallback.
+pub const COLLECTION_SEMANTIC_KEY_ABI_V2: u8 = 2;
+
+/// Exact per-element sink used while a collection PDA is suspended.
+///
+/// Generated term drivers borrow this builder through a stable raw pointer.
+/// The builder is boxed by [`CollectionSemanticHashPda`], so moving the PDA
+/// frame never invalidates that pointer.
+pub type CollectionSemanticHasher = SemanticKeyBuilder;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CollectionSemanticHashItem {
@@ -27,20 +33,14 @@ impl CollectionSemanticHashItem {
     }
 
     #[inline]
-    pub fn pair<T>(primary: &T, secondary: &T) -> Self {
+    pub fn pair<K, V>(primary: &K, secondary: &V) -> Self {
         Self {
-            primary: primary as *const T as *const (),
-            secondary: Some(secondary as *const T as *const ()),
+            primary: primary as *const K as *const (),
+            secondary: Some(secondary as *const V as *const ()),
             repetitions: 1,
         }
     }
 
-    /// A map entry whose value callback intentionally writes no bytes.
-    ///
-    /// Homogeneous set-mode `PathMapLit` uses precisely this representation:
-    /// its wrapper delegates to `HashMapLit::semantic_hash_into`, hashing each
-    /// key normally and each unit value with an empty callback. The resulting
-    /// value digest is therefore `FxHasher::default().finish()`.
     #[inline]
     pub fn key_only<T>(key: &T) -> Self {
         Self::unary(key)
@@ -48,7 +48,6 @@ impl CollectionSemanticHashItem {
 
     #[inline]
     pub fn repeated<T>(value: &T, repetitions: usize) -> Self {
-        assert!(repetitions > 0, "semantic hash bag entries must be present");
         Self {
             primary: value as *const T as *const (),
             secondary: None,
@@ -59,210 +58,288 @@ impl CollectionSemanticHashItem {
 
 #[derive(Debug)]
 pub enum CollectionSemanticHashStep {
-    /// Hash `value` into the supplied stable scratch state, then resume the PDA.
+    /// Write one child into the supplied exact scratch builder, then resume.
     Hash {
+        role: CollectionSemanticHashRole,
         value: *const (),
         state: *mut CollectionSemanticHasher,
     },
+    WriteU8(u8),
     WriteUsize(usize),
-    WriteU64(u64),
+    /// Write a length-framed exact child key at this structural position.
+    WriteKey(ContentKey),
+    Error(ContentKeyCacheError),
     Done,
 }
 
-/// Resumable semantic hashing for unordered recursive collections.
+/// Structural role requested by a suspended collection-key PDA.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollectionSemanticHashRole {
+    Primary,
+    Secondary,
+}
+
+/// Resumable exact semantic-key construction for recursive collections.
 ///
-/// The machine reproduces the existing wrapper contracts without invoking a
-/// recursive term callback:
+/// The machine emits the following versioned structural streams:
 ///
-/// - set: length, sorted semantic element digests;
-/// - map: length, sorted `(key_digest, value_digest)` pairs;
-/// - bag: total count, distinct count, and the four commutative lanes;
-/// - set-mode PathMap: the map machine with an empty unit-value callback.
+/// - set: ABI, kind, entry count, sorted exact element keys;
+/// - map: ABI, kind, entry count, sorted exact key/value pairs;
+/// - bag: ABI, kind, total count, distinct-entry count, sorted exact
+///   element-key/multiplicity pairs;
+/// - PathMap: ABI, PathMap kind, explicit Empty/Set/Map mode, entry count,
+///   then mode-correct exact entries.
 ///
-/// The generated driver owns this PDA in a continuation task. A `Hash` step is
-/// answered by pushing the requested term onto the same driver stack with the
-/// returned scratch state as its target. Consequently arbitrary nesting adds
-/// heap frames, never native call frames.
+/// Sorting compares complete [`ContentKey`] values. Its fixed-width rolling
+/// fingerprint can accelerate equality buckets, but never establishes
+/// identity or order on its own. All traversal remains on the generated
+/// explicit work stack.
 pub struct CollectionSemanticHashPda {
     kind: Kind,
     phase: Phase,
     items: Vec<CollectionSemanticHashItem>,
     item_index: usize,
     emit_index: usize,
-    pending_key_digest: u64,
+    pending_key: Option<ContentKey>,
     scratch: Box<CollectionSemanticHasher>,
     waiting: bool,
-    unary_digests: Vec<u64>,
-    pair_digests: Vec<(u64, u64)>,
-    sum_a: u64,
-    sum_b: u64,
-    xor_a: u64,
-    xor_b: u64,
+    unary_keys: Vec<ContentKey>,
+    pair_keys: Vec<(ContentKey, ContentKey)>,
+    counted_keys: Vec<(ContentKey, usize)>,
+    error: Option<ContentKeyCacheError>,
+    max_key_bytes: usize,
 }
 
 impl CollectionSemanticHashPda {
     pub fn set(items: Vec<CollectionSemanticHashItem>) -> Self {
-        assert!(
-            items.iter().all(|item| item.secondary.is_none()),
-            "set semantic hash items must be unary",
-        );
-        Self::new(Kind::Set, items)
+        Self::set_with_max_bytes(items, usize::MAX)
+    }
+
+    pub fn set_with_max_bytes(
+        items: Vec<CollectionSemanticHashItem>,
+        max_key_bytes: usize,
+    ) -> Self {
+        Self::new(Kind::Set, items, max_key_bytes)
     }
 
     pub fn map(items: Vec<CollectionSemanticHashItem>) -> Self {
-        Self::new(Kind::Map, items)
+        Self::map_with_max_bytes(items, usize::MAX)
+    }
+
+    pub fn map_with_max_bytes(
+        items: Vec<CollectionSemanticHashItem>,
+        max_key_bytes: usize,
+    ) -> Self {
+        Self::new(Kind::Map, items, max_key_bytes)
     }
 
     pub fn bag(total_count: usize, items: Vec<CollectionSemanticHashItem>) -> Self {
-        assert!(
-            items.iter().all(|item| item.secondary.is_none()),
-            "bag semantic hash items must be unary",
-        );
-        assert_eq!(
-            items.iter().map(|item| item.repetitions).sum::<usize>(),
-            total_count,
-            "bag semantic hash total must equal the sum of multiplicities",
-        );
-        Self::new(Kind::Bag { total_count }, items)
+        Self::bag_with_max_bytes(total_count, items, usize::MAX)
     }
 
-    fn new(kind: Kind, items: Vec<CollectionSemanticHashItem>) -> Self {
+    pub fn bag_with_max_bytes(
+        total_count: usize,
+        items: Vec<CollectionSemanticHashItem>,
+        max_key_bytes: usize,
+    ) -> Self {
+        Self::new(Kind::Bag { total_count }, items, max_key_bytes)
+    }
+
+    pub fn path_neutral() -> Self {
+        Self::path_neutral_with_max_bytes(usize::MAX)
+    }
+
+    pub fn path_neutral_with_max_bytes(max_key_bytes: usize) -> Self {
+        Self::new(Kind::PathNeutral, Vec::new(), max_key_bytes)
+    }
+
+    pub fn path_set(items: Vec<CollectionSemanticHashItem>) -> Self {
+        Self::path_set_with_max_bytes(items, usize::MAX)
+    }
+
+    pub fn path_set_with_max_bytes(
+        items: Vec<CollectionSemanticHashItem>,
+        max_key_bytes: usize,
+    ) -> Self {
+        Self::new(Kind::PathSet, items, max_key_bytes)
+    }
+
+    pub fn path_map(items: Vec<CollectionSemanticHashItem>) -> Self {
+        Self::path_map_with_max_bytes(items, usize::MAX)
+    }
+
+    pub fn path_map_with_max_bytes(
+        items: Vec<CollectionSemanticHashItem>,
+        max_key_bytes: usize,
+    ) -> Self {
+        Self::new(Kind::PathMap, items, max_key_bytes)
+    }
+
+    fn new(kind: Kind, items: Vec<CollectionSemanticHashItem>, max_key_bytes: usize) -> Self {
         let capacity = items.len();
+        let error = (!kind.accepts(&items)).then_some(ContentKeyCacheError::ConstructionInvariant);
         Self {
             kind,
-            phase: Phase::Prefix0,
+            phase: Phase::Abi,
             items,
             item_index: 0,
             emit_index: 0,
-            pending_key_digest: 0,
-            scratch: Box::new(CollectionSemanticHasher::default()),
+            pending_key: None,
+            scratch: Box::new(CollectionSemanticHasher::with_max_bytes(max_key_bytes)),
             waiting: false,
-            unary_digests: Vec::with_capacity(capacity),
-            pair_digests: Vec::with_capacity(capacity),
-            sum_a: 0,
-            sum_b: 0,
-            xor_a: 0,
-            xor_b: 0,
+            unary_keys: Vec::with_capacity(capacity),
+            pair_keys: Vec::with_capacity(capacity),
+            counted_keys: Vec::with_capacity(capacity),
+            error,
+            max_key_bytes,
         }
     }
 
     pub fn resume(&mut self) -> CollectionSemanticHashStep {
+        if let Some(error) = self.error.take() {
+            self.phase = Phase::Done;
+            return CollectionSemanticHashStep::Error(error);
+        }
         if self.waiting {
-            self.accept_hash();
+            if let Err(error) = self.accept_hash() {
+                self.phase = Phase::Done;
+                return CollectionSemanticHashStep::Error(error);
+            }
         }
 
         loop {
             match self.phase {
-                Phase::Prefix0 => {
-                    self.phase = match self.kind {
-                        Kind::Set | Kind::Map => Phase::Items,
-                        Kind::Bag { .. } => Phase::Prefix1,
+                Phase::Abi => {
+                    self.phase = Phase::Kind;
+                    return CollectionSemanticHashStep::WriteU8(COLLECTION_SEMANTIC_KEY_ABI_V2);
+                },
+                Phase::Kind => {
+                    self.phase = if self.kind.path_mode().is_some() {
+                        Phase::PathMode
+                    } else {
+                        Phase::Prefix0
                     };
-                    return CollectionSemanticHashStep::WriteUsize(match self.kind {
-                        Kind::Set | Kind::Map => self.items.len(),
+                    return CollectionSemanticHashStep::WriteU8(self.kind.tag());
+                },
+                Phase::PathMode => {
+                    let Some(mode) = self.kind.path_mode() else {
+                        self.phase = Phase::Done;
+                        return CollectionSemanticHashStep::Error(
+                            ContentKeyCacheError::ConstructionInvariant,
+                        );
+                    };
+                    self.phase = Phase::Prefix0;
+                    return CollectionSemanticHashStep::WriteU8(mode);
+                },
+                Phase::Prefix0 => {
+                    let prefix = match self.kind {
                         Kind::Bag { total_count } => total_count,
-                    });
+                        Kind::Set
+                        | Kind::Map
+                        | Kind::PathNeutral
+                        | Kind::PathSet
+                        | Kind::PathMap => self.items.len(),
+                    };
+                    self.phase = if matches!(self.kind, Kind::Bag { .. }) {
+                        Phase::Prefix1
+                    } else {
+                        Phase::Items
+                    };
+                    return CollectionSemanticHashStep::WriteUsize(prefix);
                 },
                 Phase::Prefix1 => {
                     self.phase = Phase::Items;
                     return CollectionSemanticHashStep::WriteUsize(self.items.len());
                 },
-                Phase::Items => match self.kind {
-                    Kind::Set => {
-                        if self.item_index == self.items.len() {
-                            self.unary_digests.sort_unstable();
+                Phase::Items => {
+                    if self.item_index == self.items.len() {
+                        self.unary_keys.sort();
+                        self.pair_keys.sort();
+                        self.counted_keys.sort();
+                        self.phase = Phase::Emit;
+                        continue;
+                    }
+                    let item = self.items[self.item_index];
+                    let pending = match self.kind {
+                        Kind::Set | Kind::PathSet => PendingHash::Unary,
+                        Kind::Map | Kind::PathMap => PendingHash::MapKey,
+                        Kind::Bag { .. } => PendingHash::BagElement,
+                        Kind::PathNeutral => {
                             self.phase = Phase::Emit;
                             continue;
-                        }
-                        return self.request_hash(
-                            self.items[self.item_index].primary,
-                            PendingHash::SetElement,
-                            CollectionSemanticHasher::default(),
-                        );
-                    },
-                    Kind::Map => {
-                        if self.item_index == self.items.len() {
-                            self.pair_digests.sort_unstable();
-                            self.phase = Phase::Emit;
-                            continue;
-                        }
-                        return self.request_hash(
-                            self.items[self.item_index].primary,
-                            PendingHash::MapKey,
-                            CollectionSemanticHasher::default(),
-                        );
-                    },
-                    Kind::Bag { .. } => {
-                        if self.item_index == self.items.len() {
-                            self.phase = Phase::Emit;
-                            continue;
-                        }
-                        return self.request_hash(
-                            self.items[self.item_index].primary,
-                            PendingHash::BagA,
-                            CollectionSemanticHasher::with_seed(0),
-                        );
-                    },
+                        },
+                    };
+                    return self.request_hash(
+                        item.primary,
+                        CollectionSemanticHashRole::Primary,
+                        pending,
+                    );
                 },
                 Phase::MapValue => {
-                    let item = self.items[self.item_index];
-                    if let Some(value) = item.secondary {
-                        return self.request_hash(
-                            value,
-                            PendingHash::MapValue,
-                            CollectionSemanticHasher::default(),
+                    let Some(value) = self
+                        .items
+                        .get(self.item_index)
+                        .and_then(|item| item.secondary)
+                    else {
+                        self.phase = Phase::Done;
+                        return CollectionSemanticHashStep::Error(
+                            ContentKeyCacheError::ConstructionInvariant,
                         );
-                    }
-                    let empty_digest = CollectionSemanticHasher::default().finish();
-                    self.pair_digests
-                        .push((self.pending_key_digest, empty_digest));
-                    self.item_index += 1;
-                    self.phase = Phase::Items;
-                },
-                Phase::BagB => {
-                    let item = self.items[self.item_index];
-                    let mut state = CollectionSemanticHasher::with_seed(0x9e37_79b9_7f4a_7c15usize);
-                    item.repetitions.hash(&mut state);
-                    return self.request_hash(item.primary, PendingHash::BagB, state);
+                    };
+                    return self.request_hash(
+                        value,
+                        CollectionSemanticHashRole::Secondary,
+                        PendingHash::MapValue,
+                    );
                 },
                 Phase::Emit => match self.kind {
-                    Kind::Set => {
-                        let Some(&digest) = self.unary_digests.get(self.emit_index) else {
+                    Kind::Set | Kind::PathSet => {
+                        let Some(key) = self.unary_keys.get(self.emit_index).cloned() else {
                             self.phase = Phase::Done;
                             continue;
                         };
                         self.emit_index += 1;
-                        return CollectionSemanticHashStep::WriteU64(digest);
+                        return CollectionSemanticHashStep::WriteKey(key);
                     },
-                    Kind::Map => {
+                    Kind::Map | Kind::PathMap => {
                         let flat_index = self.emit_index;
-                        let Some(&(key, value)) = self.pair_digests.get(flat_index / 2) else {
+                        let Some((key, value)) = self.pair_keys.get(flat_index / 2) else {
                             self.phase = Phase::Done;
                             continue;
                         };
                         self.emit_index += 1;
-                        return CollectionSemanticHashStep::WriteU64(if flat_index % 2 == 0 {
-                            key
+                        return CollectionSemanticHashStep::WriteKey(if flat_index % 2 == 0 {
+                            key.clone()
                         } else {
-                            value
+                            value.clone()
                         });
                     },
                     Kind::Bag { .. } => {
-                        let lanes = [self.sum_a, self.sum_b, self.xor_a, self.xor_b];
-                        let Some(&lane) = lanes.get(self.emit_index) else {
+                        let flat_index = self.emit_index;
+                        let Some((key, count)) = self.counted_keys.get(flat_index / 2) else {
                             self.phase = Phase::Done;
                             continue;
                         };
                         self.emit_index += 1;
-                        return CollectionSemanticHashStep::WriteU64(lane);
+                        return if flat_index % 2 == 0 {
+                            CollectionSemanticHashStep::WriteKey(key.clone())
+                        } else {
+                            CollectionSemanticHashStep::WriteUsize(*count)
+                        };
+                    },
+                    Kind::PathNeutral => {
+                        self.phase = Phase::Done;
+                        continue;
                     },
                 },
-                Phase::PendingSetElement
+                Phase::PendingUnary
                 | Phase::PendingMapKey
                 | Phase::PendingMapValue
-                | Phase::PendingBagA
-                | Phase::PendingBagB => {
-                    panic!("collection semantic hash PDA advanced before its requested hash")
+                | Phase::PendingBagElement => {
+                    self.phase = Phase::Done;
+                    return CollectionSemanticHashStep::Error(
+                        ContentKeyCacheError::ConstructionInvariant,
+                    );
                 },
                 Phase::Done => return CollectionSemanticHashStep::Done,
             }
@@ -272,51 +349,50 @@ impl CollectionSemanticHashPda {
     fn request_hash(
         &mut self,
         value: *const (),
+        role: CollectionSemanticHashRole,
         pending: PendingHash,
-        state: CollectionSemanticHasher,
     ) -> CollectionSemanticHashStep {
-        *self.scratch = state;
+        *self.scratch = CollectionSemanticHasher::with_max_bytes(self.max_key_bytes);
         self.phase = pending.phase();
         self.waiting = true;
-        CollectionSemanticHashStep::Hash { value, state: &mut *self.scratch }
+        CollectionSemanticHashStep::Hash { role, value, state: &mut *self.scratch }
     }
 
-    fn accept_hash(&mut self) {
+    fn accept_hash(&mut self) -> Result<(), ContentKeyCacheError> {
         self.waiting = false;
+        let key = std::mem::take(&mut *self.scratch).into_key()?;
         match self.phase {
-            Phase::PendingSetElement => {
-                self.unary_digests.push(self.scratch.finish());
+            Phase::PendingUnary => {
+                self.unary_keys.push(key);
                 self.item_index += 1;
                 self.phase = Phase::Items;
+                Ok(())
             },
             Phase::PendingMapKey => {
-                self.pending_key_digest = self.scratch.finish();
+                self.pending_key = Some(key);
                 self.phase = Phase::MapValue;
+                Ok(())
             },
             Phase::PendingMapValue => {
-                self.pair_digests
-                    .push((self.pending_key_digest, self.scratch.finish()));
+                let Some(primary) = self.pending_key.take() else {
+                    return Err(ContentKeyCacheError::ConstructionInvariant);
+                };
+                self.pair_keys.push((primary, key));
                 self.item_index += 1;
                 self.phase = Phase::Items;
+                Ok(())
             },
-            Phase::PendingBagA => {
-                let count = self.items[self.item_index].repetitions;
-                count.hash(&mut *self.scratch);
-                let a = mix_hashbag_lane(self.scratch.finish());
-                self.pending_key_digest = a;
-                self.phase = Phase::BagB;
-            },
-            Phase::PendingBagB => {
-                let a = self.pending_key_digest;
-                let b = mix_hashbag_lane(self.scratch.finish());
-                self.sum_a = self.sum_a.wrapping_add(a);
-                self.sum_b = self.sum_b.wrapping_add(b);
-                self.xor_a ^= a.rotate_left((b & 63) as u32);
-                self.xor_b ^= b.rotate_left((a & 63) as u32);
+            Phase::PendingBagElement => {
+                let Some(count) = self.items.get(self.item_index).map(|item| item.repetitions)
+                else {
+                    return Err(ContentKeyCacheError::ConstructionInvariant);
+                };
+                self.counted_keys.push((key, count));
                 self.item_index += 1;
                 self.phase = Phase::Items;
+                Ok(())
             },
-            _ => panic!("collection semantic hash PDA resumed without a pending hash"),
+            _ => Err(ContentKeyCacheError::ConstructionInvariant),
         }
     }
 }
@@ -326,146 +402,275 @@ enum Kind {
     Set,
     Map,
     Bag { total_count: usize },
+    PathNeutral,
+    PathSet,
+    PathMap,
+}
+
+impl Kind {
+    fn accepts(self, items: &[CollectionSemanticHashItem]) -> bool {
+        match self {
+            Self::Set | Self::PathSet => items
+                .iter()
+                .all(|item| item.secondary.is_none() && item.repetitions == 1),
+            Self::Map | Self::PathMap => items
+                .iter()
+                .all(|item| item.secondary.is_some() && item.repetitions == 1),
+            Self::Bag { total_count } => {
+                let count = items.iter().try_fold(0usize, |sum, item| {
+                    (item.secondary.is_none() && item.repetitions > 0)
+                        .then(|| sum.checked_add(item.repetitions))
+                        .flatten()
+                });
+                count == Some(total_count)
+            },
+            Self::PathNeutral => items.is_empty(),
+        }
+    }
+
+    fn tag(self) -> u8 {
+        match self {
+            Self::Set => 0,
+            Self::Map => 1,
+            Self::Bag { .. } => 2,
+            Self::PathNeutral | Self::PathSet | Self::PathMap => 3,
+        }
+    }
+
+    fn path_mode(self) -> Option<u8> {
+        match self {
+            Self::PathNeutral => Some(0),
+            Self::PathSet => Some(1),
+            Self::PathMap => Some(2),
+            Self::Set | Self::Map | Self::Bag { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum PendingHash {
-    SetElement,
+    Unary,
     MapKey,
     MapValue,
-    BagA,
-    BagB,
+    BagElement,
 }
 
 impl PendingHash {
     fn phase(self) -> Phase {
         match self {
-            Self::SetElement => Phase::PendingSetElement,
+            Self::Unary => Phase::PendingUnary,
             Self::MapKey => Phase::PendingMapKey,
             Self::MapValue => Phase::PendingMapValue,
-            Self::BagA => Phase::PendingBagA,
-            Self::BagB => Phase::PendingBagB,
+            Self::BagElement => Phase::PendingBagElement,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum Phase {
+    Abi,
+    Kind,
+    PathMode,
     Prefix0,
     Prefix1,
     Items,
     MapValue,
-    BagB,
-    PendingSetElement,
+    PendingUnary,
     PendingMapKey,
     PendingMapValue,
-    PendingBagA,
-    PendingBagB,
+    PendingBagElement,
     Emit,
     Done,
-}
-
-#[inline]
-fn mix_hashbag_lane(mut x: u64) -> u64 {
-    x ^= x >> 30;
-    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    x ^= x >> 27;
-    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^ (x >> 31)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{HashBag, HashMapLit, HashSetLit};
-
-    #[derive(Default)]
-    struct TraceHasher(Vec<TraceWrite>);
+    use std::hash::Hash;
 
     #[derive(Debug, PartialEq, Eq)]
     enum TraceWrite {
+        U8(u8),
         Usize(usize),
-        U64(u64),
+        Key(Vec<u8>),
     }
 
-    impl Hasher for TraceHasher {
-        fn finish(&self) -> u64 {
-            0
-        }
-
-        fn write(&mut self, _bytes: &[u8]) {
-            panic!("collection semantic hash oracle unexpectedly used write(bytes)")
-        }
-
-        fn write_usize(&mut self, value: usize) {
-            self.0.push(TraceWrite::Usize(value));
-        }
-
-        fn write_u64(&mut self, value: u64) {
-            self.0.push(TraceWrite::U64(value));
-        }
+    fn exact_key<T: Hash>(value: &T) -> ContentKey {
+        let mut builder = SemanticKeyBuilder::default();
+        value.hash(&mut builder);
+        builder.into_key().expect("test key fits")
     }
 
-    fn run(mut pda: CollectionSemanticHashPda) -> TraceHasher {
-        let mut output = TraceHasher::default();
+    fn run(mut pda: CollectionSemanticHashPda) -> Vec<TraceWrite> {
+        let mut output = Vec::new();
         loop {
             match pda.resume() {
-                CollectionSemanticHashStep::Hash { value, state } => unsafe {
+                CollectionSemanticHashStep::Hash { value, state, .. } => unsafe {
                     (*(value.cast::<i32>())).hash(&mut *state);
                 },
-                CollectionSemanticHashStep::WriteUsize(value) => output.write_usize(value),
-                CollectionSemanticHashStep::WriteU64(value) => output.write_u64(value),
+                CollectionSemanticHashStep::WriteU8(value) => {
+                    output.push(TraceWrite::U8(value));
+                },
+                CollectionSemanticHashStep::WriteUsize(value) => {
+                    output.push(TraceWrite::Usize(value));
+                },
+                CollectionSemanticHashStep::WriteKey(value) => {
+                    output.push(TraceWrite::Key(value.as_bytes().to_vec()));
+                },
+                CollectionSemanticHashStep::Error(error) => {
+                    panic!("valid collection-key machine failed: {error}");
+                },
                 CollectionSemanticHashStep::Done => return output,
             }
         }
     }
 
     #[test]
-    fn set_stream_matches_existing_wrapper_oracle() {
+    fn set_stream_retains_sorted_exact_children() {
         let set: HashSetLit<i32> = [7, -3, 11, 7].into_iter().collect();
         let items = set.iter().map(CollectionSemanticHashItem::unary).collect();
         let actual = run(CollectionSemanticHashPda::set(items));
-        let mut expected = TraceHasher::default();
-        set.semantic_hash_into(&mut expected, Hash::hash);
-        assert_eq!(actual.0, expected.0);
+        let mut keys: Vec<_> = set.iter().map(exact_key).collect();
+        keys.sort();
+        let mut expected = vec![
+            TraceWrite::U8(COLLECTION_SEMANTIC_KEY_ABI_V2),
+            TraceWrite::U8(0),
+            TraceWrite::Usize(keys.len()),
+        ];
+        expected.extend(
+            keys.into_iter()
+                .map(|key| TraceWrite::Key(key.as_bytes().to_vec())),
+        );
+        assert_eq!(actual, expected);
     }
 
     #[test]
-    fn map_stream_matches_existing_wrapper_oracle() {
+    fn map_stream_retains_exact_pair_boundaries() {
         let map: HashMapLit<i32, i32> = [(7, 9), (-3, 4), (11, -8)].into_iter().collect();
         let items = map
             .iter()
             .map(|(key, value)| CollectionSemanticHashItem::pair(key, value))
             .collect();
         let actual = run(CollectionSemanticHashPda::map(items));
-        let mut expected = TraceHasher::default();
-        map.semantic_hash_into(&mut expected, Hash::hash, Hash::hash);
-        assert_eq!(actual.0, expected.0);
-    }
-
-    #[test]
-    fn key_only_map_stream_matches_empty_value_callback() {
-        let map: HashMapLit<i32, ()> = [(7, ()), (-3, ()), (11, ())].into_iter().collect();
-        let items = map
-            .keys()
-            .map(CollectionSemanticHashItem::key_only)
+        let mut pairs: Vec<_> = map
+            .iter()
+            .map(|(key, value)| (exact_key(key), exact_key(value)))
             .collect();
-        let actual = run(CollectionSemanticHashPda::map(items));
-        let mut expected = TraceHasher::default();
-        map.semantic_hash_into(&mut expected, Hash::hash, |_unit, _state| {});
-        assert_eq!(actual.0, expected.0);
+        pairs.sort();
+        let mut expected = vec![
+            TraceWrite::U8(COLLECTION_SEMANTIC_KEY_ABI_V2),
+            TraceWrite::U8(1),
+            TraceWrite::Usize(pairs.len()),
+        ];
+        for (key, value) in pairs {
+            expected.push(TraceWrite::Key(key.as_bytes().to_vec()));
+            expected.push(TraceWrite::Key(value.as_bytes().to_vec()));
+        }
+        assert_eq!(actual, expected);
     }
 
     #[test]
-    fn bag_stream_matches_existing_wrapper_oracle() {
+    fn bag_stream_retains_exact_multiplicities() {
         let bag: HashBag<i32> = [7, -3, 7, 11, -3, 7].into_iter().collect();
         let items = bag
             .iter()
             .map(|(value, count)| CollectionSemanticHashItem::repeated(value, count))
             .collect();
         let actual = run(CollectionSemanticHashPda::bag(bag.len(), items));
-        let mut expected = TraceHasher::default();
-        bag.semantic_hash_into(&mut expected, Hash::hash);
-        assert_eq!(actual.0, expected.0);
+        let mut entries: Vec<_> = bag
+            .iter()
+            .map(|(value, count)| (exact_key(value), count))
+            .collect();
+        entries.sort();
+        let mut expected = vec![
+            TraceWrite::U8(COLLECTION_SEMANTIC_KEY_ABI_V2),
+            TraceWrite::U8(2),
+            TraceWrite::Usize(bag.len()),
+            TraceWrite::Usize(entries.len()),
+        ];
+        for (key, count) in entries {
+            expected.push(TraceWrite::Key(key.as_bytes().to_vec()));
+            expected.push(TraceWrite::Usize(count));
+        }
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn pathmap_empty_set_and_map_modes_are_distinct() {
+        let neutral = run(CollectionSemanticHashPda::path_neutral());
+        let set = run(CollectionSemanticHashPda::path_set(Vec::new()));
+        let map = run(CollectionSemanticHashPda::path_map(Vec::new()));
+        assert_ne!(neutral, set);
+        assert_ne!(neutral, map);
+        assert_ne!(set, map);
+    }
+
+    #[test]
+    fn distinct_child_streams_remain_distinct_exact_keys() {
+        let left = 1i32;
+        let right = 2i32;
+        let left_stream =
+            run(CollectionSemanticHashPda::set(vec![CollectionSemanticHashItem::unary(&left)]));
+        let right_stream =
+            run(CollectionSemanticHashPda::set(vec![CollectionSemanticHashItem::unary(&right)]));
+        assert_ne!(left_stream, right_stream);
+    }
+
+    #[test]
+    fn malformed_collection_shapes_fail_closed_without_panicking() {
+        let key = 1i32;
+        let value = 2i32;
+        let malformed = [
+            CollectionSemanticHashPda::set(vec![CollectionSemanticHashItem::pair(&key, &value)]),
+            CollectionSemanticHashPda::map(vec![CollectionSemanticHashItem::unary(&key)]),
+            CollectionSemanticHashPda::bag(1, vec![CollectionSemanticHashItem::repeated(&key, 0)]),
+            CollectionSemanticHashPda::path_set(vec![CollectionSemanticHashItem::pair(
+                &key, &value,
+            )]),
+            CollectionSemanticHashPda::path_map(vec![CollectionSemanticHashItem::unary(&key)]),
+        ];
+
+        for mut pda in malformed {
+            assert!(matches!(
+                pda.resume(),
+                CollectionSemanticHashStep::Error(ContentKeyCacheError::ConstructionInvariant)
+            ));
+            assert!(matches!(pda.resume(), CollectionSemanticHashStep::Done));
+        }
+    }
+
+    #[test]
+    fn collection_child_key_byte_exhaustion_is_explicit() {
+        let value = 17i32;
+        let mut pda = CollectionSemanticHashPda::set_with_max_bytes(
+            vec![CollectionSemanticHashItem::unary(&value)],
+            1,
+        );
+
+        loop {
+            match pda.resume() {
+                CollectionSemanticHashStep::Hash { value, state, .. } => unsafe {
+                    (*(value.cast::<i32>())).hash(&mut *state);
+                },
+                CollectionSemanticHashStep::Error(ContentKeyCacheError::KeyBytesExhausted {
+                    limit,
+                    requested,
+                }) => {
+                    assert_eq!(limit, 1);
+                    assert!(requested > limit);
+                    break;
+                },
+                CollectionSemanticHashStep::Error(error) => {
+                    panic!("unexpected collection-key error: {error}");
+                },
+                CollectionSemanticHashStep::Done => {
+                    panic!("overlong child key was accepted");
+                },
+                CollectionSemanticHashStep::WriteU8(_)
+                | CollectionSemanticHashStep::WriteUsize(_)
+                | CollectionSemanticHashStep::WriteKey(_) => {},
+            }
+        }
     }
 }

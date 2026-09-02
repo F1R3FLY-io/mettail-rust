@@ -2,7 +2,10 @@
 
 use crate::gen::capture::{field_layout, FieldSlotSource};
 use crate::gen::native::NativeType;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use crate::gen::{
+    category_emits_implicit_var, generate_literal_label, generate_var_label, is_literal_rule,
+    is_var_rule,
+};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, SyntaxExpr, TermParam},
     language::LanguageDef,
@@ -173,7 +176,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         }
 
         // Auto-generate Var variant if no explicit Var rule exists
-        if !has_var_rule {
+        if !has_var_rule && category_emits_implicit_var(cat_name, language) {
             let var_label = generate_var_label(cat_name);
             variants.push(quote! {
                 #var_label(mettail_runtime::OrdVar)
@@ -474,11 +477,13 @@ fn generate_variant_from_term_context(
                 fields.push(quote! { Option<std::string::String> })
             },
             // L9-4: a `*flt(…)` guest body is an opaque `Arc<FltNode>` leaf.
-            (FieldSlotSource::GuestBody { .. }, false) => {
-                fields.push(quote! { std::sync::Arc<mettail_runtime::FltNode> })
-            },
-            (FieldSlotSource::GuestBody { .. }, true) => {
-                fields.push(quote! { Option<std::sync::Arc<mettail_runtime::FltNode>> })
+            (FieldSlotSource::GuestBody { .. }, optional) => {
+                let field = quote! { std::sync::Arc<mettail_runtime::FltNode> };
+                fields.push(if optional {
+                    quote! { Option<#field> }
+                } else {
+                    field
+                });
             },
             (FieldSlotSource::Param(param), false) => {
                 fields.extend(required_param_field(param, language, category))
@@ -564,6 +569,16 @@ fn required_param_field(
 fn optional_param_field(param: &TermParam) -> Vec<TokenStream> {
     match param {
         TermParam::Simple { ty, .. } => {
+            // `Ident` is a builtin token class, not a generated semantic
+            // category.  The optional action path therefore yields the same
+            // exact `Option<String>` carrier as its required sibling; wrapping
+            // it as `Option<Arc<Ident>>` invents a nonexistent AST type and
+            // disagrees with `ActionArgKind::IdentText`.
+            if let TypeExpr::Base(ident) = ty {
+                if NonTerminalKind::classify(&ident.to_string()) == NonTerminalKind::Ident {
+                    return vec![quote! { Option<std::string::String> }];
+                }
+            }
             let inner_ty = type_expr_to_rust_type(ty);
             // Phase 4 #3 (2026-05-12): collections / maps inside Optional emit
             // `Option<Vec<T>>` / `Option<HashBag<T>>` / `Option<HashSet<T>>` /
