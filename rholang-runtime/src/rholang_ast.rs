@@ -29,9 +29,9 @@ use mettail_rholang_codegen::{
     RhoGuardCoverageEvidence, LANGUAGE_FLT_CONSTRUCT_BAND,
 };
 use mettail_runtime::{
-    Binder, FltNode, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
-    RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed,
-    WeightedSeedId,
+    Binder, FltNode, FltPolarity, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata,
+    OrdVar, RuntimeDovetailRunReport, ScopedFltTemplate, Term, TermType, Var, VarTypeInfo,
+    WeightedRewriteSeed, WeightedSeedId,
 };
 use models::create_bit_vector;
 use models::rhoapi::connective::ConnectiveInstance;
@@ -2217,10 +2217,18 @@ impl<'a> Drive<'a> {
                     new_boundvar_par(level as i32, create_bit_vector(&[level]), false),
                 );
             }
-            let (pieces, holes) = runtime_template_parts(node.as_ref());
+            node.validate()
+                .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
+            let template = node.stage(FltPolarity::PositiveConstruction);
+            let (pieces, holes) = runtime_template_parts(template);
             let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
             let request = crate::language_install::encode_flt_construct_call(
-                selector, &pieces, &holes, None, &fills, reply,
+                selector,
+                &pieces,
+                &holes,
+                Some(template.category),
+                &fills,
+                reply,
             );
             let channel = LANGUAGE_FLT_CONSTRUCT_BAND
                 .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);
@@ -2925,10 +2933,17 @@ impl<'a> Drive<'a> {
                 .envs
                 .push(extend_env(self.env(env), &[Binder(ret_var)]));
             let selector = lower_proc_var(&node.selector, self.env(env_new))?;
-            let (pieces, holes) = runtime_template_parts(node.as_ref());
+            node.validate()
+                .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
+            let template = node.stage(FltPolarity::NegativePattern);
+            let (pieces, holes) = runtime_template_parts(template);
             let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
             let request = crate::language_install::encode_flt_pattern_call(
-                selector, &pieces, &holes, None, reply,
+                selector,
+                &pieces,
+                &holes,
+                Some(template.category),
+                reply,
             );
             frames.push(PatternPrepFrame {
                 channel: mettail_rholang_codegen::LANGUAGE_FLT_PATTERN_BAND
@@ -5225,20 +5240,20 @@ fn flt_holes_of(node: &FltNode) -> Vec<FltHole> {
 }
 
 fn runtime_template_parts(
-    node: &FltNode,
+    template: ScopedFltTemplate<'_>,
 ) -> (Vec<RuntimeTemplatePiece>, Vec<NamedRuntimeTemplateHole>) {
-    let pieces = node
+    let pieces = template
         .pieces
         .iter()
         .map(|piece| match piece {
-            mettail_runtime::FltTemplatePiece::Text(text) => {
+            mettail_runtime::FltTemplatePiece::Text { text, .. } => {
                 RuntimeTemplatePiece::Text(text.clone())
             },
-            mettail_runtime::FltTemplatePiece::Hole(id) => RuntimeTemplatePiece::Hole(id.0),
+            mettail_runtime::FltTemplatePiece::Hole { id, .. } => RuntimeTemplatePiece::Hole(id.0),
         })
         .collect();
-    let holes = node
-        .holes
+    let holes = template
+        .telescope
         .iter()
         .map(|hole| NamedRuntimeTemplateHole {
             id: hole.id.0,
@@ -5264,12 +5279,12 @@ fn flt_resolve_and_reflect(
     }
     let guest = env
         .resolver
-        .resolve(&node.tag)
-        .ok_or_else(|| RholangAstLowerError::UnresolvedFltTag(node.tag.clone()))?;
+        .resolve(&node.selector_name)
+        .ok_or_else(|| RholangAstLowerError::UnresolvedFltTag(node.selector_name.clone()))?;
     let fingerprint = guest
         .metadata()
         .definition_fingerprint()
-        .ok_or_else(|| RholangAstLowerError::FltGuestHasNoFingerprint(node.tag.clone()))?
+        .ok_or_else(|| RholangAstLowerError::FltGuestHasNoFingerprint(node.selector_name.clone()))?
         .to_string();
     let ground = guest
         .parse_and_reflect_flt_template(node)

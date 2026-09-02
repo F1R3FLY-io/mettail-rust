@@ -3721,8 +3721,12 @@ fn generate_engine_syntax_pattern_arm_inner(
                         format!("{}{}{}", #field.open_src, #field.body_src, #field.close_src)
                     } else {
                         format!(
-                            "{}{}{}{}",
-                            #field.tag, #open_delim, #field.body_src, #close_delim,
+                            "{}:{}{}{}{}",
+                            #field.selector_name,
+                            #field.category,
+                            #open_delim,
+                            #field.body_src,
+                            #close_delim,
                         )
                     }));
                 });

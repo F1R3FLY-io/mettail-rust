@@ -24,7 +24,7 @@
 //!    position, and maximal munch (not a new disambiguation) is what settles it (`unperturbed_*`).
 //! 3. **The FLT / modal interaction** — the guest modes are RAW and declare their own tokens; the
 //!    comment tokens exist ONLY in the default mode, so a comment marker inside a `` ` ``, ```` ```
-//!    ```` or `box{…}` guest body is verbatim GUEST TEXT and must never be eaten as a host
+//!    ```` or `box:Proc{…}` guest body is verbatim GUEST TEXT and must never be eaten as a host
 //!    comment (`flt_*`). This is the sharpest failure mode of the change.
 //! 4. **The accepted comment language is exactly what the strip removed** — flat (non-nested)
 //!    C-style block comments, `//` to end of line, markers inert inside strings (`language_*`).
@@ -278,14 +278,15 @@ fn flt_line_comment_marker_inside_a_backtick_guest_body_is_guest_text() {
     // host comment tokens live ONLY in the default mode. So `//` inside a guest body can never be
     // lexed as a host comment — it is the guest's own bytes.
     mettail_runtime::clear_var_cache();
-    let term = Proc::parse("lam`App(a // b, c)`").expect("backtick FLT with a `//` in the body");
+    let term =
+        Proc::parse("lam:Proc`App(a // b, c)`").expect("backtick FLT with a `//` in the body");
     assert_eq!(
         flt_node(&term).body_src,
         "App(a // b, c)",
         "the guest body must survive VERBATIM, `//` included"
     );
     assert!(
-        retained_comments("lam`App(a // b, c)`").is_empty(),
+        retained_comments("lam:Proc`App(a // b, c)`").is_empty(),
         "nothing inside a guest body may be routed to the host COMMENTS channel"
     );
 }
@@ -293,15 +294,15 @@ fn flt_line_comment_marker_inside_a_backtick_guest_body_is_guest_text() {
 #[test]
 fn flt_block_comment_marker_inside_a_backtick_guest_body_is_guest_text() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::parse("lam`App(/* not a comment */ x, y)`").expect("backtick FLT");
+    let term = Proc::parse("lam:Proc`App(/* not a comment */ x, y)`").expect("backtick FLT");
     assert_eq!(flt_node(&term).body_src, "App(/* not a comment */ x, y)");
-    assert!(retained_comments("lam`App(/* not a comment */ x, y)`").is_empty());
+    assert!(retained_comments("lam:Proc`App(/* not a comment */ x, y)`").is_empty());
 }
 
 #[test]
 fn flt_comment_marker_inside_a_fence_guest_body_is_guest_text() {
     mettail_runtime::clear_var_cache();
-    let source = "lam```App(a // b, c)```";
+    let source = "lam:Proc```App(a // b, c)```";
     let term = Proc::parse(source).expect("fence FLT with a `//` in the body");
     assert_eq!(flt_node(&term).body_src, "App(a // b, c)");
     assert!(retained_comments(source).is_empty());
@@ -310,7 +311,7 @@ fn flt_comment_marker_inside_a_fence_guest_body_is_guest_text() {
 #[test]
 fn flt_comment_marker_inside_a_brace_guest_body_is_guest_text() {
     mettail_runtime::clear_var_cache();
-    let source = "box{App(a // b, c)}";
+    let source = "box:Proc{App(a // b, c)}";
     let term = Proc::parse(source).expect("brace FLT with a `//` in the body");
     assert_eq!(flt_node(&term).body_src, "App(a // b, c)");
     assert!(retained_comments(source).is_empty());
@@ -321,7 +322,8 @@ fn flt_guest_body_with_a_marker_holds_its_typed_holes() {
     // The guest body's `${…}` holes must still be recognized when a comment marker sits beside
     // them — routing must not disturb the RAW mode's own tokenization at all.
     mettail_runtime::clear_var_cache();
-    let term = Proc::parse("lam`App(${f} // pick, K)`").expect("backtick FLT with hole + marker");
+    let term =
+        Proc::parse("lam:Proc`App(${f} // pick, K)`").expect("backtick FLT with hole + marker");
     let node = flt_node(&term);
     assert_eq!(node.body_src, "App(${f} // pick, K)");
     assert_eq!(node.holes.len(), 1, "the typed hole must still bind");
@@ -333,10 +335,10 @@ fn flt_a_host_comment_may_CONTAIN_an_flt_opener_without_opening_a_guest_mode() {
     // The mirror direction: a comment is the maximal munch at `//`, so the mode map never sees the
     // backtick inside it and no guest mode is pushed. Without this, an unbalanced backtick in a
     // comment (the demo files are FULL of them) would report an unterminated guest region.
-    let source = "// mentions lam`App(x, y)` in prose\n{0 | 1}";
+    let source = "// mentions lam:Proc`App(x, y)` in prose\n{0 | 1}";
     assert_eq!(
         retained_comments(source),
-        vec![("// mentions lam`App(x, y)` in prose".to_string(), 1, 1)],
+        vec![("// mentions lam:Proc`App(x, y)` in prose".to_string(), 1, 1)],
         "the whole line is ONE comment token — the backticks inside it are comment bytes"
     );
     assert_eq!(parse_debug(source), parse_debug("{0 | 1}"));
@@ -501,10 +503,10 @@ const CORPUS: &[&str] = &[
     "@Nil!(@Nil!() / @Nil!())",
     "@Nil!(@Nil!() / @Nil!()) // division plus a comment",
     "@\"a // b\"!(0)",
-    "lam`App(a // b, c)`",
-    "lam`App(${f} // pick, K)`",
-    "box{App(a // b, c)}",
-    "lam```App(a // b, c)```",
+    "lam:Proc`App(a // b, c)`",
+    "lam:Proc`App(${f} // pick, K)`",
+    "box:Proc{App(a // b, c)}",
+    "lam:Proc```App(a // b, c)```",
     "new x in { x!(0) } /* multi\n   line */",
     "// ═══ λ ⟦x⟧ ═══\n{0 | 1}",
 ];

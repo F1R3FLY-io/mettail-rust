@@ -20171,8 +20171,8 @@ where
     /// AFTER the `close_kind` closer, or `None` if the opener kind mismatches or
     /// the run is malformed (the balanced mode stack should prevent the latter).
     ///
-    /// `tag` = the opener text's leading identifier prefix (`lam` from `` lam` ``
-    /// / `lam{` / ``` lam``` ```). `body_src` = the concatenation of the
+    /// The opener begins with an explicit `selector:Category` header followed
+    /// by its delimiter. `body_src` = the concatenation of the
     /// `GuestChunk`/`Hole` token TEXTS. In a RAW guest mode these tokens tile
     /// the region EXACTLY — no inter-token whitespace is skipped (that is
     /// precisely what `raw mode` buys, L9-4) — so the concatenation is
@@ -20181,8 +20181,7 @@ where
     /// token re-enters it). Concatenation (rather than `source_slice`) is used
     /// because the walker's `&dyn WpdaTokenSource` (base trait) exposes only
     /// `peek_text`, not the mutable subtrait's byte-span accessors. `holes` =
-    /// each `${name}`/`${name:Cat}` token, `offset` = its byte position within
-    /// `body_src` (the running length — identical to `hole.start - open.end`).
+    /// each `${name}`/`${name:Cat}` token with body-relative source ranges.
     fn assemble_guest_body(
         &mut self,
         tokens: &dyn WpdaTokenSource,
@@ -20196,10 +20195,44 @@ where
             return None;
         }
         let open_text = tokens.peek_text(open_pos).unwrap_or("");
-        let tag: String = open_text
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
+        let parse_header = |text: &str| -> Option<(String, String)> {
+            let bytes = text.as_bytes();
+            let ident_start = |byte: u8| byte.is_ascii_alphabetic() || byte == b'_';
+            let ident_continue = |byte: u8| ident_start(byte) || byte.is_ascii_digit();
+            if !bytes.first().copied().is_some_and(ident_start) {
+                return None;
+            }
+            let mut cursor = 1usize;
+            while bytes.get(cursor).copied().is_some_and(ident_continue) {
+                cursor += 1;
+            }
+            let selector_end = cursor;
+            if bytes.get(cursor) != Some(&b':') {
+                return None;
+            }
+            cursor += 1;
+            let category_start = cursor;
+            loop {
+                if !bytes.get(cursor).copied().is_some_and(ident_start) {
+                    return None;
+                }
+                cursor += 1;
+                while bytes.get(cursor).copied().is_some_and(ident_continue) {
+                    cursor += 1;
+                }
+                if bytes.get(cursor) == Some(&b'.') {
+                    cursor += 1;
+                    continue;
+                }
+                break;
+            }
+            // At least one delimiter byte must remain after the category.
+            if cursor >= bytes.len() {
+                return None;
+            }
+            Some((text[..selector_end].to_string(), text[category_start..cursor].to_string()))
+        };
+        let (selector_name, category) = parse_header(open_text)?;
         // Opener byte start (for `position`), best-effort via the end byte minus
         // the opener text length; falls back to the token index.
         let position = tokens
@@ -20218,6 +20251,7 @@ where
             std::collections::BTreeMap::new();
         let mut pieces: Vec<crate::wpda_runtime::GuestBodyPiece> = Vec::new();
         let mut pending_text = String::new();
+        let mut pending_text_start = None;
         let mut depth = 0usize;
         loop {
             match tokens.peek_kind(cur) {
@@ -20228,6 +20262,7 @@ where
                     // A nested close: descend one level; its `}` is body content.
                     depth -= 1;
                     let text = tokens.peek_text(cur).unwrap_or("");
+                    pending_text_start.get_or_insert(body_src.len());
                     body_src.push_str(text);
                     pending_text.push_str(text);
                     cur = next_of(cur);
@@ -20236,6 +20271,8 @@ where
                     let text = tokens.peek_text(cur).unwrap_or("");
                     if nested_open_kinds.iter().any(|candidate| candidate == kind) {
                         depth += 1;
+                        pending_text_start.get_or_insert(body_src.len());
+                        pending_text.push_str(text);
                     } else if text.len() >= 3 && text.starts_with("${") && text.ends_with('}') {
                         // `${name}` or `${name:Cat}`.
                         let inner = &text[2..text.len() - 1];
@@ -20267,10 +20304,19 @@ where
                             return None;
                         }
                         if !pending_text.is_empty() {
-                            pieces.push(crate::wpda_runtime::GuestBodyPiece::Text(std::mem::take(
-                                &mut pending_text,
-                            )));
+                            let start = pending_text_start.take()?;
+                            pieces.push(crate::wpda_runtime::GuestBodyPiece::Text {
+                                text: std::mem::take(&mut pending_text),
+                                range: crate::wpda_runtime::GuestBodySourceRange {
+                                    start,
+                                    end: body_src.len(),
+                                },
+                            });
                         }
+                        let occurrence_range = crate::wpda_runtime::GuestBodySourceRange {
+                            start: body_src.len(),
+                            end: body_src.len().checked_add(text.len())?,
+                        };
                         let id = match hole_ids.get(&name) {
                             Some((id, prior_category)) if prior_category == &category => *id,
                             Some(_) => return None,
@@ -20281,13 +20327,17 @@ where
                                     id,
                                     name,
                                     category,
-                                    offset: body_src.len(),
+                                    first_occurrence: occurrence_range,
                                 });
                                 id
                             },
                         };
-                        pieces.push(crate::wpda_runtime::GuestBodyPiece::Hole(id));
+                        pieces.push(crate::wpda_runtime::GuestBodyPiece::Hole {
+                            id,
+                            range: occurrence_range,
+                        });
                     } else {
+                        pending_text_start.get_or_insert(body_src.len());
                         pending_text.push_str(text);
                     }
                     body_src.push_str(text);
@@ -20299,11 +20349,18 @@ where
             }
         }
         if !pending_text.is_empty() {
-            pieces.push(crate::wpda_runtime::GuestBodyPiece::Text(pending_text));
+            pieces.push(crate::wpda_runtime::GuestBodyPiece::Text {
+                text: pending_text,
+                range: crate::wpda_runtime::GuestBodySourceRange {
+                    start: pending_text_start?,
+                    end: body_src.len(),
+                },
+            });
         }
         let close_src = tokens.peek_text(cur).unwrap_or("").to_string();
         let node = std::sync::Arc::new(crate::wpda_runtime::GuestBodyData {
-            tag,
+            selector_name,
+            category,
             open_src: open_text.to_string(),
             body_src,
             holes,

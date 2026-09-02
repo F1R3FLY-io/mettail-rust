@@ -94,36 +94,15 @@ fn optional_delimited_region_extract(
     kind: DelimitedRegionKind,
 ) -> TokenStream {
     let DelimitedRegionKind::Flt = kind;
+    let gb = format_ident!("__guest_body");
+    let build = flt_node_from_guest_body(&gb);
     quote! {
         let #value: Option<std::sync::Arc<mettail_runtime::FltNode>> =
             match #parent.as_mut() {
                 Some(parent) => parent.next().and_then(|arg| {
-                    arg.as_guest_body().map(|gb| std::sync::Arc::new(
-                        mettail_runtime::FltNode {
-                            selector: mettail_runtime::OrdVar(mettail_runtime::Var::Free(
-                                mettail_runtime::get_or_create_var(&gb.tag),
-                            )),
-                            tag: gb.tag.clone(),
-                            open_src: gb.open_src.clone(),
-                            body_src: gb.body_src.clone(),
-                            holes: gb.holes.iter().map(|hole| mettail_runtime::FltHole {
-                                id: mettail_runtime::FltHoleId(hole.id),
-                                name: hole.name.clone(),
-                                category: hole.category.clone(),
-                                offset: hole.offset,
-                            }).collect(),
-                            pieces: gb.pieces.iter().map(|piece| match piece {
-                                mettail_prattail::wpda_runtime::GuestBodyPiece::Text(text) =>
-                                    mettail_runtime::FltTemplatePiece::Text(text.clone()),
-                                mettail_prattail::wpda_runtime::GuestBodyPiece::Hole(id) =>
-                                    mettail_runtime::FltTemplatePiece::Hole(
-                                        mettail_runtime::FltHoleId(*id),
-                                    ),
-                            }).collect(),
-                            close_src: gb.close_src.clone(),
-                            position: gb.position,
-                        }
-                    ))
+                    arg.as_guest_body().and_then(|#gb| {
+                        (#build).ok().map(std::sync::Arc::new)
+                    })
                 }),
                 None => None,
             };
@@ -132,37 +111,59 @@ fn optional_delimited_region_extract(
 
 fn required_delimited_region_extract(value: &Ident, kind: DelimitedRegionKind) -> TokenStream {
     let DelimitedRegionKind::Flt = kind;
+    let gb = format_ident!("__guest_body");
+    let build = flt_node_from_guest_body(&gb);
     quote! {
         let #value: std::sync::Arc<mettail_runtime::FltNode> = match iter.next() {
             Some(arg) => match arg.as_guest_body() {
-                Some(gb) => std::sync::Arc::new(mettail_runtime::FltNode {
-                    selector: mettail_runtime::OrdVar(mettail_runtime::Var::Free(
-                        mettail_runtime::get_or_create_var(&gb.tag),
-                    )),
-                    tag: gb.tag.clone(),
-                    open_src: gb.open_src.clone(),
-                    body_src: gb.body_src.clone(),
-                    holes: gb.holes.iter().map(|hole| mettail_runtime::FltHole {
-                        id: mettail_runtime::FltHoleId(hole.id),
-                        name: hole.name.clone(),
-                        category: hole.category.clone(),
-                        offset: hole.offset,
-                    }).collect(),
-                    pieces: gb.pieces.iter().map(|piece| match piece {
-                        mettail_prattail::wpda_runtime::GuestBodyPiece::Text(text) =>
-                            mettail_runtime::FltTemplatePiece::Text(text.clone()),
-                        mettail_prattail::wpda_runtime::GuestBodyPiece::Hole(id) =>
-                            mettail_runtime::FltTemplatePiece::Hole(
-                                mettail_runtime::FltHoleId(*id),
-                            ),
-                    }).collect(),
-                    close_src: gb.close_src.clone(),
-                    position: gb.position,
-                }),
+                Some(#gb) => match #build {
+                    Ok(node) => std::sync::Arc::new(node),
+                    Err(_) => return,
+                },
                 None => return,
             },
             None => return,
         };
+    }
+}
+
+fn flt_node_from_guest_body(gb: &Ident) -> TokenStream {
+    quote! {
+        mettail_runtime::FltNode::from_structural_parts(
+            #gb.selector_name.clone(),
+            #gb.category.clone(),
+            #gb.open_src.clone(),
+            #gb.body_src.clone(),
+            #gb.holes.iter().map(|hole| mettail_runtime::FltHole {
+                id: mettail_runtime::FltHoleId(hole.id),
+                name: hole.name.clone(),
+                category: hole.category.clone(),
+                first_occurrence: mettail_runtime::FltSourceRange {
+                    start: hole.first_occurrence.start,
+                    end: hole.first_occurrence.end,
+                },
+            }).collect(),
+            #gb.pieces.iter().map(|piece| match piece {
+                mettail_prattail::wpda_runtime::GuestBodyPiece::Text { text, range } =>
+                    mettail_runtime::FltTemplatePiece::Text {
+                        text: text.clone(),
+                        range: mettail_runtime::FltSourceRange {
+                            start: range.start,
+                            end: range.end,
+                        },
+                    },
+                mettail_prattail::wpda_runtime::GuestBodyPiece::Hole { id, range } =>
+                    mettail_runtime::FltTemplatePiece::Hole {
+                        id: mettail_runtime::FltHoleId(*id),
+                        range: mettail_runtime::FltSourceRange {
+                            start: range.start,
+                            end: range.end,
+                        },
+                    },
+            }).collect(),
+            #gb.close_src.clone(),
+            #gb.position,
+        )
     }
 }
 

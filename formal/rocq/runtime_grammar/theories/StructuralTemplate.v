@@ -1,4 +1,4 @@
-From Stdlib Require Import List PeanoNat.
+From Stdlib Require Import List PeanoNat Lia.
 Import ListNotations.
 
 Definition HoleId := nat.
@@ -112,6 +112,284 @@ Proof.
   subst inferred.
   apply (Hrespects occurrence declared Hin).
   now rewrite Hid.
+Qed.
+
+(** The host parser records an explicit scoped reference and result category.
+    Neither component is optional in the staged FLT boundary.  Resolution is a
+    function of the current lexical environment; source spellings and registry
+    names therefore cannot add another route. *)
+Section ExplicitScopedRoute.
+  Context {Reference Handle : Type}.
+
+  Record TemplateHeader : Type := {
+    header_reference : Reference;
+    header_category : CategoryId
+  }.
+
+  Definition ScopedEnvironment := Reference -> option Handle.
+
+  Definition resolve_header
+      (environment : ScopedEnvironment) (header : TemplateHeader)
+      : option (Handle * CategoryId) :=
+    match environment (header_reference header) with
+    | Some handle => Some (handle, header_category header)
+    | None => None
+    end.
+
+  Theorem explicit_scoped_route_is_functional :
+    forall environment header left right,
+      resolve_header environment header = Some left ->
+      resolve_header environment header = Some right ->
+      left = right.
+  Proof.
+    intros environment header left right Hleft Hright.
+    congruence.
+  Qed.
+End ExplicitScopedRoute.
+
+(** Polarity belongs to the use site, not to untrusted guest text.  The host
+    stages the same structural capture as either a positive construction or a
+    negative pattern, and the two cases are disjoint by construction. *)
+Inductive TemplatePolarity : Type :=
+| PositiveConstruction
+| NegativePattern.
+
+Theorem construction_and_pattern_polarities_are_disjoint :
+  PositiveConstruction <> NegativePattern.
+Proof.
+  discriminate.
+Qed.
+
+(** Provenance is a half-open byte range in the original host source.  It is
+    diagnostic metadata only: erasing ranges recovers exactly the semantic
+    Text/Hole sequence. *)
+Record SourceRange : Type := {
+  range_start : nat;
+  range_end : nat
+}.
+
+Definition range_valid (range : SourceRange) : Prop :=
+  range_start range <= range_end range.
+
+Record LocatedPiece : Type := {
+  located_piece : TemplatePiece;
+  piece_range : SourceRange
+}.
+
+Fixpoint erase_locations (pieces : list LocatedPiece) : list TemplatePiece :=
+  match pieces with
+  | [] => []
+  | piece :: rest => located_piece piece :: erase_locations rest
+  end.
+
+Fixpoint located_text (pieces : list LocatedPiece) : list GuestChunk :=
+  match pieces with
+  | [] => []
+  | piece :: rest =>
+      match located_piece piece with
+      | TextPiece text => text :: located_text rest
+      | HolePiece _ => located_text rest
+      end
+  end.
+
+Theorem provenance_erasure_preserves_guest_text :
+  forall pieces,
+    template_text (erase_locations pieces) = located_text pieces.
+Proof.
+  intro pieces; induction pieces as [|piece rest IH]; simpl; [reflexivity|].
+  destruct (located_piece piece); simpl; rewrite IH; reflexivity.
+Qed.
+
+(** [ranges_tile_from cursor pieces finish] states that every piece range is
+    valid, ranges are adjacent and source ordered, and together they cover the
+    captured body without overlap or gaps. *)
+Fixpoint ranges_tile_from
+    (cursor : nat) (pieces : list LocatedPiece) (finish : nat) : Prop :=
+  match pieces with
+  | [] => cursor = finish
+  | piece :: rest =>
+      range_start (piece_range piece) = cursor /\
+      range_start (piece_range piece) <= range_end (piece_range piece) /\
+      ranges_tile_from (range_end (piece_range piece)) rest finish
+  end.
+
+Theorem tiled_ranges_are_valid :
+  forall cursor pieces finish,
+    ranges_tile_from cursor pieces finish ->
+    Forall (fun piece => range_valid (piece_range piece)) pieces.
+Proof.
+  intros cursor pieces; revert cursor.
+  induction pieces as [|piece rest IH]; intros cursor finish Htiles.
+  - constructor.
+  - simpl in Htiles.
+    destruct Htiles as [_ [Hvalid Hrest]].
+    constructor.
+    + exact Hvalid.
+    + apply (IH (range_end (piece_range piece)) finish Hrest).
+Qed.
+
+(** The lexer receives an explicit work schedule.  Every text piece starts one
+    fresh recognizer run; every hole is a typed lattice terminal between runs.
+    Mapping scheduled work back to pieces is the identity, so no scheduler step
+    can join text across a hole or reinterpret a hole as source. *)
+Inductive LexicalWork : Type :=
+| RestartRecognizer : GuestChunk -> LexicalWork
+| InjectHoleTerminal : HoleId -> LexicalWork.
+
+Fixpoint lexical_schedule (template : list TemplatePiece) : list LexicalWork :=
+  match template with
+  | [] => []
+  | TextPiece text :: rest =>
+      RestartRecognizer text :: lexical_schedule rest
+  | HolePiece id :: rest =>
+      InjectHoleTerminal id :: lexical_schedule rest
+  end.
+
+Definition scheduled_piece (work : LexicalWork) : TemplatePiece :=
+  match work with
+  | RestartRecognizer text => TextPiece text
+  | InjectHoleTerminal id => HolePiece id
+  end.
+
+Theorem recognizer_restart_schedule_is_exact :
+  forall template,
+    map scheduled_piece (lexical_schedule template) = template.
+Proof.
+  intro template; induction template as [|piece rest IH]; simpl; [reflexivity|].
+  destruct piece; simpl; rewrite IH; reflexivity.
+Qed.
+
+(** A telescope is indexed in first-occurrence order.  [canonical_from base]
+    avoids display-name lookup: the declaration at numeric position [i] has
+    stable identifier [base + i]. *)
+Record HoleDeclaration : Type := {
+  declaration_hole : HoleId;
+  declaration_category : option CategoryId
+}.
+
+Fixpoint canonical_from
+    (next : HoleId) (telescope : list HoleDeclaration) : Prop :=
+  match telescope with
+  | [] => True
+  | declaration :: rest =>
+      declaration_hole declaration = next /\
+      canonical_from (S next) rest
+  end.
+
+Definition canonical_telescope := canonical_from 0.
+
+Theorem canonical_telescope_lookup_is_stable :
+  forall base telescope index declaration,
+    canonical_from base telescope ->
+    nth_error telescope index = Some declaration ->
+    declaration_hole declaration = base + index.
+Proof.
+  intros base telescope; revert base.
+  induction telescope as [|head rest IH]; intros base index declaration Hcanonical Hlookup.
+  - destruct index; discriminate.
+  - simpl in Hcanonical; destruct Hcanonical as [Hhead Hrest].
+    destruct index as [|index].
+    + simpl in Hlookup; inversion Hlookup; subst; lia.
+    + simpl in Hlookup.
+      specialize (IH (S base) index declaration Hrest Hlookup).
+      lia.
+Qed.
+
+Fixpoint hole_occurrence_count (pieces : list TemplatePiece) : nat :=
+  match pieces with
+  | [] => 0
+  | TextPiece _ :: rest => hole_occurrence_count rest
+  | HolePiece _ :: rest => S (hole_occurrence_count rest)
+  end.
+
+(** Effective limits are supplied by the trusted host and may be tightened by
+    an installed language.  They are not fields from guest source. *)
+Record TemplateBounds : Type := {
+  max_source_bytes : nat;
+  max_piece_count : nat;
+  max_hole_declarations : nat;
+  max_hole_occurrences : nat
+}.
+
+Definition within_template_bounds
+    (bounds : TemplateBounds)
+    (source_bytes : nat)
+    (telescope : list HoleDeclaration)
+    (pieces : list TemplatePiece) : Prop :=
+  source_bytes <= max_source_bytes bounds /\
+  length pieces <= max_piece_count bounds /\
+  length telescope <= max_hole_declarations bounds /\
+  hole_occurrence_count pieces <= max_hole_occurrences bounds.
+
+Definition bounds_tighter (tight loose : TemplateBounds) : Prop :=
+  max_source_bytes tight <= max_source_bytes loose /\
+  max_piece_count tight <= max_piece_count loose /\
+  max_hole_declarations tight <= max_hole_declarations loose /\
+  max_hole_occurrences tight <= max_hole_occurrences loose.
+
+Theorem tightening_bounds_cannot_add_an_admission :
+  forall tight loose source_bytes telescope pieces,
+    bounds_tighter tight loose ->
+    within_template_bounds tight source_bytes telescope pieces ->
+    within_template_bounds loose source_bytes telescope pieces.
+Proof.
+  intros tight loose source_bytes telescope pieces
+    [Hsource [Hpieces [Hholes Hoccurrences]]]
+    [Asource [Apieces [Aholes Aoccurrences]]].
+  repeat split; lia.
+Qed.
+
+Theorem rejection_by_loose_bounds_is_preserved_by_tightening :
+  forall tight loose source_bytes telescope pieces,
+    bounds_tighter tight loose ->
+    ~ within_template_bounds loose source_bytes telescope pieces ->
+    ~ within_template_bounds tight source_bytes telescope pieces.
+Proof.
+  intros tight loose source_bytes telescope pieces Htight Hreject Hadmit.
+  apply Hreject.
+  exact (tightening_bounds_cannot_add_an_admission
+    tight loose source_bytes telescope pieces Htight Hadmit).
+Qed.
+
+(** An ambiguity-lattice node lies on the global maximal-munch chain only
+    when its parent already lies on that chain and the selected edge is the
+    parent's longest accept.  Looking only at the current edge is unsound: a
+    locally longest continuation of a secondary opener remains secondary. *)
+Definition extend_primary_chain
+    (parent_is_primary edge_is_longest : bool) : bool :=
+  andb parent_is_primary edge_is_longest.
+
+Fixpoint is_primary_edge_path (edge_choices : list bool) : bool :=
+  match edge_choices with
+  | [] => true
+  | choice :: rest => andb choice (is_primary_edge_path rest)
+  end.
+
+Theorem primary_chain_extension_is_exact :
+  forall prefix edge,
+    extend_primary_chain (is_primary_edge_path prefix) edge =
+    is_primary_edge_path (prefix ++ [edge]).
+Proof.
+  induction prefix as [|choice rest IH]; intros edge; simpl.
+  - now destruct edge.
+  - rewrite <- IH. now destruct choice.
+Qed.
+
+Theorem locally_longest_edge_cannot_promote_a_secondary_parent :
+  forall edge_is_longest,
+    extend_primary_chain false edge_is_longest = false.
+Proof.
+  intros edge_is_longest. reflexivity.
+Qed.
+
+(** Minimal witness for the fence-opener regression: the first edge selects
+    a shorter identifier alternative; the next edge is locally longest, but
+    the two-edge path is not globally primary. *)
+Example local_only_primary_classification_is_unsound :
+  is_primary_edge_path [false; true] = false /\
+  hd false (rev [false; true]) = true.
+Proof.
+  split; reflexivity.
 Qed.
 
 Section SymbolicTemplateCache.
@@ -258,6 +536,17 @@ End SymbolicTemplateSingleFlight.
 Print Assumptions structural_elaboration_has_no_text_injection.
 Print Assumptions repeated_hole_inference_is_unique.
 Print Assumptions declared_category_is_preserved.
+Print Assumptions explicit_scoped_route_is_functional.
+Print Assumptions construction_and_pattern_polarities_are_disjoint.
+Print Assumptions provenance_erasure_preserves_guest_text.
+Print Assumptions tiled_ranges_are_valid.
+Print Assumptions recognizer_restart_schedule_is_exact.
+Print Assumptions canonical_telescope_lookup_is_stable.
+Print Assumptions tightening_bounds_cannot_add_an_admission.
+Print Assumptions rejection_by_loose_bounds_is_preserved_by_tightening.
+Print Assumptions primary_chain_extension_is_exact.
+Print Assumptions locally_longest_edge_cannot_promote_a_secondary_parent.
+Print Assumptions local_only_primary_classification_is_unsound.
 Print Assumptions sound_cache_hit_is_uncached_parse.
 Print Assumptions symbolic_cache_commutes_with_structural_grafting.
 Print Assumptions different_language_commitment_cannot_hit.

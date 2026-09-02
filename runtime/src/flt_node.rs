@@ -14,14 +14,39 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FltHoleId(pub u32);
 
+/// Half-open byte range relative to the start of the captured guest body.
+///
+/// Ranges are provenance only. Runtime guest parsing projects them away and
+/// consumes the structural [`FltTemplatePiece`] payloads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FltSourceRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl FltSourceRange {
+    pub const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+
+    pub fn len(self) -> Option<usize> {
+        self.end.checked_sub(self.start)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+}
+
 /// One declared FLT hole. Repeated occurrences share the same [`FltHoleId`].
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FltHole {
     pub id: FltHoleId,
     pub name: String,
     pub category: Option<String>,
-    /// Byte offset of the first occurrence, retained for diagnostics.
-    pub offset: usize,
+    /// Range of the first occurrence. Later occurrences carry their own range
+    /// on [`FltTemplatePiece::Hole`].
+    pub first_occurrence: FltSourceRange,
 }
 
 /// One element of the structural template, in source order.
@@ -29,14 +54,55 @@ pub struct FltHole {
 pub enum FltTemplatePiece {
     /// Exact guest source between holes. It is lexed in isolation, ensuring no
     /// token can span a hole boundary.
-    Text(String),
+    Text { text: String, range: FltSourceRange },
     /// A typed lattice terminal referring to the template telescope.
-    Hole(FltHoleId),
+    Hole { id: FltHoleId, range: FltSourceRange },
+}
+
+impl FltTemplatePiece {
+    pub const fn range(&self) -> FltSourceRange {
+        match self {
+            Self::Text { range, .. } | Self::Hole { range, .. } => *range,
+        }
+    }
+}
+
+/// Exact finite extent of one captured template. The values are recomputed by
+/// validation and compared with trusted runtime limits before guest parsing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FltTemplateBounds {
+    pub source_bytes: usize,
+    pub body_bytes: usize,
+    pub piece_count: usize,
+    pub hole_declarations: usize,
+    pub hole_occurrences: usize,
+}
+
+/// The variance selected by the Rholang use site. Guest text cannot choose it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FltPolarity {
+    PositiveConstruction,
+    NegativePattern,
+}
+
+/// Immutable, context-indexed view staged for the installed-language port.
+#[derive(Clone, Copy, Debug)]
+pub struct ScopedFltTemplate<'a> {
+    pub selector: &'a OrdVar,
+    pub selector_name: &'a str,
+    pub category: &'a str,
+    pub polarity: FltPolarity,
+    pub telescope: &'a [FltHole],
+    pub pieces: &'a [FltTemplatePiece],
+    pub bounds: FltTemplateBounds,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FltTemplateError {
-    EmptyTag,
+    EmptySelector,
+    InvalidSelector(String),
+    EmptyRootCategory,
+    InvalidRootCategory(String),
     EmptyHoleName(FltHoleId),
     InvalidHoleName(String),
     InvalidHoleCategory(String),
@@ -48,18 +114,41 @@ pub enum FltTemplateError {
         expected: FltHoleId,
         found: FltHoleId,
     },
-    WrongHoleOffset {
+    WrongFirstOccurrenceRange {
         id: FltHoleId,
+        expected: FltSourceRange,
+        found: FltSourceRange,
+    },
+    InvalidPieceRange(FltSourceRange),
+    EmptyTextPiece(FltSourceRange),
+    NonContiguousPieceRange {
         expected: usize,
         found: usize,
     },
+    PieceWidthMismatch {
+        range: FltSourceRange,
+        bytes: usize,
+    },
+    WrongBounds {
+        expected: FltTemplateBounds,
+        found: FltTemplateBounds,
+    },
+    ExtentOverflow,
     SourceMismatch,
 }
 
 impl fmt::Display for FltTemplateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyTag => formatter.write_str("FLT tag is empty"),
+            Self::EmptySelector => formatter.write_str("FLT selector is empty"),
+            Self::InvalidSelector(selector) => {
+                write!(formatter, "FLT selector `{selector}` is not a Rholang identifier")
+            },
+            Self::EmptyRootCategory => formatter.write_str("FLT result category is empty"),
+            Self::InvalidRootCategory(category) => write!(
+                formatter,
+                "FLT result category `{category}` is not a qualified identifier",
+            ),
             Self::EmptyHoleName(id) => write!(formatter, "FLT hole {id:?} has an empty name"),
             Self::InvalidHoleName(name) => {
                 write!(formatter, "FLT hole name `{name}` is not an identifier")
@@ -78,10 +167,29 @@ impl fmt::Display for FltTemplateError {
                 formatter,
                 "FLT hole ids are not first-occurrence ordered: expected {expected:?}, found {found:?}",
             ),
-            Self::WrongHoleOffset { id, expected, found } => write!(
+            Self::WrongFirstOccurrenceRange { id, expected, found } => write!(
                 formatter,
-                "FLT hole {id:?} has first offset {found}, expected {expected}",
+                "FLT hole {id:?} has first range {found:?}, expected {expected:?}",
             ),
+            Self::InvalidPieceRange(range) => {
+                write!(formatter, "FLT piece has invalid source range {range:?}")
+            },
+            Self::EmptyTextPiece(range) => {
+                write!(formatter, "FLT text piece at {range:?} is empty")
+            },
+            Self::NonContiguousPieceRange { expected, found } => write!(
+                formatter,
+                "FLT piece range starts at {found}, expected contiguous byte {expected}",
+            ),
+            Self::PieceWidthMismatch { range, bytes } => write!(
+                formatter,
+                "FLT piece range {range:?} does not have payload width {bytes}",
+            ),
+            Self::WrongBounds { expected, found } => write!(
+                formatter,
+                "FLT extent {found:?} does not match structural extent {expected:?}",
+            ),
+            Self::ExtentOverflow => formatter.write_str("FLT structural extent overflowed usize"),
             Self::SourceMismatch => formatter.write_str(
                 "FLT structural pieces do not reconstruct the captured guest source",
             ),
@@ -98,54 +206,71 @@ pub struct FltNode {
     /// receive/new scope, so the surface tag denotes the installed handle bound
     /// at run time rather than an ambient global registry name.
     pub selector: OrdVar,
-    /// Original selector spelling, retained for exact display and diagnostics.
-    pub tag: String,
+    /// Original lexical selector spelling. This is diagnostic syntax, never a
+    /// registry-global name or an authority token.
+    pub selector_name: String,
+    /// Explicit result category selected before the guest body delimiter.
+    pub category: String,
     pub open_src: String,
     /// Retained only for exact diagnostics and display. Parsing uses `pieces`.
     pub body_src: String,
     pub holes: Vec<FltHole>,
     pub pieces: Vec<FltTemplatePiece>,
     pub close_src: String,
+    /// Exact finite structural extent, checked again by [`Self::validate`].
+    pub bounds: FltTemplateBounds,
+    /// Best available opener position retained for integration diagnostics.
+    /// Piece ranges remain exact because they are body-relative.
     pub position: usize,
 }
 
 impl FltNode {
-    /// Compatibility constructor for programmatically created, usually
-    /// hole-free nodes. Parsed FLTs use [`Self::from_structural_parts`].
-    pub fn new(tag: String, body_src: String, holes: Vec<FltHole>, position: usize) -> Self {
-        let selector = OrdVar(Var::Free(get_or_create_var(&tag)));
+    /// Checked constructor for programmatically created, usually hole-free
+    /// nodes. Parsed FLTs use [`Self::from_structural_parts`].
+    pub fn new(
+        selector_name: String,
+        category: String,
+        body_src: String,
+        holes: Vec<FltHole>,
+        position: usize,
+    ) -> Result<Self, FltTemplateError> {
         let mut pieces = Vec::new();
         let mut cursor = 0usize;
         for hole in &holes {
-            if hole.offset > cursor && hole.offset <= body_src.len() {
-                pieces.push(FltTemplatePiece::Text(body_src[cursor..hole.offset].to_string()));
+            if hole.first_occurrence.start > cursor && hole.first_occurrence.start <= body_src.len()
+            {
+                pieces.push(FltTemplatePiece::Text {
+                    text: body_src[cursor..hole.first_occurrence.start].to_string(),
+                    range: FltSourceRange::new(cursor, hole.first_occurrence.start),
+                });
             }
-            pieces.push(FltTemplatePiece::Hole(hole.id));
-            let literal_len = 3
-                + hole.name.len()
-                + hole
-                    .category
-                    .as_ref()
-                    .map_or(0, |category| 1 + category.len());
-            cursor = hole.offset.saturating_add(literal_len).min(body_src.len());
+            pieces.push(FltTemplatePiece::Hole {
+                id: hole.id,
+                range: hole.first_occurrence,
+            });
+            cursor = hole.first_occurrence.end.min(body_src.len());
         }
-        if cursor < body_src.len() || pieces.is_empty() {
-            pieces.push(FltTemplatePiece::Text(body_src[cursor..].to_string()));
+        if cursor < body_src.len() {
+            pieces.push(FltTemplatePiece::Text {
+                text: body_src[cursor..].to_string(),
+                range: FltSourceRange::new(cursor, body_src.len()),
+            });
         }
-        Self {
-            selector,
-            open_src: tag.clone(),
-            tag,
+        Self::from_structural_parts(
+            selector_name,
+            category,
+            String::new(),
             body_src,
             holes,
             pieces,
-            close_src: String::new(),
+            String::new(),
             position,
-        }
+        )
     }
 
     pub fn from_structural_parts(
-        tag: String,
+        selector_name: String,
+        category: String,
         open_src: String,
         body_src: String,
         holes: Vec<FltHole>,
@@ -153,15 +278,18 @@ impl FltNode {
         close_src: String,
         position: usize,
     ) -> Result<Self, FltTemplateError> {
-        let selector = OrdVar(Var::Free(get_or_create_var(&tag)));
+        let selector = OrdVar(Var::Free(get_or_create_var(&selector_name)));
+        let bounds = structural_bounds(&open_src, &body_src, &holes, &pieces, &close_src)?;
         let node = Self {
             selector,
-            tag,
+            selector_name,
+            category,
             open_src,
             body_src,
             holes,
             pieces,
             close_src,
+            bounds,
             position,
         };
         node.validate()?;
@@ -171,8 +299,17 @@ impl FltNode {
     /// Validate telescope identity, occurrence references, and exact-source
     /// reconstruction. The traversal is iterative and bounded by the node size.
     pub fn validate(&self) -> Result<(), FltTemplateError> {
-        if self.tag.is_empty() {
-            return Err(FltTemplateError::EmptyTag);
+        if self.selector_name.is_empty() {
+            return Err(FltTemplateError::EmptySelector);
+        }
+        if !valid_identifier(&self.selector_name, false) {
+            return Err(FltTemplateError::InvalidSelector(self.selector_name.clone()));
+        }
+        if self.category.is_empty() {
+            return Err(FltTemplateError::EmptyRootCategory);
+        }
+        if !valid_identifier(&self.category, true) {
+            return Err(FltTemplateError::InvalidRootCategory(self.category.clone()));
         }
         let mut by_id = BTreeMap::new();
         let mut by_name: BTreeMap<&str, (FltHoleId, &Option<String>)> = BTreeMap::new();
@@ -204,12 +341,35 @@ impl FltNode {
             }
         }
 
-        let mut rebuilt = String::with_capacity(self.body_src.len());
         let mut occurred = BTreeSet::new();
+        let mut cursor = 0usize;
         for piece in &self.pieces {
+            let range = piece.range();
+            if range.end < range.start || range.end > self.body_src.len() {
+                return Err(FltTemplateError::InvalidPieceRange(range));
+            }
+            if range.start != cursor {
+                return Err(FltTemplateError::NonContiguousPieceRange {
+                    expected: cursor,
+                    found: range.start,
+                });
+            }
             match piece {
-                FltTemplatePiece::Text(text) => rebuilt.push_str(text),
-                FltTemplatePiece::Hole(id) => {
+                FltTemplatePiece::Text { text, range } => {
+                    if text.is_empty() {
+                        return Err(FltTemplateError::EmptyTextPiece(*range));
+                    }
+                    if range.len() != Some(text.len()) {
+                        return Err(FltTemplateError::PieceWidthMismatch {
+                            range: *range,
+                            bytes: text.len(),
+                        });
+                    }
+                    if self.body_src.get(range.start..range.end) != Some(text.as_str()) {
+                        return Err(FltTemplateError::SourceMismatch);
+                    }
+                },
+                FltTemplatePiece::Hole { id, range } => {
                     let hole = by_id.get(id).ok_or(FltTemplateError::UnknownHole(*id))?;
                     if occurred.insert(*id) {
                         let expected =
@@ -220,25 +380,42 @@ impl FltNode {
                                 found: *id,
                             });
                         }
-                        if hole.offset != rebuilt.len() {
-                            return Err(FltTemplateError::WrongHoleOffset {
+                        if hole.first_occurrence != *range {
+                            return Err(FltTemplateError::WrongFirstOccurrenceRange {
                                 id: *id,
-                                expected: rebuilt.len(),
-                                found: hole.offset,
+                                expected: *range,
+                                found: hole.first_occurrence,
                             });
                         }
                     }
-                    rebuilt.push_str("${");
-                    rebuilt.push_str(&hole.name);
+                    let mut syntax = String::with_capacity(
+                        3 + hole.name.len()
+                            + hole
+                                .category
+                                .as_ref()
+                                .map_or(0, |category| 1 + category.len()),
+                    );
+                    syntax.push_str("${");
+                    syntax.push_str(&hole.name);
                     if let Some(category) = &hole.category {
-                        rebuilt.push(':');
-                        rebuilt.push_str(category);
+                        syntax.push(':');
+                        syntax.push_str(category);
                     }
-                    rebuilt.push('}');
+                    syntax.push('}');
+                    if range.len() != Some(syntax.len()) {
+                        return Err(FltTemplateError::PieceWidthMismatch {
+                            range: *range,
+                            bytes: syntax.len(),
+                        });
+                    }
+                    if self.body_src.get(range.start..range.end) != Some(syntax.as_str()) {
+                        return Err(FltTemplateError::SourceMismatch);
+                    }
                 },
             }
+            cursor = range.end;
         }
-        if rebuilt != self.body_src {
+        if cursor != self.body_src.len() {
             return Err(FltTemplateError::SourceMismatch);
         }
         if occurred.len() != self.holes.len() {
@@ -249,12 +426,61 @@ impl FltNode {
                 .expect("different cardinalities imply an unused declaration");
             return Err(FltTemplateError::UnusedHole(unused.id));
         }
+        let expected = structural_bounds(
+            &self.open_src,
+            &self.body_src,
+            &self.holes,
+            &self.pieces,
+            &self.close_src,
+        )?;
+        if self.bounds != expected {
+            return Err(FltTemplateError::WrongBounds { expected, found: self.bounds });
+        }
         Ok(())
     }
 
     pub fn hole(&self, id: FltHoleId) -> Option<&FltHole> {
         self.holes.get(id.0 as usize).filter(|hole| hole.id == id)
     }
+
+    /// Attach host-selected variance without copying or mutating the parsed
+    /// structural capture.
+    pub fn stage(&self, polarity: FltPolarity) -> ScopedFltTemplate<'_> {
+        ScopedFltTemplate {
+            selector: &self.selector,
+            selector_name: &self.selector_name,
+            category: &self.category,
+            polarity,
+            telescope: &self.holes,
+            pieces: &self.pieces,
+            bounds: self.bounds,
+        }
+    }
+}
+
+fn structural_bounds(
+    open_src: &str,
+    body_src: &str,
+    holes: &[FltHole],
+    pieces: &[FltTemplatePiece],
+    close_src: &str,
+) -> Result<FltTemplateBounds, FltTemplateError> {
+    let source_bytes = open_src
+        .len()
+        .checked_add(body_src.len())
+        .and_then(|bytes| bytes.checked_add(close_src.len()))
+        .ok_or(FltTemplateError::ExtentOverflow)?;
+    let hole_occurrences = pieces
+        .iter()
+        .filter(|piece| matches!(piece, FltTemplatePiece::Hole { .. }))
+        .count();
+    Ok(FltTemplateBounds {
+        source_bytes,
+        body_bytes: body_src.len(),
+        piece_count: pieces.len(),
+        hole_declarations: holes.len(),
+        hole_occurrences,
+    })
 }
 
 fn valid_identifier(value: &str, allow_dot: bool) -> bool {
@@ -303,7 +529,8 @@ mod tests {
     #[test]
     fn selector_closes_and_reopens_with_its_rholang_binder() {
         let selector = get_or_create_var("lambda");
-        let node = FltNode::new("lambda".into(), "x".into(), Vec::new(), 0);
+        let node = FltNode::new("lambda".into(), "Term".into(), "x".into(), Vec::new(), 0)
+            .expect("valid node");
         assert_eq!(node.selector.0, Var::Free(selector.clone()));
 
         let scope = Scope::new::<String>(Binder(selector), node);
@@ -317,20 +544,36 @@ mod tests {
     fn structural_template_validates_and_preserves_repeated_hole_identity() {
         let node = FltNode::from_structural_parts(
             "lam".into(),
-            "lam`".into(),
+            "Term".into(),
+            "lam:Term`".into(),
             "App(${f}, ${f})".into(),
             vec![FltHole {
                 id: FltHoleId(0),
                 name: "f".into(),
                 category: None,
-                offset: 4,
+                first_occurrence: FltSourceRange::new(4, 8),
             }],
             vec![
-                FltTemplatePiece::Text("App(".into()),
-                FltTemplatePiece::Hole(FltHoleId(0)),
-                FltTemplatePiece::Text(", ".into()),
-                FltTemplatePiece::Hole(FltHoleId(0)),
-                FltTemplatePiece::Text(")".into()),
+                FltTemplatePiece::Text {
+                    text: "App(".into(),
+                    range: FltSourceRange::new(0, 4),
+                },
+                FltTemplatePiece::Hole {
+                    id: FltHoleId(0),
+                    range: FltSourceRange::new(4, 8),
+                },
+                FltTemplatePiece::Text {
+                    text: ", ".into(),
+                    range: FltSourceRange::new(8, 10),
+                },
+                FltTemplatePiece::Hole {
+                    id: FltHoleId(0),
+                    range: FltSourceRange::new(10, 14),
+                },
+                FltTemplatePiece::Text {
+                    text: ")".into(),
+                    range: FltSourceRange::new(14, 15),
+                },
             ],
             "`".into(),
             0,
@@ -340,41 +583,69 @@ mod tests {
         assert_eq!(
             node.pieces
                 .iter()
-                .filter(|piece| matches!(piece, FltTemplatePiece::Hole(_)))
+                .filter(|piece| matches!(piece, FltTemplatePiece::Hole { .. }))
                 .count(),
             2,
         );
+        assert_eq!(
+            node.bounds,
+            FltTemplateBounds {
+                source_bytes: 25,
+                body_bytes: 15,
+                piece_count: 5,
+                hole_declarations: 1,
+                hole_occurrences: 2,
+            },
+        );
+        assert_eq!(node.holes[0].first_occurrence, FltSourceRange::new(4, 8));
+
+        let construction = node.stage(FltPolarity::PositiveConstruction);
+        let pattern = node.stage(FltPolarity::NegativePattern);
+        assert_eq!(construction.selector_name, "lam");
+        assert_eq!(construction.category, "Term");
+        assert_eq!(construction.telescope, pattern.telescope);
+        assert_eq!(construction.pieces, pattern.pieces);
+        assert_eq!(construction.bounds, pattern.bounds);
+        assert_ne!(construction.polarity, pattern.polarity);
     }
 
     #[test]
     fn text_cannot_impersonate_a_hole_piece() {
         let node = FltNode::from_structural_parts(
             "lam".into(),
+            "Term".into(),
             "lam`".into(),
             "${x}".into(),
             Vec::new(),
-            vec![FltTemplatePiece::Text("${x}".into())],
+            vec![FltTemplatePiece::Text {
+                text: "${x}".into(),
+                range: FltSourceRange::new(0, 4),
+            }],
             "`".into(),
             0,
         )
         .expect("text is inert guest text, not a structural hole");
         assert!(node.holes.is_empty());
-        assert!(matches!(node.pieces.as_slice(), [FltTemplatePiece::Text(_)]));
+        assert!(matches!(node.pieces.as_slice(), [FltTemplatePiece::Text { .. }]));
     }
 
     #[test]
     fn malformed_hole_name_cannot_inject_guest_tokens() {
         let error = FltNode::from_structural_parts(
             "lam".into(),
+            "Term".into(),
             "lam`".into(),
             "${x) K}".into(),
             vec![FltHole {
                 id: FltHoleId(0),
                 name: "x) K".into(),
                 category: None,
-                offset: 0,
+                first_occurrence: FltSourceRange::new(0, 7),
             }],
-            vec![FltTemplatePiece::Hole(FltHoleId(0))],
+            vec![FltTemplatePiece::Hole {
+                id: FltHoleId(0),
+                range: FltSourceRange::new(0, 7),
+            }],
             "`".into(),
             0,
         )
@@ -386,6 +657,7 @@ mod tests {
     fn telescope_order_and_first_offsets_are_canonical() {
         let error = FltNode::from_structural_parts(
             "lam".into(),
+            "Term".into(),
             "lam`".into(),
             "${y}${x}".into(),
             vec![
@@ -393,16 +665,25 @@ mod tests {
                     id: FltHoleId(0),
                     name: "x".into(),
                     category: None,
-                    offset: 4,
+                    first_occurrence: FltSourceRange::new(4, 8),
                 },
                 FltHole {
                     id: FltHoleId(1),
                     name: "y".into(),
                     category: None,
-                    offset: 0,
+                    first_occurrence: FltSourceRange::new(0, 4),
                 },
             ],
-            vec![FltTemplatePiece::Hole(FltHoleId(1)), FltTemplatePiece::Hole(FltHoleId(0))],
+            vec![
+                FltTemplatePiece::Hole {
+                    id: FltHoleId(1),
+                    range: FltSourceRange::new(0, 4),
+                },
+                FltTemplatePiece::Hole {
+                    id: FltHoleId(0),
+                    range: FltSourceRange::new(4, 8),
+                },
+            ],
             "`".into(),
             0,
         )

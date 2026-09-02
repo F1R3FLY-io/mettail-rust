@@ -3014,15 +3014,17 @@ pub fn reset_coll_action_downcast_abandon() {
 /// `mettail_runtime::FltNode` (a 1:1 field map — `holes` → `FltHole`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuestBodyData {
-    /// The opener's tag (`lam` from `` lam` `` / `lam{` / ``` lam``` ```).
-    pub tag: String,
+    /// Explicit lexical handle reference before the category separator.
+    pub selector_name: String,
+    /// Explicit result category before the delimiter.
+    pub category: String,
     /// The exact opener token text. This is retained independently from `tag`
     /// so generalized, structurally delimited host forms can preserve their
     /// complete header without reconstructing it from semantic fields.
     pub open_src: String,
     /// The verbatim guest-body source `source_slice(open.end, close.start)`.
     pub body_src: String,
-    /// The `${…}` holes, in source order, offset into `body_src`.
+    /// The `${…}` telescope, in first-occurrence order.
     pub holes: Vec<GuestBodyHole>,
     /// Ordered guest-text and hole terminals. This, not `body_src`, is the
     /// parser input for structural FLTs.
@@ -3039,13 +3041,26 @@ pub struct GuestBodyHole {
     pub id: u32,
     pub name: String,
     pub category: Option<String>,
-    pub offset: usize,
+    pub first_occurrence: GuestBodySourceRange,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuestBodyPiece {
-    Text(String),
-    Hole(u32),
+    Text {
+        text: String,
+        range: GuestBodySourceRange,
+    },
+    Hole {
+        id: u32,
+        range: GuestBodySourceRange,
+    },
+}
+
+/// Half-open byte range relative to the beginning of `body_src`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuestBodySourceRange {
+    pub start: usize,
+    pub end: usize,
 }
 
 impl fmt::Debug for ActionArg {
@@ -3083,7 +3098,8 @@ impl fmt::Debug for ActionArg {
             },
             ActionArg::GuestBody(node) => f
                 .debug_struct("GuestBody")
-                .field("tag", &node.tag)
+                .field("selector_name", &node.selector_name)
+                .field("category", &node.category)
                 .field("body_src", &node.body_src)
                 .field("holes", &node.holes.len())
                 .finish(),

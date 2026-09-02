@@ -153,14 +153,9 @@ language! {
         //     upstream's two distinct wire carriers into one — latent only because `Bytes` was
         //     unreachable in practice, and a genuine consensus defect the moment it was not.
         //
-        // ⚠ NOT in scope, and deliberately untouched: `Uri`. Upstream has `string g_uri = 4` with
-        // backtick literal syntax which we do not model at all; that is already pinned as
-        // unsupported by
-        // `languages/tests/rholang_new_official_syntax.rs::uri_declarations_are_not_yet_supported`
-        // (asserted `is_err()` so the day it starts parsing is a deliberate change) and tracked as
-        // convergence item §17.10-C1. There is also a live interaction to respect when it lands:
-        // mettail already spends the backtick on FLT syntax (`FltOpenBacktick`), and the two can
-        // coexist only because an FLT requires a lowercase prefix while a URI has none.
+        // URI literals use a bare backtick opener. FLTs remain lexically disjoint because their
+        // opener begins with an explicit Rholang selector and result category
+        // (`selector:Category\``); a bare backtick can therefore only begin a URI.
         //
         // ⚠ ALSO OUT OF SCOPE HERE, and owed to whoever owns `macros/src/gen/term_ops/`: the
         // `semantic_hash` CATEGORY TAG (#151 thread 2) is still disabled. `2eebf722` measured
@@ -562,9 +557,9 @@ language! {
     // `Ident`/keyword it collides with — `lam\`` @4 beats `lam` @3), so under the
     // Delimiter-Unambiguity Invariant the host mode-0 tokenization of every
     // existing Rholang input is byte-identical (no host source contains
-    // `IDENT\``, ` ``` `, or the reserved `box{`). Backtick/fence tags are any
-    // lowercase IDENT; the brace tag is the reserved keyword `box` (D-1), so it
-    // never collides with PPar's `{ … }`.
+    // `IDENT:CAT\`` or the corresponding fence/brace opener). Every form carries
+    // an explicit lexical handle reference and qualified result category; no
+    // delimiter triggers language inference or an ambient registry lookup.
     tokens {
         // DDL keywords are ordinary grammar literals listed in
         // `contextual_keywords`: their fixed-token reading is available in DDL
@@ -608,9 +603,9 @@ language! {
         LineComment = "//[^\\n]*" -> COMMENTS ;
         BlockComment = "/\\*([^*]|\\*+[^*/])*\\*+/" -> COMMENTS ;
 
-        FltOpenBacktick = "[a-z]+`" push(flt_body_backtick) ;
-        FltOpenFence = "[a-z]+```" push(flt_body_fence) ;
-        FltOpenBrace = "box\\{" push(flt_body_brace) ;
+        FltOpenBacktick = "[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*`" push(flt_body_backtick) ;
+        FltOpenFence = "[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*```" push(flt_body_fence) ;
+        FltOpenBrace = "[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\{" push(flt_body_brace) ;
 
         raw mode flt_body_backtick {
             FltCloseBacktick = "`" pop ;
@@ -2564,12 +2559,12 @@ language! {
 
         // L9-5: FLT guest-body captures. Each `*flt(node, open, close)` consumes a
         // delimited foreign-language region and assembles an opaque native
-        // `FltNode { tag, body_src, holes[{name,category,offset}], position }` (an
-        // inert BoundTerm leaf). The three forms differ ONLY in surface delimiter;
-        // all carry the same `Arc<FltNode>` payload. Reduction is deferred to L9-6
-        // (`lower_proc`'s `PFlt` arm → `FltResolver`); until an FLT resolver is
-        // installed a `PFlt` is inert (empty-resolver default = zero behavior
-        // change), so no `eval` disposition is declared. Declared LAST so the
+        // `FltNode` containing the lexical selector, explicit result category,
+        // ordered ranged Text/Hole pieces, stable telescope, and checked finite
+        // extent (an inert BoundTerm leaf). The three forms differ ONLY in surface
+        // delimiter; all carry the same `Arc<FltNode>` payload. Guest parsing is
+        // staged until the selector resolves to an installed handle, so no `eval`
+        // disposition is declared. Declared LAST so the
         // existing Proc rule indices (and the pinned @/mixfix cohort structure)
         // are unperturbed — a leading-capture rule joins no infix/mixfix cohort.
         PFlt . |- *flt(node, FltOpenBacktick, FltCloseBacktick) : Proc;

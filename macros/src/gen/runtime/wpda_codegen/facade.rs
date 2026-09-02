@@ -2950,7 +2950,13 @@ fn emit_proj_variant_arm(
                 parse_binds.push(quote! {
                     let #pairs_id: Vec<(Vec<#ecat>, __W)> = {
                         let (__s, __e) = __ops[#oi];
-                        let __region = input[__s..__e].trim();
+                        let Some((__region_start, __region_end)) =
+                            __mettail_trim_layout(input, &__layout, __s, __e)
+                        else {
+                            #set_cap_hit
+                            break '__variant;
+                        };
+                        let __region = &input[__region_start..__region_end];
                         // ── G1 DEGENERATE-TAIL FIX (2026-07-25) ──
                         // An EMPTY `.*sep` region is the ZERO-ELEMENT list, which is
                         // IN THE LANGUAGE: `.*sep` is zero-or-more, so a rule like
@@ -3025,6 +3031,26 @@ fn emit_proj_variant_arm(
                             let mut __start = 0usize;
                             let mut __i = 0usize;
                             while __i < __rn {
+                                let __absolute = __region_start + __i;
+                                let __after_layout = __mettail_skip_layout(
+                                    input,
+                                    &__layout,
+                                    __absolute,
+                                    __region_end,
+                                );
+                                if __after_layout > __absolute {
+                                    __i = __after_layout - __region_start;
+                                    continue;
+                                }
+                                let __after_opaque = __mettail_skip_opaque(
+                                    &__layout,
+                                    __absolute,
+                                    __region_end,
+                                );
+                                if __after_opaque > __absolute {
+                                    __i = __after_opaque - __region_start;
+                                    continue;
+                                }
                                 match __rb[__i] {
                                     b'(' | b'[' | b'{' => __depth += 1,
                                     b')' | b']' | b'}' => __depth -= 1,
@@ -3042,7 +3068,16 @@ fn emit_proj_variant_arm(
                         let mut __per_seg: Vec<(Vec<#ecat>, Vec<__W>)> =
                             Vec::with_capacity(__seg_ranges.len());
                         for &(__rs, __re) in &__seg_ranges {
-                            let __eseg = __region[__rs..__re].trim();
+                            let Some((__es, __ee)) = __mettail_trim_layout(
+                                input,
+                                &__layout,
+                                __region_start + __rs,
+                                __region_start + __re,
+                            ) else {
+                                #set_cap_hit
+                                break '__variant;
+                            };
+                            let __eseg = &input[__es..__ee];
                             // An empty ELEMENT segment is an intra-list dangling
                             // separator (`@Nil!(0,1,)` splits the region `"1,"` into
                             // `["1", ""]`). This is a STRUCTURAL decline, NOT a genuine
@@ -3234,9 +3269,11 @@ fn emit_proj_variant_arm(
         .collect();
     let match_all_call: TokenStream = if has_method {
         let greedy_last_lit = gated;
-        quote! { __proj_skeleton_match_all(__bytes, __n, __SKEL, __AMB, #greedy_last_lit) }
+        quote! {
+            __proj_skeleton_match_all(input, &__layout, __bytes, __n, __SKEL, __AMB, #greedy_last_lit)
+        }
     } else {
-        quote! { __proj_skeleton_match_all(__bytes, __n, __SKEL, __AMB) }
+        quote! { __proj_skeleton_match_all(input, &__layout, __bytes, __n, __SKEL, __AMB) }
     };
     quote! {
         {
@@ -3302,6 +3339,8 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         /// channel's own send `!`) is not split early. The run stops at the next
         /// `Op` slot.
         fn __match_lit_run(
+            input: &str,
+            layout: &__MettailSourceLayout,
             bytes: &[u8],
             n: usize,
             skel: &[__Slot],
@@ -3313,8 +3352,9 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             while k < skel.len() {
                 match &skel[k] {
                     __Slot::Lit(l, __pre, __ext) => {
-                        while p < n && bytes[p].is_ascii_whitespace() {
-                            p += 1;
+                        p = __mettail_skip_layout(input, layout, p, n);
+                        if __mettail_skip_opaque(layout, p, n) > p {
+                            return None;
                         }
                         let lb = l.as_bytes();
                         if p + lb.len() > n || &bytes[p..p + lb.len()] != lb {
@@ -3372,6 +3412,8 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         /// caller's per-operand sub-parse are the soundness filter (invalid tilings
         /// yield no candidate).
         fn __proj_skeleton_match_all(
+            input: &str,
+            layout: &__MettailSourceLayout,
             bytes: &[u8],
             n: usize,
             skel: &[__Slot],
@@ -3379,6 +3421,8 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             #matchall_recv_param
         ) -> Vec<Vec<(usize, usize)>> {
             fn go(
+                input: &str,
+                layout: &__MettailSourceLayout,
                 bytes: &[u8],
                 n: usize,
                 skel: &[__Slot],
@@ -3387,19 +3431,16 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                 i0: usize,
                 leading_greedy_last: bool,
             ) -> Vec<Vec<(usize, usize)>> {
-                let mut i = i0;
-                while i < n && bytes[i].is_ascii_whitespace() {
-                    i += 1;
-                }
+                let i = __mettail_skip_layout(input, layout, i0, n);
                 if k == skel.len() {
-                    let mut j = i;
-                    while j < n && bytes[j].is_ascii_whitespace() {
-                        j += 1;
-                    }
+                    let j = __mettail_skip_layout(input, layout, i, n);
                     return if j == n { vec![vec![]] } else { vec![] };
                 }
                 match &skel[k] {
                     __Slot::Lit(l, __pre, __ext) => {
+                        if __mettail_skip_opaque(layout, i, n) > i {
+                            return vec![];
+                        }
                         let lb = l.as_bytes();
                         if i + lb.len() > n || &bytes[i..i + lb.len()] != lb {
                             return vec![];
@@ -3421,7 +3462,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                             return vec![];
                         }
                         go(
-                            bytes, n, skel, amb, k + 1, i + lb.len(),
+                            input, layout, bytes, n, skel, amb, k + 1, i + lb.len(),
                             leading_greedy_last,
                         )
                     }
@@ -3435,7 +3476,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                         match next_lit {
                             None => {
                                 let mut subs = go(
-                                    bytes, n, skel, amb, k + 1, n,
+                                    input, layout, bytes, n, skel, amb, k + 1, n,
                                     leading_greedy_last,
                                 );
                                 for a in subs.iter_mut() {
@@ -3457,6 +3498,14 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                     // string literal or a comment, and a bracket in inert
                                     // text may not move `depth`.
                                     #inert_operand_delim
+                                    // A modal guest/payload token whose every lattice
+                                    // alternative is non-Fixed with the same span is
+                                    // atomic: host delimiters inside it are not syntax.
+                                    let __opaque_end = __mettail_skip_opaque(layout, j, n);
+                                    if __opaque_end > j {
+                                        j = __opaque_end;
+                                        continue;
+                                    }
                                     let c = bytes[j];
                                     if depth == 0
                                         && j + lb.len() <= n
@@ -3472,7 +3521,9 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                             // in the middle of a longer token.
                                             && __lit_boundary_ok(bytes, n, j, lb, __pre, __ext);
                                         let __run_ok =
-                                            __match_lit_run(bytes, n, skel, k + 1, j).is_some();
+                                            __match_lit_run(
+                                                input, layout, bytes, n, skel, k + 1, j,
+                                            ).is_some();
                                         if wb && __run_ok {
                                             cands.push(j);
                                             if !enumerate && !greedy_last {
@@ -3501,7 +3552,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                 let mut out: Vec<Vec<(usize, usize)>> = Vec::new();
                                 for &end in cands.iter() {
                                     let mut subs = go(
-                                        bytes, n, skel, amb, k + 1, end,
+                                        input, layout, bytes, n, skel, amb, k + 1, end,
                                         leading_greedy_last,
                                     );
                                     for a in subs.iter_mut() {
@@ -3516,7 +3567,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                 }
             }
             go(
-                bytes, n, skel, amb, 0, 0,
+                input, layout, bytes, n, skel, amb, 0, 0,
                 #matchall_lgl_arg,
             )
         }
@@ -3844,6 +3895,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             }
 
             let input = input.trim();
+            let __layout = __mettail_layout_ranges(input)?;
             let __bytes = input.as_bytes();
             let __n = __bytes.len();
             if __n == 0 {
@@ -6387,6 +6439,14 @@ pub(crate) fn emit_parse_fns(
     } else {
         quote! {}
     };
+    // Raw-source helpers retain exact operand slices, but their layout view must
+    // agree with the generated lexer: Unicode whitespace and auxiliary-channel
+    // ranges are invisible; DEFAULT-channel strings and modal guest text are not.
+    let layout_oracle = if any_iso_eligible {
+        super::lit_boundary::emit_layout_oracle(language)
+    } else {
+        quote! {}
+    };
     // The registry as DATA, so the enumerating gate (Stage C) iterates the same rows the
     // emitter obtained its conditions from — a site cannot be in the code and absent from
     // the gate.
@@ -6421,6 +6481,9 @@ pub(crate) fn emit_parse_fns(
         // every registered scan. Empty when no isolation helper is emitted, or when the
         // language declares neither comments nor a string family (byte-identical).
         #inert_skipper
+        // Authoritative channel-aware source-layout ranges shared by isolation
+        // facades. A lexer failure makes the fast path decline.
+        #layout_oracle
         // ★ The SCAN-SITE REGISTRY, as data, for the generated conformance gate.
         #scan_site_table
         #scan_site_literals

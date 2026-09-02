@@ -870,7 +870,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     //   `lambda`     → the in-Rho quiescence driver (β as committed communications).
     let bare_guest = match &proc {
         Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
-            Some((node.tag.clone(), node.body_src.clone()))
+            Some((node.selector_name.clone(), node.body_src.clone()))
         },
         _ => None,
     };

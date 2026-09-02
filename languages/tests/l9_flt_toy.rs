@@ -1,11 +1,11 @@
 //! L9-4 gate — `*flt(node, FltOpen*, FltClose*)` guest-body capture → FltNode.
 //!
 //! A TEST fixture (`languages/tests/`, never `languages/src/`). It proves the
-//! full L9-4 pipeline: three delimiter forms (backtick / reserved-tag brace /
+//! full L9-4 pipeline: three delimiter forms (backtick / paired brace /
 //! fixed fence), each pushing a RAW guest mode, are consumed by a `*flt(...)`
 //! GuestBody production that assembles a `mettail_runtime::FltNode`
-//! { tag, body_src (verbatim via raw-mode tiling), holes[{name,category,offset}],
-//! position }. The `${x}` / `${x:Cat}` holes are recorded with byte offsets into
+//! { selector, category, body_src (verbatim via raw-mode tiling), ranged holes,
+//! position }. The `${x}` / `${x:Cat}` holes are recorded with byte ranges into
 //! `body_src`. (Depth-counted NESTED braces are exercised by the sibling test
 //! once depth-counting lands.)
 
@@ -29,13 +29,10 @@ language! {
     },
 
     tokens {
-        // Backtick form: `IDENT\`` opens, a bare backtick closes.
-        FltOpenBacktick = "[a-z]+`" push(flt_body_backtick) ;
-        // Fence form: `IDENT\`\`\`` opens, `\`\`\`` closes.
-        FltOpenFence = "[a-z]+```" push(flt_body_fence) ;
-        // Reserved-tag brace form: `box{` opens (reserved tag — no bare `id{`
-        // ambiguity), `}` closes.
-        FltOpenBrace = "box\\{" push(flt_body_brace) ;
+        // Every opener contains an explicit lexical selector and result category.
+        FltOpenBacktick = "[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*`" push(flt_body_backtick) ;
+        FltOpenFence = "[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*```" push(flt_body_fence) ;
+        FltOpenBrace = "[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*\\{" push(flt_body_brace) ;
 
         raw mode flt_body_backtick {
             FltCloseBacktick = "`" pop ;
@@ -91,17 +88,18 @@ fn l9_flt_default_mode_parses() {
 
 #[test]
 fn l9_flt_backtick_assembles_node() {
-    // `lam`App(${f}, K)`` → FltBacktick(FltNode{tag:"lam", body_src:"App(${f}, K)",
-    // holes:[{name:"f", offset:4}], position:0}).
+    // The opener pins both the lexical selector and the result category.
     mettail_runtime::clear_var_cache();
-    let term = Num::parse("lam`App(${f}, K)`").expect("backtick FLT parse");
+    let term = Num::parse("lam:Num`App(${f}, K)`").expect("backtick FLT parse");
     let n = node_of(&term);
-    assert_eq!(n.tag, "lam");
+    assert_eq!(n.selector_name, "lam");
+    assert_eq!(n.category, "Num");
     assert_eq!(n.body_src, "App(${f}, K)");
     assert_eq!(n.holes.len(), 1);
     assert_eq!(n.holes[0].name, "f");
     assert_eq!(n.holes[0].category, None);
-    assert_eq!(&n.body_src[n.holes[0].offset..n.holes[0].offset + 4], "${f}");
+    let range = n.holes[0].first_occurrence;
+    assert_eq!(&n.body_src[range.start..range.end], "${f}");
     assert_eq!(n.position, 0);
     assert_eq!(term.eval(), 1); // one hole
 }
@@ -110,7 +108,7 @@ fn l9_flt_backtick_assembles_node() {
 fn l9_flt_typed_hole_records_category() {
     // `${f:Proc}` → FltHole{name:"f", category:Some("Proc")}.
     mettail_runtime::clear_var_cache();
-    let term = Num::parse("lam`id(${f:Proc})`").expect("typed-hole parse");
+    let term = Num::parse("lam:Num`id(${f:Proc})`").expect("typed-hole parse");
     let n = node_of(&term);
     assert_eq!(n.holes.len(), 1);
     assert_eq!(n.holes[0].name, "f");
@@ -120,9 +118,10 @@ fn l9_flt_typed_hole_records_category() {
 #[test]
 fn l9_flt_fence_assembles_node() {
     mettail_runtime::clear_var_cache();
-    let term = Num::parse("lam```App(${f}, ${g})```").expect("fence FLT parse");
+    let term = Num::parse("lam:Num```App(${f}, ${g})```").expect("fence FLT parse");
     let n = node_of(&term);
-    assert_eq!(n.tag, "lam");
+    assert_eq!(n.selector_name, "lam");
+    assert_eq!(n.category, "Num");
     assert_eq!(n.body_src, "App(${f}, ${g})");
     assert_eq!(n.holes.len(), 2);
     assert_eq!(n.holes[0].name, "f");
@@ -132,11 +131,12 @@ fn l9_flt_fence_assembles_node() {
 
 #[test]
 fn l9_flt_brace_assembles_node() {
-    // Reserved-tag brace: `box{ App(${f}) }` (NON-nested).
+    // Explicit-selector brace form (non-nested).
     mettail_runtime::clear_var_cache();
-    let term = Num::parse("box{ App(${f}) }").expect("brace FLT parse");
+    let term = Num::parse("lam:Num{ App(${f}) }").expect("brace FLT parse");
     let n = node_of(&term);
-    assert_eq!(n.tag, "box");
+    assert_eq!(n.selector_name, "lam");
+    assert_eq!(n.category, "Num");
     assert_eq!(n.body_src, " App(${f}) ");
     assert_eq!(n.holes.len(), 1);
     assert_eq!(n.holes[0].name, "f");
@@ -148,22 +148,25 @@ fn l9_flt_nested_brace_depth_counts_to_zero_close() {
     // the DEPTH-0 `}` (the inner `box{ … }` is content), so `body_src` includes the
     // nested braces verbatim and the hole is still recorded.
     mettail_runtime::clear_var_cache();
-    let term = Num::parse("box{ App(box{ ${f} }, K) }").expect("nested-brace FLT parse");
+    let term = Num::parse("lam:Num{ App(box{ ${f} }, K) }").expect("nested-brace FLT parse");
     let n = node_of(&term);
-    assert_eq!(n.tag, "box");
+    assert_eq!(n.selector_name, "lam");
+    assert_eq!(n.category, "Num");
     assert_eq!(n.body_src, " App(box{ ${f} }, K) ");
     assert_eq!(n.holes.len(), 1);
     assert_eq!(n.holes[0].name, "f");
-    assert_eq!(&n.body_src[n.holes[0].offset..n.holes[0].offset + 4], "${f}");
+    let range = n.holes[0].first_occurrence;
+    assert_eq!(&n.body_src[range.start..range.end], "${f}");
 }
 
 #[test]
 fn l9_flt_empty_body_is_clean() {
     // Empty guest body → body_src == "", no holes.
     mettail_runtime::clear_var_cache();
-    let term = Num::parse("lam``").expect("empty-body parse");
+    let term = Num::parse("lam:Num``").expect("empty-body parse");
     let n = node_of(&term);
-    assert_eq!(n.tag, "lam");
+    assert_eq!(n.selector_name, "lam");
+    assert_eq!(n.category, "Num");
     assert_eq!(n.body_src, "");
     assert!(n.holes.is_empty());
     assert_eq!(term.eval(), 0);

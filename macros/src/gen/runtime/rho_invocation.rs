@@ -3556,7 +3556,7 @@ mod tests {
                 name: IdentReflectGen,
                 types { Proc }
                 tokens {
-                    FltOpenBacktick = "[a-z]+`" push(flt_body) ;
+                    FltOpenBacktick = "[a-z]+:[A-Z][a-zA-Z0-9_]*`" push(flt_body) ;
                     raw mode flt_body {
                         FltCloseBacktick = "`" pop ;
                         GuestChunk = "[^`]+" ;

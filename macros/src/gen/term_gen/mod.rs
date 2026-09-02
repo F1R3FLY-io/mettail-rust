@@ -245,18 +245,24 @@ pub fn capture_only_construction(
                     &open.to_string(),
                     &close.to_string(),
                 );
-                let tag = opener_sample
+                let header = opener_sample
                     .strip_suffix(open_delim)
                     .unwrap_or(&opener_sample)
                     .to_string();
+                let Some((selector, category)) = header.split_once(':') else {
+                    return None;
+                };
                 let mettail_ast::grammar::DelimitedRegionKind::Flt = kind;
                 args.push(quote! {
-                    std::sync::Arc::new(mettail_runtime::FltNode::new(
-                        #tag.to_string(),
-                        String::new(),
-                        Vec::new(),
-                        0,
-                    ))
+                    std::sync::Arc::new(
+                        mettail_runtime::FltNode::new(
+                            #selector.to_string(),
+                            #category.to_string(),
+                            String::new(),
+                            Vec::new(),
+                            0,
+                        ).expect("generated FLT header and empty body are valid")
+                    )
                 });
             },
             _ => {},

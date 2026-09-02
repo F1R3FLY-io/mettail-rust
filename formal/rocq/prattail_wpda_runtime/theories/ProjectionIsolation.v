@@ -1150,6 +1150,158 @@ Example T10_seam_separation :
   /\ length (single_seam_readings nat [0; 0]) = 1.
 Proof. split; reflexivity. Qed.
 
+(* ══════════════ Alternative-channel layout invariance (2026-09-02).
+
+   Projection isolation scans the original source so it can retain exact operand
+   ranges.  The lexer, however, routes comments and every other non-DEFAULT token
+   to auxiliary channels before the parser sees them.  The scanner must therefore
+   compare skeletons in the quotient that erases both ordinary whitespace and
+   lexer-certified auxiliary-channel spans.  It must not erase DEFAULT-channel
+   strings or guest text: those are represented by [Code] below.
+
+   [visible] is the abstract counterpart of the generated layout-range oracle.
+   These lemmas state the contract at the only trusted boundary: once the lexer
+   classifies an atom as [Trivia], inserting or deleting it cannot change a
+   skeleton match; classifying code as trivia can, so the implementation consumes
+   the lexer's actual ranged channel output rather than a grammar-blind regex. *)
+
+Inductive SourceAtom : Type :=
+| Code (byte : nat)
+| Layout
+| Trivia.
+
+Fixpoint visible (source : list SourceAtom) : list nat :=
+  match source with
+  | [] => []
+  | Code byte :: rest => byte :: visible rest
+  | Layout :: rest => visible rest
+  | Trivia :: rest => visible rest
+  end.
+
+Definition skeleton_matches (skeleton : list nat) (source : list SourceAtom) : Prop :=
+  visible source = skeleton.
+
+Lemma visible_app :
+  forall left right,
+    visible (left ++ right) = visible left ++ visible right.
+Proof.
+  intros left right. induction left as [| atom left IH]; simpl.
+  - reflexivity.
+  - destruct atom; simpl; rewrite IH; reflexivity.
+Qed.
+
+Theorem T14_auxiliary_insertion_is_invariant :
+  forall skeleton left right,
+    skeleton_matches skeleton (left ++ right)
+    <-> skeleton_matches skeleton (left ++ Trivia :: right).
+Proof.
+  intros skeleton left right. unfold skeleton_matches.
+  repeat rewrite visible_app. simpl. reflexivity.
+Qed.
+
+Theorem T14_layout_insertion_is_invariant :
+  forall skeleton left right,
+    skeleton_matches skeleton (left ++ right)
+    <-> skeleton_matches skeleton (left ++ Layout :: right).
+Proof.
+  intros skeleton left right. unfold skeleton_matches.
+  repeat rewrite visible_app. simpl. reflexivity.
+Qed.
+
+Corollary T14_auxiliary_insertion_neither_loses_nor_fabricates :
+  forall skeleton left right,
+    (skeleton_matches skeleton (left ++ right) ->
+       skeleton_matches skeleton (left ++ Trivia :: right))
+    /\
+    (skeleton_matches skeleton (left ++ Trivia :: right) ->
+       skeleton_matches skeleton (left ++ right)).
+Proof.
+  intros skeleton left right. split; intro H.
+  - apply (proj1 (T14_auxiliary_insertion_is_invariant skeleton left right)); exact H.
+  - apply (proj2 (T14_auxiliary_insertion_is_invariant skeleton left right)); exact H.
+Qed.
+
+(* A successful layout step consumes at least one source atom.  The generated
+   range skipper enforces the byte analogue ([end > start]) before advancing. *)
+Definition skip_one_layout (source : list SourceAtom) : option (list SourceAtom) :=
+  match source with
+  | Layout :: rest => Some rest
+  | Trivia :: rest => Some rest
+  | _ => None
+  end.
+
+Theorem T14_layout_skip_strictly_decreases :
+  forall source rest,
+    skip_one_layout source = Some rest -> length rest < length source.
+Proof.
+  intros source rest H. destruct source as [| atom source]; simpl in H.
+  - discriminate.
+  - destruct atom; inversion H; simpl; lia.
+Qed.
+
+Theorem T14_layout_skip_preserves_visible_source :
+  forall source rest,
+    skip_one_layout source = Some rest -> visible source = visible rest.
+Proof.
+  intros source rest H. destruct source as [| atom source]; simpl in H.
+  - discriminate.
+  - destruct atom; inversion H; reflexivity.
+Qed.
+
+(* Whitespace-only trimming is insufficient: an auxiliary token remains visible
+   to such a scanner even though it is absent from the parser's DEFAULT stream. *)
+Fixpoint whitespace_only_visible (source : list SourceAtom) : list nat :=
+  match source with
+  | [] => []
+  | Code byte :: rest => byte :: whitespace_only_visible rest
+  | Layout :: rest => whitespace_only_visible rest
+  | Trivia :: rest => 0 :: whitespace_only_visible rest
+  end.
+
+Example T14_whitespace_only_counterexample :
+  visible [Code 1; Trivia] = [1]
+  /\ whitespace_only_visible [Code 1; Trivia] <> [1].
+Proof. split; simpl; [reflexivity | discriminate]. Qed.
+
+(* Modal and payload tokens are atomic to a fixed-literal source scan.  [Opaque]
+   means that every lexical alternative at this byte boundary is non-Fixed and
+   consumes the same non-empty span; the generated oracle declines to call a
+   span opaque when either condition is not established. *)
+Inductive ScanToken : Type :=
+| FixedToken (spelling : list nat)
+| OpaqueToken (payload : list nat).
+
+Definition exposes_fixed (literal : list nat) (token : ScanToken) : bool :=
+  match token with
+  | FixedToken spelling =>
+      if list_eq_dec Nat.eq_dec spelling literal then true else false
+  | OpaqueToken _ => false
+  end.
+
+Theorem T15_opaque_token_exposes_no_fixed_delimiter :
+  forall literal payload,
+    exposes_fixed literal (OpaqueToken payload) = false.
+Proof. reflexivity. Qed.
+
+Theorem T15_fixed_delimiter_is_exposed_exactly :
+  forall expected actual,
+    exposes_fixed expected (FixedToken actual) = true <-> actual = expected.
+Proof.
+  intros expected actual. unfold exposes_fixed.
+  destruct (list_eq_dec Nat.eq_dec actual expected) as [Heq | Hneq].
+  - split; [intro; exact Heq | intro; reflexivity].
+  - split; [discriminate | intro H; contradiction].
+Qed.
+
+(* A raw byte search would see this comma, but the modal token lattice exposes
+   it only as payload.  Skipping the certified opaque span is therefore what
+   prevents guest punctuation from becoming host punctuation. *)
+Example T15_guest_comma_counterexample :
+  In 44 [108; 101; 102; 116; 44; 114; 105; 103; 104; 116]
+  /\ exposes_fixed [44]
+       (OpaqueToken [108; 101; 102; 116; 44; 114; 105; 103; 104; 116]) = false.
+Proof. split; [simpl; tauto | reflexivity]. Qed.
+
 (* ══════════════ Admission audit — every theorem must print
    "Closed under the global context" (no Admitted, no Axiom, no Assumption). ══════════════ *)
 Print Assumptions T1_combine_equals_monolithic.
@@ -1208,3 +1360,12 @@ Print Assumptions T13_safety_needs_mono_completeness.
 Print Assumptions T13_decline_onto_a_gap_rejects.
 Print Assumptions T13_fallthrough_is_not_completeness.
 Print Assumptions T13_measured_witness.
+Print Assumptions T14_auxiliary_insertion_is_invariant.
+Print Assumptions T14_layout_insertion_is_invariant.
+Print Assumptions T14_auxiliary_insertion_neither_loses_nor_fabricates.
+Print Assumptions T14_layout_skip_strictly_decreases.
+Print Assumptions T14_layout_skip_preserves_visible_source.
+Print Assumptions T14_whitespace_only_counterexample.
+Print Assumptions T15_opaque_token_exposes_no_fixed_delimiter.
+Print Assumptions T15_fixed_delimiter_is_exposed_exactly.
+Print Assumptions T15_guest_comma_counterexample.

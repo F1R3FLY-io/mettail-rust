@@ -28,7 +28,10 @@ pub use canonical_fixed_point::CanonicalFixedPoint;
 // L9-4: the native capture of a delimited FLT (foreign-language template) guest
 // body — an opaque host-side leaf assembled by the `GuestBody` WPDA codegen.
 mod flt_node;
-pub use flt_node::{FltHole, FltHoleId, FltNode, FltTemplateError, FltTemplatePiece};
+pub use flt_node::{
+    FltHole, FltHoleId, FltNode, FltPolarity, FltSourceRange, FltTemplateBounds, FltTemplateError,
+    FltTemplatePiece, ScopedFltTemplate,
+};
 
 // Numeric literal parsers for fixed-point and float types. These live here
 // (not in `mettail-prattail`) because they construct runtime types above and

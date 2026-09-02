@@ -112,6 +112,7 @@ struct EffectiveRuntimeLimits {
     parse_items: usize,
     forest_nodes: usize,
     semantic_results: usize,
+    capture_bindings: usize,
     lexer_mode_depth: usize,
     foreign_nesting: u32,
 }
@@ -261,6 +262,7 @@ impl<'a> RuntimeParser<'a> {
                     .limits
                     .max_semantic_results
                     .min(policy.max_semantic_results) as usize,
+                capture_bindings: policy.max_capture_bindings as usize,
                 lexer_mode_depth: policy.max_lexer_mode_depth as usize,
                 foreign_nesting: u32::from(policy.max_foreign_nesting),
             },
@@ -344,6 +346,15 @@ impl<'a> RuntimeParser<'a> {
         pieces: &'template [RuntimeTemplatePiece],
         holes: &[RuntimeTemplateHole],
     ) -> Result<TemplateLexing<'template>, RuntimeError> {
+        // Each canonical piece consumes at least one byte or one structural
+        // lattice position. Bound the work before allocating occurrence state;
+        // callers of this neutral API need not originate from an FltNode.
+        if pieces.len() > self.limits.input_bytes {
+            return Err(RuntimeError::InputTooLarge);
+        }
+        if holes.len() > self.limits.capture_bindings {
+            return Err(RuntimeError::InvalidTemplate("hole declaration limit exceeded"));
+        }
         if holes
             .iter()
             .enumerate()
@@ -389,6 +400,9 @@ impl<'a> RuntimeParser<'a> {
                     position = position.checked_add(1).ok_or(RuntimeError::InputTooLarge)?;
                 },
                 RuntimeTemplatePiece::Text(fragment) => {
+                    if fragment.is_empty() {
+                        return Err(RuntimeError::InvalidTemplate("text pieces must be nonempty"));
+                    }
                     let fragment_start = position;
                     fragments.insert(fragment_start, fragment.as_str());
                     let bytes = fragment.as_bytes();
@@ -2489,5 +2503,66 @@ mod tests {
             Some(CategoryId(0)),
         );
         assert!(matches!(result, Err(RuntimeError::NoParse)));
+    }
+
+    #[test]
+    fn structural_template_extent_is_bounded_before_occurrence_allocation() {
+        let (mut grammar, mut image) = integer_grammar();
+        grammar.categories[0].admits_variables = true;
+        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        let policy = RuntimePolicy {
+            max_input_bytes: 2,
+            max_capture_bindings: 1,
+            ..RuntimePolicy::default()
+        };
+        let parser = RuntimeParser::new_with_policy(
+            &grammar,
+            &image,
+            "test",
+            "test",
+            &DefaultRuntimeHost,
+            policy,
+        )
+        .expect("bounded parser");
+
+        let too_many_pieces = parser.parse_template(
+            &[
+                RuntimeTemplatePiece::Hole(0),
+                RuntimeTemplatePiece::Hole(0),
+                RuntimeTemplatePiece::Hole(0),
+            ],
+            &[RuntimeTemplateHole { id: 0, category: None }],
+            Some(CategoryId(0)),
+        );
+        assert!(matches!(too_many_pieces, Err(RuntimeError::InputTooLarge)));
+
+        let too_many_declarations = parser.parse_template(
+            &[RuntimeTemplatePiece::Hole(0), RuntimeTemplatePiece::Hole(1)],
+            &[
+                RuntimeTemplateHole { id: 0, category: None },
+                RuntimeTemplateHole { id: 1, category: None },
+            ],
+            Some(CategoryId(0)),
+        );
+        assert!(matches!(
+            too_many_declarations,
+            Err(RuntimeError::InvalidTemplate("hole declaration limit exceeded"))
+        ));
+    }
+
+    #[test]
+    fn empty_text_piece_is_not_a_canonical_structural_fragment() {
+        let (grammar, image) = integer_grammar();
+        let parser = RuntimeParser::new(&grammar, &image, "test", "test", &DefaultRuntimeHost)
+            .expect("parser");
+        let result = parser.parse_template(
+            &[RuntimeTemplatePiece::Text(String::new())],
+            &[],
+            Some(CategoryId(0)),
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::InvalidTemplate("text pieces must be nonempty"))
+        ));
     }
 }

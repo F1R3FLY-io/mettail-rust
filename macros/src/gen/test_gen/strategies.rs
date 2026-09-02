@@ -2286,7 +2286,7 @@ mod tests {
                 name: IdentStrategyGen,
                 types { Proc }
                 tokens {
-                    FltOpenBrace = "box\\{" push(flt_body) ;
+                    FltOpenBrace = "box:Proc\\{" push(flt_body) ;
                     raw mode flt_body {
                         FltCloseBrace = "\\}" pop ;
                         GuestChunk = "[^{}]+" ;

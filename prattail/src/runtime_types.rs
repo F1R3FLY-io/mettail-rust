@@ -1359,9 +1359,9 @@ fn lex_dag_build(
     let mut worklist: VecDeque<usize> = VecDeque::new();
     worklist.push_back(0);
     // M6c.7.1 (2026-05-14): primary-chain tracking for soft-fail
-    // semantics. A position is "primary" if it's reachable via the
-    // maximal-munch (longest-end) accept at some node, OR if it's the
-    // initial position (byte 0). When the DFA fails to scan from a
+    // semantics. A position is "primary" if every edge from byte zero to
+    // that position is the maximal-munch (longest-end) accept of its parent,
+    // or if it is the initial position itself. When the DFA fails to scan from a
     // primary position, that's a TRUE input error and we hard-fail
     // (matching `lex` parity). When it fails at a SECONDARY-only
     // position (only reachable via a non-longest alt's downstream),
@@ -1430,7 +1430,12 @@ fn lex_dag_build(
         for succ in expanded.successors.into_iter() {
             if !byte_to_node.contains_key(&succ.byte) {
                 worklist.push_back(succ.byte);
-                if succ.is_primary {
+                // Global primary-chain membership is transitive: a locally
+                // longest edge reached from a secondary branch remains
+                // secondary. Promoting it here used to turn harmless dead-end
+                // alternatives (notably Ident prefixes of FLT fence openers)
+                // into hard lexer errors.
+                if start_is_primary && succ.is_primary {
                     primary_targets.insert(succ.byte);
                 }
             }
@@ -3128,6 +3133,38 @@ mod tests {
             true,
         );
         assert!(hard.is_err(), "primary-chain dead-end must hard-fail");
+    }
+
+    #[test]
+    fn locally_primary_edge_does_not_promote_a_secondary_chain() {
+        use std::cell::RefCell;
+
+        let observed = RefCell::new(Vec::new());
+        let _ = lex_dag_build(|start, start_is_primary| {
+            observed.borrow_mut().push((start, start_is_primary));
+            let successors = match start {
+                0 => vec![
+                    LexSuccessor { byte: 2, is_primary: true },
+                    LexSuccessor { byte: 1, is_primary: false },
+                ],
+                // This edge is longest only relative to a secondary parent.
+                1 => vec![LexSuccessor { byte: 3, is_primary: true }],
+                _ => Vec::new(),
+            };
+            Ok(ExpandedLexNode {
+                byte_start: start,
+                edges: Vec::new(),
+                successors,
+                is_eof: start == 2 || start == 3,
+            })
+        })
+        .expect("synthetic lattice builds");
+
+        assert!(observed.borrow().contains(&(2, true)));
+        assert!(
+            observed.borrow().contains(&(3, false)),
+            "a locally longest edge cannot make its secondary prefix globally primary",
+        );
     }
 
     #[test]

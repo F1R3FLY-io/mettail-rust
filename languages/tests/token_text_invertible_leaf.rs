@@ -144,12 +144,16 @@ fn a1_token_text_lowers_to_its_own_labelled_leaf() {
 /// started claiming a lossless inverse for `Arc<FltNode>`, which does not exist.
 #[test]
 fn a1_control_guest_body_still_lowers_to_the_opaque_leaf() {
-    let guest = Proc::Guest(std::sync::Arc::new(mettail_runtime::FltNode::new(
-        "g".to_string(),
-        String::new(),
-        Vec::new(),
-        0,
-    )));
+    let guest = Proc::Guest(std::sync::Arc::new(
+        mettail_runtime::FltNode::new(
+            "g".to_string(),
+            "Proc".to_string(),
+            String::new(),
+            Vec::new(),
+            0,
+        )
+        .expect("valid structural guest node"),
+    ));
     let displays = op_displays(&reduce(&guest));
     assert!(
         displays.iter().any(|d| d.contains("<field-opaque>")),

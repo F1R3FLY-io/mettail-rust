@@ -1031,6 +1031,12 @@ fn generate_language_struct(
                 template: &mettail_runtime::FltNode,
             ) -> Result<#term_name, std::string::String> {
                 template.validate().map_err(|error| error.to_string())?;
+                if template.category != #primary_type_str {
+                    return Err(format!(
+                        "FLT selects result category `{}`, expected `{}`",
+                        template.category, #primary_type_str,
+                    ));
+                }
                 for hole in &template.holes {
                     if let Some(category) = &hole.category {
                         if category != #primary_type_str {
@@ -1046,7 +1052,7 @@ fn generate_language_struct(
                 let mut texts: Vec<String> = Vec::new();
                 for piece in &template.pieces {
                     match piece {
-                        mettail_runtime::FltTemplatePiece::Text(text) => {
+                        mettail_runtime::FltTemplatePiece::Text { text, .. } => {
                             let lexed = lex(text).map_err(|error| error.to_string())?;
                             for (token, range) in lexed {
                                 if matches!(token, Token::Eof) {
@@ -1056,7 +1062,7 @@ fn generate_language_struct(
                                 texts.push(token_text(&token, text, range).to_string());
                             }
                         },
-                        mettail_runtime::FltTemplatePiece::Hole(id) => {
+                        mettail_runtime::FltTemplatePiece::Hole { id, .. } => {
                             let hole = template.hole(*id).ok_or_else(|| {
                                 format!("FLT template refers to unknown hole {id:?}")
                             })?;
@@ -1847,7 +1853,7 @@ fn generate_language_struct_multi(
             let variant = format_ident!("{}", cat);
             let parse_fn = format_ident!("parse_{}_via_wpda_all", cat);
             quote! {
-                {
+                if template.category == stringify!(#cat) {
                     let mut __pos = 0usize;
                     match #parse_fn(&__kinds, &__text_refs, &mut __pos, 0) {
                         Ok((terms, _weights)) if __pos + 1 == __kinds.len() => {
@@ -2092,6 +2098,12 @@ fn generate_language_struct_multi(
                 template: &mettail_runtime::FltNode,
             ) -> Result<#term_name, std::string::String> {
                 template.validate().map_err(|error| error.to_string())?;
+                if ![#(#template_category_names),*].contains(&template.category.as_str()) {
+                    return Err(format!(
+                        "FLT selects unknown result category `{}`",
+                        template.category,
+                    ));
+                }
                 for hole in &template.holes {
                     if let Some(category) = &hole.category {
                         if ![#(#template_category_names),*].contains(&category.as_str()) {
@@ -2107,7 +2119,7 @@ fn generate_language_struct_multi(
                 let mut __texts: Vec<String> = Vec::new();
                 for piece in &template.pieces {
                     match piece {
-                        mettail_runtime::FltTemplatePiece::Text(text) => {
+                        mettail_runtime::FltTemplatePiece::Text { text, .. } => {
                             let lexed = lex(text).map_err(|error| error.to_string())?;
                             for (token, range) in lexed {
                                 if matches!(token, Token::Eof) {
@@ -2117,7 +2129,7 @@ fn generate_language_struct_multi(
                                 __texts.push(token_text(&token, text, range).to_string());
                             }
                         },
-                        mettail_runtime::FltTemplatePiece::Hole(id) => {
+                        mettail_runtime::FltTemplatePiece::Hole { id, .. } => {
                             let hole = template.hole(*id).ok_or_else(|| {
                                 format!("FLT template refers to unknown hole {id:?}")
                             })?;

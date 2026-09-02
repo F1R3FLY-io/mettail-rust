@@ -474,11 +474,193 @@ pub(crate) fn inert_token_patterns(language: &LanguageDef) -> Vec<String> {
 /// stream-annotated token does not, and emitting the gate there is a build error. (That
 /// was a real regression in this change, caught by `--all-features`.)
 pub(crate) fn language_emits_lex_with_streams(language: &LanguageDef) -> bool {
-    language.token_defs.iter().any(|td| td.stream.is_some())
+    let is_auxiliary = |stream: &Option<syn::Ident>| {
+        stream
+            .as_ref()
+            .map(|name| name.to_string())
+            .is_some_and(|name| name != "main")
+    };
+    language
+        .token_defs
+        .iter()
+        .any(|td| is_auxiliary(&td.stream))
         || language
             .mode_defs
             .iter()
-            .any(|m| m.token_defs.iter().any(|td| td.stream.is_some()))
+            .any(|m| m.token_defs.iter().any(|td| is_auxiliary(&td.stream)))
+}
+
+/// Emit the shared source-layout oracle used by raw-source isolation facades.
+///
+/// Ordinary Unicode whitespace and lexer-certified auxiliary-channel ranges are
+/// layout.  DEFAULT-channel strings and modal guest text are deliberately absent
+/// from those ranges, so this helper cannot erase them.  A malformed or failed
+/// authoritative lex makes the facade decline through `None`.
+pub(crate) fn emit_layout_oracle(language: &LanguageDef) -> proc_macro2::TokenStream {
+    use quote::quote;
+
+    let collect_auxiliary = if language_emits_lex_with_streams(language) {
+        quote! {
+            let __lexed = lex_with_streams(input).ok()?;
+            let mut __auxiliary: Vec<(usize, usize)> = __lexed
+                .streams
+                .values()
+                .flat_map(|__tokens| __tokens.iter().map(|(_, __range)| {
+                    (__range.start.byte_offset, __range.end.byte_offset)
+                }))
+                .collect();
+            __auxiliary.sort_unstable();
+            let mut __previous_end = 0usize;
+            for &(__start, __end) in &__auxiliary {
+                if __start >= __end
+                    || __end > input.len()
+                    || !input.is_char_boundary(__start)
+                    || !input.is_char_boundary(__end)
+                    || __start < __previous_end
+                {
+                    return None;
+                }
+                __previous_end = __end;
+            }
+            __auxiliary
+        }
+    } else {
+        quote! { Vec::new() }
+    };
+
+    quote! {
+        struct __MettailSourceLayout {
+            auxiliary: Vec<(usize, usize)>,
+            opaque: Vec<(usize, usize)>,
+        }
+
+        /// Ranges hidden from the parser by the generated lexer's own channel
+        /// routing, plus lexically atomic non-Fixed token ranges. The lexer DAG
+        /// is the authority for modes and all tokenization alternatives.
+        fn __mettail_layout_ranges(input: &str) -> Option<__MettailSourceLayout> {
+            let __auxiliary = { #collect_auxiliary };
+            let __dag = lex_dag(input).ok()?;
+            let mut __opaque: Vec<(usize, usize)> = __dag
+                .nodes
+                .iter()
+                .filter_map(|__node| {
+                    let __first = __node.edges.first()?;
+                    let __end = __first.end_byte;
+                    let __same_non_fixed_span = __end > __node.byte_start
+                        && __node.edges.iter().all(|__edge| {
+                            __edge.end_byte == __end
+                                && !matches!(
+                                    __edge.kind,
+                                    mettail_prattail::automata::TokenKind::Fixed(_)
+                                )
+                        });
+                    __same_non_fixed_span.then_some((__node.byte_start, __end))
+                })
+                .collect();
+            __opaque.sort_unstable();
+            __opaque.dedup();
+            for &(__start, __end) in &__opaque {
+                if __start >= __end
+                    || __end > input.len()
+                    || !input.is_char_boundary(__start)
+                    || !input.is_char_boundary(__end)
+                {
+                    return None;
+                }
+            }
+            Some(__MettailSourceLayout {
+                auxiliary: __auxiliary,
+                opaque: __opaque,
+            })
+        }
+
+        /// Advance across layout at `at`, never beyond `end`.  Every successful
+        /// loop consumes at least one UTF-8 byte or one non-empty auxiliary range.
+        fn __mettail_skip_layout(
+            input: &str,
+            layout: &__MettailSourceLayout,
+            mut at: usize,
+            end: usize,
+        ) -> usize {
+            while at < end {
+                let before = at;
+                while at < end {
+                    let Some(rest) = input.get(at..end) else { return at };
+                    let Some(ch) = rest.chars().next() else { return at };
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    at += ch.len_utf8();
+                }
+
+                let index = layout
+                    .auxiliary
+                    .partition_point(|&(_, range_end)| range_end <= at);
+                if let Some(&(range_start, range_end)) = layout.auxiliary.get(index) {
+                    if range_start <= at && at < range_end && range_end <= end {
+                        at = range_end;
+                    }
+                }
+                if at == before {
+                    break;
+                }
+            }
+            at
+        }
+
+        /// Skip one token only when every lexer-DAG alternative at this exact
+        /// boundary is non-Fixed and has the same non-empty range. Such a token
+        /// cannot expose host punctuation; ambiguity makes the oracle decline
+        /// to skip, preserving every possible fixed-token reading.
+        fn __mettail_skip_opaque(
+            layout: &__MettailSourceLayout,
+            at: usize,
+            end: usize,
+        ) -> usize {
+            let index = layout.opaque.partition_point(|&(start, _)| start < at);
+            match layout.opaque.get(index) {
+                Some(&(start, finish)) if start == at && finish <= end => finish,
+                _ => at,
+            }
+        }
+
+        /// Remove layout from both ends of a source range without copying or
+        /// rewriting its interior.  Returns byte indices into the original input.
+        fn __mettail_trim_layout(
+            input: &str,
+            layout: &__MettailSourceLayout,
+            start: usize,
+            end: usize,
+        ) -> Option<(usize, usize)> {
+            if start > end || end > input.len() {
+                return None;
+            }
+            let start = __mettail_skip_layout(input, layout, start, end);
+            let mut finish = end;
+            while start < finish {
+                let before = finish;
+                let index = layout
+                    .auxiliary
+                    .partition_point(|&(range_start, _)| range_start < finish);
+                if let Some(&(range_start, range_end)) =
+                    index.checked_sub(1).and_then(|i| layout.auxiliary.get(i))
+                {
+                    if start <= range_start && range_start < finish && finish <= range_end {
+                        finish = range_start;
+                    }
+                }
+                if finish == before {
+                    let Some(prefix) = input.get(start..finish) else { return None };
+                    let Some(ch) = prefix.chars().next_back() else { break };
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    finish -= ch.len_utf8();
+                }
+            }
+            Some((start, finish))
+        }
+    }
 }
 
 /// Emit the per-language `__inert_skip` helper: given `bytes` and an index `i`, return
@@ -622,6 +804,44 @@ pub(crate) fn emit_inert_skipper(language: &LanguageDef) -> proc_macro2::TokenSt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mettail_ast::language::{LanguageDef, ModeDef, TokenDef};
+    use proc_macro2::Span;
+    use syn::Ident;
+
+    fn empty_language() -> LanguageDef {
+        LanguageDef {
+            name: Ident::new("LayoutOracleTest", Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
+    fn token(stream: Option<&str>) -> TokenDef {
+        TokenDef {
+            name: Ident::new("Trivia", Span::call_site()),
+            pattern: "//[^\\n]*".to_string(),
+            category: None,
+            rust_code: None,
+            priority: None,
+            push_mode: None,
+            is_pop: false,
+            stream: stream.map(|name| Ident::new(name, Span::call_site())),
+            from_literals: false,
+        }
+    }
 
     /// A DFA over a signed-integer family: `-` must be extensible by every digit, and by
     /// nothing else. This is the exact shape of the Rholang defect.
@@ -662,5 +882,35 @@ mod tests {
         assert!(!is_word_shaped("-"));
         assert!(!is_word_shaped("!!"));
         assert!(!is_word_shaped(""));
+    }
+
+    #[test]
+    fn layout_oracle_uses_lexer_ranges_only_for_auxiliary_channels() {
+        let mut auxiliary = empty_language();
+        auxiliary.token_defs.push(token(Some("COMMENTS")));
+        assert!(language_emits_lex_with_streams(&auxiliary));
+        let emitted = emit_layout_oracle(&auxiliary).to_string();
+        assert!(emitted.contains("lex_with_streams"));
+        assert!(emitted.contains("range . start . byte_offset"));
+
+        let mut main = empty_language();
+        main.token_defs.push(token(Some("main")));
+        assert!(!language_emits_lex_with_streams(&main));
+        let emitted = emit_layout_oracle(&main).to_string();
+        assert!(!emitted.contains("lex_with_streams"));
+    }
+
+    #[test]
+    fn layout_oracle_detects_auxiliary_tokens_in_named_modes() {
+        let mut language = empty_language();
+        language.mode_defs.push(ModeDef {
+            name: Ident::new("guest", Span::call_site()),
+            token_defs: vec![token(Some("COMMENTS"))],
+            raw: true,
+        });
+        assert!(language_emits_lex_with_streams(&language));
+        assert!(emit_layout_oracle(&language)
+            .to_string()
+            .contains("lex_with_streams"));
     }
 }

@@ -73,12 +73,13 @@ language! {
         // machinery; nothing here tests the FLT lexer itself, only that a `GuestBody` field
         // keeps the lossy, non-invertible, non-reflectable treatment a token-text field loses.
         //
-        // ⚠ The RESERVED-TAG brace form (`box{`), not the `[a-z]+\`` backtick form. This
+        // ⚠ The fixed explicit selector/category brace form (`box:Proc{`), not a broad
+        // backtick-opener regex. This
         // fixture also declares `m:Ident` positions, and an opener whose prefix is an
         // arbitrary lowercase word makes the lexer co-accept `Ident` at every such state —
         // the DFA blow-up `NonTerminalKind::Ident`'s own doc measured and rejected. A
         // reserved tag has no bare-identifier ambiguity at all.
-        FltOpenBrace = "box\\{" push(flt_body_brace) ;
+        FltOpenBrace = "box:Proc\\{" push(flt_body_brace) ;
 
         raw mode flt_body_brace {
             FltCloseBrace = "\\}" pop ;
