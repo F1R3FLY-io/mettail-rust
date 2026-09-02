@@ -77,6 +77,16 @@ fn test_fixed_parse_rejects_malformed() {
 
 // --- Str ---
 
+#[test]
+fn string_escape_pairs_decode_left_to_right_and_round_trip() {
+    mettail_runtime::clear_var_cache();
+    let raw = r#""a\\\"b\\\\c""#;
+    let expected = "a\\\"b\\\\c";
+    let parsed = calc::Str::parse(raw).expect("parse overlapping string escape pairs");
+    assert_eq!(parsed, calc::Str::StringLit(expected.to_string()));
+    assert_eq!(parsed.to_string(), raw);
+}
+
 // --- Environment ---
 
 #[test]

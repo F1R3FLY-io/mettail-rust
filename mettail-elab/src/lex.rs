@@ -162,32 +162,8 @@ pub struct Lexeme {
 /// recursion. Structural DDL lowering and Registry-source parsing share this
 /// function so their canonical values cannot diverge on escape spelling.
 pub fn decode_rholang_string_literal(raw: &str) -> Result<String, String> {
-    let inner = raw
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .ok_or_else(|| "string-token capture is not enclosed in double quotes".to_string())?;
-    let mut output = String::with_capacity(inner.len());
-    let mut characters = inner.chars();
-    while let Some(character) = characters.next() {
-        match character {
-            '"' => return Err("string-token capture contains an unescaped double quote".into()),
-            '\\' => {
-                let escaped = characters
-                    .next()
-                    .ok_or_else(|| "string-token capture ends in a dangling escape".to_string())?;
-                match escaped {
-                    '"' => output.push('"'),
-                    '\\' => output.push('\\'),
-                    other => {
-                        output.push('\\');
-                        output.push(other);
-                    },
-                }
-            },
-            other => output.push(other),
-        }
-    }
-    Ok(output)
+    mettail_grammar_core::decode_double_quoted_string_literal(raw)
+        .map_err(|error| error.to_string())
 }
 
 /// Decode the exact `b"…"` byte-array token emitted by nouveau Rholang.
@@ -493,6 +469,7 @@ mod string_literal_tests {
         for (raw, expected) in [
             (r#""plain""#, "plain"),
             (r#""a\"b\\c""#, "a\"b\\c"),
+            (r#""a\\\"b\\\\c""#, "a\\\"b\\\\c"),
             (r#""\n\t\x""#, r"\n\t\x"),
             ("\"λ��\"", "λ��"),
         ] {

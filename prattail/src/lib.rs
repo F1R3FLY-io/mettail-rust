@@ -44,6 +44,11 @@
 //!   TokenStream (Rust source code)
 //! ```
 
+pub use mettail_grammar_core::{
+    decode_double_quoted_string_literal, encode_double_quoted_string_literal,
+    StringLiteralDecodeError,
+};
+
 // `trace_diag!` (the compile-time `walker-trace` gate for parser diagnostics)
 // must be in textual macro scope for every module below that uses it, so this
 // `#[macro_use]` module is declared before all others. See `src/trace.rs`.

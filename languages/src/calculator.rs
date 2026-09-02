@@ -207,15 +207,7 @@ language! {
         Str {
             pattern: r#""([^"\\]|\\.)*""#;
             eval: ![ {
-                if text.len() < 2 {
-                    Err(())
-                } else {
-                    let inner = &text[1..text.len()-1];
-                    let unescaped = inner
-                        .replace("\\\"", "\"")
-                        .replace("\\\\", "\\");
-                    Ok(unescaped.to_string())
-                }
+                mettail_prattail::decode_double_quoted_string_literal(text).map_err(|_| ())
             } ]
         }
     },

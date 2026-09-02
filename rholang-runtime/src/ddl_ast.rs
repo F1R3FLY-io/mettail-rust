@@ -660,11 +660,24 @@ enum Task<'a> {
 #[cfg(test)]
 mod tests {
     use super::decode_captured_string;
+    use mettail_languages::rholang::Str;
 
     #[test]
     fn captured_string_decoding_matches_the_generated_rholang_literal_action() {
         assert_eq!(decode_captured_string(r#""rho:registry/a@1""#).unwrap(), "rho:registry/a@1");
-        assert_eq!(decode_captured_string(r#""a\\\"b\\\\c""#).unwrap(), "a\"b\\c");
+        let raw = r#""a\\\"b\\\\c""#;
+        let expected = "a\\\"b\\\\c";
+        assert_eq!(decode_captured_string(raw).as_deref(), Ok(expected));
+        assert_eq!(
+            Str::parse_via_wpda(raw).expect("the generated parser accepts the string token"),
+            Str::StringLit(expected.to_string())
+        );
+        let rendered = Str::StringLit(expected.to_string()).to_string();
+        assert_eq!(rendered, raw);
+        assert_eq!(
+            Str::parse_via_wpda(&rendered).expect("the generated display output parses"),
+            Str::StringLit(expected.to_string())
+        );
         assert_eq!(decode_captured_string(r#""\n\t\x""#).unwrap(), r"\n\t\x");
         assert!(decode_captured_string("not-quoted").is_err());
     }

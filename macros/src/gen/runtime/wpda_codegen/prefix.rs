@@ -543,15 +543,7 @@ fn default_eval_body_for_native_kind(kind: &NativeKind) -> Option<TokenStream> {
             }
         },
         NativeKind::Str => quote! {
-            if text.len() < 2 {
-                Err(())
-            } else {
-                let inner = &text[1..text.len() - 1];
-                let unescaped = inner
-                    .replace("\\\"", "\"")
-                    .replace("\\\\", "\\");
-                Ok(unescaped.to_string())
-            }
+            mettail_prattail::decode_double_quoted_string_literal(text).map_err(|_| ())
         },
         NativeKind::Other => return None,
     };
@@ -3891,6 +3883,15 @@ mod tests {
             from_literals: true,
         });
         lang
+    }
+
+    #[test]
+    fn default_string_action_uses_the_shared_left_to_right_decoder() {
+        let generated = default_eval_body_for_native_kind(&NativeKind::Str)
+            .expect("String has a generated native action")
+            .to_string();
+        assert!(generated.contains("decode_double_quoted_string_literal"));
+        assert!(!generated.contains("replace"));
     }
 
     #[test]

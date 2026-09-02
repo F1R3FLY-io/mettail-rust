@@ -4587,7 +4587,7 @@ fn generate_engine_auto_literal_arm(
         quote! {
             #category::#literal_label(v) => {
                 stack.push(DisplayTask::WriteString(
-                    format!("\"{}\"", v.replace('\"', "\\\""))
+                    mettail_prattail::encode_double_quoted_string_literal(v)
                 ));
             }
         }

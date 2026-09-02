@@ -89,6 +89,15 @@ fn json_parses_strings() {
     assert_eq!(format!("{t}"), "\"hello\"");
 }
 
+#[test]
+fn json_string_escape_pairs_decode_left_to_right_and_round_trip() {
+    mettail_runtime::clear_var_cache();
+    let raw = r#""a\\\"b\\\\c""#;
+    let value = Value::parse(raw).expect("JStr overlapping escape-pair parse");
+    assert_eq!(value.to_string(), raw);
+    assert_eq!(Value::parse(&value.to_string()).expect("JStr display reparses"), value);
+}
+
 /// `JArr` (:407) — the `List(Value)` → `Vec(Value)` clause.
 #[test]
 fn json_parses_arrays() {

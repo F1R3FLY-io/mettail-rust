@@ -75,7 +75,17 @@ Proof.
   destruct character; try contradiction. simpl. lia.
 Qed.
 
+(** Escape pairs are consumed from left to right.  In particular, the first
+    two slashes below form one escaped slash; the remaining slash then escapes
+    the quote.  A sequence of global textual replacements can incorrectly
+    rewrite across the boundary created by its preceding pass, so it is not a
+    refinement of this transition system. *)
+Example overlapping_escape_pairs_preserve_the_literal_slash :
+  decode_literal_body [Slash; Slash; Slash; Quote] = [Slash; Quote].
+Proof. reflexivity. Qed.
+
 Print Assumptions decode_encode_round_trip.
 Print Assumptions unknown_escape_is_preserved.
 Print Assumptions decoded_length_never_exceeds_input.
 Print Assumptions escaped_quote_and_slash_are_the_only_contractions.
+Print Assumptions overlapping_escape_pairs_preserve_the_literal_slash.

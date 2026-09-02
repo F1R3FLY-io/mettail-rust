@@ -15,6 +15,7 @@ mod normalize;
 mod runtime;
 mod semantic_machine;
 mod semantic_term;
+mod string_literal;
 mod theorem;
 mod weight;
 
@@ -29,5 +30,6 @@ pub use normalize::*;
 pub use runtime::*;
 pub use semantic_machine::*;
 pub use semantic_term::*;
+pub use string_literal::*;
 pub use theorem::*;
 pub use weight::*;
