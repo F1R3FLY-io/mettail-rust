@@ -3439,8 +3439,9 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
 mod tests {
     use super::*;
     use mettail_grammar_core::{
-        AdmissionTheorem, DefaultRuntimeHost, DynamicValue, LanguageRight, RuntimeTemplateHole,
-        RuntimeTemplatePiece, SpaceRight, SpaceRights, StructuralTheoremChecker,
+        AdmissionBudget, AdmissionRefutation, AdmissionTheorem, DefaultRuntimeHost, DynamicValue,
+        LanguageRight, RuntimeTemplateHole, RuntimeTemplatePiece, SpaceRight, SpaceRights,
+        StructuralTheoremChecker,
     };
     use mettail_languages::rholang::Proc;
     use models::rust::utils::{
@@ -5628,7 +5629,7 @@ mod tests {
         let handle = runtime
             .install(InstallCandidate::Canonical(tiny_value(
                 "Tiny",
-                l([s("Parse"), s("Construct"), s("Match"), s("Publish")]),
+                l([s("Parse"), s("Construct"), s("Match"), s("Publish"), s("Check")]),
             )))
             .expect("language installs");
         let zero = runtime
@@ -5648,7 +5649,8 @@ mod tests {
             membership,
             membership,
             SpaceRights::all(),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             32,
         )
         .expect("typed channel");
@@ -5687,7 +5689,7 @@ mod tests {
     }
 
     #[test]
-    fn theorem_channel_language_revocation_prevents_a_prepared_commit() {
+    fn theorem_channel_creation_requires_explicit_check_authority() {
         let service = Arc::new(LanguageInstallService::new(
             Arc::new(MemoryRegistry::default()),
             LanguageInstallPolicy::default(),
@@ -5697,6 +5699,155 @@ mod tests {
             .install(InstallCandidate::Canonical(tiny_value(
                 "Tiny",
                 l([s("Parse"), s("Construct"), s("Match"), s("Publish")]),
+            )))
+            .expect("language installs without theorem-check authority");
+        let membership = AdmissionTheorem::membership(CategoryId(0));
+
+        assert!(matches!(
+            crate::theorem_channel::RholangTheoremChannel::new(
+                runtime,
+                &handle,
+                "Expr",
+                membership,
+                membership,
+                SpaceRights::all(),
+                Arc::new(StructuralTheoremChecker::default()),
+                AdmissionBudget::structural(),
+                32,
+            ),
+            Err(crate::theorem_channel::RholangTheoremChannelError::Runtime(error))
+                if matches!(
+                    error.as_ref(),
+                    LanguageRuntimeError::Access(LanguageAccessError::MissingRight(
+                        LanguageRight::Check
+                    ))
+                )
+        ));
+    }
+
+    #[test]
+    fn theorem_channel_budget_exhaustion_fails_closed_before_rspace_mutation() {
+        let service = Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        ));
+        let runtime = Arc::new(RholangLanguageRuntime::new(service));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(tiny_value(
+                "Tiny",
+                l([s("Parse"), s("Construct"), s("Publish"), s("Check")]),
+            )))
+            .expect("language installs");
+        let zero = runtime
+            .construct_template(
+                &handle,
+                &[RuntimeTemplatePiece::Text("0".into())],
+                &[],
+                Some("Expr"),
+                &BTreeMap::new(),
+            )
+            .expect("zero FLT");
+        let membership = AdmissionTheorem::membership(CategoryId(0));
+        let channel = crate::theorem_channel::RholangTheoremChannel::new(
+            runtime,
+            &handle,
+            "Expr",
+            membership,
+            membership,
+            SpaceRights::from_rights([SpaceRight::Produce]),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::new(0, 0),
+            32,
+        )
+        .expect("bounded typed channel");
+
+        assert!(matches!(
+            channel.prepare_produce(zero),
+            Err(crate::theorem_channel::RholangTheoremChannelError::Theorem(
+                mettail_grammar_core::TheoremChannelError::AdmissionUndetermined {
+                    reason: mettail_grammar_core::AdmissionUndetermined::WorkBudgetExhausted {
+                        required: 1,
+                        available: 0,
+                    },
+                    ..
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn theorem_channel_rejects_a_mismatched_presented_certificate() {
+        let service = Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        ));
+        let runtime = Arc::new(RholangLanguageRuntime::new(service));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(tiny_value(
+                "Tiny",
+                l([s("Parse"), s("Construct"), s("Publish"), s("Check")]),
+            )))
+            .expect("language installs");
+        let zero = runtime
+            .construct_template(
+                &handle,
+                &[RuntimeTemplatePiece::Text("0".into())],
+                &[],
+                Some("Expr"),
+                &BTreeMap::new(),
+            )
+            .expect("zero FLT");
+        let membership = AdmissionTheorem::membership(CategoryId(0));
+        let channel = crate::theorem_channel::RholangTheoremChannel::new(
+            runtime,
+            &handle,
+            "Expr",
+            membership,
+            membership,
+            SpaceRights::from_rights([SpaceRight::Produce]),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
+            32,
+        )
+        .expect("typed channel");
+        let message = channel
+            .commit_produce(
+                channel
+                    .prepare_produce(zero.clone())
+                    .expect("prepare proof"),
+                |message| message,
+            )
+            .expect("commit admitted message");
+        let mismatched = mettail_grammar_core::AdmissionCertificate::from_checked_evidence(
+            message.evidence().term(),
+            membership,
+            "different-checker/1",
+            "different-limits/1",
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            channel.prepare_produce_with_certificate(zero, Some(&mismatched)),
+            Err(crate::theorem_channel::RholangTheoremChannelError::Theorem(
+                mettail_grammar_core::TheoremChannelError::AdmissionRefuted {
+                    reason: AdmissionRefutation::CertificateMismatch,
+                    ..
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn theorem_channel_language_revocation_prevents_a_prepared_commit() {
+        let service = Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        ));
+        let runtime = Arc::new(RholangLanguageRuntime::new(service));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(tiny_value(
+                "Tiny",
+                l([s("Parse"), s("Construct"), s("Match"), s("Publish"), s("Check")]),
             )))
             .expect("language installs");
         let zero = runtime
@@ -5716,7 +5867,8 @@ mod tests {
             membership,
             membership,
             SpaceRights::all(),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             32,
         )
         .expect("typed channel");
@@ -5739,7 +5891,7 @@ mod tests {
         let handle = runtime
             .install(InstallCandidate::Canonical(tiny_value(
                 "Tiny",
-                l([s("Parse"), s("Construct"), s("Match"), s("Publish")]),
+                l([s("Parse"), s("Construct"), s("Match"), s("Publish"), s("Check")]),
             )))
             .expect("language installs");
         let zero = runtime
@@ -5760,7 +5912,8 @@ mod tests {
             membership,
             membership,
             SpaceRights::all(),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             0,
         )
         .expect("produce channel");
@@ -5781,7 +5934,8 @@ mod tests {
             membership,
             membership,
             SpaceRights::all(),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             0,
         )
         .expect("consume channel");
@@ -5825,7 +5979,7 @@ mod tests {
             LanguageInstallPolicy::default(),
         ));
         let runtime = Arc::new(RholangLanguageRuntime::new(service));
-        let rights = || l([s("Parse"), s("Construct"), s("Match"), s("Publish")]);
+        let rights = || l([s("Parse"), s("Construct"), s("Match"), s("Publish"), s("Check")]);
         let left = runtime
             .install(InstallCandidate::Canonical(tiny_value("LeftTiny", rights())))
             .expect("left language");
@@ -5849,7 +6003,8 @@ mod tests {
             membership,
             membership,
             SpaceRights::all(),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             8,
         )
         .expect("left channel");
@@ -5918,7 +6073,7 @@ mod tests {
         let handle = runtime
             .install(InstallCandidate::Canonical(tiny_value(
                 "Tiny",
-                l([s("Parse"), s("Construct"), s("Match"), s("Publish")]),
+                l([s("Parse"), s("Construct"), s("Match"), s("Publish"), s("Check")]),
             )))
             .expect("language installs");
         let zero = runtime
@@ -5938,7 +6093,8 @@ mod tests {
             membership,
             membership,
             SpaceRights::all(),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             4,
         )
         .expect("membership channel");
@@ -5959,7 +6115,8 @@ mod tests {
             exact,
             membership,
             SpaceRights::from_rights([SpaceRight::Consume]),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             4,
         )
         .expect("exact theorem channel");
@@ -5993,16 +6150,18 @@ mod tests {
             AdmissionTheorem::exact(CategoryId(0), mettail_grammar_core::TermHash([99; 32])),
             membership,
             SpaceRights::from_rights([SpaceRight::Consume]),
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            AdmissionBudget::structural(),
             4,
         )
         .expect("different exact theorem channel");
         assert!(matches!(
             rejecting.prepare_consume(&message, &pattern),
             Err(crate::theorem_channel::RholangTheoremChannelError::Theorem(
-                mettail_grammar_core::TheoremChannelError::Certificate(
-                    mettail_grammar_core::CertificateError::TheoremDoesNotHold
-                )
+                mettail_grammar_core::TheoremChannelError::AdmissionRefuted {
+                    reason: AdmissionRefutation::TheoremDoesNotHold,
+                    ..
+                }
             ))
         ));
     }

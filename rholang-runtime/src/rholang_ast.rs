@@ -4878,25 +4878,8 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
     Proc::CastList(Arc::new(List::ListLit(items)))
 }
 
-/// A-S4: desugar ONE raw send-sugar node (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, and their `!!`
-/// twins) to its canonical channel-first form. Returns `None` for
-/// every non-sugar node. Each arm performs EXACTLY the constructor rewrite the rule's `![{…}]
-/// fold` body performs (`languages/src/rholang.rs`) — a pure structural rearrangement, no value
-/// computation — so lowering the desugared node is byte-identical to lowering the eval-time fold
-/// target. Exec submits the RAW parse tree post-A-S4, so these nodes reach the lowering unfolded.
 // ── the lookahead suffix: operand admission + bound admission ───────────────────────────────
 
-/// Split a lookahead's operand into `(reply channel, reflected subject)`.
-///
-/// The operand must be a **send**. Every send SUGAR is admitted, because the operand is first run
-/// through [`desugar_surface_sugar_node`] — the same canonicalization `lower_proc` performs on its head
-/// node — so `@"r"!(P)[*]`, `r!(P)[*]`, `@Nil!(P)[*]` and the polyadic forms all reach the same
-/// two arms rather than only the one shape the demo happens to use.
-///
-/// A **persistent** send (`x!!(P)[*]`) is deliberately NOT admitted: `!!` means "serve this datum
-/// to every taker, forever", and there is no such thing as a persistent *exploration* — the
-/// request is answered once, and repeating it would re-run the whole search per consumer. It
-/// fails closed here rather than being silently demoted to a linear send.
 /// Admit a `P[n]` step bound: a ground, non-negative integer literal.
 ///
 /// Non-negative because `n` counts COMMs and a negative count denotes nothing; `0` is admitted

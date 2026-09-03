@@ -12,6 +12,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.CapabilitySeparation \
 	RuntimeGrammar.InstalledLanguageAuthority \
 	RuntimeGrammar.TheoremChannel \
+	RuntimeGrammar.BoundedAdmissionChecker \
 	RuntimeGrammar.WpdaDispatchPartition \
 	RuntimeGrammar.StructuralTemplate \
 	RuntimeGrammar.StructuralConstructMatch \

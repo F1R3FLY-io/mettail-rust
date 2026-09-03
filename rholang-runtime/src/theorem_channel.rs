@@ -12,10 +12,10 @@ use crate::language_install::{
     RholangLanguageRuntime,
 };
 use mettail_grammar_core::{
-    AdmissionTheorem, AdmittedMessage, CategoryId, CheckedMatchEvidence, LanguageAccessError,
-    LanguageRight, PreparedConsume, PreparedProduce, SpaceRight, SpaceRights,
-    StructuralTheoremChecker, TermHash, TheoremChannelDescriptor, TheoremChannelError,
-    TheoremChannelKernel, TypedPatternDescriptor,
+    AdmissionBudget, AdmissionCertificate, AdmissionChecker, AdmissionTheorem, AdmittedMessage,
+    CategoryId, CheckedMatchEvidence, LanguageAccessError, LanguageRight, PreparedConsume,
+    PreparedProduce, SpaceRight, SpaceRights, TermHash, TheoremChannelDescriptor,
+    TheoremChannelError, TheoremChannelKernel, TypedPatternDescriptor,
 };
 use mettail_rholang_codegen::DynamicSyntaxAdmission;
 use models::rhoapi::{ListParWithRandom, Par};
@@ -42,32 +42,28 @@ impl RholangTheoremChannel {
         channel_theorem: AdmissionTheorem,
         space_theorem: AdmissionTheorem,
         space_rights: SpaceRights,
-        checker: StructuralTheoremChecker,
+        checker: Arc<dyn AdmissionChecker>,
+        admission_budget: AdmissionBudget,
         proof_cache_capacity: usize,
     ) -> Result<Self, RholangTheoremChannelError> {
-        let initial_right = if space_rights.contains(SpaceRight::Produce) {
-            LanguageRight::Publish
-        } else if space_rights.contains(SpaceRight::Consume) {
-            LanguageRight::Match
-        } else {
+        if !space_rights.contains(SpaceRight::Produce)
+            && !space_rights.contains(SpaceRight::Consume)
+        {
             return Err(RholangTheoremChannelError::NoSpaceRights);
-        };
+        }
         let handle = runtime
-            .resolve(language_token, initial_right)
-            .map_err(RholangTheoremChannelError::Runtime)?;
+            .resolve(language_token, LanguageRight::Check)
+            .map_err(|error| RholangTheoremChannelError::Runtime(Box::new(error)))?;
         let table = runtime.service().table();
+        let mut required_rights = vec![LanguageRight::Check];
         if space_rights.contains(SpaceRight::Produce) {
-            table
-                .authorize(&handle, LanguageRight::Publish)
-                .map_err(RholangTheoremChannelError::LanguageAccess)?;
+            required_rights.push(LanguageRight::Publish);
         }
         if space_rights.contains(SpaceRight::Consume) {
-            table
-                .authorize(&handle, LanguageRight::Match)
-                .map_err(RholangTheoremChannelError::LanguageAccess)?;
+            required_rights.push(LanguageRight::Match);
         }
         let language = table
-            .authorize(&handle, initial_right)
+            .authorize_all(&handle, &required_rights)
             .map_err(RholangTheoremChannelError::LanguageAccess)?;
         let mut categories = language
             .core()
@@ -83,7 +79,7 @@ impl RholangTheoremChannel {
         }
         let admission = runtime
             .admission_for(handle.fingerprint(), language.core())
-            .map_err(RholangTheoremChannelError::Construction)?;
+            .map_err(|error| RholangTheoremChannelError::Construction(Box::new(error)))?;
         let descriptor = TheoremChannelDescriptor::new(
             handle.fingerprint(),
             category,
@@ -97,6 +93,7 @@ impl RholangTheoremChannel {
                 descriptor,
                 space_rights,
                 checker,
+                admission_budget,
                 proof_cache_capacity,
             ),
             runtime,
@@ -114,10 +111,23 @@ impl RholangTheoremChannel {
         &self,
         value: Par,
     ) -> Result<PreparedRholangProduce, RholangTheoremChannelError> {
+        self.prepare_produce_with_certificate(value, None)
+    }
+
+    pub fn prepare_produce_with_certificate(
+        &self,
+        value: Par,
+        presented_certificate: Option<&AdmissionCertificate>,
+    ) -> Result<PreparedRholangProduce, RholangTheoremChannelError> {
         let term_hash = self.admitted_term_hash(&value, self.category)?;
         let prepared = self
             .kernel
-            .prepare_produce(self.runtime.service().table(), &self.handle, term_hash)
+            .prepare_produce_with_certificate(
+                self.runtime.service().table(),
+                &self.handle,
+                term_hash,
+                presented_certificate,
+            )
             .map_err(RholangTheoremChannelError::Theorem)?;
         Ok(PreparedRholangProduce { prepared, value })
     }
@@ -146,12 +156,12 @@ impl RholangTheoremChannel {
         self.runtime
             .service()
             .table()
-            .authorize(&self.handle, LanguageRight::Match)
+            .authorize_all(&self.handle, &[LanguageRight::Match, LanguageRight::Check])
             .map_err(RholangTheoremChannelError::LanguageAccess)?;
         let pattern = self
             .runtime
             .resolve_prepared_pattern(prepared_pattern_token)
-            .map_err(RholangTheoremChannelError::Runtime)?;
+            .map_err(|error| RholangTheoremChannelError::Runtime(Box::new(error)))?;
         if pattern.fingerprint_bytes() != self.handle.fingerprint() {
             return Err(RholangTheoremChannelError::ForeignPattern);
         }
@@ -308,8 +318,8 @@ pub enum RholangTheoremChannelError {
     PatternCategoryMismatch,
     PatternMismatch,
     CaptureAdmissionRejected,
-    Construction(LanguageFltConstructionError),
-    Runtime(LanguageRuntimeError),
+    Construction(Box<LanguageFltConstructionError>),
+    Runtime(Box<LanguageRuntimeError>),
     LanguageAccess(LanguageAccessError),
     Theorem(TheoremChannelError),
 }

@@ -9,9 +9,20 @@ Epochs == 0..2
 ValidTerms == {0}
 Operations == {"None", "Produce", "Consume"}
 Phases == {"Idle", "Prepared"}
+Decisions == {"None", "Proven", "Refuted", "Undetermined"}
+WorkBudgets == 0..1
+StructuralRequiredWork == 1
 
-CertificateAccepts(term) == term \in ValidTerms
 PatternAccepts(term) == term = 0
+
+CheckerDecision(term, workBudget, certificateSupplied, certificateMatches) ==
+  IF workBudget < StructuralRequiredWork
+  THEN "Undetermined"
+  ELSE IF certificateSupplied
+       THEN IF certificateMatches /\ term \in ValidTerms
+            THEN "Proven"
+            ELSE "Refuted"
+       ELSE IF term \in ValidTerms THEN "Proven" ELSE "Refuted"
 
 VARIABLES
   phase,
@@ -22,14 +33,25 @@ VARIABLES
   preparedSpaceEpoch,
   candidate,
   proofCacheHit,
+  checkerDecision,
+  checkerWorkBudget,
+  logicalWorkCharged,
+  certificateSupplied,
+  certificateMatches,
   publishRight,
   matchRight,
+  checkRight,
   produceRight,
   consumeRight,
   messages,
   captures,
   commitments,
   preparedCommitCount,
+  preparedMessages,
+  preparedCaptures,
+  rejectedCommitCount,
+  rejectedMessages,
+  rejectedCaptures,
   lastCommittedOperation,
   lastCommittedTerm,
   rejectionWasAtomic
@@ -37,9 +59,12 @@ VARIABLES
 vars ==
   <<phase, operation, languageEpoch, spaceEpoch,
     preparedLanguageEpoch, preparedSpaceEpoch, candidate, proofCacheHit,
-    publishRight, matchRight, produceRight, consumeRight, messages, captures,
-    commitments, preparedCommitCount, lastCommittedOperation,
-    lastCommittedTerm, rejectionWasAtomic>>
+    checkerDecision, checkerWorkBudget, logicalWorkCharged,
+    certificateSupplied, certificateMatches, publishRight, matchRight,
+    checkRight, produceRight, consumeRight, messages, captures, commitments,
+    preparedCommitCount, preparedMessages, preparedCaptures,
+    rejectedCommitCount, rejectedMessages, rejectedCaptures,
+    lastCommittedOperation, lastCommittedTerm, rejectionWasAtomic>>
 
 Init ==
   /\ phase = "Idle"
@@ -50,23 +75,35 @@ Init ==
   /\ preparedSpaceEpoch = 0
   /\ candidate = NoTerm
   /\ proofCacheHit = FALSE
+  /\ checkerDecision = "None"
+  /\ checkerWorkBudget = 0
+  /\ logicalWorkCharged = 0
+  /\ certificateSupplied = FALSE
+  /\ certificateMatches = FALSE
   /\ publishRight = TRUE
   /\ matchRight = TRUE
+  /\ checkRight = TRUE
   /\ produceRight = TRUE
   /\ consumeRight = TRUE
   /\ messages = {0}
   /\ captures = {}
   /\ commitments = {}
   /\ preparedCommitCount = 0
+  /\ preparedMessages = {}
+  /\ preparedCaptures = {}
+  /\ rejectedCommitCount = 0
+  /\ rejectedMessages = {}
+  /\ rejectedCaptures = {}
   /\ lastCommittedOperation = "None"
   /\ lastCommittedTerm = NoTerm
-  /\ rejectionWasAtomic = TRUE
+  /\ rejectionWasAtomic = FALSE
 
-PrepareProduce(term, cached) ==
+PrepareProduce(term, cached, workBudget, supplied, matches) ==
   /\ phase = "Idle"
   /\ term \in TermIds
-  /\ CertificateAccepts(term)
+  /\ CheckerDecision(term, workBudget, supplied, matches) = "Proven"
   /\ publishRight
+  /\ checkRight
   /\ produceRight
   /\ phase' = "Prepared"
   /\ operation' = "Produce"
@@ -74,19 +111,27 @@ PrepareProduce(term, cached) ==
   /\ preparedSpaceEpoch' = spaceEpoch
   /\ candidate' = term
   /\ proofCacheHit' = cached
-  /\ captures' = {}
+  /\ checkerDecision' = "Proven"
+  /\ checkerWorkBudget' = workBudget
+  /\ logicalWorkCharged' = StructuralRequiredWork
+  /\ certificateSupplied' = supplied
+  /\ certificateMatches' = matches
   /\ preparedCommitCount' = Cardinality(commitments)
-  /\ rejectionWasAtomic' = TRUE
+  /\ preparedMessages' = messages
+  /\ preparedCaptures' = captures
+  /\ rejectionWasAtomic' = FALSE
   /\ UNCHANGED <<languageEpoch, spaceEpoch, publishRight, matchRight,
-                  produceRight, consumeRight, messages, commitments,
-                  lastCommittedOperation, lastCommittedTerm>>
+                  checkRight, produceRight, consumeRight, messages, captures,
+                  commitments, rejectedCommitCount, rejectedMessages,
+                  rejectedCaptures, lastCommittedOperation, lastCommittedTerm>>
 
-PrepareConsume(term, cached) ==
+PrepareConsume(term, cached, workBudget, supplied, matches) ==
   /\ phase = "Idle"
   /\ term \in messages
-  /\ CertificateAccepts(term)
+  /\ CheckerDecision(term, workBudget, supplied, matches) = "Proven"
   /\ PatternAccepts(term)
   /\ matchRight
+  /\ checkRight
   /\ consumeRight
   /\ phase' = "Prepared"
   /\ operation' = "Consume"
@@ -94,27 +139,47 @@ PrepareConsume(term, cached) ==
   /\ preparedSpaceEpoch' = spaceEpoch
   /\ candidate' = term
   /\ proofCacheHit' = cached
-  /\ captures' = {}
+  /\ checkerDecision' = "Proven"
+  /\ checkerWorkBudget' = workBudget
+  /\ logicalWorkCharged' = StructuralRequiredWork
+  /\ certificateSupplied' = supplied
+  /\ certificateMatches' = matches
   /\ preparedCommitCount' = Cardinality(commitments)
-  /\ rejectionWasAtomic' = TRUE
+  /\ preparedMessages' = messages
+  /\ preparedCaptures' = captures
+  /\ rejectionWasAtomic' = FALSE
   /\ UNCHANGED <<languageEpoch, spaceEpoch, publishRight, matchRight,
-                  produceRight, consumeRight, messages, commitments,
-                  lastCommittedOperation, lastCommittedTerm>>
+                  checkRight, produceRight, consumeRight, messages, captures,
+                  commitments, rejectedCommitCount, rejectedMessages,
+                  rejectedCaptures, lastCommittedOperation, lastCommittedTerm>>
 
 Prepare ==
-  \/ \E term \in TermIds, cached \in BOOLEAN : PrepareProduce(term, cached)
-  \/ \E term \in messages, cached \in BOOLEAN : PrepareConsume(term, cached)
+  \/ \E term \in TermIds, cached \in BOOLEAN, workBudget \in WorkBudgets,
+        supplied \in BOOLEAN, matches \in BOOLEAN :
+       PrepareProduce(term, cached, workBudget, supplied, matches)
+  \/ \E term \in messages, cached \in BOOLEAN, workBudget \in WorkBudgets,
+        supplied \in BOOLEAN, matches \in BOOLEAN :
+       PrepareConsume(term, cached, workBudget, supplied, matches)
 
-RejectInvalidProduce(term, cached) ==
+RejectChecked(term, cached, workBudget, supplied, matches) ==
   /\ phase = "Idle"
   /\ term \in TermIds
-  /\ ~CertificateAccepts(term)
+  /\ CheckerDecision(term, workBudget, supplied, matches) # "Proven"
   /\ proofCacheHit' = cached
+  /\ checkerDecision' = CheckerDecision(term, workBudget, supplied, matches)
+  /\ checkerWorkBudget' = workBudget
+  /\ logicalWorkCharged' = StructuralRequiredWork
+  /\ certificateSupplied' = supplied
+  /\ certificateMatches' = matches
+  /\ rejectedCommitCount' = Cardinality(commitments)
+  /\ rejectedMessages' = messages
+  /\ rejectedCaptures' = captures
   /\ rejectionWasAtomic' = TRUE
   /\ UNCHANGED <<phase, operation, languageEpoch, spaceEpoch,
                   preparedLanguageEpoch, preparedSpaceEpoch, candidate,
-                  publishRight, matchRight, produceRight, consumeRight,
-                  messages, captures, commitments, preparedCommitCount,
+                  publishRight, matchRight, checkRight, produceRight,
+                  consumeRight, messages, captures, commitments,
+                  preparedCommitCount, preparedMessages, preparedCaptures,
                   lastCommittedOperation, lastCommittedTerm>>
 
 RevokeLanguage ==
@@ -122,11 +187,16 @@ RevokeLanguage ==
   /\ languageEpoch' = languageEpoch + 1
   /\ publishRight' = FALSE
   /\ matchRight' = FALSE
+  /\ checkRight' = FALSE
   /\ UNCHANGED <<phase, operation, spaceEpoch, preparedLanguageEpoch,
-                  preparedSpaceEpoch, candidate, proofCacheHit, produceRight,
+                  preparedSpaceEpoch, candidate, proofCacheHit,
+                  checkerDecision, checkerWorkBudget, logicalWorkCharged,
+                  certificateSupplied, certificateMatches, produceRight,
                   consumeRight, messages, captures, commitments,
-                  preparedCommitCount, lastCommittedOperation,
-                  lastCommittedTerm, rejectionWasAtomic>>
+                  preparedCommitCount, preparedMessages, preparedCaptures,
+                  rejectedCommitCount, rejectedMessages, rejectedCaptures,
+                  lastCommittedOperation, lastCommittedTerm,
+                  rejectionWasAtomic>>
 
 RevokeSpace ==
   /\ spaceEpoch < 2
@@ -134,10 +204,14 @@ RevokeSpace ==
   /\ produceRight' = FALSE
   /\ consumeRight' = FALSE
   /\ UNCHANGED <<phase, operation, languageEpoch, preparedLanguageEpoch,
-                  preparedSpaceEpoch, candidate, proofCacheHit, publishRight,
-                  matchRight, messages, captures, commitments,
-                  preparedCommitCount, lastCommittedOperation,
-                  lastCommittedTerm, rejectionWasAtomic>>
+                  preparedSpaceEpoch, candidate, proofCacheHit,
+                  checkerDecision, checkerWorkBudget, logicalWorkCharged,
+                  certificateSupplied, certificateMatches, publishRight,
+                  matchRight, checkRight, messages, captures, commitments,
+                  preparedCommitCount, preparedMessages, preparedCaptures,
+                  rejectedCommitCount, rejectedMessages, rejectedCaptures,
+                  lastCommittedOperation, lastCommittedTerm,
+                  rejectionWasAtomic>>
 
 CommitProduce ==
   /\ phase = "Prepared"
@@ -145,7 +219,9 @@ CommitProduce ==
   /\ preparedLanguageEpoch = languageEpoch
   /\ preparedSpaceEpoch = spaceEpoch
   /\ publishRight
+  /\ checkRight
   /\ produceRight
+  /\ checkerDecision = "Proven"
   /\ phase' = "Idle"
   /\ operation' = "None"
   /\ messages' = messages \cup {candidate}
@@ -153,14 +229,18 @@ CommitProduce ==
        commitments \cup
          {<<"Produce", candidate,
             preparedLanguageEpoch, languageEpoch,
-            preparedSpaceEpoch, spaceEpoch, publishRight, produceRight>>}
-  /\ captures' = {}
+            preparedSpaceEpoch, spaceEpoch, publishRight, checkRight,
+            produceRight, checkerDecision>>}
   /\ lastCommittedOperation' = "Produce"
   /\ lastCommittedTerm' = candidate
-  /\ rejectionWasAtomic' = TRUE
+  /\ rejectionWasAtomic' = FALSE
   /\ UNCHANGED <<languageEpoch, spaceEpoch, preparedLanguageEpoch,
                   preparedSpaceEpoch, candidate, proofCacheHit, publishRight,
-                  matchRight, produceRight, consumeRight, preparedCommitCount>>
+                  matchRight, checkRight, produceRight, consumeRight, captures,
+                  preparedCommitCount, preparedMessages, preparedCaptures,
+                  checkerDecision, checkerWorkBudget, logicalWorkCharged,
+                  certificateSupplied, certificateMatches, rejectedCommitCount,
+                  rejectedMessages, rejectedCaptures>>
 
 CommitConsume ==
   /\ phase = "Prepared"
@@ -169,7 +249,9 @@ CommitConsume ==
   /\ preparedLanguageEpoch = languageEpoch
   /\ preparedSpaceEpoch = spaceEpoch
   /\ matchRight
+  /\ checkRight
   /\ consumeRight
+  /\ checkerDecision = "Proven"
   /\ phase' = "Idle"
   /\ operation' = "None"
   /\ messages' = messages \ {candidate}
@@ -177,20 +259,27 @@ CommitConsume ==
        commitments \cup
          {<<"Consume", candidate,
             preparedLanguageEpoch, languageEpoch,
-            preparedSpaceEpoch, spaceEpoch, matchRight, consumeRight>>}
+            preparedSpaceEpoch, spaceEpoch, matchRight, checkRight,
+            consumeRight, checkerDecision>>}
   /\ captures' = {candidate}
   /\ lastCommittedOperation' = "Consume"
   /\ lastCommittedTerm' = candidate
-  /\ rejectionWasAtomic' = TRUE
+  /\ rejectionWasAtomic' = FALSE
   /\ UNCHANGED <<languageEpoch, spaceEpoch, preparedLanguageEpoch,
                   preparedSpaceEpoch, candidate, proofCacheHit, publishRight,
-                  matchRight, produceRight, consumeRight, preparedCommitCount>>
+                  matchRight, checkRight, produceRight, consumeRight,
+                  preparedCommitCount, preparedMessages, preparedCaptures,
+                  checkerDecision, checkerWorkBudget, logicalWorkCharged,
+                  certificateSupplied, certificateMatches, rejectedCommitCount,
+                  rejectedMessages, rejectedCaptures>>
 
 Commit == CommitProduce \/ CommitConsume
 
 MustReject ==
   \/ preparedLanguageEpoch # languageEpoch
   \/ preparedSpaceEpoch # spaceEpoch
+  \/ checkerDecision # "Proven"
+  \/ ~checkRight
   \/ (operation = "Produce" /\ (~publishRight \/ ~produceRight))
   \/ (operation = "Consume" /\
        (~matchRight \/ ~consumeRight \/ candidate \notin messages))
@@ -200,13 +289,17 @@ RejectPrepared ==
   /\ MustReject
   /\ phase' = "Idle"
   /\ operation' = "None"
-  /\ captures' = {}
+  /\ rejectedCommitCount' = Cardinality(commitments)
+  /\ rejectedMessages' = messages
+  /\ rejectedCaptures' = captures
   /\ rejectionWasAtomic' = TRUE
   /\ UNCHANGED <<languageEpoch, spaceEpoch, preparedLanguageEpoch,
                   preparedSpaceEpoch, candidate, proofCacheHit, publishRight,
-                  matchRight, produceRight, consumeRight, messages,
-                  commitments, preparedCommitCount, lastCommittedOperation,
-                  lastCommittedTerm>>
+                  matchRight, checkRight, produceRight, consumeRight, messages,
+                  captures, commitments, preparedCommitCount, preparedMessages,
+                  preparedCaptures, checkerDecision, checkerWorkBudget,
+                  logicalWorkCharged, certificateSupplied, certificateMatches,
+                  lastCommittedOperation, lastCommittedTerm>>
 
 UnsafeCommit ==
   /\ UnsafeMode
@@ -224,14 +317,20 @@ UnsafeCommit ==
             preparedLanguageEpoch, languageEpoch,
             preparedSpaceEpoch, spaceEpoch,
             IF operation = "Produce" THEN publishRight ELSE matchRight,
-            IF operation = "Produce" THEN produceRight ELSE consumeRight>>}
-  /\ captures' = IF operation = "Consume" THEN {candidate} ELSE {}
+            checkRight,
+            IF operation = "Produce" THEN produceRight ELSE consumeRight,
+            checkerDecision>>}
+  /\ captures' = IF operation = "Consume" THEN {candidate} ELSE captures
   /\ lastCommittedOperation' = operation
   /\ lastCommittedTerm' = candidate
-  /\ rejectionWasAtomic' = TRUE
+  /\ rejectionWasAtomic' = FALSE
   /\ UNCHANGED <<languageEpoch, spaceEpoch, preparedLanguageEpoch,
                   preparedSpaceEpoch, candidate, proofCacheHit, publishRight,
-                  matchRight, produceRight, consumeRight, preparedCommitCount>>
+                  matchRight, checkRight, produceRight, consumeRight,
+                  preparedCommitCount, preparedMessages, preparedCaptures,
+                  checkerDecision, checkerWorkBudget, logicalWorkCharged,
+                  certificateSupplied, certificateMatches, rejectedCommitCount,
+                  rejectedMessages, rejectedCaptures>>
 
 IdleStep ==
   /\ phase = "Idle"
@@ -239,7 +338,9 @@ IdleStep ==
 
 Next ==
   \/ Prepare
-  \/ \E term \in TermIds, cached \in BOOLEAN : RejectInvalidProduce(term, cached)
+  \/ \E term \in TermIds, cached \in BOOLEAN, workBudget \in WorkBudgets,
+        supplied \in BOOLEAN, matches \in BOOLEAN :
+       RejectChecked(term, cached, workBudget, supplied, matches)
   \/ RevokeLanguage
   \/ RevokeSpace
   \/ Commit
@@ -258,16 +359,27 @@ TypeOK ==
   /\ preparedSpaceEpoch \in Epochs
   /\ candidate \in TermIds \cup {NoTerm}
   /\ proofCacheHit \in BOOLEAN
+  /\ checkerDecision \in Decisions
+  /\ checkerWorkBudget \in WorkBudgets
+  /\ logicalWorkCharged \in Nat
+  /\ certificateSupplied \in BOOLEAN
+  /\ certificateMatches \in BOOLEAN
   /\ publishRight \in BOOLEAN
   /\ matchRight \in BOOLEAN
+  /\ checkRight \in BOOLEAN
   /\ produceRight \in BOOLEAN
   /\ consumeRight \in BOOLEAN
   /\ messages \subseteq TermIds
   /\ captures \subseteq TermIds
   /\ commitments \subseteq
        (Operations \ {"None"}) \X TermIds \X Epochs \X Epochs
-         \X Epochs \X Epochs \X BOOLEAN \X BOOLEAN
+         \X Epochs \X Epochs \X BOOLEAN \X BOOLEAN \X BOOLEAN \X Decisions
   /\ preparedCommitCount \in Nat
+  /\ preparedMessages \subseteq TermIds
+  /\ preparedCaptures \subseteq TermIds
+  /\ rejectedCommitCount \in Nat
+  /\ rejectedMessages \subseteq TermIds
+  /\ rejectedCaptures \subseteq TermIds
   /\ lastCommittedOperation \in Operations
   /\ lastCommittedTerm \in TermIds \cup {NoTerm}
   /\ rejectionWasAtomic \in BOOLEAN
@@ -278,6 +390,10 @@ AllCommitsAuthorized ==
     /\ record[5] = record[6]
     /\ record[7] = TRUE
     /\ record[8] = TRUE
+    /\ record[9] = TRUE
+
+AllCommitsAreProven ==
+  \A record \in commitments : record[10] = "Proven"
 
 AllProducedTermsAdmitted ==
   \A record \in commitments :
@@ -286,25 +402,53 @@ AllProducedTermsAdmitted ==
 PreparedCarriesCheckedEvidence ==
   phase = "Prepared" =>
     /\ candidate \in ValidTerms
+    /\ checkerDecision = "Proven"
+    /\ logicalWorkCharged = StructuralRequiredWork
     /\ (operation = "Consume" => PatternAccepts(candidate))
 
 PreparedStateIsInvisible ==
   phase = "Prepared" =>
     /\ Cardinality(commitments) = preparedCommitCount
-    /\ captures = {}
+    /\ messages = preparedMessages
+    /\ captures = preparedCaptures
 
 CapturesCarryCheckedConsumeEvidence ==
-  captures # {} =>
-    /\ lastCommittedOperation = "Consume"
-    /\ captures = {lastCommittedTerm}
-    /\ lastCommittedTerm \in ValidTerms
-    /\ PatternAccepts(lastCommittedTerm)
+  \A term \in captures :
+    /\ term \in ValidTerms
+    /\ PatternAccepts(term)
+    /\ \E record \in commitments :
+         /\ record[1] = "Consume"
+         /\ record[2] = term
+         /\ record[7] = TRUE
+         /\ record[8] = TRUE
+         /\ record[9] = TRUE
+         /\ record[10] = "Proven"
 
-RejectedTransactionIsAtomic == rejectionWasAtomic
+RejectedTransactionIsAtomic ==
+  rejectionWasAtomic =>
+    /\ phase = "Idle"
+    /\ Cardinality(commitments) = rejectedCommitCount
+    /\ messages = rejectedMessages
+    /\ captures = rejectedCaptures
+
+ExhaustionIsUndetermined ==
+  checkerDecision # "None" /\
+  checkerWorkBudget < StructuralRequiredWork =>
+    checkerDecision = "Undetermined"
+
+InvalidPresentedCertificateIsRefuted ==
+  checkerDecision # "None" /\
+  checkerWorkBudget >= StructuralRequiredWork /\
+  certificateSupplied /\ ~certificateMatches =>
+    checkerDecision = "Refuted"
+
+CacheChargeIsTransparent ==
+  checkerDecision # "None" => logicalWorkCharged = StructuralRequiredWork
 
 CacheNeverConveysAuthority ==
   \A record \in commitments :
     /\ record[7] = TRUE
     /\ record[8] = TRUE
+    /\ record[9] = TRUE
 
 ====

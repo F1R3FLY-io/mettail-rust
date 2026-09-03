@@ -11,12 +11,13 @@ use crate::{
     CategoryId, InstalledLanguageHandle, InstalledLanguageTable, LanguageAccessError, LanguageRight,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 pub const STRUCTURAL_THEOREM_CHECKER_ABI_V1: &str = "mettail-structural-theorem-checker/1";
 pub const STRUCTURAL_THEOREM_LIMIT_PROFILE_V1: &str = "mettail-structural-theorem-limits/1";
+pub const STRUCTURAL_ADMISSION_WORK_UNITS: u64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TheoremId(pub [u8; 32]);
@@ -196,6 +197,7 @@ pub struct AdmissionCertificate {
     theorem_id: TheoremId,
     checker_abi: String,
     limit_profile: String,
+    evidence: Vec<u8>,
     evidence_hash: [u8; 32],
 }
 
@@ -219,6 +221,62 @@ impl AdmissionCertificate {
     pub fn limit_profile(&self) -> &str {
         &self.limit_profile
     }
+
+    pub fn evidence(&self) -> &[u8] {
+        &self.evidence
+    }
+
+    pub const fn evidence_hash(&self) -> [u8; 32] {
+        self.evidence_hash
+    }
+
+    /// Package evidence produced by a trusted checker.  This constructor does
+    /// not make the evidence authoritative: the selected `AdmissionChecker`
+    /// must still return `Proven` for this exact envelope before admission.
+    pub fn from_checked_evidence(
+        term: CanonicalFltTerm,
+        theorem: AdmissionTheorem,
+        checker_abi: impl Into<String>,
+        limit_profile: impl Into<String>,
+        evidence: Vec<u8>,
+    ) -> Self {
+        let theorem_id = theorem.id();
+        let checker_abi = checker_abi.into();
+        let limit_profile = limit_profile.into();
+        let evidence_hash =
+            certificate_evidence_hash(term, theorem_id, &checker_abi, &limit_profile, &evidence);
+        Self {
+            term,
+            theorem,
+            theorem_id,
+            checker_abi,
+            limit_profile,
+            evidence,
+            evidence_hash,
+        }
+    }
+
+    fn has_valid_envelope_for(
+        &self,
+        term: CanonicalFltTerm,
+        theorem: AdmissionTheorem,
+        checker_abi: &str,
+        limit_profile: &str,
+    ) -> bool {
+        self.term == term
+            && self.theorem == theorem
+            && self.theorem_id == theorem.id()
+            && self.checker_abi == checker_abi
+            && self.limit_profile == limit_profile
+            && self.evidence_hash
+                == certificate_evidence_hash(
+                    self.term,
+                    self.theorem_id,
+                    &self.checker_abi,
+                    &self.limit_profile,
+                    &self.evidence,
+                )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -237,6 +295,130 @@ impl fmt::Display for CertificateError {
 }
 
 impl std::error::Error for CertificateError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AdmissionBudget {
+    pub max_work_units: u64,
+    pub max_evidence_bytes: u64,
+}
+
+impl AdmissionBudget {
+    pub const fn new(max_work_units: u64, max_evidence_bytes: u64) -> Self {
+        Self { max_work_units, max_evidence_bytes }
+    }
+
+    pub const fn structural() -> Self {
+        Self::new(1, 0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AdmissionUsage {
+    pub logical_work_units: u64,
+    pub evidence_bytes: u64,
+}
+
+impl AdmissionUsage {
+    pub const fn new(logical_work_units: u64, evidence_bytes: u64) -> Self {
+        Self { logical_work_units, evidence_bytes }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdmissionRefutation {
+    TheoremDoesNotHold,
+    CertificateMismatch,
+    CheckerDefined(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdmissionUndetermined {
+    WorkBudgetExhausted { required: u64, available: u64 },
+    EvidenceBudgetExhausted { required: u64, available: u64 },
+    CheckerDefined(u32),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvenAdmission {
+    certificate: Arc<AdmissionCertificate>,
+    usage: AdmissionUsage,
+}
+
+impl ProvenAdmission {
+    /// Package a checker's positive result for kernel validation. Construction
+    /// alone grants no authority: the theorem-channel kernel independently
+    /// checks the complete certificate envelope, checker identity, limit
+    /// profile, and reported usage before it can prepare a transaction.
+    pub fn from_checked_certificate(
+        certificate: AdmissionCertificate,
+        usage: AdmissionUsage,
+    ) -> Self {
+        Self {
+            certificate: Arc::new(certificate),
+            usage,
+        }
+    }
+
+    pub fn certificate(&self) -> &AdmissionCertificate {
+        &self.certificate
+    }
+
+    pub fn term(&self) -> CanonicalFltTerm {
+        self.certificate.term
+    }
+
+    pub const fn usage(&self) -> AdmissionUsage {
+        self.usage
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AdmissionDecision {
+    Proven(ProvenAdmission),
+    Refuted {
+        reason: AdmissionRefutation,
+        usage: AdmissionUsage,
+    },
+    Undetermined {
+        reason: AdmissionUndetermined,
+        usage: AdmissionUsage,
+    },
+}
+
+impl AdmissionDecision {
+    pub const fn usage(&self) -> AdmissionUsage {
+        match self {
+            Self::Proven(proof) => proof.usage,
+            Self::Refuted { usage, .. } | Self::Undetermined { usage, .. } => *usage,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AdmissionRequest<'a> {
+    pub term: CanonicalFltTerm,
+    pub theorem: AdmissionTheorem,
+    pub presented_certificate: Option<&'a AdmissionCertificate>,
+    pub budget: AdmissionBudget,
+}
+
+/// Source-neutral, bounded theorem admission.  Implementations may embody a
+/// structural checker or an installed `TheoryCore`; only `Proven` may cross
+/// the transaction boundary, while exhaustion must return `Undetermined`.
+///
+/// Implementations are trusted host components, not grammar-provided
+/// capabilities. They must be deterministic functions of the complete
+/// request, account every unit of logical work and evidence against `budget`,
+/// and return `Undetermined` before exceeding either bound. The kernel treats
+/// their output as untrusted data until its envelope and reported usage have
+/// been validated.
+pub trait AdmissionChecker: fmt::Debug + Send + Sync {
+    fn checker_abi(&self) -> &str;
+
+    fn limit_profile(&self) -> &str;
+
+    fn check(&self, request: AdmissionRequest<'_>) -> AdmissionDecision;
+}
 
 /// Total checker for the structural theorem fragment.  Stronger theorem
 /// engines implement the same source-neutral certificate contract at a
@@ -277,35 +459,95 @@ impl StructuralTheoremChecker {
         if !theorem.holds(term) {
             return Err(CertificateError::TheoremDoesNotHold);
         }
-        let theorem_id = theorem.id();
-        let evidence_hash =
-            certificate_evidence_hash(term, theorem_id, &self.checker_abi, &self.limit_profile);
-        Ok(AdmissionCertificate {
+        Ok(AdmissionCertificate::from_checked_evidence(
             term,
             theorem,
-            theorem_id,
-            checker_abi: self.checker_abi.clone(),
-            limit_profile: self.limit_profile.clone(),
-            evidence_hash,
-        })
+            self.checker_abi.clone(),
+            self.limit_profile.clone(),
+            Vec::new(),
+        ))
     }
 
     pub fn verify(&self, certificate: &AdmissionCertificate) -> Result<(), CertificateError> {
-        if certificate.theorem_id != certificate.theorem.id()
-            || certificate.checker_abi != self.checker_abi
-            || certificate.limit_profile != self.limit_profile
-            || !certificate.theorem.holds(certificate.term)
-            || certificate.evidence_hash
-                != certificate_evidence_hash(
-                    certificate.term,
-                    certificate.theorem_id,
-                    &certificate.checker_abi,
-                    &certificate.limit_profile,
-                )
+        if !certificate.has_valid_envelope_for(
+            certificate.term,
+            certificate.theorem,
+            &self.checker_abi,
+            &self.limit_profile,
+        ) || !certificate.theorem.holds(certificate.term)
         {
             return Err(CertificateError::CertificateMismatch);
         }
         Ok(())
+    }
+}
+
+impl AdmissionChecker for StructuralTheoremChecker {
+    fn checker_abi(&self) -> &str {
+        &self.checker_abi
+    }
+
+    fn limit_profile(&self) -> &str {
+        &self.limit_profile
+    }
+
+    fn check(&self, request: AdmissionRequest<'_>) -> AdmissionDecision {
+        let evidence_bytes = request
+            .presented_certificate
+            .map_or(0, |certificate| u64::try_from(certificate.evidence.len()).unwrap_or(u64::MAX));
+        let usage = AdmissionUsage::new(STRUCTURAL_ADMISSION_WORK_UNITS, evidence_bytes);
+        if request.budget.max_work_units < STRUCTURAL_ADMISSION_WORK_UNITS {
+            return AdmissionDecision::Undetermined {
+                reason: AdmissionUndetermined::WorkBudgetExhausted {
+                    required: STRUCTURAL_ADMISSION_WORK_UNITS,
+                    available: request.budget.max_work_units,
+                },
+                usage,
+            };
+        }
+        if request.budget.max_evidence_bytes < evidence_bytes {
+            return AdmissionDecision::Undetermined {
+                reason: AdmissionUndetermined::EvidenceBudgetExhausted {
+                    required: evidence_bytes,
+                    available: request.budget.max_evidence_bytes,
+                },
+                usage,
+            };
+        }
+        if let Some(certificate) = request.presented_certificate {
+            if !certificate.has_valid_envelope_for(
+                request.term,
+                request.theorem,
+                &self.checker_abi,
+                &self.limit_profile,
+            ) || !request.theorem.holds(request.term)
+            {
+                return AdmissionDecision::Refuted {
+                    reason: AdmissionRefutation::CertificateMismatch,
+                    usage,
+                };
+            }
+            return AdmissionDecision::Proven(ProvenAdmission::from_checked_certificate(
+                certificate.clone(),
+                usage,
+            ));
+        }
+        if !request.theorem.holds(request.term) {
+            return AdmissionDecision::Refuted {
+                reason: AdmissionRefutation::TheoremDoesNotHold,
+                usage,
+            };
+        }
+        AdmissionDecision::Proven(ProvenAdmission::from_checked_certificate(
+            AdmissionCertificate::from_checked_evidence(
+                request.term,
+                request.theorem,
+                self.checker_abi.clone(),
+                self.limit_profile.clone(),
+                Vec::new(),
+            ),
+            usage,
+        ))
     }
 }
 
@@ -314,6 +556,7 @@ fn certificate_evidence_hash(
     theorem_id: TheoremId,
     checker_abi: &str,
     limit_profile: &str,
+    evidence: &[u8],
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"mettail-admission-certificate/1\0");
@@ -323,6 +566,7 @@ fn certificate_evidence_hash(
     hasher.update(&theorem_id.0);
     hash_field(&mut hasher, checker_abi.as_bytes());
     hash_field(&mut hasher, limit_profile.as_bytes());
+    hash_field(&mut hasher, evidence);
     *hasher.finalize().as_bytes()
 }
 
@@ -352,31 +596,60 @@ impl From<&AdmissionCertificate> for ProofCacheKey {
     }
 }
 
+impl ProofCacheKey {
+    pub fn for_request(
+        term: CanonicalFltTerm,
+        theorem: AdmissionTheorem,
+        checker_abi: impl Into<String>,
+        limit_profile: impl Into<String>,
+    ) -> Self {
+        Self {
+            language: term.language,
+            theorem: theorem.id(),
+            term_hash: term.term_hash,
+            checker_abi: checker_abi.into(),
+            limit_profile: limit_profile.into(),
+        }
+    }
+}
+
 /// A bounded, semantics-inert cache.  Saturation merely declines new entries;
 /// authorization and revocation are never cached.
 #[derive(Debug)]
 pub struct ProofCache {
     capacity: usize,
-    entries: BTreeSet<ProofCacheKey>,
+    entries: BTreeMap<ProofCacheKey, ProvenAdmission>,
 }
 
 impl ProofCache {
     pub fn new(capacity: usize) -> Self {
-        Self { capacity, entries: BTreeSet::new() }
+        Self { capacity, entries: BTreeMap::new() }
     }
 
     pub fn contains(&self, key: &ProofCacheKey) -> bool {
-        self.entries.contains(key)
+        self.entries.contains_key(key)
     }
 
-    pub fn insert(&mut self, key: ProofCacheKey) -> bool {
-        if self.entries.contains(&key) {
-            return true;
+    pub fn contains_certificate(&self, certificate: &AdmissionCertificate) -> bool {
+        self.entries
+            .get(&ProofCacheKey::from(certificate))
+            .is_some_and(|stored| stored.certificate() == certificate)
+    }
+
+    pub fn get(&self, key: &ProofCacheKey) -> Option<&ProvenAdmission> {
+        self.entries.get(key)
+    }
+
+    pub fn insert(&mut self, proof: ProvenAdmission) -> bool {
+        let key = ProofCacheKey::from(proof.certificate());
+        if let Some(stored) = self.entries.get(&key) {
+            return stored == &proof;
         }
         if self.entries.len() >= self.capacity {
             return false;
         }
-        self.entries.insert(key)
+        self.entries.insert(key, proof);
+        true
     }
 
     pub fn len(&self) -> usize {
@@ -563,7 +836,7 @@ impl TypedPatternDescriptor {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmittedMessage {
     term: CanonicalFltTerm,
-    certificate: AdmissionCertificate,
+    proof: ProvenAdmission,
 }
 
 impl AdmittedMessage {
@@ -572,7 +845,11 @@ impl AdmittedMessage {
     }
 
     pub fn certificate(&self) -> &AdmissionCertificate {
-        &self.certificate
+        self.proof.certificate()
+    }
+
+    pub fn proof(&self) -> &ProvenAdmission {
+        &self.proof
     }
 }
 
@@ -580,7 +857,7 @@ impl AdmittedMessage {
 pub struct CheckedMatchEvidence {
     pattern_id: [u8; 32],
     message: AdmittedMessage,
-    captures: Vec<AdmissionCertificate>,
+    captures: Vec<ProvenAdmission>,
 }
 
 impl CheckedMatchEvidence {
@@ -592,12 +869,11 @@ impl CheckedMatchEvidence {
         &self.message
     }
 
-    pub fn captures(&self) -> &[AdmissionCertificate] {
+    pub fn captures(&self) -> &[ProvenAdmission] {
         &self.captures
     }
 }
 
-#[derive(Clone)]
 pub struct PreparedProduce {
     channel_id: [u8; 32],
     epoch: u64,
@@ -605,7 +881,6 @@ pub struct PreparedProduce {
     message: AdmittedMessage,
 }
 
-#[derive(Clone)]
 pub struct PreparedConsume {
     channel_id: [u8; 32],
     epoch: u64,
@@ -625,7 +900,8 @@ struct ChannelAuthorityState {
 /// the callback, which is the adapter's atomic-mutation boundary.
 pub struct TheoremChannelKernel {
     descriptor: TheoremChannelDescriptor,
-    checker: StructuralTheoremChecker,
+    checker: Arc<dyn AdmissionChecker>,
+    admission_budget: AdmissionBudget,
     authority: RwLock<ChannelAuthorityState>,
     proof_cache: RwLock<ProofCache>,
 }
@@ -634,12 +910,14 @@ impl TheoremChannelKernel {
     pub fn new(
         descriptor: TheoremChannelDescriptor,
         rights: SpaceRights,
-        checker: StructuralTheoremChecker,
+        checker: Arc<dyn AdmissionChecker>,
+        admission_budget: AdmissionBudget,
         proof_cache_capacity: usize,
     ) -> Self {
         Self {
             descriptor,
             checker,
+            admission_budget,
             authority: RwLock::new(ChannelAuthorityState { epoch: 0, rights }),
             proof_cache: RwLock::new(ProofCache::new(proof_cache_capacity)),
         }
@@ -655,8 +933,18 @@ impl TheoremChannelKernel {
         handle: &InstalledLanguageHandle,
         term_hash: TermHash,
     ) -> Result<PreparedProduce, TheoremChannelError> {
+        self.prepare_produce_with_certificate(table, handle, term_hash, None)
+    }
+
+    pub fn prepare_produce_with_certificate(
+        &self,
+        table: &InstalledLanguageTable,
+        handle: &InstalledLanguageHandle,
+        term_hash: TermHash,
+        presented_certificate: Option<&AdmissionCertificate>,
+    ) -> Result<PreparedProduce, TheoremChannelError> {
         table
-            .authorize(handle, LanguageRight::Publish)
+            .authorize_all(handle, &[LanguageRight::Publish, LanguageRight::Check])
             .map_err(TheoremChannelError::LanguageAccess)?;
         if handle.fingerprint() != self.descriptor.language {
             return Err(TheoremChannelError::LanguageMismatch);
@@ -673,16 +961,15 @@ impl TheoremChannelKernel {
         if !authority.rights.contains(SpaceRight::Produce) {
             return Err(TheoremChannelError::MissingSpaceRight(SpaceRight::Produce));
         }
-        let certificate = self
-            .checker
-            .check(term, self.descriptor.channel_theorem)
-            .map_err(TheoremChannelError::Certificate)?;
-        self.cache_verified(&certificate)?;
+        let epoch = authority.epoch;
+        drop(authority);
+        let proof =
+            self.check_admission(term, self.descriptor.channel_theorem, presented_certificate)?;
         Ok(PreparedProduce {
             channel_id: self.descriptor.id,
-            epoch: authority.epoch,
+            epoch,
             handle: handle.clone(),
-            message: AdmittedMessage { term, certificate },
+            message: AdmittedMessage { term, proof },
         })
     }
 
@@ -695,21 +982,25 @@ impl TheoremChannelKernel {
         if prepared.channel_id != self.descriptor.id {
             return Err(TheoremChannelError::WrongChannel);
         }
+        self.verify_cached(prepared.message.proof())?;
         table
-            .with_authorized(&prepared.handle, LanguageRight::Publish, |_| {
-                let authority = self
-                    .authority
-                    .read()
-                    .map_err(|_| TheoremChannelError::Poisoned)?;
-                if authority.epoch != prepared.epoch {
-                    return Err(TheoremChannelError::StaleEpoch);
-                }
-                if !authority.rights.contains(SpaceRight::Produce) {
-                    return Err(TheoremChannelError::MissingSpaceRight(SpaceRight::Produce));
-                }
-                self.verify_cached(prepared.message.certificate())?;
-                Ok(commit(prepared.message))
-            })
+            .with_authorized_all(
+                &prepared.handle,
+                &[LanguageRight::Publish, LanguageRight::Check],
+                |_| {
+                    let authority = self
+                        .authority
+                        .read()
+                        .map_err(|_| TheoremChannelError::Poisoned)?;
+                    if authority.epoch != prepared.epoch {
+                        return Err(TheoremChannelError::StaleEpoch);
+                    }
+                    if !authority.rights.contains(SpaceRight::Produce) {
+                        return Err(TheoremChannelError::MissingSpaceRight(SpaceRight::Produce));
+                    }
+                    Ok(commit(prepared.message))
+                },
+            )
             .map_err(TheoremChannelError::LanguageAccess)?
     }
 
@@ -722,11 +1013,20 @@ impl TheoremChannelKernel {
         capture_hashes: &[TermHash],
     ) -> Result<PreparedConsume, TheoremChannelError> {
         table
-            .authorize(handle, LanguageRight::Match)
+            .authorize_all(handle, &[LanguageRight::Match, LanguageRight::Check])
             .map_err(TheoremChannelError::LanguageAccess)?;
         if handle.fingerprint() != self.descriptor.language {
             return Err(TheoremChannelError::LanguageMismatch);
         }
+        let authority = self
+            .authority
+            .read()
+            .map_err(|_| TheoremChannelError::Poisoned)?;
+        if !authority.rights.contains(SpaceRight::Consume) {
+            return Err(TheoremChannelError::MissingSpaceRight(SpaceRight::Consume));
+        }
+        let epoch = authority.epoch;
+        drop(authority);
         let channel_message = self.reclassify_channel_message(message)?;
         if message.term.language != pattern.language
             || message.term.category != pattern.category
@@ -741,35 +1041,27 @@ impl TheoremChannelKernel {
         if capture_hashes.len() != pattern.capture_categories.len() {
             return Err(TheoremChannelError::CaptureTelescopeMismatch);
         }
-        let mut capture_certificates = Vec::with_capacity(capture_hashes.len());
+        let mut capture_proofs = Vec::with_capacity(capture_hashes.len());
         for (term_hash, category) in capture_hashes.iter().zip(&pattern.capture_categories) {
             let capture = CanonicalFltTerm::structurally_admitted(
                 self.descriptor.language,
                 *category,
                 *term_hash,
             );
-            let certificate = self
-                .checker
-                .check(capture, AdmissionTheorem::Membership(*category))
-                .map_err(TheoremChannelError::Certificate)?;
-            self.cache_verified(&certificate)?;
-            capture_certificates.push(certificate);
-        }
-        let authority = self
-            .authority
-            .read()
-            .map_err(|_| TheoremChannelError::Poisoned)?;
-        if !authority.rights.contains(SpaceRight::Consume) {
-            return Err(TheoremChannelError::MissingSpaceRight(SpaceRight::Consume));
+            capture_proofs.push(self.check_admission(
+                capture,
+                AdmissionTheorem::Membership(*category),
+                None,
+            )?);
         }
         Ok(PreparedConsume {
             channel_id: self.descriptor.id,
-            epoch: authority.epoch,
+            epoch,
             handle: handle.clone(),
             evidence: CheckedMatchEvidence {
                 pattern_id: pattern.id,
                 message: channel_message,
-                captures: capture_certificates,
+                captures: capture_proofs,
             },
         })
     }
@@ -783,24 +1075,28 @@ impl TheoremChannelKernel {
         if prepared.channel_id != self.descriptor.id {
             return Err(TheoremChannelError::WrongChannel);
         }
+        self.verify_cached(prepared.evidence.message.proof())?;
+        for proof in &prepared.evidence.captures {
+            self.verify_cached(proof)?;
+        }
         table
-            .with_authorized(&prepared.handle, LanguageRight::Match, |_| {
-                let authority = self
-                    .authority
-                    .read()
-                    .map_err(|_| TheoremChannelError::Poisoned)?;
-                if authority.epoch != prepared.epoch {
-                    return Err(TheoremChannelError::StaleEpoch);
-                }
-                if !authority.rights.contains(SpaceRight::Consume) {
-                    return Err(TheoremChannelError::MissingSpaceRight(SpaceRight::Consume));
-                }
-                self.verify_cached(prepared.evidence.message.certificate())?;
-                for certificate in &prepared.evidence.captures {
-                    self.verify_cached(certificate)?;
-                }
-                Ok(commit(prepared.evidence))
-            })
+            .with_authorized_all(
+                &prepared.handle,
+                &[LanguageRight::Match, LanguageRight::Check],
+                |_| {
+                    let authority = self
+                        .authority
+                        .read()
+                        .map_err(|_| TheoremChannelError::Poisoned)?;
+                    if authority.epoch != prepared.epoch {
+                        return Err(TheoremChannelError::StaleEpoch);
+                    }
+                    if !authority.rights.contains(SpaceRight::Consume) {
+                        return Err(TheoremChannelError::MissingSpaceRight(SpaceRight::Consume));
+                    }
+                    Ok(commit(prepared.evidence))
+                },
+            )
             .map_err(TheoremChannelError::LanguageAccess)?
     }
 
@@ -845,40 +1141,99 @@ impl TheoremChannelKernel {
         message: &AdmittedMessage,
     ) -> Result<AdmittedMessage, TheoremChannelError> {
         self.check_term_identity(message.term)?;
-        self.verify_cached(message.certificate())?;
-        let certificate = self
-            .checker
-            .check(message.term, self.descriptor.channel_theorem)
-            .map_err(TheoremChannelError::Certificate)?;
-        self.cache_verified(&certificate)?;
-        Ok(AdmittedMessage { term: message.term, certificate })
+        self.verify_cached(message.proof())?;
+        let proof = self.check_admission(message.term, self.descriptor.channel_theorem, None)?;
+        Ok(AdmittedMessage { term: message.term, proof })
     }
 
-    fn cache_verified(
+    fn check_admission(
         &self,
-        certificate: &AdmissionCertificate,
-    ) -> Result<(), TheoremChannelError> {
-        self.checker
-            .verify(certificate)
-            .map_err(TheoremChannelError::Certificate)?;
+        term: CanonicalFltTerm,
+        theorem: AdmissionTheorem,
+        presented_certificate: Option<&AdmissionCertificate>,
+    ) -> Result<ProvenAdmission, TheoremChannelError> {
+        let key = ProofCacheKey::for_request(
+            term,
+            theorem,
+            self.checker.checker_abi(),
+            self.checker.limit_profile(),
+        );
+        let cached = self
+            .proof_cache
+            .read()
+            .map_err(|_| TheoremChannelError::Poisoned)?
+            .get(&key)
+            .cloned();
+        if let Some(proof) = cached {
+            let exact_presented_certificate =
+                presented_certificate.is_none_or(|certificate| certificate == proof.certificate());
+            if exact_presented_certificate {
+                self.validate_proven(term, theorem, &proof)?;
+                return Ok(proof);
+            }
+        }
+        let decision = self.checker.check(AdmissionRequest {
+            term,
+            theorem,
+            presented_certificate,
+            budget: self.admission_budget,
+        });
+        let proof = match decision {
+            AdmissionDecision::Proven(proof) => proof,
+            AdmissionDecision::Refuted { reason, usage } => {
+                return Err(TheoremChannelError::AdmissionRefuted { reason, usage });
+            },
+            AdmissionDecision::Undetermined { reason, usage } => {
+                return Err(TheoremChannelError::AdmissionUndetermined { reason, usage });
+            },
+        };
+        self.validate_proven(term, theorem, &proof)?;
         self.proof_cache
             .write()
             .map_err(|_| TheoremChannelError::Poisoned)?
-            .insert(ProofCacheKey::from(certificate));
+            .insert(proof.clone());
+        Ok(proof)
+    }
+
+    fn validate_proven(
+        &self,
+        term: CanonicalFltTerm,
+        theorem: AdmissionTheorem,
+        proof: &ProvenAdmission,
+    ) -> Result<(), TheoremChannelError> {
+        let certificate = proof.certificate();
+        let evidence_bytes = u64::try_from(certificate.evidence.len()).unwrap_or(u64::MAX);
+        if !certificate.has_valid_envelope_for(
+            term,
+            theorem,
+            self.checker.checker_abi(),
+            self.checker.limit_profile(),
+        ) || proof.usage.evidence_bytes != evidence_bytes
+            || proof.usage.logical_work_units > self.admission_budget.max_work_units
+            || evidence_bytes > self.admission_budget.max_evidence_bytes
+        {
+            return Err(TheoremChannelError::Certificate(CertificateError::CertificateMismatch));
+        }
         Ok(())
     }
 
-    fn verify_cached(&self, certificate: &AdmissionCertificate) -> Result<(), TheoremChannelError> {
-        let key = ProofCacheKey::from(certificate);
+    fn verify_cached(&self, proof: &ProvenAdmission) -> Result<(), TheoremChannelError> {
+        let certificate = proof.certificate();
+        self.validate_proven(certificate.term, certificate.theorem, proof)?;
         if self
             .proof_cache
             .read()
             .map_err(|_| TheoremChannelError::Poisoned)?
-            .contains(&key)
+            .contains_certificate(certificate)
         {
             return Ok(());
         }
-        self.cache_verified(certificate)
+        let verified =
+            self.check_admission(certificate.term, certificate.theorem, Some(certificate))?;
+        if &verified != proof {
+            return Err(TheoremChannelError::Certificate(CertificateError::CertificateMismatch));
+        }
+        Ok(())
     }
 }
 
@@ -891,6 +1246,14 @@ pub enum TheoremChannelError {
     PatternMismatch,
     CaptureTelescopeMismatch,
     CaptureLimitExceeded,
+    AdmissionRefuted {
+        reason: AdmissionRefutation,
+        usage: AdmissionUsage,
+    },
+    AdmissionUndetermined {
+        reason: AdmissionUndetermined,
+        usage: AdmissionUsage,
+    },
     MissingSpaceRight(SpaceRight),
     StaleEpoch,
     EpochExhausted,
@@ -919,6 +1282,16 @@ impl fmt::Display for TheoremChannelError {
             Self::CaptureLimitExceeded => {
                 formatter.write_str("capture telescope exceeds its limit")
             },
+            Self::AdmissionRefuted { reason, usage } => write!(
+                formatter,
+                "admission was refuted ({reason:?}) after {} logical work units",
+                usage.logical_work_units,
+            ),
+            Self::AdmissionUndetermined { reason, usage } => write!(
+                formatter,
+                "admission is undetermined ({reason:?}) after {} logical work units",
+                usage.logical_work_units,
+            ),
             Self::MissingSpaceRight(right) => write!(formatter, "missing space right {right:?}"),
             Self::StaleEpoch => {
                 formatter.write_str("prepared transaction has a stale authority epoch")
@@ -958,6 +1331,123 @@ mod tests {
     }
 
     #[test]
+    fn structural_admission_is_bounded_and_three_valued() {
+        let checker = StructuralTheoremChecker::default();
+        let term = CanonicalFltTerm::structurally_admitted([1; 32], CategoryId(2), hash(4));
+        let membership = AdmissionTheorem::membership(CategoryId(2));
+
+        let exhausted = AdmissionChecker::check(
+            &checker,
+            AdmissionRequest {
+                term,
+                theorem: membership,
+                presented_certificate: None,
+                budget: AdmissionBudget::new(0, 0),
+            },
+        );
+        assert!(matches!(
+            exhausted,
+            AdmissionDecision::Undetermined {
+                reason: AdmissionUndetermined::WorkBudgetExhausted {
+                    required: STRUCTURAL_ADMISSION_WORK_UNITS,
+                    available: 0,
+                },
+                usage: AdmissionUsage {
+                    logical_work_units: STRUCTURAL_ADMISSION_WORK_UNITS,
+                    evidence_bytes: 0,
+                },
+            }
+        ));
+
+        let refuted = AdmissionChecker::check(
+            &checker,
+            AdmissionRequest {
+                term,
+                theorem: AdmissionTheorem::membership(CategoryId(3)),
+                presented_certificate: None,
+                budget: AdmissionBudget::structural(),
+            },
+        );
+        assert!(matches!(
+            refuted,
+            AdmissionDecision::Refuted {
+                reason: AdmissionRefutation::TheoremDoesNotHold,
+                ..
+            }
+        ));
+
+        let AdmissionDecision::Proven(proof) = AdmissionChecker::check(
+            &checker,
+            AdmissionRequest {
+                term,
+                theorem: membership,
+                presented_certificate: None,
+                budget: AdmissionBudget::structural(),
+            },
+        ) else {
+            panic!("valid structural membership must be proven")
+        };
+        assert_eq!(proof.usage(), AdmissionUsage::new(STRUCTURAL_ADMISSION_WORK_UNITS, 0));
+        checker
+            .verify(proof.certificate())
+            .expect("minted proof envelope");
+    }
+
+    #[test]
+    fn presented_certificate_limits_and_complete_envelope_are_checked() {
+        let checker = StructuralTheoremChecker::default();
+        let term = CanonicalFltTerm::structurally_admitted([1; 32], CategoryId(2), hash(4));
+        let theorem = AdmissionTheorem::membership(CategoryId(2));
+        let evidence_bearing = AdmissionCertificate::from_checked_evidence(
+            term,
+            theorem,
+            checker.checker_abi(),
+            checker.limit_profile(),
+            vec![7],
+        );
+        assert!(matches!(
+            AdmissionChecker::check(
+                &checker,
+                AdmissionRequest {
+                    term,
+                    theorem,
+                    presented_certificate: Some(&evidence_bearing),
+                    budget: AdmissionBudget::structural(),
+                },
+            ),
+            AdmissionDecision::Undetermined {
+                reason: AdmissionUndetermined::EvidenceBudgetExhausted {
+                    required: 1,
+                    available: 0,
+                },
+                ..
+            }
+        ));
+
+        let other = checker
+            .check(
+                CanonicalFltTerm::structurally_admitted([1; 32], CategoryId(2), hash(5)),
+                theorem,
+            )
+            .expect("other canonical certificate");
+        assert!(matches!(
+            AdmissionChecker::check(
+                &checker,
+                AdmissionRequest {
+                    term,
+                    theorem,
+                    presented_certificate: Some(&other),
+                    budget: AdmissionBudget::structural(),
+                },
+            ),
+            AdmissionDecision::Refuted {
+                reason: AdmissionRefutation::CertificateMismatch,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn certificate_and_cache_bind_every_consensus_identity_field() {
         let checker = StructuralTheoremChecker::default();
         let term = CanonicalFltTerm::structurally_admitted([1; 32], CategoryId(2), hash(4));
@@ -972,15 +1462,30 @@ mod tests {
         assert_eq!(key.limit_profile, STRUCTURAL_THEOREM_LIMIT_PROFILE_V1);
 
         let mut cache = ProofCache::new(1);
-        assert!(cache.insert(key.clone()));
+        let proof = ProvenAdmission::from_checked_certificate(
+            certificate.clone(),
+            AdmissionUsage::new(STRUCTURAL_ADMISSION_WORK_UNITS, 0),
+        );
+        assert!(cache.insert(proof));
         assert!(cache.contains(&key));
+        let same_key_different_evidence = AdmissionCertificate::from_checked_evidence(
+            term,
+            AdmissionTheorem::membership(CategoryId(2)),
+            checker.checker_abi(),
+            checker.limit_profile(),
+            vec![1],
+        );
+        assert!(!cache.contains_certificate(&same_key_different_evidence));
         let other = checker
             .check(
                 CanonicalFltTerm::structurally_admitted([1; 32], CategoryId(2), hash(5)),
                 AdmissionTheorem::membership(CategoryId(2)),
             )
             .expect("second certificate");
-        assert!(!cache.insert(ProofCacheKey::from(&other)));
+        assert!(!cache.insert(ProvenAdmission::from_checked_certificate(
+            other,
+            AdmissionUsage::new(STRUCTURAL_ADMISSION_WORK_UNITS, 0),
+        )));
         assert_eq!(cache.len(), 1);
     }
 

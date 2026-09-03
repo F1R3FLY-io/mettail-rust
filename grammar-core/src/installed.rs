@@ -1161,25 +1161,28 @@ impl InstalledLanguageTable {
         right: LanguageRight,
         operation: impl FnOnce(&InstalledLanguage) -> R,
     ) -> Result<R, LanguageAccessError> {
+        self.with_authorized_all(handle, &[right], operation)
+    }
+
+    /// Run `operation` while every requested right and the installed-language
+    /// epoch are protected by one registry read guard.
+    pub fn with_authorized_all<R>(
+        &self,
+        handle: &InstalledLanguageHandle,
+        rights: &[LanguageRight],
+        operation: impl FnOnce(&InstalledLanguage) -> R,
+    ) -> Result<R, LanguageAccessError> {
         let state = self
             .state
             .read()
             .map_err(|_| LanguageAccessError::Poisoned)?;
-        let entry = self.authorized_entry(&state, handle, right)?;
-        Ok(operation(&entry.language))
-    }
-
-    fn authorized_entry<'a>(
-        &self,
-        state: &'a InstalledState,
-        handle: &InstalledLanguageHandle,
-        right: LanguageRight,
-    ) -> Result<&'a InstalledEntry, LanguageAccessError> {
-        let entry = self.valid_entry(state, handle)?;
-        if !handle.rights.contains(right) {
-            return Err(LanguageAccessError::MissingRight(right));
+        let entry = self.valid_entry(&state, handle)?;
+        for right in rights {
+            if !handle.rights.contains(*right) {
+                return Err(LanguageAccessError::MissingRight(*right));
+            }
         }
-        Ok(entry)
+        Ok(operation(&entry.language))
     }
 
     fn valid_entry<'a>(
@@ -1437,10 +1440,12 @@ pub enum AliasError {
 mod tests {
     use super::*;
     use crate::{
-        normalize_runtime_engine, AdmissionTheorem, Carrier, Category, IndexWidth, LexerImage,
-        LexerState, ParserImageKind, SpaceRight, SpaceRights, StructuralTheoremChecker, TermHash,
-        TheoremChannelDescriptor, TheoremChannelError, TheoremChannelKernel,
-        TypedPatternDescriptor, PARSER_IMAGE_ABI_V1, PARSER_IMAGE_MAGIC,
+        normalize_runtime_engine, AdmissionBudget, AdmissionCertificate, AdmissionChecker,
+        AdmissionDecision, AdmissionRefutation, AdmissionRequest, AdmissionTheorem,
+        AdmissionUndetermined, AdmissionUsage, Carrier, Category, IndexWidth, LexerImage,
+        LexerState, ParserImageKind, ProvenAdmission, SpaceRight, SpaceRights,
+        StructuralTheoremChecker, TermHash, TheoremChannelDescriptor, TheoremChannelError,
+        TheoremChannelKernel, TypedPatternDescriptor, PARSER_IMAGE_ABI_V1, PARSER_IMAGE_MAGIC,
     };
 
     const COMPILER: &str = "registry-test/1";
@@ -2469,13 +2474,78 @@ mod tests {
         rights: SpaceRights,
         proof_cache_capacity: usize,
     ) -> TheoremChannelKernel {
+        theorem_kernel_with_budget(
+            language,
+            channel_theorem,
+            space_theorem,
+            rights,
+            AdmissionBudget::structural(),
+            proof_cache_capacity,
+        )
+    }
+
+    fn theorem_kernel_with_budget(
+        language: [u8; 32],
+        channel_theorem: AdmissionTheorem,
+        space_theorem: AdmissionTheorem,
+        rights: SpaceRights,
+        admission_budget: AdmissionBudget,
+        proof_cache_capacity: usize,
+    ) -> TheoremChannelKernel {
         TheoremChannelKernel::new(
             TheoremChannelDescriptor::new(language, CategoryId(0), channel_theorem, space_theorem)
                 .expect("channel descriptor"),
             rights,
-            StructuralTheoremChecker::default(),
+            Arc::new(StructuralTheoremChecker::default()),
+            admission_budget,
             proof_cache_capacity,
         )
+    }
+
+    #[derive(Debug)]
+    struct AlwaysUndeterminedChecker;
+
+    impl AdmissionChecker for AlwaysUndeterminedChecker {
+        fn checker_abi(&self) -> &str {
+            "test-undetermined-checker/1"
+        }
+
+        fn limit_profile(&self) -> &str {
+            "test-undetermined-limits/1"
+        }
+
+        fn check(&self, _request: AdmissionRequest<'_>) -> AdmissionDecision {
+            AdmissionDecision::Undetermined {
+                reason: AdmissionUndetermined::CheckerDefined(7),
+                usage: AdmissionUsage::new(1, 0),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct EvidenceChecker;
+
+    impl AdmissionChecker for EvidenceChecker {
+        fn checker_abi(&self) -> &str {
+            "test-evidence-checker/1"
+        }
+
+        fn limit_profile(&self) -> &str {
+            "test-evidence-limits/1"
+        }
+
+        fn check(&self, request: AdmissionRequest<'_>) -> AdmissionDecision {
+            AdmissionDecision::Proven(ProvenAdmission::from_checked_certificate(
+                AdmissionCertificate::from_checked_evidence(
+                    request.term,
+                    request.theorem,
+                    self.checker_abi(),
+                    self.limit_profile(),
+                    vec![0xa5],
+                ),
+                AdmissionUsage::new(1, 1),
+            ))
+        }
     }
 
     #[test]
@@ -2483,7 +2553,11 @@ mod tests {
         let table = InstalledLanguageTable::new();
         let grant = install(
             &table,
-            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+            LanguageRights::from_rights([
+                LanguageRight::Publish,
+                LanguageRight::Match,
+                LanguageRight::Check,
+            ]),
         );
         let kernel = theorem_kernel(grant.handle.fingerprint(), SpaceRights::all());
         let prepared = kernel
@@ -2503,7 +2577,11 @@ mod tests {
         let table = InstalledLanguageTable::new();
         let grant = install(
             &table,
-            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+            LanguageRights::from_rights([
+                LanguageRight::Publish,
+                LanguageRight::Match,
+                LanguageRight::Check,
+            ]),
         );
         let kernel = theorem_kernel(grant.handle.fingerprint(), SpaceRights::all());
         let prepared = kernel
@@ -2521,18 +2599,223 @@ mod tests {
     }
 
     #[test]
+    fn proof_cache_hit_cannot_replace_check_authority() {
+        let table = InstalledLanguageTable::new();
+        let grant = install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
+        );
+        let kernel = theorem_kernel(grant.handle.fingerprint(), SpaceRights::all());
+        let term_hash = TermHash([51; 32]);
+        kernel
+            .prepare_produce(&table, &grant.handle, term_hash)
+            .expect("authorized check fills the exact proof cache");
+        let publish_only = grant
+            .handle
+            .attenuate(&LanguageRights::from_rights([LanguageRight::Publish]));
+        assert!(matches!(
+            kernel.prepare_produce(&table, &publish_only, term_hash),
+            Err(TheoremChannelError::LanguageAccess(LanguageAccessError::MissingRight(
+                LanguageRight::Check
+            )))
+        ));
+    }
+
+    #[test]
+    fn bounded_admission_exhaustion_is_undetermined_and_fails_closed() {
+        let table = InstalledLanguageTable::new();
+        let grant = install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
+        );
+        let theorem = AdmissionTheorem::membership(CategoryId(0));
+        let kernel = theorem_kernel_with_budget(
+            grant.handle.fingerprint(),
+            theorem,
+            theorem,
+            SpaceRights::all(),
+            AdmissionBudget::new(0, 0),
+            16,
+        );
+        assert!(matches!(
+            kernel.prepare_produce(&table, &grant.handle, TermHash([52; 32])),
+            Err(TheoremChannelError::AdmissionUndetermined {
+                reason: AdmissionUndetermined::WorkBudgetExhausted { required: 1, available: 0 },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn theorem_channel_dispatches_through_the_neutral_checker_interface() {
+        let table = InstalledLanguageTable::new();
+        let grant = install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
+        );
+        let theorem = AdmissionTheorem::membership(CategoryId(0));
+        let kernel = TheoremChannelKernel::new(
+            TheoremChannelDescriptor::new(
+                grant.handle.fingerprint(),
+                CategoryId(0),
+                theorem,
+                theorem,
+            )
+            .expect("channel descriptor"),
+            SpaceRights::all(),
+            Arc::new(AlwaysUndeterminedChecker),
+            AdmissionBudget::structural(),
+            16,
+        );
+        assert!(matches!(
+            kernel.prepare_produce(&table, &grant.handle, TermHash([56; 32])),
+            Err(TheoremChannelError::AdmissionUndetermined {
+                reason: AdmissionUndetermined::CheckerDefined(7),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn neutral_checker_can_return_bounded_evidence_across_the_module_boundary() {
+        let table = InstalledLanguageTable::new();
+        let grant = install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
+        );
+        let theorem = AdmissionTheorem::membership(CategoryId(0));
+        let kernel = TheoremChannelKernel::new(
+            TheoremChannelDescriptor::new(
+                grant.handle.fingerprint(),
+                CategoryId(0),
+                theorem,
+                theorem,
+            )
+            .expect("channel descriptor"),
+            SpaceRights::all(),
+            Arc::new(EvidenceChecker),
+            AdmissionBudget::new(1, 1),
+            16,
+        );
+        let message = kernel
+            .commit_produce(
+                &table,
+                kernel
+                    .prepare_produce(&table, &grant.handle, TermHash([57; 32]))
+                    .expect("evidence-bearing admission prepares"),
+                |message| message,
+            )
+            .expect("evidence-bearing admission commits");
+        assert_eq!(message.certificate().evidence(), &[0xa5]);
+        assert_eq!(message.proof().usage(), AdmissionUsage::new(1, 1));
+    }
+
+    #[test]
+    fn presented_certificate_mismatch_is_refuted_before_prepare() {
+        let table = InstalledLanguageTable::new();
+        let grant = install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
+        );
+        let kernel = theorem_kernel(grant.handle.fingerprint(), SpaceRights::all());
+        let first = kernel
+            .commit_produce(
+                &table,
+                kernel
+                    .prepare_produce(&table, &grant.handle, TermHash([53; 32]))
+                    .expect("first proof"),
+                |message| message,
+            )
+            .expect("first admission");
+        assert!(matches!(
+            kernel.prepare_produce_with_certificate(
+                &table,
+                &grant.handle,
+                TermHash([54; 32]),
+                Some(first.certificate()),
+            ),
+            Err(TheoremChannelError::AdmissionRefuted {
+                reason: AdmissionRefutation::CertificateMismatch,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn language_revocation_cannot_interleave_with_atomic_commit_callback() {
+        let table = Arc::new(InstalledLanguageTable::new());
+        let grant = install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
+        );
+        let handle = grant.handle.clone();
+        let kernel = Arc::new(theorem_kernel(handle.fingerprint(), SpaceRights::all()));
+        let prepared = kernel
+            .prepare_produce(&table, &handle, TermHash([55; 32]))
+            .expect("prepare before concurrent revocation");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let commit_table = table.clone();
+        let commit_kernel = kernel.clone();
+        let commit_thread = std::thread::spawn(move || {
+            commit_kernel.commit_produce(&commit_table, prepared, |_| {
+                assert!(
+                    commit_table.state.try_write().is_err(),
+                    "registry revocation lock must remain excluded through the callback",
+                );
+                entered_tx.send(()).expect("announce guarded callback");
+                release_rx.recv().expect("release guarded callback");
+            })
+        });
+        entered_rx.recv().expect("commit callback entered");
+
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let (revoked_tx, revoked_rx) = std::sync::mpsc::channel();
+        let revoke_table = table.clone();
+        let revoke_thread = std::thread::spawn(move || {
+            attempt_tx.send(()).expect("announce revocation attempt");
+            let result = revoke_table.revoke(grant.revocation);
+            revoked_tx.send(result).expect("publish revocation result");
+        });
+        attempt_rx.recv().expect("revocation thread started");
+        assert!(matches!(revoked_rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)));
+        release_tx.send(()).expect("complete atomic callback");
+        commit_thread
+            .join()
+            .expect("commit thread")
+            .expect("commit succeeds before revocation");
+        revoked_rx
+            .recv()
+            .expect("revocation result")
+            .expect("revocation succeeds after callback");
+        revoke_thread.join().expect("revocation thread");
+        assert!(matches!(
+            table.authorize(&handle, LanguageRight::Publish),
+            Err(LanguageAccessError::StaleHandle)
+        ));
+    }
+
+    #[test]
     fn theorem_channel_rejects_a_capable_handle_for_another_language() {
         let table = InstalledLanguageTable::new();
         let channel_language = install(
             &table,
-            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+            LanguageRights::from_rights([
+                LanguageRight::Publish,
+                LanguageRight::Match,
+                LanguageRight::Check,
+            ]),
         );
         let other_core = core("OtherLanguage");
         let other_language = table
             .install_runtime(
                 other_core.clone(),
                 image(&other_core),
-                LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+                LanguageRights::from_rights([
+                    LanguageRight::Publish,
+                    LanguageRight::Match,
+                    LanguageRight::Check,
+                ]),
                 COMPILER,
                 UNICODE,
                 "caps/1",
@@ -2574,7 +2857,11 @@ mod tests {
         let table = InstalledLanguageTable::new();
         let grant = install(
             &table,
-            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+            LanguageRights::from_rights([
+                LanguageRight::Publish,
+                LanguageRight::Match,
+                LanguageRight::Check,
+            ]),
         );
         let language = grant.handle.fingerprint();
         let kernel = theorem_kernel(language, SpaceRights::all());
@@ -2612,7 +2899,11 @@ mod tests {
         let table = InstalledLanguageTable::new();
         let grant = install(
             &table,
-            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+            LanguageRights::from_rights([
+                LanguageRight::Publish,
+                LanguageRight::Match,
+                LanguageRight::Check,
+            ]),
         );
         let kernel = theorem_kernel_with(
             grant.handle.fingerprint(),
@@ -2649,7 +2940,11 @@ mod tests {
         let table = InstalledLanguageTable::new();
         let grant = install(
             &table,
-            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+            LanguageRights::from_rights([
+                LanguageRight::Publish,
+                LanguageRight::Match,
+                LanguageRight::Check,
+            ]),
         );
         let language = grant.handle.fingerprint();
         let membership = AdmissionTheorem::membership(CategoryId(0));
@@ -2686,7 +2981,10 @@ mod tests {
         );
         assert!(matches!(
             rejecting.prepare_consume(&table, &grant.handle, &message, &pattern, &[]),
-            Err(TheoremChannelError::Certificate(crate::CertificateError::TheoremDoesNotHold))
+            Err(TheoremChannelError::AdmissionRefuted {
+                reason: AdmissionRefutation::TheoremDoesNotHold,
+                ..
+            })
         ));
     }
 
@@ -2695,7 +2993,11 @@ mod tests {
         let table = InstalledLanguageTable::new();
         let grant = install(
             &table,
-            LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Match]),
+            LanguageRights::from_rights([
+                LanguageRight::Publish,
+                LanguageRight::Match,
+                LanguageRight::Check,
+            ]),
         );
         let kernel = theorem_kernel(grant.handle.fingerprint(), SpaceRights::all());
         let message = kernel
