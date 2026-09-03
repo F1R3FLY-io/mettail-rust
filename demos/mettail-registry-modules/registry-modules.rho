@@ -1,0 +1,59 @@
+new install(`rho:mettail:install`) in {
+  new parse(`rho:mettail:parse`) in {
+    new installed in {
+      install!(
+        {
+          "mettail": "mettail-registry-module-ref/1",
+          "uri": "rho:demo:registry-pair"
+        },
+        *installed
+      ) |
+      for(@{
+        "ok": {
+          "module": "RegistryPair",
+          "exports": [
+            {"name": "Left", "handle": left},
+            {"name": "Right", "handle": right}
+          ],
+          "programs": []
+        }
+      } <- installed) {
+        new leftPositive, leftCrossfire, rightPositive, rightCrossfire,
+            leftFlt, rightFlt in {
+          parse!([
+            "mettail-language-parse/1", left, "left", "LeftExpr", *leftPositive
+          ]) |
+          parse!([
+            "mettail-language-parse/1", left, "right", "LeftExpr", *leftCrossfire
+          ]) |
+          parse!([
+            "mettail-language-parse/1", right, "right", "RightExpr", *rightPositive
+          ]) |
+          parse!([
+            "mettail-language-parse/1", right, "left", "RightExpr", *rightCrossfire
+          ]) |
+          leftFlt!(left:LeftExpr`left`) |
+          for(@left:LeftExpr`${captured:LeftExpr}` <- leftFlt) {
+            @"OUT"!(["left-flt", captured])
+          } |
+          rightFlt!(right:RightExpr`right`) |
+          for(@right:RightExpr`${captured:RightExpr}` <- rightFlt) {
+            @"OUT"!(["right-flt", captured])
+          } |
+          for(@result <- leftPositive) {
+            @"OUT"!(["left-positive", result])
+          } |
+          for(@result <- leftCrossfire) {
+            @"OUT"!(["left-crossfire", result])
+          } |
+          for(@result <- rightPositive) {
+            @"OUT"!(["right-positive", result])
+          } |
+          for(@result <- rightCrossfire) {
+            @"OUT"!(["right-crossfire", result])
+          }
+        }
+      }
+    }
+  }
+}

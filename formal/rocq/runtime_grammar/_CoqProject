@@ -23,6 +23,7 @@ theories/InstalledLanguageAuthority.v
 theories/TheoremChannel.v
 theories/BoundedAdmissionChecker.v
 theories/RholangTheoremService.v
+theories/RegistryModuleClosure.v
 theories/WpdaDispatchPartition.v
 theories/CategoricalPrattFloor.v
 theories/StructuralTemplate.v

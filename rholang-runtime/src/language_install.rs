@@ -74,9 +74,10 @@ pub const MAX_INSTALL_CANDIDATE_ENCODED_BYTES: usize = 128 * 1024 * 1024;
 /// One immutable view of Registry state used for a complete installation.
 ///
 /// The node adapter must pin the snapshot before calling the installer. The
-/// two lookup families are separate because a surface module graph contains
-/// source declarations while canonical `extends` / `includes` / `mixins`
-/// edges contain authoritative `language/2` records.
+/// two lookup families are separate because module references resolve signed
+/// canonical multi-export records, while canonical `extends` / `includes` /
+/// `mixins` edges resolve authoritative single-language records. Neither
+/// lookup grants installation authority or licenses source reparsing.
 pub trait RegistrySnapshot: Send + Sync {
     fn lookup_module(&self, uri: &str) -> Result<Option<RegistryModuleValue>, String>;
     fn lookup_language(&self, name: &str) -> Result<Option<RegistryLanguageRecord>, String>;
@@ -509,51 +510,31 @@ impl LanguageInstallService {
                     .lookup_module(&uri)
                     .map_err(InstallServiceError::Registry)?
                     .ok_or_else(|| InstallServiceError::RegistryModuleNotFound(uri.clone()))?;
+                let entry = ModuleRef::parse(&uri).map_err(|error| {
+                    InstallServiceError::RegistryModuleReference(error.to_string())
+                })?;
                 let signed_payload = record
                     .signed_payload()
                     .map_err(InstallServiceError::RegistryModule)?;
                 self.registry
                     .verify_module_trust(&uri, &signed_payload, &record.signatures)
                     .map_err(InstallServiceError::RegistryTrust)?;
-                let entry = ModuleRef::parse(&uri).map_err(|error| {
-                    InstallServiceError::RegistryModuleReference(error.to_string())
-                })?;
-                let source_limit =
-                    mettail_elab::resolve::ResolveLimits::default().max_module_source_bytes;
-                if record.source.len() > source_limit {
-                    return Err(InstallServiceError::Surface(mettail_elab::Diag::new(
-                        mettail_elab::DiagKind::ResourceLimit,
-                        format!("module source-byte limit exceeded (maximum {source_limit})"),
-                        mettail_elab::lex::Span { line: 0, col: 0 },
-                    )));
-                }
-                let parsed = mettail_elab::parse::parse_module(&record.source)
+                let canonical = CanonicalModuleValue::from_rho_value(&record.module)
+                    .map_err(InstallServiceError::CanonicalModule)?;
+                let pinned = PinnedRegistryReader {
+                    registry: self.registry.as_ref(),
+                    entry_uri: &uri,
+                    entry: &record,
+                    entry_signed_payload: &signed_payload,
+                };
+                let resolver = RegistryResolver::new(pinned);
+                mettail_elab::resolve::Program::load(&entry, &resolver)
                     .map_err(InstallServiceError::Surface)?;
-                let resolver =
-                    RegistryResolver::new(RegistryLanguageReader(self.registry.as_ref()));
-                let elaborated = mettail_elab::elaborate_module_ast_at(&entry, parsed, &resolver)
-                    .map_err(InstallServiceError::Surface)?;
-                if elaborated.canonical_value != record.module {
-                    return Err(InstallServiceError::Surface(
-                        mettail_elab::Diag::new(
-                            mettail_elab::DiagKind::RegistryProjection,
-                            format!(
-                                "signed Registry module `{entry}` does not equal the canonical module/1 value elaborated from its committed source graph"
-                            ),
-                            mettail_elab::lex::Span { line: 0, col: 0 },
-                        )
-                        .with_provenance(mettail_elab::SourceProvenance {
-                            reference: entry.external_form(),
-                            content_commitment: Some(record.source_commitment),
-                            import_chain: vec![entry.external_form()],
-                        }),
-                    ));
-                }
                 let records = record
                     .export_records()
                     .map_err(InstallServiceError::RegistryModule)?;
                 Ok(CanonicalCandidateSet {
-                    module_name: Some(elaborated.name),
+                    module_name: Some(canonical.name),
                     records: records
                         .into_iter()
                         .map(|(name, record)| (Some(name), record))
@@ -652,6 +633,17 @@ fn canonical_value_schema(value: &RhoValue) -> Option<&str> {
 
 struct RegistryLanguageReader<'a>(&'a dyn RegistrySnapshot);
 
+/// A one-transaction view that reuses the already fetched root record while
+/// delegating every dependency to the same immutable snapshot. This prevents
+/// a mutable or equivocating adapter from swapping the entry between trust
+/// verification, graph validation, and export installation.
+struct PinnedRegistryReader<'a> {
+    registry: &'a dyn RegistrySnapshot,
+    entry_uri: &'a str,
+    entry: &'a RegistryModuleValue,
+    entry_signed_payload: &'a [u8],
+}
+
 impl VersionedLanguageRegistryReader for RegistryLanguageReader<'_> {
     fn lookup_language(&self, name: &str) -> Result<Option<RegistryLanguageRecord>, String> {
         self.0.lookup_language(name)
@@ -670,6 +662,34 @@ impl VersionedRegistryReader for RegistryLanguageReader<'_> {
         signatures: &RhoValue,
     ) -> Result<(), String> {
         self.0.verify_module_trust(uri, signed_payload, signatures)
+    }
+}
+
+impl VersionedRegistryReader for PinnedRegistryReader<'_> {
+    fn lookup_module(&self, uri: &str) -> Result<Option<RegistryModuleValue>, String> {
+        if uri == self.entry_uri {
+            Ok(Some(self.entry.clone()))
+        } else {
+            self.registry.lookup_module(uri)
+        }
+    }
+
+    fn verify_module_trust(
+        &self,
+        uri: &str,
+        signed_payload: &[u8],
+        signatures: &RhoValue,
+    ) -> Result<(), String> {
+        if uri == self.entry_uri {
+            if signed_payload == self.entry_signed_payload && signatures == &self.entry.signatures {
+                Ok(())
+            } else {
+                Err("pinned Registry entry changed during graph validation".into())
+            }
+        } else {
+            self.registry
+                .verify_module_trust(uri, signed_payload, signatures)
+        }
     }
 }
 
@@ -4480,6 +4500,36 @@ mod tests {
     }
 
     #[test]
+    fn registry_module_recompiles_an_invalid_selected_unsigned_cache() {
+        let source = r#"Module Stored {
+            Theory T() { Types { Expr; } Terms { Zero . |- "0" : Expr; } }
+            theory T()
+        }"#;
+        let mut record = registry_module(source);
+        let module =
+            CanonicalModuleValue::from_rho_value(&record.module).expect("test module is canonical");
+        let core = mettail_elab::canonical::value_to_core(&module.exports[0].spec)
+            .expect("test export lowers");
+        let fingerprint = core.fingerprint().expect("test export fingerprints");
+        record.images.insert(fingerprint, Vec::new());
+        let registry = MemoryRegistry {
+            modules: HashMap::from([("rho:stored".into(), record)]),
+            ..MemoryRegistry::default()
+        };
+        let service =
+            LanguageInstallService::new(Arc::new(registry), LanguageInstallPolicy::default());
+        let batch = service
+            .install_all(InstallCandidate::RegistryModule("rho:stored".into()))
+            .expect("invalid unsigned cache is discarded and deterministically recompiled");
+        assert_eq!(batch.exports.len(), 1);
+        assert!(matches!(
+            batch.exports[0].receipt.cache_disposition,
+            ParserCacheDisposition::RecompiledRejected { .. }
+        ));
+        assert_eq!(service.installed_count().expect("table readable"), 1);
+    }
+
+    #[test]
     fn registry_entry_is_fetched_once_per_installation_snapshot() {
         let first_source = r#"Module Stored {
             Theory T() { Types { Expr; } Terms { Zero . |- "0" : Expr; } }
@@ -4526,7 +4576,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_source_must_elaborate_to_its_signed_module_projection() {
+    fn registry_source_oracle_cannot_override_signed_canonical_content() {
         let authoritative = r#"Module Stored {
             Theory T() { Types { Expr; } Terms { Zero . |- "0" : Expr; } }
             theory T()
@@ -4538,23 +4588,32 @@ mod tests {
         let mut record = registry_module(authoritative);
         record.source = substituted.into();
         record.source_commitment = *blake3::hash(substituted.as_bytes()).as_bytes();
+        record
+            .validate_source_oracle()
+            .expect("the substituted source is internally committed but remains non-authoritative");
         let registry = MemoryRegistry {
             modules: HashMap::from([("rho:stored".into(), record)]),
             ..MemoryRegistry::default()
         };
         let service =
             LanguageInstallService::new(Arc::new(registry), LanguageInstallPolicy::default());
-        let error = service
+        let batch = service
             .install_all(InstallCandidate::RegistryModule("rho:stored".into()))
-            .expect_err("source/projection substitution fails closed");
-        assert!(matches!(
-            error,
-            InstallServiceError::Surface(mettail_elab::Diag {
-                kind: mettail_elab::DiagKind::RegistryProjection,
-                ..
-            })
-        ));
-        assert_eq!(service.installed_count().expect("control plane readable"), 0);
+            .expect("signed canonical module installs without parsing the source oracle");
+        let handle = &batch.exports[0].receipt.handle;
+        assert_eq!(
+            service
+                .parse(handle, "0", None, &DefaultRuntimeHost)
+                .expect("canonical parser accepts its own source")
+                .len(),
+            1,
+        );
+        assert!(
+            service
+                .parse(handle, "1", None, &DefaultRuntimeHost)
+                .is_err(),
+            "source-oracle grammar is not installed",
+        );
     }
 
     #[test]

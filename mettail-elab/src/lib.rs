@@ -107,42 +107,7 @@ fn elaborate_program_languages(
     program: &resolve::Program,
     entry: &resolve::ModuleRef,
 ) -> Result<ElaboratedModule, Diag> {
-    let elaborated = elaborate_loaded_module(&program, entry)?;
-    for (reference, expected) in program.registry_module_expectations() {
-        let actual = if reference == entry {
-            &elaborated.canonical_value
-        } else {
-            let imported = elaborate_loaded_module(&program, reference)?;
-            if &imported.canonical_value != expected {
-                return Err(Diag::new(
-                    DiagKind::RegistryProjection,
-                    format!(
-                        "signed Registry module `{reference}` does not equal the canonical module/1 value elaborated from its committed source graph"
-                    ),
-                    program
-                        .module(reference)
-                        .map(|module| module.span)
-                        .unwrap_or(lex::Span { line: 0, col: 0 }),
-                )
-                .with_provenance(module_provenance(&program, reference)));
-            }
-            continue;
-        };
-        if actual != expected {
-            return Err(Diag::new(
-                DiagKind::RegistryProjection,
-                format!(
-                    "signed Registry module `{reference}` does not equal the canonical module/1 value elaborated from its committed source graph"
-                ),
-                program
-                    .module(reference)
-                    .map(|module| module.span)
-                    .unwrap_or(lex::Span { line: 0, col: 0 }),
-            )
-            .with_provenance(module_provenance(&program, reference)));
-        }
-    }
-    Ok(elaborated)
+    elaborate_loaded_module(program, entry)
 }
 
 fn elaborate_loaded_module(

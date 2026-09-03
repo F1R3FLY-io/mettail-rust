@@ -14,6 +14,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.TheoremChannel \
 	RuntimeGrammar.BoundedAdmissionChecker \
 	RuntimeGrammar.RholangTheoremService \
+	RuntimeGrammar.RegistryModuleClosure \
 	RuntimeGrammar.WpdaDispatchPartition \
 	RuntimeGrammar.StructuralTemplate \
 	RuntimeGrammar.StructuralConstructMatch \

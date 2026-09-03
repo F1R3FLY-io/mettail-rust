@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 pub const REGISTRY_LANGUAGE_SCHEMA_V1: &str = "mettail-registry-language/1";
 pub const REGISTRY_MODULE_SCHEMA_V1: &str = "mettail-registry-module/1";
+const REGISTRY_MODULE_CONTENT_DOMAIN_V1: &[u8] = b"mettail-registry-module-content/1\0";
 
 /// One immutable Versioned Registry module record.
 ///
@@ -61,14 +62,12 @@ impl RegistryModuleRecord {
         }
     }
 
-    /// Validate every authority-bearing projection before source parsing.
+    /// Validate every authority-bearing canonical projection. The source and
+    /// its commitment are retained as a development oracle, but source bytes
+    /// do not participate in production semantic admission.
     pub fn validate_structure(&self) -> Result<CanonicalModuleValue, RegistryModuleError> {
         if self.schema != REGISTRY_MODULE_SCHEMA_V1 {
             return Err(RegistryModuleError::UnsupportedSchema(self.schema.clone()));
-        }
-        let actual = *blake3::hash(self.source.as_bytes()).as_bytes();
-        if actual != self.source_commitment {
-            return Err(RegistryModuleError::SourceCommitmentMismatch);
         }
         crate::canonical::admit_canonical_value(&self.signatures)
             .map_err(RegistryModuleError::SignatureMetadata)?;
@@ -85,19 +84,18 @@ impl RegistryModuleRecord {
         if projected_exports != self.exports {
             return Err(RegistryModuleError::ExportProjectionMismatch);
         }
-        for (fingerprint, image) in &self.images {
-            if image.is_empty() {
-                return Err(RegistryModuleError::EmptyParserImage(*fingerprint));
-            }
-            if image.len() > crate::canonical::MAX_CANONICAL_BYTE_ARRAY_BYTES {
-                return Err(RegistryModuleError::ParserImageTooLarge {
-                    fingerprint: *fingerprint,
-                    size: image.len(),
-                    limit: crate::canonical::MAX_CANONICAL_BYTE_ARRAY_BYTES,
-                });
-            }
-        }
         Ok(module)
+    }
+
+    /// Check the optional source oracle without promoting it to production
+    /// authority. Developer tooling may call this to compare a source artifact
+    /// with its separately committed bytes; installers never need to parse it.
+    pub fn validate_source_oracle(&self) -> Result<(), RegistryModuleError> {
+        let actual = *blake3::hash(self.source.as_bytes()).as_bytes();
+        if actual != self.source_commitment {
+            return Err(RegistryModuleError::SourceCommitmentMismatch);
+        }
+        Ok(())
     }
 
     /// Canonical bytes covered by Registry trust verification. Images are
@@ -123,6 +121,19 @@ impl RegistryModuleRecord {
             ("dependencies".into(), dependencies),
         ]))
         .canonical_bytes())
+    }
+
+    /// Exact commitment used by dependency edges. It commits the signed
+    /// canonical record projection, including its source-provenance
+    /// commitment, but excludes the optional source bytes and every untrusted
+    /// parser-image cache.
+    pub fn content_commitment(&self) -> Result<[u8; 32], RegistryModuleError> {
+        let payload = self.signed_payload()?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(REGISTRY_MODULE_CONTENT_DOMAIN_V1);
+        hasher.update(&(payload.len() as u64).to_be_bytes());
+        hasher.update(&payload);
+        Ok(*hasher.finalize().as_bytes())
     }
 
     /// Export records in canonical module source order. Every export shares
@@ -154,12 +165,6 @@ pub enum RegistryModuleError {
     CanonicalModule(crate::canonical::ValueDecodeError),
     DependencyProjectionMismatch,
     ExportProjectionMismatch,
-    EmptyParserImage([u8; 32]),
-    ParserImageTooLarge {
-        fingerprint: [u8; 32],
-        size: usize,
-        limit: usize,
-    },
 }
 
 impl std::fmt::Display for RegistryModuleError {
@@ -180,14 +185,6 @@ impl std::fmt::Display for RegistryModuleError {
             Self::ExportProjectionMismatch => {
                 formatter.write_str("Registry exports differ from the canonical module projection")
             },
-            Self::EmptyParserImage(fingerprint) => {
-                write!(formatter, "parser image {:02x?} is empty", fingerprint)
-            },
-            Self::ParserImageTooLarge { fingerprint, size, limit } => write!(
-                formatter,
-                "parser image {:02x?} has {size} bytes; maximum is {limit}",
-                fingerprint
-            ),
         }
     }
 }
@@ -519,14 +516,51 @@ mod tests {
     }
 
     #[test]
-    fn registry_module_source_commitment_is_checked_before_parsing() {
+    fn source_oracle_is_checked_only_when_developer_tooling_requests_it() {
         let mut record =
             RegistryModuleRecord::new("Module Pair {}", canonical_module(), RhoValue::Nil);
         record.source.push(' ');
+        assert!(record.validate_structure().is_ok());
         assert!(matches!(
-            record.validate_structure(),
+            record.validate_source_oracle(),
             Err(RegistryModuleError::SourceCommitmentMismatch)
         ));
+    }
+
+    #[test]
+    fn content_commitment_excludes_source_oracle_bytes_and_parser_images() {
+        let mut record =
+            RegistryModuleRecord::new("Module Pair {}", canonical_module(), RhoValue::Nil);
+        let commitment = record.content_commitment().expect("record validates");
+        record.source = "not even valid MeTTaIL source".into();
+        record.images.insert([0x44; 32], vec![1, 2, 3]);
+        assert_eq!(
+            record
+                .content_commitment()
+                .expect("canonical record still validates"),
+            commitment
+        );
+    }
+
+    #[test]
+    fn unsigned_invalid_cache_cannot_veto_signed_canonical_content() {
+        let mut record =
+            RegistryModuleRecord::new("Module Pair {}", canonical_module(), RhoValue::Nil);
+        let payload = record.signed_payload().expect("canonical record validates");
+        record.images.insert([0x44; 32], Vec::new());
+        assert_eq!(
+            record
+                .signed_payload()
+                .expect("an unsigned cache cannot invalidate canonical content"),
+            payload,
+        );
+        assert_eq!(
+            record
+                .export_records()
+                .expect("cache validation is deferred until fingerprint selection")
+                .len(),
+            1,
+        );
     }
 
     fn executable(core: &GrammarCoreV1, compiler: &str, unicode: &str) -> ParserImageV1 {

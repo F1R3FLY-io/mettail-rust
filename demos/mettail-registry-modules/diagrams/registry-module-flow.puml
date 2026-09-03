@@ -1,0 +1,89 @@
+@startuml
+title Deterministic Registry Module Installation
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam ArrowColor #334155
+skinparam defaultFontColor #0F172A
+skinparam sequence {
+  LifeLineBorderColor #475569
+  LifeLineBackgroundColor #F8FAFC
+  ParticipantBorderColor #475569
+  GroupBorderColor #64748B
+  GroupBackgroundColor #F8FAFC
+  GroupHeaderFontColor #0F172A
+}
+
+actor "Rholang\napplication" as app #DBEAFE
+participant "Generated nouveau\nRholang parser" as host #BFDBFE
+participant "Language-install\nsystem process" as install #C4B5FD
+database "Injected immutable\nRegistry snapshot" as registry #FDE68A
+participant "Bounded iterative\ngraph resolver" as graph #FED7AA
+participant "Canonical module/1\nadapter" as canonical #DDD6FE
+participant "Runtime parser-image\ncompiler / verifier" as compiler #FEF3C7
+database "Installed-language\ntable" as table #A7F3D0
+collections "Opaque attenuated\nhandles" as handles #FBCFE8
+participant "Bounded parser and\nstructural FLT port" as runtime #BAE6FD
+participant "OUT" as out #E0E7FF
+
+group Parse the host application once
+  app -> host : complete Rholang source
+  host --> app : structural Registry reference and FLT templates
+end
+
+group Resolve one exact canonical snapshot
+  app -> install : install({mettail, rho: root URI}, reply)
+  install -> registry : lookup root once
+  registry --> install : signed canonical RegistryModuleRecord
+  install -> registry : verify root payload and signatures
+  registry --> install : trusted
+  install -> graph : pinned root plus snapshot capability
+  graph -> canonical : decode root module/1; ignore source oracle
+  canonical --> graph : ordered exports and committed dependencies
+  graph -> registry : lookup dependency once
+  registry --> graph : signed canonical dependency
+  graph -> registry : verify dependency payload and signatures
+  registry --> graph : trusted
+  graph -> graph : check commitments, bounds, conflicts, and cycles
+  graph --> install : exact accepted closure
+end
+
+group Prepare every export, then publish once
+  install -> compiler : compile or verify Left image
+  compiler --> install : executable Left parser image
+  install -> compiler : compile or verify Right image
+  compiler --> install : executable Right parser image
+  install -> table : atomic batch commit [Left, Right]
+  table --> handles : mint distinct sealed capabilities
+  handles --> app : ordered named handles
+end
+
+group Handle-selected use
+  app -> runtime : Left handle + LeftExpr + left
+  runtime --> out : accepted
+  app -> runtime : Right handle + RightExpr + right
+  runtime --> out : accepted
+  app -> runtime : each handle + structural Text/Hole FLT
+  runtime --> out : typed captures
+end
+
+group Fail-closed alternatives
+  graph -[#DC2626]-> install : trust / commitment / bound / cycle refusal
+  registry -[#DC2626]-> graph : FileIoUnavailable without injected File I/O
+  compiler -[#DC2626]-> install : malformed export or image
+  install -[#DC2626]-> table : publish nothing
+end
+
+legend right
+  |= Color |= Meaning |
+  |<#BFDBFE>| one host-language parse |
+  |<#FDE68A>| injected immutable content and trust |
+  |<#FED7AA>| bounded graph validation |
+  |<#DDD6FE>| canonical data semantics |
+  |<#FEF3C7>| derived parser artifacts |
+  |<#A7F3D0>| atomic installed state |
+  |<#FBCFE8>| unforgeable authority |
+  |<#BAE6FD>| handle-selected parsing and FLTs |
+  |<#FEE2E2>| fail-closed path |
+endlegend
+@enduml
