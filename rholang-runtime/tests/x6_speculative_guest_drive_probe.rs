@@ -131,7 +131,7 @@ async fn probe(label: &str, source: &str) {
 async fn plus_two_three_reduces_under_the_speculation_engine() {
     probe(
         "plus",
-        "lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), \
+        "lambda:Term`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), \
          lam f. lam x. (f, (f, (f, x))))`",
     )
     .await;
@@ -139,5 +139,5 @@ async fn plus_two_three_reduces_under_the_speculation_engine() {
 
 #[tokio::test]
 async fn a_short_beta_chain_reduces_under_the_speculation_engine() {
-    probe("ik", "lambda`(lam x. x, lam a. lam b. a)`").await;
+    probe("ik", "lambda:Term`(lam x. x, lam a. lam b. a)`").await;
 }

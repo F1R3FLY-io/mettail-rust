@@ -46,9 +46,9 @@
 // request would REST on ^spec-all and the interpreter would say so; it can never quietly
 // degrade to publishing nothing, and it can never publish the subject back as an "answer".
 
-@"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
-@"results"!(lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda:Term`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda:Term`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
 
-for(@lambda`lam f. lam x. ${body}` <- @"results") {
-  @"OUT"!(lambda`${body}`)
+for(@lambda:Term`lam f. lam x. ${body}` <- @"results") {
+  @"OUT"!(lambda:Term`${body}`)
 }

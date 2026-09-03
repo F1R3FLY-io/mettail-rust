@@ -9,7 +9,7 @@
 //
 // TWO FILTERS, DOING DIFFERENT JOBS
 // ─────────────────────────────────
-//   for( @lambda`lam f. lam x. ${body}` <- @"numerals" where ... )
+//   for( @lambda:Term`lam f. lam x. ${body}` <- @"numerals" where ... )
 //
 //   * The PATTERN is a Foreign Language Term with a hole in a NESTED position. It matches
 //     only terms shaped `lam f. lam x. _` — so the identity is rejected structurally — and
@@ -24,11 +24,11 @@
 //
 // EXPECT: @"OUT" carries the body of the sum; the product and the identity still rest.
 
-@"numerals"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
-@"numerals"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) |
-@"numerals"!(lambda`lam x. x`) |
+@"numerals"!(lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
+@"numerals"!(lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) |
+@"numerals"!(lambda:Term`lam x. x`) |
 
-for(@lambda`lam f. lam x. ${body}` <- @"numerals"
-    where lambda`lam f. lam x. ${body}` == lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) {
-  @"OUT"!(lambda`${body}`)
+for(@lambda:Term`lam f. lam x. ${body}` <- @"numerals"
+    where lambda:Term`lam f. lam x. ${body}` == lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) {
+  @"OUT"!(lambda:Term`${body}`)
 }

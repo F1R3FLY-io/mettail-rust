@@ -1,4 +1,4 @@
-// A second guest language, same feature. `lambda`…`` embeds the untyped λ-calculus, where
+// A second guest language, same feature. `lambda:Term`…`` embeds the untyped λ-calculus, where
 // `(f, a)` is application. The λ-calculus has no numbers, so numbers are ENCODED as functions:
 //
 //     n   =   lam f. lam x. (f, (f, ... (f, x)))          n applications of f
@@ -10,4 +10,4 @@
 //
 // EXPECT   Church numeral 12, from 21 in-Rho β firings
 
-lambda`((lam m. lam n. lam f. (m, (n, f)), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, x)), lam f. lam x. (f, (f, x)))), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, x))))`
+lambda:Term`((lam m. lam n. lam f. (m, (n, f)), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, x)), lam f. lam x. (f, (f, x)))), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, x))))`

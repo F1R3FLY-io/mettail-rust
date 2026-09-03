@@ -99,7 +99,7 @@ Church numerals and Church booleans are **both two-binder terms**, so counting b
 them apart. The pattern
 
 ```
-for(@lambda`lam f. lam x. (f, ${rest})` <- @"results") { … }
+for(@lambda:Term`lam f. lam x. (f, ${rest})` <- @"results") { … }
 ```
 
 requires the body to be an *application of the outer binder* — true of every numeral ≥ 1, false of
@@ -126,7 +126,7 @@ The **same four programs, the same pool** — and a different question. Here the
 whole computed term and a `where` clause decides:
 
 ```
-for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam t. lam f. f`) { @"OUT"!(r) }
+for(@lambda:Term`${r}` <- @"results" where lambda:Term`${r}` == lambda:Term`lam t. lam f. f`) { @"OUT"!(r) }
 ```
 
 `⟦λ.λ.0⟧` is FALSE. The predicate accepted the one boolean it asked for and refused both numerals
@@ -139,7 +139,7 @@ reply channel, and a provenance pair `[trace, [term…]]` on `@"^spec-success"` 
 the *same* predicate on the *other* channel and republishes what it finds:
 
 ```
-for(@[trace, [term]] <- @"^spec-success" where term == lambda`lam t. lam f. f`) {
+for(@[trace, [term]] <- @"^spec-success" where term == lambda:Term`lam t. lam f. f`) {
   @"OUT"!(trace.concat([term]).nth(trace.concat([term]).length() - 1))
 }
 ```

@@ -186,7 +186,7 @@ lambda-runtime = [
     "mettail-languages/rho-codegen",
 ]
 # Pulls in the PRODUCTION `Calculator` language so the `rholang` interpreter can register it as the
-# `calc` Foreign Language Term guest. A bare `calc`…`` term is evaluated on the reducer through the
+# `calculator` Foreign Language Term guest. A bare `calculator:Proc`…`` term is evaluated on the reducer through the
 # E3 FOLD DATAFLOW (`CalculatorLanguage::rho_fold_dataflow_invocation_to` — `rho-codegen`), which
 # wires the parsed expression tree through one installed Rholang contract per operator node, so
 # `2 + 3 * 4` executes as real metered arithmetic on the f1r3node reducer. `dovetail-codegen`

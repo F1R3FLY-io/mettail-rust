@@ -64,8 +64,8 @@
 //! FLT receive pattern work verbatim —
 //!
 //! ```text
-//! @"results"!(lambda`((plus, two), three)`)[*] |
-//! for(@lambda`lam f. lam x. ${body}` <- @"results") { @"OUT"!(lambda`${body}`) }
+//! @"results"!(lambda:Term`((plus, two), three)`)[*] |
+//! for(@lambda:Term`lam f. lam x. ${body}` <- @"results") { @"OUT"!(lambda:Term`${body}`) }
 //! ```
 //!
 //! — so a program filters over values the machine **computed**, not constants someone

@@ -1782,6 +1782,15 @@ mod differential {
         ("@\"OUT\"!(Set(1, 2, 3))", "CastSet", Expect::Lowers),
         ("@\"OUT\"!(#{1 | 2 | 2}#)", "CastBag (the tagged ABI encoding)", Expect::Lowers),
         ("@\"OUT\"!({| 1 : 10, 2 : 20 |})", "CastPathmap", Expect::Lowers),
+        // The DDL driver is a post-order structural encoder: its child Proc jobs
+        // are lowered before `Kont::Ddl` assembles the installer envelope. A
+        // closed empty theory reaches that continuation without depending on a
+        // registry entry or an installed guest language.
+        (
+            "Theory T() { Empty }",
+            "DdlTheory ▸ structural installer envelope",
+            Expect::Lowers,
+        ),
         // ── arithmetic and comparison ───────────────────────────────────────────────────────
         ("@\"OUT\"!(1 + 2)", "Add (numeric parity)", Expect::Lowers),
         ("@\"OUT\"!(\"a\" + \"b\")", "Add (string parity ▸ EPlusPlus)", Expect::Lowers),
@@ -1852,7 +1861,7 @@ mod differential {
             Expect::Lowers,
         ),
         (
-            "new ret in { for(lambda <- ret){lambda`x`} }",
+            "new ret in { for(lambda <- ret){lambda:Term`x`} }",
             "receive-bound FLT selector ▸ InstalledFlt construction trampoline",
             Expect::Lowers,
         ),

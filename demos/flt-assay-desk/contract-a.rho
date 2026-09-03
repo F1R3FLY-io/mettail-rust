@@ -6,7 +6,7 @@
 //
 //  WHAT THIS FILE IS
 //  ─────────────────
-//  One Foreign Language Term (FLT) and nothing else. `lambda`…`` is Rholang's opener for a guest
+//  One Foreign Language Term (FLT) and nothing else. `lambda:Term`…`` is Rholang's opener for a guest
 //  term written in the untyped λ-calculus — the text between the back-ticks is the GUEST's own
 //  concrete syntax, handed to the guest's reflector, never string-spliced (No-Injection).
 //
@@ -35,4 +35,4 @@
 //  (`desk-accepts-constant.rho`).
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-lambda`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
+lambda:Term`((lam a. lam b. a, lam x. x), lam a. lam b. a)`

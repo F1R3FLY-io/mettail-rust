@@ -70,19 +70,19 @@
 // EXPECT: @"OUT" carries ⟦λ.λ.0⟧ and the run reports `lookahead: 4 request(s) served`,
 // `^spec-failure: 0`, `^spec-truncated: 0`.
 
-@"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
-@"results"!(lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
-@"results"!(lambda`(lam b. ((b, lam t. lam f. f), lam t. lam f. t), lam t. lam f. t)`)[*] |
-@"results"!(lambda`((lam p. lam q. ((p, q), p), lam t. lam f. t), lam t. lam f. t)`)[*] |
+@"results"!(lambda:Term`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda:Term`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda:Term`(lam b. ((b, lam t. lam f. f), lam t. lam f. t), lam t. lam f. t)`)[*] |
+@"results"!(lambda:Term`((lam p. lam q. ((p, q), p), lam t. lam f. t), lam t. lam f. t)`)[*] |
 
-for(@lambda`${r}` <= @"results") {
-  @"OUT"!(lambda`${r}`)
+for(@lambda:Term`${r}` <= @"results") {
+  @"OUT"!(lambda:Term`${r}`)
 }
 
-// for(@lambda`${r}` <= @"results" where lambda`${r}` != lambda`lam t. lam f. f` and lambda`${r}` != lambda`lam t. lam f. t`) {
-//   @"OUT"!(lambda`${r}`)
+// for(@lambda:Term`${r}` <= @"results" where lambda:Term`${r}` != lambda:Term`lam t. lam f. f` and lambda:Term`${r}` != lambda:Term`lam t. lam f. t`) {
+//   @"OUT"!(lambda:Term`${r}`)
 // }
 
-// for(@lambda`${r}` <= @"results" where lambda`${r}` == lambda`lam t. lam f. f`) {
-//   @"OUT"!(lambda`${r}`)
+// for(@lambda:Term`${r}` <= @"results" where lambda:Term`${r}` == lambda:Term`lam t. lam f. f`) {
+//   @"OUT"!(lambda:Term`${r}`)
 // }

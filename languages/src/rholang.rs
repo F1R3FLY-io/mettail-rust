@@ -554,7 +554,7 @@ language! {
     // parser runs (the parser sees an already-bracketed FltOpen…FltClose kind
     // sequence). ZERO-REGRESSION rationale: an opener is the longest maximal-munch
     // accept at its start (its delimiter makes it strictly longer than the bare
-    // `Ident`/keyword it collides with — `lam\`` @4 beats `lam` @3), so under the
+    // `Ident`/keyword it collides with — `lam:Proc\`` @9 beats `lam` @3), so under the
     // Delimiter-Unambiguity Invariant the host mode-0 tokenization of every
     // existing Rholang input is byte-identical (no host source contains
     // `IDENT:CAT\`` or the corresponding fence/brace opener). Every form carries
@@ -591,7 +591,7 @@ language! {
         // Why the three edge cases the strip hand-coded need no code here:
         //   * `"a // b"`  — `StringLit` is one maximal-munch span from `"` to `"`, so the
         //     `//` inside is consumed as string bytes and is never at a token-start position.
-        //   * ``lam`a // b` `` — the FLT guest modes are RAW and declare their own tokens;
+        //   * ``lam:Proc`a // b` `` — the FLT guest modes are RAW and declare their own tokens;
         //     `LineComment`/`BlockComment` exist ONLY in the default mode, so a comment marker
         //     inside a guest body is verbatim GUEST TEXT.
         //   * `a / b` vs `a // b` — maximal munch: `//` (2 bytes) beats `Div` (1 byte), so the

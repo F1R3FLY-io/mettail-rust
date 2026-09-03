@@ -8,9 +8,9 @@
 //! the acceptance program:
 //!
 //! ```text
-//! @"results"!(lambda`plus two three`)[*] |
-//! @"results"!(lambda`mult two three`)[*] |
-//! for(@lambda`lam f. lam x. ${body}` <- @"results") { @"OUT"!(lambda`${body}`) }
+//! @"results"!(lambda:Term`plus two three`)[*] |
+//! @"results"!(lambda:Term`mult two three`)[*] |
+//! for(@lambda:Term`lam f. lam x. ${body}` <- @"results") { @"OUT"!(lambda:Term`${body}`) }
 //! ```
 //!
 //! ★ **The payloads on `@"results"` are normal forms the MACHINE computed.** Nothing in the
@@ -46,7 +46,7 @@ use mettail_rholang_codegen::{
 };
 use mettail_rholang_runtime::lookahead::{
     SPEC_ALL_CHANNEL, SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL,
-    SPEC_N_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
+    SPEC_LEAF_CHANNEL, SPEC_N_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
 };
 use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
@@ -62,16 +62,16 @@ use models::rhoapi::Par;
 // ══════════════════════════════════════════════════════════════════════════
 
 /// `plus ≡ λm.λn.λf.λx. m f (n f x)` applied to the Church numerals 2 and 3.
-const PLUS_TWO_THREE: &str = "lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), \
+const PLUS_TWO_THREE: &str = "lambda:Term`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), \
                               lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`";
 
 /// `mult ≡ λm.λn.λf. m (n f)` applied to the Church numerals 2 and 3.
 const MULT_TWO_THREE: &str =
-    "lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), \
+    "lambda:Term`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), \
                               lam f. lam x. (f, (f, (f, x))))`";
 
 /// `Ω ≡ (λx. x x) (λx. x x)` — one β step takes it to itself, forever.
-const OMEGA: &str = "lambda`(lam x. (x, x), lam x. (x, x))`";
+const OMEGA: &str = "lambda:Term`(lam x. (x, x), lam x. (x, x))`";
 
 // ══════════════════════════════════════════════════════════════════════════
 // Harness
@@ -97,15 +97,21 @@ fn lambda_backend() -> (PlannedRhoBackend, String) {
     (PlannedRhoBackend::from_plan(plan), fingerprint)
 }
 
-/// The engine the `rholang` interpreter installs: the Lambda guest, driven by its own in-Rho
-/// quiescence driver inside every speculative sandbox.
-fn lambda_engine() -> LookaheadEngine {
+/// The Lambda guest installed into the interpreter's lookahead engine: its in-Rho receiver
+/// network plus the seed constructor that starts its quiescence driver.
+fn lambda_guest() -> SpeculationGuest {
     let (backend, fingerprint) = lambda_backend();
     let prelude = backend
         .plan()
         .installed_rho_net_program_par()
         .expect("the installed Lambda Rho-net program must lower");
-    LookaheadEngine::new().with_guest(SpeculationGuest::driven(fingerprint, prelude))
+    SpeculationGuest::driven(fingerprint, prelude)
+}
+
+/// The engine the `rholang` interpreter installs: the Lambda guest, driven by its own in-Rho
+/// quiescence driver inside every speculative sandbox.
+fn lambda_engine() -> LookaheadEngine {
+    LookaheadEngine::new().with_guest(lambda_guest())
 }
 
 fn guest_resolver() -> Arc<dyn FltResolve> {
@@ -208,7 +214,7 @@ async fn the_acceptance_program_runs() {
     let rest = run(&format!(
         r#"@"results"!({PLUS_TWO_THREE})[*] |
            @"results"!({MULT_TWO_THREE})[*] |
-           for(@lambda`lam f. lam x. ${{body}}` <- @"results") {{ @"OUT"!(lambda`${{body}}`) }}"#
+           for(@lambda:Term`lam f. lam x. ${{body}}` <- @"results") {{ @"OUT"!(lambda:Term`${{body}}`) }}"#
     ))
     .await;
 
@@ -270,7 +276,9 @@ async fn both_delivery_forms_are_published() {
         "and it is the computed Church numeral 5"
     );
 
-    // 2. The trace-keyed provenance: `[trace, term]` per success branch.
+    // 2. The trace-keyed provenance: `[trace, terms]` per success branch. The trace is the
+    // complete root-to-leaf PROCESS/configuration path; digests name resumable paths but never
+    // replace the path's nodes.
     use models::rhoapi::expr::ExprInstance;
     let success = on(&rest, SPEC_SUCCESS_CHANNEL);
     assert_eq!(success.len(), 1, "one provenance datum per success branch");
@@ -287,23 +295,57 @@ async fn both_delivery_forms_are_published() {
         .first()
         .and_then(|expr| expr.expr_instance.as_ref())
     else {
-        panic!("the trace must be an EList of step digests");
+        panic!("the trace must be an EList of process/configuration nodes");
     };
     assert!(
-        !trace.ps.is_empty(),
-        "★ the branch fired real COMMs — a trace of length 0 would mean the subject was \
-         explored INERT, which is what omitting the guest prelude looks like"
+        trace.ps.len() > 2,
+        "this reducing guest trace must contain successor configurations after the submitted \
+         input and saturated initial configuration"
     );
-    eprintln!("[X7] the success branch's trace is {} step(s) long", trace.ps.len());
+    let guest = lambda_guest();
+    let submitted = guest
+        .prelude()
+        .clone()
+        .append(guest.seed(lower(PLUS_TWO_THREE), SPEC_LEAF_CHANNEL));
     assert!(
-        matches!(
-            trace.ps[0].exprs.first().and_then(|e| e.expr_instance.as_ref()),
-            Some(ExprInstance::GByteArray(bytes)) if bytes.len() == 32
-        ),
-        "a step is a 32-byte content digest"
+        trace.ps.first() == Some(&submitted),
+        "the first provenance node must be the exact submitted guest program: installed \
+         receiver network in parallel with the evaluator seed"
+    );
+    eprintln!(
+        "[X7] the success branch's trace is {} process/configuration node(s) long",
+        trace.ps.len()
+    );
+    let Some(ExprInstance::EListBody(projected_terms)) = entry.ps[1]
+        .exprs
+        .first()
+        .and_then(|expr| expr.expr_instance.as_ref())
+    else {
+        panic!("the success report's second element must be its projected-term list");
+    };
+    assert_eq!(
+        projected_terms.ps, reply,
+        "the provenance report and bare reply must carry the same term"
+    );
+    let leaf_channel =
+        models::rust::utils::new_gstring_par(SPEC_LEAF_CHANNEL.to_string(), Vec::new(), false);
+    let terminal_terms: Vec<Par> = trace
+        .ps
+        .last()
+        .expect("a complete trace has a terminal configuration")
+        .sends
+        .iter()
+        .filter(|send| send.chan.as_ref() == Some(&leaf_channel))
+        .flat_map(|send| send.data.iter().cloned())
+        .collect();
+    assert_eq!(
+        terminal_terms, reply,
+        "the trace's final node must be the terminal configuration from which the guest \
+         projection reads the bare reply"
     );
 
-    // 3. The FIPS's own three collections, as one datum: `[success, truncated, failure]`.
+    // 3. The FIPS's own three set-mode PathMap collections, as one datum:
+    // `[success, truncated, failure]`.
     let delivery = on(&rest, SPEC_DELIVERY_CHANNEL);
     assert_eq!(delivery.len(), 1, "one collection triple per served request");
     let Some(ExprInstance::EListBody(collections)) = delivery[0]
@@ -314,17 +356,28 @@ async fn both_delivery_forms_are_published() {
         panic!("the delivery datum must be an EList, got {:?}", delivery[0]);
     };
     assert_eq!(collections.ps.len(), 3, "[success, truncated, failure]");
-    let Some(ExprInstance::ESetBody(fips_success)) = collections.ps[0]
+    let Some(ExprInstance::EPathmapBody(fips_success)) = collections.ps[0]
         .exprs
         .first()
         .and_then(|expr| expr.expr_instance.as_ref())
     else {
-        panic!("the FIPS `success` collection must be an ESet");
+        panic!("the FIPS `success` collection must be an EPathMap");
     };
     assert_eq!(
-        fips_success.ps.len(),
+        fips_success.mode(),
+        models::rust::epathmap_trie_codec::EPathMapMode::Set,
+        "the success collection is a set-valued PathMap rather than a positional list or map"
+    );
+    assert_eq!(
+        fips_success.len(),
         1,
         "the FIPS success set carries one entry per quiescent branch"
+    );
+    assert_eq!(
+        fips_success.entry_trie().entries_owned(),
+        vec![entry.ps[0].clone()],
+        "the aggregate PathMap must contain the same complete process trace published in the \
+         per-branch provenance report"
     );
 
     // Nothing died and nothing was cut short.
@@ -462,32 +515,32 @@ async fn installing_the_server_changes_nothing_a_lookahead_free_program_observes
     let corpus: [(&str, String); 4] = [
         (
             "plain send + receive",
-            r#"@"r"!(lambda`lam f. lam x. (f, (f, x))`) | for(@lambda`${t}` <- @"r") { @"OUT"!(lambda`${t}`) }"#
+            r#"@"r"!(lambda:Term`lam f. lam x. (f, (f, x))`) | for(@lambda:Term`${t}` <- @"r") { @"OUT"!(lambda:Term`${t}`) }"#
                 .to_string(),
         ),
         (
             "nested-hole destructure",
-            r#"@"r"!(lambda`lam f. lam x. (f, (f, x))`) |
-               for(@lambda`lam f. lam x. ${b}` <- @"r") { @"OUT"!(lambda`${b}`) }"#
+            r#"@"r"!(lambda:Term`lam f. lam x. (f, (f, x))`) |
+               for(@lambda:Term`lam f. lam x. ${b}` <- @"r") { @"OUT"!(lambda:Term`${b}`) }"#
                 .to_string(),
         ),
         (
             "where-guarded desk (bare hole)",
-            r#"@"r"!(lambda`lam f. lam x. (f, (f, x))`) |
-               @"r"!(lambda`lam x. x`) |
-               for(@lambda`${t}` <- @"r"
-                   where lambda`${t}` == lambda`lam f. lam x. (f, (f, x))`) { @"OUT"!(lambda`${t}`) }"#
+            r#"@"r"!(lambda:Term`lam f. lam x. (f, (f, x))`) |
+               @"r"!(lambda:Term`lam x. x`) |
+               for(@lambda:Term`${t}` <- @"r"
+                   where lambda:Term`${t}` == lambda:Term`lam f. lam x. (f, (f, x))`) { @"OUT"!(lambda:Term`${t}`) }"#
                 .to_string(),
         ),
         (
             // ★ `demos/flt-lambda-lab/04-desk.rho`'s shape: a NESTED-hole pattern under a
             // `where` guard over the reconstructed term.
             "where-guarded desk (nested hole)",
-            r#"@"r"!(lambda`lam f. lam x. (f, (f, x))`) |
-               @"r"!(lambda`lam x. x`) |
-               for(@lambda`lam f. lam x. ${b}` <- @"r"
-                   where lambda`lam f. lam x. ${b}` == lambda`lam f. lam x. (f, (f, x))`) {
-                 @"OUT"!(lambda`${b}`)
+            r#"@"r"!(lambda:Term`lam f. lam x. (f, (f, x))`) |
+               @"r"!(lambda:Term`lam x. x`) |
+               for(@lambda:Term`lam f. lam x. ${b}` <- @"r"
+                   where lambda:Term`lam f. lam x. ${b}` == lambda:Term`lam f. lam x. (f, (f, x))`) {
+                 @"OUT"!(lambda:Term`${b}`)
                }"#
             .to_string(),
         ),

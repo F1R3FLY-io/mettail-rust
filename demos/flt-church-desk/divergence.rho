@@ -6,4 +6,4 @@
 //
 // EXPECT   reduction fuel exhausted, stuck redex ⟦(λ.(0 0) λ.(0 0))⟧
 
-lambda`(lam x. (x, x), lam x. (x, x))`
+lambda:Term`(lam x. (x, x), lam x. (x, x))`

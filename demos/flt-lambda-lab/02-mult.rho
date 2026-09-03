@@ -8,4 +8,4 @@
 //
 // Same machine, same driver, a different answer. Compare the `^fired` count against 01-plus.
 
-lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`
+lambda:Term`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`

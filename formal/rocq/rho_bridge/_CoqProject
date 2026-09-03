@@ -315,3 +315,4 @@ theories/CrossLanguageSeparation.v
 # set-automaton PDA equivalence, verbatim spatial fallback, append-only StateId
 # suffix serialization, and zero persistent-receiver admission.
 theories/FltRetainedSetAutomaton.v
+theories/LookaheadTraceDelivery.v

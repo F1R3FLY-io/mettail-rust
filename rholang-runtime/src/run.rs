@@ -309,10 +309,12 @@ const INTERPRETER_RAND_DOMAIN: &[u8] = b"mettail.rholang-runtime.inj.v1";
 /// 3. `models`' `event_hash_bytes_list_par_with_random` **hashes `random_state` into** the
 ///    `Produce` / `Consume` event hashes;
 /// 4. `speculation::RendezvousName::of` copies exactly those hashes;
-/// 5. [`speculation::delivery::step_digest`](crate::speculation::delivery::step_digest) folds
-///    them, and `trace_digest` folds the step digests;
-/// 6. so a `^spec-success` / `^spec-failure` / `^spec-truncated` entry — and every FIPS
-///    collection — carried a fresh random value on every run.
+/// 5. at the time of this defect, `step_digest` folded those names and the whole-trace digest
+///    folded the step digests;
+/// 6. consequently every digest-bearing provenance entry carried a fresh random value on every
+///    run. Current published traces contain complete process/configuration paths instead; their
+///    compact handle is derived from those canonical process bytes, never substituted for a
+///    trace node.
 ///
 /// Measured before the fix: twenty runs of `demos/flt-lookahead/04-divergence.rho` produced
 /// **twenty distinct trace digests, zero repeats**, which is the entropy signature and not the

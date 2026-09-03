@@ -227,7 +227,7 @@ async fn rest_on_channels_of_demo(demo: &str, channels: &[&str]) -> Vec<(String,
 /// with no receiver at all, so the expected value comes from the same reflection path as the
 /// value under test. Nothing about the reflected wire format is hard-coded anywhere in this file.
 async fn resting_display_of(guest_term: &str) -> String {
-    let program = format!("@\"assay\"!(lambda`{guest_term}`)");
+    let program = format!("@\"assay\"!(lambda:Term`{guest_term}`)");
     let resting = rest_on_channels(&program, &["assay"]).await;
     let (_channel, values) = resting
         .into_iter()
@@ -264,7 +264,7 @@ fn beat_1_the_foreign_term_as_written_is_the_last_line_of_the_contract() {
         .expect("the demo ships contract-a.rho");
     assert_eq!(
         source.lines().last().expect("contract-a.rho is non-empty"),
-        "lambda`((lam a. lam b. a, lam x. x), lam a. lam b. a)`",
+        "lambda:Term`((lam a. lam b. a, lam x. x), lam a. lam b. a)`",
         "the term the sheet shows with `tail -1` is the term the interpreter runs"
     );
 }
@@ -369,7 +369,7 @@ fn each_desk_payload_is_the_normal_form_its_contract_reduced_to() {
         (NF_MIRROR, "contract-b.rho", "⟦λ.λ.0⟧"),
         (NF_CONSTANT, "contract-c.rho", "⟦λ.λ.1⟧"),
     ] {
-        std::fs::write(&scratch, format!("lambda`{payload}`\n"))
+        std::fs::write(&scratch, format!("lambda:Term`{payload}`\n"))
             .expect("the probe term must be writable to a temporary file");
         let output = Command::new(env!("CARGO_BIN_EXE_rholang"))
             .arg(&scratch)
@@ -414,9 +414,9 @@ fn the_desk_files_publish_exactly_those_three_payloads() {
         assert_eq!(
             sends,
             vec![
-                format!("@\"assay\"!(lambda`{NF_IDENTITY}`) |"),
-                format!("@\"assay\"!(lambda`{NF_MIRROR}`) |"),
-                format!("@\"assay\"!(lambda`{NF_CONSTANT}`) |"),
+                format!("@\"assay\"!(lambda:Term`{NF_IDENTITY}`) |"),
+                format!("@\"assay\"!(lambda:Term`{NF_MIRROR}`) |"),
+                format!("@\"assay\"!(lambda:Term`{NF_CONSTANT}`) |"),
             ],
             "{desk} must offer the desk exactly the three contract results, in this order"
         );
@@ -438,12 +438,12 @@ fn beat_3_the_desk_program_is_the_last_seven_lines_of_the_file() {
     assert_eq!(
         tail,
         vec![
-            "@\"assay\"!(lambda`lam x. x`) |",
-            "@\"assay\"!(lambda`lam a. lam b. b`) |",
-            "@\"assay\"!(lambda`lam a. lam b. a`) |",
+            "@\"assay\"!(lambda:Term`lam x. x`) |",
+            "@\"assay\"!(lambda:Term`lam a. lam b. b`) |",
+            "@\"assay\"!(lambda:Term`lam a. lam b. a`) |",
             "",
-            "for(@lambda`${r}` <- @\"assay\" where lambda`${r}` == lambda`lam a. lam b. a`) {",
-            "  @\"OUT\"!(lambda`${r}`)",
+            "for(@lambda:Term`${r}` <- @\"assay\" where lambda:Term`${r}` == lambda:Term`lam a. lam b. a`) {",
+            "  @\"OUT\"!(lambda:Term`${r}`)",
             "}",
         ],
         "`tail -7` must print exactly the program the audience is told it is reading"
@@ -566,10 +566,10 @@ fn the_two_desks_differ_only_in_the_guards_comparison_term() {
     assert!(
         differing[0]
             .0
-            .contains("where lambda`${r}` == lambda`lam a. lam b. a`")
+            .contains("where lambda:Term`${r}` == lambda:Term`lam a. lam b. a`")
             && differing[0]
                 .1
-                .contains("where lambda`${r}` == lambda`lam x. x`"),
+                .contains("where lambda:Term`${r}` == lambda:Term`lam x. x`"),
         "the load-bearing difference is the guard's comparison term: {:?}",
         differing[0]
     );
@@ -628,7 +628,7 @@ fn beat_5a_changes_the_datum_and_nothing_else() {
         .collect();
     assert_eq!(
         sends,
-        vec![format!("@\"assay\"!(lambda`{UNREDUCED_ARRIVAL}`) |")],
+        vec![format!("@\"assay\"!(lambda:Term`{UNREDUCED_ARRIVAL}`) |")],
         "exactly one datum is offered, and it is Contract C as it arrives"
     );
 }
@@ -642,7 +642,7 @@ fn beat_5a_the_refused_arrival_is_exactly_what_contract_c_reduces() {
         .expect("the demo ships contract-c.rho");
     assert_eq!(
         source.lines().last().expect("contract-c.rho is non-empty"),
-        format!("lambda`{UNREDUCED_ARRIVAL}`"),
+        format!("lambda:Term`{UNREDUCED_ARRIVAL}`"),
         "the datum Beat 5a offers IS contract-c.rho's term, verbatim"
     );
     assert_eq!(

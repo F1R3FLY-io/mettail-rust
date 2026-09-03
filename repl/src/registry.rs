@@ -77,19 +77,22 @@ impl Default for LanguageRegistry {
     }
 }
 
-/// FLT (Foreign Language Term) Phase 2 — the tag-keyed resolver over a [`LanguageRegistry`].
+/// FLT (Foreign Language Term) Phase 2 — the selector-keyed compatibility resolver over a
+/// [`LanguageRegistry`].
 ///
-/// An FLT surface `` L`…` `` names its guest language by a REQUIRED reserved tag `L` (e.g. `lambda`);
-/// this resolver maps that tag to the guest [`Language`] value and its stable
+/// An FLT surface `` L:C`…` `` names its guest language by the REQUIRED selector `L` and its entry
+/// category by the REQUIRED `C` (for example, `` lambda:Term`…` ``). This resolver maps the
+/// selector to the guest [`Language`] value and its stable
 /// `definition_fingerprint()` — the `fp` every public FLT reflector
 /// ([`mettail_rholang_codegen::reflect_flt_pattern`] et al.) keys its unforgeable reflected tags on.
-/// Because the tag is REQUIRED, exactly one grammar parses an FLT body, so the registry's
-/// first-match composition is moot (design §Registry).
+/// Because the selector is explicit, exactly one grammar parses an FLT body; the selected guest
+/// validates `C`, so no registry-wide grammar guessing occurs.
 ///
-/// The reserved tag need not equal the language NAME (the registry key). A tag alias
-/// ([`register_tag`](Self::register_tag)) maps a surface tag (e.g. `lambda`) to a guest language name
-/// (e.g. `Lambda`); [`resolve`](Self::resolve) falls back to treating the tag AS a language name
-/// when no alias is registered.
+/// This adapter predates opaque installed-language handles and remains the compile-time-language
+/// compatibility path. Its selector need not equal the language NAME (the registry key). A selector
+/// alias ([`register_tag`](Self::register_tag)) maps, for example, `lambda` to `Lambda`;
+/// [`resolve`](Self::resolve) falls back to treating the selector as a language name when no alias
+/// is registered.
 pub struct FltResolver<'a> {
     registry: &'a LanguageRegistry,
     tag_aliases: HashMap<String, String>,

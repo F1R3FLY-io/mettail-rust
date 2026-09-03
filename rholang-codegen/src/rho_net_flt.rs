@@ -1,7 +1,8 @@
 //! FLT (Foreign Language Term) Phase 2 — the PUBLIC reflector API.
 //!
 //! This module is the public, syntax-independent hinge between an FLT surface template
-//! (`` lam`App(${f}, K)` ``) and the reflected-`Par` shapes the installed set-automaton / driver
+//! (`` lambda:Term`(${f}, lam a. lam b. a)` ``) and the reflected-`Par` shapes the installed
+//! set-automaton / driver
 //! family MATCHES and SEEDS on. It GENERATES the exact hand-built shapes pinned in
 //! `rholang-runtime/tests/flt_abi_over_rspace.rs` (the ground truth), reusing the landed
 //! reflected-term ABI ([`crate::rho_net_lower::reflect_ground_term_par`] and the E-2-D v2
@@ -765,8 +766,10 @@ pub trait FltReflect: mettail_runtime::Language {
 // ── FltResolve — the FLT tag → guest-reflector registry (L9-6) ─────────────────────────────────
 
 /// The registry a Rho lowering's `PFlt` arm consults to elaborate a foreign-language template. A
-/// `PFlt` node's `tag` (the opener payload, e.g. `"lam"`) selects the [`FltReflect`] guest that
-/// parses and reflects its body; the resolver maps that tag to the guest.
+/// `PFlt` node's selector (the opener payload before `:Category`, e.g. `"lambda"`) selects the
+/// [`FltReflect`] guest that parses and reflects its body; the resolver maps that selector to the
+/// guest. The node retains the category independently so the selected guest can reject an unknown
+/// or incompatible entry category.
 ///
 /// Behind a trait so a lowering threads a `&dyn FltResolve` (or an `Arc<dyn FltResolve>`) without
 /// naming a concrete registry, and so the EMPTY default ([`EmptyFltResolver`]) can resolve nothing:
@@ -790,10 +793,10 @@ impl FltResolve for EmptyFltResolver {
     }
 }
 
-/// A concrete growable [`FltResolve`] registry: a `tag → Box<dyn FltReflect>` map. The guest
+/// A concrete growable [`FltResolve`] registry: a `selector → Box<dyn FltReflect>` map. The guest
 /// reflectors are the per-language `impl FltReflect for <Guest>Language` values (macro-generated
 /// under feature `rho-codegen`); a caller registers each guest under the surface tag its FLT openers
-/// carry (e.g. `"lam"` → `LambdaLanguage`).
+/// carry (e.g. `"lambda"` in `` lambda:Term`…` `` → `LambdaLanguage`).
 #[derive(Default)]
 pub struct FltRegistry {
     guests: std::collections::HashMap<String, Box<dyn FltReflect>>,

@@ -17,8 +17,9 @@
 //!    reported.
 //!
 //! ## Foreign Language Terms are a grammar feature, not a special case
-//! The Rholang grammar supports Foreign Language Terms (FLT): the opener `tag`…`` embeds a term of
-//! a guest language written in the guest's own concrete syntax. The interpreter is NOT
+//! The Rholang grammar supports Foreign Language Terms (FLTs): an explicit
+//! `selector:Category` opener embeds a term of a selected guest language, beginning at the named
+//! guest category. For example, `` lambda:Term`lam x. x` `` is a Lambda `Term`. The interpreter is NOT
 //! FLT-specific — it just interprets Rholang — but it supplies an [`FltResolve`] registry of the
 //! guest languages it bundles (`calculator`, the production `CalculatorLanguage`; `lambda`, the
 //! untyped λ-calculus `LambdaLanguage`) so that programs USING the FLT feature lower, and so a bare guest term can be reduced to normal form by
@@ -91,21 +92,22 @@ and evaluates it on the f1r3node reducer:
     reduction engine), printed with the ^fired rewrite ledger;
   * a process (sends/receives) runs to rest and its @\"OUT\" observations are reported.
 
-The Rholang grammar supports Foreign Language Terms (`tag`…``). An opener IS the lower-cased name
-of the guest grammar, so the tag is never a nickname to memorize. The interpreter bundles two:
+The Rholang grammar supports Foreign Language Terms (`selector:Category`…``). The selector is the
+lower-cased name of the guest grammar and the category is an explicit guest entry point. The
+interpreter bundles two:
   * `calculator` — the production Calculator grammar (arithmetic, comparison, boolean, string). A
-                   bare `calculator`…`` term EVALUATES to a value through the E3 fold-dataflow:
+                   bare `calculator:Proc`…`` term EVALUATES to a value through the E3 fold-dataflow:
                    every operator becomes a real metered Rholang expression on the reducer.
   * `lambda`     — the untyped λ-calculus, reduced to normal form by its in-Rho quiescence driver.";
 
-/// THE opener a guest is registered under: the lower-cased form of the grammar's OWN name, read off
+/// The selector a guest is registered under: the lower-cased form of the grammar's OWN name, read off
 /// the guest itself ([`mettail_runtime::Language::name`], which the `language!` macro emits from the
 /// `LanguageDef`'s `name:` field). `CalculatorLanguage` ⟶ `calculator`; `LambdaLanguage` ⟶ `lambda`.
 ///
-/// Derived rather than passed, because every hand-typed opener this interpreter has carried was an
+/// Derived rather than passed, because every hand-typed selector this interpreter has carried was an
 /// arbitrary abbreviation that had to be corrected afterwards (`lam`, then `calc`). A registration
-/// site that cannot name its own tag cannot invent a third one: adding a guest now yields exactly
-/// one legal opener, and it is the one a reader would guess from the grammar's name.
+/// site that cannot name its own selector cannot invent a third one: adding a guest now yields
+/// exactly one legal selector. The FLT surface still supplies the guest entry category explicitly.
 fn derived_opener(guest: &dyn FltReflect) -> String {
     guest.name().to_lowercase()
 }
@@ -123,7 +125,7 @@ fn guest_resolver() -> Arc<dyn FltResolve> {
     Arc::new(registry)
 }
 
-/// The openers the registry accepts, in registration order — one derivation, so the `--help` text
+/// The selectors the registry accepts, in registration order — one derivation, so the `--help` text
 /// and the unknown-guest diagnostic can never drift from what is actually registered.
 fn registered_openers() -> Vec<String> {
     let guests: Vec<Box<dyn FltReflect>> =
@@ -544,7 +546,10 @@ fn render_pars(pars: &[Par]) -> String {
 /// later gets mistaken for the wire format.
 fn render_spec_failure(datum: &Par) -> String {
     let fallback = || render_pars(std::slice::from_ref(datum));
-    let Some(RuntimeObservationValue::List(entry)) = par_as_runtime_observation_value(datum) else {
+    let Some(decoded) = par_as_runtime_observation_value(datum) else {
+        return fallback();
+    };
+    let RuntimeObservationValue::List(entry) = &decoded else {
         return fallback();
     };
     // The leaf is the last element; everything before it is the trace.
@@ -581,7 +586,7 @@ fn render_spec_failure(datum: &Par) -> String {
 
 // ── the evaluation modes ────────────────────────────────────────────────────────────────────────
 
-/// Evaluate a bare `calculator`…`` TERM to a VALUE on the reducer, through the E3 fold dataflow.
+/// Evaluate a bare `calculator:Proc`…`` TERM to a VALUE on the reducer, through the E3 fold dataflow.
 ///
 /// The guest body is parsed by the production `CalculatorLanguage`'s own parser, its expression
 /// tree is lowered to a Rholang DATAFLOW (one contract call per operator node, wired through
@@ -704,7 +709,7 @@ async fn evaluate_term_to_normal_form(term: Par) -> Result<(), InterpError> {
 /// A speculation over a Foreign Language Term needs the guest's **installed program** and a
 /// **seed** that hands the reflected term to it — see `speculation::server`'s `prelude`
 /// section. Registering the guest here, next to the FLT resolver that lowers its terms, is
-/// what makes `lambda`…`` speculable; a subject of any other language is refused typed on
+/// what makes `lambda:Term`…`` speculable; a subject of any other language is refused typed on
 /// `^spec-err` rather than explored inert.
 fn lookahead_engine() -> LookaheadEngine {
     let (backend, fingerprint) = lambda_backend();
@@ -863,7 +868,8 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     // removes it from this path entirely rather than compensating for it downstream.
     let proc = Proc::parse_via_wpda(&source).map_err(|err| InterpError::Parse(err.to_string()))?;
 
-    // A WHOLE-PROGRAM bare FLT (the file is one `tag`…`` and nothing else) is evaluated by THAT
+    // A WHOLE-PROGRAM bare FLT (the file is one `selector:Category`…`` and nothing else) is
+    // evaluated by THAT
     // GUEST'S OWN engine, so the tag is read off the AST before lowering reflects it away. Each
     // registered guest brings its own reduction mechanism, and both run on the reducer:
     //   `calculator` → the E3 fold dataflow (metered Rholang arithmetic contracts);

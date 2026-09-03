@@ -9,4 +9,4 @@
 //
 // EXPECT: a normal form with five nested applications, and a `^fired` ledger of Beta steps.
 
-lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`
+lambda:Term`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`

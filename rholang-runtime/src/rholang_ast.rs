@@ -5056,8 +5056,8 @@ fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
 }
 
 /// The bind's pattern as a `Proc` whose `Proc::PVar` leaves mark the bound positions.
-/// L9-6b: the `FltNode` of an FLT RECEIVE pattern (`for(@lambda`…` <- c)`), or `None`
-/// for a non-FLT bind. The FLT surface `@lambda`…`` is a quoted `PFlt*` process
+/// L9-6b: the `FltNode` of an FLT RECEIVE pattern (`for(@lambda:Term`…` <- c)`), or `None`
+/// for a non-FLT bind. The FLT surface `@lambda:Term`…`` is a quoted `PFlt*` process
 /// (`NQuote`/`NQuoteShort`); a `PFlt*` written directly as a quoted pattern rides
 /// the `InputBindQuoted` family. It is intercepted here, ahead of
 /// [`bind_pattern_proc`], because an FLT pattern is REFLECTED (its holes become

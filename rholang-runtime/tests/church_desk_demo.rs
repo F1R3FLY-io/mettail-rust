@@ -150,14 +150,31 @@ fn run_demo(name: &str) -> Output {
         .unwrap_or_else(|err| panic!("the rholang binary must run on {name}: {err}"))
 }
 
+/// Run one demo and retain both streams after checking its contractually expected exit code.
+/// Divergence is the one intentional failure: the CLI reports exhausted reduction fuel as
+/// `EX_SOFTWARE` (70), while every other beat must succeed.
+fn checked_demo_streams(name: &str) -> (String, String) {
+    let output = run_demo(name);
+    let stdout = String::from_utf8(output.stdout).expect("rholang writes UTF-8 to stdout");
+    let stderr = String::from_utf8(output.stderr).expect("rholang writes UTF-8 to stderr");
+    let expected_code = if name == "divergence.rho" { 70 } else { 0 };
+    assert_eq!(
+        output.status.code(),
+        Some(expected_code),
+        "the rholang binary returned the wrong status on {name}\nstatus: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status,
+    );
+    (stdout, stderr)
+}
+
 /// The binary's STDOUT for one demo file.
 fn transcript(name: &str) -> String {
-    String::from_utf8(run_demo(name).stdout).expect("rholang writes UTF-8 to stdout")
+    checked_demo_streams(name).0
 }
 
 /// The binary's STDERR for one demo file (the fail-closed reports land here).
 fn diagnostic(name: &str) -> String {
-    String::from_utf8(run_demo(name).stderr).expect("rholang writes UTF-8 to stderr")
+    checked_demo_streams(name).1
 }
 
 /// The `⟦…⟧` observations the interpreter printed, in order. Deliberately parses only the
@@ -247,7 +264,7 @@ async fn rest_on_channels_of_demo(demo: &str, channels: &[&str]) -> Vec<(String,
 /// with no receiver at all, so the expected value comes from the same reflection path as the
 /// value under test. Nothing about the reflected wire format is hard-coded anywhere in this file.
 async fn resting_display_of(guest_term: &str) -> String {
-    let program = format!("@\"results\"!(lambda`{guest_term}`)");
+    let program = format!("@\"results\"!(lambda:Term`{guest_term}`)");
     let resting = rest_on_channels(&program, &["results"]).await;
     let (_channel, values) = resting
         .into_iter()
@@ -282,7 +299,7 @@ fn beat_0_the_calculator_guest_is_opened_by_the_lower_cased_grammar_name() {
         .expect("the demo ships calculator.rho");
     assert_eq!(
         source.lines().last().expect("calculator.rho is non-empty"),
-        "calculator`2 + 3 * 4`",
+        "calculator:Proc`2 + 3 * 4`",
         "the opener must be the lower-cased name of the CalculatorLanguage grammar"
     );
     assert_eq!(
@@ -321,7 +338,7 @@ fn beat_1_the_foreign_term_as_written_is_the_last_line_of_the_file() {
         .expect("the demo ships arithmetic.rho");
     let last = source.lines().last().expect("arithmetic.rho is non-empty");
     assert!(
-        last.starts_with("lambda`") && last.ends_with('`'),
+        last.starts_with("lambda:Term`") && last.ends_with('`'),
         "the term the sheet shows with `tail -1` must be the FLT the interpreter runs: {last}"
     );
 }
@@ -501,7 +518,7 @@ fn beat_5_the_receive_pattern_carries_a_hole_under_two_guest_binders() {
     let source =
         std::fs::read_to_string(demo_file("destructure.rho")).expect("the demo ships destructure");
     assert!(
-        source.contains("for(@lambda`lam f. lam x. ${body}` <- @\"results\")"),
+        source.contains("for(@lambda:Term`lam f. lam x. ${body}` <- @\"results\")"),
         "the pattern must be a foreign term with a NESTED hole\nsource:\n{source}"
     );
 }

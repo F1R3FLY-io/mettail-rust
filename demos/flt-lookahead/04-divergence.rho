@@ -49,9 +49,9 @@
 // ──────────
 //   target/debug/rholang demos/flt-lookahead/04-divergence.rho
 
-@"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
-@"results"!(lambda`(lam x. (x, x), lam x. (x, x))`)[*] |
+@"results"!(lambda:Term`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda:Term`(lam x. (x, x), lam x. (x, x))`)[*] |
 
-for(@lambda`lam f. lam x. ${body}` <- @"results") {
-  @"OUT"!(lambda`${body}`)
+for(@lambda:Term`lam f. lam x. ${body}` <- @"results") {
+  @"OUT"!(lambda:Term`${body}`)
 }

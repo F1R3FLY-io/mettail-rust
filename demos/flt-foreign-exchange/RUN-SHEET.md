@@ -26,7 +26,7 @@ in the build window before presenting.
 
 ⚠ **This page's load-bearing premise has expired in the good direction.** It opens by saying the
 runtime ingredients exist and "**only the surface syntax is missing**". The surface syntax has
-since landed: `` lambda`…` `` openers with `${x}` typed-AST holes, in both construction and
+since landed: `` lambda:Term`…` `` openers with `${x}` typed-AST holes, in both construction and
 pattern position, and the interpreter binary — not a demo-local `flt_demo` bin — runs `.rho`
 files directly. The beats below are still the design, and their `(to validate)` markers still
 mean what they say at the **ABI** level. What follows is what a presenter can run *today*, in the

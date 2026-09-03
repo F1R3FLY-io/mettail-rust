@@ -66,10 +66,10 @@ fn sole_send(par: &Par) -> (Par, Par) {
 /// send of `P` would carry, and the send's own channel as the reply channel.
 #[test]
 fn lookahead_all_lowers_to_the_unbounded_speculation_request() {
-    let ordinary = lower_ok(r#"@"results"!(lambda`(lam x. x, lam a. lam b. a)`)"#);
+    let ordinary = lower_ok(r#"@"results"!(lambda:Term`(lam x. x, lam a. lam b. a)`)"#);
     let (channel, subject) = sole_send(&ordinary);
 
-    let speculated = lower_ok(r#"@"results"!(lambda`(lam x. x, lam a. lam b. a)`)[*]"#);
+    let speculated = lower_ok(r#"@"results"!(lambda:Term`(lam x. x, lam a. lam b. a)`)[*]"#);
     assert_eq!(
         speculated,
         spec_all_request(subject, channel),
@@ -80,10 +80,10 @@ fn lookahead_all_lowers_to_the_unbounded_speculation_request() {
 /// `x!(P)[n]` lowers to the bounded request, carrying the step bound.
 #[test]
 fn bounded_lookahead_lowers_to_the_bounded_speculation_request() {
-    let ordinary = lower_ok(r#"@"results"!(lambda`(lam x. x, lam a. a)`)"#);
+    let ordinary = lower_ok(r#"@"results"!(lambda:Term`(lam x. x, lam a. a)`)"#);
     let (channel, subject) = sole_send(&ordinary);
 
-    let speculated = lower_ok(r#"@"results"!(lambda`(lam x. x, lam a. a)`)[7]"#);
+    let speculated = lower_ok(r#"@"results"!(lambda:Term`(lam x. x, lam a. a)`)[7]"#);
     assert_eq!(
         speculated,
         spec_n_request(subject, 7, channel),
@@ -126,7 +126,7 @@ fn every_send_sugar_accepts_the_lookahead_suffix() {
 /// enumerator on the guest the demo uses, and wrong on the first guest that has two normal forms.
 #[test]
 fn lookahead_does_not_lower_onto_the_single_path_drive() {
-    let lowered = lower_ok(r#"@"results"!(lambda`(lam x. x, lam a. lam b. a)`)[*]"#);
+    let lowered = lower_ok(r#"@"results"!(lambda:Term`(lam x. x, lam a. lam b. a)`)[*]"#);
     let rendered = format!("{lowered:?}");
     assert!(
         !rendered.contains("^drive"),
@@ -143,7 +143,7 @@ fn lookahead_does_not_lower_onto_the_single_path_drive() {
 /// that eventually rest on `x` are the terminal terms the engine computed, never the subject.
 #[test]
 fn a_lookahead_does_not_also_send_the_subject_on_the_channel() {
-    let lowered = lower_ok(r#"@"results"!(lambda`(lam x. x, lam a. lam b. a)`)[*]"#);
+    let lowered = lower_ok(r#"@"results"!(lambda:Term`(lam x. x, lam a. lam b. a)`)[*]"#);
     assert_eq!(
         lowered.sends.len(),
         1,
@@ -212,7 +212,7 @@ fn a_non_ground_or_negative_bound_is_rejected_with_a_typed_error() {
 #[tokio::test]
 async fn an_unserved_lookahead_request_rests_and_is_reported() {
     let program = lower_ok(
-        r#"@"results"!(lambda`(lam x. x, lam a. lam b. a)`)[*] |
+        r#"@"results"!(lambda:Term`(lam x. x, lam a. lam b. a)`)[*] |
            for(@r <- @"results") { @"OUT"!(r) }"#,
     );
 

@@ -46,15 +46,15 @@ and the interpreter derives it from the language itself rather than from a hand-
 
 | grammar | opener | what a bare term of it does |
 |---|---|---|
-| `CalculatorLanguage` | `` calculator`…` `` | evaluates to a **value** through the E3 fold dataflow — one installed Rholang contract per operator node |
-| `LambdaLanguage` | `` lambda`…` `` | reduces to its **normal form** through the in-Rho quiescence driver — every $`\beta`$ step a committed COMM |
+| `CalculatorLanguage` | `` calculator:Proc`…` `` | evaluates to a **value** through the E3 fold dataflow — one installed Rholang contract per operator node |
+| `LambdaLanguage` | `` lambda:Term`…` `` | reduces to its **normal form** through the in-Rho quiescence driver — every $`\beta`$ step a committed COMM |
 
 ## The shape
 
 ```
    ╭─────────────── written in the GUEST's own syntax ───────────────╮
    │                                                                 │
-   │   calculator`2 + 3 * 4`           lambda`((mult, (plus …)) …)`  │
+   │   calculator:Proc`2 + 3 * 4`           lambda:Term`((mult, (plus …)) …)`  │
    │        Beat 0                            Beat 1                 │
    ╰────────────────┬──────────────────────────┬─────────────────────╯
                     │                          │
@@ -77,8 +77,8 @@ and the interpreter derives it from the language itself rather than from a hand-
            │                                         │
     Beats 3 & 4 — the FILTER                Beat 5 — the EXTRACTION
 
-  for( @lambda`${r}` <- @"results"      for( @lambda`lam f. lam x. ${body}`
-       where lambda`${r}` == … )             <- @"results" )
+  for( @lambda:Term`${r}` <- @"results"      for( @lambda:Term`lam f. lam x. ${body}`
+       where lambda:Term`${r}` == … )             <- @"results" )
            │                                         │
            ▼                                         ▼
       @"OUT" = the one accepted           @"OUT" = the BODY, a sub-term
@@ -91,9 +91,9 @@ Three mechanisms, doing three different jobs:
 
 | | what it is | what it does |
 |---|---|---|
-| `` @lambda`${r}` `` | a receive **pattern** carrying one WHOLE-TERM hole | matches any reflected guest term and binds it to `r`. The foreign result becomes a value the Rholang program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
-| `` where lambda`${r}` == … `` | the **guard** | re-quotes the captured term and **decides** it against a reference term. The decision is made by the substrate, not by the pattern. |
-| `` @lambda`lam f. lam x. ${body}` `` | a receive pattern carrying a **NESTED** hole | matches only terms of that **shape**, and binds a **sub-term** — reached from under two guest binders — out into Rholang as an ordinary name. This is pattern matching *into* a foreign language. |
+| `` @lambda:Term`${r}` `` | a receive **pattern** carrying one WHOLE-TERM hole | matches any reflected guest term and binds it to `r`. The foreign result becomes a value the Rholang program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
+| `` where lambda:Term`${r}` == … `` | the **guard** | re-quotes the captured term and **decides** it against a reference term. The decision is made by the substrate, not by the pattern. |
+| `` @lambda:Term`lam f. lam x. ${body}` `` | a receive pattern carrying a **NESTED** hole | matches only terms of that **shape**, and binds a **sub-term** — reached from under two guest binders — out into Rholang as an ordinary name. This is pattern matching *into* a foreign language. |
 
 ---
 
@@ -183,7 +183,7 @@ $ tail -1 demos/flt-church-desk/arithmetic.rho
 ```
 
 ```
-lambda`((lam m. lam n. lam f. (m, (n, f)), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, x)), lam f. lam x. (f, (f, x)))), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, x))))`
+lambda:Term`((lam m. lam n. lam f. (m, (n, f)), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, x)), lam f. lam x. (f, (f, x)))), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, x))))`
 ```
 
 That is $`\mathrm{mult}\;(\mathrm{plus}\;1\;2)\;(\mathrm{plus}\;2\;2)`$ — in other words
@@ -337,11 +337,11 @@ $ tail -7 demos/flt-church-desk/destructure.rho
 ```
 
 ```
-@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
-@"results"!(lambda`lam x. x`) |
-@"results"!(lambda`(lam x. x, lam y. y)`) |
+@"results"!(lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
+@"results"!(lambda:Term`lam x. x`) |
+@"results"!(lambda:Term`(lam x. x, lam y. y)`) |
 
-for(@lambda`lam f. lam x. ${body}` <- @"results") {
+for(@lambda:Term`lam f. lam x. ${body}` <- @"results") {
   @"OUT"!(body)
 }
 ```
@@ -407,7 +407,7 @@ No single defect produces all six outcomes, which is why the demo is six files a
 | symptom | cause | fix |
 |---|---|---|
 | `has overflowed its stack` | a regression — no beat on this page should be able to produce this | do **not** paper over it with `RUST_MIN_STACK`; that knob does not reach a main thread at all. Report it: `rholang-runtime/tests/stack_depth_gate.rs` is the gate that is supposed to catch it |
-| `unknown guest language ⌜…⌝` | an opener was mistyped | an opener is the lower-cased grammar name: `calculator`, `lambda` |
+| `unknown guest language ⌜…⌝` | an FLT selector was mistyped | use the lower-cased grammar name and an explicit entry category: `calculator:Proc`, `lambda:Term` |
 | a beat prints a different numeral | the binary is stale | rebuild with the setup line; the bin's required features changed on 2026-07-26 |
 
 ## Files

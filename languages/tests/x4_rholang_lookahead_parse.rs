@@ -51,7 +51,7 @@ fn t1_lookahead_all_over_a_quoted_string_channel_send() {
 
 #[test]
 fn t2_lookahead_all_over_an_flt_payload() {
-    let term = read_ok(r#"@"results"!(lambda`(lam x. x, lam a. lam b. a)`)[*]"#);
+    let term = read_ok(r#"@"results"!(lambda:Term`(lam x. x, lam a. lam b. a)`)[*]"#);
     println!("X4 FLT[*] → {term}");
     assert!(
         term.contains("PLookaheadAll"),

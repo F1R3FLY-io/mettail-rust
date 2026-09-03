@@ -29,10 +29,10 @@
 //        all three results still resting on @"assay"
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-@"assay"!(lambda`lam x. x`) |
-@"assay"!(lambda`lam a. lam b. b`) |
-@"assay"!(lambda`lam a. lam b. a`) |
+@"assay"!(lambda:Term`lam x. x`) |
+@"assay"!(lambda:Term`lam a. lam b. b`) |
+@"assay"!(lambda:Term`lam a. lam b. a`) |
 
-for(@lambda`${r}` <- @"assay" where lambda`${r}` == lambda`lam a. lam b. lam c. a`) {
-  @"OUT"!(lambda`${r}`)
+for(@lambda:Term`${r}` <- @"assay" where lambda:Term`${r}` == lambda:Term`lam a. lam b. lam c. a`) {
+  @"OUT"!(lambda:Term`${r}`)
 }

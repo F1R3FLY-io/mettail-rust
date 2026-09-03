@@ -14,7 +14,7 @@
 //
 //  THE COMPUTATION — the K combinator discards its second argument
 //  ───────────────────────────────────────────────────────────────
-//  `lambda`(fun, arg)`` reflects to the guest application node App(fun, arg). Here we build
+//  `lambda:Term`(fun, arg)`` reflects to the guest application node App(fun, arg). Here we build
 //        App( App(K, I), K )
 //  with the two standard combinators
 //        K = lam a. lam b. a      — the constant combinator  (= λ.λ.1)   "keep the first argument"
@@ -32,4 +32,4 @@
 //        ^fired ledger contains the "Beta" firings that performed the reduction
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-lambda`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
+lambda:Term`((lam a. lam b. a, lam x. x), lam a. lam b. a)`

@@ -701,7 +701,7 @@ fn ddl_comments_strings_and_flt_guest_text_keep_their_lexer_domains() {
             Terms { Slash . |- "// is literal DDL terminal text" : Expr; }
         }
         |
-        lam`// and /* */ are literal guest text`
+        lam:Proc`// and /* */ are literal guest text`
     "#;
     let parsed = Proc::parse_via_wpda(source)
         .expect("comments, DDL string terminals, and FLT guest text have disjoint lexer domains");

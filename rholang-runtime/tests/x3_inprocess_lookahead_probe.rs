@@ -86,7 +86,7 @@ async fn one_inprocess_drive_delivers_a_computed_normal_form_to_a_waiting_receiv
     let (backend, fingerprint) = lambda_backend();
 
     // ⟦App(I, K)⟧ — the reflected subject, obtained by lowering the FLT surface itself.
-    let subject = lower_source("lambda`(lam x. x, lam a. lam b. a)`");
+    let subject = lower_source("lambda:Term`(lam x. x, lam a. lam b. a)`");
 
     // The lowering `x!(P)[*]` is to become: drive ⟦P⟧, deliver the resting term to `x`.
     let seed = rho_net_drive_call_par(&fingerprint, subject, "results");
@@ -132,8 +132,8 @@ async fn two_inprocess_drives_in_one_program_both_deliver() {
     let (backend, fingerprint) = lambda_backend();
 
     // Two DIFFERENT subjects, so a single delivery cannot masquerade as two.
-    let subject_a = lower_source("lambda`(lam x. x, lam a. lam b. a)`"); // (I K) ⟶ K = λ.λ.1
-    let subject_b = lower_source("lambda`(lam x. x, lam a. a)`"); // (I I) ⟶ I = λ.0
+    let subject_a = lower_source("lambda:Term`(lam x. x, lam a. lam b. a)`"); // (I K) ⟶ K = λ.λ.1
+    let subject_b = lower_source("lambda:Term`(lam x. x, lam a. a)`"); // (I I) ⟶ I = λ.0
 
     let seed_a = rho_net_drive_call_par(&fingerprint, subject_a, "results");
     let seed_b = rho_net_drive_call_par(&fingerprint, subject_b, "results");
@@ -180,7 +180,7 @@ async fn two_inprocess_drives_in_one_program_both_deliver() {
 #[tokio::test]
 async fn omega_under_an_inprocess_drive_reports_fuel_exhaustion() {
     let (backend, fingerprint) = lambda_backend();
-    let subject = lower_source("lambda`(lam x. (x, x), lam x. (x, x))`");
+    let subject = lower_source("lambda:Term`(lam x. (x, x), lam x. (x, x))`");
     let seed = rho_net_drive_call_par(&fingerprint, subject, "results");
     let collector = lower_source(r#"for(@x <- @"results") { @"OUT"!(x) }"#);
 

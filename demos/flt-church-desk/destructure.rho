@@ -1,6 +1,6 @@
 // The receive PATTERN is itself a foreign term, with a hole NESTED under two guest binders:
 //
-//     for( @lambda`lam f. lam x. ${body}` <- @"results" )
+//     for( @lambda:Term`lam f. lam x. ${body}` <- @"results" )
 //
 // It matches only λ-terms of that SHAPE, and binds `${body}` — a SUB-TERM of the foreign term,
 // from under both binders — out into Rholang as an ordinary Rholang name. `${x}` is a typed AST
@@ -11,10 +11,10 @@
 //
 // EXPECT   @"OUT" = ⟦(1 (1 (1 (1 (1 0)))))⟧ — five applications: the BODY of Church 5
 
-@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
-@"results"!(lambda`lam x. x`) |
-@"results"!(lambda`(lam x. x, lam y. y)`) |
+@"results"!(lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
+@"results"!(lambda:Term`lam x. x`) |
+@"results"!(lambda:Term`(lam x. x, lam y. y)`) |
 
-for(@lambda`lam f. lam x. ${body}` <- @"results") {
+for(@lambda:Term`lam f. lam x. ${body}` <- @"results") {
   @"OUT"!(body)
 }

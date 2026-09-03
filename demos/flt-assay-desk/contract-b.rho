@@ -24,4 +24,4 @@
 //        ^drive-err / ^drive-fuel empty                   ⟹ it terminated by QUIESCENCE
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-lambda`((lam a. lam b. b, lam x. x), lam a. lam b. b)`
+lambda:Term`((lam a. lam b. b, lam x. x), lam a. lam b. b)`

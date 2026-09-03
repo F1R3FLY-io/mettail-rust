@@ -10,4 +10,4 @@
 // EXPECT: no normal form on @"OUT"; a non-empty `^drive-fuel`. The machine says what it
 // could not finish, rather than pretending it did.
 
-lambda`(lam x. (x, x), lam x. (x, x))`
+lambda:Term`(lam x. (x, x), lam x. (x, x))`

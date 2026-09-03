@@ -147,6 +147,166 @@ Section ExplicitScopedRoute.
   Qed.
 End ExplicitScopedRoute.
 
+(** URI literals and FLT templates share a backtick byte but not a lexical
+    opener or a parser use site.  The concrete lexer recognizes an FLT opener
+    as [reference:Category`] in one maximal-munch token.  Both identifiers are
+    nonempty, so that token is strictly longer than the competing leading
+    identifier.  A bare [`body`] remains a URI token; [reference`body`] is
+    consequently an identifier followed by a URI token and is not an FLT.
+
+    The model below records the accepted-token extents rather than the bytes of
+    a particular identifier alphabet.  This is the information the generated
+    maximal-munch lexer and modal parser consume. *)
+Section UriFltLexicalOwnership.
+  Inductive HeaderToken : Type :=
+  | HeaderIdentifier
+  | HeaderUriLiteral
+  | HeaderFltOpen
+  | HeaderGuestChunk
+  | HeaderFltClose.
+
+  Inductive HeaderSurface : Type :=
+  | QualifiedFltSurface
+      (reference_bytes category_bytes body_bytes : nat)
+  | UnqualifiedBacktickSurface
+      (reference_bytes body_bytes : nat)
+  | BareUriSurface
+      (body_bytes : nat).
+
+  Inductive HeaderUseSite : Type :=
+  | TemplateProcSite
+  | BinderUriSite.
+
+  Definition qualified_open_extent
+      (reference_bytes category_bytes : nat) : nat :=
+    reference_bytes + 1 + category_bytes + 1.
+
+  Definition body_tokens (body_bytes : nat) : list HeaderToken :=
+    if Nat.eqb body_bytes 0
+    then [HeaderFltClose]
+    else [HeaderGuestChunk; HeaderFltClose].
+
+  Definition lex_header (surface : HeaderSurface)
+      : option (list HeaderToken) :=
+    match surface with
+    | QualifiedFltSurface reference_bytes category_bytes body_bytes =>
+        if andb (Nat.ltb 0 reference_bytes) (Nat.ltb 0 category_bytes)
+        then Some (HeaderFltOpen :: body_tokens body_bytes)
+        else None
+    | UnqualifiedBacktickSurface reference_bytes body_bytes =>
+        if andb (Nat.ltb 0 reference_bytes) (Nat.ltb 0 body_bytes)
+        then Some [HeaderIdentifier; HeaderUriLiteral]
+        else None
+    | BareUriSurface body_bytes =>
+        if Nat.ltb 0 body_bytes
+        then Some [HeaderUriLiteral]
+        else None
+    end.
+
+  Definition enters_guest_mode (tokens : list HeaderToken) : bool :=
+    match tokens with
+    | HeaderFltOpen :: _ => true
+    | _ => false
+    end.
+
+  Definition accepted_at
+      (site : HeaderUseSite) (tokens : list HeaderToken) : bool :=
+    match site, tokens with
+    | TemplateProcSite, HeaderFltOpen :: _ => true
+    | BinderUriSite, [HeaderUriLiteral] => true
+    | _, _ => false
+    end.
+
+  (** The colon, nonempty category, and delimiter make the FLT opener longer
+      than its identifier prefix.  Maximal munch therefore selects the modal
+      opener without a priority convention or parser feedback. *)
+  Theorem qualified_flt_opener_strictly_extends_identifier :
+    forall reference_bytes category_bytes,
+      0 < reference_bytes ->
+      0 < category_bytes ->
+      reference_bytes <
+        qualified_open_extent reference_bytes category_bytes.
+  Proof.
+    intros reference_bytes category_bytes Hreference Hcategory.
+    unfold qualified_open_extent; lia.
+  Qed.
+
+  Theorem qualified_flt_enters_guest_mode :
+    forall reference_bytes category_bytes body_bytes tokens,
+      0 < reference_bytes ->
+      0 < category_bytes ->
+      lex_header
+        (QualifiedFltSurface reference_bytes category_bytes body_bytes) =
+        Some tokens ->
+      enters_guest_mode tokens = true.
+  Proof.
+    intros reference_bytes category_bytes body_bytes tokens
+      Hreference Hcategory Hlex.
+    unfold lex_header in Hlex.
+    apply Nat.ltb_lt in Hreference.
+    apply Nat.ltb_lt in Hcategory.
+    rewrite Hreference, Hcategory in Hlex; simpl in Hlex.
+    inversion Hlex; reflexivity.
+  Qed.
+
+  Theorem qualified_flt_is_accepted_only_at_template_site :
+    forall reference_bytes category_bytes body_bytes tokens,
+      0 < reference_bytes ->
+      0 < category_bytes ->
+      lex_header
+        (QualifiedFltSurface reference_bytes category_bytes body_bytes) =
+        Some tokens ->
+      accepted_at TemplateProcSite tokens = true /\
+      accepted_at BinderUriSite tokens = false.
+  Proof.
+    intros reference_bytes category_bytes body_bytes tokens
+      Hreference Hcategory Hlex.
+    unfold lex_header in Hlex.
+    apply Nat.ltb_lt in Hreference.
+    apply Nat.ltb_lt in Hcategory.
+    rewrite Hreference, Hcategory in Hlex; simpl in Hlex.
+    inversion Hlex; split; reflexivity.
+  Qed.
+
+  Theorem unqualified_backtick_never_enters_guest_mode :
+    forall reference_bytes body_bytes tokens,
+      lex_header (UnqualifiedBacktickSurface reference_bytes body_bytes) =
+        Some tokens ->
+      enters_guest_mode tokens = false.
+  Proof.
+    intros reference_bytes body_bytes tokens Hlex.
+    unfold lex_header in Hlex.
+    destruct (andb (Nat.ltb 0 reference_bytes) (Nat.ltb 0 body_bytes))
+      eqn:Hvalid; discriminate Hlex || (inversion Hlex; reflexivity).
+  Qed.
+
+  Theorem unqualified_backtick_is_not_an_flt_or_binder_uri :
+    forall reference_bytes body_bytes tokens,
+      lex_header (UnqualifiedBacktickSurface reference_bytes body_bytes) =
+        Some tokens ->
+      accepted_at TemplateProcSite tokens = false /\
+      accepted_at BinderUriSite tokens = false.
+  Proof.
+    intros reference_bytes body_bytes tokens Hlex.
+    unfold lex_header in Hlex.
+    destruct (andb (Nat.ltb 0 reference_bytes) (Nat.ltb 0 body_bytes))
+      eqn:Hvalid; discriminate Hlex || (inversion Hlex; split; reflexivity).
+  Qed.
+
+  Theorem bare_uri_remains_binder_owned :
+    forall body_bytes tokens,
+      lex_header (BareUriSurface body_bytes) = Some tokens ->
+      accepted_at BinderUriSite tokens = true /\
+      accepted_at TemplateProcSite tokens = false /\
+      enters_guest_mode tokens = false.
+  Proof.
+    intros body_bytes tokens Hlex.
+    unfold lex_header in Hlex.
+    destruct (Nat.ltb 0 body_bytes) eqn:Hbody;
+      discriminate Hlex || (inversion Hlex; repeat split; reflexivity).
+  Qed.
+End UriFltLexicalOwnership.
+
 (** Polarity belongs to the use site, not to untrusted guest text.  The host
     stages the same structural capture as either a positive construction or a
     negative pattern, and the two cases are disjoint by construction. *)
@@ -537,6 +697,12 @@ Print Assumptions structural_elaboration_has_no_text_injection.
 Print Assumptions repeated_hole_inference_is_unique.
 Print Assumptions declared_category_is_preserved.
 Print Assumptions explicit_scoped_route_is_functional.
+Print Assumptions qualified_flt_opener_strictly_extends_identifier.
+Print Assumptions qualified_flt_enters_guest_mode.
+Print Assumptions qualified_flt_is_accepted_only_at_template_site.
+Print Assumptions unqualified_backtick_never_enters_guest_mode.
+Print Assumptions unqualified_backtick_is_not_an_flt_or_binder_uri.
+Print Assumptions bare_uri_remains_binder_owned.
 Print Assumptions construction_and_pattern_polarities_are_disjoint.
 Print Assumptions provenance_erasure_preserves_guest_text.
 Print Assumptions tiled_ranges_are_valid.

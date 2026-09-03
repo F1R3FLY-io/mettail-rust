@@ -5,10 +5,10 @@
 //
 // EXPECT   @"OUT" = Church numeral 5      (6 and 0 left resting on @"results")
 
-@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
-@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) |
-@"results"!(lambda`lam f. lam x. x`) |
+@"results"!(lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
+@"results"!(lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) |
+@"results"!(lambda:Term`lam f. lam x. x`) |
 
-for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) {
-  @"OUT"!(lambda`${r}`)
+for(@lambda:Term`${r}` <- @"results" where lambda:Term`${r}` == lambda:Term`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) {
+  @"OUT"!(lambda:Term`${r}`)
 }
