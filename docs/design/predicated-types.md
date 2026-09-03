@@ -1293,21 +1293,26 @@ pipeline can route precisely:
    }
    ```
 
-**No new automata types needed.** The existing 15 modules (M1–M15) and their
-automata (SFA, Büchi, AWA, VPA, Parity Tree, Register, etc.) are
-parameterized by `BooleanAlgebra` via `TheoryAlgebra<T>`. Typed predicates
-do not change the automaton structure — they change which `BooleanAlgebra`
-implementation is plugged in:
+**No new automata types needed.** The existing 15 modules (M1–M15) retain
+their parameterization by exact `BooleanAlgebra` implementations. Typed
+predicates do not change the automaton structure; exact domains select a
+classical algebra, while non-decidable theories remain on the three-valued
+`RejectSafeAlgebra` path:
 
-- `gt(x: Int, y: Int)` → `TheoryAlgebra<PresburgerAlgebra>` → SFA with
+- `gt(x: Int, y: Int)` → `PresburgerAlgebra` → SFA with
   Presburger transition predicates
 - `gt(x: Str, y: Str)` → no theory match → falls back to generic Boolean
   predicate (M1 only)
-- `subtype_of(x: Proc, y: Proc)` → `TheoryAlgebra<LatticeTheory>` → SFA
-  with lattice transition predicates
+- `subtype_of(x: Proc, y: Proc)` →
+  `TheoryAlgebra<FrozenLatticeTheory>` → SFA with exact lattice transition
+  predicates
+- `unify(x, y)` → `TheoryAlgebra<UnificationTheory>` → bounded `Sat3`
+  reasoning, not a classical SFA alphabet
 
-The `TheoryAlgebra<T>` wrapper ([`logict.rs`](../../prattail/src/logict.rs)) already bridges
-`ConstraintTheory` to `BooleanAlgebra`. No new automata types are required.
+The `TheoryAlgebra<T>` wrapper ([`logict.rs`](../../prattail/src/logict.rs))
+bridges every `ConstraintTheory` to reject-safe reasoning and only an exact
+`DecidableConstraintTheory` to `BooleanAlgebra`. No new automata types are
+required.
 
 ### Selectivity Refinement via Typed Predicates
 
@@ -6492,7 +6497,7 @@ discussion, see the referenced section.
 | Guard codegen (T1)                     | Static evaluation → dead-code elim                           | — (zero overhead)                             | §13      |
 | Guard codegen (T2)                     | SFA/range/register compilation                               | Guard function: O(1)–O(\|value\|)             | §13      |
 | Guard codegen (T3)                     | Bounded automaton compilation                                | BFS with depth counter: O(k·\|value\|)        | §13      |
-| Guard codegen (T4)                     | Lint MSO01, external verification commentary                 | `assert_pred()` returns true (trust)          | §13      |
+| Guard codegen (T4)                     | Lint MSO01; require an explicit assertion capability          | Missing or undecided assertion rejects        | §13      |
 | Pipeline (Stages 1–5)                  | Parse → Classify → Compile → Optimize → Codegen              | —                                             | §12      |
 | BooleanAlgebra + SFA ops               | `is_satisfiable`, intersect, minimize                        | —                                             | §15      |
 | ConstraintTheory suite                 | Propagate, label, witness                                    | —                                             | §16      |
@@ -6516,8 +6521,8 @@ and all Rocq proofs.
 
 Three components span both phases:
 
-- **LogicStream<T>**: Compile-time fair backtracking for `TheoryAlgebra::label()`
-  satisfiability; runtime `evaluate_quantified()` for `∀`/`∃` guards (`gnot`,
+- **LogicStream<T>**: Compile-time fair backtracking for bounded
+  `TheoryAlgebra::label()` search; runtime `evaluate_quantified()` for `∀`/`∃` guards (`gnot`,
   `interleave`, `collect_bounded`). When a registered `ConstraintTheory` (from
   `guards { theories {} }`, §2A) matches the guard's typed predicates, the
   runtime path gains **theory-guided domain pruning**: `propagate()` narrows
@@ -6617,7 +6622,9 @@ and LogicT evaluation. Read top-to-bottom:
 
 This diagram shows the three built-in `ConstraintTheory` implementations,
 how they compose through the `ConstraintTheory` trait, and how
-`TheoryAlgebra<T>` bridges them into the `BooleanAlgebra`/SFA pipeline:
+`TheoryAlgebra<T>` bridges every theory into reject-safe reasoning while
+admitting only `DecidableConstraintTheory` implementations to the classical
+`BooleanAlgebra`/SFA pipeline:
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -6661,11 +6668,12 @@ how they compose through the `ConstraintTheory` trait, and how
 │                  ┌────────────────────────┐                │
 │                  │ TheoryAlgebra<T>       │                │
 │                  │ ────────────────       │                │
-│                  │ impl BooleanAlgebra    │                │
+│                  │ all T: reject-safe     │                │
+│                  │ exact T: BooleanAlg.   │                │
 │                  │                        │                │
-│                  │ is_satisfiable(φ)      │                │
-│                  │ witness(φ)             │                │
-│                  │ and/or/not/complement  │                │
+│                  │ bounded Sat3           │                │
+│                  │ checked witness        │                │
+│                  │ exact complement only  │                │
 │                  └────────────┬───────────┘                │
 │                               │                            │
 │                               ▼                            │
@@ -6699,13 +6707,13 @@ This is implemented via the existing `ConstraintTheory::propagate()` +
 pipeline which theory to use for propagation.
 
 **2. Type-specific `label()` generators.** `ConstraintTheory::label()` returns
-a `LogicStream<Constraint>` — the non-deterministic choices for search. With
-typed predicates, the theory can generate type-appropriate choices:
+a `LogicStream<Constraint>` — implementation choices for bounded search. With
+typed predicates, the theory can generate type-appropriate choices. Neither an
+empty stream nor exhaustion is a proof of semantic unsatisfiability:
 
-- `PresburgerAlgebra::label()` generates integer assignments satisfying linear
-  constraints
-- `LatticeTheory::label()` generates type assignments consistent with the
-  subtype lattice
+- `PresburgerTheory::label()` exposes its theory-specific search path, while
+  `decide_exact()` supplies the separate total classical decision
+- `FrozenLatticeTheory::decide_exact()` evaluates the immutable closed lattice
 - `UnificationTheory::label()` generates unifier candidates
 
 Without typed predicates, `label()` must guess the domain. With them, it
@@ -6852,7 +6860,8 @@ With: `theories { types = LatticeTheory for [Atom]; }`
 2. Theory refinement: `LatticeTheory::propagate(store, compatible(y, target))`
    → if the refined store is inconsistent (e.g., no `Atom` is compatible with
    `target`), `Unknown` is refined to `False`
-3. If consistent, `Unknown` remains — the guard fires conservatively
+3. If consistency does not decide the formula, `Unknown` remains and the guard
+   fails closed; it does not fire
 
 **Example 3: Refinement type bridge (Rholang)**
 
@@ -6959,15 +6968,14 @@ Boolean reductions: `implies(a, b)` checks `¬is_satisfiable(a ∧ ¬b)`,
 
 ### Built-in Algebras
 
-The pipeline ships with six `BooleanAlgebra` implementations covering the
-common guard domains. The first five are *direct implementations* — they
-implement the trait methods directly using domain-specific algorithms (interval
-arithmetic, Unicode range operations, etc.). The sixth, `TheoryAlgebra<T>`, is
-an *adapter* that wraps any `ConstraintTheory` (§16) into a `BooleanAlgebra`
-via propagation and optional LogicT search, providing the extensibility bridge
-for user-defined domains. The diagram below shows the algebra hierarchy and
-the `SymbolicAutomaton<A>` type that is parameterized over any of these
-algebras:
+The pipeline ships with five direct `BooleanAlgebra` implementations covering
+common guard domains. They implement exact domain-specific algorithms
+(interval arithmetic, Unicode range operations, and so on).
+`TheoryAlgebra<T>` is the extensibility adapter: every `ConstraintTheory`
+receives bounded `RejectSafeAlgebra` reasoning, but it implements
+`BooleanAlgebra` only when `T: DecidableConstraintTheory` supplies an exact
+total decision. The diagram below shows the classical algebra hierarchy and
+the `SymbolicAutomaton<A>` type parameterized over one of those exact algebras:
 
 ```
 BooleanAlgebra trait
@@ -6976,7 +6984,7 @@ BooleanAlgebra trait
 ├── KatBooleanAlgebra ── Domain: propositional atoms  (behavioral predicates)
 ├── DispatchAlgebra ──── Domain: module signatures    (15-bit dispatch)
 ├── PresburgerAlgebra ── Domain: ℤⁿ linear constraints (multi-variable arithmetic)
-└── TheoryAlgebra<T> ─── Domain: any ConstraintTheory (extensible)
+└── TheoryAlgebra<T> ─── Domain: DecidableConstraintTheory (exact bridge)
          │
          ▼
 SymbolicAutomaton<A: BooleanAlgebra>
@@ -6994,8 +7002,8 @@ compiled to an SFA over any `BooleanAlgebra`, the full suite of automaton
 operations (determinization, minimization, intersection, etc.) becomes
 available without writing algebra-specific code. This is the payoff of the
 algebraic abstraction — the O(n log n) Hopcroft minimization algorithm, for
-example, is written once against the `BooleanAlgebra` trait and works for all
-six algebras.
+example, is written once against the `BooleanAlgebra` trait and works for every
+exact implementation.
 
 ### Symbolic Finite Automata
 
@@ -7119,7 +7127,7 @@ ProductAlgebra<A, B>.is_satisfiable((a, b)) = A.is_satisfiable(a) ∧ B.is_satis
 ```
 
 This enables mixed-domain constraints, e.g.,
-`ProductAlgebra<PresburgerAlgebra, LatticeTheory>` for guards combining
+`ProductAlgebra<PresburgerAlgebra, TheoryAlgebra<FrozenLatticeTheory>>` for guards combining
 numeric and type hierarchy constraints. The SFA operations (`determinize`,
 `minimize`, `intersect`) work over the product algebra without modification,
 since they are generic over any `BooleanAlgebra` implementation.
@@ -7183,58 +7191,55 @@ models back — a lossy round-trip that adds complexity without benefit.
 
 ### Architecture
 
-The constraint theory architecture has two layers connected by the
-`TheoryAlgebra<T>` bridge. The upper layer is the `BooleanAlgebra` trait (§15),
-which all SFA operations consume. The lower layer is the `ConstraintTheory`
-trait, which domain-specific implementations provide. The bridge translates
-between the two: `is_satisfiable()` on the algebra side becomes `propagate()`
-plus optional `label()` search on the theory side. The left column shows direct
-`BooleanAlgebra` implementations (the "fast path" — no bridge overhead), while
-the right column shows the bridge path through `TheoryAlgebra<T>`. Note that
-`PresburgerAlgebra` appears on both sides: it has a direct `BooleanAlgebra`
-implementation for compile-time analysis performance, and a `ConstraintTheory`
-implementation for validation and LogicT integration.
+The constraint theory architecture has a reject-safe lower layer and an exact
+classical upper layer. Every domain-specific `ConstraintTheory` receives
+bounded propagation and LogicT search through `TheoryAlgebra<T>`, producing
+`Sat3`; exhaustion or an incomplete search is `DontKnow`. Only an additional
+`DecidableConstraintTheory` witness enables the `BooleanAlgebra` interface
+consumed by classical SFA operations. The left column shows direct exact
+implementations (the fast path), while the right column shows this split
+bridge. `PresburgerAlgebra` appears on both sides because it supplies both a
+direct compile-time decision procedure and constraint-theory integration.
 
-The key architectural insight is the `label()` method's return type: decidable
-theories return `LogicStream::empty()` (propagation alone determines
-satisfiability, no search needed), while search-based theories return a
-non-empty `LogicStream` of search choices that LogicT explores fairly:
+The key architectural distinction is that `label()` enumerates search choices,
+not proof of exhaustion. An empty stream therefore cannot establish
+unsatisfiability. Exact theories provide a separate total decision method;
+search-based theories retain three-valued results:
 
 ```
                     ┌──────────────────────────────────────────┐
-                    │         BooleanAlgebra trait             │
-                    │  (is_satisfiable, witness, evaluate,     │
-                    │   and, or, not)                          │
+                    │       Algebra capability boundary        │
+                    │ RejectSafeAlgebra │ BooleanAlgebra exact │
                     └────────┬────────────────┬────────────────┘
                              │                │
               ┌──────────────┴──┐      ┌──────┴───────────────┐
-              │ Direct impls    │      │ TheoryAlgebra<T>     │
-              │ (fast path)     │      │ bridge               │
+              │ Direct exact    │      │ TheoryAlgebra<T>     │
+              │ implementations │      │ split bridge         │
               ├─────────────────┤      ├──────────────────────┤
-              │ IntervalAlgebra │      │ Wraps any            │
-              │ CharClassAlgebra│      │ ConstraintTheory     │
-              │ KatBooleanAlg.  │      │ into BooleanAlgebra  │
-              │ DispatchAlgebra │      │ via propagation +    │
-              │ PresburgerAlg.  │◄─────┤ LogicT search        │
+              │ IntervalAlgebra │      │ any theory: Sat3     │
+              │ CharClassAlgebra│      │ + checked witness    │
+              │ KatBooleanAlg.  │      │ exact theory only:   │
+              │ DispatchAlgebra │      │ BooleanAlgebra       │
+              │ PresburgerAlg.  │◄─────┤ checked decision     │
               └─────────────────┘      └──────┬───────────────┘
                                               │
                              ┌────────────────┼────────────────┐
                              │                │                │
                    ┌─────────┴──┐  ┌──────────┴───┐  ┌─────────┴───┐
-                   │ Presburger │  │ Unification  │  │ Lattice     │
-                   │ Theory     │  │ Theory       │  │ Theory      │
+                   │ Presburger │  │ Unification  │  │ Frozen      │
+                   │ Theory     │  │ Theory       │  │ Lattice     │
                    │            │  │              │  │             │
-                   │ label():   │  │ label():     │  │ label():    │
-                   │ empty()    │  │ CustomMatch  │  │ empty()     │
-                   │ (decidable)│  │ alternatives │  │ (decidable) │
+                   │ label():   │  │ label():     │  │ exact frozen│
+                   │ empty()    │  │ CustomMatch  │  │ decision    │
+                   │ (decidable)│  │ alternatives │  │             │
                    └────────────┘  └──────────────┘  └─────────────┘
 
   ProductAlgebra<A, B>: composes any two BooleanAlgebra instances
   LogicStream<T>: fair backtracking search (Kiselyov et al., ICFP 2005)
 ```
 
-The `ProductAlgebra<A, B>` at the bottom composes any two algebras
-(direct or bridged) into a single algebra, enabling multi-domain guards. The
+The `ProductAlgebra<A, B>` at the bottom composes any two exact Boolean
+algebras (direct or exactly bridged), enabling multi-domain guards. The
 `LogicStream<T>` provides the fair backtracking monad that powers search-based
 theories, ensuring that all branches are explored without starvation.
 
@@ -7245,10 +7250,11 @@ domains to the pipeline. Its design follows the constraint logic programming
 (CLP) paradigm: a *store* accumulates constraints via *propagation* (which may
 detect inconsistency and return `None`), and *labeling* generates search choices
 when propagation alone cannot determine satisfiability. The separation of
-propagation and labeling is the key design decision: it allows decidable
-theories (where propagation is complete) to avoid search entirely, while
-search-based theories (where propagation narrows but doesn't solve) can
-delegate to LogicT's fair backtracking. The three associated types —
+propagation and labeling is the key design decision: theories with no labeling
+choices avoid that search, while search-based theories delegate to LogicT's
+fair backtracking. Neither an empty nor an exhausted stream proves semantic
+completeness; exact theories separately implement `DecidableConstraintTheory`.
+The three associated types —
 `Constraint`, `Assignment`, `Store` — separate the *what* (constraints to
 satisfy), the *evidence* (a satisfying assignment), and the *state* (the
 accumulated constraint set).
@@ -7271,38 +7277,33 @@ pub trait ConstraintTheory {
 }
 ```
 
-The `propagate()` method is the workhorse: it takes the current store and a new
-constraint, and returns either `Some(new_store)` (the constraint is consistent
-with the existing store) or `None` (inconsistency detected — the constraint
-set is unsatisfiable). For decidable theories like Presburger arithmetic, a
-sequence of propagations followed by `is_consistent()` is sufficient to
-determine satisfiability — `label()` returns `LogicStream::empty()` to signal
-that no search is needed. For search-based theories like unification, `label()`
-returns a `LogicStream` of *labeling choices* — additional constraints that
-narrow the search space — and `LogicStream::interleave` explores these choices
-fairly, ensuring both branches of a disjunction receive equal attention.
+The `propagate()` method is the constructive workhorse: it adds a constraint to
+the current store and returns either a refined store or a detected
+inconsistency. Successful propagation means only “not refuted”; it is not a
+satisfiability witness. `label()` returns implementation search choices, and
+`LogicStream::interleave` explores them fairly. An empty or exhausted stream is
+also not a semantic completeness certificate. A theory that can decide the
+complete predicate must implement the separate `DecidableConstraintTheory`
+contract and its total `decide_exact()` operation.
 
 ### The TheoryAlgebra Bridge
 
 The `TheoryAlgebra<T: ConstraintTheory>` adapter is the glue between the two
-layers: it implements `BooleanAlgebra` for any `ConstraintTheory`, allowing
-domain-specific constraint solvers to be used as SFA transition labels without
-modification. The implementation translates each `BooleanAlgebra` method into
-the corresponding `ConstraintTheory` operations. The critical translation is
-`is_satisfiable()`, which first attempts propagation (the fast path), and only
-falls back to labeling search if propagation succeeds but the store is not yet
-fully determined:
+layers. For every theory it implements `RejectSafeAlgebra`: bounded search may
+return a checked witness (`Sat`), a proven contradiction (`Unsat`), or
+`DontKnow`. Only `TheoryAlgebra<T: DecidableConstraintTheory>` implements
+`BooleanAlgebra`, allowing that exact domain to serve as an SFA alphabet.
 
 ```
-is_satisfiable(φ) ≡ propagate(∅, φ) ≠ ⊥ ∨ label_search(store) succeeds
+decide_bounded(φ) = Sat(w) | Unsat(proof) | DontKnow
+decide_exact(φ)   = Satisfiable(w) | Unsatisfiable
 ```
 
-For decidable theories (Presburger, Lattice), `label()` returns
-`LogicStream::empty()` and the disjunction's right branch is never evaluated —
-the entire check reduces to a single `propagate()` call. For search-based
-theories (Unification), the `label_search()` invokes LogicT's fair
-backtracking with a configurable depth bound, ensuring that the bridge does
-not loop indefinitely on theories with infinite search spaces.
+Every positive witness is re-evaluated against the complete predicate. Generic
+search exhaustion remains `DontKnow`, even when the implementation stream ends.
+Presburger and frozen lattices expose exact decisions; unification uses LogicT
+fair backtracking with a configurable bound and therefore cannot silently enter
+the classical interface.
 
 ### LogicStream — Fair Backtracking Monad
 
@@ -7681,7 +7682,7 @@ modules:
 |------------------|--------------------------------|---------------------|--------|-------|---------------------------------------------|
 | LogicT           | `logict`                       | `logict.rs`         | ~600   | 29    | Fair backtracking monad                     |
 | ConstraintTheory | `logict`                       | `logict.rs`         | —      | —     | Pluggable constraint domain trait           |
-| TheoryAlgebra    | `logict` + `symbolic-automata` | `logict.rs`         | —      | —     | ConstraintTheory → BooleanAlgebra bridge    |
+| TheoryAlgebra    | `logict` + `symbolic-automata` | `logict.rs`         | —      | —     | Reject-safe bridge; exact theories → BooleanAlgebra |
 | Presburger       | `presburger`                   | `presburger.rs`     | ~2,200 | 83    | Multi-variable linear integer arithmetic    |
 | Unification      | `unification`                  | `unification.rs`    | ~750   | 65    | Structural unification (Martelli-Montanari) |
 | Lattice          | `lattice-theory`               | `lattice_theory.rs` | ~1,200 | 45    | Subtype lattice with join/meet              |
@@ -7818,35 +7819,32 @@ as `theories {}` replaced heuristic keyword dispatch for constraint theories.
 The three layers for theories are:
 
 **Layer 1 — Rust Implementation.** The first step is implementing the
-`ConstraintTheory` trait for the new domain. The example below shows a
-hypothetical `ResourceTheory` for resource-usage guards (e.g., "this process
-uses at most 5 MB of memory"). The implementation must provide the five
-core methods. Note that `label()` returns `LogicStream::empty()`, indicating
-that resource constraints are decidable by propagation alone — no search is
-needed:
+`ConstraintTheory` trait for the new domain. Consider a hypothetical
+`ResourceTheory` for guards such as “this process uses at most 5 MB of
+memory.” Its implementation follows this literate algorithm:
 
-```rust
-pub struct ResourceTheory;
-impl ConstraintTheory for ResourceTheory {
-    type Constraint = ResourceConstraint;
-    type Assignment = ResourceAssignment;
-    type Store = ResourceStore;
+```text
+ALGORITHM RESOURCE-THEORY
+  INPUT: a resource store, a resource constraint, or a candidate assignment
+  PROPAGATE(store, constraint): refine the store or return a contradiction
+  LABEL(store): fairly enumerate implementation search choices
+  EVALUATE(constraint, assignment): check the atomic relation exactly
 
-    fn empty_store(&self) -> Self::Store { ResourceStore::new() }
-    fn propagate(&self, store: &Self::Store, c: &Self::Constraint)
-        -> Option<Self::Store> { /* domain-specific propagation */ }
-    fn label(&self, store: &Self::Store) -> LogicStream<Self::Constraint> {
-        LogicStream::empty()  // decidable → no search needed
-    }
-    fn evaluate(&self, c: &Self::Constraint, a: &Self::Assignment)
-        -> bool { /* membership test */ }
-}
+  BOUNDED-DECIDE(predicate, budget):
+    search fairly; return Sat only with a rechecked assignment;
+    return Unsat only for a structural contradiction;
+    otherwise return DontKnow
+
+  OPTIONAL EXACT-DECIDE(predicate):
+    run a terminating complete procedure;
+    return Satisfiable with a rechecked witness, or Unsatisfiable
 ```
 
-Once implemented, the theory automatically gains `BooleanAlgebra` support via
-`TheoryAlgebra<ResourceTheory>`, which means it can be used as an SFA
-transition label — all SFA operations (determinization, minimization,
-intersection) work without additional code.
+Implementing `ConstraintTheory` automatically supplies only the bounded,
+three-valued `RejectSafeAlgebra` path. If the resource domain also owns the
+total procedure described by `EXACT-DECIDE`, it may implement
+`DecidableConstraintTheory`; only then does `TheoryAlgebra<ResourceTheory>`
+implement `BooleanAlgebra` and become eligible for classical SFA operations.
 
 **Layer 2 — `language!` Declaration.** The second step registers the theory
 in the `language!` macro's `guards { theories {} }` block (§2A), giving it a
@@ -7871,7 +7869,7 @@ language! {
             resources  = ResourceTheory    for [Proc];  // user-defined
             arithmetic = PresburgerAlgebra for [Int];   // built-in fast path
             patterns   = UnificationTheory for [Proc, Name]; // LogicT search
-            types      = LatticeTheory     for [Proc, Name, Int]; // decidable
+            types      = LatticeTheory     for [Proc, Name, Int]; // freeze before exact use
         }
     },
     // ...
@@ -9535,11 +9533,17 @@ implementation burden for simple type systems.
 
 ### TypeSystemAlgebra Bridge
 
-`TypeSystemAlgebra<S>` bridges `TypeSystem` to `BooleanAlgebra`, analogous
-to `TheoryAlgebra<T>` for `ConstraintTheory`. This enables SFA-based
-analysis of type predicates: satisfiability (`is_inhabited`), subsumption
-(`is_subtype`), and overlap (intersection non-emptiness) all reduce to
-BooleanAlgebra operations.
+`TypeSystemAlgebra<S>` bridges `DecidableFiniteTypeSystem` to
+`BooleanAlgebra`, analogous to the exact `TheoryAlgebra<T>` implementation for
+`T: DecidableConstraintTheory`. The type system supplies a deterministic,
+complete finite universe of semantic witness classes for the active
+environment, plus exact membership of each witness in each type. The adapter
+searches that universe for one witness satisfying the whole predicate; it never
+combines unrelated witnesses from different leaves. Consequently absence of a
+witness is an exact emptiness result, and SFA-based satisfiability, subsumption,
+and overlap checks are sound. The finite-lattice implementation uses inhabited
+principal types as witness-class representatives and excludes its designated
+bottom, which denotes no runtime value.
 
 ### Refinement Types
 
@@ -9547,14 +9551,13 @@ A refined type `{ x: T | P(x) }` combines:
 - A **base type** `T` from a `TypeSystem S` (e.g., `Int` from `LatticeTypeSystem`)
 - A **predicate** `P` from a `ConstraintTheory T` (e.g., `x > 0` from Presburger)
 
-The subtyping rule for refinement types decomposes into two independent checks,
-reflecting the product structure of `RefinementTypeSystem<S, T>`. The base type
-check uses the underlying `TypeSystem S`'s `is_subtype()`, while the predicate
-entailment check uses the `ConstraintTheory T`'s `is_satisfiable()` to test
-whether `P(x) ∧ ¬Q(x)` is unsatisfiable (i.e., every `x` satisfying `P` also
-satisfies `Q`). This decomposition is sound because the refinement type's
-denotation is the intersection of the base type's denotation with the
-predicate's satisfying set:
+The subtyping rule for refinement types decomposes into two checks. The base
+check uses `TypeSystem S::is_subtype()`. The predicate check is classical only
+when `T: DecidableConstraintTheory`; it decides whether `P(x) ∧ ¬Q(x)` is
+unsatisfiable. With only `T: ConstraintTheory`, the same obligation is
+three-valued and `DontKnow` must reject the subtype claim. This guarded
+decomposition is sound because the refinement type denotes the intersection of
+the base type's denotation with the predicate's satisfying set:
 
 ```
 { x: S | P(x) } <: { x: T | Q(x) }
@@ -9562,13 +9565,14 @@ predicate's satisfying set:
   AND  ∀x. P(x) ⟹ Q(x)  (predicate entailment via ConstraintTheory)
 ```
 
-The entailment check `∀x. P(x) ⟹ Q(x)` reduces to `¬∃x. P(x) ∧ ¬Q(x)` via
-the standard logical equivalence, which is tested by
-`!algebra.is_satisfiable(algebra.and(P, algebra.not(Q)))` — reusing the
-existing `BooleanAlgebra` infrastructure from §15.
+For a decidable theory, the entailment check `∀x. P(x) ⟹ Q(x)` reduces to
+`¬∃x. P(x) ∧ ¬Q(x)` and is tested through the exact `BooleanAlgebra`
+implementation from §15. The reject-safe tier never turns failure to find that
+counterexample into a proof of entailment.
 
-Inhabitedness: `{ x: T | P(x) }` is inhabited iff `T` is inhabited AND
-`P` is satisfiable (checked via `TheoryAlgebra::is_satisfiable()`).
+Inhabitedness: `{ x: T | P(x) }` is proven inhabited only by a checked witness.
+Exact non-inhabitedness requires `DecidableConstraintTheory`; bounded absence
+remains `DontKnow`.
 
 ### Set-Theoretic Types
 
@@ -9654,8 +9658,9 @@ representation for compile-time analysis and runtime codegen.
 2. For each refinement type, classify predicate domain
 3. Check inhabitedness (RT01), tautology (RT02), pairwise intersection (RT03),
    pairwise subtyping (RT04), decidability tier (RT05), name shadowing (RT06)
-4. Use `TypeSystemAlgebra<S>` for SFA-based dispatch analysis when multiple
-   refinement types refine the same base type
+4. Use `TypeSystemAlgebra<S>` for SFA-based dispatch analysis only when `S`
+   implements `DecidableFiniteTypeSystem`; otherwise retain a reject-safe
+   three-valued analysis rather than claiming a Boolean result
 
 > **Phase 2 implementation status (OSLF; structural dispatch now the sole path).**
 > The structural refinement-type dispatch runs through the `sym_tree` recognizer
@@ -9822,7 +9827,7 @@ Key operations via the `TypeSystem` trait:
 |------------------------|------------------|--------------------------------------|
 | `TypeSystem` trait     | `type_system.rs` | Direct implementation                |
 | `UnificationTheory`    | `unification.rs` | Martelli-Montanari with occurs check |
-| `TypeSystemAlgebra<S>` | `type_system.rs` | SFA bridge for dispatch              |
+| `TypeSystemAlgebra<S>` | `type_system.rs` | Exact finite-universe SFA bridge     |
 | `ConstraintTheory`     | `logict.rs`      | Constraint-based type inference      |
 
 **References:**

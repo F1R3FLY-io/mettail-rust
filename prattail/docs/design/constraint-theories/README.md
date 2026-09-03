@@ -25,31 +25,31 @@ The Constraint Theory Suite fills these gaps with a unified architecture that re
 
 ```
                          ┌───────────────────────────────────────────┐
-                         │          BooleanAlgebra trait              │
-                         │   (is_satisfiable, witness, evaluate,     │
-                         │    and, or, not)                           │
+                         │       Algebra capability boundary          │
+                         │ RejectSafeAlgebra │ BooleanAlgebra (exact) │
                          └──────────┬────────────────┬───────────────┘
                                     │                │
                      ┌──────────────┴────┐    ┌──────┴──────────────┐
                      │  Direct impls     │    │  TheoryAlgebra<T>   │
-                     │  (fast path)      │    │  bridge             │
+                     │  (exact fast path)│    │  split bridge       │
                      ├──────────────────┤    ├─────────────────────┤
-                     │ IntervalAlgebra  │    │ Wraps any           │
-                     │ CharClassAlgebra │    │ ConstraintTheory    │
-                     │ KatBooleanAlg.   │    │ into BooleanAlgebra │
-                     │ DispatchAlgebra  │    │ via propagation +   │
-                     │ PresburgerAlg.   │◄───┤ LogicT search       │
+                     │ IntervalAlgebra  │    │ any theory:         │
+                     │ CharClassAlgebra │    │ RejectSafeAlgebra   │
+                     │ KatBooleanAlg.   │    │ exact theory only:  │
+                     │ DispatchAlgebra  │    │ BooleanAlgebra      │
+                     │ PresburgerAlg.   │◄───┤ propagation plus    │
+                     │                  │    │ checked decision    │
                      └──────────────────┘    └──────┬──────────────┘
                                                     │
                                    ┌────────────────┼─────────────────┐
                                    │                │                 │
                          ┌─────────┴──┐  ┌──────────┴───┐  ┌─────────┴────┐
-                         │ Presburger │  │ Unification  │  │ Lattice      │
-                         │ Theory     │  │ Theory       │  │ Theory       │
+                         │ Presburger │  │ Unification  │  │ Frozen       │
+                         │ Theory     │  │ Theory       │  │ Lattice      │
                          │            │  │              │  │              │
-                         │ label():   │  │ label():     │  │ label():     │
-                         │ empty()    │  │ CustomMatch  │  │ empty()      │
-                         │ (decidable)│  │ alternatives │  │ (decidable)  │
+                         │ label():   │  │ label():     │  │ exact frozen │
+                         │ empty()    │  │ CustomMatch  │  │ decision     │
+                         │ (decidable)│  │ alternatives │  │              │
                          └────────────┘  └──────────────┘  └──────────────┘
 
               ProductAlgebra<A, B>: composes any two BooleanAlgebra instances
@@ -60,7 +60,15 @@ The architecture has two complementary paths for connecting constraint domains t
 
 **Direct path (fast).** A domain implements `BooleanAlgebra` directly, providing its own satisfiability decision procedure. `PresburgerAlgebra` takes this path, using NFA-based satisfiability (Buchi's construction + emptiness check) for maximal performance.
 
-**Theory bridge (generic).** A domain implements `ConstraintTheory` -- a simpler trait with `propagate`, `label`, `witness`, and `evaluate` -- and `TheoryAlgebra<T>` automatically lifts it to `BooleanAlgebra`. For decidable theories (where `label()` returns `empty()`), the bridge uses propagation alone. For non-decidable theories, it drives LogicT's fair backtracking search.
+**Theory bridge (generic).** A domain implements `ConstraintTheory` -- a
+simpler trait with `propagate`, `label`, `witness`, and `evaluate` -- and
+`TheoryAlgebra<T>` supplies bounded, certificate-checked
+`RejectSafeAlgebra` search. Failure to find a witness is `DontKnow`, including
+when the implementation stream happens to end. A domain receives the exact
+`BooleanAlgebra` bridge only by additionally implementing
+`DecidableConstraintTheory`, whose total decision procedure can prove
+unsatisfiability. An empty `label()` stream is operational exhaustion, not a
+completeness certificate.
 
 ---
 
@@ -70,7 +78,7 @@ The architecture has two complementary paths for connecting constraint domains t
 |-----------|-------------|--------|---------|------------|
 | **LogicT** | `logict` | `logict.rs` | Fair backtracking monad: `msplit`, `interleave`, `fair_conjoin`, `ifte`, `once`, `gnot` | N/A (infrastructure) |
 | **ConstraintTheory** | `logict` | `logict.rs` | Pluggable constraint domain trait: `propagate`, `label`, `witness`, `evaluate` | N/A (trait) |
-| **TheoryAlgebra** | `logict` + `symbolic-automata` | `logict.rs` | Bridge: `ConstraintTheory` to `BooleanAlgebra` | N/A (adapter) |
+| **TheoryAlgebra** | `logict` + `symbolic-automata` | `logict.rs` | `ConstraintTheory` to reject-safe search; `DecidableConstraintTheory` to exact `BooleanAlgebra` | Depends on gate |
 | **PresburgerTheory** | `presburger` | `presburger.rs` | Multi-variable linear integer arithmetic via NFA construction | Yes |
 | **PresburgerAlgebra** | `presburger` + `symbolic-automata` | `presburger.rs` | Direct `BooleanAlgebra` fast path (NFA emptiness check) | Yes |
 | **UnificationTheory** | `unification` | `unification.rs` | Structural unification (Martelli-Montanari), pattern matching | Yes |
@@ -90,8 +98,8 @@ The Constraint Theory Suite integrates with, rather than replaces, the existing 
 | `KatBooleanAlgebra` | `HashMap<String, bool>` | finite propositional | Independent |
 | `DispatchAlgebra` | `PredicateSignature` | module bitfield | Independent; `M12`/`M13`/`M14` bits route to constraint theories |
 | `PresburgerAlgebra` | `IntAssignment` | k (multi-var) | *New* -- NFA-based decision for linear arithmetic |
-| `TheoryAlgebra<Unif>` | `Substitution` | structural | *New* -- first-order syntactic unification |
-| `TheoryAlgebra<Lat>` | `TypeAssignment` | finite lattice | *New* -- subtype join/meet |
+| `TheoryAlgebra<Unif>` | `Substitution` | structural | Reject-safe unless the selected theory implements `DecidableConstraintTheory` |
+| `TheoryAlgebra<Lat>` | `TypeAssignment` | finite lattice | Exact only through a complete lattice-theory decider |
 | `ProductAlgebra<A,B>` | `(A::Domain, B::Domain)` | composed | *New* -- combine independent domains |
 
 ---
@@ -117,7 +125,8 @@ The Constraint Theory Suite integrates with, rather than replaces, the existing 
             │
             ├── (+ symbolic-automata) ──→ PresburgerAlgebra
             │
-            └── (via TheoryAlgebra)  ──→ BooleanAlgebra impl
+            ├── (via TheoryAlgebra)  ──→ RejectSafeAlgebra impl
+            └── (+ DecidableConstraintTheory) → BooleanAlgebra impl
 
    ┌────────────────────────────────────┐
    │  predicated-types (convenience)   │
@@ -130,7 +139,11 @@ The Constraint Theory Suite integrates with, rather than replaces, the existing 
    └────────────────────────────────────┘
 ```
 
-The `logict` feature is the root dependency. Each constraint theory depends on `logict` for the `ConstraintTheory` trait and `LogicStream` type. The `symbolic-automata` feature is needed only for the `BooleanAlgebra` bridge (`TheoryAlgebra`) and the direct `PresburgerAlgebra` -- the theories themselves work without it.
+The `logict` feature is the root dependency. Each constraint theory depends on
+`logict` for `ConstraintTheory`, `DecidableConstraintTheory`, and `LogicStream`.
+The `symbolic-automata` feature is needed for the exact `BooleanAlgebra` bridge
+and the direct `PresburgerAlgebra`; bounded theories remain usable through the
+reject-safe algebra without pretending that truncated search proved emptiness.
 
 ---
 

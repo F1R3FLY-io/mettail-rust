@@ -451,7 +451,8 @@ pub mod unification;
 pub mod lattice_theory;
 
 /// Pluggable type system framework: TypeSystem trait, LatticeTypeSystem,
-/// RefinementTypeSystem, TypeSystemAlgebra bridge to BooleanAlgebra.
+/// RefinementTypeSystem, and an exact finite-semantic-witness
+/// TypeSystemAlgebra bridge to BooleanAlgebra.
 pub mod type_system;
 
 /// Safety/liveness verification API: WPDS-based property checking.

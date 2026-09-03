@@ -10,9 +10,11 @@
 PraTTaIL's constraint theory suite provides three built-in theories --
 Presburger arithmetic, structural unification, and subtype lattices -- each
 implementing the `ConstraintTheory` trait from `logict.rs`. These theories
-integrate with the symbolic automata framework via `TheoryAlgebra<T>`, which
-lifts any `ConstraintTheory` to a `BooleanAlgebra` for guard analysis, lint
-diagnostics, and codegen.
+integrate with the algebra tower via `TheoryAlgebra<T>`. Every
+`ConstraintTheory` receives bounded, three-valued `RejectSafeAlgebra` search;
+only a theory that additionally implements `DecidableConstraintTheory`
+receives the exact `BooleanAlgebra` needed by complement, inclusion, and other
+classical symbolic-automata analyses.
 
 Today, wiring a constraint theory into the pipeline requires:
 
@@ -69,8 +71,8 @@ pipeline threads constraint results through 14 analysis phases.
 ║    extract_features()                                                 ║
 ║         │  map each guard to its declared theory                      ║
 ║         ▼                                                             ║
-║    TheoryAlgebra<T>::is_satisfiable()                                 ║
-║         │  BooleanAlgebra bridge (automatic)                          ║
+║    TheoryAlgebra<T>::is_satisfiable_3v()                              ║
+║         │  reject-safe by default; exact only with a decider          ║
 ║         ▼                                                             ║
 ║    lint analysis ──▶ codegen                                          ║
 ║                                                                       ║
@@ -201,10 +203,13 @@ impl ConstraintTheory for ResourceTheory {
 }
 ```
 
-By implementing `ConstraintTheory`, the author automatically gains
-`BooleanAlgebra` (via `TheoryAlgebra<ResourceTheory>`) and therefore
-`SymbolicAutomaton` integration, minterm computation, and lint analysis -- all
-without writing a single line of automata code.
+By implementing `ConstraintTheory`, the author automatically gains bounded,
+certificate-checked `RejectSafeAlgebra` reasoning through
+`TheoryAlgebra<ResourceTheory>`. To gain exact `BooleanAlgebra`, and therefore
+classical `SymbolicAutomaton` complement, inclusion, and minterm analysis, the
+author must also provide a total `DecidableConstraintTheory::decide_exact`
+procedure. This prevents a bounded failed search from masquerading as an
+unsatisfiability proof.
 
 ### Layer 2: language! Declaration
 
@@ -395,9 +400,11 @@ for each guard AST node G:
     return (T.name, algebra)
 ```
 
-The `TheoryAlgebra<T>` wraps the user's `ConstraintTheory` implementation
-and provides `BooleanAlgebra::is_satisfiable`, `witness`, `evaluate`, etc.
-This is the same bridge used by the built-in theories.
+The `TheoryAlgebra<T>` wraps the user's `ConstraintTheory` implementation and
+provides `RejectSafeAlgebra::is_satisfiable_3v`, checked positive witnesses,
+and evaluation. When `T: DecidableConstraintTheory`, the same wrapper also
+implements `BooleanAlgebra` using the complete decider. This is the same
+capability split used by the built-in theories.
 
 ### 4.3 Lint Integration
 
@@ -579,7 +586,7 @@ The `theories { }` proposal does **not** modify:
 
 - The `BooleanAlgebra` trait (unchanged).
 - The `ConstraintTheory` trait (unchanged).
-- The `TheoryAlgebra<T>` bridge (unchanged).
+- The `TheoryAlgebra<T>` reject-safe bridge and exact-decision gate (unchanged).
 - Existing Boolean algebra implementations (IntervalAlgebra, CharClassAlgebra, etc.).
 - The `ProductAlgebra` combinator (unchanged).
 
@@ -587,7 +594,8 @@ It **adds**:
 
 - `TheoryRegistration` struct and `AttributeValue` enum for pipeline metadata.
 - `theories { }` block parsing in the `language!` macro proc-macro expansion.
-- Automatic `TheoryAlgebra<T>` instantiation in the pipeline.
+- Automatic `TheoryAlgebra<T>` instantiation in the pipeline, with
+  `BooleanAlgebra` admission only for registered exact deciders.
 - Dynamic `PredicateSignature` bit allocation for user-defined theories.
 - Theory-keyed lint message formatting.
 

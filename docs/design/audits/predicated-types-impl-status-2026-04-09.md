@@ -124,8 +124,10 @@ regressions.**
    implementation checked "is Q consistent in a store where P holds",
    which is *joint* satisfiability, not entailment. Phase 6E corrected
    it to use the spec-canonical formulation `P ⟹ Q ≡ ¬is_satisfiable(P ∧ ¬Q)`,
-   lifting the constraints into the `TheoryAlgebra<T>` `BooleanAlgebra`
-   wrapper which exposes negation.
+   lifting the constraints into the then-current `TheoryAlgebra<T>` classical
+   wrapper. The later capability-boundary repair restricts that bridge to
+   `DecidableConstraintTheory`; general theories use reject-safe three-valued
+   entailment so bounded search cannot prove a negative result.
 
 5. **Phase 5 MSO→SFA compilation is ~700 LOC, not ~2,000.** The plan
    estimated 2,000 LOC because it expected reinventing alphabet

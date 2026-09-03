@@ -63,8 +63,11 @@ algebra (the key-uniqueness machinery).
 
 ## 3. Leaf algebras (per `NativeKind`)
 
-Minted via the existing `TheoryAlgebra<T: ConstraintTheory>` bridge where
-possible (the cheap leaf template), else purpose-built:
+Minted through `TheoryAlgebra<T>` only when `T: DecidableConstraintTheory`
+supplies the exact Boolean operations required by this carrier; otherwise a
+purpose-built exact algebra is used. A merely bounded `ConstraintTheory` stays
+outside `AnyAlgebra`'s classical SFA carrier and remains available through the
+separate reject-safe path:
 
 | Leaf | Algebra | File |
 |---|---|---|
@@ -161,7 +164,7 @@ runtime→`RuntimeObservation`, undecided→`Unknown`). `Unknown` is fail-closed
 | Sum closure | `product_nary::SumAlgebra` | `SumAlgebraClosure.v` `sum_eba_laws` |
 | Collection (bag ∀/∃) closure | `collection_algebra::BagAlgebra` | `CollectionAlgebraClosure.v` `collection_eba_laws` |
 | Tree closure | `sym_tree::TreeAlgebra` | `TreeAlgebraClosure.v` `tree_eba_laws` |
-| Theory combination | `logict::TheoryAlgebra` (union) | `TheoryCombination.v` `combined_eba_laws` |
+| Theory combination | reject-safe `TheoryAlgebra` generally; exact only with a combined `DecidableConstraintTheory` | `TheoryCombination.v` `combined_eba_laws` under exhaustive `enum_all` |
 | ¬¬ closure / reject-safety / H_reg | `algebra_tower::{RejectSafe,Heyting}Algebra` | `HeytingAlgebra.v` |
 | Tier lattice ↔ regularity | `symbolic::DecidabilityTier`, macros `max_tier` | `GuardTierCertificate.v` |
 | Mixed asymmetric negation | `algebra_tower::RejectSafeProduct` | `BehavioralNegation.v` `mixed_negation_soundness` |

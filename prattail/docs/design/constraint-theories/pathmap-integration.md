@@ -75,7 +75,7 @@ each layer has a distinct role:
 ║  ┌──────────────────────────────────────────────────────────────────┐  ║
 ║  │  Ascent (Datalog) ────────── fixpoint derivation                 │  ║
 ║  │  LogicT ─────────────────── fair backtracking search             │  ║
-║  │  TheoryAlgebra<T> ────────── BooleanAlgebra bridge               │  ║
+║  │  TheoryAlgebra<T> ────────── reject-safe / exact gated bridge    │  ║
 ║  │                                                                  │  ║
 ║  │  Reads/writes PathMap stores via ConstraintTheory trait methods:  │  ║
 ║  │    propagate() ──▶ insert bindings, check consistency            │  ║
@@ -474,7 +474,7 @@ impl ConstraintTheory for PathMapUnificationTheory {
     }
 
     fn label(&self, _store: &UnificationStore) -> LogicStream<UnificationEquation> {
-        LogicStream::empty() // decidable: no labeling needed
+        LogicStream::empty() // this implementation has no labeling choices
     }
 
     fn evaluate(

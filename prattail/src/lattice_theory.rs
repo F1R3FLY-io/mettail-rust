@@ -678,10 +678,11 @@ impl ConstraintTheory for LatticeTheory {
         Some(TypeAssignment { bindings })
     }
 
-    /// No labeling needed — the lattice theory is decidable.
+    /// No labeling choices are needed for the current ground relation.
     ///
-    /// The finite universe of types means propagation alone determines
-    /// all subtype relationships via transitive closure.
+    /// Transitive closure determines every asserted subtype relationship.
+    /// Exact decision for arbitrary Boolean predicates is exposed only by an
+    /// immutable [`FrozenLatticeTheory`] through [`DecidableConstraintTheory`].
     fn label(&self, _store: &LatticeStore) -> LogicStream<SubtypeConstraint> {
         LogicStream::empty()
     }

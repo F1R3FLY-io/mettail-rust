@@ -395,9 +395,10 @@ impl Default for UnificationStore {
 /// Structural unification constraint theory (Martelli & Montanari 1982).
 ///
 /// Implements first-order syntactic unification with occurs check as a
-/// [`ConstraintTheory`]. This is a decidable, deterministic theory:
-/// propagation alone determines satisfiability, so `label()` returns an
-/// empty `LogicStream`.
+/// [`ConstraintTheory`]. Conjunctive syntactic unification is decidable and
+/// deterministic, so propagation solves the store and `label()` returns an
+/// empty `LogicStream`. This implementation does not claim exact decision of
+/// arbitrary Boolean [`crate::logict::TheoryPred`] combinations.
 ///
 /// # Usage
 ///
@@ -629,9 +630,9 @@ impl ConstraintTheory for UnificationTheory {
 
     /// Generate labeling choices for search.
     ///
-    /// Unification is a decidable, deterministic theory: propagation alone
-    /// determines satisfiability. No search choices are needed, so this
-    /// always returns an empty stream.
+    /// Conjunctive syntactic unification is deterministic, so no labeling
+    /// choices are needed. Empty labeling does not certify exact decision of
+    /// arbitrary Boolean [`crate::logict::TheoryPred`] combinations.
     fn label(&self, _store: &UnificationStore) -> LogicStream<UnificationEquation> {
         LogicStream::empty()
     }
@@ -883,9 +884,9 @@ fn subsumes(general: &TermExpr, specific: &TermExpr) -> bool {
 /// 2. Checks subsumption — if one pattern is strictly more general than
 ///    the other, it is recorded in `subsumed_guards`.
 ///
-/// The `search_bound_exceeded` field is always empty for the unification
-/// theory (which is decidable and uses no labelling search), but is
-/// included for interface consistency.
+/// The `search_bound_exceeded` field is always empty for this analyzer because
+/// its conjunctive unification pass performs no LogicT labeling search. The
+/// field is retained for the shared diagnostic result shape.
 ///
 /// # Parameters
 ///
@@ -905,7 +906,7 @@ pub fn analyze_from_bundle(
     let mut unsatisfiable_guards: Vec<(String, String)> = Vec::new();
     let mut tautological_guards: Vec<(String, String)> = Vec::new();
     let mut subsumed_guards: Vec<(String, String, String)> = Vec::new();
-    // The unification theory is decidable; no LogicT search is performed.
+    // This conjunctive unification analysis performs no LogicT search.
     let search_bound_exceeded: Vec<String> = Vec::new();
 
     // ── Phase 1: Convert each rule to a TermExpr ─────────────────────────
@@ -1672,12 +1673,14 @@ mod tests {
 
     #[test]
     fn label_returns_empty_stream() {
-        // Unification is decidable and deterministic: no search needed.
+        // Conjunctive syntactic unification is deterministic, so this solver
+        // has no labeling alternatives. This does not certify exact decision
+        // of the wrapper's arbitrary Boolean TheoryPred language.
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
         let stream = theory.label(&store);
-        assert!(stream.is_empty(), "label should return empty stream for decidable theory");
+        assert!(stream.is_empty(), "deterministic unification should not label");
     }
 
     // ── Variable chain unification ───────────────────────────────────────

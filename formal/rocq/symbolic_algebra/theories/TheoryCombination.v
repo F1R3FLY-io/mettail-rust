@@ -32,9 +32,10 @@
  *                            |   `Assignment` domain)
  *   CForm / ceval            | `QuantifiedFormula` Boolean closure (And/Or/Not
  *                            |   over the two theories' atoms) / its evaluation
- *   D + enum + enum_all      | the enumerable shared assignment domain (joint
- *                            |   search; `TheoryAlgebra::search_bound` is the
- *                            |   bounded operational analogue of `enum`)
+ *   D + enum + enum_all      | a complete shared assignment universe, which a
+ *                            |   combined `DecidableConstraintTheory` must
+ *                            |   provide; a bounded `search_bound` alone is
+ *                            |   deliberately insufficient
  *   csat (existsb enum)      | combined `BooleanAlgebra::is_satisfiable`
  *                            |   (`TheoryAlgebra<T>` over the union theory)
  *   cwit (find  enum)        | combined `BooleanAlgebra::witness`

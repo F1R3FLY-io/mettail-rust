@@ -48,49 +48,43 @@ search can return `Sat` where naive depth-first would diverge into `DontKnow`** 
 and the reason the engine uses an explicit `VecDeque` of branches rather than
 continuation-passing.
 
-## 2. The bridge: `ConstraintTheory` → `TheoryAlgebra` → effective Boolean algebra
+## 2. The split bridge: reject-safe search and exact Boolean algebra
 
-The substrate's automata are written *once* against the `BooleanAlgebra` trait
-([02 §3](02-effective-boolean-algebra.md)). LogicT supplies the adapter that lets a
-domain-specific solver plug into that interface without touching the automata.
+The substrate's classical automata are written *once* against the
+`BooleanAlgebra` trait ([02 §3](02-effective-boolean-algebra.md)). LogicT
+supplies a split adapter: every domain-specific solver receives bounded
+three-valued reasoning, while only a solver with a total decision procedure
+enters the classical automata interface.
 
-![A registered constraint theory becomes a Boolean algebra the automata reuse](figures/13-theory-algebra-bridge.svg)
+![A registered constraint theory receives reject-safe reasoning and crosses into Boolean automata only with an exact-decision capability](figures/13-theory-algebra-bridge.svg)
 
 PlantUML source: [figures/13-theory-algebra-bridge.puml](figures/13-theory-algebra-bridge.puml).
 
 A **`ConstraintTheory`** (the trait in `logict.rs`) is a domain solver: a `Store`, a
 `propagate(store, constraint) → Option<Store>` step, an `is_consistent` check, a
 `witness(store) → Option<Assignment>`, an `evaluate(constraint, assignment) → bool`,
-and a `label(store) → LogicStream<Constraint>` enumerator. A *decidable* theory
-returns `LogicStream::empty()` from `label` (propagation alone decides); a theory
-that needs search returns a fair stream.
+and a `label(store) → LogicStream<Constraint>` enumerator. `label` exposes
+implementation search choices; neither its emptiness nor its exhaustion proves
+semantic unsatisfiability.
 
-**`TheoryAlgebra<T: ConstraintTheory>`** wraps a theory plus a `search_bound` and
-`impl`s `BooleanAlgebra` with `Predicate = TheoryPred<T>` (a `True | False | Atom |
-And | Or | Not` tree) and `Domain = T::Assignment`. Its `is_satisfiable` is
-`witness(...).is_some()`, where `witness` runs `collect_constraints` — `And` via
-`fair_conjoin`, `Or` via `interleave`, `Not` by De Morgan push-down to negation-as-
-failure — then `collect_bounded(search_bound)`, then `theory.witness` (falling back
-to `label` + `propagate`), validating each candidate with `evaluate`. The payoff
-sentence:
+**`TheoryAlgebra<T: ConstraintTheory>`** wraps a theory plus a `search_bound`
+and implements `RejectSafeAlgebra` over `TheoryPred<T>`. Bounded search returns
+`Sat` only with an assignment rechecked by `evaluate`; absence of a witness is
+`DontKnow`, even if the implementation stream ended. The adapter implements
+`BooleanAlgebra` only for `T: DecidableConstraintTheory`, whose
+`decide_exact()` terminates with either a checked witness or a complete
+unsatisfiability result.
 
-> **Once a domain implements `ConstraintTheory`, it is a `BooleanAlgebra` for free —
-> hence a `SymbolicAutomaton`, minterms, determinization, and the overlap/subsumption
-> analysis of [03](03-symbolic-automata-sfa.md) and [07](07-language-to-rholang-integration.md)
-> apply unchanged.** This is how a `theories { name = T for [Cat] }` registration
-> ([06 §2.1.3](06-guard-syntax-and-extensions.md)) becomes a usable guard algebra.
+> **Every `ConstraintTheory` receives bounded, reject-safe composition. Only a
+> `DecidableConstraintTheory` receives classical complement, minterms,
+> determinization, and SFA overlap/subsumption.** A
+> `theories { name = T for [Cat] }` registration supplies no completeness
+> authority by itself.
 
-This lift holds for every domain whose satisfiability is **decidable**. One
-shipped backend is deliberately held *back* from it, because its satisfiability
-is only **semi-decidable** — the Z3/SMT oracle of §2.1.
-
-The three shipped theories — `PresburgerTheory`, `UnificationTheory`,
-`LatticeTheory` — return an empty `label` (decidable: propagation only, the
-`search_bound` is irrelevant), except `UnificationTheory`'s extended custom-match,
-whose non-empty `label` engages the fair search bounded by `search_bound` (the
-`LT01` lint guards it). `PresburgerAlgebra` additionally has a *direct*
-`BooleanAlgebra` path (NFA-backed, [02 §5](02-effective-boolean-algebra.md)) for
-speed, distinct from the bridge.
+`PresburgerTheory` and `FrozenLatticeTheory` implement the exact gate.
+`UnificationTheory`, mutable `LatticeTheory`, and `Z3Theory` remain on the
+reject-safe path. `PresburgerAlgebra` additionally has a direct NFA-backed
+`BooleanAlgebra` implementation ([02 §5](02-effective-boolean-algebra.md)).
 
 ### 2.1 The Z3/SMT backend — a `ConstraintTheory` that deliberately stops there
 
@@ -98,26 +92,25 @@ speed, distinct from the bridge.
 
 PlantUML source: [figures/13-smt-sat3-leg.puml](figures/13-smt-sat3-leg.puml).
 
-The payoff above has **one deliberate exception**. `Z3Theory`
+`Z3Theory`
 (`prattail/src/logict_smt.rs`, feature `smt`, default-off — it dynamically links
 the system `libz3`) is a `ConstraintTheory` over `bool`, linear integer
-arithmetic, and fixed-width bit-vectors, but it is **never** lifted to a
-`TheoryAlgebra<Z3Theory>` and **never** becomes a `BooleanAlgebra`. The reason is
-soundness, not convenience.
+arithmetic, and fixed-width bit-vectors. It may use the generic
+`TheoryAlgebra<Z3Theory>` reject-safe interface, but it does not implement
+`DecidableConstraintTheory` and therefore never becomes a `BooleanAlgebra`.
 
 A general SMT query has three outcomes — `Sat`, `Unsat`, and `unknown` — and
-`unknown` is irreducibly semi-decidable. The generic bridge of §2 decides
-satisfiability by `witness(...).is_some()`, a **two-valued** test; routing Z3
-through it would collapse `unknown → witness None → is_satisfiable false`,
-silently reporting a wrong **`Unsat`** (the exact defect in the upstream
-lling-llang hoist this backport corrects). So the backend is exposed **only**
-through a three-valued surface — `logict_smt::is_satisfiable_3v` and
+`unknown` is irreducibly semi-decidable. The former two-valued bridge decided
+satisfiability by `witness(...).is_some()`; routing Z3 through it would collapse
+`unknown → witness None → is_satisfiable false`, silently reporting a wrong
+**`Unsat`**. The repaired generic bridge is itself three-valued, and the
+specialized backend also exposes `logict_smt::is_satisfiable_3v` and
 `checked_witness`, returning `Sat3 = Sat | Unsat | DontKnow`
 ([05 §3](05-algebra-pyramid-and-decidability.md)) — and a Z3 `unknown` maps to
 `DontKnow`, **never** to `Unsat`. `DontKnow` then meets the same reject-safe
 collapse the rest of the engine uses (`Unknown → false`, §5). In the bridge
-figure above, this is the amber Z3 leg that branches off `ConstraintTheory` to a
-`Sat3` exit and stops — it never reaches the `BooleanAlgebra` node.
+figure above, this is the amber Z3 leg that reaches `Sat3` but cannot cross the
+separate exactness gate to the `BooleanAlgebra` node.
 
 Two further disciplines keep it sound:
 
@@ -157,25 +150,21 @@ returning `None` **only** on a proven `Unsat`; both a `Sat` and an `unknown` ans
 entry points are `is_satisfiable_3v(theory, c) -> Sat3` and
 `checked_witness(theory, c) -> Option<SmtModel>`.
 
-**Proposition (Z3 must not become a `TheoryAlgebra`).** Routing `Z3Theory` through the §2
-bridge — whose satisfiability test is the two-valued `witness(...).is_some()` — would report
-a *false* `Unsat` for a possibly-satisfiable guard; the unique sound exposure is the
-three-valued surface that keeps a Z3 `unknown` as `Sat3::DontKnow`.
+**Proposition (Z3 must not cross the exact-decision gate).** Granting
+`Z3Theory` the `DecidableConstraintTheory` capability would permit a possibly
+satisfiable `unknown` result to become a false classical `Unsat`. Its sound
+exposure is the three-valued surface that preserves `unknown` as
+`Sat3::DontKnow`.
 
-*Proof.* The bridge computes `is_satisfiable(p) = witness(p).is_some()`. A Z3 `unknown`
-yields no model, so `witness(p) = None`, so the bridge returns `is_satisfiable(p) = false`
-— it declares `p` unsatisfiable although `p` may be satisfiable. The classical SFA consumers
-the bridge feeds — complement, determinization, and language equivalence — are sound only
-over a *total* Boolean algebra (decidable, with an involutive complement and excluded
-middle), so a spurious `Unsat` propagates into a fabricated classical verdict. The
-store-level routing is the only one that avoids this: `propagate` returns `None` *only* on a
-proven `Unsat`, so an `unknown` stays `Some(store)` with `status = DontKnow`, the
-conservative over-approximation "possibly satisfiable." The downstream collapse
-`Sat3::into_safe_bool` then maps `DontKnow` to `false` *as a refusal*, forcing the caller to
-treat the undecided guard as not-established rather than as proven-unsatisfiable. Hence
-`Z3Theory` is exposed only as a `Sat3` oracle and is never given a `BooleanAlgebra` instance
-— there is, by construction, no `impl BooleanAlgebra for Z3Theory` and no
-`TheoryAlgebra<Z3Theory>` anywhere in the tree. ∎
+*Proof.* A Z3 `unknown` yields no checked model but does not prove that no model
+exists. Therefore a two-valued `witness(p).is_some()` decision would report
+`false` and fabricate `Unsat`. Classical SFA complement, determinization, and
+language equivalence require a total Boolean algebra, so that fabricated result
+would be unsound. The generic reject-safe adapter instead reports `DontKnow`;
+`Sat3::into_safe_bool` maps it to `false` only at an admission boundary, as a
+refusal rather than as an unsatisfiability theorem. There is no
+`DecidableConstraintTheory for Z3Theory` and hence no classical
+`BooleanAlgebra for TheoryAlgebra<Z3Theory>`. ∎
 
 **Proposition (certificate-checked witnesses are sound and non-fabricating).** Let
 `checked_witness(c)` return `Some m` exactly when the solver supplies a candidate model `m`
@@ -213,26 +202,20 @@ guard `T3`, degrading to `T4` on the `unknown` ([05 §6](05-algebra-pyramid-and-
 At no point is a `Sat` model trusted without the re-check, and at no point is `unknown`
 coerced to `Unsat`.
 
-### 2.2 The shipped decidable theories
+### 2.2 The shipped theory capability catalog
 
-![The three shipped decidable theories, lifted to EBAs via the TheoryAlgebra bridge](figures/13-theory-catalog.svg)
+![Shipped theories split between reject-safe and exact algebra capabilities](figures/13-theory-catalog.svg)
 
 PlantUML source: [figures/13-theory-catalog.puml](figures/13-theory-catalog.puml).
 
-Where §2.1 is the one backend held *back* from the bridge, this subsection is its
-positive counterpart: the **three shipped, unconditionally compiled
-`ConstraintTheory` implementations** that *do* pass through the `TheoryAlgebra<T>`
-bridge of §2 and become full `BooleanAlgebra`s — `PresburgerTheory`,
-`UnificationTheory`, and `LatticeTheory`. All three live in the compile-time
-analysis pipeline (selected by the predicate-dispatch plan), all three are **exact**
-— each judgement is a definite `Some`/`None`, never a `DontKnow` — and all three are
-*decidable*, so each returns `LogicStream::empty()` from `label`: propagation alone
-settles satisfiability and the `search_bound` of the bridge is never consulted. That
-each becomes a `BooleanAlgebra` via `TheoryAlgebra<T>` is the bridge of §2, stated and
-proved as [05 Theorem 7.6](05-algebra-pyramid-and-decidability.md) (`combined_eba_laws`);
-the present subsection does **not** re-prove the bridge — it establishes only that each
-theory's own propagation is a *decision procedure* for its domain, which is exactly the
-decidability hypothesis the bridge consumes.
+This subsection separates atomic solver strength from the stronger capability
+needed for full Boolean predicates. `PresburgerTheory` implements
+`DecidableConstraintTheory`. `UnificationTheory` exactly solves its positive
+first-order equation stores but does not claim a total decision for arbitrary
+`TheoryPred` negation and disjunction. Mutable `LatticeTheory` constructs a
+preorder; `FrozenLatticeTheory` snapshots that preorder and implements the exact
+observation gate. All remain usable through reject-safe `TheoryAlgebra`; only the
+two exact implementations enter the classical algebra interface.
 
 #### 2.2.1 `PresburgerTheory` — linear integer arithmetic by a remainder automaton
 
@@ -293,8 +276,10 @@ algorithm `unify` over `σ` and all queued equations plus `eq`, returning
 solved substitution — the most general unifier (mgu) — once the equation queue is
 empty;
 `is_consistent` re-runs `unify` to confirm solvability; and `label` is **unconditionally
-empty** — propagation alone is the decision procedure, with no labeling search. The
-algorithm dispatches on the two oriented sides via six rules:
+empty** — propagation decides the conjunctive equation store, with no labeling
+search. The current implementation does not thereby claim an exact decision
+procedure for arbitrary Boolean `TheoryPred` combinations. The algorithm
+dispatches on the two oriented sides via six rules:
 
 | Rule | Trigger | Action |
 |---|---|---|
@@ -379,9 +364,10 @@ store's closure, not `evaluate`. The construction follows the standard transitiv
 and subtyping treatments ([Warshall, 1962](references.md#warshall-1962);
 [Pierce, 2002](references.md#pierce-tapl-2002), ch. 15).
 
-All three theories reach the SFA/minterm machinery of [03](03-symbolic-automata-sfa.md)
-through the `TheoryAlgebra<T>` bridge of §2; `Z3Theory` (§2.1) is the deliberate
-semi-decidable exception that never crosses the bridge and stops at `Sat3`.
+`PresburgerTheory` and `FrozenLatticeTheory` reach the SFA/minterm machinery of
+[03](03-symbolic-automata-sfa.md) through the exact bridge. `UnificationTheory`,
+mutable `LatticeTheory`, and `Z3Theory` stop at reject-safe `Sat3` unless a future
+implementation supplies and verifies a total decision procedure.
 
 ### 2.3 The always-on OSLF analysis engines and the optional Z3 solver
 
@@ -484,11 +470,12 @@ the Heyting / Kleene three-valued logic of [12](12-heyting-behavioral-logic.md).
 
 ## 4. Theory combination — the Nelson–Oppen base case
 
-Two decidable theories over a shared enumerable domain combine into one EBA by
-**joint search**: the LogicT realization interleaves their constraint streams and
-labels under the bounded budget.
+Two theories can always combine through bounded, fair joint search at the
+reject-safe tier. They combine into an EBA only when the joint procedure ranges
+over a proved-complete shared universe (or supplies an equivalent total
+decision procedure); an arbitrary bounded budget cannot establish emptiness.
 
-![Two constraint theories combine by joint interleaved search](figures/13-theory-combination.svg)
+![Two theories combine reject-safely under a bound and classically only over a proved-complete shared universe](figures/13-theory-combination.svg)
 
 PlantUML source: [figures/13-theory-combination.puml](figures/13-theory-combination.puml).
 
@@ -514,14 +501,16 @@ which the fail-closed gate ([07 §5](07-language-to-rholang-integration.md)) act
 
 | How the LogicT evaluation terminates | Tier | Quality |
 |---|---|---|
-| finite-relation quantifier / decidable theory (propagation decides; `label = empty`) | T1 / T2 | `ExactDecidable` |
+| finite-relation quantifier with complete enumeration / `DecidableConstraintTheory::decide_exact` | T1 / T2 | `ExactDecidable` |
 | bounded quantifier or `search_bound`-limited labeling that returned a definite verdict | T3 | `BoundedDecidable` |
 | `evaluate_quantified_with_theory → Unknown` (budget exhausted, `had_unknown`), or `collect_bounded` truncated without a witness (`LT01`) | maps to `Sat3::DontKnow` | fail-closed unless asserted (`#[tier(t4)]` / `@[quality(trusted)]`) |
 | Z3/SMT gap-filler (feature `smt`, §2.1) decides via `is_satisfiable_3v` + a certificate-checked witness; `Sat`/`Unsat` are definite, an `unknown` is `DontKnow` | T3 (T4 on `unknown`) | `BoundedDecidable` (reject-safe on `DontKnow`) |
 
-Two places turn the engine's "don't know" into a *rejection*, never a false
-admission: `into_safe_bool` (`Unknown → false`) and the bridge's
-`is_satisfiable = witness().is_some()`. Both are the operational realization of the
+The engine preserves “don't know” throughout theory composition. Only an
+admission boundary may call `into_safe_bool` (`Unknown → false`), where `false`
+means refusal rather than a proof of unsatisfiability. `TheoryAlgebra` itself
+returns `Sat3`; its two-valued `is_satisfiable` exists only behind
+`DecidableConstraintTheory`. These are the operational realizations of the
 reject-safe discipline ([05 §5](05-algebra-pyramid-and-decidability.md)). The
 governing soundness result — *the asymmetric mixed De Morgan complement
 `(¬a ∧ ⊤) ∨ (⊤ ∧ ¬b)` of a structural-times-behavioral guard accepts an element only
@@ -569,7 +558,7 @@ mechanizing witnesses of the cited theorems.
 
 | Claim | Stated-and-proved in | Coq witness |
 |---|---|---|
-| theory combination is an EBA (Nelson–Oppen joint-search base case) | [05 — Theorem 7.6](05-algebra-pyramid-and-decidability.md) | `combined_eba_laws`, `csat_sound`, `csat_complete`, `cwit_sound`, `cwit_total` (`TheoryCombination.v`) |
+| theory combination over a proved-exhaustive shared universe is an EBA (Nelson–Oppen joint-search base case) | [05 — Theorem 7.6](05-algebra-pyramid-and-decidability.md) | `combined_eba_laws`, `csat_sound`, `csat_complete`, `cwit_sound`, `cwit_total` (`TheoryCombination.v`) |
 | the mixed-guard complement is reject-safe (a covered theory guard never false-fires) | [12 — Theorem 6.1](12-heyting-behavioral-logic.md) | `mixed_negation_soundness` (`BehavioralNegation.v`); run-time mirror `rho_complement_no_commit` (`RhoGuardedCommSoundness.v`) |
 | the tier ↔ regularity / decidability frame the engine populates | [12 — Proposition 6.3](12-heyting-behavioral-logic.md) ([05 §6](05-algebra-pyramid-and-decidability.md) summary) | `tier_max_sound_hom`, `tier_regularity_reg`, `tier_regularity_boundary`, `tier_regularity_closed` (`GuardTierCertificate.v`) |
 | the Z3/SMT witness is certificate-checked, never fabricated — the soundness fence on the `Sat3`-only backend (§2.1) | [10 §2.1](10-formal-verification-and-tests.md) | `checked_witness_sound`, `checked_witness_no_fabrication` (`Z3WitnessChecked.v`) |
@@ -584,8 +573,8 @@ The engine is cited from [Kiselyov et al., 2005](references.md#kiselyov-2005)
 
 ## 8. Cross-references
 
-- The abstract algebra the engine realizes: [02 — Effective Boolean Algebra](02-effective-boolean-algebra.md)
-  (the `TheoryAlgebra` instance and the `BooleanAlgebra` trait it implements).
+- The exact algebra interface and its capability gate:
+  [02 — Effective Boolean Algebra](02-effective-boolean-algebra.md).
 - The tiers, `Sat3`, reject-safety, and the closure family it feeds:
   [05 — Algebra Pyramid and Decidability](05-algebra-pyramid-and-decidability.md).
 - The guard syntax that builds the formulas: [06 — Guard Syntax and Extensions](06-guard-syntax-and-extensions.md)

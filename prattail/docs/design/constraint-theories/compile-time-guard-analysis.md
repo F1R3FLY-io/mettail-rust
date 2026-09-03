@@ -54,10 +54,11 @@ compile time for each guard domain:
 | Product | `ProductAlgebra` | ✓ | ✓ | ✓ | ✓ | ✓ | **Complete** |
 
 The **complete** entries implement the full `BooleanAlgebra` trait and
-support all five analysis questions.  The **partial** entries implement
-`ConstraintTheory` (lifted to `BooleanAlgebra` via `TheoryAlgebra`) but
-lack some operations.  The **gap** entries have no compile-time algebraic
-backend.
+support all five analysis questions. The **partial** entries implement
+`ConstraintTheory` and therefore receive bounded `RejectSafeAlgebra` search
+through `TheoryAlgebra`; they enter `BooleanAlgebra` only when an additional
+`DecidableConstraintTheory` implementation proves exactness. The **gap**
+entries have no compile-time algebraic backend.
 
 > **Cross-reference:** The main document's §3.3 lists the implemented
 > `BooleanAlgebra` implementations.  This document focuses on extending
@@ -398,15 +399,17 @@ quantification — which the `LogicT` framework provides via
 ║               • multiplicity bounds (Presburger on counts)                ║
 ║               • feature multiplicities (existing M9 infrastructure)      ║
 ║                                                                          ║
-║  Each is lifted to BooleanAlgebra via TheoryAlgebra<T>.                  ║
-║  Quantified constraints use LogicT fair backtracking (bounded search).   ║
+║  Each receives reject-safe search via TheoryAlgebra<T>.                 ║
+║  Exact Boolean lifting additionally requires DecidableConstraintTheory. ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
 The key design principle: container algebras are **parameterized** by the
-element type's algebra `E`.  A `ListTheory<IntervalAlgebra>` analyzes
-integer lists; a `ListTheory<StringAlgebra>` analyzes string lists.  The
-`TheoryAlgebra` bridge lifts each to `BooleanAlgebra` for SFA integration.
+element type's algebra `E`. A `ListTheory<IntervalAlgebra>` analyzes integer
+lists; a `ListTheory<StringAlgebra>` analyzes string lists. The
+`TheoryAlgebra` bridge always supplies reject-safe search and supplies the
+exact `BooleanAlgebra` required by SFA integration only for a complete theory
+decider.
 
 ### 5.4 Decidability Boundaries
 

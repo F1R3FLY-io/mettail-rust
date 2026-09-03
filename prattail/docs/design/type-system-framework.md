@@ -65,7 +65,7 @@ into PraTTaIL's pipeline — getting lints, SFA integration, and codegen for fre
                                  │
                     ┌────────────▼──────────────────────┐
                     │  TypeSystemAlgebra<S>              │
-                    │  (TypeSystem → BooleanAlgebra)     │
+                    │  (exact finite types → EBA)        │
                     │                                    │
                     │  Analogous to TheoryAlgebra<T>     │
                     │  for ConstraintTheory              │
@@ -162,7 +162,8 @@ refinement types `{ x: S::Type | T::Constraint }`.
 ```
 { x: S | P(x) } <: { x: T | Q(x) }
   iff  S <: T    (base subtype via TypeSystem S)
-  AND  ∀x. P(x) ⟹ Q(x)  (predicate entailment via TheoryAlgebra<T>)
+  AND  ∀x. P(x) ⟹ Q(x)  (exact via DecidableConstraintTheory;
+                          otherwise three-valued and fail-closed)
 ```
 
 Base types lift implicitly: `T` is equivalent to `{ x: T | true }`.
@@ -214,28 +215,45 @@ automata, making this a fully decidable type system for algebraic data types.
 
 ## TypeSystemAlgebra\<S\> Bridge
 
-Bridges `TypeSystem` to `BooleanAlgebra`, analogous to `TheoryAlgebra<T>` for
-`ConstraintTheory`. This enables SFA-based analysis of type predicates.
+`TypeSystemAlgebra<S>` bridges a type system with a declared complete finite
+semantic-witness universe to `BooleanAlgebra`. A witness represents a runtime
+value equivalence class with one exact answer to every `HasType` query; it need
+not be the type syntax itself. The stronger `DecidableFiniteTypeSystem` bound is
+essential: satisfiability of a compound predicate requires one witness that
+satisfies the complete predicate, and a failed search proves emptiness only
+after every semantic witness class has been checked.
+This is analogous to the `DecidableConstraintTheory` gate on
+`TheoryAlgebra<T>` and enables sound symbolic finite automaton (SFA) analysis.
 
 ```rust
-pub struct TypeSystemAlgebra<S: TypeSystem> {
-    pub type_system: S,
+pub struct TypeSystemAlgebra<S: DecidableFiniteTypeSystem> {
+    pub system: S,
     pub env: S::TypeEnv,
 }
 
 // TypePred<S>: HasType(ty), Subtype(sub, sup), And/Or/Not, True, False
-impl<S: TypeSystem> BooleanAlgebra for TypeSystemAlgebra<S> {
+impl<S: DecidableFiniteTypeSystem> BooleanAlgebra for TypeSystemAlgebra<S> {
     type Predicate = TypePred<S>;
+    type Domain = S::Witness;
     fn is_satisfiable(&self, pred: &Self::Predicate) -> bool { ... }
-    fn witness(&self, pred: &Self::Predicate) -> Option<S::Type> { ... }
+    fn witness(&self, pred: &Self::Predicate) -> Option<S::Witness> { ... }
     // ...
 }
 ```
 
-This bridge enables:
+The implementation enumerates `complete_witness_universe(env)` in deterministic
+order and evaluates the entire `TypePred` against each candidate. It does not
+combine witnesses obtained independently from the left and right leaves of a
+Boolean connective. The bridge therefore enables:
 - **Satisfiability**: Is a type inhabited? → `is_satisfiable(HasType(ty))`
 - **Subsumption**: Is `S <: T`? → `implies(HasType(S), HasType(T))`
 - **Overlap**: Do `S` and `T` share values? → `is_satisfiable(And(HasType(S), HasType(T)))`
+
+For `LatticeTypeSystem`, each inhabited declared type is the principal-type
+representative of one witness class, and subtype closure determines all of that
+class's memberships. A designated bottom type is excluded because it denotes
+the empty type; admitting bottom as a witness would incorrectly make every two
+types overlap.
 
 ---
 
@@ -328,7 +346,7 @@ They are not present in the generated binary.
 | Component | Phase | Notes |
 |-----------|-------|-------|
 | `TypeSystem` trait + all impls | Compile-time | Analysis infrastructure |
-| `TypeSystemAlgebra<S>` bridge | Compile-time | BooleanAlgebra adapter |
+| `TypeSystemAlgebra<S>` bridge | Compile-time | Exact finite-semantic-witness `BooleanAlgebra` adapter |
 | `RefinementDispatchAnalysis` | Compile-time | Pairwise overlap analysis |
 | Pipeline lints RT01–RT06 | Compile-time | Diagnostic messages |
 | `is_refined_*` relations | **Codegen → Runtime** | One relation per refinement type |

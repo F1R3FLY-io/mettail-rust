@@ -6,7 +6,8 @@
 #   - MGU soundness: if unify succeeds, the substitution satisfies all equations
 #   - Occurs check: failure implies unsatisfiability
 #   - Constructor clash: failure implies unsatisfiability
-#   - TheoryAlgebra bridge preserves BooleanAlgebra axioms
+#   - Pointwise Boolean laws hold over predicates on substitutions; this is
+#     not an effective satisfiability decision for arbitrary Boolean formulas
 #
 # Model: terms as inductive type with Var, Const, App constructors.
 #

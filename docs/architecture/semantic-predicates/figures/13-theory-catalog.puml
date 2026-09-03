@@ -1,5 +1,5 @@
 @startuml
-title The shipped decidable theories, lifted to EBAs via TheoryAlgebra
+title Shipped theory capabilities: reject-safe by default, classical only with exactness
 
 skinparam backgroundColor #FEFEFE
 skinparam componentStyle rectangle
@@ -19,33 +19,51 @@ skinparam note {
   FontColor #111827
 }
 
-' ── The three decidable ConstraintTheory implementations ────────────────
-component "PresburgerTheory\nStore: linear ≤ atoms + NFA\nNFA non-emptiness (Bartzis–Bultan)\n(Proposition 1)" as Presburger #DCFCE7
+component "PresburgerTheory\ntotal automata decision" as Presburger #DCFCE7
+component "FrozenLatticeTheory\nfinite closed relation" as Frozen #DCFCE7
+component "UnificationTheory\npositive-store solver" as Unification #FEF3C7
+component "LatticeTheory\nmutable preorder builder" as Lattice #FEF3C7
+component "Z3Theory\nSat / Unsat / unknown" as Z3 #FDE68A
 
-component "UnificationTheory\nStore: solved substitution\nMartelli–Montanari + occurs-check\nwitness = mgu (Theorem 2)" as Unification #DCFCE7
+interface "ConstraintTheory\npropagate · label · witness · evaluate" as CT #DBEAFE
+component "TheoryAlgebra<T>\nbounded, witness-checked search" as Bridge #E0E7FF
+interface "RejectSafeAlgebra\nSat | Unsat | DontKnow" as RSA #FEF3C7
 
-component "LatticeTheory\nStore: edges + Warshall closure\nfinite subtype order (Prop 3)\npreorder; partial join/meet" as Lattice #FEF3C7
+interface "DecidableConstraintTheory\ndecide_exact" as DCT #BBF7D0
+interface "BooleanAlgebra\nclassical complement" as BA #DBEAFE
+component "SFA consumers\nminterms · determinize · inclusion" as SFA #CCFBF1
 
-' ── The bridge and the EBA target ───────────────────────────────────────
-component "TheoryAlgebra<T>\nthe bridge (section 2)" as Bridge #E0E7FF
+Presburger --> CT
+Frozen --> CT
+Unification --> CT
+Lattice --> CT
+Z3 --> CT
+CT --> Bridge
+Bridge --> RSA : every theory
 
-interface "BooleanAlgebra\nSFA, minterms, lint reuse" as BA #DBEAFE
+Presburger --> DCT
+Frozen --> DCT
+DCT --> Bridge : exact capability
+Bridge --> BA : only when T is decidable
+BA --> SFA
 
-Presburger --> Bridge
-Unification --> Bridge
-Lattice --> Bridge
-Bridge --> BA : lifts theory store into an EBA
+Unification ..> DCT #EF4444 : no exact claim
+Lattice ..> DCT #EF4444 : freeze first
+Z3 ..> DCT #EF4444 : unknown blocks exactness
 
 note bottom of Bridge
-  exact: Some/None, never DontKnow; Z3Theory (2.1) is the deliberate
-  semi-decidable exception that stops at Sat3.
+  A checked witness may prove satisfiability.
+  Search exhaustion alone remains DontKnow.
+  Only decide_exact may prove the complementary branch.
 end note
 
 legend right
-|= Color |= Group |
-|<#DCFCE7> | decidable theory (exact, regular) |
-|<#FEF3C7> | reject-safe (preorder; partial join/meet) |
-|<#E0E7FF> | bridge / formal (TheoryAlgebra) |
-|<#DBEAFE> | classical EBA target (BooleanAlgebra) |
+|= Color |= Meaning |
+|<#DCFCE7> | exact shipped theory |
+|<#FEF3C7> | reject-safe theory |
+|<#FDE68A> | external three-valued solver |
+|<#E0E7FF> | shared adapter |
+|<#DBEAFE> | declared interface |
+|<#CCFBF1> | classical automata consumer |
 endlegend
 @enduml

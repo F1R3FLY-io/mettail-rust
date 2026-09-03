@@ -233,7 +233,7 @@ PlantUML source: [figures/05-closure-family.puml](figures/05-closure-family.puml
 | collection (map) | `MapAlgebra<K,V>` | key × value counts + distinct-key cap | Theorem 7.4 (`collection_eba_laws`) |
 | sequence (list) | `ListAlgebra<A>` = `RegexAlgebra<A>` | an ordered language, recognized by an SFA | Theorem 7.4 (`collection_eba_laws`) |
 | recursive tree | `TreeAlgebra<A>` | "constructor `c` ∧ payload ⊨ `φ` ∧ childᵢ ⊨ `φᵢ`" | Theorem 7.5 (`tree_eba_laws`) |
-| theory combination | `TheoryAlgebra` (union) | two decidable theories over a shared domain | Theorem 7.6 (`combined_eba_laws`) |
+| theory combination | exact union decision | two decidable atom theories plus a proved-exhaustive shared universe | Theorem 7.6 (`combined_eba_laws`) |
 
 Each row is a stated-and-proved closure theorem in the subsections below: the
 collection and tree complements rest on the SFA **minterms** of

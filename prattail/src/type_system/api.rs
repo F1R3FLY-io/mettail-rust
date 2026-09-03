@@ -21,7 +21,8 @@ use super::*;
 /// # Guarantees
 ///
 /// Implementations must satisfy:
-/// - **Reflexivity**: `is_subtype(env, T, T) == true`
+/// - **Reflexivity**: `is_subtype(env, T, T) == true` for every semantic type
+///   admitted by the implementation
 /// - **Transitivity**: `is_subtype(S, T) ∧ is_subtype(T, U) ⟹ is_subtype(S, U)`
 /// - **Antisymmetry**: `is_subtype(S, T) ∧ is_subtype(T, S) ⟹ S ≡ T`
 /// - **Soundness of check**: `check(env, t, T)` implies `t` denotes a value of
@@ -69,8 +70,55 @@ pub trait TypeSystem: Clone + fmt::Debug + Send + Sync + 'static {
         None
     }
 
-    /// Bottom type (if the system has one). This is a subtype of all types.
+    /// Bottom type (if the system has one). This is the uninhabited subtype of
+    /// all types.
     fn bottom(&self) -> Option<Self::Type> {
         None
+    }
+}
+
+/// Completeness authority for classical predicates over a finite semantic
+/// witness domain.
+///
+/// [`TypeSystem`] alone supplies sound type-checking operations, but it does
+/// not promise that an implementation can enumerate representatives of every
+/// possible runtime value class. A
+/// [`TypeSystemAlgebra`](super::TypeSystemAlgebra) needs that stronger premise
+/// because Boolean complement and unsatisfiability quantify over values, not
+/// merely over type syntax.
+///
+/// Implementations must return a terminating, complete enumeration of semantic
+/// witness classes for the supplied environment and decide type membership for
+/// each witness exactly. Every runtime value must be represented by a witness
+/// with the same answers to every `HasType` predicate; duplicates are permitted
+/// and affect only performance. The implementation must also recognize every
+/// valid type appearing in a predicate and decide `is_subtype` exactly for those
+/// types. Runtime DDL data cannot self-assert this native completeness
+/// authority; a trusted compiler/verifier may instead derive an equivalent
+/// checked runtime artifact from a complete finite declaration.
+pub trait DecidableFiniteTypeSystem: TypeSystem {
+    /// Finite representative of a semantic runtime-value equivalence class.
+    type Witness: Clone + fmt::Debug + Eq + Hash + Send + Sync + 'static;
+
+    /// Enumerate the complete semantic witness domain in deterministic order.
+    fn complete_witness_universe(&self, env: &Self::TypeEnv) -> Vec<Self::Witness>;
+
+    /// Decide whether a semantic witness has a type.
+    fn witness_has_type(
+        &self,
+        env: &Self::TypeEnv,
+        witness: &Self::Witness,
+        ty: &Self::Type,
+    ) -> bool;
+
+    /// Decide whether a type representation belongs to the semantic type domain.
+    fn is_valid_type(&self, env: &Self::TypeEnv, ty: &Self::Type) -> bool;
+
+    /// Decide whether a witness representation belongs to the semantic domain.
+    ///
+    /// The default follows directly from [`Self::complete_witness_universe`].
+    /// Implementations may override it to avoid allocating the enumeration.
+    fn is_valid_witness(&self, env: &Self::TypeEnv, witness: &Self::Witness) -> bool {
+        self.complete_witness_universe(env).contains(witness)
     }
 }

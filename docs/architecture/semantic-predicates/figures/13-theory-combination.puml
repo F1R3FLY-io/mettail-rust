@@ -8,43 +8,57 @@ skinparam component {
   BorderColor #1F2937
   FontColor #111827
 }
+skinparam interface {
+  BorderColor #1F2937
+  FontColor #111827
+}
 skinparam note {
   BorderColor #1F2937
   FontColor #111827
 }
 
-title Theory combination: two ConstraintTheories combine by joint search
+title Theory combination: bounded search versus exact shared-universe decision
 
-' ── Two decidable input theories feeding a joint interleaved search ──
-component "arithmetic = PresburgerAlgebra\n(ConstraintTheory, decidable)" as Arith #DBEAFE
-component "text = StringAlgebra\n(ConstraintTheory, decidable)" as Text #DBEAFE
+component "theory A\nConstraintTheory" as A #DBEAFE
+component "theory B\nConstraintTheory" as B #DBEAFE
+component "A <+> B\nbounded fair joint search" as BoundedJoin #FEF3C7
+interface "combined RejectSafeAlgebra\nSat | Unsat | DontKnow" as RejectSafe #FEF3C7
 
-' ── The join: joint bounded interleaved search over the shared domain ──
-component "arithmetic <+> text\njoint interleaved search (bounded)" as Join #FEF3C7
+A -down-> BoundedJoin : factor
+B -down-> BoundedJoin : factor
+BoundedJoin -down-> RejectSafe : always sound
 
-component "combined ConstraintTheory over Pair" as Combined #DCFCE7
-component "TheoryAlgebra → EBA" as EBA #DCFCE7
-
-Arith -down-> Join : factor
-Text  -down-> Join : factor
-Join     -down-> Combined : yields
-Combined -down-> EBA      : adapter
-
-note right of Join #FEF3C7
-  Nelson–Oppen **BASE CASE** (joint search over a
-  shared domain) — not the full equality-exchange
-  procedure.
+note right of BoundedJoin
+  A checked shared assignment proves Sat.
+  Bounded failure to find one yields DontKnow,
+  not classical Unsat.
 end note
 
-' ── Formal counterpart (dashed) ──
-component "TheoryCombination.v\ncombined_eba_laws · csat_sound · csat_complete" as Formal #E0E7FF
-EBA ..> Formal : formal counterpart
+component "complete shared universe D\nenum_all : every d is enumerated" as Universe #DCFCE7
+component "combined DecidableConstraintTheory\ndecide_exact by exhaustive joint search" as ExactJoin #DCFCE7
+interface "combined BooleanAlgebra" as Boolean #CCFBF1
+
+A -right-> ExactJoin : decidable atom evaluation
+B -left-> ExactJoin : decidable atom evaluation
+Universe -down-> ExactJoin : completeness witness
+ExactJoin -down-> Boolean : exact upgrade
+
+note right of ExactJoin
+  This is the exact enumerable base case proved in
+  TheoryCombination.v. Full Nelson–Oppen combination
+  over infinite domains requires its stronger hypotheses
+  and is not inferred from a search bound.
+end note
+
+component "TheoryCombination.v\ncsat_sound · csat_complete\ncombined_eba_laws" as Formal #E0E7FF
+ExactJoin ..> Formal : mechanized proof
 
 legend right
 |= Color |= Role |
-|<#DBEAFE> | decidable input ConstraintTheory (blue) |
-|<#FEF3C7> | joint interleaved bounded search — the combination (amber) |
-|<#DCFCE7> | combined theory + the EBA it provides (green) |
-|<#E0E7FF> | formal counterpart discharged in Coq (indigo) |
+|<#DBEAFE> | general component theory (blue) |
+|<#FEF3C7> | bounded reject-safe combination (amber) |
+|<#DCFCE7> | explicit completeness evidence and exact decision (green) |
+|<#CCFBF1> | resulting classical algebra (teal) |
+|<#E0E7FF> | Rocq proof (indigo) |
 endlegend
 @enduml

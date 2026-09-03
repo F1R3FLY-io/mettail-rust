@@ -494,7 +494,8 @@ impl<T: Send + 'static> IntoIterator for LogicStream<T> {
 ///
 /// The trait separates two concerns:
 /// - **Propagation** (`propagate`): deterministic constraint narrowing.
-///   For decidable theories, propagation alone determines satisfiability.
+///   Some theories completely decide conjunctions during propagation, but
+///   arbitrary Boolean predicates require the separate exactness contract.
 /// - **Labeling** (`label`): non-deterministic search choices. For
 ///   theories requiring search (e.g., unification with multiple matches),
 ///   `label()` produces a `LogicStream` of constraint alternatives.
@@ -528,10 +529,11 @@ pub trait ConstraintTheory: Clone + fmt::Debug + Send + Sync + 'static {
 
     /// Generate labeling choices for search (used by LogicT).
     ///
-    /// For decidable theories, this returns `LogicStream::empty()` —
-    /// propagation alone determines satisfiability. For non-decidable
-    /// theories, this produces a fair stream of variable assignments
-    /// to search over.
+    /// A theory whose propagation is complete may return
+    /// `LogicStream::empty()`. An empty or exhausted implementation stream is
+    /// not, by itself, a semantic completeness certificate; exact classical
+    /// reasoning additionally requires [`DecidableConstraintTheory`]. Other
+    /// theories produce a fair stream of variable assignments to search over.
     fn label(&self, store: &Self::Store) -> LogicStream<Self::Constraint>;
 
     /// Evaluate whether an assignment satisfies a constraint.

@@ -9,8 +9,9 @@
  *      no substitution can make them equal (unsatisfiability).
  *   3. Constructor clash: if two terms have different head constructors,
  *      no substitution can make them equal (unsatisfiability).
- *   4. TheoryAlgebra bridge: the BooleanAlgebra structure over
- *      unification predicates is preserved.
+ *   4. Pointwise Boolean laws: the semantic powerset of substitutions obeys
+ *      the Boolean connectives. This does not construct an effective
+ *      satisfiability or witness procedure for arbitrary Boolean formulas.
  *
  * The model uses an inductive term type with Var, Const, and App
  * constructors, matching the Rust TermExpr type in unification.rs.
@@ -25,7 +26,7 @@
  *   apply_subst                 | TermExpr::apply_subst()            | unification.rs:100
  *   occurs_in                   | occurs_in()                        | unification.rs
  *   unify soundness contract    | UnificationStore::unify()          | unification.rs
- *   TheoryAlgebra               | TheoryAlgebra<T>                   | logict.rs
+ *   UnifPred pointwise laws     | TheoryPred Boolean syntax          | logict.rs
  *
  * Reference: Martelli & Montanari (1982), Robinson (1965)
  * Rocq 9.1 compatible.
@@ -376,20 +377,20 @@ Section UnificationSoundness.
   Qed.
 
   (* ===================================================================== *)
-  (*  TheoryAlgebra Bridge: Boolean Algebra Preservation                    *)
+  (*  Pointwise Boolean structure over semantic substitution predicates     *)
   (* ===================================================================== *)
 
-  (* The TheoryAlgebra<T> bridge in logict.rs wraps a ConstraintTheory as
-     a BooleanAlgebra. For the unification theory, predicates are
-     "unification-satisfiable sets" — sets of substitutions satisfying a
-     given equation. The Boolean operations are:
+  (* Predicates denote sets of substitutions satisfying a given equation.
+     Their pointwise Boolean operations are:
 
        - AND: conjunction of constraints (both equations must hold)
        - OR:  disjunction (either equation holds)
        - NOT: negation (equation does not hold)
 
-     We model these as Prop-valued predicates over substitutions and
-     prove the Boolean algebra axioms hold. *)
+     We model these as Prop-valued predicates over substitutions and prove
+     their extensional Boolean laws. This semantic result does not supply the
+     computable, total satisfiability and witness procedures required by the
+     Rust DecidableConstraintTheory / BooleanAlgebra gate. *)
 
   Definition UnifPred := Subst -> Prop.
 
@@ -484,13 +485,13 @@ Section UnificationSoundness.
   Qed.
 
   (* ===================================================================== *)
-  (*  Bridge Theorem: TheoryAlgebra preserves BooleanAlgebra                *)
+  (*  Pointwise Boolean laws over the semantic substitution space           *)
   (* ===================================================================== *)
 
-  (* The composite theorem: the TheoryAlgebra bridge preserves all
-     essential Boolean algebra axioms. We state this as a conjunction
-     for documentation purposes. *)
-  Theorem theory_algebra_preserves_ba :
+  (* The composite theorem states the pointwise Boolean laws. It deliberately
+     says nothing about effective satisfiability, witness completeness, or the
+     Rust DecidableConstraintTheory gate. *)
+  Theorem unification_predicate_boolean_laws :
     (* AND commutative *)
     (forall P Q : UnifPred,
       upred_eq (upred_and P Q) (upred_and Q P)) /\
@@ -550,7 +551,7 @@ End UnificationSoundness.
 (*    6.  kind_clash_const_app — Const c = App f args unsatisfiable       *)
 (*    7.  kind_clash_app_const — App f args = Const c unsatisfiable       *)
 (*                                                                         *)
-(*  TheoryAlgebra Boolean Algebra:                                         *)
+(*  Pointwise Boolean laws for predicates over substitutions:              *)
 (*    8.  theory_algebra_and_comm                                          *)
 (*    9.  theory_algebra_or_comm                                           *)
 (*    10. theory_algebra_and_assoc                                         *)
@@ -561,7 +562,7 @@ End UnificationSoundness.
 (*    15. theory_algebra_or_false                                          *)
 (*    16. theory_algebra_de_morgan_and                                     *)
 (*    17. theory_algebra_de_morgan_or                                      *)
-(*    18. theory_algebra_preserves_ba (composite)                          *)
+(*    18. unification_predicate_boolean_laws (composite)                   *)
 (*                                                                         *)
 (*  Auxiliary:                                                              *)
 (*    19. apply_id             — identity substitution is neutral           *)

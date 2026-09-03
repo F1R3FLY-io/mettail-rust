@@ -309,6 +309,75 @@ Section BoundedCollection.
   Qed.
 End BoundedCollection.
 
+Section ExactFiniteWitnessUniverse.
+  Context {Witness : Type}.
+  Variable valid : Witness -> Prop.
+  Variable satisfies : Witness -> bool.
+
+  (** A classical type-predicate adapter must search one complete semantic
+      domain.  In particular, conjunction cannot combine unrelated witnesses
+      obtained by deciding its leaves independently. *)
+  Definition exact_witness (universe : list Witness) : option Witness :=
+    find_valid satisfies universe.
+
+  Definition CompleteWitnessUniverse (universe : list Witness) : Prop :=
+    forall witness, valid witness <-> In witness universe.
+
+  Theorem exact_witness_is_shared_and_sound :
+    forall universe witness,
+      CompleteWitnessUniverse universe ->
+      exact_witness universe = Some witness ->
+      valid witness /\ satisfies witness = true.
+  Proof.
+    intros universe witness Hcomplete Hfound.
+    unfold exact_witness in Hfound.
+    apply find_valid_sound in Hfound as [Hin Hsatisfies].
+    split; [now apply (proj2 (Hcomplete witness)) | exact Hsatisfies].
+  Qed.
+
+  Theorem complete_witness_universe_refutation_is_sound :
+    forall universe,
+      CompleteWitnessUniverse universe ->
+      exact_witness universe = None ->
+      forall witness, valid witness -> satisfies witness = false.
+  Proof.
+    intros universe Hcomplete Hnone witness Hvalid.
+    unfold exact_witness in Hnone.
+    now apply (find_valid_none satisfies universe Hnone witness
+      (proj1 (Hcomplete witness) Hvalid)).
+  Qed.
+
+  Theorem uninhabited_witness_is_excluded :
+    forall universe bottom,
+      CompleteWitnessUniverse universe ->
+      ~ valid bottom ->
+      ~ In bottom universe.
+  Proof.
+    intros universe bottom Hcomplete Huninhabited Hin.
+    apply Huninhabited.
+    now apply (proj2 (Hcomplete bottom)).
+  Qed.
+End ExactFiniteWitnessUniverse.
+
+Module IndependentTypeLeafCounterexample.
+  Definition universe : list bool := [false; true].
+  Definition left (candidate : bool) : bool := candidate.
+  Definition right (candidate : bool) : bool := negb candidate.
+
+  (** The former TypeSystemAlgebra algorithm asked whether each leaf had some
+      witness, then conjoined those answers. *)
+  Definition leafwise_conjunction : bool :=
+    existsb left universe && existsb right universe.
+
+  (** Correct satisfiability requires one candidate satisfying both leaves. *)
+  Definition shared_witness_conjunction : bool :=
+    existsb (fun candidate => left candidate && right candidate) universe.
+
+  Theorem independent_leaf_witnesses_do_not_prove_conjunction :
+    leafwise_conjunction = true /\ shared_witness_conjunction = false.
+  Proof. split; reflexivity. Qed.
+End IndependentTypeLeafCounterexample.
+
 Module OldBooleanCounterexample.
   Definition valid_one (candidate : nat) : bool := Nat.eqb candidate 1.
 
@@ -342,4 +411,8 @@ Print Assumptions negated_truncated_quantifier_fails_closed.
 Print Assumptions undetermined_counterexample_does_not_prove_entailment.
 Print Assumptions bounded_collection_marks_every_truncation.
 Print Assumptions bounded_collection_exhaustion_is_exact_for_the_stream.
+Print Assumptions exact_witness_is_shared_and_sound.
+Print Assumptions complete_witness_universe_refutation_is_sound.
+Print Assumptions uninhabited_witness_is_excluded.
+Print Assumptions IndependentTypeLeafCounterexample.independent_leaf_witnesses_do_not_prove_conjunction.
 Print Assumptions OldBooleanCounterexample.bounded_none_to_false_is_unsound.

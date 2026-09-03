@@ -1,5 +1,6 @@
 use super::*;
 use crate::lattice_theory::{LatticeStore, LatticeTheory, TypeId};
+use crate::symbolic::BooleanAlgebra;
 
 /// Helper: build a simple type hierarchy for testing.
 ///
@@ -81,6 +82,40 @@ fn lattice_subtype_reflexive() {
             "is_subtype({ty}, {ty}) should be true (reflexivity)"
         );
     }
+    assert!(!sys.is_subtype(&env, &99, &99), "undeclared IDs are not semantic types");
+}
+
+#[test]
+fn lattice_type_system_rejects_undeclared_ids_at_every_entry_point() {
+    let sys = test_system();
+    let env = sys.empty_env();
+    let invalid = LatticeTerm::Const { name: "forged".into(), ty: 99 };
+    assert!(sys.infer(&env, &invalid).is_empty());
+    assert!(!sys.check(&env, &invalid, &99));
+
+    let extended = sys.extend(&env, "forged", &99);
+    assert!(!extended.bindings.contains_key("forged"));
+    assert!(sys
+        .infer(&extended, &LatticeTerm::Var("forged".into()))
+        .is_empty());
+
+    let bounded = LatticeTypeSystem::with_bounds(
+        sys.theory.clone(),
+        sys.store.clone(),
+        HashMap::new(),
+        99,
+        98,
+    );
+    assert_eq!(bounded.top(), None);
+    assert_eq!(bounded.bottom(), None);
+
+    let malformed_constructor = LatticeTypeSystem::new(
+        sys.theory,
+        sys.store,
+        HashMap::from([("Forged".into(), (Vec::new(), 99))]),
+    );
+    let app = LatticeTerm::App { head: "Forged".into(), args: Vec::new() };
+    assert!(malformed_constructor.infer(&env, &app).is_empty());
 }
 
 // ── TypeSystem trait: transitivity ──
@@ -373,6 +408,8 @@ fn type_algebra_satisfiable() {
     assert!(!algebra.is_satisfiable_pred(&TypePred::False));
     assert!(algebra.is_satisfiable_pred(&TypePred::HasType(2)));
     assert!(!algebra.is_satisfiable_pred(&TypePred::HasType(99))); // unknown type
+    assert!(!algebra.evaluate(&TypePred::True, &99));
+    assert!(!algebra.evaluate(&TypePred::HasType(99), &99));
 }
 
 #[test]
@@ -398,9 +435,10 @@ fn type_algebra_and_or_not() {
     let int_inhabited = TypePred::HasType(2);
     let string_inhabited = TypePred::HasType(4);
 
-    // And: both inhabited
+    // Int and String are each inhabited, but no one semantic witness has both
+    // types.  The designated bottom type is empty and cannot act as a witness.
     let both = TypePred::And(Box::new(int_inhabited.clone()), Box::new(string_inhabited.clone()));
-    assert!(algebra.evaluate_pred(&both));
+    assert!(!algebra.evaluate_pred(&both));
 
     // Or: at least one
     let either = TypePred::Or(Box::new(int_inhabited.clone()), Box::new(TypePred::False));
@@ -409,6 +447,44 @@ fn type_algebra_and_or_not() {
     // Not: negation
     let not_false = TypePred::Not(Box::new(TypePred::False));
     assert!(algebra.evaluate_pred(&not_false));
+}
+
+#[test]
+fn type_algebra_conjunction_requires_one_shared_type_witness() {
+    let theory = LatticeTheory::new(vec![1, 2], HashMap::new());
+    let system = LatticeTypeSystem::new(theory, LatticeStore::new(), HashMap::new());
+    let algebra = TypeSystemAlgebra::new(system);
+    let left = TypePred::HasType(1);
+    let right = TypePred::HasType(2);
+
+    assert!(algebra.is_satisfiable_pred(&left));
+    assert!(algebra.is_satisfiable_pred(&right));
+
+    let conjunction = TypePred::And(Box::new(left), Box::new(right));
+    assert!(!algebra.is_satisfiable_pred(&conjunction));
+    assert_eq!(algebra.witness(&conjunction), None);
+
+    let complement = TypePred::Not(Box::new(TypePred::HasType(1)));
+    assert_eq!(algebra.witness(&complement), Some(2));
+}
+
+#[test]
+fn designated_lattice_bottom_is_empty_and_never_a_boolean_witness() {
+    let sys = test_system();
+    let env = sys.empty_env();
+    assert!(!sys.is_inhabited(&env, &6));
+
+    let algebra = TypeSystemAlgebra::new(sys);
+    assert!(!algebra
+        .system
+        .complete_witness_universe(&algebra.env)
+        .contains(&6));
+    assert!(!algebra.is_satisfiable_pred(&TypePred::HasType(6)));
+    assert_eq!(algebra.witness(&TypePred::HasType(6)), None);
+
+    let int_and_string =
+        TypePred::And(Box::new(TypePred::HasType(2)), Box::new(TypePred::HasType(4)));
+    assert!(!algebra.is_satisfiable_pred(&int_and_string));
 }
 
 // ── RefinementTypeSystem ──
@@ -602,6 +678,138 @@ mod boolean_algebra_tests {
     use super::*;
     use crate::symbolic::BooleanAlgebra;
 
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    enum ColorType {
+        Any,
+        Red,
+        Blue,
+        Never,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    enum ColorWitness {
+        RedValue,
+        BlueValue,
+        Forged,
+    }
+
+    #[derive(Clone, Debug)]
+    struct FiniteColorSystem;
+
+    impl FiniteColorSystem {
+        fn has_type(witness: &ColorWitness, ty: &ColorType) -> bool {
+            matches!(ty, ColorType::Any)
+                || matches!(
+                    (witness, ty),
+                    (ColorWitness::RedValue, ColorType::Red)
+                        | (ColorWitness::BlueValue, ColorType::Blue)
+                )
+        }
+    }
+
+    impl TypeSystem for FiniteColorSystem {
+        type Type = ColorType;
+        type TypeEnv = ();
+        type Term = ColorWitness;
+
+        fn empty_env(&self) -> Self::TypeEnv {}
+
+        fn check(&self, _env: &Self::TypeEnv, term: &Self::Term, ty: &Self::Type) -> bool {
+            Self::has_type(term, ty)
+        }
+
+        fn infer(&self, _env: &Self::TypeEnv, term: &Self::Term) -> Vec<Self::Type> {
+            match term {
+                ColorWitness::RedValue => vec![ColorType::Red, ColorType::Any],
+                ColorWitness::BlueValue => vec![ColorType::Blue, ColorType::Any],
+                ColorWitness::Forged => Vec::new(),
+            }
+        }
+
+        fn is_subtype(&self, _env: &Self::TypeEnv, sub: &Self::Type, sup: &Self::Type) -> bool {
+            sub == sup
+                || matches!(sub, ColorType::Never)
+                || matches!((sub, sup), (ColorType::Red | ColorType::Blue, ColorType::Any))
+        }
+
+        fn join(&self, env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
+            if self.is_subtype(env, a, b) {
+                Some(b.clone())
+            } else if self.is_subtype(env, b, a) {
+                Some(a.clone())
+            } else {
+                Some(ColorType::Any)
+            }
+        }
+
+        fn meet(&self, env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
+            if self.is_subtype(env, a, b) {
+                Some(a.clone())
+            } else if self.is_subtype(env, b, a) {
+                Some(b.clone())
+            } else {
+                Some(ColorType::Never)
+            }
+        }
+
+        fn extend(&self, _env: &Self::TypeEnv, _var: &str, _ty: &Self::Type) -> Self::TypeEnv {}
+
+        fn is_inhabited(&self, _env: &Self::TypeEnv, ty: &Self::Type) -> bool {
+            !matches!(ty, ColorType::Never)
+        }
+
+        fn top(&self) -> Option<Self::Type> {
+            Some(ColorType::Any)
+        }
+
+        fn bottom(&self) -> Option<Self::Type> {
+            Some(ColorType::Never)
+        }
+    }
+
+    impl DecidableFiniteTypeSystem for FiniteColorSystem {
+        type Witness = ColorWitness;
+
+        fn complete_witness_universe(&self, _env: &Self::TypeEnv) -> Vec<Self::Witness> {
+            vec![ColorWitness::RedValue, ColorWitness::BlueValue]
+        }
+
+        fn witness_has_type(
+            &self,
+            _env: &Self::TypeEnv,
+            witness: &Self::Witness,
+            ty: &Self::Type,
+        ) -> bool {
+            Self::has_type(witness, ty)
+        }
+
+        fn is_valid_type(&self, _env: &Self::TypeEnv, _ty: &Self::Type) -> bool {
+            true
+        }
+
+        fn is_valid_witness(&self, _env: &Self::TypeEnv, witness: &Self::Witness) -> bool {
+            !matches!(witness, ColorWitness::Forged)
+        }
+    }
+
+    #[test]
+    fn type_algebra_ranges_over_semantic_witnesses_not_type_syntax() {
+        let algebra = TypeSystemAlgebra::new(FiniteColorSystem);
+        let red = TypePred::HasType(ColorType::Red);
+        let blue = TypePred::HasType(ColorType::Blue);
+        let any = TypePred::HasType(ColorType::Any);
+        let never = TypePred::HasType(ColorType::Never);
+
+        assert_eq!(algebra.witness(&red), Some(ColorWitness::RedValue));
+        assert!(!algebra.is_satisfiable(&algebra.and(&red, &blue)));
+        assert_eq!(
+            algebra.witness(&algebra.and(&any, &algebra.not(&red))),
+            Some(ColorWitness::BlueValue)
+        );
+        assert!(!algebra.is_satisfiable(&never));
+        assert!(!algebra.evaluate(&algebra.true_pred(), &ColorWitness::Forged));
+    }
+
     #[test]
     fn type_algebra_boolean_algebra_contract() {
         let sys = test_system();
@@ -628,6 +836,73 @@ mod boolean_algebra_tests {
 
         // witness(false) = None
         assert_eq!(algebra.witness(&f), None);
+    }
+
+    #[test]
+    fn type_algebra_decision_matches_exhaustive_domain_evaluation() {
+        let algebra = TypeSystemAlgebra::new(test_system());
+        let universe = algebra.system.complete_witness_universe(&algebra.env);
+        let mut atoms = vec![TypePred::True, TypePred::False];
+        for ty in [0, 1, 2, 3, 4, 5, 6, 99] {
+            atoms.push(TypePred::HasType(ty));
+        }
+        for (sub, sup) in [(2, 1), (1, 2), (6, 4), (99, 99), (2, 99)] {
+            atoms.push(TypePred::Subtype { sub, sup });
+        }
+
+        let mut predicates = atoms.clone();
+        predicates.extend(
+            atoms
+                .iter()
+                .cloned()
+                .map(|pred| TypePred::Not(Box::new(pred))),
+        );
+        for left in &atoms {
+            for right in &atoms {
+                predicates.push(TypePred::And(Box::new(left.clone()), Box::new(right.clone())));
+                predicates.push(TypePred::Or(Box::new(left.clone()), Box::new(right.clone())));
+            }
+        }
+
+        for predicate in &predicates {
+            let expected = universe
+                .iter()
+                .any(|candidate| algebra.evaluate(predicate, candidate));
+            assert_eq!(
+                algebra.is_satisfiable(predicate),
+                expected,
+                "satisfiability disagrees with exhaustive evaluation for {predicate:?}"
+            );
+            match algebra.witness(predicate) {
+                Some(witness) => {
+                    assert!(universe.contains(&witness));
+                    assert!(algebra.evaluate(predicate, &witness));
+                },
+                None => assert!(!expected),
+            }
+
+            let complement = algebra.not(predicate);
+            for candidate in &universe {
+                assert_eq!(
+                    algebra.evaluate(&complement, candidate),
+                    !algebra.evaluate(predicate, candidate),
+                    "complement disagrees at {candidate:?} for {predicate:?}"
+                );
+            }
+        }
+
+        for premise in &predicates {
+            for conclusion in &atoms {
+                let expected = universe.iter().all(|candidate| {
+                    !algebra.evaluate(premise, candidate) || algebra.evaluate(conclusion, candidate)
+                });
+                assert_eq!(
+                    algebra.implies(premise, conclusion),
+                    expected,
+                    "implication disagrees for {premise:?} -> {conclusion:?}"
+                );
+            }
+        }
     }
 }
 

@@ -141,15 +141,25 @@ impl LatticeTypeSystem {
         while let Some(task) = tasks.pop() {
             match task {
                 Task::Visit(LatticeTerm::Var(name)) => {
-                    values.push(env.bindings.get(name).copied());
+                    values.push(
+                        env.bindings
+                            .get(name)
+                            .copied()
+                            .filter(|ty| self.theory.universe.contains(ty)),
+                    );
                 },
-                Task::Visit(LatticeTerm::Const { ty, .. }) => values.push(Some(*ty)),
+                Task::Visit(LatticeTerm::Const { ty, .. }) => {
+                    values.push(self.theory.universe.contains(ty).then_some(*ty));
+                },
                 Task::Visit(LatticeTerm::App { head, args }) => {
                     let Some((expected, result)) = self.constructor_types.get(head) else {
                         values.push(None);
                         continue;
                     };
-                    if args.len() != expected.len() {
+                    if !self.theory.universe.contains(result)
+                        || expected.iter().any(|ty| !self.theory.universe.contains(ty))
+                        || args.len() != expected.len()
+                    {
                         values.push(None);
                     } else if args.is_empty() {
                         values.push(Some(*result));
@@ -204,8 +214,10 @@ impl TypeSystem for LatticeTypeSystem {
     fn check(&self, env: &LatticeTypeEnv, term: &LatticeTerm, ty: &TypeId) -> bool {
         let mut store = self.store.clone();
         match self.infer_single(env, term, &mut store) {
-            Some(inferred) => self.theory.is_subtype(&mut store, inferred, *ty),
-            None => false,
+            Some(inferred) if self.theory.universe.contains(ty) => {
+                self.theory.is_subtype(&mut store, inferred, *ty)
+            },
+            Some(_) | None => false,
         }
     }
 
@@ -218,36 +230,87 @@ impl TypeSystem for LatticeTypeSystem {
     }
 
     fn is_subtype(&self, _env: &LatticeTypeEnv, sub: &TypeId, sup: &TypeId) -> bool {
+        if !self.theory.universe.contains(sub) || !self.theory.universe.contains(sup) {
+            return false;
+        }
         let mut store = self.store.clone();
         self.theory.is_subtype(&mut store, *sub, *sup)
     }
 
     fn join(&self, _env: &LatticeTypeEnv, a: &TypeId, b: &TypeId) -> Option<TypeId> {
+        if !self.theory.universe.contains(a) || !self.theory.universe.contains(b) {
+            return None;
+        }
         let mut store = self.store.clone();
-        self.theory.join(&mut store, *a, *b)
+        self.theory
+            .join(&mut store, *a, *b)
+            .filter(|result| self.theory.universe.contains(result))
     }
 
     fn meet(&self, _env: &LatticeTypeEnv, a: &TypeId, b: &TypeId) -> Option<TypeId> {
+        if !self.theory.universe.contains(a) || !self.theory.universe.contains(b) {
+            return None;
+        }
         let mut store = self.store.clone();
-        self.theory.meet(&mut store, *a, *b)
+        self.theory
+            .meet(&mut store, *a, *b)
+            .filter(|result| self.theory.universe.contains(result))
     }
 
     fn extend(&self, env: &LatticeTypeEnv, var: &str, ty: &TypeId) -> LatticeTypeEnv {
         let mut new_env = env.clone();
-        new_env.bindings.insert(var.to_string(), *ty);
+        if self.theory.universe.contains(ty) {
+            new_env.bindings.insert(var.to_string(), *ty);
+        }
         new_env
     }
 
     fn is_inhabited(&self, _env: &LatticeTypeEnv, ty: &TypeId) -> bool {
-        // In a finite lattice, all declared types are inhabited
-        self.theory.universe.contains(ty)
+        // The free finite-lattice model gives every declared type a principal
+        // semantic witness except the designated bottom.  Bottom denotes the
+        // empty type: using it as a witness would make every pair of types
+        // overlap because bottom is a subtype of every type.
+        self.theory.universe.contains(ty) && self.bottom_type != Some(*ty)
     }
 
     fn top(&self) -> Option<TypeId> {
-        self.top_type
+        self.top_type.filter(|ty| self.theory.universe.contains(ty))
     }
 
     fn bottom(&self) -> Option<TypeId> {
         self.bottom_type
+            .filter(|ty| self.theory.universe.contains(ty))
+    }
+}
+
+impl DecidableFiniteTypeSystem for LatticeTypeSystem {
+    type Witness = TypeId;
+
+    fn complete_witness_universe(&self, env: &Self::TypeEnv) -> Vec<Self::Witness> {
+        let mut universe = self.theory.universe.clone();
+        universe.retain(|ty| self.is_inhabited(env, ty));
+        if let Some(top) = self.top_type {
+            if let Some(index) = universe.iter().position(|candidate| *candidate == top) {
+                universe[..=index].rotate_right(1);
+            }
+        }
+        universe
+    }
+
+    fn witness_has_type(
+        &self,
+        env: &Self::TypeEnv,
+        witness: &Self::Witness,
+        ty: &Self::Type,
+    ) -> bool {
+        self.is_inhabited(env, witness) && self.is_subtype(env, witness, ty)
+    }
+
+    fn is_valid_type(&self, _env: &Self::TypeEnv, ty: &Self::Type) -> bool {
+        self.theory.universe.contains(ty)
+    }
+
+    fn is_valid_witness(&self, env: &Self::TypeEnv, witness: &Self::Witness) -> bool {
+        self.is_valid_type(env, witness) && self.is_inhabited(env, witness)
     }
 }

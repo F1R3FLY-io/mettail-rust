@@ -7037,13 +7037,10 @@ pub(crate) fn lint_lt01_search_bound_exceeded(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
 ) {
-    // LT01 is emitted when LogicT search hits its depth limit.
-    // Any ConstraintTheory with non-empty label() can trigger it.
-
-    // Presburger: decidable theory — label() returns empty, search bound never exceeded.
-    // Lattice theory: decidable — search bound never exceeded.
-
-    // Unification: may exceed on deeply nested CustomMatch alternatives.
+    // LT01 is emitted only when an analysis result records actual bounded
+    // LogicT truncation. Label-stream shape is not a decidability certificate.
+    // The current conjunctive unification analyzer performs no LogicT search,
+    // so its reserved result field remains empty.
     if let Some(result) = ctx.unification_result {
         for desc in &result.search_bound_exceeded {
             diagnostics.push(LintDiagnostic {

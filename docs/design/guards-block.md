@@ -476,9 +476,11 @@ The current well-known theory types and the modules they activate:
 
 The mapping is performed by string-matching the theory's quoted Rust
 type name against this table inside `classify_grammar_with_config()`.
-New theory types can be added by extending this table — no other
-pipeline changes are required because all 15 modules are already
-parameterized over an effective Boolean algebra via `TheoryAlgebra<T>`.
+New theory types can be added by extending this table. Every registered
+`ConstraintTheory` can participate in bounded reject-safe analysis through
+`TheoryAlgebra<T>`. Classical automata modules additionally require an exact
+`DecidableConstraintTheory`; registration and type-name dispatch do not confer
+that capability.
 
 ### 6.1 Why String Matching?
 

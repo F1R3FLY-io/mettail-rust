@@ -17,55 +17,56 @@ skinparam note {
   FontColor #111827
 }
 
-title The bridge: a ConstraintTheory becomes a BooleanAlgebra the automata reuse
+title Capability-gated bridge from constraint theories to symbolic automata
 
-' ── Left→right dataflow: registration → theory → adapter → BooleanAlgebra → consumers ──
 component "theories { name = T for [Cat] }\n(TheoryRegistration)" as Reg #DBEAFE
 component "ConstraintTheory T\npropagate · label · witness · evaluate" as Theory #DBEAFE
-component "TheoryAlgebra<T> { search_bound }\n(the adapter)" as Adapter #DCFCE7
-interface "BooleanAlgebra\nis_satisfiable = witness().is_some()" as BA #DCFCE7
-component "SymbolicAutomaton · minterms · determinize · lint" as Consumers #CCFBF1
+component "TheoryAlgebra<T> { search_bound }\nbounded fair search + witness recheck" as Adapter #FEF3C7
+interface "RejectSafeAlgebra\nis_satisfiable_3v\nSat | Unsat | DontKnow" as RejectSafe #FEF3C7
+component "guard pruning · admission\nDontKnow rejects, never refutes" as SafeConsumers #FDE68A
 
-Reg     -right-> Theory   : lowers to
-Theory  -right-> Adapter  : wrapped by
-Adapter -right-> BA       : impl
-BA      -right-> Consumers : reused by
+Reg -right-> Theory : lowers to
+Theory -right-> Adapter : wrapped by
+Adapter -right-> RejectSafe : every T
+RejectSafe -right-> SafeConsumers : conservative use
+
+component "DecidableConstraintTheory T\ndecide_exact terminates and is complete" as Decidable #DCFCE7
+interface "BooleanAlgebra\nexact SAT · complement · witness" as Boolean #DCFCE7
+component "SFA minterms · determinize\ninclusion · equivalence" as ExactConsumers #CCFBF1
+
+Theory -down-> Decidable : additional capability
+Decidable -right-> Boolean : same adapter implements
+Boolean -right-> ExactConsumers : exact algorithms
 
 note bottom of Adapter
-  collect_constraints:
-  And → fair_conjoin,  Or → interleave,
-  Not → De Morgan / negation-as-failure;
-  then collect_bounded(search_bound).
+  Bounded search proves Sat only with a rechecked witness.
+  Structural contradiction may prove Unsat.
+  Search exhaustion without completeness yields DontKnow.
 end note
 
-' ── Formal counterpart (dashed) ──
-component "TheoryCombination.v\ncombined_eba_laws" as Formal #E0E7FF
-Adapter ..> Formal : formal counterpart
-
-' ── The Z3/SMT exception: a ConstraintTheory that stops at Sat3, never a BooleanAlgebra ──
-component "Z3Theory\npropagate · is_consistent · witness\n(logict_smt.rs, feature smt)" as Z3 #FEF3C7
-interface "Sat3-only API\nis_satisfiable_3v · checked_witness\nSat | Unsat | DontKnow" as Sat3 #FEF3C7
-
-Theory -down-> Z3   : SMT gap-filler\n(only where a verified decider says DontKnow)
-Z3     -down-> Sat3 : decides (3-valued)
-Z3     ..>     BA   : ✗ does NOT implement
-
-note bottom of Z3 #FEE2E2
-  Z3Theory impls ONLY ConstraintTheory — never
-  BooleanAlgebra / RejectSafeAlgebra / HeytingAlgebra.
-  DontKnow ⇒ don't-claim-entailment; never routed into
-  SFA complement / determinize / equivalence.
+note bottom of Decidable
+  Empty label streams, bounded exhaustion, and solver
+  silence are not exactness witnesses. The explicit
+  decide_exact contract is the classical admission gate.
 end note
 
-component "Z3WitnessChecked.v\nchecked_witness_sound\nchecked_witness_no_fabrication" as ZForm #E0E7FF
-Z3 ..> ZForm : formal counterpart
+component "Z3Theory\nConstraintTheory only" as Z3 #FECACA
+Z3 -up-> Theory : instance of
+Z3 ..> RejectSafe : via TheoryAlgebra<Z3Theory>
+Z3 ..> Boolean : forbidden without exact decider
+
+component "ConstraintDecision.v\npositive-witness soundness\ncomplete-refutation requirement" as Formal #E0E7FF
+Adapter ..> Formal : mechanized boundary
+Decidable ..> Formal : completeness premise
 
 legend right
 |= Color |= Role |
-|<#DBEAFE> | classical / decidable: registration + ConstraintTheory |
-|<#DCFCE7> | adapter + the BooleanAlgebra it provides |
-|<#CCFBF1> | SFA consumers that reuse the algebra (teal) |
-|<#FEF3C7> | Z3/SMT leg — a Sat3-only ConstraintTheory that STOPS here (amber) |
-|<#E0E7FF> | formal counterpart discharged in Coq (indigo) |
+|<#DBEAFE> | general registered constraint theory (blue) |
+|<#FEF3C7> | bounded three-valued bridge (amber) |
+|<#FDE68A> | fail-closed consumers (gold) |
+|<#DCFCE7> | exact decidability capability and Boolean bridge (green) |
+|<#CCFBF1> | classical symbolic-automata consumers (teal) |
+|<#FECACA> | incomplete solver path excluded from classical use (red) |
+|<#E0E7FF> | Rocq proof boundary (indigo) |
 endlegend
 @enduml

@@ -195,7 +195,9 @@ impl ConstraintTheory for UnificationTheory {
 
 Key properties:
 - **`propagate`** runs the full Martelli-Montanari algorithm, returning `None` on failure
-- **`label`** returns `LogicStream::empty()` — unification is decidable, so no search is needed
+- **`label`** returns `LogicStream::empty()` because conjunctive syntactic
+  unification is deterministic. Stream emptiness does not certify exact
+  decision of arbitrary Boolean `TheoryPred` combinations.
 - **`witness`** extracts the solved substitution from a consistent store
 - **`evaluate`** checks whether an assignment satisfies an equation
 

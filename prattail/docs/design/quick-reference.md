@@ -2551,9 +2551,10 @@ struct PresburgerTheory { bit_width: u32 }         // ConstraintTheory impl (val
 ```
 
 **Dual implementation:** `PresburgerAlgebra` directly implements `BooleanAlgebra`
-via NFA emptiness (fast path).  `PresburgerTheory` implements `ConstraintTheory`
-with `label() → LogicStream::empty()` (decidable — no search needed).  Cross-
-validation ensures both produce identical results.
+via NFA emptiness (fast path). `PresburgerTheory` implements both
+`ConstraintTheory` and `DecidableConstraintTheory`; its exact NFA decision
+procedure, rather than its empty labeling stream, justifies the classical
+bridge. Cross-validation ensures both paths produce identical results.
 
 **Pipeline integration:** M12_LINEAR_ARITHMETIC bit (11) in `PredicateSignature`.
 Single-variable guards delegate to `IntervalAlgebra` for performance.
@@ -2584,7 +2585,9 @@ struct UnificationTheory { signature: TermSignature }  // ConstraintTheory impl
 **ConstraintTheory integration:** `propagate()` applies Martelli-Montanari.
 `label()` returns `LogicStream::empty()` for deterministic unification, or
 interleaves over `CustomMatch` alternatives when multiple results exist.
-`TheoryAlgebra<UnificationTheory>` provides `BooleanAlgebra` for SFA integration.
+`TheoryAlgebra<UnificationTheory>` provides bounded `RejectSafeAlgebra`
+reasoning. It cannot enter classical SFA complement, inclusion, or equivalence
+unless a complete `DecidableConstraintTheory` procedure is supplied.
 
 **Use cases:** MeTTa pattern matching, polymorphic type variable instantiation,
 Rholang quoted process matching (`@{P | Q}`), comm rule guard unification.
@@ -2600,9 +2603,11 @@ UN03 subsumed-unification-guard.
 
 **Source:** `lattice_theory.rs` (feature: `lattice-theory`, depends on `logict`)
 
-**Theory:** Finite poset (partial order) with join (LUB) and meet (GLB) operations.
-Transitive closure via Warshall's algorithm.  Decidable — finite type universe
-means `label()` returns empty (propagation alone suffices).
+**Theory:** Finite poset (partial order) with join (LUB) and meet (GLB)
+operations. Transitive closure uses Warshall's algorithm. Mutable
+`LatticeTheory` receives only the reject-safe bridge. `FrozenLatticeTheory`
+implements `DecidableConstraintTheory` over an immutable closed relation; that
+explicit exact procedure, not an empty labeling stream, enables Boolean use.
 
 **Key types:**
 
@@ -2659,9 +2664,11 @@ struct TheoryAlgebra<T: ConstraintTheory> { theory: T, search_bound: usize }
 
 **ConstraintTheory + TheoryAlgebra:** The `ConstraintTheory` trait provides a
 pluggable constraint domain with `propagate()`/`label()`/`witness()`/`evaluate()`.
-`TheoryAlgebra<T>` wraps any `ConstraintTheory` into a `BooleanAlgebra` for SFA
-integration — decidable theories use propagation-only; non-decidable theories
-use LogicT fair search (bounded).
+`TheoryAlgebra<T>` wraps every such theory in bounded, fair,
+certificate-checked `RejectSafeAlgebra` search. Only
+`T: DecidableConstraintTheory` receives `BooleanAlgebra` and may enter SFA
+complement/inclusion; an exhausted bounded search is never treated as an
+unsatisfiability proof.
 
 **Lints:** LT01 search-bound-exceeded.
 
@@ -3790,7 +3797,7 @@ PD01-04 (predicate dispatch).
 | **SFA**                   | Symbolic finite automaton                                             |
 | **SGD**                   | Stochastic gradient descent                                           |
 | **StarSemiring**          | Semiring with Kleene closure operation a*                             |
-| **TheoryAlgebra**         | Bridge wrapping ConstraintTheory into BooleanAlgebra                  |
+| **TheoryAlgebra**         | Reject-safe constraint bridge; exact Boolean algebra when explicitly decidable |
 | **Thompson construction** | NFA construction from regular expressions                             |
 | **Trampoline**            | Explicit continuation stack replacing OS call stack                   |
 | **TRS**                   | Term rewriting system                                                 |

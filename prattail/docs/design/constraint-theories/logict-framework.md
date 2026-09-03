@@ -482,12 +482,16 @@ PraTTaIL's symbolic-automata framework. It separates two orthogonal concerns:
 
 1. **Propagation** — deterministic constraint narrowing. Adding a constraint to
    the store may detect inconsistency (return `None`) or yield a refined store.
-   For *decidable* theories, propagation alone decides satisfiability.
+   Some theories have complete propagation, but that fact must be supplied by
+   the separate `DecidableConstraintTheory` contract; it cannot be inferred
+   from propagation succeeding.
 
 2. **Labeling** — non-deterministic search choices. For theories that need
    search (e.g. choosing among alternative constructor matches), `label`
    produces a `LogicStream` of constraint alternatives that LogicT explores
-   fairly. A decidable theory returns `LogicStream::empty()`.
+   fairly. A theory may return `LogicStream::empty()` when it has no labeling
+   alternatives, but emptiness is operational behavior rather than a proof of
+   semantic completeness.
 
 ### 6.1 Specification (verbatim trait, with pre/post-conditions)
 
@@ -542,8 +546,8 @@ across the fair-search frontier.
 | Theory | Decidability | `label()` behavior | Rationale |
 |---|---|---|---|
 | `PresburgerTheory` | Decidable | `LogicStream::empty()` | NFA emptiness decides satisfiability; no search choices. |
-| `LatticeTheory` | Decidable | `LogicStream::empty()` | Finite universe; transitive-closure decides all relationships. |
-| `UnificationTheory` | Decidable (core) | `empty()` for core; alternatives for extended custom-match | Martelli–Montanari unification is deterministic; extended pattern matching may branch. |
+| `LatticeTheory` | Reject-safe while mutable | `LogicStream::empty()` | Transitive closure decides asserted relationships, but mutation prevents an immutable exact-domain contract; `FrozenLatticeTheory` supplies that contract. |
+| `UnificationTheory` | Decidable conjunction solver; reject-safe Boolean wrapper | `empty()` for core; alternatives for extended custom-match | Martelli–Montanari unification is deterministic, but the implementation does not claim a total decider for arbitrary disjunction/negation. |
 | User-defined | Varies | Domain-specific stream | `ConstraintTheory` grants reject-safe three-valued search; `BooleanAlgebra` additionally requires `DecidableConstraintTheory`. |
 
 An exact theory's `DecidableConstraintTheory::decide_exact` procedure does not
@@ -619,7 +623,7 @@ impl ConstraintTheory for PropTheory {
     }
 
     fn label(&self, _store: &PropStore) -> LogicStream<PropConstraint> {
-        LogicStream::empty() // decidable: propagation alone decides
+        LogicStream::empty() // this implementation has no labeling choices
     }
 
     fn evaluate(&self, c: &PropConstraint, a: &PropAssignment) -> bool {
@@ -633,6 +637,8 @@ impl ConstraintTheory for PropTheory {
 
 `PropTheory` has an empty labeling stream and supplies useful positive witnesses,
 but it intentionally implements only `ConstraintTheory` in the test module.
+Consequently, bounded absence remains `DontKnow`; the empty stream does not
+promote this example to `BooleanAlgebra`.
 Consequently a propagation contradiction is reported as `DontKnow` by the
 general adapter. An exact propositional implementation would additionally
 implement `DecidableConstraintTheory` with a complete truth-table, BDD, or SAT
@@ -1045,13 +1051,12 @@ makes the engine *reject-safe* end-to-end.
 
 ## 9. Theory combination
 
-Two decidable theories over a shared, enumerable domain combine into a single
-effective Boolean algebra by **joint search**: the LogicT realization
-*interleaves* the two theories' constraint streams and labels them under the
-shared bounded budget. Concretely, the combined satisfiability check threads a
-candidate assignment through both theories' `propagate`/`witness`, using
-`interleave` for the disjunctive choices and `fair_conjoin` for the conjunctive
-threading, exactly as `CollectConstraints` does for a single theory (§7.2).
+Two general theories may combine by bounded, fair joint search, but that path
+remains `RejectSafeAlgebra`: a checked shared assignment proves `Sat`, while
+failure to find one is `DontKnow`. A combined theory becomes an effective
+Boolean algebra only when it supplies a complete shared assignment universe or
+another total `DecidableConstraintTheory` procedure. Exhaustive joint search
+over that universe then proves both positive witnesses and negative emptiness.
 
 This is the **base case** of the Nelson–Oppen combination method
 ([Nelson & Oppen, 1979](#14-references)): cooperation over a *shared domain* by
@@ -1065,8 +1070,9 @@ surface syntax for combination is `arithmetic <+> text`
 The mechanized counterpart is
 [`TheoryCombination.v`](../../../../formal/rocq/symbolic_algebra/theories/TheoryCombination.v):
 `combined_eba_laws`, with `csat_sound` and `csat_complete`, proves that the
-joint-search combination is itself an effective Boolean algebra (the base-case
-soundness/completeness), surveyed in
+**exhaustive** joint-search combination is an effective Boolean algebra under
+the explicit `enum_all` completeness hypothesis. A finite `search_bound` is
+not that hypothesis. The exact base case is surveyed in
 [10 §2.1](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md).
 
 ---
@@ -1226,14 +1232,13 @@ That truncation is surfaced as the lint
 - **Remedies:** raise `search_bound`, simplify the constraint, or add pruning
   constraints earlier so the witness surfaces within budget.
 
-Because a *decidable* theory returns an empty `label`, `LT01` can only fire for
-theories that genuinely search (the `UnificationTheory` extended-match case,
-user-defined searching theories, and large AC enumerations). It is the
-diagnostic face of the `collect_bounded(search_bound)` resource gates in
-`Witness` (§7.3). The definitive (bound-free) unsatisfiability lints of the
-sibling theories — `PB01` (Presburger), `UN01` (unification), `SL01`
-(subtype-lattice) — are the *complementary* signal: a hard `Unsat`, not a
-budget-limited `Unknown`.
+`LT01` is justified only by an actual truncation record; neither a non-empty nor
+an empty `label` stream classifies a theory's decidability. The current
+conjunctive unification analyzer performs no LogicT search, so its reserved
+`search_bound_exceeded` field stays empty. Bounded runtime theory calls expose
+truncation directly as `TheoryDecision::Undetermined` / `Sat3::DontKnow`.
+Definitive unsatisfiability diagnostics require their own exact domain evidence
+rather than inference from stream exhaustion.
 
 ---
 

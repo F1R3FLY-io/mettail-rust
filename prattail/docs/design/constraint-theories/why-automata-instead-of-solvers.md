@@ -2219,36 +2219,41 @@ Some domains -- particularly those involving search (e.g., unification with
 multiple possible substitutions) -- are more naturally expressed as a
 `ConstraintTheory` with propagation and backtracking.
 
-`TheoryAlgebra<T>` lifts any `ConstraintTheory` implementation into a
+`TheoryAlgebra<T>` gives every `ConstraintTheory` a reject-safe interface and
+lifts only `DecidableConstraintTheory` implementations into a
 `BooleanAlgebra`:
 
 ```
-  ConstraintTheory T            TheoryAlgebra<T>
-  ──────────────────            ─────────────────
-  propagate(store, c) → Store?  is_satisfiable(φ) → bool
-  is_consistent(store) → bool   witness(φ) → Option<T::Assignment>
-  witness(store) → Assignment?  and(φ, ψ) → Pred
-  label(store) → LogicStream    or(φ, ψ) → Pred
-                                not(φ) → Pred
+  ConstraintTheory T             TheoryAlgebra<T>
+  ──────────────────             ─────────────────
+  propagate(store, c) → Store?   decide_bounded(φ) → Sat3
+  is_consistent(store) → bool    witness(φ) → Option<Assignment>
+  witness(store) → Assignment?   and/or/pseudo-complement
+  label(store) → LogicStream
+
+  DecidableConstraintTheory T    Exact TheoryAlgebra<T>
+  ───────────────────────────    ──────────────────────
+  decide_exact(φ) → exact result is_satisfiable(φ) → bool
+                                  and/or/not; SFA eligible
 
   The bridge:
-  - SAT(φ) = ∃ store such that propagating all constraints
-    in φ yields a consistent store.  Uses LogicT fair
-    backtracking (Kiselyov et al., 2005) for labeling.
-  - ¬φ = negation-as-failure via LogicT's gnot().
+  - A checked witness proves SAT.
+  - Bounded absence or implementation-stream exhaustion is DontKnow.
+  - Classical UNSAT and complement require decide_exact.
 ```
 
 This means every constraint domain -- Presburger, unification, lattice
-subtyping, and any future user-defined theory -- participates in SFA
-operations uniformly through the same `BooleanAlgebra` interface.
+subtyping, and future user-defined theories -- participates uniformly in
+reject-safe composition. Only domains carrying exact-decision authority
+participate in classical SFA operations.
 
 > **Full specification:** [logict-framework.md](logict-framework.md).
 
 ### 9.3 Uniform Minterm Participation
 
-The payoff is that all algebras -- direct implementations and bridged theories
-alike -- participate in minterm-based determinization through the same
-interface.
+The payoff is that all exact algebras -- direct implementations and exactly
+bridged theories alike -- participate in minterm-based determinization through
+the same interface, while incomplete theories cannot fabricate minterms.
 
 A minterm computation over `ProductAlgebra<PresburgerAlgebra, CharClassAlgebra>`
 proceeds as follows:

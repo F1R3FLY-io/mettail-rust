@@ -644,13 +644,18 @@ precisely when `A` is. `∎` (For the tree- and word-automaton background, see
 
 The six §5.2–§5.6 leaves are the *scalar* and *sequence* base of the family. The
 **carriers** that close the family under the type constructors — product, sum,
-collection (bag/map/list), tree, and theory combination — are each proved to be an EBA
-in [05 §7](05-algebra-pyramid-and-decidability.md) (Theorems 7.2–7.6), so the SFA/SFT
+collection (bag/map/list), tree, and exact theory combination — are each proved
+to be an EBA under their listed completeness hypotheses in
+[05 §7](05-algebra-pyramid-and-decidability.md) (Theorems 7.2–7.6), so the SFA/SFT
 algorithms run over them unchanged. The two **bridges** that present a non-numeric
-analysis as a `BooleanAlgebra` — `TypeSystemAlgebra<S>` (refinement-type dispatch,
-`prattail/src/type_system/refinement.rs`) and `DispatchAlgebra` (grammar dispatch
-disambiguation, `prattail/src/predicate_dispatch/mod.rs`) — feed the same SFA machinery
-and are documented with the dispatch analysis they serve in
+analysis as a `BooleanAlgebra` — `TypeSystemAlgebra<S>` for
+`S: DecidableFiniteTypeSystem` (exact refinement-type dispatch over a complete
+finite semantic-witness universe, `prattail/src/type_system/refinement.rs`) and
+`DispatchAlgebra` (exhaustive grammar-dispatch bitfields,
+`prattail/src/predicate_dispatch/mod.rs`) — feed the same SFA machinery. A plain
+`TypeSystem` is intentionally insufficient: independently satisfiable leaves do
+not establish that one semantic value witnesses their conjunction. The bridges are
+documented with the dispatch analysis they serve in
 [03 §8](03-symbolic-automata-sfa.md).
 
 ## 6. The uniform carrier `AnyAlgebra`

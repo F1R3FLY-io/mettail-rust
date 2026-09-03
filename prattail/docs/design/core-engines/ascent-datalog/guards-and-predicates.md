@@ -185,15 +185,19 @@ pub trait ConstraintTheory: Clone + Debug + Send + Sync + 'static {
 
 The trait separates two concerns:
 
-- **Propagation** (`propagate`): deterministic constraint narrowing. For decidable theories (like unification), propagation alone determines satisfiability.
-- **Labeling** (`label`): non-deterministic search choices. For theories requiring search, `label()` produces a `LogicStream` of alternatives explored via LogicT's fair backtracking.
+- **Propagation** (`propagate`): deterministic constraint narrowing. Success
+  narrows a store; failure proves the asserted conjunction inconsistent. It
+  does not decide arbitrary Boolean predicates by itself.
+- **Labeling** (`label`): non-deterministic implementation choices explored via
+  LogicT's fair backtracking. Empty or exhausted labeling is not a semantic
+  completeness certificate.
 
 ### Implementations
 
 | Theory | Constraint | Store | Labeling? |
 |--------|-----------|-------|-----------|
-| `UnificationTheory` | `UnificationEquation` | `UnificationStore` | No (decidable) |
-| `TheoryAlgebra<T>` | `BooleanAlgebra` predicate | SFA state | No (decidable) |
+| `UnificationTheory` | `UnificationEquation` | `UnificationStore` | None for deterministic cases; base contract remains reject-safe |
+| `TheoryAlgebra<T>` | `TheoryPred<T>` | checked witness or `Sat3` | Bounded unless `T: DecidableConstraintTheory` |
 
 ---
 

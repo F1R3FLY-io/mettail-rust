@@ -550,9 +550,10 @@ tokens produce `Int` values alongside `Integer` tokens).
 ## 8. Adding a New Constraint Theory
 
 The `ConstraintTheory` trait (feature: `logict`) provides the extension point for
-pluggable constraint domains.  Implementing a new theory gives you `BooleanAlgebra`
-integration (and therefore SFA determinization, minterm computation, and lint
-analysis) for free via the `TheoryAlgebra` bridge.
+pluggable constraint domains. Implementing it gives the theory bounded,
+certificate-checked `RejectSafeAlgebra` integration through `TheoryAlgebra`.
+SFA determinization, minterm computation, inclusion, and equivalence additionally
+require `DecidableConstraintTheory`, whose total procedure proves exact emptiness.
 
 ### Steps to Add a New Constraint Theory (e.g., `ResourceTheory`)
 
@@ -560,63 +561,56 @@ analysis) for free via the `TheoryAlgebra` bridge.
 
 File: new module (e.g., `prattail/src/resource_theory.rs`)
 
-```rust
-use crate::logict::{ConstraintTheory, LogicStream};
+```text
+Algorithm IMPLEMENT-CONSTRAINT-THEORY(ResourceTheory)
+Input: domain configuration and a ResourceStore
+Output: a ConstraintTheory implementation
 
-#[derive(Clone, Debug)]
-pub struct ResourceTheory { /* domain config */ }
-
-impl ConstraintTheory for ResourceTheory {
-    type Constraint = ResourceConstraint;
-    type Assignment = ResourceAssignment;
-    type Store = ResourceStore;
-
-    fn empty_store(&self) -> Self::Store { ResourceStore::new() }
-
-    fn propagate(&self, store: &Self::Store, c: &Self::Constraint) -> Option<Self::Store> {
-        // Add constraint, propagate implications, return None if inconsistent
-    }
-
-    fn is_consistent(&self, store: &Self::Store) -> bool { /* check store */ }
-
-    fn witness(&self, store: &Self::Store) -> Option<Self::Assignment> {
-        // Extract concrete assignment from consistent store
-    }
-
-    fn label(&self, store: &Self::Store) -> LogicStream<Self::Constraint> {
-        // Decidable theory → LogicStream::empty()
-        // Non-decidable → interleave over domain alternatives
-        LogicStream::empty()
-    }
-
-    fn evaluate(&self, c: &Self::Constraint, a: &Self::Assignment) -> bool {
-        // Check if assignment satisfies constraint
-    }
-}
+1. empty_store returns the unconstrained resource store.
+2. propagate(store, constraint) returns a narrowed store, or inconsistency.
+3. is_consistent(store) checks the accumulated conjunction.
+4. witness(store) returns a concrete assignment only when one is known.
+5. label(store) fairly enumerates implementation search alternatives; it may
+   be empty, but emptiness does not certify semantic completeness.
+6. evaluate_checked(constraint, assignment) returns true, false, or unknown
+   without guessing when evaluation is partial.
 ```
 
 **Step 2: Use via `TheoryAlgebra`**
 
-```rust
-use crate::logict::TheoryAlgebra;
-
-let algebra = TheoryAlgebra::new(ResourceTheory::new(), 1000);
-// algebra implements BooleanAlgebra — use with SymbolicAutomaton, ProductAlgebra, etc.
+```text
+Algorithm BOUNDED-RESOURCE-DECISION(theory, predicate, budget)
+1. Construct TheoryAlgebra(theory, budget).
+2. Invoke the RejectSafeAlgebra three-valued satisfiability operation.
+3. Return Sat only with a rechecked witness, Unsat only with a proof, and
+   DontKnow when the bounded procedure establishes neither result.
 ```
 
-**Step 3: Add feature gate (optional)**
+`result` is `Sat`, `Unsat`, or `DontKnow`; a budget-exhausted search never
+fabricates `Unsat`.
+
+**Step 3: Add an exact-decision capability when justified (optional)**
+
+Implement `DecidableConstraintTheory::decide_exact` only when the domain owns a
+terminating and complete decision procedure. Its positive branch must return a
+witness satisfying the whole predicate, and its negative branch must prove no
+such assignment exists. Only this implementation makes
+`TheoryAlgebra<ResourceTheory>` a `BooleanAlgebra` suitable for classical SFA
+algorithms.
+
+**Step 4: Add feature gate (optional)**
 
 In `Cargo.toml`:
 ```toml
 resource-theory = ["logict"]
 ```
 
-**Step 4: Add predicate dispatch integration (optional)**
+**Step 5: Add predicate dispatch integration (optional)**
 
 In `predicate_dispatch.rs`, add a new `PredicateSignature` bit and `ModuleId`
 variant, with detection logic in `extract_features()` and `classify_grammar()`.
 
-**Step 5: Add lints (optional)**
+**Step 6: Add lints (optional)**
 
 In `lint.rs`, add lint functions that consume an analysis result struct from
 your theory module, gated on your feature flag.

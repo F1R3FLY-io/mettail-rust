@@ -48,11 +48,12 @@
 //!
 //! ## Compile-Time vs Runtime
 //!
-//! All `TypeSystem` implementations and the `TypeSystemAlgebra` bridge are
-//! **compile-time only** — they execute during `language!` macro expansion
-//! to analyze types, emit lints (RT01–RT06), and inform codegen. None of
-//! this code appears in the generated binary. The only runtime artifacts
-//! are generated Ascent relations (`is_refined_*`) and predicate checks.
+//! `TypeSystem` implementations are compile-time analyses. The classical
+//! `TypeSystemAlgebra` bridge is available only to a
+//! `DecidableFiniteTypeSystem`, whose complete deterministic semantic-witness
+//! universe makes Boolean complement and unsatisfiability exact. These analyses execute
+//! during `language!` macro expansion to emit lints and inform codegen; only
+//! generated relations and predicate checks enter the generated binary.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;

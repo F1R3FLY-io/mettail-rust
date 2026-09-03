@@ -401,7 +401,8 @@ compiled (no feature gate); only the log semiring modules require `wfst-log`.
 #### Constraint Theory Framework (`logict` + dependent features)
 
 - **`logict.rs`** (`logict` feature) -- `LogicStream<T>` fair backtracking search,
-  `ConstraintTheory` trait, `TheoryAlgebra<T>` bridge to `BooleanAlgebra`,
+  `ConstraintTheory` and `DecidableConstraintTheory` traits,
+  `TheoryAlgebra<T>` reject-safe bridge plus exact `BooleanAlgebra` gate,
   8 core operations: `msplit`, `mzero`, `mplus`, `interleave`, `fair_conjoin`,
   `ifte`, `once`, `gnot`
 - **`presburger.rs`** (`presburger` feature, depends on `logict`) --

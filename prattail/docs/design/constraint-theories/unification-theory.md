@@ -168,9 +168,14 @@ propagate(store, eq) =
 
 The algorithm is **deterministic**: for any set of equations, either there is a unique most general unifier or the system is unsatisfiable. No search is needed.
 
-### label: empty (decidable)
+### label: empty (deterministic conjunction solver)
 
-Because syntactic unification is decidable and deterministic, `label()` returns `LogicStream::empty()`. Propagation alone determines satisfiability.
+Syntactic unification of a conjunction of equations is decidable and
+deterministic, so `label()` returns `LogicStream::empty()`. This statement is
+about the conjunction solver: it does not certify an exact decision procedure
+for arbitrary `TheoryPred` combinations containing disjunction and negation.
+Accordingly, `UnificationTheory` implements `ConstraintTheory` but not
+`DecidableConstraintTheory`, and its generic bridge remains reject-safe.
 
 ```rust
 fn label(&self, _store: &UnificationStore) -> LogicStream<UnificationEquation> {
