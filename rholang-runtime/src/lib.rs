@@ -170,16 +170,17 @@ pub use guard_discharge::{
 pub use language_install::{
     decode_ddl_envelope, language_flt_construct_definition, language_flt_pattern_definition,
     language_install_definition, language_parse_definition, language_runtime_definitions,
-    par_to_canonical_value, CanonicalValueError, CanonicalValueLimits, EmptyRegistrySnapshot,
-    InstallCandidate, InstallServiceError, InstalledLanguageBatchReceipt,
-    InstalledLanguageExportReceipt, InstalledLanguageReceipt, LanguageFltConstructionError,
-    LanguageInstallPolicy, LanguageInstallService, LanguageParseExhaustion, LanguageParseOutcome,
-    LanguageParseRejection, LanguageRuntimeError, NamedRuntimeTemplateHole, RegistrySnapshot,
-    RholangInstalledBatch, RholangInstalledExport, RholangLanguageRuntime, DDL_AST_ENVELOPE_V2,
-    DYNAMIC_FLT_PATTERN_ENVELOPE_V1, LANGUAGE_CAPABILITY_ABI_V1, LANGUAGE_FLT_CONSTRUCT_ABI_V1,
-    LANGUAGE_FLT_CONSTRUCT_URN, LANGUAGE_FLT_PATTERN_ABI_V1, LANGUAGE_FLT_PATTERN_URN,
-    LANGUAGE_INSTALL_URN, LANGUAGE_PARSE_ABI_V1, LANGUAGE_PARSE_URN,
-    REGISTRY_LANGUAGE_REFERENCE_V1, REGISTRY_MODULE_REFERENCE_V1,
+    language_runtime_definitions_with_theorem_checker, par_to_canonical_value, CanonicalValueError,
+    CanonicalValueLimits, EmptyRegistrySnapshot, InstallCandidate, InstallServiceError,
+    InstalledLanguageBatchReceipt, InstalledLanguageExportReceipt, InstalledLanguageReceipt,
+    LanguageFltConstructionError, LanguageInstallPolicy, LanguageInstallService,
+    LanguageParseExhaustion, LanguageParseOutcome, LanguageParseRejection, LanguageRuntimeError,
+    NamedRuntimeTemplateHole, RegistrySnapshot, RholangInstalledBatch, RholangInstalledExport,
+    RholangLanguageRuntime, DDL_AST_ENVELOPE_V2, DYNAMIC_FLT_PATTERN_ENVELOPE_V1,
+    LANGUAGE_CAPABILITY_ABI_V1, LANGUAGE_FLT_CONSTRUCT_ABI_V1, LANGUAGE_FLT_CONSTRUCT_URN,
+    LANGUAGE_FLT_PATTERN_ABI_V1, LANGUAGE_FLT_PATTERN_URN, LANGUAGE_INSTALL_URN,
+    LANGUAGE_PARSE_ABI_V1, LANGUAGE_PARSE_URN, REGISTRY_LANGUAGE_REFERENCE_V1,
+    REGISTRY_MODULE_REFERENCE_V1,
 };
 pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOLANG_BAG_ABI_TAG};
 pub use native_contract::{
@@ -202,6 +203,8 @@ pub use rholang_ast::{
     RholangAstLowerError, RholangAstRuntimeLanguage, RholangInvocationMapper,
     RholangRuntimeBackedLanguage, RholangRuntimeBackedLanguageResult,
 };
+#[cfg(feature = "rholang-runtime")]
+pub use run::run_normalized_par_with_language_runtime_and_read_par_channels;
 #[cfg(feature = "runtime-report")]
 pub use run::{
     binder_apply_redex_present, drive_cross_check, flatten_observation_value,
@@ -244,6 +247,10 @@ pub use shift_contract::{native_shift_definition, native_shift_definitions_for};
 pub use step::{StepSession, TauChannelClassifier};
 #[cfg(feature = "rholang-runtime")]
 pub use theorem_channel::{
-    AdmittedRholangMessage, CheckedRholangMatch, PreparedRholangConsume, PreparedRholangProduce,
-    RholangTheoremChannel, RholangTheoremChannelError,
+    theorem_runtime_definitions, AdmittedRholangMessage, CheckedRholangMatch,
+    PreparedRholangConsume, PreparedRholangProduce, RholangTheoremChannel,
+    RholangTheoremChannelError, RholangTheoremService, TheoremServicePolicy,
+    THEOREM_CHANNEL_COMMIT_ABI_V1, THEOREM_CHANNEL_COMMIT_URN, THEOREM_CHANNEL_OPEN_ABI_V1,
+    THEOREM_CHANNEL_OPEN_URN, THEOREM_CHANNEL_PREPARE_ABI_V1, THEOREM_CHANNEL_PREPARE_URN,
+    THEOREM_CHANNEL_REVOKE_ABI_V1, THEOREM_CHANNEL_REVOKE_URN, THEOREM_CHANNEL_SERVICE_ABI_V1,
 };

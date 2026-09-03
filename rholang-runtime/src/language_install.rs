@@ -2190,7 +2190,7 @@ fn capability_token_id(
     id
 }
 
-fn private_name(id: Vec<u8>) -> Par {
+pub(crate) fn private_name(id: Vec<u8>) -> Par {
     Par::default().with_unforgeables(vec![GUnforgeable {
         unf_instance: Some(GPrivateBody(GPrivate { id })),
     }])
@@ -2227,7 +2227,7 @@ fn single_private_name_id(value: &Par) -> Option<&[u8]> {
     single_private_name_id_ignoring_cache(value)
 }
 
-fn single_private_name_id_ignoring_cache(value: &Par) -> Option<&[u8]> {
+pub(crate) fn single_private_name_id_ignoring_cache(value: &Par) -> Option<&[u8]> {
     if !value.sends.is_empty()
         || !value.receives.is_empty()
         || !value.news.is_empty()
@@ -2443,12 +2443,37 @@ pub fn language_parse_definition(runtime: Arc<RholangLanguageRuntime>) -> Defini
 /// opaque capability minted by the installation handler in that instance's
 /// private directory.
 pub fn language_runtime_definitions(runtime: Arc<RholangLanguageRuntime>) -> Vec<Definition> {
-    vec![
+    language_runtime_definitions_with_theorem_checker(
+        runtime,
+        Arc::new(mettail_grammar_core::StructuralTheoremChecker::default()),
+        crate::theorem_channel::TheoremServicePolicy::default(),
+    )
+}
+
+/// Build the complete Rholang-facing language surface with a host-injected
+/// theorem checker and policy. The theorem service is constructed around the
+/// same installed-language runtime as the parser and FLT ports, so a caller
+/// cannot accidentally split capability identity across two runtime tables.
+/// This is the OSLF/Reified-RSpace integration seam; the default helper above
+/// installs only the bounded structural checker.
+pub fn language_runtime_definitions_with_theorem_checker(
+    runtime: Arc<RholangLanguageRuntime>,
+    checker: Arc<dyn mettail_grammar_core::AdmissionChecker>,
+    policy: crate::theorem_channel::TheoremServicePolicy,
+) -> Vec<Definition> {
+    let theorem_service = Arc::new(crate::theorem_channel::RholangTheoremService::new(
+        runtime.clone(),
+        checker,
+        policy,
+    ));
+    let mut definitions = vec![
         language_install_definition(runtime.clone()),
         language_parse_definition(runtime.clone()),
         language_flt_construct_definition(runtime.clone()),
         language_flt_pattern_definition(runtime),
-    ]
+    ];
+    definitions.extend(crate::theorem_channel::theorem_runtime_definitions(theorem_service));
+    definitions
 }
 
 /// Machine boundary for structural construction through an installed language.
@@ -2770,7 +2795,7 @@ fn optional_string_par(value: Option<&str>) -> Par {
     value.map_or_else(Par::default, |value| new_gstring_par(value.into(), Vec::new(), false))
 }
 
-fn wire_list(items: Vec<Par>) -> Par {
+pub(crate) fn wire_list(items: Vec<Par>) -> Par {
     let locally_free = items
         .iter()
         .fold(Vec::new(), |acc, item| union(acc, item.locally_free.clone()));
@@ -2806,7 +2831,7 @@ fn wire_map(entries: Vec<(Par, Par)>) -> Par {
 }
 
 #[derive(Debug)]
-enum FltConstructWireError {
+pub(crate) enum FltConstructWireError {
     Shape(&'static str),
     UnsupportedAbi(String),
     IntegerRange,
@@ -2948,7 +2973,7 @@ fn decode_language_parse_call(datum: &Par) -> Result<LanguageParseCall, Language
     })
 }
 
-fn decode_flt_piece(value: &Par) -> Result<RuntimeTemplatePiece, FltConstructWireError> {
+pub(crate) fn decode_flt_piece(value: &Par) -> Result<RuntimeTemplatePiece, FltConstructWireError> {
     let fields =
         exact_list(value).ok_or(FltConstructWireError::Shape("FLT piece must be [kind, value]"))?;
     let [kind, value] = fields else {
@@ -2963,7 +2988,9 @@ fn decode_flt_piece(value: &Par) -> Result<RuntimeTemplatePiece, FltConstructWir
     }
 }
 
-fn decode_flt_hole(value: &Par) -> Result<NamedRuntimeTemplateHole, FltConstructWireError> {
+pub(crate) fn decode_flt_hole(
+    value: &Par,
+) -> Result<NamedRuntimeTemplateHole, FltConstructWireError> {
     let fields = exact_list(value).ok_or(FltConstructWireError::Shape(
         "FLT hole declaration must be [id, name, category-or-Nil]",
     ))?;
@@ -3001,7 +3028,7 @@ fn decode_flt_fills(value: &Par) -> Result<BTreeMap<String, Par>, FltConstructWi
     Ok(fills)
 }
 
-fn exact_list(value: &Par) -> Option<&[Par]> {
+pub(crate) fn exact_list(value: &Par) -> Option<&[Par]> {
     let instance = exact_expr(value)?;
     let ExprInstance::EListBody(list) = instance else {
         return None;
@@ -3017,7 +3044,7 @@ fn exact_map(value: &Par) -> Option<&[models::rhoapi::KeyValuePair]> {
     (map.remainder.is_none()).then_some(map.kvs.as_slice())
 }
 
-fn exact_string(value: &Par) -> Option<&str> {
+pub(crate) fn exact_string(value: &Par) -> Option<&str> {
     let ExprInstance::GString(value) = exact_expr(value)? else {
         return None;
     };
@@ -3055,7 +3082,7 @@ fn exact_nil(value: &Par) -> bool {
         && !value.connective_used
 }
 
-fn exact_expr(value: &Par) -> Option<&ExprInstance> {
+pub(crate) fn exact_expr(value: &Par) -> Option<&ExprInstance> {
     if !value.sends.is_empty()
         || !value.receives.is_empty()
         || !value.news.is_empty()
@@ -3279,7 +3306,7 @@ fn decode_registry_reference(
     Ok(uri.clone())
 }
 
-fn map_par(entries: impl IntoIterator<Item = (String, Par)>) -> Par {
+pub(crate) fn map_par(entries: impl IntoIterator<Item = (String, Par)>) -> Par {
     new_emap_par(
         entries
             .into_iter()
@@ -3368,7 +3395,7 @@ fn success_batch_response(mut batch: RholangInstalledBatch) -> Par {
     map_par([("ok".into(), module)])
 }
 
-fn error_response(code: &str, message: &str) -> Par {
+pub(crate) fn error_response(code: &str, message: &str) -> Par {
     let message: String = message.chars().take(MAX_PUBLIC_ERROR_CHARS).collect();
     let error = map_par([
         ("code".into(), new_gstring_par(code.into(), Vec::new(), false)),
@@ -5259,11 +5286,15 @@ mod tests {
             LanguageInstallPolicy::default(),
         ))));
         let definitions = language_runtime_definitions(runtime);
-        assert_eq!(definitions.len(), 4);
+        assert_eq!(definitions.len(), 8);
         assert_eq!(definitions[0].urn, LANGUAGE_INSTALL_URN);
         assert_eq!(definitions[1].urn, LANGUAGE_PARSE_URN);
         assert_eq!(definitions[2].urn, LANGUAGE_FLT_CONSTRUCT_URN);
         assert_eq!(definitions[3].urn, LANGUAGE_FLT_PATTERN_URN);
+        assert_eq!(definitions[4].urn, crate::theorem_channel::THEOREM_CHANNEL_OPEN_URN);
+        assert_eq!(definitions[5].urn, crate::theorem_channel::THEOREM_CHANNEL_PREPARE_URN);
+        assert_eq!(definitions[6].urn, crate::theorem_channel::THEOREM_CHANNEL_COMMIT_URN);
+        assert_eq!(definitions[7].urn, crate::theorem_channel::THEOREM_CHANNEL_REVOKE_URN);
         for left in 0..definitions.len() {
             for right in left + 1..definitions.len() {
                 assert_ne!(definitions[left].fixed_channel, definitions[right].fixed_channel);

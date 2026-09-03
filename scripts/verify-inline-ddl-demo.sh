@@ -17,10 +17,13 @@ run_and_capture() {
 }
 
 run_and_capture application.log \
-  cargo test -p rholang-runtime --test inline_ddl_demo -- --nocapture
+  cargo test -p rholang-runtime --test inline_ddl_demo --features rholang-runtime -- --nocapture
 
 run_and_capture runtime-security-resource.log \
-  cargo test -p rholang-runtime language_install::tests --lib
+  cargo test -p rholang-runtime language_install::tests --lib --features rholang-runtime
+
+run_and_capture theorem-service-wire.log \
+  cargo test -p rholang-runtime theorem_channel::service_wire_tests --lib --features rholang-runtime
 
 run_and_capture reserved-band.log \
   cargo test -p rholang-codegen system_process_band --lib

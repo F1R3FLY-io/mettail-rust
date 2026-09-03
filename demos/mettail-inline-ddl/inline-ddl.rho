@@ -1,75 +1,238 @@
 new install(`rho:mettail:install`) in {
   new parse(`rho:mettail:parse`) in {
-    new installed in {
-      install!(
-        Module InlineDemo {
-          Theory Left() {
-            Types { LeftExpr; }
-            Terms { LeftLiteral . |- "left" : LeftExpr; }
-          }
-          Theory Right() {
-            Types { RightExpr; }
-            Terms { RightLiteral . |- "right" : RightExpr; }
-          }
-          theory Left()
-          theory Right()
-        },
-        *installed
-      ) |
-      for(@{
-        "ok": {
-          "module": "InlineDemo",
-          "exports": [
-            {"name": "Left", "handle": left},
-            {"name": "Right", "handle": right}
-          ],
-          "programs": []
-        }
-      } <- installed) {
-        new leftPositive, leftNegative, leftCrossfire,
-            rightPositive, rightNegative, rightCrossfire,
-            failedInstall in {
-          parse!(["mettail-language-parse/1", left, "left", "LeftExpr", *leftPositive]) |
-          parse!(["mettail-language-parse/1", left, "not-left", "LeftExpr", *leftNegative]) |
-          parse!(["mettail-language-parse/1", left, "right", "LeftExpr", *leftCrossfire]) |
-          parse!(["mettail-language-parse/1", right, "right", "RightExpr", *rightPositive]) |
-          parse!(["mettail-language-parse/1", right, "not-right", "RightExpr", *rightNegative]) |
-          parse!(["mettail-language-parse/1", right, "left", "RightExpr", *rightCrossfire]) |
-          install!(
-            Module MustFailAtomically {
-              Theory ValidPrefix() {
-                Types { PrefixExpr; }
-                Terms { PrefixLiteral . |- "prefix" : PrefixExpr; }
+    new theoremOpen(`rho:mettail:theorem-channel:open`) in {
+      new theoremPrepare(`rho:mettail:theorem-channel:prepare`) in {
+        new theoremCommit(`rho:mettail:theorem-channel:commit`) in {
+          new theoremRevoke(`rho:mettail:theorem-channel:revoke`) in {
+            new installed in {
+              install!(
+                Module InlineDemo {
+                  Theory Left() {
+                    Data({
+                      "rights": ["Parse", "Construct", "Match", "Publish", "Check"]
+                    })
+                    Types { LeftExpr; }
+                    Terms { LeftLiteral . |- "left" : LeftExpr; }
+                  }
+                  Theory Right() {
+                    Data({
+                      "rights": ["Parse", "Construct", "Match", "Publish", "Check"]
+                    })
+                    Types { RightExpr; }
+                    Terms { RightLiteral . |- "right" : RightExpr; }
+                  }
+                  Theory Ambiguous() {
+                    Data({
+                      "rights": ["Parse", "Construct", "Match", "Publish", "Check"]
+                    })
+                    Types { AmbExpr; }
+                    Terms {
+                      AmbiguousA . |- "amb" : AmbExpr;
+                      AmbiguousB . |- "amb" : AmbExpr;
+                    }
+                  }
+                  theory Left()
+                  theory Right()
+                  theory Ambiguous()
+                },
+                *installed
+              ) |
+              for(@{
+                "ok": {
+                  "module": "InlineDemo",
+                  "exports": [
+                    {"name": "Left", "handle": left},
+                    {"name": "Right", "handle": right},
+                    {"name": "Ambiguous", "handle": ambiguous}
+                  ],
+                  "programs": []
+                }
+              } <- installed) {
+                new leftPositive, leftNegative, leftCrossfire,
+                    rightPositive, rightNegative, rightCrossfire,
+                    failedInstall, admittedOpen, invalidOpen,
+                    wrongLanguageOpen, exhaustedOpen, staleOpen,
+                    ambiguousOpen in {
+                  parse!(["mettail-language-parse/1", left, "left", "LeftExpr", *leftPositive]) |
+                  parse!(["mettail-language-parse/1", left, "not-left", "LeftExpr", *leftNegative]) |
+                  parse!(["mettail-language-parse/1", left, "right", "LeftExpr", *leftCrossfire]) |
+                  parse!(["mettail-language-parse/1", right, "right", "RightExpr", *rightPositive]) |
+                  parse!(["mettail-language-parse/1", right, "not-right", "RightExpr", *rightNegative]) |
+                  parse!(["mettail-language-parse/1", right, "left", "RightExpr", *rightCrossfire]) |
+                  install!(
+                    Module MustFailAtomically {
+                      Theory ValidPrefix() {
+                        Types { PrefixExpr; }
+                        Terms { PrefixLiteral . |- "prefix" : PrefixExpr; }
+                      }
+                      Theory InvalidSuffix() {
+                        Types { SuffixExpr; }
+                        Terms { InvalidLiteral . |- "suffix" : MissingCategory; }
+                      }
+                      theory ValidPrefix()
+                      theory InvalidSuffix()
+                    },
+                    *failedInstall
+                  ) |
+
+                  theoremOpen!([
+                    "mettail-theorem-channel-open/1", left, "LeftExpr",
+                    ["membership"], ["membership"], ["Produce", "Consume"],
+                    1, 4096, 8, *admittedOpen
+                  ]) |
+                  theoremOpen!([
+                    "mettail-theorem-channel-open/1", left, "LeftExpr",
+                    ["bottom"], ["membership"], ["Produce", "Consume"],
+                    1, 4096, 8, *invalidOpen
+                  ]) |
+                  theoremOpen!([
+                    "mettail-theorem-channel-open/1", left, "LeftExpr",
+                    ["membership"], ["membership"], ["Produce", "Consume"],
+                    1, 4096, 8, *wrongLanguageOpen
+                  ]) |
+                  theoremOpen!([
+                    "mettail-theorem-channel-open/1", left, "LeftExpr",
+                    ["membership"], ["membership"], ["Produce", "Consume"],
+                    0, 4096, 8, *exhaustedOpen
+                  ]) |
+                  theoremOpen!([
+                    "mettail-theorem-channel-open/1", left, "LeftExpr",
+                    ["membership"], ["membership"], ["Produce", "Consume"],
+                    1, 4096, 8, *staleOpen
+                  ]) |
+                  theoremOpen!([
+                    "mettail-theorem-channel-open/1", ambiguous, "AmbExpr",
+                    ["membership"], ["membership"], ["Produce", "Consume"],
+                    1, 4096, 8, *ambiguousOpen
+                  ]) |
+
+                  for(@result <- leftPositive) {
+                    @"OUT"!(["left-positive", result])
+                  } |
+                  for(@result <- leftNegative) {
+                    @"OUT"!(["left-negative", result])
+                  } |
+                  for(@result <- leftCrossfire) {
+                    @"OUT"!(["left-crossfire", result])
+                  } |
+                  for(@result <- rightPositive) {
+                    @"OUT"!(["right-positive", result])
+                  } |
+                  for(@result <- rightNegative) {
+                    @"OUT"!(["right-negative", result])
+                  } |
+                  for(@result <- rightCrossfire) {
+                    @"OUT"!(["right-crossfire", result])
+                  } |
+                  for(@result <- failedInstall) {
+                    @"OUT"!(["atomic-failure", result])
+                  } |
+
+                  for(@{"ok": {"channel": admitted}} <- admittedOpen) {
+                    new specimen in {
+                      specimen!(left:LeftExpr`left`) |
+                      for(@left:LeftExpr`${captured:LeftExpr}` <- specimen) {
+                        new prepared in {
+                          theoremPrepare!([
+                            "mettail-theorem-channel-prepare/1", admitted,
+                            left:LeftExpr`${captured:LeftExpr}`,
+                            [["hole", 0]], [[0, "value", "LeftExpr"]], *prepared
+                          ]) |
+                          for(@{"ok": {"transaction": transaction}} <- prepared) {
+                            new committed in {
+                              theoremCommit!([
+                                "mettail-theorem-channel-commit/1", transaction, *committed
+                              ]) |
+                              for(@result <- committed) {
+                                @"OUT"!(["theorem-positive", result])
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  } |
+
+                  for(@{"ok": {"channel": invalid}} <- invalidOpen) {
+                    new reply in {
+                      theoremPrepare!([
+                        "mettail-theorem-channel-prepare/1", invalid,
+                        left:LeftExpr`left`, [["hole", 0]],
+                        [[0, "value", "LeftExpr"]], *reply
+                      ]) |
+                      for(@result <- reply) {
+                        @"OUT"!(["theorem-invalid", result])
+                      }
+                    }
+                  } |
+
+                  for(@{"ok": {"channel": wrongLanguage}} <- wrongLanguageOpen) {
+                    new reply in {
+                      theoremPrepare!([
+                        "mettail-theorem-channel-prepare/1", wrongLanguage,
+                        right:RightExpr`right`, [["hole", 0]],
+                        [[0, "value", "LeftExpr"]], *reply
+                      ]) |
+                      for(@result <- reply) {
+                        @"OUT"!(["wrong-language", result])
+                      }
+                    }
+                  } |
+
+                  for(@{"ok": {"channel": exhausted}} <- exhaustedOpen) {
+                    new reply in {
+                      theoremPrepare!([
+                        "mettail-theorem-channel-prepare/1", exhausted,
+                        left:LeftExpr`left`, [["hole", 0]],
+                        [[0, "value", "LeftExpr"]], *reply
+                      ]) |
+                      for(@result <- reply) {
+                        @"OUT"!(["theorem-exhausted", result])
+                      }
+                    }
+                  } |
+
+                  for(@{"ok": {"channel": ambiguousChannel}} <- ambiguousOpen) {
+                    new reply in {
+                      theoremPrepare!([
+                        "mettail-theorem-channel-prepare/1", ambiguousChannel,
+                        left:LeftExpr`left`, [["text", "amb"]], [], *reply
+                      ]) |
+                      for(@result <- reply) {
+                        @"OUT"!(["ambiguous-pattern", result])
+                      }
+                    }
+                  } |
+
+                  for(@{"ok": {"channel": stale}} <- staleOpen) {
+                    new prepared in {
+                      theoremPrepare!([
+                        "mettail-theorem-channel-prepare/1", stale,
+                        left:LeftExpr`left`, [["hole", 0]],
+                        [[0, "value", "LeftExpr"]], *prepared
+                      ]) |
+                      for(@{"ok": {"transaction": transaction}} <- prepared) {
+                        new revoked in {
+                          theoremRevoke!([
+                            "mettail-theorem-channel-revoke/1", stale, *revoked
+                          ]) |
+                          for(@{"ok": {"status": "revoked"}} <- revoked) {
+                            new committed in {
+                              theoremCommit!([
+                                "mettail-theorem-channel-commit/1", transaction, *committed
+                              ]) |
+                              for(@result <- committed) {
+                                @"OUT"!(["stale-authority", result])
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
-              Theory InvalidSuffix() {
-                Types { SuffixExpr; }
-                Terms { InvalidLiteral . |- "suffix" : MissingCategory; }
-              }
-              theory ValidPrefix()
-              theory InvalidSuffix()
-            },
-            *failedInstall
-          ) |
-          for(@result <- leftPositive) {
-            @"OUT"!(["left-positive", result])
-          } |
-          for(@result <- leftNegative) {
-            @"OUT"!(["left-negative", result])
-          } |
-          for(@result <- leftCrossfire) {
-            @"OUT"!(["left-crossfire", result])
-          } |
-          for(@result <- rightPositive) {
-            @"OUT"!(["right-positive", result])
-          } |
-          for(@result <- rightNegative) {
-            @"OUT"!(["right-negative", result])
-          } |
-          for(@result <- rightCrossfire) {
-            @"OUT"!(["right-crossfire", result])
-          } |
-          for(@result <- failedInstall) {
-            @"OUT"!(["atomic-failure", result])
+            }
           }
         }
       }

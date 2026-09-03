@@ -13,6 +13,7 @@
 //! | **language-parse** | recognize guest source through an opaque installed capability | `rholang-runtime/src/language_install.rs` |
 //! | **FLT-construct** | parse and structurally reflect an FLT through an installed capability | `rholang-runtime/src/language_install.rs` |
 //! | **FLT-pattern** | prepare a capability-scoped FLT receive pattern before publication | `rholang-runtime/src/language_install.rs` |
+//! | **theorem-channel** | open, prepare, commit, and revoke bounded theorem-channel transactions | `rholang-runtime/src/theorem_channel.rs` |
 //!
 //! Each contract needs two identifiers, and f1r3node treats them very differently:
 //!
@@ -75,6 +76,7 @@
 //!           6=FLT-build   zero
 //!           7=FLT-match   zero
 //!           8=parse       zero
+//!           9=theorem     operation
 //! ```
 //!
 //! * bit 63 is always clear, so every `body_ref` is a positive `i64` (f1r3node compares them as
@@ -219,6 +221,15 @@ pub const LANGUAGE_PARSE_BAND: SystemProcessBand = SystemProcessBand {
     channel_tag: MTL_LANGUAGE_PARSE_CHANNEL_TAG,
 };
 
+/// Process-wide theorem-channel capability router. The four operation indices
+/// are fixed by the theorem-service ABI (open, prepare, commit, revoke); the ABI
+/// string scopes their deterministic body references.
+pub const THEOREM_CHANNEL_BAND: SystemProcessBand = SystemProcessBand {
+    name: "theorem-channel",
+    band_id: 9,
+    channel_tag: MTL_THEOREM_CHANNEL_TAG,
+};
+
 /// Leading byte of every held-fold contract channel id.
 pub const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
 /// Leading byte of every native-handler contract channel id.
@@ -237,6 +248,8 @@ pub const MTL_LANGUAGE_FLT_CONSTRUCT_CHANNEL_TAG: u8 = 0xF5;
 pub const MTL_LANGUAGE_FLT_PATTERN_CHANNEL_TAG: u8 = 0xF6;
 /// Leading byte of the installed-language parse-only recognizer channel.
 pub const MTL_LANGUAGE_PARSE_CHANNEL_TAG: u8 = 0xF7;
+/// Leading byte of every theorem-channel service contract.
+pub const MTL_THEOREM_CHANNEL_TAG: u8 = 0xF8;
 
 impl SystemProcessBand {
     /// The unforgeable contract channel for `(index, fingerprint)` in this band:
@@ -372,6 +385,7 @@ mod tests {
             LANGUAGE_FLT_CONSTRUCT_BAND,
             LANGUAGE_FLT_PATTERN_BAND,
             LANGUAGE_PARSE_BAND,
+            THEOREM_CHANNEL_BAND,
         ] {
             assert_ne!(
                 band.channel(0, FP_A),
@@ -423,6 +437,7 @@ mod tests {
         let construct = LANGUAGE_FLT_CONSTRUCT_BAND.body_ref_range();
         let pattern = LANGUAGE_FLT_PATTERN_BAND.body_ref_range();
         let parse = LANGUAGE_PARSE_BAND.body_ref_range();
+        let theorem = THEOREM_CHANNEL_BAND.body_ref_range();
         assert!(fold.end() < native.start(), "the fold and native bands must not overlap");
         assert!(
             native.end() < lookahead.start(),
@@ -439,6 +454,7 @@ mod tests {
             "construct and pattern bands must not overlap"
         );
         assert!(pattern.end() < parse.start(), "pattern and parse bands must not overlap");
+        assert!(parse.end() < theorem.start(), "parse and theorem bands must not overlap");
         assert!(
             *fold.start() > 108,
             "every band sits above f1r3node's std (0-36) and test-framework (101-108) body_refs"
@@ -454,6 +470,7 @@ mod tests {
                     (LANGUAGE_FLT_CONSTRUCT_BAND, &construct),
                     (LANGUAGE_FLT_PATTERN_BAND, &pattern),
                     (LANGUAGE_PARSE_BAND, &parse),
+                    (THEOREM_CHANNEL_BAND, &theorem),
                 ] {
                     let body_ref = band.body_ref(index, fingerprint);
                     assert!(body_ref > 0, "{}: body_ref must be positive", band.name);

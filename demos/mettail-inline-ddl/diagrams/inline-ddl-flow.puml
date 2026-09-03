@@ -1,40 +1,108 @@
 @startuml
-title Inline MeTTaIL DDL Application — Authority and Failure Boundaries
+title Inline MeTTaIL DDL and Theorem-Channel Application
 
 skinparam backgroundColor #FFFFFF
 skinparam shadowing false
 skinparam ArrowColor #334155
 skinparam defaultFontColor #0F172A
+skinparam sequence {
+  LifeLineBorderColor #475569
+  LifeLineBackgroundColor #F8FAFC
+  ParticipantBorderColor #475569
+  GroupBorderColor #64748B
+  GroupBackgroundColor #F8FAFC
+  GroupHeaderFontColor #0F172A
+}
 
-actor "Rholang application" as app #DBEAFE
-component "Generated nouveau\nRholang parser" as host #BFDBFE
-component "Structural DDL\nelaboration" as ddl #DDD6FE
-component "Atomic verified\nparser installation" as install #A7F3D0
-collections "Opaque handles\nLeft · Right" as handles #FBCFE8
-component "Bounded parser\nport" as parser #FEF3C7
+actor "Rholang\napplication" as app #DBEAFE
+participant "Generated nouveau\nRholang parser" as host #BFDBFE
+participant "Structural DDL\nelaborator" as ddl #DDD6FE
+participant "Atomic language\ninstaller" as install #A7F3D0
 database "Installed-language\ntable" as table #DCFCE7
-rectangle "OUT\naccepted · rejected\natomic error" as out #E0E7FF
-rectangle "Invalid two-theory batch" as invalid #FEE2E2
+collections "Opaque language\nhandles" as handles #FBCFE8
+participant "Bounded runtime\nlexer / WPDA" as wpda #FEF3C7
+participant "Structural FLT\nconstruct + matcher" as flt #FED7AA
+participant "Theorem capability\nrouter" as theorem #C4B5FD
+participant "Injected bounded\nAdmissionChecker" as checker #A5B4FC
+collections "Linear transaction\ncapability" as transaction #F9A8D4
+participant "OUT" as out #E0E7FF
 
-app --> host : parse complete source once
-host --> ddl : DdlModule / DdlTheory AST
-ddl --> install : canonical LanguageCore batch
-install --> table : one all-or-none commit
-install --> handles : mint only after commit
-handles --> parser : handle + explicit category + text
-parser --> table : authorize Parse before and after
-parser --> out : classified result; no reflected AST
-app --> invalid : submit valid prefix + invalid suffix
-invalid -[#DC2626]-> install : validation refusal
-install -[#DC2626,dashed]-> out : error; publish no prefix
+group One host parse and atomic installation
+  app -> host : complete Rholang source
+  host -> ddl : structural DdlModule / DdlTheory AST
+  ddl -> install : canonical LanguageCore batch
+  install -> table : validate and commit all three exports atomically
+  table --> install : committed entries + sealed epochs
+  install --> handles : mint Left, Right, and Ambiguous capabilities
+  handles --> app : opaque values only
+  app -> install : valid-prefix + invalid-suffix batch
+  install -[#DC2626]-> out : InvalidSurfaceDdl; publish no prefix
+end
+
+group Explicit-handle recognition
+  app -> wpda : handle + category + guest text
+  wpda -> table : authorize Parse before work
+  table --> wpda : exact installed parser image
+  wpda -> table : revalidate authority before result
+  wpda --> out : accepted or rejected; no reflected AST
+end
+
+group Structural FLT construction and typed matching
+  app -> flt : left:LeftExpr Text/Hole template
+  flt -> table : authorize Construct
+  flt -> wpda : first guest parse over structural pieces
+  wpda --> flt : reflected term; no interpolation or reparse
+  flt --> app : structural Left value
+  app -> flt : qualified receive pattern with typed hole
+  flt -> table : authorize Match
+  flt -> wpda : compile bounded structural pattern
+  wpda --> flt : prepared pattern capability
+  app -> flt : reflected Left datum
+  flt --> app : matcher-owned typed capture
+end
+
+group Bounded theorem-channel transaction
+  app -> theorem : open(handle, category, theorem, rights, limits)
+  theorem -> table : authorize Match + Publish + Check
+  table --> theorem : exact language and channel epochs
+  theorem --> app : opaque theorem-channel capability
+  app -> theorem : prepare(channel, value, structural pattern)
+  theorem -> wpda : validate language, category, and pattern
+  wpda --> theorem : admitted term + typed capture telescope
+  theorem -> checker : theorem + canonical term + explicit budget
+
+  alt Proven within bounds
+    checker --> theorem : certificate + measured resource usage
+    theorem --> transaction : store prepared exchange
+    transaction --> app : opaque transaction capability
+    app -> theorem : commit(transaction)
+    theorem -> transaction : remove exactly once
+    theorem -> table : revalidate language and channel epochs
+    table --> theorem : current authority
+    theorem --> out : committed capture + scoped proof evidence
+  else Theorem false
+    checker -[#DC2626]-> out : TheoremRefuted
+  else Work or evidence exhausted
+    checker -[#DC2626]-> out : AdmissionExhausted
+  else Wrong language or category
+    wpda -[#DC2626]-> out : WrongLanguageOrCategory
+  else Ambiguous structural pattern
+    wpda -[#DC2626]-> out : AmbiguousPattern
+  else Revoked after prepare
+    table -[#DC2626]-> theorem : stale epoch
+    theorem -[#DC2626]-> out : StaleAuthority; no commit callback
+  end
+end
 
 legend right
   |= Color |= Meaning |
   |<#BFDBFE>| host-language parsing |
   |<#DDD6FE>| structural canonicalization |
-  |<#A7F3D0>| atomic admission |
+  |<#A7F3D0>| atomic installation |
   |<#FBCFE8>| unforgeable authority |
-  |<#FEF3C7>| bounded recognition |
-  |<#FEE2E2>| rejected batch |
+  |<#FEF3C7>| bounded runtime parsing |
+  |<#FED7AA>| structural FLT operations |
+  |<#C4B5FD>| theorem transaction boundary |
+  |<#FEE2E2>| fail-closed outcome |
 endlegend
 @enduml

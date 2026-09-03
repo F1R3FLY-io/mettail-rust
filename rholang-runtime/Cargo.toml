@@ -815,9 +815,10 @@ required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
 # Executable contract for `demos/mettail-inline-ddl/inline-ddl.rho`. The test
 # runs that committed Rholang application through the generated nouveau parser,
-# structural DDL lowering, real reducer, atomic installer, and handle-scoped
-# runtime parsers; it also observes the installed table to prove the invalid
-# multi-theory batch published no prefix.
+# structural DDL lowering, real reducer, atomic installer, handle-scoped runtime
+# parsers, structural FLT matching, and bounded theorem transactions. It also
+# observes the installed table to prove the invalid multi-theory batch published
+# no prefix and checks deterministic proof/security/resource evidence.
 [[test]]
 name = "inline_ddl_demo"
 path = "tests/inline_ddl_demo.rs"

@@ -13,6 +13,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.InstalledLanguageAuthority \
 	RuntimeGrammar.TheoremChannel \
 	RuntimeGrammar.BoundedAdmissionChecker \
+	RuntimeGrammar.RholangTheoremService \
 	RuntimeGrammar.WpdaDispatchPartition \
 	RuntimeGrammar.StructuralTemplate \
 	RuntimeGrammar.StructuralConstructMatch \
