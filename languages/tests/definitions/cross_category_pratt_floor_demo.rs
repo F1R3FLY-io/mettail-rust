@@ -15,6 +15,9 @@ language! {
 
     options {
         hosted_in: "tests/definitions/cross_category_pratt_floor_demo.rs",
+        // This fixture exercises parser/WPDA behavior and intentionally has no
+        // equations, rewrites, logic, or guards to inventory in Dovetail.
+        parse_only: true,
         emit_tests: false,
         emit_simulator: false,
         emit_blockly: false,
