@@ -9,8 +9,10 @@
 #![forbid(unsafe_code)]
 
 mod semantic_machine_projection;
+mod theory_image_compiler;
 
 pub use semantic_machine_projection::*;
+pub use theory_image_compiler::*;
 
 use std::any::Any;
 // FxHash (via dovetail's inline hasher) for the per-report root-dedup set: the keys

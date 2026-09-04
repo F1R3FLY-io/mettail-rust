@@ -68,7 +68,7 @@ pub enum TheoryTermFormV1 {
     Literal(TheoryLiteralV1),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TheoryLiteralV1 {
     String(String),
     Bytes(Vec<u8>),

@@ -1,0 +1,2014 @@
+//! Verified, authority-free execution images for runtime-defined GSLTs.
+//!
+//! [`TheoryCoreV1`](crate::TheoryCoreV1) is authoritative.  A
+//! [`TheorySemanticImageV1`] is a replaceable cache artifact that resolves
+//! source names to dense identifiers, normalizes rule terms to a closed
+//! polynomial operator language, and carries an independently checkable
+//! set-automaton quotient for positional left-hand sides.  The complete rule
+//! programs remain present, so collection remainders and other generalized
+//! patterns do not disappear when they are outside the positional quotient.
+//!
+//! All arenas are flat and backward-referencing.  Validation and automaton
+//! correspondence checks use explicit worklists, keeping admission independent
+//! of the native call stack.  The image contains rights *requirements* only;
+//! authority is supplied separately by an installed language handle.
+
+use crate::{
+    CategoryId, CollectionKind, ConstructorId, JudgmentAtomV1, LanguageCoreV1, LanguageRights,
+    SemanticEffectClassV1, TheoryCoreV1, TheoryLiteralV1, TheoryPremiseFormV1, TheoryRuleArenaV1,
+    TheoryRuleReferenceV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryVariableId,
+    TheoryVariableRoleV1,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub const THEORY_SEMANTIC_IMAGE_ABI_V1: u16 = 1;
+pub const THEORY_IMAGE_COMPILER_ABI_V1: u16 = 1;
+
+macro_rules! image_id {
+    ($name:ident) => {
+        #[derive(
+            Clone,
+            Copy,
+            Debug,
+            Default,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            Serialize,
+            Deserialize,
+        )]
+        pub struct $name(pub u32);
+    };
+}
+
+image_id!(TheorySortId);
+image_id!(TheoryConstructorId);
+image_id!(TheoryJudgmentId);
+image_id!(TheoryEffectId);
+image_id!(TheoryActionId);
+image_id!(TheoryRuleProgramId);
+image_id!(TheoryPatternStateId);
+image_id!(TheoryPatternEntryId);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryConstructorImageV1 {
+    pub id: TheoryConstructorId,
+    pub domain: Vec<TheorySortId>,
+    pub codomain: TheorySortId,
+    /// The parsed semantic constructor when this theory constructor is part of
+    /// the concrete grammar.  Internal semantic constructors may leave it
+    /// absent, but the compiler must never invent a grammar binding.
+    pub grammar: Option<TheoryGrammarConstructorV1>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryGrammarConstructorV1 {
+    pub category: CategoryId,
+    pub constructor: ConstructorId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TheoryImageOperatorV1 {
+    Constructor(TheoryConstructorId),
+    Abstraction {
+        sort: TheorySortId,
+    },
+    Substitution {
+        sort: TheorySortId,
+    },
+    Collection {
+        sort: TheorySortId,
+        element: TheorySortId,
+        kind: CollectionKind,
+    },
+    Map {
+        sort: TheorySortId,
+    },
+    Zip {
+        sort: TheorySortId,
+    },
+    Literal {
+        sort: TheorySortId,
+        value: TheoryLiteralV1,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryImageVariableV1 {
+    pub id: TheoryVariableId,
+    pub sort: TheorySortId,
+    pub role: TheoryVariableRoleV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryImageTermNodeV1 {
+    pub sort: TheorySortId,
+    pub form: TheoryImageTermFormV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryImageTermFormV1 {
+    Slot(TheoryVariableId),
+    Apply {
+        operator: TheoryImageOperatorV1,
+        arguments: Vec<TheoryTermId>,
+        /// Variable-valued structural children.  The canonical order is slots
+        /// first, followed by `arguments`.
+        slots: Vec<TheoryVariableId>,
+        /// A collection-tail binding.  Its matching law depends on the
+        /// collection kind, so it is not disguised as a positional child.
+        remainder: Option<TheoryVariableId>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryImagePremiseNodeV1 {
+    pub form: TheoryImagePremiseFormV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryImagePremiseFormV1 {
+    Freshness {
+        variable: TheoryVariableId,
+        target: TheoryVariableId,
+        remainder: bool,
+    },
+    Transition {
+        source: TheoryVariableId,
+        target: TheoryVariableId,
+    },
+    Judgment {
+        judgment: TheoryJudgmentId,
+        terms: Vec<TheoryTermId>,
+    },
+    ForAll {
+        collection: TheoryVariableId,
+        parameter: TheoryVariableId,
+        body: u32,
+    },
+    /// The guard value remains in the authoritative TheoryCore.  This exact
+    /// commitment prevents substitution while keeping the executable image
+    /// flat and allocation-bounded.
+    Guard { commitment: [u8; 32] },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryRuleDirectionV1 {
+    Forward,
+    Reverse,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryRuleOriginV1 {
+    Equation {
+        source: u32,
+        direction: TheoryRuleDirectionV1,
+    },
+    Rewrite {
+        source: u32,
+    },
+}
+
+/// The executable disposition of one declared rule orientation.
+///
+/// Every source orientation remains visible in the image.  An unsafe
+/// match-everything orientation or an orientation whose premises/template are
+/// not closed under its left-hand side is recorded, never silently discarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryRuleDispositionV1 {
+    Executable,
+    Suppressed(TheoryRuleSuppressionV1),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryRuleSuppressionV1 {
+    MatchAllRoot,
+    PremiseDependency { variable: TheoryVariableId },
+    UnboundTemplate { variable: TheoryVariableId },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryWorkChargeV1 {
+    pub pattern_nodes: u32,
+    pub template_nodes: u32,
+    pub premise_nodes: u32,
+    pub variable_slots: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryRuleProgramV1 {
+    pub id: TheoryRuleProgramId,
+    pub origin: TheoryRuleOriginV1,
+    pub disposition: TheoryRuleDispositionV1,
+    pub name: String,
+    pub variables: Vec<TheoryImageVariableV1>,
+    pub terms: Vec<TheoryImageTermNodeV1>,
+    pub premises: Vec<TheoryImagePremiseNodeV1>,
+    pub premise_roots: Vec<u32>,
+    pub left: TheoryTermId,
+    pub right: TheoryTermId,
+    pub charge: TheoryWorkChargeV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryPatternInvocationV1 {
+    pub state: TheoryPatternStateId,
+    /// Child-local slot -> parent-local slot.
+    pub parent_slots: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryPatternStateV1 {
+    pub id: TheoryPatternStateId,
+    pub slot_count: u32,
+    pub form: TheoryPatternStateFormV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryPatternStateFormV1 {
+    Bind,
+    Apply {
+        operator: TheoryImageOperatorV1,
+        arguments: Vec<TheoryPatternInvocationV1>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryPatternEntryV1 {
+    pub id: TheoryPatternEntryId,
+    pub rule: TheoryRuleProgramId,
+    pub root: TheoryPatternStateId,
+    /// Root-local slot -> rule variable.
+    pub slot_variables: Vec<TheoryVariableId>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryPatternAutomatonV1 {
+    pub states: Vec<TheoryPatternStateV1>,
+    pub entries: Vec<TheoryPatternEntryV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryActionImageV1 {
+    pub id: TheoryActionId,
+    pub domain: Vec<TheorySortId>,
+    pub codomain: TheorySortId,
+    pub transitions: Vec<TheoryRuleProgramId>,
+    pub effect: TheoryEffectId,
+    pub effect_class: SemanticEffectClassV1,
+    /// Declarative demand only.  It is intersected with an independently
+    /// supplied handle grant before the kernel can run.
+    pub required_rights: LanguageRights,
+    pub grade: TheorySortId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TheorySemanticImageV1 {
+    pub abi: u16,
+    pub compiler_abi: u16,
+    pub language_fingerprint: [u8; 32],
+    pub grammar_fingerprint: [u8; 32],
+    pub theory_fingerprint: [u8; 32],
+    pub constructors: Vec<TheoryConstructorImageV1>,
+    pub rules: Vec<TheoryRuleProgramV1>,
+    pub patterns: TheoryPatternAutomatonV1,
+    pub actions: Vec<TheoryActionImageV1>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TheoryImageAdmissionLimits {
+    pub max_encoded_bytes: usize,
+    pub max_sorts: usize,
+    pub max_constructors: usize,
+    pub max_judgments: usize,
+    pub max_effects: usize,
+    pub max_rules: usize,
+    pub max_actions: usize,
+    pub max_total_constructor_arguments: usize,
+    pub max_total_action_arguments: usize,
+    pub max_total_rule_variables: usize,
+    pub max_total_term_nodes: usize,
+    pub max_total_term_references: usize,
+    pub max_total_premise_nodes: usize,
+    pub max_total_premise_roots: usize,
+    pub max_total_name_bytes: usize,
+    pub max_total_literal_bytes: usize,
+    pub max_total_guard_nodes: usize,
+    pub max_total_guard_bytes: usize,
+    pub max_total_action_transitions: usize,
+    pub max_automaton_states: usize,
+    pub max_automaton_entries: usize,
+    pub max_automaton_edges: usize,
+    pub max_automaton_slot_references: usize,
+    pub max_automaton_checks: usize,
+}
+
+impl Default for TheoryImageAdmissionLimits {
+    fn default() -> Self {
+        Self {
+            max_encoded_bytes: 64 * 1024 * 1024,
+            max_sorts: 1_000_000,
+            max_constructors: 1_000_000,
+            max_judgments: 1_000_000,
+            max_effects: 1_000_000,
+            max_rules: 1_000_000,
+            max_actions: 1_000_000,
+            max_total_constructor_arguments: 10_000_000,
+            max_total_action_arguments: 10_000_000,
+            max_total_rule_variables: 10_000_000,
+            max_total_term_nodes: 10_000_000,
+            max_total_term_references: 20_000_000,
+            max_total_premise_nodes: 10_000_000,
+            max_total_premise_roots: 10_000_000,
+            max_total_name_bytes: 64 * 1024 * 1024,
+            max_total_literal_bytes: 64 * 1024 * 1024,
+            max_total_guard_nodes: 10_000_000,
+            max_total_guard_bytes: 64 * 1024 * 1024,
+            max_total_action_transitions: 10_000_000,
+            max_automaton_states: 10_000_000,
+            max_automaton_entries: 1_000_000,
+            max_automaton_edges: 20_000_000,
+            max_automaton_slot_references: 20_000_000,
+            max_automaton_checks: 50_000_000,
+        }
+    }
+}
+
+impl TheoryImageAdmissionLimits {
+    /// Preflight the complete source expansion before an image compiler clones
+    /// any rule arena or allocates automaton state.  Equation orientations are
+    /// counted separately because both remain auditable image programs even
+    /// when one is explicitly suppressed.
+    pub fn validate_source(self, language: &LanguageCoreV1) -> Result<(), TheoryImageError> {
+        language
+            .validate()
+            .map_err(|errors| TheoryImageError::InvalidLanguage(format!("{errors:?}")))?;
+        enforce(language.theory.sorts.len(), self.max_sorts, "sorts")?;
+        enforce(language.theory.constructors.len(), self.max_constructors, "constructors")?;
+        enforce(language.theory.judgments.len(), self.max_judgments, "judgments")?;
+        enforce(language.theory.effects.len(), self.max_effects, "effects")?;
+        enforce(language.theory.actions.len(), self.max_actions, "actions")?;
+        let rule_count = language
+            .theory
+            .equations
+            .len()
+            .checked_mul(2)
+            .and_then(|count| count.checked_add(language.theory.rewrites.len()))
+            .ok_or(TheoryImageError::LengthOverflow)?;
+        enforce(rule_count, self.max_rules, "rules")?;
+        enforce(rule_count, self.max_automaton_entries, "automaton entries")?;
+
+        let mut totals = SourceImageTotals::default();
+        for constructor in &language.theory.constructors {
+            totals.constructor_arguments = checked_total(
+                totals.constructor_arguments,
+                constructor.domain.len(),
+                self.max_total_constructor_arguments,
+                "constructor arguments",
+            )?;
+        }
+        for equation in &language.theory.equations {
+            account_source_arena(&equation.arena, equation.name.len(), 2, self, &mut totals)?;
+        }
+        for rewrite in &language.theory.rewrites {
+            account_source_arena(&rewrite.arena, rewrite.name.len(), 1, self, &mut totals)?;
+        }
+        for action in &language.theory.actions {
+            totals.action_arguments = checked_total(
+                totals.action_arguments,
+                action.domain.len(),
+                self.max_total_action_arguments,
+                "action arguments",
+            )?;
+            let count = match &action.transition {
+                TheoryRuleReferenceV1::Equation(name) => language
+                    .theory
+                    .equations
+                    .iter()
+                    .filter(|rule| rule.name == *name)
+                    .count()
+                    .checked_mul(2)
+                    .ok_or(TheoryImageError::LengthOverflow)?,
+                TheoryRuleReferenceV1::Rewrite(name) => language
+                    .theory
+                    .rewrites
+                    .iter()
+                    .filter(|rule| rule.name == *name)
+                    .count(),
+                TheoryRuleReferenceV1::Handler(_) => {
+                    return Err(TheoryImageError::SourceMismatch {
+                        kind: "runtime handler",
+                        index: u32::MAX,
+                    });
+                },
+            };
+            totals.action_transitions = checked_total(
+                totals.action_transitions,
+                count,
+                self.max_total_action_transitions,
+                "action transitions",
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct SourceImageTotals {
+    constructor_arguments: usize,
+    action_arguments: usize,
+    variables: usize,
+    terms: usize,
+    term_references: usize,
+    premises: usize,
+    premise_roots: usize,
+    names: usize,
+    literals: usize,
+    guard_nodes: usize,
+    guard_bytes: usize,
+    automaton_states: usize,
+    automaton_edges: usize,
+    automaton_slot_references: usize,
+    action_transitions: usize,
+}
+
+fn account_source_arena(
+    arena: &TheoryRuleArenaV1,
+    name_bytes: usize,
+    orientations: usize,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut SourceImageTotals,
+) -> Result<(), TheoryImageError> {
+    let scaled = |value: usize| {
+        value
+            .checked_mul(orientations)
+            .ok_or(TheoryImageError::LengthOverflow)
+    };
+    totals.variables = checked_total(
+        totals.variables,
+        scaled(arena.variables.len())?,
+        limits.max_total_rule_variables,
+        "rule variables",
+    )?;
+    totals.terms = checked_total(
+        totals.terms,
+        scaled(arena.terms.len())?,
+        limits.max_total_term_nodes,
+        "term nodes",
+    )?;
+    totals.premises = checked_total(
+        totals.premises,
+        scaled(arena.premises.len())?,
+        limits.max_total_premise_nodes,
+        "premise nodes",
+    )?;
+    totals.premise_roots = checked_total(
+        totals.premise_roots,
+        scaled(arena.premise_roots.len())?,
+        limits.max_total_premise_roots,
+        "premise roots",
+    )?;
+    totals.names = checked_total(
+        totals.names,
+        scaled(name_bytes)?,
+        limits.max_total_name_bytes,
+        "name bytes",
+    )?;
+
+    let mut slot_occurrences = 0usize;
+    let mut child_edges = 0usize;
+    for term in &arena.terms {
+        let (children, slots) = match &term.form {
+            TheoryTermFormV1::Variable(_) => (0, 0),
+            TheoryTermFormV1::Constructor { arguments, .. } => (arguments.len(), 0),
+            TheoryTermFormV1::Abstraction { .. } => (1, 1),
+            TheoryTermFormV1::Substitution { .. } => (2, 0),
+            TheoryTermFormV1::Collection { elements, remainder } => {
+                (elements.len(), usize::from(remainder.is_some()))
+            },
+            TheoryTermFormV1::Map { parameters, .. } => (2, parameters.len()),
+            TheoryTermFormV1::Zip { .. } => (2, 0),
+            TheoryTermFormV1::Literal(value) => {
+                totals.literals = checked_total(
+                    totals.literals,
+                    scaled(literal_bytes(value))?,
+                    limits.max_total_literal_bytes,
+                    "literal bytes",
+                )?;
+                (0, 0)
+            },
+        };
+        child_edges = child_edges
+            .checked_add(children)
+            .and_then(|total| total.checked_add(slots))
+            .ok_or(TheoryImageError::LengthOverflow)?;
+        slot_occurrences = slot_occurrences
+            .checked_add(slots)
+            .ok_or(TheoryImageError::LengthOverflow)?;
+    }
+    totals.automaton_states = checked_total(
+        totals.automaton_states,
+        scaled(
+            arena
+                .terms
+                .len()
+                .checked_add(slot_occurrences)
+                .ok_or(TheoryImageError::LengthOverflow)?,
+        )?,
+        limits.max_automaton_states,
+        "automaton states",
+    )?;
+    totals.automaton_edges = checked_total(
+        totals.automaton_edges,
+        scaled(child_edges)?,
+        limits.max_automaton_edges,
+        "automaton edges",
+    )?;
+    let slot_reference_upper = arena
+        .terms
+        .len()
+        .checked_add(slot_occurrences)
+        .and_then(|states| states.checked_mul(arena.variables.len()))
+        .and_then(|references| references.checked_add(arena.variables.len()))
+        .ok_or(TheoryImageError::LengthOverflow)?;
+    totals.automaton_slot_references = checked_total(
+        totals.automaton_slot_references,
+        scaled(slot_reference_upper)?,
+        limits.max_automaton_slot_references,
+        "automaton slot references",
+    )?;
+
+    let mut term_references = child_edges;
+    for premise in &arena.premises {
+        match &premise.form {
+            TheoryPremiseFormV1::Judgment(atom) => {
+                term_references = term_references
+                    .checked_add(atom.terms.len())
+                    .ok_or(TheoryImageError::LengthOverflow)?;
+            },
+            TheoryPremiseFormV1::Guard(value) => {
+                let (nodes, bytes) = canonical_guard_footprint(value, limits)?;
+                totals.guard_nodes = checked_total(
+                    totals.guard_nodes,
+                    scaled(nodes)?,
+                    limits.max_total_guard_nodes,
+                    "guard nodes",
+                )?;
+                totals.guard_bytes = checked_total(
+                    totals.guard_bytes,
+                    scaled(bytes)?,
+                    limits.max_total_guard_bytes,
+                    "guard bytes",
+                )?;
+            },
+            TheoryPremiseFormV1::Freshness { .. }
+            | TheoryPremiseFormV1::Transition { .. }
+            | TheoryPremiseFormV1::ForAll { .. } => {},
+        }
+    }
+    totals.term_references = checked_total(
+        totals.term_references,
+        scaled(term_references)?,
+        limits.max_total_term_references,
+        "term references",
+    )?;
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TheoryImageError {
+    InvalidLanguage(String),
+    UnsupportedAbi(u16),
+    UnsupportedCompilerAbi(u16),
+    Fingerprint(String),
+    FingerprintMismatch(&'static str),
+    LimitExceeded(&'static str),
+    LengthOverflow,
+    NonDenseId {
+        kind: &'static str,
+        expected: u32,
+        actual: u32,
+    },
+    SourceMismatch {
+        kind: &'static str,
+        index: u32,
+    },
+    UnknownReference {
+        kind: &'static str,
+        owner: u32,
+        target: u32,
+    },
+    ForwardReference {
+        kind: &'static str,
+        owner: u32,
+        target: u32,
+    },
+    DuplicateReference {
+        kind: &'static str,
+        owner: u32,
+        target: u32,
+    },
+    AutomatonCoverage {
+        rule: u32,
+        actual: usize,
+    },
+    AutomatonShape {
+        entry: u32,
+    },
+    Allocation,
+    InvalidMagic,
+    InvalidTag(u8),
+    InvalidUtf8,
+    Truncated,
+    TrailingBytes,
+}
+
+impl TheorySemanticImageV1 {
+    pub fn validate(
+        &self,
+        language: &LanguageCoreV1,
+        limits: TheoryImageAdmissionLimits,
+    ) -> Result<(), TheoryImageError> {
+        limits.validate_source(language)?;
+        if self.abi != THEORY_SEMANTIC_IMAGE_ABI_V1 {
+            return Err(TheoryImageError::UnsupportedAbi(self.abi));
+        }
+        if self.compiler_abi != THEORY_IMAGE_COMPILER_ABI_V1 {
+            return Err(TheoryImageError::UnsupportedCompilerAbi(self.compiler_abi));
+        }
+        check_fingerprint(
+            self.language_fingerprint,
+            language
+                .fingerprint()
+                .map_err(|error| TheoryImageError::Fingerprint(error.to_string()))?,
+            "language",
+        )?;
+        check_fingerprint(
+            self.grammar_fingerprint,
+            language
+                .grammar_fingerprint()
+                .map_err(|error| TheoryImageError::Fingerprint(error.to_string()))?,
+            "grammar",
+        )?;
+        check_fingerprint(
+            self.theory_fingerprint,
+            language
+                .theory_fingerprint()
+                .map_err(|error| TheoryImageError::Fingerprint(error.to_string()))?,
+            "theory",
+        )?;
+
+        enforce(self.constructors.len(), limits.max_constructors, "constructors")?;
+        enforce(self.rules.len(), limits.max_rules, "rules")?;
+        enforce(self.actions.len(), limits.max_actions, "actions")?;
+        validate_image_totals(self, limits)?;
+        enforce(
+            crate::theory_image_codec::encoded_theory_image_len(self)?,
+            limits.max_encoded_bytes,
+            "encoded bytes",
+        )?;
+        enforce(self.patterns.states.len(), limits.max_automaton_states, "automaton states")?;
+        enforce(self.patterns.entries.len(), limits.max_automaton_entries, "automaton entries")?;
+
+        let context = ImageSourceContext::new(&language.theory)?;
+        validate_constructors(self, language, &context)?;
+        validate_rules(self, language, &context)?;
+        validate_actions(self, language, &context)?;
+        validate_pattern_automaton(self, limits)?;
+        Ok(())
+    }
+}
+
+struct ImageSourceContext<'a> {
+    theory: &'a TheoryCoreV1,
+    sorts: BTreeMap<&'a str, TheorySortId>,
+    constructors: BTreeMap<&'a str, TheoryConstructorId>,
+    judgments: BTreeMap<&'a str, TheoryJudgmentId>,
+    effects: BTreeMap<&'a str, TheoryEffectId>,
+}
+
+impl<'a> ImageSourceContext<'a> {
+    fn new(theory: &'a TheoryCoreV1) -> Result<Self, TheoryImageError> {
+        Ok(Self {
+            theory,
+            sorts: index_names(theory.sorts.iter().map(|sort| sort.name.as_str()), "sort")?,
+            constructors: index_names(
+                theory
+                    .constructors
+                    .iter()
+                    .map(|constructor| constructor.name.as_str()),
+                "constructor",
+            )?,
+            judgments: index_names(
+                theory
+                    .judgments
+                    .iter()
+                    .map(|judgment| judgment.name.as_str()),
+                "judgment",
+            )?,
+            effects: index_names(
+                theory.effects.iter().map(|effect| effect.name.as_str()),
+                "effect",
+            )?,
+        })
+    }
+
+    fn sort(&self, name: &str) -> Result<TheorySortId, TheoryImageError> {
+        self.sorts
+            .get(name)
+            .copied()
+            .ok_or(TheoryImageError::SourceMismatch { kind: "sort", index: u32::MAX })
+    }
+}
+
+fn index_names<'a, I, Id>(
+    names: I,
+    kind: &'static str,
+) -> Result<BTreeMap<&'a str, Id>, TheoryImageError>
+where
+    I: IntoIterator<Item = &'a str>,
+    Id: From<u32>,
+{
+    let mut output = BTreeMap::new();
+    for (index, name) in names.into_iter().enumerate() {
+        let index = u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded(kind))?;
+        if output.insert(name, Id::from(index)).is_some() {
+            return Err(TheoryImageError::SourceMismatch { kind, index });
+        }
+    }
+    Ok(output)
+}
+
+macro_rules! impl_from_u32 {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl From<u32> for $name {
+                fn from(value: u32) -> Self { Self(value) }
+            }
+        )+
+    };
+}
+
+impl_from_u32!(TheorySortId, TheoryConstructorId, TheoryJudgmentId, TheoryEffectId);
+
+fn validate_constructors(
+    image: &TheorySemanticImageV1,
+    language: &LanguageCoreV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<(), TheoryImageError> {
+    if image.constructors.len() != language.theory.constructors.len() {
+        return Err(TheoryImageError::SourceMismatch { kind: "constructor count", index: 0 });
+    }
+    for (index, (actual, source)) in image
+        .constructors
+        .iter()
+        .zip(&language.theory.constructors)
+        .enumerate()
+    {
+        let index =
+            u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("constructors"))?;
+        dense("constructor", index, actual.id.0)?;
+        let expected_domain = source
+            .domain
+            .iter()
+            .map(|sort| context.sort(sort))
+            .collect::<Result<Vec<_>, _>>()?;
+        if actual.domain != expected_domain || actual.codomain != context.sort(&source.codomain)? {
+            return Err(TheoryImageError::SourceMismatch { kind: "constructor", index });
+        }
+        let expected_binding = unique_grammar_binding(language, &source.name, index)?;
+        if actual.grammar != Some(expected_binding) {
+            return Err(TheoryImageError::SourceMismatch { kind: "grammar constructor", index });
+        }
+        let category = language
+            .grammar
+            .categories
+            .get(expected_binding.category.0 as usize)
+            .ok_or(TheoryImageError::SourceMismatch { kind: "grammar category", index })?;
+        if category.name != source.codomain {
+            return Err(TheoryImageError::SourceMismatch { kind: "constructor codomain", index });
+        }
+    }
+    Ok(())
+}
+
+fn unique_grammar_binding(
+    language: &LanguageCoreV1,
+    label: &str,
+    index: u32,
+) -> Result<TheoryGrammarConstructorV1, TheoryImageError> {
+    let mut binding = None;
+    for production in &language.grammar.productions {
+        if production.label != label {
+            continue;
+        }
+        let candidate = TheoryGrammarConstructorV1 {
+            category: production.result,
+            constructor: production.constructor,
+        };
+        if binding.is_some_and(|current| current != candidate) {
+            return Err(TheoryImageError::SourceMismatch {
+                kind: "ambiguous grammar constructor",
+                index,
+            });
+        }
+        binding = Some(candidate);
+    }
+    binding.ok_or(TheoryImageError::SourceMismatch { kind: "grammar constructor", index })
+}
+
+fn validate_image_totals(
+    image: &TheorySemanticImageV1,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<(), TheoryImageError> {
+    let mut constructor_arguments = 0usize;
+    for constructor in &image.constructors {
+        constructor_arguments = checked_total(
+            constructor_arguments,
+            constructor.domain.len(),
+            limits.max_total_constructor_arguments,
+            "constructor arguments",
+        )?;
+    }
+    let mut variables = 0usize;
+    let mut terms = 0usize;
+    let mut term_references = 0usize;
+    let mut premises = 0usize;
+    let mut premise_roots = 0usize;
+    let mut names = 0usize;
+    let mut literals = 0usize;
+    let mut action_arguments = 0usize;
+    let mut transitions = 0usize;
+    for rule in &image.rules {
+        variables = checked_total(
+            variables,
+            rule.variables.len(),
+            limits.max_total_rule_variables,
+            "rule variables",
+        )?;
+        terms = checked_total(terms, rule.terms.len(), limits.max_total_term_nodes, "term nodes")?;
+        premises = checked_total(
+            premises,
+            rule.premises.len(),
+            limits.max_total_premise_nodes,
+            "premise nodes",
+        )?;
+        names = checked_total(names, rule.name.len(), limits.max_total_name_bytes, "name bytes")?;
+        for term in &rule.terms {
+            if let TheoryImageTermFormV1::Apply { arguments, slots, remainder, .. } = &term.form {
+                term_references = checked_total(
+                    term_references,
+                    arguments
+                        .len()
+                        .checked_add(slots.len())
+                        .and_then(|count| count.checked_add(usize::from(remainder.is_some())))
+                        .ok_or(TheoryImageError::LengthOverflow)?,
+                    limits.max_total_term_references,
+                    "term references",
+                )?;
+            }
+            if let TheoryImageTermFormV1::Apply {
+                operator: TheoryImageOperatorV1::Literal { value, .. },
+                ..
+            } = &term.form
+            {
+                literals = checked_total(
+                    literals,
+                    literal_bytes(value),
+                    limits.max_total_literal_bytes,
+                    "literal bytes",
+                )?;
+            }
+        }
+        for premise in &rule.premises {
+            if let TheoryImagePremiseFormV1::Judgment { terms, .. } = &premise.form {
+                term_references = checked_total(
+                    term_references,
+                    terms.len(),
+                    limits.max_total_term_references,
+                    "term references",
+                )?;
+            }
+        }
+        premise_roots = checked_total(
+            premise_roots,
+            rule.premise_roots.len(),
+            limits.max_total_premise_roots,
+            "premise roots",
+        )?;
+    }
+    for action in &image.actions {
+        action_arguments = checked_total(
+            action_arguments,
+            action.domain.len(),
+            limits.max_total_action_arguments,
+            "action arguments",
+        )?;
+        transitions = checked_total(
+            transitions,
+            action.transitions.len(),
+            limits.max_total_action_transitions,
+            "action transitions",
+        )?;
+    }
+    Ok(())
+}
+
+fn canonical_guard_footprint(
+    value: &crate::CanonicalValue,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<(usize, usize), TheoryImageError> {
+    let mut pending = vec![value];
+    let mut nodes = 0usize;
+    let mut bytes = 0usize;
+    while let Some(value) = pending.pop() {
+        nodes = checked_total(nodes, 1, limits.max_total_guard_nodes, "guard nodes")?;
+        match value {
+            crate::CanonicalValue::Map(values) => {
+                pending
+                    .try_reserve(values.len())
+                    .map_err(|_| TheoryImageError::Allocation)?;
+                for (key, value) in values.iter().rev() {
+                    bytes = checked_total(
+                        bytes,
+                        key.len(),
+                        limits.max_total_guard_bytes,
+                        "guard bytes",
+                    )?;
+                    pending.push(value);
+                }
+            },
+            crate::CanonicalValue::List(values) => {
+                pending
+                    .try_reserve(values.len())
+                    .map_err(|_| TheoryImageError::Allocation)?;
+                pending.extend(values.iter().rev());
+            },
+            crate::CanonicalValue::String(value) => {
+                bytes =
+                    checked_total(bytes, value.len(), limits.max_total_guard_bytes, "guard bytes")?;
+            },
+            crate::CanonicalValue::Bytes(value) => {
+                bytes =
+                    checked_total(bytes, value.len(), limits.max_total_guard_bytes, "guard bytes")?;
+            },
+            crate::CanonicalValue::Integer(_)
+            | crate::CanonicalValue::FloatBits(_)
+            | crate::CanonicalValue::Boolean(_)
+            | crate::CanonicalValue::Nil => {},
+        }
+    }
+    Ok((nodes, bytes))
+}
+
+fn literal_bytes(literal: &TheoryLiteralV1) -> usize {
+    match literal {
+        TheoryLiteralV1::String(value) => value.len(),
+        TheoryLiteralV1::Bytes(value) => value.len(),
+        TheoryLiteralV1::Integer(_)
+        | TheoryLiteralV1::FloatBits(_)
+        | TheoryLiteralV1::Boolean(_)
+        | TheoryLiteralV1::Unit => 0,
+    }
+}
+
+fn checked_total(
+    current: usize,
+    additional: usize,
+    limit: usize,
+    kind: &'static str,
+) -> Result<usize, TheoryImageError> {
+    let total = current
+        .checked_add(additional)
+        .ok_or(TheoryImageError::LengthOverflow)?;
+    enforce(total, limit, kind)?;
+    Ok(total)
+}
+
+fn validate_rules(
+    image: &TheorySemanticImageV1,
+    language: &LanguageCoreV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<(), TheoryImageError> {
+    let expected_count = language
+        .theory
+        .equations
+        .len()
+        .checked_mul(2)
+        .and_then(|count| count.checked_add(language.theory.rewrites.len()))
+        .ok_or(TheoryImageError::LengthOverflow)?;
+    if image.rules.len() != expected_count {
+        return Err(TheoryImageError::SourceMismatch { kind: "rule count", index: 0 });
+    }
+    for (index, program) in image.rules.iter().enumerate() {
+        let index = u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("rules"))?;
+        dense("rule", index, program.id.0)?;
+        let (name, arena, left, right) = source_rule(&language.theory, program.origin)?;
+        if program.name != name || program.left != left || program.right != right {
+            return Err(TheoryImageError::SourceMismatch { kind: "rule header", index });
+        }
+        validate_program(program, arena, context, index)?;
+        if structurally_equal(&program.terms, program.left, program.right)? {
+            return Err(TheoryImageError::SourceMismatch { kind: "non-progressing rule", index });
+        }
+        let allow_transition = matches!(program.origin, TheoryRuleOriginV1::Rewrite { .. });
+        if program.disposition != rule_disposition(arena, left, right, allow_transition)? {
+            return Err(TheoryImageError::SourceMismatch { kind: "rule disposition", index });
+        }
+    }
+    Ok(())
+}
+
+fn source_rule(
+    theory: &TheoryCoreV1,
+    origin: TheoryRuleOriginV1,
+) -> Result<(&str, &TheoryRuleArenaV1, TheoryTermId, TheoryTermId), TheoryImageError> {
+    match origin {
+        TheoryRuleOriginV1::Equation { source, direction } => {
+            let equation = theory.equations.get(source as usize).ok_or(
+                TheoryImageError::UnknownReference {
+                    kind: "equation",
+                    owner: source,
+                    target: source,
+                },
+            )?;
+            Ok(match direction {
+                TheoryRuleDirectionV1::Forward => {
+                    (&equation.name, &equation.arena, equation.left, equation.right)
+                },
+                TheoryRuleDirectionV1::Reverse => {
+                    (&equation.name, &equation.arena, equation.right, equation.left)
+                },
+            })
+        },
+        TheoryRuleOriginV1::Rewrite { source } => {
+            let rewrite =
+                theory
+                    .rewrites
+                    .get(source as usize)
+                    .ok_or(TheoryImageError::UnknownReference {
+                        kind: "rewrite",
+                        owner: source,
+                        target: source,
+                    })?;
+            Ok((&rewrite.name, &rewrite.arena, rewrite.left, rewrite.right))
+        },
+    }
+}
+
+fn validate_program(
+    program: &TheoryRuleProgramV1,
+    source: &TheoryRuleArenaV1,
+    context: &ImageSourceContext<'_>,
+    owner: u32,
+) -> Result<(), TheoryImageError> {
+    if program.variables.len() != source.variables.len()
+        || program.terms.len() != source.terms.len()
+        || program.premises.len() != source.premises.len()
+        || program
+            .premise_roots
+            .iter()
+            .copied()
+            .ne(source.premise_roots.iter().map(|id| id.0))
+    {
+        return Err(TheoryImageError::SourceMismatch { kind: "rule arena", index: owner });
+    }
+    for (index, (actual, expected)) in program.variables.iter().zip(&source.variables).enumerate() {
+        let index =
+            u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("rule variables"))?;
+        dense("rule variable", index, actual.id.0)?;
+        if actual.sort != context.sort(&expected.sort)? || actual.role != expected.role {
+            return Err(TheoryImageError::SourceMismatch { kind: "rule variable", index: owner });
+        }
+    }
+    for (index, (actual, expected)) in program.terms.iter().zip(&source.terms).enumerate() {
+        let index =
+            u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("rule terms"))?;
+        if actual.sort != context.sort(&expected.sort)?
+            || actual.form != expected_term_form(expected, context)?
+        {
+            return Err(TheoryImageError::SourceMismatch { kind: "rule term", index: owner });
+        }
+        validate_term_references(actual, index, program.variables.len())?;
+    }
+    for (index, (actual, expected)) in program.premises.iter().zip(&source.premises).enumerate() {
+        let index =
+            u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("premises"))?;
+        if actual.form != expected_premise_form(&expected.form, context)? {
+            return Err(TheoryImageError::SourceMismatch { kind: "premise", index: owner });
+        }
+        validate_premise_references(actual, index, program)?;
+    }
+    let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+    let expected_charge = TheoryWorkChargeV1 {
+        pattern_nodes: count(source.terms.len()),
+        template_nodes: count(source.terms.len()),
+        premise_nodes: count(source.premises.len()),
+        variable_slots: count(source.variables.len()),
+    };
+    if program.charge != expected_charge {
+        return Err(TheoryImageError::SourceMismatch { kind: "resource charge", index: owner });
+    }
+    Ok(())
+}
+
+fn expected_term_form(
+    node: &crate::TheoryTermNodeV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<TheoryImageTermFormV1, TheoryImageError> {
+    let sort = context.sort(&node.sort)?;
+    Ok(match &node.form {
+        TheoryTermFormV1::Variable(variable) => TheoryImageTermFormV1::Slot(*variable),
+        TheoryTermFormV1::Constructor { constructor, arguments } => TheoryImageTermFormV1::Apply {
+            operator: TheoryImageOperatorV1::Constructor(
+                context
+                    .constructors
+                    .get(constructor.as_str())
+                    .copied()
+                    .ok_or(TheoryImageError::SourceMismatch {
+                        kind: "constructor",
+                        index: u32::MAX,
+                    })?,
+            ),
+            arguments: arguments.clone(),
+            slots: Vec::new(),
+            remainder: None,
+        },
+        TheoryTermFormV1::Abstraction { binder, body } => TheoryImageTermFormV1::Apply {
+            operator: TheoryImageOperatorV1::Abstraction { sort },
+            arguments: vec![*body],
+            slots: vec![*binder],
+            remainder: None,
+        },
+        TheoryTermFormV1::Substitution { abstraction, argument } => TheoryImageTermFormV1::Apply {
+            operator: TheoryImageOperatorV1::Substitution { sort },
+            arguments: vec![*abstraction, *argument],
+            slots: Vec::new(),
+            remainder: None,
+        },
+        TheoryTermFormV1::Collection { elements, remainder } => {
+            return expected_collection_form(sort, elements, *remainder, context);
+        },
+        TheoryTermFormV1::Map { collection, parameters, body } => TheoryImageTermFormV1::Apply {
+            operator: TheoryImageOperatorV1::Map { sort },
+            arguments: vec![*collection, *body],
+            slots: parameters.clone(),
+            remainder: None,
+        },
+        TheoryTermFormV1::Zip { left, right } => TheoryImageTermFormV1::Apply {
+            operator: TheoryImageOperatorV1::Zip { sort },
+            arguments: vec![*left, *right],
+            slots: Vec::new(),
+            remainder: None,
+        },
+        TheoryTermFormV1::Literal(value) => TheoryImageTermFormV1::Apply {
+            operator: TheoryImageOperatorV1::Literal { sort, value: value.clone() },
+            arguments: Vec::new(),
+            slots: Vec::new(),
+            remainder: None,
+        },
+    })
+}
+
+fn expected_collection_form(
+    sort: TheorySortId,
+    elements: &[TheoryTermId],
+    remainder: Option<TheoryVariableId>,
+    context: &ImageSourceContext<'_>,
+) -> Result<TheoryImageTermFormV1, TheoryImageError> {
+    let declaration = context
+        .theory
+        .sorts
+        .get(sort.0 as usize)
+        .ok_or(TheoryImageError::SourceMismatch { kind: "collection sort", index: sort.0 })?;
+    let TheorySortKindV1::Collection { kind, element, .. } = &declaration.kind else {
+        return Err(TheoryImageError::SourceMismatch {
+            kind: "collection signature",
+            index: sort.0,
+        });
+    };
+    Ok(TheoryImageTermFormV1::Apply {
+        operator: TheoryImageOperatorV1::Collection {
+            sort,
+            element: context.sort(element)?,
+            kind: *kind,
+        },
+        arguments: elements.to_vec(),
+        slots: Vec::new(),
+        remainder,
+    })
+}
+
+fn expected_premise_form(
+    form: &TheoryPremiseFormV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<TheoryImagePremiseFormV1, TheoryImageError> {
+    Ok(match form {
+        TheoryPremiseFormV1::Freshness { variable, target, remainder } => {
+            TheoryImagePremiseFormV1::Freshness {
+                variable: *variable,
+                target: *target,
+                remainder: *remainder,
+            }
+        },
+        TheoryPremiseFormV1::Transition { source, target } => {
+            TheoryImagePremiseFormV1::Transition { source: *source, target: *target }
+        },
+        TheoryPremiseFormV1::Judgment(JudgmentAtomV1 { judgment, terms }) => {
+            TheoryImagePremiseFormV1::Judgment {
+                judgment: context.judgments.get(judgment.as_str()).copied().ok_or(
+                    TheoryImageError::SourceMismatch { kind: "judgment", index: u32::MAX },
+                )?,
+                terms: terms.clone(),
+            }
+        },
+        TheoryPremiseFormV1::ForAll { collection, parameter, body } => {
+            TheoryImagePremiseFormV1::ForAll {
+                collection: *collection,
+                parameter: *parameter,
+                body: body.0,
+            }
+        },
+        TheoryPremiseFormV1::Guard(value) => TheoryImagePremiseFormV1::Guard {
+            commitment: theory_guard_commitment_v1(value)?,
+        },
+    })
+}
+
+/// Domain-separated, representation-independent commitment to a guard value.
+/// The traversal is iterative and streams directly into BLAKE3, so deeply
+/// nested guards neither recurse nor require a second full-size byte buffer.
+pub fn theory_guard_commitment_v1(
+    value: &crate::CanonicalValue,
+) -> Result<[u8; 32], TheoryImageError> {
+    enum Task<'a> {
+        Value(&'a crate::CanonicalValue),
+        Key(&'a str),
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"mettail-theory-guard/1\0");
+    let mut pending = vec![Task::Value(value)];
+    while let Some(task) = pending.pop() {
+        match task {
+            Task::Key(key) => hash_guard_bytes(&mut hasher, key.as_bytes()),
+            Task::Value(crate::CanonicalValue::Map(values)) => {
+                hasher.update(b"m");
+                hash_guard_len(&mut hasher, values.len());
+                pending
+                    .try_reserve(values.len().saturating_mul(2))
+                    .map_err(|_| TheoryImageError::Allocation)?;
+                for (key, value) in values.iter().rev() {
+                    pending.push(Task::Value(value));
+                    pending.push(Task::Key(key));
+                }
+            },
+            Task::Value(crate::CanonicalValue::List(values)) => {
+                hasher.update(b"l");
+                hash_guard_len(&mut hasher, values.len());
+                pending
+                    .try_reserve(values.len())
+                    .map_err(|_| TheoryImageError::Allocation)?;
+                pending.extend(values.iter().rev().map(Task::Value));
+            },
+            Task::Value(crate::CanonicalValue::String(value)) => {
+                hasher.update(b"s");
+                hash_guard_bytes(&mut hasher, value.as_bytes());
+            },
+            Task::Value(crate::CanonicalValue::Bytes(value)) => {
+                hasher.update(b"b");
+                hash_guard_bytes(&mut hasher, value);
+            },
+            Task::Value(crate::CanonicalValue::Integer(value)) => {
+                hasher.update(b"i");
+                hasher.update(&value.to_be_bytes());
+            },
+            Task::Value(crate::CanonicalValue::FloatBits(value)) => {
+                hasher.update(b"d");
+                hasher.update(&value.to_be_bytes());
+            },
+            Task::Value(crate::CanonicalValue::Boolean(value)) => {
+                hasher.update(if *value { b"t" } else { b"f" });
+            },
+            Task::Value(crate::CanonicalValue::Nil) => {
+                hasher.update(b"n");
+            },
+        }
+    }
+    Ok(*hasher.finalize().as_bytes())
+}
+
+fn hash_guard_len(hasher: &mut blake3::Hasher, length: usize) {
+    hasher.update(&u64::try_from(length).unwrap_or(u64::MAX).to_be_bytes());
+}
+
+fn hash_guard_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+    hash_guard_len(hasher, bytes.len());
+    hasher.update(bytes);
+}
+
+fn validate_term_references(
+    node: &TheoryImageTermNodeV1,
+    owner: u32,
+    variable_count: usize,
+) -> Result<(), TheoryImageError> {
+    match &node.form {
+        TheoryImageTermFormV1::Slot(variable) => {
+            variable_reference(*variable, owner, variable_count)
+        },
+        TheoryImageTermFormV1::Apply { arguments, slots, remainder, .. } => {
+            for target in arguments {
+                if target.0 >= owner {
+                    return Err(TheoryImageError::ForwardReference {
+                        kind: "term",
+                        owner,
+                        target: target.0,
+                    });
+                }
+            }
+            for variable in slots {
+                variable_reference(*variable, owner, variable_count)?;
+            }
+            if let Some(variable) = remainder {
+                variable_reference(*variable, owner, variable_count)?;
+            }
+            Ok(())
+        },
+    }
+}
+
+fn validate_premise_references(
+    node: &TheoryImagePremiseNodeV1,
+    owner: u32,
+    program: &TheoryRuleProgramV1,
+) -> Result<(), TheoryImageError> {
+    let variables = program.variables.len();
+    let terms = program.terms.len();
+    match &node.form {
+        TheoryImagePremiseFormV1::Freshness { variable, target, .. } => {
+            variable_reference(*variable, owner, variables)?;
+            variable_reference(*target, owner, variables)
+        },
+        TheoryImagePremiseFormV1::Transition { source, target } => {
+            variable_reference(*source, owner, variables)?;
+            variable_reference(*target, owner, variables)
+        },
+        TheoryImagePremiseFormV1::Judgment { terms: arguments, .. } => {
+            for target in arguments {
+                if target.0 as usize >= terms {
+                    return Err(TheoryImageError::UnknownReference {
+                        kind: "premise term",
+                        owner,
+                        target: target.0,
+                    });
+                }
+            }
+            Ok(())
+        },
+        TheoryImagePremiseFormV1::ForAll { collection, parameter, body } => {
+            variable_reference(*collection, owner, variables)?;
+            variable_reference(*parameter, owner, variables)?;
+            if *body >= owner {
+                return Err(TheoryImageError::ForwardReference {
+                    kind: "premise",
+                    owner,
+                    target: *body,
+                });
+            }
+            Ok(())
+        },
+        TheoryImagePremiseFormV1::Guard { .. } => Ok(()),
+    }
+}
+
+fn variable_reference(
+    variable: TheoryVariableId,
+    owner: u32,
+    count: usize,
+) -> Result<(), TheoryImageError> {
+    if variable.0 as usize >= count {
+        return Err(TheoryImageError::UnknownReference {
+            kind: "variable",
+            owner,
+            target: variable.0,
+        });
+    }
+    Ok(())
+}
+
+fn structurally_equal(
+    terms: &[TheoryImageTermNodeV1],
+    left: TheoryTermId,
+    right: TheoryTermId,
+) -> Result<bool, TheoryImageError> {
+    let mut pending = vec![(left, right)];
+    let mut seen = BTreeSet::new();
+    while let Some((left, right)) = pending.pop() {
+        if !seen.insert((left, right)) {
+            continue;
+        }
+        let left_node = terms
+            .get(left.0 as usize)
+            .ok_or(TheoryImageError::UnknownReference {
+                kind: "term root",
+                owner: left.0,
+                target: left.0,
+            })?;
+        let right_node = terms
+            .get(right.0 as usize)
+            .ok_or(TheoryImageError::UnknownReference {
+                kind: "term root",
+                owner: right.0,
+                target: right.0,
+            })?;
+        if left_node.sort != right_node.sort {
+            return Ok(false);
+        }
+        match (&left_node.form, &right_node.form) {
+            (TheoryImageTermFormV1::Slot(left), TheoryImageTermFormV1::Slot(right)) => {
+                if left != right {
+                    return Ok(false);
+                }
+            },
+            (
+                TheoryImageTermFormV1::Apply {
+                    operator: left_operator,
+                    arguments: left_arguments,
+                    slots: left_slots,
+                    remainder: left_remainder,
+                },
+                TheoryImageTermFormV1::Apply {
+                    operator: right_operator,
+                    arguments: right_arguments,
+                    slots: right_slots,
+                    remainder: right_remainder,
+                },
+            ) => {
+                if left_operator != right_operator
+                    || left_slots != right_slots
+                    || left_remainder != right_remainder
+                    || left_arguments.len() != right_arguments.len()
+                {
+                    return Ok(false);
+                }
+                pending.extend(
+                    left_arguments
+                        .iter()
+                        .copied()
+                        .zip(right_arguments.iter().copied()),
+                );
+            },
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+fn rule_disposition(
+    arena: &TheoryRuleArenaV1,
+    left: TheoryTermId,
+    right: TheoryTermId,
+    allow_transition: bool,
+) -> Result<TheoryRuleDispositionV1, TheoryImageError> {
+    let left_node = arena
+        .terms
+        .get(left.0 as usize)
+        .ok_or(TheoryImageError::UnknownReference {
+            kind: "left root",
+            owner: left.0,
+            target: left.0,
+        })?;
+    if matches!(left_node.form, TheoryTermFormV1::Variable(_)) {
+        return Ok(TheoryRuleDispositionV1::Suppressed(TheoryRuleSuppressionV1::MatchAllRoot));
+    }
+
+    let mut available = term_variables(arena, left)?;
+    if let Some(variable) = unavailable_premise_variable(arena, &mut available, allow_transition)? {
+        return Ok(TheoryRuleDispositionV1::Suppressed(
+            TheoryRuleSuppressionV1::PremiseDependency { variable },
+        ));
+    }
+    if let Some(variable) = term_variables(arena, right)?
+        .into_iter()
+        .find(|variable| !available.contains(variable))
+    {
+        return Ok(TheoryRuleDispositionV1::Suppressed(TheoryRuleSuppressionV1::UnboundTemplate {
+            variable,
+        }));
+    }
+    Ok(TheoryRuleDispositionV1::Executable)
+}
+
+fn term_variables(
+    arena: &TheoryRuleArenaV1,
+    root: TheoryTermId,
+) -> Result<BTreeSet<TheoryVariableId>, TheoryImageError> {
+    let mut variables = BTreeSet::new();
+    let mut pending = vec![root];
+    let mut visited = BTreeSet::new();
+    while let Some(term) = pending.pop() {
+        if !visited.insert(term) {
+            continue;
+        }
+        let node = arena
+            .terms
+            .get(term.0 as usize)
+            .ok_or(TheoryImageError::UnknownReference {
+                kind: "term",
+                owner: root.0,
+                target: term.0,
+            })?;
+        match &node.form {
+            TheoryTermFormV1::Variable(variable) => {
+                variables.insert(*variable);
+            },
+            TheoryTermFormV1::Constructor { arguments, .. } => {
+                pending.extend(arguments.iter().copied());
+            },
+            TheoryTermFormV1::Abstraction { binder, body } => {
+                variables.insert(*binder);
+                pending.push(*body);
+            },
+            TheoryTermFormV1::Substitution { abstraction, argument } => {
+                pending.push(*abstraction);
+                pending.push(*argument);
+            },
+            TheoryTermFormV1::Collection { elements, remainder } => {
+                pending.extend(elements.iter().copied());
+                variables.extend(remainder.iter().copied());
+            },
+            TheoryTermFormV1::Map { collection, parameters, body } => {
+                pending.push(*collection);
+                pending.push(*body);
+                variables.extend(parameters.iter().copied());
+            },
+            TheoryTermFormV1::Zip { left, right } => {
+                pending.push(*left);
+                pending.push(*right);
+            },
+            TheoryTermFormV1::Literal(_) => {},
+        }
+    }
+    Ok(variables)
+}
+
+fn unavailable_premise_variable(
+    arena: &TheoryRuleArenaV1,
+    available: &mut BTreeSet<TheoryVariableId>,
+    allow_transition: bool,
+) -> Result<Option<TheoryVariableId>, TheoryImageError> {
+    for root in &arena.premise_roots {
+        let mut pending = vec![(root.0, available.clone(), true)];
+        while let Some((index, mut scope, is_root)) = pending.pop() {
+            let premise =
+                arena
+                    .premises
+                    .get(index as usize)
+                    .ok_or(TheoryImageError::UnknownReference {
+                        kind: "premise",
+                        owner: root.0,
+                        target: index,
+                    })?;
+            let require =
+                |variable, scope: &BTreeSet<_>| (!scope.contains(&variable)).then_some(variable);
+            match &premise.form {
+                TheoryPremiseFormV1::Freshness { variable, target, .. } => {
+                    if let Some(missing) =
+                        require(*variable, &scope).or_else(|| require(*target, &scope))
+                    {
+                        return Ok(Some(missing));
+                    }
+                },
+                TheoryPremiseFormV1::Transition { source, target } => {
+                    if !allow_transition {
+                        return Ok(Some(*source));
+                    }
+                    if let Some(missing) = require(*source, &scope) {
+                        return Ok(Some(missing));
+                    }
+                    if is_root {
+                        available.insert(*target);
+                    }
+                },
+                TheoryPremiseFormV1::Judgment(atom) => {
+                    for term in &atom.terms {
+                        if let Some(missing) = term_variables(arena, *term)?
+                            .into_iter()
+                            .find(|variable| !scope.contains(variable))
+                        {
+                            return Ok(Some(missing));
+                        }
+                    }
+                },
+                TheoryPremiseFormV1::ForAll { collection, parameter, body } => {
+                    if let Some(missing) = require(*collection, &scope) {
+                        return Ok(Some(missing));
+                    }
+                    scope.insert(*parameter);
+                    pending.push((body.0, scope, false));
+                },
+                TheoryPremiseFormV1::Guard(_) => {},
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn validate_actions(
+    image: &TheorySemanticImageV1,
+    language: &LanguageCoreV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<(), TheoryImageError> {
+    if image.actions.len() != language.theory.actions.len() {
+        return Err(TheoryImageError::SourceMismatch { kind: "action count", index: 0 });
+    }
+    for (index, (actual, source)) in image
+        .actions
+        .iter()
+        .zip(&language.theory.actions)
+        .enumerate()
+    {
+        let index = u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("actions"))?;
+        dense("action", index, actual.id.0)?;
+        let expected_transitions = resolve_action_rules(&image.rules, &source.transition)?;
+        let expected = TheoryActionImageV1 {
+            id: TheoryActionId(index),
+            domain: source
+                .domain
+                .iter()
+                .map(|sort| context.sort(sort))
+                .collect::<Result<Vec<_>, _>>()?,
+            codomain: context.sort(&source.codomain)?,
+            transitions: expected_transitions,
+            effect: context
+                .effects
+                .get(source.effect.as_str())
+                .copied()
+                .ok_or(TheoryImageError::SourceMismatch { kind: "effect", index })?,
+            effect_class: source.effect_class,
+            required_rights: source.required_rights.clone(),
+            grade: context.sort(&source.grade)?,
+        };
+        if actual != &expected {
+            return Err(TheoryImageError::SourceMismatch { kind: "action", index });
+        }
+        if actual
+            .required_rights
+            .iter()
+            .any(|right| !source.required_rights.contains(right))
+        {
+            return Err(TheoryImageError::SourceMismatch { kind: "action rights", index });
+        }
+    }
+    Ok(())
+}
+
+fn resolve_action_rules(
+    rules: &[TheoryRuleProgramV1],
+    reference: &TheoryRuleReferenceV1,
+) -> Result<Vec<TheoryRuleProgramId>, TheoryImageError> {
+    let matches = rules
+        .iter()
+        .filter(|rule| match (reference, rule.origin) {
+            (TheoryRuleReferenceV1::Equation(name), TheoryRuleOriginV1::Equation { .. })
+            | (TheoryRuleReferenceV1::Rewrite(name), TheoryRuleOriginV1::Rewrite { .. }) => {
+                rule.name == *name && rule.disposition == TheoryRuleDispositionV1::Executable
+            },
+            _ => false,
+        })
+        .map(|rule| rule.id)
+        .collect::<Vec<_>>();
+    match reference {
+        TheoryRuleReferenceV1::Handler(_) => {
+            Err(TheoryImageError::SourceMismatch { kind: "runtime handler", index: u32::MAX })
+        },
+        TheoryRuleReferenceV1::Equation(_) | TheoryRuleReferenceV1::Rewrite(_)
+            if matches.is_empty() =>
+        {
+            Err(TheoryImageError::SourceMismatch {
+                kind: "action transition",
+                index: u32::MAX,
+            })
+        },
+        TheoryRuleReferenceV1::Equation(_) | TheoryRuleReferenceV1::Rewrite(_) => Ok(matches),
+    }
+}
+
+fn validate_pattern_automaton(
+    image: &TheorySemanticImageV1,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<(), TheoryImageError> {
+    let mut edges = 0usize;
+    let mut slot_references = 0usize;
+    for (index, state) in image.patterns.states.iter().enumerate() {
+        let index = u32::try_from(index)
+            .map_err(|_| TheoryImageError::LimitExceeded("automaton states"))?;
+        dense("pattern state", index, state.id.0)?;
+        match &state.form {
+            TheoryPatternStateFormV1::Bind => {
+                if state.slot_count != 1 {
+                    return Err(TheoryImageError::SourceMismatch {
+                        kind: "bind slot count",
+                        index,
+                    });
+                }
+            },
+            TheoryPatternStateFormV1::Apply { arguments, .. } => {
+                let mut used = BTreeSet::new();
+                for invocation in arguments {
+                    edges = edges
+                        .checked_add(1)
+                        .ok_or(TheoryImageError::LengthOverflow)?;
+                    enforce(edges, limits.max_automaton_edges, "automaton edges")?;
+                    if invocation.state.0 >= index {
+                        return Err(TheoryImageError::ForwardReference {
+                            kind: "pattern state",
+                            owner: index,
+                            target: invocation.state.0,
+                        });
+                    }
+                    let child = &image.patterns.states[invocation.state.0 as usize];
+                    if invocation.parent_slots.len() != child.slot_count as usize {
+                        return Err(TheoryImageError::SourceMismatch {
+                            kind: "pattern slot map",
+                            index,
+                        });
+                    }
+                    slot_references = checked_total(
+                        slot_references,
+                        invocation.parent_slots.len(),
+                        limits.max_automaton_slot_references,
+                        "automaton slot references",
+                    )?;
+                    for slot in &invocation.parent_slots {
+                        if *slot >= state.slot_count {
+                            return Err(TheoryImageError::UnknownReference {
+                                kind: "pattern slot",
+                                owner: index,
+                                target: *slot,
+                            });
+                        }
+                        used.insert(*slot);
+                    }
+                }
+                if used.iter().copied().ne(0..state.slot_count) {
+                    return Err(TheoryImageError::SourceMismatch {
+                        kind: "pattern slot density",
+                        index,
+                    });
+                }
+            },
+        }
+    }
+
+    let mut coverage = vec![0usize; image.rules.len()];
+    let mut checks = 0usize;
+    for (index, entry) in image.patterns.entries.iter().enumerate() {
+        let index = u32::try_from(index)
+            .map_err(|_| TheoryImageError::LimitExceeded("automaton entries"))?;
+        dense("pattern entry", index, entry.id.0)?;
+        let rule =
+            image
+                .rules
+                .get(entry.rule.0 as usize)
+                .ok_or(TheoryImageError::UnknownReference {
+                    kind: "pattern rule",
+                    owner: index,
+                    target: entry.rule.0,
+                })?;
+        let root = image.patterns.states.get(entry.root.0 as usize).ok_or(
+            TheoryImageError::UnknownReference {
+                kind: "pattern root",
+                owner: index,
+                target: entry.root.0,
+            },
+        )?;
+        if entry.slot_variables.len() != root.slot_count as usize {
+            return Err(TheoryImageError::AutomatonShape { entry: index });
+        }
+        slot_references = checked_total(
+            slot_references,
+            entry.slot_variables.len(),
+            limits.max_automaton_slot_references,
+            "automaton slot references",
+        )?;
+        let mut unique = BTreeSet::new();
+        for variable in &entry.slot_variables {
+            variable_reference(*variable, index, rule.variables.len())?;
+            if !unique.insert(*variable) {
+                return Err(TheoryImageError::DuplicateReference {
+                    kind: "entry variable",
+                    owner: index,
+                    target: variable.0,
+                });
+            }
+        }
+        check_entry_matches_program(image, entry, rule, &mut checks, limits.max_automaton_checks)?;
+        coverage[entry.rule.0 as usize] += 1;
+    }
+    for (index, rule) in image.rules.iter().enumerate() {
+        let expected = usize::from(rule_is_positional(rule)?);
+        if coverage[index] != expected {
+            return Err(TheoryImageError::AutomatonCoverage {
+                rule: rule.id.0,
+                actual: coverage[index],
+            });
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum PatternSubject {
+    Term(TheoryTermId),
+    Slot(TheoryVariableId),
+}
+
+fn check_entry_matches_program(
+    image: &TheorySemanticImageV1,
+    entry: &TheoryPatternEntryV1,
+    rule: &TheoryRuleProgramV1,
+    checks: &mut usize,
+    limit: usize,
+) -> Result<(), TheoryImageError> {
+    let root_state = &image.patterns.states[entry.root.0 as usize];
+    let root_slots = (0..root_state.slot_count).collect::<Vec<_>>();
+    let mut pending = vec![(PatternSubject::Term(rule.left), entry.root, root_slots)];
+    while let Some((subject, state_id, slots_to_root)) = pending.pop() {
+        *checks = checks
+            .checked_add(1)
+            .ok_or(TheoryImageError::LengthOverflow)?;
+        enforce(*checks, limit, "automaton correspondence checks")?;
+        let state = &image.patterns.states[state_id.0 as usize];
+        if slots_to_root.len() != state.slot_count as usize {
+            return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+        }
+        match (subject, &state.form) {
+            (PatternSubject::Slot(variable), TheoryPatternStateFormV1::Bind) => {
+                let root_slot = *slots_to_root
+                    .first()
+                    .ok_or(TheoryImageError::AutomatonShape { entry: entry.id.0 })?;
+                if entry.slot_variables.get(root_slot as usize) != Some(&variable) {
+                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                }
+            },
+            (PatternSubject::Term(term), TheoryPatternStateFormV1::Bind) => {
+                let node =
+                    rule.terms
+                        .get(term.0 as usize)
+                        .ok_or(TheoryImageError::UnknownReference {
+                            kind: "pattern term",
+                            owner: entry.id.0,
+                            target: term.0,
+                        })?;
+                let TheoryImageTermFormV1::Slot(variable) = node.form else {
+                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                };
+                pending.push((PatternSubject::Slot(variable), state_id, slots_to_root));
+            },
+            (
+                PatternSubject::Term(term),
+                TheoryPatternStateFormV1::Apply { operator, arguments },
+            ) => {
+                let node =
+                    rule.terms
+                        .get(term.0 as usize)
+                        .ok_or(TheoryImageError::UnknownReference {
+                            kind: "pattern term",
+                            owner: entry.id.0,
+                            target: term.0,
+                        })?;
+                let TheoryImageTermFormV1::Apply {
+                    operator: expected_operator,
+                    arguments: term_arguments,
+                    slots,
+                    remainder,
+                } = &node.form
+                else {
+                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                };
+                if expected_operator != operator || remainder.is_some() {
+                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                }
+                let subjects = slots
+                    .iter()
+                    .copied()
+                    .map(PatternSubject::Slot)
+                    .chain(term_arguments.iter().copied().map(PatternSubject::Term))
+                    .collect::<Vec<_>>();
+                if subjects.len() != arguments.len() {
+                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                }
+                for (subject, invocation) in subjects.into_iter().zip(arguments).rev() {
+                    let child_slots = invocation
+                        .parent_slots
+                        .iter()
+                        .map(|parent| {
+                            slots_to_root
+                                .get(*parent as usize)
+                                .copied()
+                                .ok_or(TheoryImageError::AutomatonShape { entry: entry.id.0 })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    pending.push((subject, invocation.state, child_slots));
+                }
+            },
+            (PatternSubject::Slot(_), TheoryPatternStateFormV1::Apply { .. }) => {
+                return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+            },
+        }
+    }
+    Ok(())
+}
+
+fn rule_is_positional(rule: &TheoryRuleProgramV1) -> Result<bool, TheoryImageError> {
+    if rule.disposition != TheoryRuleDispositionV1::Executable {
+        return Ok(false);
+    }
+    let mut pending = vec![rule.left];
+    let mut seen = BTreeSet::new();
+    while let Some(term) = pending.pop() {
+        if !seen.insert(term) {
+            continue;
+        }
+        let node = rule
+            .terms
+            .get(term.0 as usize)
+            .ok_or(TheoryImageError::UnknownReference {
+                kind: "pattern term",
+                owner: rule.id.0,
+                target: term.0,
+            })?;
+        if let TheoryImageTermFormV1::Apply { operator, arguments, remainder, .. } = &node.form {
+            if remainder.is_some() {
+                return Ok(false);
+            }
+            if matches!(
+                operator,
+                TheoryImageOperatorV1::Collection {
+                    kind: CollectionKind::Bag
+                        | CollectionKind::Set
+                        | CollectionKind::Map
+                        | CollectionKind::PathMap,
+                    ..
+                }
+            ) {
+                return Ok(false);
+            }
+            pending.extend(arguments.iter().copied());
+        }
+    }
+    Ok(true)
+}
+
+fn check_fingerprint(
+    actual: [u8; 32],
+    expected: [u8; 32],
+    kind: &'static str,
+) -> Result<(), TheoryImageError> {
+    if actual != expected {
+        return Err(TheoryImageError::FingerprintMismatch(kind));
+    }
+    Ok(())
+}
+
+fn dense(kind: &'static str, expected: u32, actual: u32) -> Result<(), TheoryImageError> {
+    if expected != actual {
+        return Err(TheoryImageError::NonDenseId { kind, expected, actual });
+    }
+    Ok(())
+}
+
+fn enforce(actual: usize, limit: usize, kind: &'static str) -> Result<(), TheoryImageError> {
+    if actual > limit {
+        return Err(TheoryImageError::LimitExceeded(kind));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_fingerprint_domain_is_not_the_language_domain() {
+        let language_bytes = b"same bytes";
+        let mut language = blake3::Hasher::new();
+        language.update(b"mettail-language-core/1\0");
+        language.update(language_bytes);
+        let mut image = blake3::Hasher::new();
+        image.update(b"mettail-theory-semantic-image/1\0");
+        image.update(language_bytes);
+        assert_ne!(language.finalize(), image.finalize());
+    }
+
+    #[test]
+    fn image_rights_are_demands_not_handle_authority() {
+        let demand = LanguageRights::from_rights([crate::LanguageRight::Reduce]);
+        let grant = LanguageRights::none();
+        assert!(grant.attenuate(&demand).iter().next().is_none());
+    }
+}

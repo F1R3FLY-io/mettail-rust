@@ -70,7 +70,7 @@ Inductive TermForm :=
     (parameters : list VariableId)
     (body : TermId)
 | ZipTerm (first second : TermId)
-| LiteralTerm.
+| LiteralTerm (canonical_payload : nat).
 
 Record TermNode := {
   term_sort : SortId;
@@ -140,7 +140,7 @@ Definition node_well_typed
       earlier owner body /\
       Forall (fun variable => variable < length variables) parameters
   | ZipTerm first second => earlier owner first /\ earlier owner second
-  | LiteralTerm => True
+  | LiteralTerm _ => True
   end.
 
 Definition arena_well_typed
@@ -384,7 +384,7 @@ Definition variables_in_term_form (form : TermForm) : list VariableId :=
   | SubstitutionTerm _ _
   | CollectionTerm _ _ None
   | ZipTerm _ _
-  | LiteralTerm => []
+  | LiteralTerm _ => []
   end.
 
 Definition term_variables (arena : list TermNode) (root : TermId) : list VariableId :=

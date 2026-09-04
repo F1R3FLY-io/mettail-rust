@@ -112,6 +112,7 @@ rocq-runtime-grammar: require-capped rocq-dovetail-exact-keys
 # gate and additionally runs rocqchk over the complete trusted kernel.
 rocq-runtime-regex-gslt: require-capped
 	$(MAKE) -C rocq/runtime_grammar theories/ExecutableTheoryCore.vo
+	$(MAKE) -C rocq/runtime_grammar theories/ExecutableTheoryImage.vo
 	$(MAKE) -C rocq/runtime_grammar theories/RegexGsltSyntax.vo
 	$(MAKE) -C rocq/runtime_grammar theories/RegexGsltMatch.vo
 	$(MAKE) -C rocq/runtime_grammar theories/RegexGsltSearch.vo

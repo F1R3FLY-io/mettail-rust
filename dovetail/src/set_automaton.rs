@@ -18,6 +18,37 @@ use crate::rules::{Pattern, Subst};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PatternId(pub usize);
 
+/// One node in a stack-safe positional pattern DAG.  Child indices must point
+/// backward, and the root must be the final node.  This is the source-neutral
+/// entrypoint for runtime-compiled grammars whose canonical rule arenas are
+/// already flat; it avoids materializing a recursive [`Pattern`] first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlatPatternNode<L> {
+    Var(String),
+    App { op: L, args: Vec<usize> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlatPattern<L> {
+    pub nodes: Vec<FlatPatternNode<L>>,
+    pub root: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlatPatternError {
+    Empty,
+    Root { root: usize, nodes: usize },
+    RootNotLast { root: usize, nodes: usize },
+    ForwardReference { owner: usize, target: usize },
+    UnreachableNode { node: usize },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlatSetAutomatonError {
+    pub pattern: PatternId,
+    pub error: FlatPatternError,
+}
+
 /// One match produced by a compiled set automaton.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetAutomatonMatch {
@@ -211,6 +242,7 @@ impl<L> PatternState<L> {
     }
 }
 
+#[derive(Clone)]
 struct CompiledSubpattern {
     state: StateId,
     slot_names: Vec<Rc<str>>,
@@ -286,40 +318,8 @@ impl<L: Clone + Eq + Hash> PatternCompiler<L> {
                         .len()
                         .checked_sub(child_count)
                         .expect("pattern-compiler PDA lost a child state");
-                    let mut children = states.split_off(first_child);
-                    let (args, parent_names) = if children.len() == 1 {
-                        let child = children.pop().expect("the unary child exists");
-                        let slots = (0..child.slot_names.len()).map(SlotId).collect();
-                        (vec![StateInvocation::new(child.state, slots)], child.slot_names)
-                    } else {
-                        let mut args = Vec::with_capacity(child_count);
-                        let mut parent_names: Vec<Rc<str>> = Vec::new();
-                        let mut parent_slots: HashMap<Rc<str>, SlotId> = HashMap::default();
-
-                        for child in children {
-                            let mut slots = Vec::with_capacity(child.slot_names.len());
-                            for name in child.slot_names {
-                                let slot = match parent_slots.get(&name).copied() {
-                                    Some(slot) => slot,
-                                    None => {
-                                        let slot = SlotId(parent_names.len());
-                                        parent_names.push(Rc::clone(&name));
-                                        parent_slots.insert(name, slot);
-                                        slot
-                                    },
-                                };
-                                slots.push(slot);
-                            }
-                            args.push(StateInvocation::new(child.state, slots));
-                        }
-                        (args, parent_names)
-                    };
-
-                    let slot_count = parent_names.len();
-                    states.push(CompiledSubpattern {
-                        state: self.intern(StateKey::App { op, args }, slot_count),
-                        slot_names: parent_names,
-                    });
+                    let children = states.split_off(first_child);
+                    states.push(self.assemble(op, children));
                 },
             }
         }
@@ -334,6 +334,120 @@ impl<L: Clone + Eq + Hash> PatternCompiler<L> {
                 .map(|name| name.to_string())
                 .collect(),
         )
+    }
+
+    fn compile_flat(
+        &mut self,
+        pattern: &FlatPattern<L>,
+    ) -> Result<(StateId, Vec<String>), FlatPatternError> {
+        if pattern.nodes.is_empty() {
+            return Err(FlatPatternError::Empty);
+        }
+        if pattern.root >= pattern.nodes.len() {
+            return Err(FlatPatternError::Root {
+                root: pattern.root,
+                nodes: pattern.nodes.len(),
+            });
+        }
+        if pattern.root + 1 != pattern.nodes.len() {
+            return Err(FlatPatternError::RootNotLast {
+                root: pattern.root,
+                nodes: pattern.nodes.len(),
+            });
+        }
+
+        let mut reachable = vec![false; pattern.nodes.len()];
+        let mut pending = vec![pattern.root];
+        while let Some(index) = pending.pop() {
+            if reachable[index] {
+                continue;
+            }
+            reachable[index] = true;
+            if let FlatPatternNode::App { args, .. } = &pattern.nodes[index] {
+                for target in args {
+                    if *target >= index {
+                        return Err(FlatPatternError::ForwardReference {
+                            owner: index,
+                            target: *target,
+                        });
+                    }
+                    pending.push(*target);
+                }
+            }
+        }
+        if let Some(node) = reachable.iter().position(|reachable| !reachable) {
+            return Err(FlatPatternError::UnreachableNode { node });
+        }
+
+        let mut compiled = Vec::with_capacity(pattern.nodes.len());
+        let mut names: HashMap<&str, Rc<str>> = HashMap::default();
+        for node in &pattern.nodes {
+            match node {
+                FlatPatternNode::Var(name) => {
+                    let slot_name = match names.get(name.as_str()) {
+                        Some(name) => Rc::clone(name),
+                        None => {
+                            let shared: Rc<str> = Rc::from(name.as_str());
+                            names.insert(name.as_str(), Rc::clone(&shared));
+                            shared
+                        },
+                    };
+                    compiled.push(CompiledSubpattern {
+                        state: self.intern(StateKey::Var, 1),
+                        slot_names: vec![slot_name],
+                    });
+                },
+                FlatPatternNode::App { op, args } => {
+                    let children = args.iter().map(|index| compiled[*index].clone()).collect();
+                    compiled.push(self.assemble(op.clone(), children));
+                },
+            }
+        }
+        let root = compiled.pop().ok_or(FlatPatternError::Empty)?;
+        Ok((
+            root.state,
+            root.slot_names
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect(),
+        ))
+    }
+
+    fn assemble(&mut self, op: L, mut children: Vec<CompiledSubpattern>) -> CompiledSubpattern {
+        let child_count = children.len();
+        let (args, parent_names) = if children.len() == 1 {
+            let child = children.pop().expect("the unary child exists");
+            let slots = (0..child.slot_names.len()).map(SlotId).collect();
+            (vec![StateInvocation::new(child.state, slots)], child.slot_names)
+        } else {
+            let mut args = Vec::with_capacity(child_count);
+            let mut parent_names: Vec<Rc<str>> = Vec::new();
+            let mut parent_slots: HashMap<Rc<str>, SlotId> = HashMap::default();
+
+            for child in children {
+                let mut slots = Vec::with_capacity(child.slot_names.len());
+                for name in child.slot_names {
+                    let slot = match parent_slots.get(&name).copied() {
+                        Some(slot) => slot,
+                        None => {
+                            let slot = SlotId(parent_names.len());
+                            parent_names.push(Rc::clone(&name));
+                            parent_slots.insert(name, slot);
+                            slot
+                        },
+                    };
+                    slots.push(slot);
+                }
+                args.push(StateInvocation::new(child.state, slots));
+            }
+            (args, parent_names)
+        };
+
+        let slot_count = parent_names.len();
+        CompiledSubpattern {
+            state: self.intern(StateKey::App { op, args }, slot_count),
+            slot_names: parent_names,
+        }
     }
 
     fn intern(&mut self, key: StateKey<L>, slot_count: usize) -> StateId {
@@ -524,6 +638,70 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
         } else {
             Err(SetAutomatonError { unsupported })
         }
+    }
+
+    /// Compile canonical backward-referencing pattern DAGs directly.
+    ///
+    /// This produces the same interned state algebra as
+    /// [`compile_structural`](Self::compile_structural), while keeping native
+    /// stack use constant and preserving subterm sharing in the input.  Any
+    /// malformed DAG rejects the whole batch; no partial automaton escapes.
+    pub fn compile_structural_flat<I>(patterns: I) -> Result<Self, FlatSetAutomatonError>
+    where
+        I: IntoIterator<Item = (PatternId, FlatPattern<L>)>,
+    {
+        let mut entries = Vec::new();
+        let mut variable_roots = Vec::new();
+        let mut app_roots: HashMap<RootKey<L>, Vec<usize>> = HashMap::default();
+        let mut compiler = PatternCompiler::default();
+
+        for (id, pattern) in patterns {
+            let root_shape = match pattern.nodes.get(pattern.root) {
+                Some(FlatPatternNode::Var(_)) => None,
+                Some(FlatPatternNode::App { op, args }) => Some((op.clone(), args.len())),
+                None if pattern.nodes.is_empty() => {
+                    return Err(FlatSetAutomatonError {
+                        pattern: id,
+                        error: FlatPatternError::Empty,
+                    });
+                },
+                None => {
+                    return Err(FlatSetAutomatonError {
+                        pattern: id,
+                        error: FlatPatternError::Root {
+                            root: pattern.root,
+                            nodes: pattern.nodes.len(),
+                        },
+                    });
+                },
+            };
+            let (root_state, slot_names) = compiler
+                .compile_flat(&pattern)
+                .map_err(|error| FlatSetAutomatonError { pattern: id, error })?;
+            let entry_idx = entries.len();
+            match root_shape {
+                None => variable_roots.push(entry_idx),
+                Some((op, arity)) => {
+                    app_roots
+                        .entry(RootKey { op, arity })
+                        .or_default()
+                        .push(entry_idx);
+                },
+            }
+            entries.push(PatternEntry {
+                id,
+                root_state,
+                slot_names,
+                _marker: std::marker::PhantomData,
+            });
+        }
+
+        Ok(SetAutomaton {
+            entries,
+            compiler,
+            variable_roots,
+            app_roots,
+        })
     }
 
     /// E-3 T-INCR: append additional pattern entries to this compiled automaton,
@@ -857,6 +1035,88 @@ mod tests {
 
         let err = compiled.expect_err("AC patterns must stay on the lazy AC path");
         assert_eq!(err.unsupported_patterns(), &[PatternId(7)]);
+    }
+
+    #[test]
+    fn flat_pattern_compilation_is_identical_to_recursive_compilation() {
+        let recursive = SetAutomaton::compile_structural([(
+            PatternId(7),
+            Pattern::app(
+                "pair".to_string(),
+                vec![Pattern::var("x"), Pattern::app("wrap".to_string(), vec![Pattern::var("x")])],
+            ),
+        )])
+        .expect("recursive pattern compiles");
+        let flat = SetAutomaton::compile_structural_flat([(
+            PatternId(7),
+            FlatPattern {
+                nodes: vec![
+                    FlatPatternNode::Var("x".to_string()),
+                    FlatPatternNode::Var("x".to_string()),
+                    FlatPatternNode::App { op: "wrap".to_string(), args: vec![1] },
+                    FlatPatternNode::App { op: "pair".to_string(), args: vec![0, 2] },
+                ],
+                root: 3,
+            },
+        )])
+        .expect("flat pattern compiles");
+
+        assert_eq!(flat, recursive);
+    }
+
+    #[test]
+    fn flat_pattern_rejects_forward_and_unreachable_nodes() {
+        let forward = SetAutomaton::compile_structural_flat([(
+            PatternId(2),
+            FlatPattern {
+                nodes: vec![
+                    FlatPatternNode::Var("x".to_string()),
+                    FlatPatternNode::App { op: "bad".to_string(), args: vec![1] },
+                ],
+                root: 1,
+            },
+        )])
+        .expect_err("a forward edge rejects the entire batch");
+        assert_eq!(
+            forward,
+            FlatSetAutomatonError {
+                pattern: PatternId(2),
+                error: FlatPatternError::ForwardReference { owner: 1, target: 1 },
+            }
+        );
+
+        let unreachable = SetAutomaton::compile_structural_flat([(
+            PatternId(3),
+            FlatPattern {
+                nodes: vec![
+                    FlatPatternNode::Var("unused".to_string()),
+                    FlatPatternNode::Var("x".to_string()),
+                    FlatPatternNode::App { op: "id".to_string(), args: vec![1] },
+                ],
+                root: 2,
+            },
+        )])
+        .expect_err("unreachable nodes are non-canonical");
+        assert_eq!(unreachable.error, FlatPatternError::UnreachableNode { node: 0 });
+    }
+
+    #[test]
+    fn flat_pattern_compiler_is_stack_safe_for_deep_chains() {
+        let depth = 20_000usize;
+        let mut nodes = Vec::with_capacity(depth + 1);
+        nodes.push(FlatPatternNode::Var("x".to_string()));
+        for index in 1..=depth {
+            nodes.push(FlatPatternNode::App {
+                op: "step".to_string(),
+                args: vec![index - 1],
+            });
+        }
+        let automaton = SetAutomaton::compile_structural_flat([(
+            PatternId(0),
+            FlatPattern { nodes, root: depth },
+        )])
+        .expect("a deep flat pattern compiles without native recursion");
+        assert_eq!(automaton.view().state_count(), depth + 1);
     }
 
     #[test]

@@ -34,6 +34,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.TerminalVariantIdentity \
 	RuntimeGrammar.GeneratedSemanticAdapter \
 	RuntimeGrammar.ExecutableTheoryCore \
+	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.RegexGsltSyntax \
 	RuntimeGrammar.RegexGsltMatch \
 	RuntimeGrammar.RegexGsltSearch \
