@@ -7,17 +7,20 @@
 //! automaton data that is derived rather than present in the source.
 
 use crate::{
-    CollectionKind, LanguageCoreV1, LanguageRight, LanguageRights, SemanticEffectClassV1,
-    TheoryActionId, TheoryActionImageV1, TheoryConstructorId, TheoryConstructorImageV1,
-    TheoryEffectId, TheoryGrammarConstructorV1, TheoryImageAdmissionLimits, TheoryImageError,
-    TheoryImageOperatorV1, TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1,
-    TheoryImageTermFormV1, TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryJudgmentId,
-    TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternEntryId, TheoryPatternEntryV1,
-    TheoryPatternInvocationV1, TheoryPatternStateFormV1, TheoryPatternStateId,
-    TheoryPatternStateV1, TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1,
-    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleSuppressionV1,
-    TheorySemanticImageV1, TheorySortId, TheoryTermId, TheoryVariableId, TheoryVariableRoleV1,
-    TheoryWorkChargeV1, THEORY_SEMANTIC_IMAGE_ABI_V1,
+    CollectionKind, JudgmentDecisionV1, JudgmentRuleV1, LanguageCoreV1, LanguageRight,
+    LanguageRights, SemanticEffectClassV1, TheoryActionId, TheoryActionImageV1,
+    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryGrammarConstructorV1,
+    TheoryImageAdmissionLimits, TheoryImageError, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
+    TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1, TheoryImageTermFormV1,
+    TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryJudgmentId, TheoryJudgmentImageV1,
+    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentPatternEntryV1, TheoryJudgmentRuleProgramId,
+    TheoryJudgmentRuleProgramV1, TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1,
+    TheoryPatternEntryId, TheoryPatternEntryV1, TheoryPatternInvocationV1,
+    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1,
+    TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1,
+    TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleSuppressionV1, TheorySemanticImageV1,
+    TheorySortId, TheorySortImageV1, TheorySortKindImageV1, TheoryTermId, TheoryVariableId,
+    TheoryVariableRoleV1, TheoryWorkChargeV1, THEORY_SEMANTIC_IMAGE_ABI_V1,
 };
 
 const THEORY_IMAGE_MAGIC: &[u8; 8] = b"MTTHIMG1";
@@ -103,6 +106,20 @@ impl TheorySemanticImageV1 {
         let language_fingerprint = reader.read_array()?;
         let grammar_fingerprint = reader.read_array()?;
         let theory_fingerprint = reader.read_array()?;
+        let resource_profile = decode_resource_profile(&mut reader)?;
+
+        let sort_count = reader.read_exact_count(language.theory.sorts.len(), "sort count")?;
+        let mut sorts = empty_vec(sort_count)?;
+        let mut totals = DecodeTotals::default();
+        for (index, source) in language.theory.sorts.iter().enumerate() {
+            sorts.push(decode_sort(
+                &mut reader,
+                TheorySortId(u32::try_from(index).map_err(|_| TheoryImageError::LengthOverflow)?),
+                source,
+                limits,
+                &mut totals,
+            )?);
+        }
 
         let constructor_count =
             reader.read_exact_count(language.theory.constructors.len(), "constructor count")?;
@@ -120,7 +137,6 @@ impl TheorySemanticImageV1 {
             .ok_or(TheoryImageError::LengthOverflow)?;
         let rule_count = reader.read_exact_count(expected_rules, "rule count")?;
         let mut rules = empty_vec(rule_count)?;
-        let mut totals = DecodeTotals::default();
         for _ in 0..rule_count {
             let id = TheoryRuleProgramId(reader.read_u32()?);
             let origin = decode_origin(&mut reader)?;
@@ -129,6 +145,43 @@ impl TheorySemanticImageV1 {
         }
 
         let patterns = decode_patterns(&mut reader, limits, &mut totals)?;
+
+        let judgment_count =
+            reader.read_exact_count(language.theory.judgments.len(), "judgment count")?;
+        let mut judgments = empty_vec(judgment_count)?;
+        for source in &language.theory.judgments {
+            judgments.push(decode_judgment(
+                &mut reader,
+                source.arguments.len(),
+                source.rules.len(),
+            )?);
+        }
+
+        let expected_judgment_rules =
+            language
+                .theory
+                .judgments
+                .iter()
+                .try_fold(0usize, |count, judgment| {
+                    count
+                        .checked_add(judgment.rules.len())
+                        .ok_or(TheoryImageError::LengthOverflow)
+                })?;
+        let judgment_rule_count =
+            reader.read_exact_count(expected_judgment_rules, "judgment rule count")?;
+        let mut judgment_rules = empty_vec(judgment_rule_count)?;
+        for judgment in &language.theory.judgments {
+            for source in &judgment.rules {
+                judgment_rules.push(decode_judgment_rule(
+                    &mut reader,
+                    source,
+                    limits,
+                    &mut totals,
+                )?);
+            }
+        }
+
+        let judgment_patterns = decode_judgment_patterns(&mut reader, limits, &mut totals)?;
 
         let action_count =
             reader.read_exact_count(language.theory.actions.len(), "action count")?;
@@ -145,9 +198,14 @@ impl TheorySemanticImageV1 {
             language_fingerprint,
             grammar_fingerprint,
             theory_fingerprint,
+            resource_profile,
+            sorts,
             constructors,
             rules,
             patterns,
+            judgments,
+            judgment_rules,
+            judgment_patterns,
             actions,
         };
         image.validate(language, limits)?;
@@ -173,6 +231,12 @@ fn encode_image<S: ImageSink>(
     sink.write(&image.language_fingerprint)?;
     sink.write(&image.grammar_fingerprint)?;
     sink.write(&image.theory_fingerprint)?;
+    encode_resource_profile(sink, image.resource_profile)?;
+
+    write_count(sink, image.sorts.len())?;
+    for sort in &image.sorts {
+        encode_sort(sink, sort)?;
+    }
 
     write_count(sink, image.constructors.len())?;
     for constructor in &image.constructors {
@@ -213,31 +277,59 @@ fn encode_image<S: ImageSink>(
         write_u32_values(sink, &rule.premise_roots)?;
         write_u32(sink, rule.left.0)?;
         write_u32(sink, rule.right.0)?;
-        write_u32(sink, rule.charge.pattern_nodes)?;
-        write_u32(sink, rule.charge.template_nodes)?;
-        write_u32(sink, rule.charge.premise_nodes)?;
-        write_u32(sink, rule.charge.variable_slots)?;
+        encode_work_charge(sink, rule.charge)?;
     }
 
     write_count(sink, image.patterns.states.len())?;
     for state in &image.patterns.states {
-        write_u32(sink, state.id.0)?;
-        write_u32(sink, state.slot_count)?;
-        match &state.form {
-            TheoryPatternStateFormV1::Bind => write_u8(sink, 0)?,
-            TheoryPatternStateFormV1::Apply { operator, arguments } => {
-                write_u8(sink, 1)?;
-                encode_operator(sink, operator)?;
-                write_count(sink, arguments.len())?;
-                for invocation in arguments {
-                    write_u32(sink, invocation.state.0)?;
-                    write_u32_values(sink, &invocation.parent_slots)?;
-                }
-            },
-        }
+        encode_pattern_state(sink, state)?;
     }
     write_count(sink, image.patterns.entries.len())?;
     for entry in &image.patterns.entries {
+        write_u32(sink, entry.id.0)?;
+        write_u32(sink, entry.rule.0)?;
+        write_u32(sink, entry.root.0)?;
+        write_ids(sink, &entry.slot_variables, |id| id.0)?;
+    }
+
+    write_count(sink, image.judgments.len())?;
+    for judgment in &image.judgments {
+        write_u32(sink, judgment.id.0)?;
+        write_ids(sink, &judgment.arguments, |id| id.0)?;
+        write_u8(sink, encode_judgment_decision(judgment.decision))?;
+        write_ids(sink, &judgment.rules, |id| id.0)?;
+    }
+
+    write_count(sink, image.judgment_rules.len())?;
+    for rule in &image.judgment_rules {
+        write_u32(sink, rule.id.0)?;
+        write_u32(sink, rule.owner.0)?;
+        write_string(sink, &rule.name)?;
+        write_count(sink, rule.variables.len())?;
+        for variable in &rule.variables {
+            write_u32(sink, variable.id.0)?;
+            write_u32(sink, variable.sort.0)?;
+            write_u8(sink, encode_variable_role(variable.role))?;
+        }
+        write_count(sink, rule.terms.len())?;
+        for term in &rule.terms {
+            write_u32(sink, term.sort.0)?;
+            encode_term_form(sink, &term.form)?;
+        }
+        write_count(sink, rule.premises.len())?;
+        for premise in &rule.premises {
+            encode_judgment_atom(sink, premise)?;
+        }
+        encode_judgment_atom(sink, &rule.conclusion)?;
+        encode_work_charge(sink, rule.charge)?;
+    }
+
+    write_count(sink, image.judgment_patterns.states.len())?;
+    for state in &image.judgment_patterns.states {
+        encode_pattern_state(sink, state)?;
+    }
+    write_count(sink, image.judgment_patterns.entries.len())?;
+    for entry in &image.judgment_patterns.entries {
         write_u32(sink, entry.id.0)?;
         write_u32(sink, entry.rule.0)?;
         write_u32(sink, entry.root.0)?;
@@ -256,6 +348,274 @@ fn encode_image<S: ImageSink>(
         write_u32(sink, action.grade.0)?;
     }
     Ok(())
+}
+
+fn encode_resource_profile<S: ImageSink>(
+    sink: &mut S,
+    profile: TheoryResourceProfileV1,
+) -> Result<(), TheoryImageError> {
+    match profile {
+        TheoryResourceProfileV1::Uncosted => write_u8(sink, 0),
+        TheoryResourceProfileV1::Costed { grade_sort } => {
+            write_u8(sink, 1)?;
+            write_u32(sink, grade_sort.0)
+        },
+    }
+}
+
+fn decode_resource_profile(
+    reader: &mut ImageReader<'_>,
+) -> Result<TheoryResourceProfileV1, TheoryImageError> {
+    match reader.read_u8()? {
+        0 => Ok(TheoryResourceProfileV1::Uncosted),
+        1 => Ok(TheoryResourceProfileV1::Costed {
+            grade_sort: TheorySortId(reader.read_u32()?),
+        }),
+        tag => Err(TheoryImageError::InvalidTag(tag)),
+    }
+}
+
+fn encode_sort<S: ImageSink>(
+    sink: &mut S,
+    sort: &TheorySortImageV1,
+) -> Result<(), TheoryImageError> {
+    write_u32(sink, sort.id.0)?;
+    match &sort.kind {
+        TheorySortKindImageV1::Syntax { literal } => {
+            write_u8(sink, 0)?;
+            encode_optional_literal_carrier(sink, literal.as_ref())
+        },
+        TheorySortKindImageV1::Collection { kind, key, element } => {
+            write_u8(sink, 1)?;
+            write_u8(sink, encode_collection_kind(*kind))?;
+            write_optional_u32(sink, key.map(|id| id.0))?;
+            write_u32(sink, element.0)
+        },
+        TheorySortKindImageV1::Function { domain, codomain, multiple } => {
+            write_u8(sink, 2)?;
+            write_u32(sink, domain.0)?;
+            write_u32(sink, codomain.0)?;
+            write_u8(sink, u8::from(*multiple))
+        },
+        TheorySortKindImageV1::Product { factors } => {
+            write_u8(sink, 3)?;
+            write_ids(sink, factors, |id| id.0)
+        },
+        TheorySortKindImageV1::Opaque { abi } => {
+            write_u8(sink, 4)?;
+            write_string(sink, abi)
+        },
+    }
+}
+
+fn encode_optional_literal_carrier<S: ImageSink>(
+    sink: &mut S,
+    carrier: Option<&TheoryLiteralCarrierV1>,
+) -> Result<(), TheoryImageError> {
+    match carrier {
+        None => write_u8(sink, 0),
+        Some(carrier) => {
+            write_u8(sink, 1)?;
+            encode_literal_carrier(sink, carrier)
+        },
+    }
+}
+
+fn encode_literal_carrier<S: ImageSink>(
+    sink: &mut S,
+    carrier: &TheoryLiteralCarrierV1,
+) -> Result<(), TheoryImageError> {
+    match carrier {
+        TheoryLiteralCarrierV1::Boolean => write_u8(sink, 0),
+        TheoryLiteralCarrierV1::Integer => write_u8(sink, 1),
+        TheoryLiteralCarrierV1::Rational => write_u8(sink, 2),
+        TheoryLiteralCarrierV1::FixedPoint => write_u8(sink, 3),
+        TheoryLiteralCarrierV1::Float => write_u8(sink, 4),
+        TheoryLiteralCarrierV1::String => write_u8(sink, 5),
+        TheoryLiteralCarrierV1::Bytes => write_u8(sink, 6),
+        TheoryLiteralCarrierV1::Unit => write_u8(sink, 7),
+        TheoryLiteralCarrierV1::External(abi) => {
+            write_u8(sink, 8)?;
+            write_string(sink, abi)
+        },
+        TheoryLiteralCarrierV1::HostOpaque(abi) => {
+            write_u8(sink, 9)?;
+            write_string(sink, abi)
+        },
+    }
+}
+
+fn decode_sort(
+    reader: &mut ImageReader<'_>,
+    expected_id: TheorySortId,
+    source: &crate::TheorySortV1,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<TheorySortImageV1, TheoryImageError> {
+    let id = TheorySortId(reader.read_u32()?);
+    if id != expected_id {
+        return Err(TheoryImageError::SourceMismatch { kind: "sort id", index: expected_id.0 });
+    }
+    let tag = reader.read_u8()?;
+    let kind = match (&source.kind, tag) {
+        (crate::TheorySortKindV1::Syntax { .. }, 0) => TheorySortKindImageV1::Syntax {
+            literal: decode_optional_literal_carrier(reader, limits, totals)?,
+        },
+        (crate::TheorySortKindV1::Collection { .. }, 1) => {
+            charge_sort_references(totals, limits, 1)?;
+            let kind = decode_collection_kind(reader.read_u8()?)?;
+            let key = read_optional_u32(reader)?.map(TheorySortId);
+            charge_sort_references(totals, limits, usize::from(key.is_some()))?;
+            TheorySortKindImageV1::Collection {
+                kind,
+                key,
+                element: TheorySortId(reader.read_u32()?),
+            }
+        },
+        (crate::TheorySortKindV1::Function { .. }, 2) => {
+            charge_sort_references(totals, limits, 2)?;
+            TheorySortKindImageV1::Function {
+                domain: TheorySortId(reader.read_u32()?),
+                codomain: TheorySortId(reader.read_u32()?),
+                multiple: reader.read_bool()?,
+            }
+        },
+        (crate::TheorySortKindV1::Product { factors }, 3) => {
+            charge_sort_references(totals, limits, factors.len())?;
+            TheorySortKindImageV1::Product {
+                factors: read_ids_exact(reader, factors.len(), TheorySortId, "product factors")?,
+            }
+        },
+        (crate::TheorySortKindV1::Opaque { .. }, 4) => TheorySortKindImageV1::Opaque {
+            abi: decode_sort_metadata(reader, limits, totals)?,
+        },
+        (_, 0..=4) => {
+            return Err(TheoryImageError::SourceMismatch {
+                kind: "sort kind",
+                index: expected_id.0,
+            });
+        },
+        (_, tag) => return Err(TheoryImageError::InvalidTag(tag)),
+    };
+    Ok(TheorySortImageV1 { id, kind })
+}
+
+fn decode_optional_literal_carrier(
+    reader: &mut ImageReader<'_>,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<Option<TheoryLiteralCarrierV1>, TheoryImageError> {
+    match reader.read_u8()? {
+        0 => Ok(None),
+        1 => decode_literal_carrier(reader, limits, totals).map(Some),
+        tag => Err(TheoryImageError::InvalidTag(tag)),
+    }
+}
+
+fn decode_literal_carrier(
+    reader: &mut ImageReader<'_>,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<TheoryLiteralCarrierV1, TheoryImageError> {
+    Ok(match reader.read_u8()? {
+        0 => TheoryLiteralCarrierV1::Boolean,
+        1 => TheoryLiteralCarrierV1::Integer,
+        2 => TheoryLiteralCarrierV1::Rational,
+        3 => TheoryLiteralCarrierV1::FixedPoint,
+        4 => TheoryLiteralCarrierV1::Float,
+        5 => TheoryLiteralCarrierV1::String,
+        6 => TheoryLiteralCarrierV1::Bytes,
+        7 => TheoryLiteralCarrierV1::Unit,
+        8 => TheoryLiteralCarrierV1::External(decode_sort_metadata(reader, limits, totals)?),
+        9 => TheoryLiteralCarrierV1::HostOpaque(decode_sort_metadata(reader, limits, totals)?),
+        tag => return Err(TheoryImageError::InvalidTag(tag)),
+    })
+}
+
+fn decode_sort_metadata(
+    reader: &mut ImageReader<'_>,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<String, TheoryImageError> {
+    let remaining = limits
+        .max_total_sort_metadata_bytes
+        .checked_sub(totals.sort_metadata_bytes)
+        .ok_or(TheoryImageError::LimitExceeded("sort metadata bytes"))?;
+    let value = reader.read_string(remaining, "sort metadata bytes")?;
+    add_limit(
+        &mut totals.sort_metadata_bytes,
+        value.len(),
+        limits.max_total_sort_metadata_bytes,
+        "sort metadata bytes",
+    )?;
+    Ok(value)
+}
+
+fn charge_sort_references(
+    totals: &mut DecodeTotals,
+    limits: TheoryImageAdmissionLimits,
+    count: usize,
+) -> Result<(), TheoryImageError> {
+    add_limit(
+        &mut totals.sort_references,
+        count,
+        limits.max_total_sort_references,
+        "sort references",
+    )
+}
+
+fn encode_pattern_state<S: ImageSink>(
+    sink: &mut S,
+    state: &TheoryPatternStateV1,
+) -> Result<(), TheoryImageError> {
+    write_u32(sink, state.id.0)?;
+    write_u32(sink, state.slot_count)?;
+    match &state.form {
+        TheoryPatternStateFormV1::Bind => write_u8(sink, 0),
+        TheoryPatternStateFormV1::Apply { operator, arguments } => {
+            write_u8(sink, 1)?;
+            encode_operator(sink, operator)?;
+            write_count(sink, arguments.len())?;
+            for invocation in arguments {
+                write_u32(sink, invocation.state.0)?;
+                write_u32_values(sink, &invocation.parent_slots)?;
+            }
+            Ok(())
+        },
+    }
+}
+
+fn encode_judgment_atom<S: ImageSink>(
+    sink: &mut S,
+    atom: &TheoryImageJudgmentAtomV1,
+) -> Result<(), TheoryImageError> {
+    write_u32(sink, atom.judgment.0)?;
+    write_ids(sink, &atom.terms, |id| id.0)
+}
+
+fn encode_work_charge<S: ImageSink>(
+    sink: &mut S,
+    charge: TheoryWorkChargeV1,
+) -> Result<(), TheoryImageError> {
+    write_u32(sink, charge.pattern_nodes)?;
+    write_u32(sink, charge.template_nodes)?;
+    write_u32(sink, charge.premise_nodes)?;
+    write_u32(sink, charge.variable_slots)
+}
+
+fn encode_judgment_decision(decision: JudgmentDecisionV1) -> u8 {
+    match decision {
+        JudgmentDecisionV1::Exact => 0,
+        JudgmentDecisionV1::Bounded => 1,
+    }
+}
+
+fn decode_judgment_decision(tag: u8) -> Result<JudgmentDecisionV1, TheoryImageError> {
+    match tag {
+        0 => Ok(JudgmentDecisionV1::Exact),
+        1 => Ok(JudgmentDecisionV1::Bounded),
+        _ => Err(TheoryImageError::InvalidTag(tag)),
+    }
 }
 
 fn encode_origin<S: ImageSink>(
@@ -340,9 +700,10 @@ fn encode_operator<S: ImageSink>(
             write_u8(sink, 1)?;
             write_u32(sink, sort.0)
         },
-        TheoryImageOperatorV1::Substitution { sort } => {
+        TheoryImageOperatorV1::Substitution { sort, function } => {
             write_u8(sink, 2)?;
-            write_u32(sink, sort.0)
+            write_u32(sink, sort.0)?;
+            write_u32(sink, function.0)
         },
         TheoryImageOperatorV1::Collection { sort, element, kind } => {
             write_u8(sink, 3)?;
@@ -350,9 +711,11 @@ fn encode_operator<S: ImageSink>(
             write_u32(sink, element.0)?;
             write_u8(sink, encode_collection_kind(*kind))
         },
-        TheoryImageOperatorV1::Map { sort } => {
+        TheoryImageOperatorV1::Map { sort, source, parameters } => {
             write_u8(sink, 4)?;
-            write_u32(sink, sort.0)
+            write_u32(sink, sort.0)?;
+            write_u32(sink, source.0)?;
+            write_ids(sink, parameters, |id| id.0)
         },
         TheoryImageOperatorV1::Zip { sort } => {
             write_u8(sink, 5)?;
@@ -362,6 +725,10 @@ fn encode_operator<S: ImageSink>(
             write_u8(sink, 6)?;
             write_u32(sink, sort.0)?;
             encode_literal(sink, value)
+        },
+        TheoryImageOperatorV1::Judgment { judgment } => {
+            write_u8(sink, 7)?;
+            write_u32(sink, judgment.0)
         },
     }
 }
@@ -459,6 +826,8 @@ fn source_arena(
 
 #[derive(Default)]
 struct DecodeTotals {
+    sort_references: usize,
+    sort_metadata_bytes: usize,
     variables: usize,
     terms: usize,
     term_references: usize,
@@ -466,6 +835,8 @@ struct DecodeTotals {
     names: usize,
     literals: usize,
     transitions: usize,
+    automaton_states: usize,
+    automaton_entries: usize,
     automaton_edges: usize,
     automaton_slot_references: usize,
 }
@@ -634,18 +1005,51 @@ fn decode_operator(
 ) -> Result<TheoryImageOperatorV1, TheoryImageError> {
     Ok(match reader.read_u8()? {
         0 => TheoryImageOperatorV1::Constructor(TheoryConstructorId(reader.read_u32()?)),
-        1 => TheoryImageOperatorV1::Abstraction { sort: TheorySortId(reader.read_u32()?) },
-        2 => TheoryImageOperatorV1::Substitution { sort: TheorySortId(reader.read_u32()?) },
-        3 => TheoryImageOperatorV1::Collection {
-            sort: TheorySortId(reader.read_u32()?),
-            element: TheorySortId(reader.read_u32()?),
-            kind: decode_collection_kind(reader.read_u8()?)?,
+        1 => {
+            charge_sort_references(totals, limits, 1)?;
+            TheoryImageOperatorV1::Abstraction { sort: TheorySortId(reader.read_u32()?) }
         },
-        4 => TheoryImageOperatorV1::Map { sort: TheorySortId(reader.read_u32()?) },
-        5 => TheoryImageOperatorV1::Zip { sort: TheorySortId(reader.read_u32()?) },
-        6 => TheoryImageOperatorV1::Literal {
-            sort: TheorySortId(reader.read_u32()?),
-            value: decode_literal(reader, limits, totals)?,
+        2 => {
+            charge_sort_references(totals, limits, 2)?;
+            TheoryImageOperatorV1::Substitution {
+                sort: TheorySortId(reader.read_u32()?),
+                function: TheorySortId(reader.read_u32()?),
+            }
+        },
+        3 => {
+            charge_sort_references(totals, limits, 2)?;
+            TheoryImageOperatorV1::Collection {
+                sort: TheorySortId(reader.read_u32()?),
+                element: TheorySortId(reader.read_u32()?),
+                kind: decode_collection_kind(reader.read_u8()?)?,
+            }
+        },
+        4 => {
+            charge_sort_references(totals, limits, 2)?;
+            let sort = TheorySortId(reader.read_u32()?);
+            let source = TheorySortId(reader.read_u32()?);
+            let parameters = read_ids_charged(
+                reader,
+                &mut totals.sort_references,
+                limits.max_total_sort_references,
+                TheorySortId,
+                "sort references",
+            )?;
+            TheoryImageOperatorV1::Map { sort, source, parameters }
+        },
+        5 => {
+            charge_sort_references(totals, limits, 1)?;
+            TheoryImageOperatorV1::Zip { sort: TheorySortId(reader.read_u32()?) }
+        },
+        6 => {
+            charge_sort_references(totals, limits, 1)?;
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(reader.read_u32()?),
+                value: decode_literal(reader, limits, totals)?,
+            }
+        },
+        7 => TheoryImageOperatorV1::Judgment {
+            judgment: TheoryJudgmentId(reader.read_u32()?),
         },
         tag => return Err(TheoryImageError::InvalidTag(tag)),
     })
@@ -725,7 +1129,43 @@ fn decode_patterns(
     limits: TheoryImageAdmissionLimits,
     totals: &mut DecodeTotals,
 ) -> Result<TheoryPatternAutomatonV1, TheoryImageError> {
+    let states = decode_pattern_states(reader, limits, totals)?;
+    let entry_count = reader.read_count(limits.max_automaton_entries, 16, "automaton entries")?;
+    add_limit(
+        &mut totals.automaton_entries,
+        entry_count,
+        limits.max_automaton_entries,
+        "automaton entries",
+    )?;
+    let mut entries = empty_vec(entry_count)?;
+    for _ in 0..entry_count {
+        let id = TheoryPatternEntryId(reader.read_u32()?);
+        let rule = TheoryRuleProgramId(reader.read_u32()?);
+        let root = TheoryPatternStateId(reader.read_u32()?);
+        let slot_variables = read_ids_charged(
+            reader,
+            &mut totals.automaton_slot_references,
+            limits.max_automaton_slot_references,
+            TheoryVariableId,
+            "entry variables",
+        )?;
+        entries.push(TheoryPatternEntryV1 { id, rule, root, slot_variables });
+    }
+    Ok(TheoryPatternAutomatonV1 { states, entries })
+}
+
+fn decode_pattern_states(
+    reader: &mut ImageReader<'_>,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<Vec<TheoryPatternStateV1>, TheoryImageError> {
     let state_count = reader.read_count(limits.max_automaton_states, 10, "automaton states")?;
+    add_limit(
+        &mut totals.automaton_states,
+        state_count,
+        limits.max_automaton_states,
+        "automaton states",
+    )?;
     let mut states = empty_vec(state_count)?;
     for _ in 0..state_count {
         let id = TheoryPatternStateId(reader.read_u32()?);
@@ -759,22 +1199,145 @@ fn decode_patterns(
         };
         states.push(TheoryPatternStateV1 { id, slot_count, form });
     }
-    let entry_count = reader.read_count(limits.max_automaton_entries, 16, "automaton entries")?;
+    Ok(states)
+}
+
+fn decode_judgment(
+    reader: &mut ImageReader<'_>,
+    source_arguments: usize,
+    source_rules: usize,
+) -> Result<TheoryJudgmentImageV1, TheoryImageError> {
+    Ok(TheoryJudgmentImageV1 {
+        id: TheoryJudgmentId(reader.read_u32()?),
+        arguments: read_ids_exact(reader, source_arguments, TheorySortId, "judgment arguments")?,
+        decision: decode_judgment_decision(reader.read_u8()?)?,
+        rules: read_ids_exact(reader, source_rules, TheoryJudgmentRuleProgramId, "judgment rules")?,
+    })
+}
+
+fn decode_judgment_rule(
+    reader: &mut ImageReader<'_>,
+    source: &JudgmentRuleV1,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<TheoryJudgmentRuleProgramV1, TheoryImageError> {
+    let id = TheoryJudgmentRuleProgramId(reader.read_u32()?);
+    let owner = TheoryJudgmentId(reader.read_u32()?);
+    let name = reader.read_string(limits.max_total_name_bytes, "name bytes")?;
+    add_limit(&mut totals.names, name.len(), limits.max_total_name_bytes, "name bytes")?;
+
+    let variable_count =
+        reader.read_exact_count(source.variables.len(), "judgment rule variables")?;
+    add_limit(
+        &mut totals.variables,
+        variable_count,
+        limits.max_total_rule_variables,
+        "rule variables",
+    )?;
+    let mut variables = empty_vec(variable_count)?;
+    for _ in 0..variable_count {
+        variables.push(TheoryImageVariableV1 {
+            id: TheoryVariableId(reader.read_u32()?),
+            sort: TheorySortId(reader.read_u32()?),
+            role: decode_variable_role(reader.read_u8()?)?,
+        });
+    }
+
+    let term_count = reader.read_exact_count(source.terms.len(), "judgment rule terms")?;
+    add_limit(&mut totals.terms, term_count, limits.max_total_term_nodes, "term nodes")?;
+    let mut terms = empty_vec(term_count)?;
+    for _ in 0..term_count {
+        terms.push(TheoryImageTermNodeV1 {
+            sort: TheorySortId(reader.read_u32()?),
+            form: decode_term_form(reader, limits, totals)?,
+        });
+    }
+
+    let premise_count = reader.read_exact_count(source.premises.len(), "judgment rule premises")?;
+    add_limit(
+        &mut totals.premises,
+        premise_count,
+        limits.max_total_premise_nodes,
+        "premise nodes",
+    )?;
+    let mut premises = empty_vec(premise_count)?;
+    for source_atom in &source.premises {
+        premises.push(decode_judgment_atom(reader, source_atom.terms.len(), limits, totals)?);
+    }
+    let conclusion = decode_judgment_atom(reader, source.conclusion.terms.len(), limits, totals)?;
+    let charge = decode_work_charge(reader)?;
+    Ok(TheoryJudgmentRuleProgramV1 {
+        id,
+        owner,
+        name,
+        variables,
+        terms,
+        premises,
+        conclusion,
+        charge,
+    })
+}
+
+fn decode_judgment_atom(
+    reader: &mut ImageReader<'_>,
+    source_terms: usize,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<TheoryImageJudgmentAtomV1, TheoryImageError> {
+    let judgment = TheoryJudgmentId(reader.read_u32()?);
+    let term_count = reader.read_exact_count(source_terms, "judgment atom terms")?;
+    add_limit(
+        &mut totals.term_references,
+        term_count,
+        limits.max_total_term_references,
+        "term references",
+    )?;
+    Ok(TheoryImageJudgmentAtomV1 {
+        judgment,
+        terms: read_ids_without_count(reader, term_count, TheoryTermId)?,
+    })
+}
+
+fn decode_work_charge(
+    reader: &mut ImageReader<'_>,
+) -> Result<TheoryWorkChargeV1, TheoryImageError> {
+    Ok(TheoryWorkChargeV1 {
+        pattern_nodes: reader.read_u32()?,
+        template_nodes: reader.read_u32()?,
+        premise_nodes: reader.read_u32()?,
+        variable_slots: reader.read_u32()?,
+    })
+}
+
+fn decode_judgment_patterns(
+    reader: &mut ImageReader<'_>,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<TheoryJudgmentPatternAutomatonV1, TheoryImageError> {
+    let states = decode_pattern_states(reader, limits, totals)?;
+    let entry_count =
+        reader.read_count(limits.max_automaton_entries, 16, "judgment automaton entries")?;
+    add_limit(
+        &mut totals.automaton_entries,
+        entry_count,
+        limits.max_automaton_entries,
+        "automaton entries",
+    )?;
     let mut entries = empty_vec(entry_count)?;
     for _ in 0..entry_count {
         let id = TheoryPatternEntryId(reader.read_u32()?);
-        let rule = TheoryRuleProgramId(reader.read_u32()?);
+        let rule = TheoryJudgmentRuleProgramId(reader.read_u32()?);
         let root = TheoryPatternStateId(reader.read_u32()?);
         let slot_variables = read_ids_charged(
             reader,
             &mut totals.automaton_slot_references,
             limits.max_automaton_slot_references,
             TheoryVariableId,
-            "entry variables",
+            "judgment entry variables",
         )?;
-        entries.push(TheoryPatternEntryV1 { id, rule, root, slot_variables });
+        entries.push(TheoryJudgmentPatternEntryV1 { id, rule, root, slot_variables });
     }
-    Ok(TheoryPatternAutomatonV1 { states, entries })
+    Ok(TheoryJudgmentPatternAutomatonV1 { states, entries })
 }
 
 fn decode_action(
@@ -1028,6 +1591,19 @@ fn read_ids_exact<T>(
     kind: &'static str,
 ) -> Result<Vec<T>, TheoryImageError> {
     let count = reader.read_exact_count(expected, kind)?;
+    reader.require_width(count, 4)?;
+    let mut values = empty_vec(count)?;
+    for _ in 0..count {
+        values.push(wrap(reader.read_u32()?));
+    }
+    Ok(values)
+}
+
+fn read_ids_without_count<T>(
+    reader: &mut ImageReader<'_>,
+    count: usize,
+    wrap: fn(u32) -> T,
+) -> Result<Vec<T>, TheoryImageError> {
     reader.require_width(count, 4)?;
     let mut values = empty_vec(count)?;
     for _ in 0..count {

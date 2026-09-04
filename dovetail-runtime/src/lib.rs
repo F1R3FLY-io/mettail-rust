@@ -9,9 +9,11 @@
 #![forbid(unsafe_code)]
 
 mod semantic_machine_projection;
+mod semantic_transition_kernel;
 mod theory_image_compiler;
 
 pub use semantic_machine_projection::*;
+pub use semantic_transition_kernel::*;
 pub use theory_image_compiler::*;
 
 use std::any::Any;

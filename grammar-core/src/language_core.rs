@@ -251,6 +251,15 @@ impl TheoryCoreV1 {
             require_sorts(action.domain.iter().map(String::as_str), &sorts, &mut errors);
             require_sort(&action.codomain, &sorts, &mut errors);
             require_sort(&action.grade, &sorts, &mut errors);
+            if let Some(cost) = &self.cost {
+                if action.grade != cost.signature_sort {
+                    errors.push(TheoryValidationError::SortMismatch {
+                        owner: format!("action `{}` resource grade", action.id),
+                        expected: cost.signature_sort.clone(),
+                        actual: action.grade.clone(),
+                    });
+                }
+            }
             if !effects.contains(action.effect.as_str()) {
                 errors.push(TheoryValidationError::UnknownReference {
                     kind: "effect",
@@ -305,6 +314,7 @@ impl TheoryCoreV1 {
                 | TheoryRuleReferenceV1::Equation(_)
                 | TheoryRuleReferenceV1::Handler(_) => {},
             }
+            validate_rule_backed_action_signature(action, self, &mut errors);
         }
         for judgment in &self.judgments {
             require_sorts(judgment.arguments.iter().map(String::as_str), &sorts, &mut errors);
@@ -635,6 +645,11 @@ pub enum TheoryValidationError {
         expected: usize,
         actual: usize,
     },
+    BindingArityMismatch {
+        owner: String,
+        expected: usize,
+        actual: usize,
+    },
     UnboundVariable {
         rule: String,
         variable: String,
@@ -657,6 +672,83 @@ pub enum TheoryValidationError {
         left: String,
         right: String,
     },
+    JudgmentOwnerMismatch {
+        rule: String,
+        expected: String,
+        actual: String,
+    },
+    RuleBackedActionArity {
+        action: String,
+        actual: usize,
+    },
+    RuleBackedActionSignature {
+        action: String,
+        rule: String,
+        source: String,
+        target: String,
+        domain: Vec<String>,
+        codomain: String,
+    },
+}
+
+/// Version-1 `RuleRef` actions label a transition of one canonical term.  A
+/// handler ABI may define a richer invocation convention, but a bare rewrite
+/// reference contains no mapping from multiple operands into its one redex.
+fn validate_rule_backed_action_signature(
+    action: &SemanticActionV1,
+    theory: &TheoryCoreV1,
+    errors: &mut Vec<TheoryValidationError>,
+) {
+    let mut rules = Vec::new();
+    match &action.transition {
+        TheoryRuleReferenceV1::Equation(name) => {
+            rules.extend(
+                theory
+                    .equations
+                    .iter()
+                    .filter(|rule| rule.name == *name)
+                    .map(|rule| (rule.name.as_str(), &rule.arena, rule.left, rule.right)),
+            );
+        },
+        TheoryRuleReferenceV1::Rewrite(name) => {
+            rules.extend(
+                theory
+                    .rewrites
+                    .iter()
+                    .filter(|rule| rule.name == *name)
+                    .map(|rule| (rule.name.as_str(), &rule.arena, rule.left, rule.right)),
+            );
+        },
+        TheoryRuleReferenceV1::Handler(_) => return,
+    }
+    if rules.is_empty() {
+        return;
+    }
+    if action.domain.len() != 1 {
+        errors.push(TheoryValidationError::RuleBackedActionArity {
+            action: action.id.clone(),
+            actual: action.domain.len(),
+        });
+        return;
+    }
+    for (rule, arena, left, right) in rules {
+        let Some(source) = arena.terms.get(left.0 as usize) else {
+            continue;
+        };
+        let Some(target) = arena.terms.get(right.0 as usize) else {
+            continue;
+        };
+        if action.domain[0] != source.sort || action.codomain != target.sort {
+            errors.push(TheoryValidationError::RuleBackedActionSignature {
+                action: action.id.clone(),
+                rule: rule.to_string(),
+                source: source.sort.clone(),
+                target: target.sort.clone(),
+                domain: action.domain.clone(),
+                codomain: action.codomain.clone(),
+            });
+        }
+    }
 }
 
 fn unique_names<'a>(
@@ -1149,8 +1241,16 @@ fn validate_term_arena(
                 let collection = prior_term(owner, terms, index, *collection, errors);
                 let body = prior_term(owner, terms, index, *body, errors);
                 for parameter in parameters {
-                    if variables.get(parameter.0 as usize).is_none() {
-                        errors.push(TheoryValidationError::UnknownVariable(parameter.0));
+                    match variables.get(parameter.0 as usize) {
+                        None => errors.push(TheoryValidationError::UnknownVariable(parameter.0)),
+                        Some(variable) if variable.role != TheoryVariableRoleV1::Binder => {
+                            errors.push(TheoryValidationError::InvalidVariableRole {
+                                rule: owner.to_string(),
+                                variable: variable.name.clone(),
+                                expected: "Binder",
+                            });
+                        },
+                        Some(_) => {},
                     }
                 }
                 if let (Some(collection), Some(body)) = (collection, body) {
@@ -1158,10 +1258,34 @@ fn validate_term_arena(
                     let target_kind = sorts.get(node.sort.as_str()).map(|sort| &sort.kind);
                     match (source_kind, target_kind) {
                         (
-                            Some(TheorySortKindV1::Collection { kind: source, .. }),
+                            Some(TheorySortKindV1::Collection {
+                                kind: source,
+                                element: source_element,
+                                ..
+                            }),
                             Some(TheorySortKindV1::Collection { kind: target, element, .. }),
                         ) if source == target => {
-                            require_equal_sort(owner, element, &body.sort, errors)
+                            require_equal_sort(owner, element, &body.sort, errors);
+                            let expected_parameters = match sorts
+                                .get(source_element.as_str())
+                                .map(|sort| &sort.kind)
+                            {
+                                Some(TheorySortKindV1::Product { factors }) => factors.as_slice(),
+                                _ => std::slice::from_ref(source_element),
+                            };
+                            if parameters.len() != expected_parameters.len() {
+                                errors.push(TheoryValidationError::BindingArityMismatch {
+                                    owner: owner.to_string(),
+                                    expected: expected_parameters.len(),
+                                    actual: parameters.len(),
+                                });
+                            }
+                            for (parameter, expected) in parameters.iter().zip(expected_parameters)
+                            {
+                                if let Some(variable) = variables.get(parameter.0 as usize) {
+                                    require_equal_sort(owner, expected, &variable.sort, errors);
+                                }
+                            }
                         },
                         _ => errors.push(TheoryValidationError::SortMismatch {
                             owner: owner.to_string(),
@@ -1217,6 +1341,13 @@ fn validate_judgment_rule(
     errors: &mut Vec<TheoryValidationError>,
 ) {
     let name = format!("{}::{}", owner.name, rule.name);
+    if rule.conclusion.judgment != owner.name {
+        errors.push(TheoryValidationError::JudgmentOwnerMismatch {
+            rule: name.clone(),
+            expected: owner.name.clone(),
+            actual: rule.conclusion.judgment.clone(),
+        });
+    }
     validate_variables(&name, &rule.variables, sorts, limits, errors);
     validate_term_arena(&name, &rule.variables, &rule.terms, sorts, constructors, limits, errors);
     for atom in rule

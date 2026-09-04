@@ -61,6 +61,7 @@ theories/StructuralProjectionImage.v
 theories/GeneratedSemanticAdapter.v
 theories/ExecutableTheoryCore.v
 theories/ExecutableTheoryImage.v
+theories/SemanticTransitionKernel.v
 theories/RegexGsltSyntax.v
 theories/RegexGsltMatch.v
 theories/RegexGsltSearch.v

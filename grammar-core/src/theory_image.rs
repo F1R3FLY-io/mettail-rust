@@ -14,11 +14,12 @@
 //! authority is supplied separately by an installed language handle.
 
 use crate::{
-    CategoryId, CollectionKind, ConstructorId, JudgmentAtomV1, LanguageCoreV1, LanguageRights,
-    SemanticEffectClassV1, TheoryCoreV1, TheoryLiteralV1, TheoryPremiseFormV1, TheoryRuleArenaV1,
-    TheoryRuleReferenceV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryVariableId,
-    TheoryVariableRoleV1,
+    CategoryId, CollectionKind, ConstructorId, JudgmentAtomV1, JudgmentDecisionV1, JudgmentRuleV1,
+    LanguageCoreV1, LanguageRights, SemanticEffectClassV1, TheoryCoreV1, TheoryLiteralCarrierV1,
+    TheoryLiteralV1, TheoryPremiseFormV1, TheoryRuleArenaV1, TheoryRuleReferenceV1,
+    TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryVariableId, TheoryVariableRoleV1,
 };
+use mettail_semantic_key::{write_framed, SemanticHash};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,8 +51,38 @@ image_id!(TheoryJudgmentId);
 image_id!(TheoryEffectId);
 image_id!(TheoryActionId);
 image_id!(TheoryRuleProgramId);
+image_id!(TheoryJudgmentRuleProgramId);
 image_id!(TheoryPatternStateId);
 image_id!(TheoryPatternEntryId);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheorySortImageV1 {
+    pub id: TheorySortId,
+    pub kind: TheorySortKindImageV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheorySortKindImageV1 {
+    Syntax {
+        literal: Option<TheoryLiteralCarrierV1>,
+    },
+    Collection {
+        kind: CollectionKind,
+        key: Option<TheorySortId>,
+        element: TheorySortId,
+    },
+    Function {
+        domain: TheorySortId,
+        codomain: TheorySortId,
+        multiple: bool,
+    },
+    Product {
+        factors: Vec<TheorySortId>,
+    },
+    Opaque {
+        abi: String,
+    },
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TheoryConstructorImageV1 {
@@ -78,6 +109,7 @@ pub enum TheoryImageOperatorV1 {
     },
     Substitution {
         sort: TheorySortId,
+        function: TheorySortId,
     },
     Collection {
         sort: TheorySortId,
@@ -86,6 +118,8 @@ pub enum TheoryImageOperatorV1 {
     },
     Map {
         sort: TheorySortId,
+        source: TheorySortId,
+        parameters: Vec<TheorySortId>,
     },
     Zip {
         sort: TheorySortId,
@@ -94,6 +128,92 @@ pub enum TheoryImageOperatorV1 {
         sort: TheorySortId,
         value: TheoryLiteralV1,
     },
+    /// Synthetic root used only to match a relational judgment conclusion.
+    /// It is never a language term and carries no authority or executable
+    /// callback; the exact child arity is checked against the declaration.
+    Judgment {
+        judgment: TheoryJudgmentId,
+    },
+}
+
+// SAFETY: the leading variant tag is injective; every fixed-width identifier
+// uses its complete little-endian representation; and every variable-width
+// literal payload is length-framed.  This stream therefore agrees exactly
+// with the derived `Eq`/`Hash` implementation, including literal spelling.
+unsafe impl SemanticHash for TheoryImageOperatorV1 {
+    fn write_content(&self, output: &mut Vec<u8>) {
+        match self {
+            Self::Constructor(constructor) => {
+                output.push(0);
+                output.extend_from_slice(&constructor.0.to_le_bytes());
+            },
+            Self::Abstraction { sort } => {
+                output.push(1);
+                output.extend_from_slice(&sort.0.to_le_bytes());
+            },
+            Self::Substitution { sort, function } => {
+                output.push(2);
+                output.extend_from_slice(&sort.0.to_le_bytes());
+                output.extend_from_slice(&function.0.to_le_bytes());
+            },
+            Self::Collection { sort, element, kind } => {
+                output.push(3);
+                output.extend_from_slice(&sort.0.to_le_bytes());
+                output.extend_from_slice(&element.0.to_le_bytes());
+                output.push(match kind {
+                    CollectionKind::Bag => 0,
+                    CollectionKind::Set => 1,
+                    CollectionKind::List => 2,
+                    CollectionKind::Map => 3,
+                    CollectionKind::PathMap => 4,
+                });
+            },
+            Self::Map { sort, source, parameters } => {
+                output.push(4);
+                output.extend_from_slice(&sort.0.to_le_bytes());
+                output.extend_from_slice(&source.0.to_le_bytes());
+                output.extend_from_slice(&(parameters.len() as u64).to_le_bytes());
+                for parameter in parameters {
+                    output.extend_from_slice(&parameter.0.to_le_bytes());
+                }
+            },
+            Self::Zip { sort } => {
+                output.push(5);
+                output.extend_from_slice(&sort.0.to_le_bytes());
+            },
+            Self::Literal { sort, value } => {
+                output.push(6);
+                output.extend_from_slice(&sort.0.to_le_bytes());
+                match value {
+                    TheoryLiteralV1::String(value) => {
+                        output.push(0);
+                        write_framed(output, value.as_bytes());
+                    },
+                    TheoryLiteralV1::Bytes(value) => {
+                        output.push(1);
+                        write_framed(output, value);
+                    },
+                    TheoryLiteralV1::Integer(value) => {
+                        output.push(2);
+                        output.extend_from_slice(&value.to_le_bytes());
+                    },
+                    TheoryLiteralV1::FloatBits(value) => {
+                        output.push(3);
+                        output.extend_from_slice(&value.to_le_bytes());
+                    },
+                    TheoryLiteralV1::Boolean(value) => {
+                        output.push(4);
+                        output.push(u8::from(*value));
+                    },
+                    TheoryLiteralV1::Unit => output.push(5),
+                }
+            },
+            Self::Judgment { judgment } => {
+                output.push(7);
+                output.extend_from_slice(&judgment.0.to_le_bytes());
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,6 +334,36 @@ pub struct TheoryRuleProgramV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryImageJudgmentAtomV1 {
+    pub judgment: TheoryJudgmentId,
+    pub terms: Vec<TheoryTermId>,
+}
+
+/// One source-exact Horn clause. Terms are kept in a flat, backward-pointing
+/// arena and premise order is semantic order. Runtime proof search owns the
+/// substitution and explores these programs with the same bounded FIFO
+/// frontier used for rewrite premises.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryJudgmentRuleProgramV1 {
+    pub id: TheoryJudgmentRuleProgramId,
+    pub owner: TheoryJudgmentId,
+    pub name: String,
+    pub variables: Vec<TheoryImageVariableV1>,
+    pub terms: Vec<TheoryImageTermNodeV1>,
+    pub premises: Vec<TheoryImageJudgmentAtomV1>,
+    pub conclusion: TheoryImageJudgmentAtomV1,
+    pub charge: TheoryWorkChargeV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryJudgmentImageV1 {
+    pub id: TheoryJudgmentId,
+    pub arguments: Vec<TheorySortId>,
+    pub decision: JudgmentDecisionV1,
+    pub rules: Vec<TheoryJudgmentRuleProgramId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TheoryPatternInvocationV1 {
     pub state: TheoryPatternStateId,
     /// Child-local slot -> parent-local slot.
@@ -252,6 +402,21 @@ pub struct TheoryPatternAutomatonV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryJudgmentPatternEntryV1 {
+    pub id: TheoryPatternEntryId,
+    pub rule: TheoryJudgmentRuleProgramId,
+    pub root: TheoryPatternStateId,
+    /// Root-local slot -> judgment-clause variable.
+    pub slot_variables: Vec<TheoryVariableId>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheoryJudgmentPatternAutomatonV1 {
+    pub states: Vec<TheoryPatternStateV1>,
+    pub entries: Vec<TheoryJudgmentPatternEntryV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TheoryActionImageV1 {
     pub id: TheoryActionId,
     pub domain: Vec<TheorySortId>,
@@ -265,6 +430,20 @@ pub struct TheoryActionImageV1 {
     pub grade: TheorySortId,
 }
 
+/// Whether the authoritative theory carries the checked additional structure
+/// required by `Cost(G)`.  This is independent of [`SemanticEffectClassV1`]:
+/// purity constrains observable effects, not semantic resource consumption.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryResourceProfileV1 {
+    /// The base theory has no semantic resource grade. Host execution may
+    /// still consume and be charged for ordinary machine resources.
+    Uncosted,
+    /// The theory is a checked `Cost(G)` presentation. Every successful
+    /// transition requires grade evidence in this exact sort from a separately
+    /// verified cost image.
+    Costed { grade_sort: TheorySortId },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TheorySemanticImageV1 {
     pub abi: u16,
@@ -272,9 +451,14 @@ pub struct TheorySemanticImageV1 {
     pub language_fingerprint: [u8; 32],
     pub grammar_fingerprint: [u8; 32],
     pub theory_fingerprint: [u8; 32],
+    pub resource_profile: TheoryResourceProfileV1,
+    pub sorts: Vec<TheorySortImageV1>,
     pub constructors: Vec<TheoryConstructorImageV1>,
     pub rules: Vec<TheoryRuleProgramV1>,
     pub patterns: TheoryPatternAutomatonV1,
+    pub judgments: Vec<TheoryJudgmentImageV1>,
+    pub judgment_rules: Vec<TheoryJudgmentRuleProgramV1>,
+    pub judgment_patterns: TheoryJudgmentPatternAutomatonV1,
     pub actions: Vec<TheoryActionImageV1>,
 }
 
@@ -287,6 +471,8 @@ pub struct TheoryImageAdmissionLimits {
     pub max_effects: usize,
     pub max_rules: usize,
     pub max_actions: usize,
+    pub max_total_sort_references: usize,
+    pub max_total_sort_metadata_bytes: usize,
     pub max_total_constructor_arguments: usize,
     pub max_total_action_arguments: usize,
     pub max_total_rule_variables: usize,
@@ -316,6 +502,8 @@ impl Default for TheoryImageAdmissionLimits {
             max_effects: 1_000_000,
             max_rules: 1_000_000,
             max_actions: 1_000_000,
+            max_total_sort_references: 10_000_000,
+            max_total_sort_metadata_bytes: 64 * 1024 * 1024,
             max_total_constructor_arguments: 10_000_000,
             max_total_action_arguments: 10_000_000,
             max_total_rule_variables: 10_000_000,
@@ -351,6 +539,61 @@ impl TheoryImageAdmissionLimits {
         enforce(language.theory.judgments.len(), self.max_judgments, "judgments")?;
         enforce(language.theory.effects.len(), self.max_effects, "effects")?;
         enforce(language.theory.actions.len(), self.max_actions, "actions")?;
+        let mut sort_references = 0usize;
+        let mut sort_metadata_bytes = 0usize;
+        for sort in &language.theory.sorts {
+            match &sort.kind {
+                TheorySortKindV1::Syntax {
+                    literal:
+                        Some(
+                            TheoryLiteralCarrierV1::External(value)
+                            | TheoryLiteralCarrierV1::HostOpaque(value),
+                        ),
+                } => {
+                    sort_metadata_bytes = checked_total(
+                        sort_metadata_bytes,
+                        value.len(),
+                        self.max_total_sort_metadata_bytes,
+                        "sort metadata bytes",
+                    )?;
+                },
+                TheorySortKindV1::Syntax { .. } => {},
+                TheorySortKindV1::Collection { key, .. } => {
+                    sort_references = checked_total(
+                        sort_references,
+                        1usize
+                            .checked_add(usize::from(key.is_some()))
+                            .ok_or(TheoryImageError::LengthOverflow)?,
+                        self.max_total_sort_references,
+                        "sort references",
+                    )?;
+                },
+                TheorySortKindV1::Function { .. } => {
+                    sort_references = checked_total(
+                        sort_references,
+                        2,
+                        self.max_total_sort_references,
+                        "sort references",
+                    )?;
+                },
+                TheorySortKindV1::Product { factors } => {
+                    sort_references = checked_total(
+                        sort_references,
+                        factors.len(),
+                        self.max_total_sort_references,
+                        "sort references",
+                    )?;
+                },
+                TheorySortKindV1::Opaque { abi } => {
+                    sort_metadata_bytes = checked_total(
+                        sort_metadata_bytes,
+                        abi.len(),
+                        self.max_total_sort_metadata_bytes,
+                        "sort metadata bytes",
+                    )?;
+                },
+            }
+        }
         let rule_count = language
             .theory
             .equations
@@ -358,8 +601,21 @@ impl TheoryImageAdmissionLimits {
             .checked_mul(2)
             .and_then(|count| count.checked_add(language.theory.rewrites.len()))
             .ok_or(TheoryImageError::LengthOverflow)?;
-        enforce(rule_count, self.max_rules, "rules")?;
-        enforce(rule_count, self.max_automaton_entries, "automaton entries")?;
+        let judgment_rule_count =
+            language
+                .theory
+                .judgments
+                .iter()
+                .try_fold(0usize, |count, judgment| {
+                    count
+                        .checked_add(judgment.rules.len())
+                        .ok_or(TheoryImageError::LengthOverflow)
+                })?;
+        let total_rule_count = rule_count
+            .checked_add(judgment_rule_count)
+            .ok_or(TheoryImageError::LengthOverflow)?;
+        enforce(total_rule_count, self.max_rules, "rules")?;
+        enforce(total_rule_count, self.max_automaton_entries, "automaton entries")?;
 
         let mut totals = SourceImageTotals::default();
         for constructor in &language.theory.constructors {
@@ -375,6 +631,11 @@ impl TheoryImageAdmissionLimits {
         }
         for rewrite in &language.theory.rewrites {
             account_source_arena(&rewrite.arena, rewrite.name.len(), 1, self, &mut totals)?;
+        }
+        for judgment in &language.theory.judgments {
+            for rule in &judgment.rules {
+                account_source_judgment_rule(rule, self, &mut totals)?;
+            }
         }
         for action in &language.theory.actions {
             totals.action_arguments = checked_total(
@@ -578,6 +839,110 @@ fn account_source_arena(
     Ok(())
 }
 
+fn account_source_judgment_rule(
+    rule: &JudgmentRuleV1,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut SourceImageTotals,
+) -> Result<(), TheoryImageError> {
+    totals.variables = checked_total(
+        totals.variables,
+        rule.variables.len(),
+        limits.max_total_rule_variables,
+        "rule variables",
+    )?;
+    totals.terms =
+        checked_total(totals.terms, rule.terms.len(), limits.max_total_term_nodes, "term nodes")?;
+    totals.premises = checked_total(
+        totals.premises,
+        rule.premises.len(),
+        limits.max_total_premise_nodes,
+        "premise nodes",
+    )?;
+    totals.names =
+        checked_total(totals.names, rule.name.len(), limits.max_total_name_bytes, "name bytes")?;
+
+    let mut child_edges = 0usize;
+    let mut slot_occurrences = 0usize;
+    for term in &rule.terms {
+        let (children, slots) = match &term.form {
+            TheoryTermFormV1::Variable(_) => (0, 0),
+            TheoryTermFormV1::Constructor { arguments, .. } => (arguments.len(), 0),
+            TheoryTermFormV1::Abstraction { .. } => (1, 1),
+            TheoryTermFormV1::Substitution { .. } => (2, 0),
+            TheoryTermFormV1::Collection { elements, remainder } => {
+                (elements.len(), usize::from(remainder.is_some()))
+            },
+            TheoryTermFormV1::Map { parameters, .. } => (2, parameters.len()),
+            TheoryTermFormV1::Zip { .. } => (2, 0),
+            TheoryTermFormV1::Literal(value) => {
+                totals.literals = checked_total(
+                    totals.literals,
+                    literal_bytes(value),
+                    limits.max_total_literal_bytes,
+                    "literal bytes",
+                )?;
+                (0, 0)
+            },
+        };
+        child_edges = child_edges
+            .checked_add(children)
+            .and_then(|count| count.checked_add(slots))
+            .ok_or(TheoryImageError::LengthOverflow)?;
+        slot_occurrences = slot_occurrences
+            .checked_add(slots)
+            .ok_or(TheoryImageError::LengthOverflow)?;
+    }
+    let atom_references = rule
+        .premises
+        .iter()
+        .chain(std::iter::once(&rule.conclusion))
+        .try_fold(0usize, |count, atom| {
+            count
+                .checked_add(atom.terms.len())
+                .ok_or(TheoryImageError::LengthOverflow)
+        })?;
+    totals.term_references = checked_total(
+        totals.term_references,
+        child_edges
+            .checked_add(atom_references)
+            .ok_or(TheoryImageError::LengthOverflow)?,
+        limits.max_total_term_references,
+        "term references",
+    )?;
+    totals.automaton_states = checked_total(
+        totals.automaton_states,
+        rule.terms
+            .len()
+            .checked_add(slot_occurrences)
+            .and_then(|count| count.checked_add(1))
+            .ok_or(TheoryImageError::LengthOverflow)?,
+        limits.max_automaton_states,
+        "automaton states",
+    )?;
+    totals.automaton_edges = checked_total(
+        totals.automaton_edges,
+        child_edges
+            .checked_add(rule.conclusion.terms.len())
+            .ok_or(TheoryImageError::LengthOverflow)?,
+        limits.max_automaton_edges,
+        "automaton edges",
+    )?;
+    let slot_reference_upper = rule
+        .terms
+        .len()
+        .checked_add(slot_occurrences)
+        .and_then(|states| states.checked_mul(rule.variables.len()))
+        .and_then(|references| references.checked_add(rule.variables.len()))
+        .ok_or(TheoryImageError::LengthOverflow)?;
+    totals.automaton_slot_references = checked_total(
+        totals.automaton_slot_references,
+        slot_reference_upper,
+        limits.max_automaton_slot_references,
+        "automaton slot references",
+    )?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TheoryImageError {
     InvalidLanguage(String),
@@ -661,8 +1026,17 @@ impl TheorySemanticImageV1 {
             "theory",
         )?;
 
+        enforce(self.sorts.len(), limits.max_sorts, "sorts")?;
         enforce(self.constructors.len(), limits.max_constructors, "constructors")?;
-        enforce(self.rules.len(), limits.max_rules, "rules")?;
+        enforce(self.judgments.len(), limits.max_judgments, "judgments")?;
+        enforce(
+            self.rules
+                .len()
+                .checked_add(self.judgment_rules.len())
+                .ok_or(TheoryImageError::LengthOverflow)?,
+            limits.max_rules,
+            "rules",
+        )?;
         enforce(self.actions.len(), limits.max_actions, "actions")?;
         validate_image_totals(self, limits)?;
         enforce(
@@ -670,14 +1044,42 @@ impl TheorySemanticImageV1 {
             limits.max_encoded_bytes,
             "encoded bytes",
         )?;
-        enforce(self.patterns.states.len(), limits.max_automaton_states, "automaton states")?;
-        enforce(self.patterns.entries.len(), limits.max_automaton_entries, "automaton entries")?;
+        enforce(
+            self.patterns
+                .states
+                .len()
+                .checked_add(self.judgment_patterns.states.len())
+                .ok_or(TheoryImageError::LengthOverflow)?,
+            limits.max_automaton_states,
+            "automaton states",
+        )?;
+        enforce(
+            self.patterns
+                .entries
+                .len()
+                .checked_add(self.judgment_patterns.entries.len())
+                .ok_or(TheoryImageError::LengthOverflow)?,
+            limits.max_automaton_entries,
+            "automaton entries",
+        )?;
 
         let context = ImageSourceContext::new(&language.theory)?;
+        let expected_resource_profile = match &language.theory.cost {
+            None => TheoryResourceProfileV1::Uncosted,
+            Some(cost) => TheoryResourceProfileV1::Costed {
+                grade_sort: context.sort(&cost.signature_sort)?,
+            },
+        };
+        if self.resource_profile != expected_resource_profile {
+            return Err(TheoryImageError::SourceMismatch { kind: "resource profile", index: 0 });
+        }
+        validate_sorts(self, language, &context)?;
         validate_constructors(self, language, &context)?;
         validate_rules(self, language, &context)?;
+        validate_judgments(self, language, &context)?;
         validate_actions(self, language, &context)?;
         validate_pattern_automaton(self, limits)?;
+        validate_judgment_pattern_automaton(self, limits)?;
         Ok(())
     }
 }
@@ -754,6 +1156,76 @@ macro_rules! impl_from_u32 {
 
 impl_from_u32!(TheorySortId, TheoryConstructorId, TheoryJudgmentId, TheoryEffectId);
 
+fn validate_sorts(
+    image: &TheorySemanticImageV1,
+    language: &LanguageCoreV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<(), TheoryImageError> {
+    if image.sorts.len() != language.theory.sorts.len() {
+        return Err(TheoryImageError::SourceMismatch { kind: "sort count", index: 0 });
+    }
+    for (index, (actual, source)) in image.sorts.iter().zip(&language.theory.sorts).enumerate() {
+        let index = u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("sorts"))?;
+        dense("sort", index, actual.id.0)?;
+        let matches = match (&actual.kind, &source.kind) {
+            (
+                TheorySortKindImageV1::Syntax { literal: actual },
+                TheorySortKindV1::Syntax { literal: source },
+            ) => actual == source,
+            (
+                TheorySortKindImageV1::Collection {
+                    kind: actual_kind,
+                    key: actual_key,
+                    element: actual_element,
+                },
+                TheorySortKindV1::Collection { kind, key, element },
+            ) => {
+                *actual_kind == *kind
+                    && *actual_key == key.as_deref().map(|name| context.sort(name)).transpose()?
+                    && *actual_element == context.sort(element)?
+            },
+            (
+                TheorySortKindImageV1::Function {
+                    domain: actual_domain,
+                    codomain: actual_codomain,
+                    multiple: actual_multiple,
+                },
+                TheorySortKindV1::Function { domain, codomain, multiple },
+            ) => {
+                *actual_domain == context.sort(domain)?
+                    && *actual_codomain == context.sort(codomain)?
+                    && *actual_multiple == *multiple
+            },
+            (
+                TheorySortKindImageV1::Product { factors: actual },
+                TheorySortKindV1::Product { factors: source },
+            ) => {
+                if actual.len() != source.len() {
+                    false
+                } else {
+                    let mut equal = true;
+                    for (actual, source) in actual.iter().zip(source) {
+                        if *actual != context.sort(source)? {
+                            equal = false;
+                            break;
+                        }
+                    }
+                    equal
+                }
+            },
+            (
+                TheorySortKindImageV1::Opaque { abi: actual },
+                TheorySortKindV1::Opaque { abi: source },
+            ) => actual == source,
+            _ => false,
+        };
+        if !matches {
+            return Err(TheoryImageError::SourceMismatch { kind: "sort", index });
+        }
+    }
+    Ok(())
+}
+
 fn validate_constructors(
     image: &TheorySemanticImageV1,
     language: &LanguageCoreV1,
@@ -824,6 +1296,61 @@ fn validate_image_totals(
     image: &TheorySemanticImageV1,
     limits: TheoryImageAdmissionLimits,
 ) -> Result<(), TheoryImageError> {
+    let mut sort_references = 0usize;
+    let mut sort_metadata_bytes = 0usize;
+    for sort in &image.sorts {
+        match &sort.kind {
+            TheorySortKindImageV1::Syntax {
+                literal:
+                    Some(
+                        TheoryLiteralCarrierV1::External(value)
+                        | TheoryLiteralCarrierV1::HostOpaque(value),
+                    ),
+            } => {
+                sort_metadata_bytes = checked_total(
+                    sort_metadata_bytes,
+                    value.len(),
+                    limits.max_total_sort_metadata_bytes,
+                    "sort metadata bytes",
+                )?;
+            },
+            TheorySortKindImageV1::Syntax { .. } => {},
+            TheorySortKindImageV1::Collection { key, .. } => {
+                sort_references = checked_total(
+                    sort_references,
+                    1usize
+                        .checked_add(usize::from(key.is_some()))
+                        .ok_or(TheoryImageError::LengthOverflow)?,
+                    limits.max_total_sort_references,
+                    "sort references",
+                )?;
+            },
+            TheorySortKindImageV1::Function { .. } => {
+                sort_references = checked_total(
+                    sort_references,
+                    2,
+                    limits.max_total_sort_references,
+                    "sort references",
+                )?;
+            },
+            TheorySortKindImageV1::Product { factors } => {
+                sort_references = checked_total(
+                    sort_references,
+                    factors.len(),
+                    limits.max_total_sort_references,
+                    "sort references",
+                )?;
+            },
+            TheorySortKindImageV1::Opaque { abi } => {
+                sort_metadata_bytes = checked_total(
+                    sort_metadata_bytes,
+                    abi.len(),
+                    limits.max_total_sort_metadata_bytes,
+                    "sort metadata bytes",
+                )?;
+            },
+        }
+    }
     let mut constructor_arguments = 0usize;
     for constructor in &image.constructors {
         constructor_arguments = checked_total(
@@ -858,7 +1385,9 @@ fn validate_image_totals(
         )?;
         names = checked_total(names, rule.name.len(), limits.max_total_name_bytes, "name bytes")?;
         for term in &rule.terms {
-            if let TheoryImageTermFormV1::Apply { arguments, slots, remainder, .. } = &term.form {
+            if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } =
+                &term.form
+            {
                 term_references = checked_total(
                     term_references,
                     arguments
@@ -868,6 +1397,12 @@ fn validate_image_totals(
                         .ok_or(TheoryImageError::LengthOverflow)?,
                     limits.max_total_term_references,
                     "term references",
+                )?;
+                sort_references = checked_total(
+                    sort_references,
+                    operator_sort_reference_count(operator)?,
+                    limits.max_total_sort_references,
+                    "sort references",
                 )?;
             }
             if let TheoryImageTermFormV1::Apply {
@@ -900,6 +1435,68 @@ fn validate_image_totals(
             "premise roots",
         )?;
     }
+    for rule in &image.judgment_rules {
+        variables = checked_total(
+            variables,
+            rule.variables.len(),
+            limits.max_total_rule_variables,
+            "rule variables",
+        )?;
+        terms = checked_total(terms, rule.terms.len(), limits.max_total_term_nodes, "term nodes")?;
+        premises = checked_total(
+            premises,
+            rule.premises.len(),
+            limits.max_total_premise_nodes,
+            "premise nodes",
+        )?;
+        names = checked_total(names, rule.name.len(), limits.max_total_name_bytes, "name bytes")?;
+        for term in &rule.terms {
+            if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } =
+                &term.form
+            {
+                term_references = checked_total(
+                    term_references,
+                    arguments
+                        .len()
+                        .checked_add(slots.len())
+                        .and_then(|count| count.checked_add(usize::from(remainder.is_some())))
+                        .ok_or(TheoryImageError::LengthOverflow)?,
+                    limits.max_total_term_references,
+                    "term references",
+                )?;
+                sort_references = checked_total(
+                    sort_references,
+                    operator_sort_reference_count(operator)?,
+                    limits.max_total_sort_references,
+                    "sort references",
+                )?;
+            }
+            if let TheoryImageTermFormV1::Apply {
+                operator: TheoryImageOperatorV1::Literal { value, .. },
+                ..
+            } = &term.form
+            {
+                literals = checked_total(
+                    literals,
+                    literal_bytes(value),
+                    limits.max_total_literal_bytes,
+                    "literal bytes",
+                )?;
+            }
+        }
+        for atom in rule
+            .premises
+            .iter()
+            .chain(std::iter::once(&rule.conclusion))
+        {
+            term_references = checked_total(
+                term_references,
+                atom.terms.len(),
+                limits.max_total_term_references,
+                "term references",
+            )?;
+        }
+    }
     for action in &image.actions {
         action_arguments = checked_total(
             action_arguments,
@@ -914,7 +1511,40 @@ fn validate_image_totals(
             "action transitions",
         )?;
     }
+    for state in image
+        .patterns
+        .states
+        .iter()
+        .chain(&image.judgment_patterns.states)
+    {
+        if let TheoryPatternStateFormV1::Apply { operator, .. } = &state.form {
+            sort_references = checked_total(
+                sort_references,
+                operator_sort_reference_count(operator)?,
+                limits.max_total_sort_references,
+                "sort references",
+            )?;
+        }
+    }
     Ok(())
+}
+
+fn operator_sort_reference_count(
+    operator: &TheoryImageOperatorV1,
+) -> Result<usize, TheoryImageError> {
+    match operator {
+        TheoryImageOperatorV1::Constructor(_) | TheoryImageOperatorV1::Judgment { .. } => Ok(0),
+        TheoryImageOperatorV1::Abstraction { .. }
+        | TheoryImageOperatorV1::Zip { .. }
+        | TheoryImageOperatorV1::Literal { .. } => Ok(1),
+        TheoryImageOperatorV1::Substitution { .. } | TheoryImageOperatorV1::Collection { .. } => {
+            Ok(2)
+        },
+        TheoryImageOperatorV1::Map { parameters, .. } => parameters
+            .len()
+            .checked_add(2)
+            .ok_or(TheoryImageError::LengthOverflow),
+    }
 }
 
 fn canonical_guard_footprint(
@@ -1022,6 +1652,177 @@ fn validate_rules(
     Ok(())
 }
 
+fn validate_judgments(
+    image: &TheorySemanticImageV1,
+    language: &LanguageCoreV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<(), TheoryImageError> {
+    if image.judgments.len() != language.theory.judgments.len() {
+        return Err(TheoryImageError::SourceMismatch { kind: "judgment count", index: 0 });
+    }
+    let expected_rule_count =
+        language
+            .theory
+            .judgments
+            .iter()
+            .try_fold(0usize, |count, judgment| {
+                count
+                    .checked_add(judgment.rules.len())
+                    .ok_or(TheoryImageError::LengthOverflow)
+            })?;
+    if image.judgment_rules.len() != expected_rule_count {
+        return Err(TheoryImageError::SourceMismatch { kind: "judgment rule count", index: 0 });
+    }
+
+    let mut next_rule = 0usize;
+    for (judgment_index, (actual, source)) in image
+        .judgments
+        .iter()
+        .zip(&language.theory.judgments)
+        .enumerate()
+    {
+        let judgment_index = u32::try_from(judgment_index)
+            .map_err(|_| TheoryImageError::LimitExceeded("judgments"))?;
+        dense("judgment", judgment_index, actual.id.0)?;
+        let expected_arguments = source
+            .arguments
+            .iter()
+            .map(|sort| context.sort(sort))
+            .collect::<Result<Vec<_>, _>>()?;
+        let next_rule_end = next_rule
+            .checked_add(source.rules.len())
+            .ok_or(TheoryImageError::LengthOverflow)?;
+        let expected_rules = (next_rule..next_rule_end)
+            .map(|index| {
+                u32::try_from(index)
+                    .map(TheoryJudgmentRuleProgramId)
+                    .map_err(|_| TheoryImageError::LimitExceeded("judgment rules"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if actual.arguments != expected_arguments
+            || actual.decision != source.decision
+            || actual.rules != expected_rules
+        {
+            return Err(TheoryImageError::SourceMismatch {
+                kind: "judgment",
+                index: judgment_index,
+            });
+        }
+        for source_rule in &source.rules {
+            let program =
+                image
+                    .judgment_rules
+                    .get(next_rule)
+                    .ok_or(TheoryImageError::UnknownReference {
+                        kind: "judgment rule",
+                        owner: judgment_index,
+                        target: u32::try_from(next_rule).unwrap_or(u32::MAX),
+                    })?;
+            let expected_id = u32::try_from(next_rule)
+                .map_err(|_| TheoryImageError::LimitExceeded("judgment rules"))?;
+            dense("judgment rule", expected_id, program.id.0)?;
+            validate_judgment_program(program, source_rule, actual.id, context)?;
+            next_rule += 1;
+        }
+    }
+    Ok(())
+}
+
+fn validate_judgment_program(
+    program: &TheoryJudgmentRuleProgramV1,
+    source: &JudgmentRuleV1,
+    owner: TheoryJudgmentId,
+    context: &ImageSourceContext<'_>,
+) -> Result<(), TheoryImageError> {
+    let index = program.id.0;
+    if program.owner != owner
+        || program.name != source.name
+        || program.variables.len() != source.variables.len()
+        || program.terms.len() != source.terms.len()
+        || program.premises.len() != source.premises.len()
+    {
+        return Err(TheoryImageError::SourceMismatch { kind: "judgment rule", index });
+    }
+    for (variable_index, (actual, expected)) in
+        program.variables.iter().zip(&source.variables).enumerate()
+    {
+        let variable_index = u32::try_from(variable_index)
+            .map_err(|_| TheoryImageError::LimitExceeded("rule variables"))?;
+        dense("judgment rule variable", variable_index, actual.id.0)?;
+        if actual.sort != context.sort(&expected.sort)? || actual.role != expected.role {
+            return Err(TheoryImageError::SourceMismatch { kind: "judgment rule variable", index });
+        }
+    }
+    for (term_index, (actual, expected)) in program.terms.iter().zip(&source.terms).enumerate() {
+        let term_index =
+            u32::try_from(term_index).map_err(|_| TheoryImageError::LimitExceeded("rule terms"))?;
+        if actual.sort != context.sort(&expected.sort)?
+            || actual.form
+                != expected_term_form(expected, &source.terms, &source.variables, context)?
+        {
+            return Err(TheoryImageError::SourceMismatch { kind: "judgment rule term", index });
+        }
+        validate_term_references(actual, term_index, program.variables.len())?;
+    }
+    for (actual, expected) in program.premises.iter().zip(&source.premises) {
+        if actual != &expected_judgment_atom(expected, context)? {
+            return Err(TheoryImageError::SourceMismatch { kind: "judgment rule premise", index });
+        }
+        validate_judgment_atom_references(actual, index, program.terms.len())?;
+    }
+    if program.conclusion != expected_judgment_atom(&source.conclusion, context)? {
+        return Err(TheoryImageError::SourceMismatch { kind: "judgment rule conclusion", index });
+    }
+    validate_judgment_atom_references(&program.conclusion, index, program.terms.len())?;
+    if program.conclusion.judgment != owner {
+        return Err(TheoryImageError::SourceMismatch { kind: "judgment rule owner", index });
+    }
+    let expected_charge = TheoryWorkChargeV1 {
+        pattern_nodes: u32::try_from(source.terms.len())
+            .map_err(|_| TheoryImageError::LimitExceeded("judgment rule terms"))?,
+        template_nodes: 0,
+        premise_nodes: u32::try_from(source.premises.len())
+            .map_err(|_| TheoryImageError::LimitExceeded("judgment rule premises"))?,
+        variable_slots: u32::try_from(source.variables.len())
+            .map_err(|_| TheoryImageError::LimitExceeded("judgment rule variables"))?,
+    };
+    if program.charge != expected_charge {
+        return Err(TheoryImageError::SourceMismatch { kind: "judgment resource charge", index });
+    }
+    Ok(())
+}
+
+fn expected_judgment_atom(
+    source: &JudgmentAtomV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<TheoryImageJudgmentAtomV1, TheoryImageError> {
+    Ok(TheoryImageJudgmentAtomV1 {
+        judgment: context
+            .judgments
+            .get(source.judgment.as_str())
+            .copied()
+            .ok_or(TheoryImageError::SourceMismatch { kind: "judgment atom", index: u32::MAX })?,
+        terms: source.terms.clone(),
+    })
+}
+
+fn validate_judgment_atom_references(
+    atom: &TheoryImageJudgmentAtomV1,
+    owner: u32,
+    term_count: usize,
+) -> Result<(), TheoryImageError> {
+    for term in &atom.terms {
+        if term.0 as usize >= term_count {
+            return Err(TheoryImageError::UnknownReference {
+                kind: "judgment term",
+                owner,
+                target: term.0,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn source_rule(
     theory: &TheoryCoreV1,
     origin: TheoryRuleOriginV1,
@@ -1088,7 +1889,8 @@ fn validate_program(
         let index =
             u32::try_from(index).map_err(|_| TheoryImageError::LimitExceeded("rule terms"))?;
         if actual.sort != context.sort(&expected.sort)?
-            || actual.form != expected_term_form(expected, context)?
+            || actual.form
+                != expected_term_form(expected, &source.terms, &source.variables, context)?
         {
             return Err(TheoryImageError::SourceMismatch { kind: "rule term", index: owner });
         }
@@ -1117,6 +1919,8 @@ fn validate_program(
 
 fn expected_term_form(
     node: &crate::TheoryTermNodeV1,
+    terms: &[crate::TheoryTermNodeV1],
+    variables: &[crate::TheoryVariableV1],
     context: &ImageSourceContext<'_>,
 ) -> Result<TheoryImageTermFormV1, TheoryImageError> {
     let sort = context.sort(&node.sort)?;
@@ -1144,7 +1948,19 @@ fn expected_term_form(
             remainder: None,
         },
         TheoryTermFormV1::Substitution { abstraction, argument } => TheoryImageTermFormV1::Apply {
-            operator: TheoryImageOperatorV1::Substitution { sort },
+            operator: TheoryImageOperatorV1::Substitution {
+                sort,
+                function: context.sort(
+                    &terms
+                        .get(abstraction.0 as usize)
+                        .ok_or(TheoryImageError::UnknownReference {
+                            kind: "substitution abstraction",
+                            owner: u32::MAX,
+                            target: abstraction.0,
+                        })?
+                        .sort,
+                )?,
+            },
             arguments: vec![*abstraction, *argument],
             slots: Vec::new(),
             remainder: None,
@@ -1152,11 +1968,40 @@ fn expected_term_form(
         TheoryTermFormV1::Collection { elements, remainder } => {
             return expected_collection_form(sort, elements, *remainder, context);
         },
-        TheoryTermFormV1::Map { collection, parameters, body } => TheoryImageTermFormV1::Apply {
-            operator: TheoryImageOperatorV1::Map { sort },
-            arguments: vec![*collection, *body],
-            slots: parameters.clone(),
-            remainder: None,
+        TheoryTermFormV1::Map { collection, parameters, body } => {
+            let mut parameter_sorts = Vec::new();
+            parameter_sorts
+                .try_reserve_exact(parameters.len())
+                .map_err(|_| TheoryImageError::Allocation)?;
+            for parameter in parameters {
+                let variable = variables.get(parameter.0 as usize).ok_or(
+                    TheoryImageError::UnknownReference {
+                        kind: "map parameter",
+                        owner: u32::MAX,
+                        target: parameter.0,
+                    },
+                )?;
+                parameter_sorts.push(context.sort(&variable.sort)?);
+            }
+            TheoryImageTermFormV1::Apply {
+                operator: TheoryImageOperatorV1::Map {
+                    sort,
+                    source: context.sort(
+                        &terms
+                            .get(collection.0 as usize)
+                            .ok_or(TheoryImageError::UnknownReference {
+                                kind: "map collection",
+                                owner: u32::MAX,
+                                target: collection.0,
+                            })?
+                            .sort,
+                    )?,
+                    parameters: parameter_sorts,
+                },
+                arguments: vec![*collection, *body],
+                slots: parameters.clone(),
+                remainder: None,
+            }
         },
         TheoryTermFormV1::Zip { left, right } => TheoryImageTermFormV1::Apply {
             operator: TheoryImageOperatorV1::Zip { sort },
@@ -1821,6 +2666,136 @@ fn validate_pattern_automaton(
     Ok(())
 }
 
+fn validate_judgment_pattern_automaton(
+    image: &TheorySemanticImageV1,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<(), TheoryImageError> {
+    let states = &image.judgment_patterns.states;
+    let mut edges = 0usize;
+    let mut slot_references = 0usize;
+    for (index, state) in states.iter().enumerate() {
+        let index = u32::try_from(index)
+            .map_err(|_| TheoryImageError::LimitExceeded("judgment automaton states"))?;
+        dense("judgment pattern state", index, state.id.0)?;
+        match &state.form {
+            TheoryPatternStateFormV1::Bind => {
+                if state.slot_count != 1 {
+                    return Err(TheoryImageError::SourceMismatch {
+                        kind: "judgment bind slot count",
+                        index,
+                    });
+                }
+            },
+            TheoryPatternStateFormV1::Apply { arguments, .. } => {
+                let mut used = BTreeSet::new();
+                for invocation in arguments {
+                    edges = checked_total(edges, 1, limits.max_automaton_edges, "automaton edges")?;
+                    if invocation.state.0 >= index {
+                        return Err(TheoryImageError::ForwardReference {
+                            kind: "judgment pattern state",
+                            owner: index,
+                            target: invocation.state.0,
+                        });
+                    }
+                    let child = &states[invocation.state.0 as usize];
+                    if invocation.parent_slots.len() != child.slot_count as usize {
+                        return Err(TheoryImageError::SourceMismatch {
+                            kind: "judgment pattern slot map",
+                            index,
+                        });
+                    }
+                    slot_references = checked_total(
+                        slot_references,
+                        invocation.parent_slots.len(),
+                        limits.max_automaton_slot_references,
+                        "automaton slot references",
+                    )?;
+                    for slot in &invocation.parent_slots {
+                        if *slot >= state.slot_count {
+                            return Err(TheoryImageError::UnknownReference {
+                                kind: "judgment pattern slot",
+                                owner: index,
+                                target: *slot,
+                            });
+                        }
+                        used.insert(*slot);
+                    }
+                }
+                if used.iter().copied().ne(0..state.slot_count) {
+                    return Err(TheoryImageError::SourceMismatch {
+                        kind: "judgment pattern slot density",
+                        index,
+                    });
+                }
+            },
+        }
+    }
+
+    let mut coverage = vec![0usize; image.judgment_rules.len()];
+    let mut checks = 0usize;
+    for (index, entry) in image.judgment_patterns.entries.iter().enumerate() {
+        let index = u32::try_from(index)
+            .map_err(|_| TheoryImageError::LimitExceeded("judgment automaton entries"))?;
+        dense("judgment pattern entry", index, entry.id.0)?;
+        let rule = image.judgment_rules.get(entry.rule.0 as usize).ok_or(
+            TheoryImageError::UnknownReference {
+                kind: "judgment pattern rule",
+                owner: index,
+                target: entry.rule.0,
+            },
+        )?;
+        let root = states
+            .get(entry.root.0 as usize)
+            .ok_or(TheoryImageError::UnknownReference {
+                kind: "judgment pattern root",
+                owner: index,
+                target: entry.root.0,
+            })?;
+        if entry.slot_variables.len() != root.slot_count as usize {
+            return Err(TheoryImageError::AutomatonShape { entry: index });
+        }
+        slot_references = checked_total(
+            slot_references,
+            entry.slot_variables.len(),
+            limits.max_automaton_slot_references,
+            "automaton slot references",
+        )?;
+        let mut unique = BTreeSet::new();
+        for variable in &entry.slot_variables {
+            variable_reference(*variable, index, rule.variables.len())?;
+            if !unique.insert(*variable) {
+                return Err(TheoryImageError::DuplicateReference {
+                    kind: "judgment entry variable",
+                    owner: index,
+                    target: variable.0,
+                });
+            }
+        }
+        check_judgment_entry_matches_program(
+            image,
+            entry,
+            rule,
+            &mut checks,
+            limits.max_automaton_checks,
+        )?;
+        coverage[entry.rule.0 as usize] += 1;
+    }
+    for (index, rule) in image.judgment_rules.iter().enumerate() {
+        let expected = usize::from(term_roots_are_positional_image(
+            &rule.terms,
+            &rule.conclusion.terms,
+            rule.id.0,
+        )?);
+        if coverage[index] != expected {
+            return Err(TheoryImageError::AutomatonCoverage {
+                rule: rule.id.0,
+                actual: coverage[index],
+            });
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 enum PatternSubject {
     Term(TheoryTermId),
@@ -1836,36 +2811,112 @@ fn check_entry_matches_program(
 ) -> Result<(), TheoryImageError> {
     let root_state = &image.patterns.states[entry.root.0 as usize];
     let root_slots = (0..root_state.slot_count).collect::<Vec<_>>();
-    let mut pending = vec![(PatternSubject::Term(rule.left), entry.root, root_slots)];
+    check_pattern_subjects(
+        &image.patterns.states,
+        &rule.terms,
+        entry.id.0,
+        &entry.slot_variables,
+        vec![(PatternSubject::Term(rule.left), entry.root, root_slots)],
+        checks,
+        limit,
+    )
+}
+
+fn check_judgment_entry_matches_program(
+    image: &TheorySemanticImageV1,
+    entry: &TheoryJudgmentPatternEntryV1,
+    rule: &TheoryJudgmentRuleProgramV1,
+    checks: &mut usize,
+    limit: usize,
+) -> Result<(), TheoryImageError> {
+    let states = &image.judgment_patterns.states;
+    let root = states
+        .get(entry.root.0 as usize)
+        .ok_or(TheoryImageError::UnknownReference {
+            kind: "judgment pattern root",
+            owner: entry.id.0,
+            target: entry.root.0,
+        })?;
+    charge_pattern_check(checks, limit)?;
+    let TheoryPatternStateFormV1::Apply { operator, arguments } = &root.form else {
+        return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+    };
+    if operator != &(TheoryImageOperatorV1::Judgment { judgment: rule.conclusion.judgment })
+        || arguments.len() != rule.conclusion.terms.len()
+    {
+        return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+    }
+
+    let root_slots = (0..root.slot_count).collect::<Vec<_>>();
+    let mut pending = Vec::new();
+    pending
+        .try_reserve(arguments.len())
+        .map_err(|_| TheoryImageError::Allocation)?;
+    for (term, invocation) in rule.conclusion.terms.iter().zip(arguments).rev() {
+        let child_slots = invocation
+            .parent_slots
+            .iter()
+            .map(|parent| {
+                root_slots
+                    .get(*parent as usize)
+                    .copied()
+                    .ok_or(TheoryImageError::AutomatonShape { entry: entry.id.0 })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        pending.push((PatternSubject::Term(*term), invocation.state, child_slots));
+    }
+    check_pattern_subjects(
+        states,
+        &rule.terms,
+        entry.id.0,
+        &entry.slot_variables,
+        pending,
+        checks,
+        limit,
+    )
+}
+
+fn check_pattern_subjects(
+    states: &[TheoryPatternStateV1],
+    terms: &[TheoryImageTermNodeV1],
+    entry: u32,
+    slot_variables: &[TheoryVariableId],
+    mut pending: Vec<(PatternSubject, TheoryPatternStateId, Vec<u32>)>,
+    checks: &mut usize,
+    limit: usize,
+) -> Result<(), TheoryImageError> {
     while let Some((subject, state_id, slots_to_root)) = pending.pop() {
-        *checks = checks
-            .checked_add(1)
-            .ok_or(TheoryImageError::LengthOverflow)?;
-        enforce(*checks, limit, "automaton correspondence checks")?;
-        let state = &image.patterns.states[state_id.0 as usize];
+        charge_pattern_check(checks, limit)?;
+        let state = states
+            .get(state_id.0 as usize)
+            .ok_or(TheoryImageError::UnknownReference {
+                kind: "pattern state",
+                owner: entry,
+                target: state_id.0,
+            })?;
         if slots_to_root.len() != state.slot_count as usize {
-            return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+            return Err(TheoryImageError::AutomatonShape { entry });
         }
         match (subject, &state.form) {
             (PatternSubject::Slot(variable), TheoryPatternStateFormV1::Bind) => {
                 let root_slot = *slots_to_root
                     .first()
-                    .ok_or(TheoryImageError::AutomatonShape { entry: entry.id.0 })?;
-                if entry.slot_variables.get(root_slot as usize) != Some(&variable) {
-                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                    .ok_or(TheoryImageError::AutomatonShape { entry })?;
+                if slot_variables.get(root_slot as usize) != Some(&variable) {
+                    return Err(TheoryImageError::AutomatonShape { entry });
                 }
             },
             (PatternSubject::Term(term), TheoryPatternStateFormV1::Bind) => {
                 let node =
-                    rule.terms
+                    terms
                         .get(term.0 as usize)
                         .ok_or(TheoryImageError::UnknownReference {
                             kind: "pattern term",
-                            owner: entry.id.0,
+                            owner: entry,
                             target: term.0,
                         })?;
                 let TheoryImageTermFormV1::Slot(variable) = node.form else {
-                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                    return Err(TheoryImageError::AutomatonShape { entry });
                 };
                 pending.push((PatternSubject::Slot(variable), state_id, slots_to_root));
             },
@@ -1874,11 +2925,11 @@ fn check_entry_matches_program(
                 TheoryPatternStateFormV1::Apply { operator, arguments },
             ) => {
                 let node =
-                    rule.terms
+                    terms
                         .get(term.0 as usize)
                         .ok_or(TheoryImageError::UnknownReference {
                             kind: "pattern term",
-                            owner: entry.id.0,
+                            owner: entry,
                             target: term.0,
                         })?;
                 let TheoryImageTermFormV1::Apply {
@@ -1888,10 +2939,10 @@ fn check_entry_matches_program(
                     remainder,
                 } = &node.form
                 else {
-                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                    return Err(TheoryImageError::AutomatonShape { entry });
                 };
-                if expected_operator != operator || remainder.is_some() {
-                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                if expected_operator != operator || remainder.is_some() || !slots.is_empty() {
+                    return Err(TheoryImageError::AutomatonShape { entry });
                 }
                 let subjects = slots
                     .iter()
@@ -1900,7 +2951,7 @@ fn check_entry_matches_program(
                     .chain(term_arguments.iter().copied().map(PatternSubject::Term))
                     .collect::<Vec<_>>();
                 if subjects.len() != arguments.len() {
-                    return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                    return Err(TheoryImageError::AutomatonShape { entry });
                 }
                 for (subject, invocation) in subjects.into_iter().zip(arguments).rev() {
                     let child_slots = invocation
@@ -1910,51 +2961,68 @@ fn check_entry_matches_program(
                             slots_to_root
                                 .get(*parent as usize)
                                 .copied()
-                                .ok_or(TheoryImageError::AutomatonShape { entry: entry.id.0 })
+                                .ok_or(TheoryImageError::AutomatonShape { entry })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     pending.push((subject, invocation.state, child_slots));
                 }
             },
             (PatternSubject::Slot(_), TheoryPatternStateFormV1::Apply { .. }) => {
-                return Err(TheoryImageError::AutomatonShape { entry: entry.id.0 });
+                return Err(TheoryImageError::AutomatonShape { entry });
             },
         }
     }
     Ok(())
 }
 
+fn charge_pattern_check(checks: &mut usize, limit: usize) -> Result<(), TheoryImageError> {
+    *checks = checks
+        .checked_add(1)
+        .ok_or(TheoryImageError::LengthOverflow)?;
+    enforce(*checks, limit, "automaton correspondence checks")
+}
+
 fn rule_is_positional(rule: &TheoryRuleProgramV1) -> Result<bool, TheoryImageError> {
     if rule.disposition != TheoryRuleDispositionV1::Executable {
         return Ok(false);
     }
-    let mut pending = vec![rule.left];
+    term_roots_are_positional_image(&rule.terms, &[rule.left], rule.id.0)
+}
+
+fn term_roots_are_positional_image(
+    terms: &[TheoryImageTermNodeV1],
+    roots: &[TheoryTermId],
+    owner: u32,
+) -> Result<bool, TheoryImageError> {
+    let mut pending = roots.to_vec();
     let mut seen = BTreeSet::new();
     while let Some(term) = pending.pop() {
         if !seen.insert(term) {
             continue;
         }
-        let node = rule
-            .terms
+        let node = terms
             .get(term.0 as usize)
             .ok_or(TheoryImageError::UnknownReference {
                 kind: "pattern term",
-                owner: rule.id.0,
+                owner,
                 target: term.0,
             })?;
-        if let TheoryImageTermFormV1::Apply { operator, arguments, remainder, .. } = &node.form {
-            if remainder.is_some() {
+        if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } = &node.form {
+            if remainder.is_some() || !slots.is_empty() {
                 return Ok(false);
             }
             if matches!(
                 operator,
-                TheoryImageOperatorV1::Collection {
-                    kind: CollectionKind::Bag
-                        | CollectionKind::Set
-                        | CollectionKind::Map
-                        | CollectionKind::PathMap,
-                    ..
-                }
+                TheoryImageOperatorV1::Abstraction { .. }
+                    | TheoryImageOperatorV1::Map { .. }
+                    | TheoryImageOperatorV1::Judgment { .. }
+                    | TheoryImageOperatorV1::Collection {
+                        kind: CollectionKind::Bag
+                            | CollectionKind::Set
+                            | CollectionKind::Map
+                            | CollectionKind::PathMap,
+                        ..
+                    }
             ) {
                 return Ok(false);
             }
@@ -1992,6 +3060,7 @@ fn enforce(actual: usize, limit: usize, kind: &'static str) -> Result<(), Theory
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mettail_semantic_key::SemanticHash;
 
     #[test]
     fn image_fingerprint_domain_is_not_the_language_domain() {
@@ -2010,5 +3079,68 @@ mod tests {
         let demand = LanguageRights::from_rights([crate::LanguageRight::Reduce]);
         let grant = LanguageRights::none();
         assert!(grant.attenuate(&demand).iter().next().is_none());
+    }
+
+    #[test]
+    fn theory_operator_exact_keys_are_injective_over_every_variant() {
+        let operators = vec![
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)),
+            TheoryImageOperatorV1::Abstraction { sort: TheorySortId(0) },
+            TheoryImageOperatorV1::Substitution {
+                sort: TheorySortId(0),
+                function: TheorySortId(1),
+            },
+            TheoryImageOperatorV1::Substitution {
+                sort: TheorySortId(0),
+                function: TheorySortId(2),
+            },
+            TheoryImageOperatorV1::Collection {
+                sort: TheorySortId(0),
+                element: TheorySortId(1),
+                kind: CollectionKind::List,
+            },
+            TheoryImageOperatorV1::Map {
+                sort: TheorySortId(0),
+                source: TheorySortId(1),
+                parameters: vec![TheorySortId(2)],
+            },
+            TheoryImageOperatorV1::Map {
+                sort: TheorySortId(0),
+                source: TheorySortId(1),
+                parameters: vec![TheorySortId(3)],
+            },
+            TheoryImageOperatorV1::Zip { sort: TheorySortId(0) },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::String("a".into()),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Bytes(vec![b'a']),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Integer(97),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::FloatBits(97),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Boolean(true),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Unit,
+            },
+        ];
+        let keys = operators
+            .iter()
+            .map(SemanticHash::content_key)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(keys.len(), operators.len());
+        assert_eq!(operators[0].content_key(), operators[0].clone().content_key());
     }
 }

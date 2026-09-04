@@ -126,7 +126,9 @@ fn eval_app_state<L: Clone + Eq + Hash>(
             let mut next = Vec::new();
             for left in &partial {
                 for right in child_matches.iter() {
-                    if let Some(merged) = merge_slot_substs(eg, left, invocation, right) {
+                    if let Some(merged) = merge_slot_substs(eg, left, invocation, right)
+                        .expect("the recursive test oracle has no allocation governor")
+                    {
                         next.push(merged);
                     }
                 }

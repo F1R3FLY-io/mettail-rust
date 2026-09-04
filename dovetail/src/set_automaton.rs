@@ -57,6 +57,17 @@ pub struct SetAutomatonMatch {
     pub subst: Subst,
 }
 
+/// One substitution obtained by matching a caller-owned application view.
+///
+/// Unlike [`SetAutomatonMatch`], this result has no root [`EClassId`]: the
+/// application itself is virtual and is never inserted into the subject
+/// e-graph. Its children remain ordinary canonical e-classes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetAutomatonApplicationMatch {
+    pub pattern: PatternId,
+    pub subst: Subst,
+}
+
 /// Cheap observability for tests, benchmarks, and later RhoNet cost models.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SetAutomatonStats {
@@ -64,6 +75,8 @@ pub struct SetAutomatonStats {
     pub root_classes: usize,
     /// E-nodes inspected while scanning potential redex roots.
     pub root_nodes: usize,
+    /// Caller-owned application views considered without e-graph insertion.
+    pub application_roots: usize,
     /// Candidate root-pattern checks after symbol/arity indexing.
     pub candidate_evaluations: usize,
     /// Cache misses for compiled pattern states at canonical e-classes.
@@ -82,6 +95,101 @@ pub struct SetAutomatonRun {
 impl SetAutomatonRun {
     pub fn into_matches(self) -> Vec<SetAutomatonMatch> {
         self.matches
+    }
+}
+
+/// Result of matching one virtual application root.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SetAutomatonApplicationRun {
+    pub matches: Vec<SetAutomatonApplicationMatch>,
+    pub stats: SetAutomatonStats,
+}
+
+/// Consensus-visible reason a bounded set-automaton scan did not complete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetAutomatonSearchStop {
+    WorkBudgetExhausted,
+    Cancelled,
+    /// A checked allocation required by a private result frontier failed.
+    AllocationFailed,
+}
+
+/// Complete bounded scan.  `work` is the exact number of abstract evaluator
+/// units charged by this version of the automaton ABI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundedSetAutomatonRun {
+    pub run: SetAutomatonRun,
+    pub work: u64,
+}
+
+/// Complete bounded virtual-application match.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundedSetAutomatonApplicationRun {
+    pub run: SetAutomatonApplicationRun,
+    pub work: u64,
+}
+
+/// Fail-closed bounded scan result.  Partial matches are intentionally absent;
+/// only non-semantic diagnostics and the exact consumed work may escape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetAutomatonSearchFailure {
+    pub reason: SetAutomatonSearchStop,
+    pub work: u64,
+    pub stats: SetAutomatonStats,
+}
+
+trait SearchGovernor {
+    fn charge(&mut self, work: usize) -> Result<(), SetAutomatonSearchStop>;
+}
+
+struct UnboundedGovernor;
+
+impl SearchGovernor for UnboundedGovernor {
+    #[inline(always)]
+    fn charge(&mut self, _work: usize) -> Result<(), SetAutomatonSearchStop> {
+        Ok(())
+    }
+}
+
+struct BoundedGovernor<C> {
+    remaining: u64,
+    spent: u64,
+    is_cancelled: C,
+}
+
+impl<C> BoundedGovernor<C>
+where
+    C: FnMut() -> bool,
+{
+    fn new(work_limit: u64, is_cancelled: C) -> Self {
+        Self {
+            remaining: work_limit,
+            spent: 0,
+            is_cancelled,
+        }
+    }
+
+    fn spent(&self) -> u64 {
+        self.spent
+    }
+}
+
+impl<C> SearchGovernor for BoundedGovernor<C>
+where
+    C: FnMut() -> bool,
+{
+    #[inline]
+    fn charge(&mut self, work: usize) -> Result<(), SetAutomatonSearchStop> {
+        if (self.is_cancelled)() {
+            return Err(SetAutomatonSearchStop::Cancelled);
+        }
+        let work = u64::try_from(work).map_err(|_| SetAutomatonSearchStop::WorkBudgetExhausted)?;
+        if work > self.remaining {
+            return Err(SetAutomatonSearchStop::WorkBudgetExhausted);
+        }
+        self.remaining -= work;
+        self.spent += work;
+        Ok(())
     }
 }
 
@@ -518,11 +626,144 @@ pub enum AutomatonNode<'a, L> {
     App { op: &'a L, args: &'a [StateInvocation] },
 }
 
+/// Closed, source-neutral representation of one already-interned positional
+/// automaton state.  Cache/image adapters use this to restore the exact state
+/// quotient without rebuilding source patterns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlatAutomatonNodeImage<L> {
+    Var,
+    App {
+        op: L,
+        args: Vec<FlatAutomatonInvocationImage>,
+    },
+}
+
+/// One child-state call in a [`FlatAutomatonNodeImage`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlatAutomatonInvocationImage {
+    pub state: usize,
+    /// Child-local slot to parent-local slot.
+    pub parent_slots: Vec<usize>,
+}
+
+/// One dense state in a serialized/restored set automaton.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlatAutomatonStateImage<L> {
+    pub slot_count: usize,
+    pub node: FlatAutomatonNodeImage<L>,
+}
+
+/// One pattern entry in a serialized/restored set automaton.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlatAutomatonEntryImage {
+    pub id: PatternId,
+    pub root_state: usize,
+    pub slot_names: Vec<String>,
+}
+
+/// Canonical flat image accepted by [`SetAutomaton::restore_flat_image`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlatAutomatonImage<L> {
+    pub states: Vec<FlatAutomatonStateImage<L>>,
+    pub entries: Vec<FlatAutomatonEntryImage>,
+}
+
+/// Structural reason an untrusted flat automaton image cannot be restored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlatAutomatonRestoreError {
+    Allocation,
+    StateReference {
+        owner: usize,
+        target: usize,
+    },
+    StateSlotCount {
+        state: usize,
+        expected: usize,
+        actual: usize,
+    },
+    InvocationSlotCount {
+        state: usize,
+        child: usize,
+        expected: usize,
+        actual: usize,
+    },
+    ParentSlot {
+        state: usize,
+        slot: usize,
+        slot_count: usize,
+    },
+    NonCanonicalParentSlot {
+        state: usize,
+        expected: usize,
+        actual: usize,
+    },
+    NonInjectiveInvocation {
+        state: usize,
+        slot: usize,
+    },
+    DuplicateState {
+        state: usize,
+        previous: usize,
+    },
+    EntryRoot {
+        entry: usize,
+        root: usize,
+    },
+    EntrySlotCount {
+        entry: usize,
+        expected: usize,
+        actual: usize,
+    },
+    DuplicateEntryId(PatternId),
+    DuplicateEntrySlot {
+        entry: usize,
+        name: String,
+    },
+}
+
 impl<L> SetAutomaton<L> {
     /// A read-only view over the interned pattern DAG — the Stage 1 in-Rho lowering
     /// input.
     pub fn view(&self) -> SetAutomatonView<'_, L> {
         SetAutomatonView { automaton: self }
+    }
+}
+
+impl<L: Clone> SetAutomaton<L> {
+    /// Serialize the already-interned state quotient without reconstructing
+    /// source [`Pattern`] trees.  Dense state and entry order is preserved.
+    pub fn flat_image(&self) -> FlatAutomatonImage<L> {
+        let view = self.view();
+        let states = view
+            .state_ids()
+            .map(|state| FlatAutomatonStateImage {
+                slot_count: view.state_slot_count(state),
+                node: match view.node(state) {
+                    AutomatonNode::Var => FlatAutomatonNodeImage::Var,
+                    AutomatonNode::App { op, args } => FlatAutomatonNodeImage::App {
+                        op: op.clone(),
+                        args: args
+                            .iter()
+                            .map(|invocation| FlatAutomatonInvocationImage {
+                                state: invocation.state().index(),
+                                parent_slots: invocation
+                                    .parent_slots()
+                                    .map(SlotId::index)
+                                    .collect(),
+                            })
+                            .collect(),
+                    },
+                },
+            })
+            .collect();
+        let entries = (0..view.entry_count())
+            .map(|entry| FlatAutomatonEntryImage {
+                id: view.entry_id(entry),
+                root_state: view.entry_root_state(entry).index(),
+                slot_names: view.entry_slot_names(entry).to_vec(),
+            })
+            .collect();
+        FlatAutomatonImage { states, entries }
     }
 }
 
@@ -590,6 +831,169 @@ impl<'a, L> SetAutomatonView<'a, L> {
 }
 
 impl<L: Clone + Eq + Hash> SetAutomaton<L> {
+    /// Restore a previously interned canonical automaton image without
+    /// reconstructing source [`Pattern`] trees.
+    ///
+    /// State references must point backward and the image must already be the
+    /// quotient produced by this module's state interner: duplicate structural
+    /// states are rejected rather than silently re-numbered.  The method
+    /// validates the complete image before returning, so no partially restored
+    /// dispatch table can escape.
+    pub fn restore_flat_image(
+        image: FlatAutomatonImage<L>,
+    ) -> Result<Self, FlatAutomatonRestoreError> {
+        let mut compiler = PatternCompiler::default();
+        for (state_index, state) in image.states.into_iter().enumerate() {
+            let key = match state.node {
+                FlatAutomatonNodeImage::Var => {
+                    if state.slot_count != 1 {
+                        return Err(FlatAutomatonRestoreError::StateSlotCount {
+                            state: state_index,
+                            expected: 1,
+                            actual: state.slot_count,
+                        });
+                    }
+                    StateKey::Var
+                },
+                FlatAutomatonNodeImage::App { op, args } => {
+                    let mut invocations = Vec::new();
+                    invocations
+                        .try_reserve_exact(args.len())
+                        .map_err(|_| FlatAutomatonRestoreError::Allocation)?;
+                    for invocation in args {
+                        let child = compiler.states.get(invocation.state).ok_or(
+                            FlatAutomatonRestoreError::StateReference {
+                                owner: state_index,
+                                target: invocation.state,
+                            },
+                        )?;
+                        let expected = child.slot_count();
+                        if invocation.parent_slots.len() != expected {
+                            return Err(FlatAutomatonRestoreError::InvocationSlotCount {
+                                state: state_index,
+                                child: invocation.state,
+                                expected,
+                                actual: invocation.parent_slots.len(),
+                            });
+                        }
+                        let mut parent_slots = Vec::new();
+                        parent_slots
+                            .try_reserve_exact(expected)
+                            .map_err(|_| FlatAutomatonRestoreError::Allocation)?;
+                        let mut local_slots = HashSet::default();
+                        for slot in invocation.parent_slots {
+                            if slot >= state.slot_count {
+                                return Err(FlatAutomatonRestoreError::ParentSlot {
+                                    state: state_index,
+                                    slot,
+                                    slot_count: state.slot_count,
+                                });
+                            }
+                            if !local_slots.insert(slot) {
+                                return Err(FlatAutomatonRestoreError::NonInjectiveInvocation {
+                                    state: state_index,
+                                    slot,
+                                });
+                            }
+                            parent_slots.push(SlotId(slot));
+                        }
+                        invocations
+                            .push(StateInvocation::new(StateId(invocation.state), parent_slots));
+                    }
+                    let mut next_slot = 0usize;
+                    for invocation in &invocations {
+                        for slot in invocation.parent_slots() {
+                            let slot = slot.index();
+                            if slot > next_slot {
+                                return Err(FlatAutomatonRestoreError::NonCanonicalParentSlot {
+                                    state: state_index,
+                                    expected: next_slot,
+                                    actual: slot,
+                                });
+                            }
+                            if slot == next_slot {
+                                next_slot += 1;
+                            }
+                        }
+                    }
+                    if next_slot != state.slot_count {
+                        return Err(FlatAutomatonRestoreError::StateSlotCount {
+                            state: state_index,
+                            expected: next_slot,
+                            actual: state.slot_count,
+                        });
+                    }
+                    StateKey::App { op, args: invocations }
+                },
+            };
+            if let Some(previous) = compiler.interned.get(&key) {
+                return Err(FlatAutomatonRestoreError::DuplicateState {
+                    state: state_index,
+                    previous: previous.0,
+                });
+            }
+            let actual = compiler.intern(key, state.slot_count);
+            debug_assert_eq!(actual.0, state_index);
+        }
+
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(image.entries.len())
+            .map_err(|_| FlatAutomatonRestoreError::Allocation)?;
+        let mut variable_roots = Vec::new();
+        let mut app_roots: HashMap<RootKey<L>, Vec<usize>> = HashMap::default();
+        let mut entry_ids = HashSet::default();
+        for (entry_index, entry) in image.entries.into_iter().enumerate() {
+            let state = compiler.states.get(entry.root_state).ok_or(
+                FlatAutomatonRestoreError::EntryRoot {
+                    entry: entry_index,
+                    root: entry.root_state,
+                },
+            )?;
+            if entry.slot_names.len() != state.slot_count() {
+                return Err(FlatAutomatonRestoreError::EntrySlotCount {
+                    entry: entry_index,
+                    expected: state.slot_count(),
+                    actual: entry.slot_names.len(),
+                });
+            }
+            let mut names = HashSet::default();
+            for name in &entry.slot_names {
+                if !names.insert(name.as_str()) {
+                    return Err(FlatAutomatonRestoreError::DuplicateEntrySlot {
+                        entry: entry_index,
+                        name: name.clone(),
+                    });
+                }
+            }
+            if !entry_ids.insert(entry.id) {
+                return Err(FlatAutomatonRestoreError::DuplicateEntryId(entry.id));
+            }
+            match state {
+                PatternState::Var => variable_roots.push(entry_index),
+                PatternState::App { op, args, .. } => {
+                    app_roots
+                        .entry(RootKey { op: op.clone(), arity: args.len() })
+                        .or_default()
+                        .push(entry_index);
+                },
+            }
+            entries.push(PatternEntry {
+                id: entry.id,
+                root_state: StateId(entry.root_state),
+                slot_names: entry.slot_names,
+                _marker: std::marker::PhantomData,
+            });
+        }
+
+        Ok(Self {
+            entries,
+            compiler,
+            variable_roots,
+            app_roots,
+        })
+    }
+
     /// Compile a set of positional patterns.
     ///
     /// The compiler rejects any pattern containing [`Pattern::AcApp`] so callers
@@ -765,70 +1169,341 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
 
     /// Scan the e-graph once at candidate redex roots and return every match.
     pub fn search_egraph(&self, eg: &EGraph<L>) -> SetAutomatonRun {
+        let mut governor = UnboundedGovernor;
+        match self.search_egraph_governed(eg, &mut governor) {
+            Ok(run) => run,
+            Err(_) => unreachable!("the unbounded set-automaton governor cannot stop"),
+        }
+    }
+
+    /// Scan the e-graph with explicit work accounting and cooperative
+    /// cancellation.
+    ///
+    /// The callback is sampled before every charged operation.  Every loop that
+    /// can grow with the subject, pattern interface, substitution cross-product,
+    /// or output passes through the governor.  If either bound stops the scan,
+    /// all matches accumulated so far remain private and are discarded; the
+    /// returned failure contains only diagnostics and consumed work.
+    ///
+    /// [`search_egraph`](Self::search_egraph) remains the unbounded generated
+    /// path.  Both entrypoints monomorphize the same evaluator, so bounded
+    /// execution cannot drift into a second matcher and the no-op governor is
+    /// optimized out of the existing path.
+    pub fn search_egraph_bounded<C>(
+        &self,
+        eg: &EGraph<L>,
+        work_limit: u64,
+        is_cancelled: C,
+    ) -> Result<BoundedSetAutomatonRun, SetAutomatonSearchFailure>
+    where
+        C: FnMut() -> bool,
+    {
+        let mut governor = BoundedGovernor::new(work_limit, is_cancelled);
+        match self.search_egraph_governed(eg, &mut governor) {
+            Ok(run) => Ok(BoundedSetAutomatonRun { run, work: governor.spent() }),
+            Err((reason, run)) => Err(SetAutomatonSearchFailure {
+                reason,
+                work: governor.spent(),
+                stats: run.stats,
+            }),
+        }
+    }
+
+    /// Match only one canonical e-class root under the same bounded evaluator
+    /// used by [`search_egraph_bounded`](Self::search_egraph_bounded).
+    ///
+    /// This is the semantic-transition path: premise expansion supplies an
+    /// exact redex root, so scanning unrelated classes would make proof-search
+    /// cost depend on private intermediate terms. State evaluation, slot
+    /// merging, work accounting, cancellation, and result publication remain
+    /// identical to the whole-graph path.
+    pub fn search_eclass_bounded<C>(
+        &self,
+        eg: &EGraph<L>,
+        root: EClassId,
+        work_limit: u64,
+        is_cancelled: C,
+    ) -> Result<BoundedSetAutomatonRun, SetAutomatonSearchFailure>
+    where
+        C: FnMut() -> bool,
+    {
+        let mut governor = BoundedGovernor::new(work_limit, is_cancelled);
         let mut run = SetAutomatonRun::default();
+        if let Err(reason) = governor.charge(0) {
+            return Err(SetAutomatonSearchFailure {
+                reason,
+                work: governor.spent(),
+                stats: run.stats,
+            });
+        }
+        let mut cache = HashMap::<(StateId, EClassId), CachedSubsts>::default();
+        match governor
+            .charge(1)
+            .and_then(|()| self.search_root_governed(eg, root, &mut cache, &mut run, &mut governor))
+        {
+            Ok(()) => Ok(BoundedSetAutomatonRun { run, work: governor.spent() }),
+            Err(reason) => Err(SetAutomatonSearchFailure {
+                reason,
+                work: governor.spent(),
+                stats: run.stats,
+            }),
+        }
+    }
+
+    /// Match one application without inserting a synthetic root into `eg`.
+    ///
+    /// This is the Horn-judgment path: a checked judgment identifier supplies
+    /// the operator and the query supplies canonical argument e-classes. Only
+    /// application-root entries participate; a root variable cannot bind the
+    /// virtual application because no fabricated [`EClassId`] exists for it.
+    /// Child states are evaluated by [`Self::eval_state`], so compiled-state
+    /// semantics, slot consistency, caching, cancellation, and work charging
+    /// are shared with physical-root matching.
+    pub fn search_application_bounded<C>(
+        &self,
+        eg: &EGraph<L>,
+        op: &L,
+        arguments: &[EClassId],
+        work_limit: u64,
+        is_cancelled: C,
+    ) -> Result<BoundedSetAutomatonApplicationRun, SetAutomatonSearchFailure>
+    where
+        C: FnMut() -> bool,
+    {
+        let mut governor = BoundedGovernor::new(work_limit, is_cancelled);
+        let mut run = SetAutomatonApplicationRun::default();
+        if let Err(reason) = governor.charge(0) {
+            return Err(SetAutomatonSearchFailure {
+                reason,
+                work: governor.spent(),
+                stats: run.stats,
+            });
+        }
+        match governor.charge(1).and_then(|()| {
+            self.search_application_governed(eg, op, arguments, &mut run, &mut governor)
+        }) {
+            Ok(()) => Ok(BoundedSetAutomatonApplicationRun { run, work: governor.spent() }),
+            Err(reason) => Err(SetAutomatonSearchFailure {
+                reason,
+                work: governor.spent(),
+                stats: run.stats,
+            }),
+        }
+    }
+
+    fn search_application_governed<G>(
+        &self,
+        eg: &EGraph<L>,
+        op: &L,
+        arguments: &[EClassId],
+        run: &mut SetAutomatonApplicationRun,
+        governor: &mut G,
+    ) -> Result<(), SetAutomatonSearchStop>
+    where
+        G: SearchGovernor,
+    {
+        governor.charge(1)?;
+        run.stats.application_roots += 1;
+        let key = RootKey { op: op.clone(), arity: arguments.len() };
+        let Some(candidate_entries) = self.app_roots.get(&key) else {
+            return Ok(());
+        };
+        let mut cache = HashMap::<(StateId, EClassId), CachedSubsts>::default();
+        for &entry_index in candidate_entries {
+            governor.charge(1)?;
+            run.stats.candidate_evaluations += 1;
+            self.extend_application_matches(eg, entry_index, arguments, &mut cache, run, governor)?;
+        }
+        Ok(())
+    }
+
+    fn extend_application_matches<G>(
+        &self,
+        eg: &EGraph<L>,
+        entry_index: usize,
+        arguments: &[EClassId],
+        cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
+        run: &mut SetAutomatonApplicationRun,
+        governor: &mut G,
+    ) -> Result<(), SetAutomatonSearchStop>
+    where
+        G: SearchGovernor,
+    {
+        let entry = &self.entries[entry_index];
+        let PatternState::App { op: _, args: state_arguments, slot_count } =
+            &self.compiler.states[entry.root_state.0]
+        else {
+            unreachable!("the application root index cannot contain a variable state")
+        };
+        debug_assert_eq!(state_arguments.len(), arguments.len());
+
+        governor.charge(charged_width(*slot_count)?)?;
+        let mut partial = Vec::new();
+        partial
+            .try_reserve_exact(1)
+            .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+        partial.push(empty_partial_slot_subst(*slot_count)?);
+
+        for (invocation, &argument) in state_arguments.iter().zip(arguments) {
+            let child_matches =
+                self.eval_state(eg, invocation.state(), argument, cache, &mut run.stats, governor)?;
+            if child_matches.is_empty() {
+                partial.clear();
+                break;
+            }
+            let mut next = Vec::new();
+            for left in &partial {
+                for right in child_matches.iter() {
+                    governor.charge(charged_width(right.len())?)?;
+                    if let Some(merged) = merge_slot_substs(eg, left, invocation, right)? {
+                        next.try_reserve(1)
+                            .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+                        next.push(merged);
+                    }
+                }
+            }
+            partial = next;
+            if partial.is_empty() {
+                break;
+            }
+        }
+
+        let mut complete = Vec::new();
+        finish_slot_substs_governed(&mut partial, &mut complete, governor)?;
+        for slots in complete {
+            governor.charge(charged_width(slots.len())?)?;
+            debug_assert_eq!(slots.len(), entry.slot_names.len());
+            let mut subst = Subst::default();
+            subst
+                .try_reserve(entry.slot_names.len())
+                .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+            for (name, class) in entry.slot_names.iter().zip(slots.iter().copied()) {
+                subst.insert(name.clone(), class);
+            }
+            run.matches
+                .try_reserve(1)
+                .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+            run.matches
+                .push(SetAutomatonApplicationMatch { pattern: entry.id, subst });
+        }
+        Ok(())
+    }
+
+    fn search_egraph_governed<G>(
+        &self,
+        eg: &EGraph<L>,
+        governor: &mut G,
+    ) -> Result<SetAutomatonRun, (SetAutomatonSearchStop, SetAutomatonRun)>
+    where
+        G: SearchGovernor,
+    {
+        let mut run = SetAutomatonRun::default();
+        if let Err(reason) = governor.charge(0) {
+            return Err((reason, run));
+        }
         let mut cache = HashMap::<(StateId, EClassId), CachedSubsts>::default();
         let mut visited_roots = HashSet::default();
         for class in eg.classes() {
+            if let Err(reason) = governor.charge(1) {
+                return Err((reason, run));
+            }
             let root = eg.find(class);
             if !visited_roots.insert(root) {
                 continue;
             }
-            run.stats.root_classes += 1;
-
-            for &entry_idx in &self.variable_roots {
-                self.extend_entry_matches(eg, entry_idx, root, &mut cache, &mut run);
-            }
-
-            let mut dispatched_keys = HashSet::default();
-            for node in eg.nodes(root) {
-                run.stats.root_nodes += 1;
-                let key = RootKey {
-                    op: node.op.clone(),
-                    arity: node.children.len(),
-                };
-                let Some(candidate_entries) = self.app_roots.get(&key) else {
-                    continue;
-                };
-                if !dispatched_keys.insert(key) {
-                    continue;
-                }
-                for &entry_idx in candidate_entries {
-                    run.stats.candidate_evaluations += 1;
-                    self.extend_entry_matches(eg, entry_idx, root, &mut cache, &mut run);
-                }
+            if let Err(reason) = self.search_root_governed(eg, root, &mut cache, &mut run, governor)
+            {
+                return Err((reason, run));
             }
         }
-        run
+        Ok(run)
     }
 
-    fn extend_entry_matches(
+    fn search_root_governed<G>(
+        &self,
+        eg: &EGraph<L>,
+        root: EClassId,
+        cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
+        run: &mut SetAutomatonRun,
+        governor: &mut G,
+    ) -> Result<(), SetAutomatonSearchStop>
+    where
+        G: SearchGovernor,
+    {
+        let root = eg.find(root);
+        if eg.nodes(root).is_empty() {
+            return Ok(());
+        }
+        run.stats.root_classes += 1;
+
+        for &entry_idx in &self.variable_roots {
+            governor.charge(1)?;
+            self.extend_entry_matches(eg, entry_idx, root, cache, run, governor)?;
+        }
+
+        let mut dispatched_keys = HashSet::default();
+        for node in eg.nodes(root) {
+            governor.charge(1)?;
+            run.stats.root_nodes += 1;
+            let key = RootKey {
+                op: node.op.clone(),
+                arity: node.children.len(),
+            };
+            let Some(candidate_entries) = self.app_roots.get(&key) else {
+                continue;
+            };
+            if !dispatched_keys.insert(key) {
+                continue;
+            }
+            for &entry_idx in candidate_entries {
+                governor.charge(1)?;
+                run.stats.candidate_evaluations += 1;
+                self.extend_entry_matches(eg, entry_idx, root, cache, run, governor)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn extend_entry_matches<G>(
         &self,
         eg: &EGraph<L>,
         entry_idx: usize,
         root: EClassId,
         cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
         run: &mut SetAutomatonRun,
-    ) {
+        governor: &mut G,
+    ) -> Result<(), SetAutomatonSearchStop>
+    where
+        G: SearchGovernor,
+    {
         let entry = &self.entries[entry_idx];
-        let matches = self.eval_state(eg, entry.root_state, root, cache, &mut run.stats);
-        run.matches.extend(matches.iter().map(|slots| {
+        let matches =
+            self.eval_state(eg, entry.root_state, root, cache, &mut run.stats, governor)?;
+        for slots in matches.iter() {
+            governor.charge(charged_width(slots.len())?)?;
             debug_assert_eq!(slots.len(), entry.slot_names.len());
             let mut subst = Subst::default();
             for (name, &class) in entry.slot_names.iter().zip(slots.iter()) {
                 subst.insert(name.clone(), class);
             }
-            SetAutomatonMatch { pattern: entry.id, root, subst }
-        }));
+            run.matches
+                .push(SetAutomatonMatch { pattern: entry.id, root, subst });
+        }
+        Ok(())
     }
 
-    fn eval_state(
+    fn eval_state<G>(
         &self,
         eg: &EGraph<L>,
         state_id: StateId,
         class: EClassId,
         cache: &mut HashMap<(StateId, EClassId), CachedSubsts>,
         stats: &mut SetAutomatonStats,
-    ) -> CachedSubsts {
+        governor: &mut G,
+    ) -> Result<CachedSubsts, SetAutomatonSearchStop>
+    where
+        G: SearchGovernor,
+    {
         struct AppFrame {
             state_id: StateId,
             class: EClassId,
@@ -848,6 +1523,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
         let mut jobs = vec![Job::Evaluate { state_id, class }];
         let mut values = Vec::<CachedSubsts>::new();
         while let Some(job) = jobs.pop() {
+            governor.charge(1)?;
             match job {
                 Job::Evaluate { state_id, class } => {
                     let class = eg.find(class);
@@ -861,6 +1537,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                     stats.state_evaluations += 1;
                     match &self.compiler.states[state_id.0] {
                         PatternState::Var => {
+                            governor.charge(1)?;
                             let matches = cached_substs(vec![vec![class].into_boxed_slice()]);
                             cache.insert(key, Rc::clone(&matches));
                             values.push(matches);
@@ -885,23 +1562,39 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
 
                     if frame.active_node.is_none() {
                         let nodes = eg.nodes(frame.class);
-                        let Some(node_index) = (frame.next_node..nodes.len()).find(|&index| {
-                            nodes[index].op == *op && nodes[index].children.len() == args.len()
-                        }) else {
+                        let mut node_index = None;
+                        while frame.next_node < nodes.len() {
+                            governor.charge(1)?;
+                            let current = frame.next_node;
+                            frame.next_node += 1;
+                            if nodes[current].op == *op
+                                && nodes[current].children.len() == args.len()
+                            {
+                                node_index = Some(current);
+                                break;
+                            }
+                        }
+                        let Some(node_index) = node_index else {
                             let matches = cached_substs(frame.out);
                             cache.insert((frame.state_id, frame.class), Rc::clone(&matches));
                             values.push(matches);
                             continue;
                         };
-                        frame.next_node = node_index + 1;
                         frame.active_node = Some(node_index);
                         frame.next_arg = 0;
+                        governor.charge(charged_width(*slot_count)?)?;
                         frame
                             .partial
-                            .push(vec![None; *slot_count].into_boxed_slice());
+                            .try_reserve(1)
+                            .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+                        frame.partial.push(empty_partial_slot_subst(*slot_count)?);
 
                         if args.is_empty() {
-                            finish_slot_substs(&mut frame.partial, &mut frame.out);
+                            finish_slot_substs_governed(
+                                &mut frame.partial,
+                                &mut frame.out,
+                                governor,
+                            )?;
                             frame.active_node = None;
                             jobs.push(Job::ContinueApp(frame));
                             continue;
@@ -935,7 +1628,10 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                     let invocation = &args[frame.next_arg];
                     for left in &frame.partial {
                         for right in child_matches.iter() {
-                            if let Some(merged) = merge_slot_substs(eg, left, invocation, right) {
+                            governor.charge(charged_width(right.len())?)?;
+                            if let Some(merged) = merge_slot_substs(eg, left, invocation, right)? {
+                                next.try_reserve(1)
+                                    .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
                                 next.push(merged);
                             }
                         }
@@ -946,7 +1642,11 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                     } else {
                         frame.next_arg += 1;
                         if frame.next_arg == args.len() {
-                            finish_slot_substs(&mut frame.partial, &mut frame.out);
+                            finish_slot_substs_governed(
+                                &mut frame.partial,
+                                &mut frame.out,
+                                governor,
+                            )?;
                             frame.active_node = None;
                         }
                     }
@@ -956,9 +1656,9 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
         }
 
         debug_assert_eq!(values.len(), 1);
-        values
+        Ok(values
             .pop()
-            .expect("set-automaton evaluator produced no root-state result")
+            .expect("set-automaton evaluator produced no root-state result"))
     }
 }
 
@@ -974,35 +1674,77 @@ fn contains_ac<L>(pattern: &Pattern<L>) -> bool {
     false
 }
 
+fn charged_width(width: usize) -> Result<usize, SetAutomatonSearchStop> {
+    width
+        .checked_add(1)
+        .ok_or(SetAutomatonSearchStop::WorkBudgetExhausted)
+}
+
+fn empty_partial_slot_subst(slot_count: usize) -> Result<PartialSlotSubst, SetAutomatonSearchStop> {
+    let mut slots = Vec::new();
+    slots
+        .try_reserve_exact(slot_count)
+        .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+    slots.resize(slot_count, None);
+    Ok(slots.into_boxed_slice())
+}
+
 fn merge_slot_substs<L: Clone + Eq + Hash>(
     eg: &EGraph<L>,
     left: &PartialSlotSubst,
     invocation: &StateInvocation,
     right: &SlotSubst,
-) -> Option<PartialSlotSubst> {
+) -> Result<Option<PartialSlotSubst>, SetAutomatonSearchStop> {
     debug_assert_eq!(invocation.slot_count(), right.len());
-    let mut merged = left.clone();
+    let mut merged = Vec::new();
+    merged
+        .try_reserve_exact(left.len())
+        .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+    merged.extend_from_slice(left);
     for (local_index, &right_class) in right.iter().enumerate() {
         let right_class = eg.find(right_class);
         let parent = invocation.parent_slot(SlotId(local_index)).0;
         match merged[parent] {
             Some(left_class) if eg.find(left_class) == right_class => {},
-            Some(_) => return None,
+            Some(_) => return Ok(None),
             None => merged[parent] = Some(right_class),
         }
     }
-    Some(merged)
+    Ok(Some(merged.into_boxed_slice()))
 }
 
+fn finish_slot_substs_governed<G>(
+    partial: &mut Vec<PartialSlotSubst>,
+    out: &mut Vec<SlotSubst>,
+    governor: &mut G,
+) -> Result<(), SetAutomatonSearchStop>
+where
+    G: SearchGovernor,
+{
+    for slots in partial.iter() {
+        governor.charge(charged_width(slots.len())?)?;
+    }
+    out.try_reserve(partial.len())
+        .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+    for slots in partial.drain(..) {
+        let slots = slots.into_vec();
+        let mut complete = Vec::new();
+        complete
+            .try_reserve_exact(slots.len())
+            .map_err(|_| SetAutomatonSearchStop::AllocationFailed)?;
+        for slot in slots {
+            complete.push(slot.expect("every canonical state slot is bound by an occurrence"));
+        }
+        out.push(complete.into_boxed_slice());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn finish_slot_substs(partial: &mut Vec<PartialSlotSubst>, out: &mut Vec<SlotSubst>) {
-    out.extend(partial.drain(..).map(|slots| {
-        slots
-            .into_vec()
-            .into_iter()
-            .map(|slot| slot.expect("every canonical state slot is bound by an occurrence"))
-            .collect::<Vec<_>>()
-            .into_boxed_slice()
-    }));
+    let mut governor = UnboundedGovernor;
+    finish_slot_substs_governed(partial, out, &mut governor)
+        .expect("the unbounded search governor cannot stop evaluation");
 }
 
 #[cfg(test)]
@@ -1065,6 +1807,355 @@ mod tests {
     }
 
     #[test]
+    fn flat_automaton_image_round_trips_the_exact_interned_quotient() {
+        let compiled = SetAutomaton::compile_structural([
+            (
+                PatternId(7),
+                Pattern::app(
+                    "pair".to_string(),
+                    vec![
+                        Pattern::var("x"),
+                        Pattern::app("wrap".to_string(), vec![Pattern::var("x")]),
+                    ],
+                ),
+            ),
+            (PatternId(11), Pattern::app("wrap".to_string(), vec![Pattern::var("value")])),
+        ])
+        .expect("recursive patterns compile");
+
+        let restored = SetAutomaton::restore_flat_image(compiled.flat_image())
+            .expect("the compiler's canonical image restores");
+
+        assert_eq!(restored, compiled);
+
+        let mut eg = EGraph::new();
+        let leaf = leaf(&mut eg, "leaf");
+        let wrapped = eg.add(ENode::new("wrap".to_string(), vec![leaf]));
+        let _pair = eg.add(ENode::new("pair".to_string(), vec![leaf, wrapped]));
+        assert_eq!(restored.search_egraph(&eg), compiled.search_egraph(&eg));
+    }
+
+    #[test]
+    fn empty_flat_automaton_image_is_the_canonical_empty_automaton() {
+        let compiled = SetAutomaton::<String>::compile_structural(std::iter::empty())
+            .expect("the empty pattern set compiles");
+        let image = compiled.flat_image();
+        assert!(image.states.is_empty());
+        assert!(image.entries.is_empty());
+
+        let restored =
+            SetAutomaton::restore_flat_image(image).expect("the canonical empty image restores");
+        assert_eq!(restored, compiled);
+    }
+
+    #[test]
+    fn bounded_scan_is_exact_at_its_reported_work_boundary() {
+        let automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(1),
+                Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (PatternId(2), Pattern::app("wrap".to_string(), vec![Pattern::var("value")])),
+        ])
+        .expect("the pattern set compiles");
+        let mut eg = EGraph::new();
+        let left = leaf(&mut eg, "left");
+        let right = leaf(&mut eg, "right");
+        let pair = eg.add(ENode::new("pair".to_string(), vec![left, right]));
+        let _wrapped = eg.add(ENode::new("wrap".to_string(), vec![pair]));
+
+        let unbounded = automaton.search_egraph(&eg);
+        let generous = automaton
+            .search_egraph_bounded(&eg, u64::MAX, || false)
+            .expect("the generous bounded scan completes");
+        assert_eq!(generous.run, unbounded);
+        assert!(generous.work > 0);
+
+        let exact = automaton
+            .search_egraph_bounded(&eg, generous.work, || false)
+            .expect("the exact reported work is sufficient");
+        assert_eq!(exact, generous);
+
+        let failure = automaton
+            .search_egraph_bounded(&eg, generous.work - 1, || false)
+            .expect_err("one unit below the exact work must fail closed");
+        assert_eq!(failure.reason, SetAutomatonSearchStop::WorkBudgetExhausted);
+        assert!(failure.work <= generous.work - 1);
+        assert!(failure.work < generous.work);
+    }
+
+    #[test]
+    fn bounded_single_root_uses_the_shared_evaluator_without_scanning_unrelated_classes() {
+        let automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(1),
+                Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (PatternId(2), Pattern::app("wrap".to_string(), vec![Pattern::var("value")])),
+        ])
+        .expect("the pattern set compiles");
+        let mut eg = EGraph::new();
+        let left = leaf(&mut eg, "left");
+        let right = leaf(&mut eg, "right");
+        let pair = eg.add(ENode::new("pair".to_string(), vec![left, right]));
+        let wrapped = eg.add(ENode::new("wrap".to_string(), vec![pair]));
+        for index in 0..128 {
+            let _ = leaf(&mut eg, &format!("unrelated-{index}"));
+        }
+
+        let whole = automaton
+            .search_egraph_bounded(&eg, u64::MAX, || false)
+            .expect("whole-graph scan completes");
+        let root = automaton
+            .search_eclass_bounded(&eg, wrapped, u64::MAX, || false)
+            .expect("single-root scan completes");
+        let expected = whole
+            .run
+            .matches
+            .iter()
+            .filter(|matched| eg.equiv(matched.root, wrapped))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(root.run.matches, expected);
+        assert_eq!(root.run.stats.root_classes, 1);
+        assert!(root.work < whole.work);
+
+        let exact = automaton
+            .search_eclass_bounded(&eg, wrapped, root.work, || false)
+            .expect("the reported single-root work is exact");
+        assert_eq!(exact, root);
+        assert_eq!(
+            automaton
+                .search_eclass_bounded(&eg, wrapped, root.work - 1, || false)
+                .expect_err("one unit below the exact root work must fail closed")
+                .reason,
+            SetAutomatonSearchStop::WorkBudgetExhausted
+        );
+    }
+
+    #[test]
+    fn bounded_virtual_application_is_equivalent_to_a_singleton_physical_root() {
+        let automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(1),
+                Pattern::app(
+                    "pair".to_string(),
+                    vec![
+                        Pattern::var("x"),
+                        Pattern::app("wrap".to_string(), vec![Pattern::var("x")]),
+                    ],
+                ),
+            ),
+            (
+                PatternId(2),
+                Pattern::app("pair".to_string(), vec![Pattern::var("left"), Pattern::var("right")]),
+            ),
+            (PatternId(3), Pattern::var("synthetic-root")),
+        ])
+        .expect("the pattern set compiles");
+        let mut eg = EGraph::new();
+        let leaf = leaf(&mut eg, "leaf");
+        let wrapped = eg.add(ENode::new("wrap".to_string(), vec![leaf]));
+        let physical = eg.add(ENode::new("pair".to_string(), vec![leaf, wrapped]));
+        let nodes_before = eg.node_count();
+
+        let physical_run = automaton
+            .search_eclass_bounded(&eg, physical, u64::MAX, || false)
+            .expect("the singleton physical root matches");
+        let expected = physical_run
+            .run
+            .matches
+            .into_iter()
+            .filter(|matched| matched.pattern != PatternId(3))
+            .map(|matched| SetAutomatonApplicationMatch {
+                pattern: matched.pattern,
+                subst: matched.subst,
+            })
+            .collect::<Vec<_>>();
+
+        let virtual_run = automaton
+            .search_application_bounded(
+                &eg,
+                &"pair".to_string(),
+                &[leaf, wrapped],
+                u64::MAX,
+                || false,
+            )
+            .expect("the virtual application matches");
+        assert_eq!(virtual_run.run.matches, expected);
+        assert_eq!(virtual_run.run.stats.application_roots, 1);
+        assert_eq!(virtual_run.run.stats.root_classes, 0);
+        assert_eq!(virtual_run.run.stats.root_nodes, 0);
+        assert_eq!(eg.node_count(), nodes_before, "virtual matching is read-only");
+
+        let exact = automaton
+            .search_application_bounded(
+                &eg,
+                &"pair".to_string(),
+                &[leaf, wrapped],
+                virtual_run.work,
+                || false,
+            )
+            .expect("the reported virtual-root work is exact");
+        assert_eq!(exact, virtual_run);
+        assert_eq!(
+            automaton
+                .search_application_bounded(
+                    &eg,
+                    &"pair".to_string(),
+                    &[leaf, wrapped],
+                    virtual_run.work - 1,
+                    || false,
+                )
+                .expect_err("one unit below exact virtual-root work must fail closed")
+                .reason,
+            SetAutomatonSearchStop::WorkBudgetExhausted
+        );
+    }
+
+    #[test]
+    fn virtual_application_cancellation_discards_private_matches() {
+        let automaton = SetAutomaton::compile_structural([(
+            PatternId(1),
+            Pattern::app("pair".to_string(), vec![Pattern::var("left"), Pattern::var("right")]),
+        )])
+        .expect("the pattern compiles");
+        let mut eg = EGraph::new();
+        let left = leaf(&mut eg, "left");
+        let right = leaf(&mut eg, "right");
+
+        let failure = automaton
+            .search_application_bounded(&eg, &"pair".to_string(), &[left, right], u64::MAX, || true)
+            .expect_err("initial cancellation must fail before publication");
+        assert_eq!(failure.reason, SetAutomatonSearchStop::Cancelled);
+        assert_eq!(failure.work, 0);
+        assert_eq!(failure.stats, SetAutomatonStats::default());
+    }
+
+    #[test]
+    fn bounded_scan_cancellation_discards_private_matches() {
+        let automaton =
+            SetAutomaton::compile_structural([(PatternId(1), Pattern::var("everything"))])
+                .expect("the variable pattern compiles");
+        let mut eg = EGraph::new();
+        for index in 0..32 {
+            let _ = leaf(&mut eg, &format!("leaf-{index}"));
+        }
+
+        let polls = std::cell::Cell::new(0usize);
+        let failure = automaton
+            .search_egraph_bounded(&eg, u64::MAX, || {
+                let poll = polls.get();
+                polls.set(poll + 1);
+                poll >= 12
+            })
+            .expect_err("mid-scan cancellation must stop the evaluator");
+        assert_eq!(failure.reason, SetAutomatonSearchStop::Cancelled);
+        assert!(failure.work > 0, "the cancellation occurred after useful work");
+
+        let immediate = automaton
+            .search_egraph_bounded(&eg, u64::MAX, || true)
+            .expect_err("initial cancellation must stop before any work");
+        assert_eq!(immediate.reason, SetAutomatonSearchStop::Cancelled);
+        assert_eq!(immediate.work, 0);
+        assert_eq!(immediate.stats, SetAutomatonStats::default());
+    }
+
+    #[test]
+    fn zero_work_accepts_only_an_empty_scan() {
+        let empty = SetAutomaton::<String>::compile_structural(std::iter::empty())
+            .expect("the empty automaton compiles");
+        let empty_graph = EGraph::<String>::new();
+        assert_eq!(
+            empty
+                .search_egraph_bounded(&empty_graph, 0, || false)
+                .expect("empty work completes"),
+            BoundedSetAutomatonRun { run: SetAutomatonRun::default(), work: 0 }
+        );
+
+        let automaton = SetAutomaton::compile_structural([(PatternId(0), Pattern::var("value"))])
+            .expect("the pattern compiles");
+        let mut graph = EGraph::new();
+        let _ = leaf(&mut graph, "value");
+        let failure = automaton
+            .search_egraph_bounded(&graph, 0, || false)
+            .expect_err("the first charged operation exceeds zero work");
+        assert_eq!(
+            failure,
+            SetAutomatonSearchFailure {
+                reason: SetAutomatonSearchStop::WorkBudgetExhausted,
+                work: 0,
+                stats: SetAutomatonStats::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn flat_automaton_image_rejects_noncanonical_slot_interfaces() {
+        let skipped_first_slot = FlatAutomatonImage {
+            states: vec![
+                FlatAutomatonStateImage {
+                    slot_count: 1,
+                    node: FlatAutomatonNodeImage::Var,
+                },
+                FlatAutomatonStateImage {
+                    slot_count: 2,
+                    node: FlatAutomatonNodeImage::App {
+                        op: "wrap".to_string(),
+                        args: vec![FlatAutomatonInvocationImage {
+                            state: 0,
+                            parent_slots: vec![1],
+                        }],
+                    },
+                },
+            ],
+            entries: Vec::new(),
+        };
+        assert_eq!(
+            SetAutomaton::restore_flat_image(skipped_first_slot),
+            Err(FlatAutomatonRestoreError::NonCanonicalParentSlot {
+                state: 1,
+                expected: 0,
+                actual: 1,
+            })
+        );
+
+        let collapsed_child_slots = FlatAutomatonImage {
+            states: vec![
+                FlatAutomatonStateImage {
+                    slot_count: 1,
+                    node: FlatAutomatonNodeImage::Var,
+                },
+                FlatAutomatonStateImage {
+                    slot_count: 2,
+                    node: FlatAutomatonNodeImage::App {
+                        op: "pair".to_string(),
+                        args: vec![
+                            FlatAutomatonInvocationImage { state: 0, parent_slots: vec![0] },
+                            FlatAutomatonInvocationImage { state: 0, parent_slots: vec![1] },
+                        ],
+                    },
+                },
+                FlatAutomatonStateImage {
+                    slot_count: 1,
+                    node: FlatAutomatonNodeImage::App {
+                        op: "wrap".to_string(),
+                        args: vec![FlatAutomatonInvocationImage {
+                            state: 1,
+                            parent_slots: vec![0, 0],
+                        }],
+                    },
+                },
+            ],
+            entries: Vec::new(),
+        };
+        assert_eq!(
+            SetAutomaton::restore_flat_image(collapsed_child_slots),
+            Err(FlatAutomatonRestoreError::NonInjectiveInvocation { state: 2, slot: 0 })
+        );
+    }
+
+    #[test]
     fn flat_pattern_rejects_forward_and_unreachable_nodes() {
         let forward = SetAutomaton::compile_structural_flat([(
             PatternId(2),
@@ -1117,6 +2208,10 @@ mod tests {
         )])
         .expect("a deep flat pattern compiles without native recursion");
         assert_eq!(automaton.view().state_count(), depth + 1);
+
+        let restored = SetAutomaton::restore_flat_image(automaton.flat_image())
+            .expect("the deep canonical quotient restores without native recursion");
+        assert_eq!(restored, automaton);
     }
 
     #[test]

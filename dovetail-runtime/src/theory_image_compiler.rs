@@ -9,18 +9,21 @@ use dovetail::set_automaton::{
     AutomatonNode, FlatPattern, FlatPatternNode, FlatSetAutomatonError, PatternId, SetAutomaton,
 };
 use mettail_grammar_core::{
-    theory_guard_commitment_v1, CollectionKind, LanguageCoreV1, SemanticActionV1, TheoryActionId,
-    TheoryActionImageV1, TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId,
-    TheoryGrammarConstructorV1, TheoryImageAdmissionLimits, TheoryImageError,
-    TheoryImageOperatorV1, TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1,
-    TheoryImageTermFormV1, TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryJudgmentId,
-    TheoryPatternAutomatonV1, TheoryPatternEntryId, TheoryPatternEntryV1,
-    TheoryPatternInvocationV1, TheoryPatternStateFormV1, TheoryPatternStateId,
-    TheoryPatternStateV1, TheoryPremiseFormV1, TheoryRuleArenaV1, TheoryRuleDirectionV1,
-    TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1,
-    TheoryRuleReferenceV1, TheoryRuleSuppressionV1, TheorySemanticImageV1, TheorySortId,
-    TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryVariableId, TheoryWorkChargeV1,
-    THEORY_IMAGE_COMPILER_ABI_V1, THEORY_SEMANTIC_IMAGE_ABI_V1,
+    theory_guard_commitment_v1, CollectionKind, JudgmentAtomV1, JudgmentDeclV1, JudgmentRuleV1,
+    LanguageCoreV1, SemanticActionV1, TheoryActionId, TheoryActionImageV1, TheoryConstructorId,
+    TheoryConstructorImageV1, TheoryEffectId, TheoryGrammarConstructorV1,
+    TheoryImageAdmissionLimits, TheoryImageError, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
+    TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1, TheoryImageTermFormV1,
+    TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryJudgmentId, TheoryJudgmentImageV1,
+    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentPatternEntryV1, TheoryJudgmentRuleProgramId,
+    TheoryJudgmentRuleProgramV1, TheoryPatternAutomatonV1, TheoryPatternEntryId,
+    TheoryPatternEntryV1, TheoryPatternInvocationV1, TheoryPatternStateFormV1,
+    TheoryPatternStateId, TheoryPatternStateV1, TheoryPremiseFormV1, TheoryResourceProfileV1,
+    TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1,
+    TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleReferenceV1, TheoryRuleSuppressionV1,
+    TheorySemanticImageV1, TheorySortId, TheorySortImageV1, TheorySortKindImageV1,
+    TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1, TheoryVariableId,
+    TheoryWorkChargeV1, THEORY_IMAGE_COMPILER_ABI_V1, THEORY_SEMANTIC_IMAGE_ABI_V1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -88,10 +91,19 @@ pub fn compile_theory_semantic_image(
     limits.validate_source(language)?;
     reject_non_progressing_rules(language)?;
     let context = CompileContext::new(language)?;
+    let sorts = compile_sorts(language, &context)?;
     let constructors = compile_constructors(language, &context)?;
     let rules = compile_rules(language, &context)?;
     let patterns = compile_patterns(&rules)?;
+    let (judgments, judgment_rules) = compile_judgments(&language.theory.judgments, &context)?;
+    let judgment_patterns = compile_judgment_patterns(&judgment_rules)?;
     let actions = compile_actions(&language.theory.actions, &rules, &context)?;
+    let resource_profile = match &language.theory.cost {
+        None => TheoryResourceProfileV1::Uncosted,
+        Some(cost) => TheoryResourceProfileV1::Costed {
+            grade_sort: context.sort(&cost.signature_sort)?,
+        },
+    };
     let image = TheorySemanticImageV1 {
         abi: THEORY_SEMANTIC_IMAGE_ABI_V1,
         compiler_abi: THEORY_IMAGE_COMPILER_ABI_V1,
@@ -104,13 +116,57 @@ pub fn compile_theory_semantic_image(
         theory_fingerprint: language
             .theory_fingerprint()
             .map_err(|error| TheoryImageError::Fingerprint(error.to_string()))?,
+        resource_profile,
+        sorts,
         constructors,
         rules,
         patterns,
+        judgments,
+        judgment_rules,
+        judgment_patterns,
         actions,
     };
     image.validate(language, limits)?;
     Ok(image)
+}
+
+fn compile_sorts(
+    language: &LanguageCoreV1,
+    context: &CompileContext<'_>,
+) -> Result<Vec<TheorySortImageV1>, TheoryImageCompileError> {
+    let mut sorts = empty_vec(language.theory.sorts.len())?;
+    for (index, source) in language.theory.sorts.iter().enumerate() {
+        let id = TheorySortId(checked_u32(index)?);
+        let kind = match &source.kind {
+            TheorySortKindV1::Syntax { literal } => {
+                TheorySortKindImageV1::Syntax { literal: literal.clone() }
+            },
+            TheorySortKindV1::Collection { kind, key, element } => {
+                TheorySortKindImageV1::Collection {
+                    kind: *kind,
+                    key: key.as_deref().map(|name| context.sort(name)).transpose()?,
+                    element: context.sort(element)?,
+                }
+            },
+            TheorySortKindV1::Function { domain, codomain, multiple } => {
+                TheorySortKindImageV1::Function {
+                    domain: context.sort(domain)?,
+                    codomain: context.sort(codomain)?,
+                    multiple: *multiple,
+                }
+            },
+            TheorySortKindV1::Product { factors } => {
+                let mut resolved = empty_vec(factors.len())?;
+                for factor in factors {
+                    resolved.push(context.sort(factor)?);
+                }
+                TheorySortKindImageV1::Product { factors: resolved }
+            },
+            TheorySortKindV1::Opaque { abi } => TheorySortKindImageV1::Opaque { abi: abi.clone() },
+        };
+        sorts.push(TheorySortImageV1 { id, kind });
+    }
+    Ok(sorts)
 }
 
 struct CompileContext<'a> {
@@ -344,74 +400,9 @@ fn compile_rule(
     allow_transition: bool,
     context: &CompileContext<'_>,
 ) -> Result<TheoryRuleProgramV1, TheoryImageCompileError> {
-    let mut variables = empty_vec(arena.variables.len())?;
-    for variable in &arena.variables {
-        variables.push(TheoryImageVariableV1 {
-            id: variable.id,
-            sort: context.sort(&variable.sort)?,
-            role: variable.role,
-        });
-    }
+    let variables = compile_variables(&arena.variables, context)?;
 
-    let mut terms = empty_vec(arena.terms.len())?;
-    for term in &arena.terms {
-        let sort = context.sort(&term.sort)?;
-        let form = match &term.form {
-            TheoryTermFormV1::Variable(variable) => TheoryImageTermFormV1::Slot(*variable),
-            TheoryTermFormV1::Constructor { constructor, arguments } => {
-                TheoryImageTermFormV1::Apply {
-                    operator: TheoryImageOperatorV1::Constructor(context.constructor(constructor)?),
-                    arguments: clone_vec(arguments)?,
-                    slots: Vec::new(),
-                    remainder: None,
-                }
-            },
-            TheoryTermFormV1::Abstraction { binder, body } => TheoryImageTermFormV1::Apply {
-                operator: TheoryImageOperatorV1::Abstraction { sort },
-                arguments: vec![*body],
-                slots: vec![*binder],
-                remainder: None,
-            },
-            TheoryTermFormV1::Substitution { abstraction, argument } => {
-                TheoryImageTermFormV1::Apply {
-                    operator: TheoryImageOperatorV1::Substitution { sort },
-                    arguments: vec![*abstraction, *argument],
-                    slots: Vec::new(),
-                    remainder: None,
-                }
-            },
-            TheoryTermFormV1::Collection { elements, remainder } => {
-                let (element, kind) = context.collection(sort)?;
-                TheoryImageTermFormV1::Apply {
-                    operator: TheoryImageOperatorV1::Collection { sort, element, kind },
-                    arguments: clone_vec(elements)?,
-                    slots: Vec::new(),
-                    remainder: *remainder,
-                }
-            },
-            TheoryTermFormV1::Map { collection, parameters, body } => {
-                TheoryImageTermFormV1::Apply {
-                    operator: TheoryImageOperatorV1::Map { sort },
-                    arguments: vec![*collection, *body],
-                    slots: clone_vec(parameters)?,
-                    remainder: None,
-                }
-            },
-            TheoryTermFormV1::Zip { left, right } => TheoryImageTermFormV1::Apply {
-                operator: TheoryImageOperatorV1::Zip { sort },
-                arguments: vec![*left, *right],
-                slots: Vec::new(),
-                remainder: None,
-            },
-            TheoryTermFormV1::Literal(value) => TheoryImageTermFormV1::Apply {
-                operator: TheoryImageOperatorV1::Literal { sort, value: value.clone() },
-                arguments: Vec::new(),
-                slots: Vec::new(),
-                remainder: None,
-            },
-        };
-        terms.push(TheoryImageTermNodeV1 { sort, form });
-    }
+    let terms = compile_term_nodes(&arena.terms, &arena.variables, context)?;
 
     let mut premises = empty_vec(arena.premises.len())?;
     for premise in &arena.premises {
@@ -441,6 +432,117 @@ fn compile_rule(
             variable_slots: checked_u32(arena.variables.len())?,
         },
     })
+}
+
+fn compile_variables(
+    source: &[mettail_grammar_core::TheoryVariableV1],
+    context: &CompileContext<'_>,
+) -> Result<Vec<TheoryImageVariableV1>, TheoryImageCompileError> {
+    let mut variables = empty_vec(source.len())?;
+    for variable in source {
+        variables.push(TheoryImageVariableV1 {
+            id: variable.id,
+            sort: context.sort(&variable.sort)?,
+            role: variable.role,
+        });
+    }
+    Ok(variables)
+}
+
+fn compile_term_nodes(
+    source: &[TheoryTermNodeV1],
+    variables: &[mettail_grammar_core::TheoryVariableV1],
+    context: &CompileContext<'_>,
+) -> Result<Vec<TheoryImageTermNodeV1>, TheoryImageCompileError> {
+    let mut terms = empty_vec(source.len())?;
+    for term in source {
+        let sort = context.sort(&term.sort)?;
+        let form = match &term.form {
+            TheoryTermFormV1::Variable(variable) => TheoryImageTermFormV1::Slot(*variable),
+            TheoryTermFormV1::Constructor { constructor, arguments } => {
+                TheoryImageTermFormV1::Apply {
+                    operator: TheoryImageOperatorV1::Constructor(context.constructor(constructor)?),
+                    arguments: clone_vec(arguments)?,
+                    slots: Vec::new(),
+                    remainder: None,
+                }
+            },
+            TheoryTermFormV1::Abstraction { binder, body } => TheoryImageTermFormV1::Apply {
+                operator: TheoryImageOperatorV1::Abstraction { sort },
+                arguments: vec![*body],
+                slots: vec![*binder],
+                remainder: None,
+            },
+            TheoryTermFormV1::Substitution { abstraction, argument } => {
+                let function = source.get(abstraction.0 as usize).ok_or_else(|| {
+                    TheoryImageCompileError::UnknownReference {
+                        kind: "term",
+                        name: abstraction.0.to_string(),
+                    }
+                })?;
+                TheoryImageTermFormV1::Apply {
+                    operator: TheoryImageOperatorV1::Substitution {
+                        sort,
+                        function: context.sort(&function.sort)?,
+                    },
+                    arguments: vec![*abstraction, *argument],
+                    slots: Vec::new(),
+                    remainder: None,
+                }
+            },
+            TheoryTermFormV1::Collection { elements, remainder } => {
+                let (element, kind) = context.collection(sort)?;
+                TheoryImageTermFormV1::Apply {
+                    operator: TheoryImageOperatorV1::Collection { sort, element, kind },
+                    arguments: clone_vec(elements)?,
+                    slots: Vec::new(),
+                    remainder: *remainder,
+                }
+            },
+            TheoryTermFormV1::Map { collection, parameters, body } => {
+                let source_sort = source.get(collection.0 as usize).ok_or_else(|| {
+                    TheoryImageCompileError::UnknownReference {
+                        kind: "term",
+                        name: collection.0.to_string(),
+                    }
+                })?;
+                let mut parameter_sorts = empty_vec(parameters.len())?;
+                for parameter in parameters {
+                    let declaration = variables.get(parameter.0 as usize).ok_or_else(|| {
+                        TheoryImageCompileError::UnknownReference {
+                            kind: "variable",
+                            name: parameter.0.to_string(),
+                        }
+                    })?;
+                    parameter_sorts.push(context.sort(&declaration.sort)?);
+                }
+                TheoryImageTermFormV1::Apply {
+                    operator: TheoryImageOperatorV1::Map {
+                        sort,
+                        source: context.sort(&source_sort.sort)?,
+                        parameters: parameter_sorts,
+                    },
+                    arguments: vec![*collection, *body],
+                    slots: clone_vec(parameters)?,
+                    remainder: None,
+                }
+            },
+            TheoryTermFormV1::Zip { left, right } => TheoryImageTermFormV1::Apply {
+                operator: TheoryImageOperatorV1::Zip { sort },
+                arguments: vec![*left, *right],
+                slots: Vec::new(),
+                remainder: None,
+            },
+            TheoryTermFormV1::Literal(value) => TheoryImageTermFormV1::Apply {
+                operator: TheoryImageOperatorV1::Literal { sort, value: value.clone() },
+                arguments: Vec::new(),
+                slots: Vec::new(),
+                remainder: None,
+            },
+        };
+        terms.push(TheoryImageTermNodeV1 { sort, form });
+    }
+    Ok(terms)
 }
 
 fn compile_premise(
@@ -745,6 +847,80 @@ fn first_unavailable_premise(
     Ok(None)
 }
 
+fn compile_judgments(
+    declarations: &[JudgmentDeclV1],
+    context: &CompileContext<'_>,
+) -> Result<(Vec<TheoryJudgmentImageV1>, Vec<TheoryJudgmentRuleProgramV1>), TheoryImageCompileError>
+{
+    let rule_count = declarations.iter().try_fold(0usize, |count, judgment| {
+        count
+            .checked_add(judgment.rules.len())
+            .ok_or(TheoryImageCompileError::LengthOverflow)
+    })?;
+    let mut judgments = empty_vec(declarations.len())?;
+    let mut programs = empty_vec(rule_count)?;
+    for (judgment_index, declaration) in declarations.iter().enumerate() {
+        let id = TheoryJudgmentId(checked_u32(judgment_index)?);
+        let mut domain = empty_vec(declaration.arguments.len())?;
+        for sort in &declaration.arguments {
+            domain.push(context.sort(sort)?);
+        }
+        let mut rules = empty_vec(declaration.rules.len())?;
+        for source in &declaration.rules {
+            let rule_id = TheoryJudgmentRuleProgramId(checked_u32(programs.len())?);
+            rules.push(rule_id);
+            programs.push(compile_judgment_rule(rule_id, id, source, context)?);
+        }
+        judgments.push(TheoryJudgmentImageV1 {
+            id,
+            arguments: domain,
+            decision: declaration.decision,
+            rules,
+        });
+    }
+    Ok((judgments, programs))
+}
+
+fn compile_judgment_rule(
+    id: TheoryJudgmentRuleProgramId,
+    owner: TheoryJudgmentId,
+    source: &JudgmentRuleV1,
+    context: &CompileContext<'_>,
+) -> Result<TheoryJudgmentRuleProgramV1, TheoryImageCompileError> {
+    let variables = compile_variables(&source.variables, context)?;
+    let terms = compile_term_nodes(&source.terms, &source.variables, context)?;
+    let mut premises = empty_vec(source.premises.len())?;
+    for premise in &source.premises {
+        premises.push(compile_judgment_atom(premise, context)?);
+    }
+    let conclusion = compile_judgment_atom(&source.conclusion, context)?;
+    Ok(TheoryJudgmentRuleProgramV1 {
+        id,
+        owner,
+        name: source.name.clone(),
+        variables,
+        terms,
+        premises,
+        conclusion,
+        charge: TheoryWorkChargeV1 {
+            pattern_nodes: checked_u32(source.terms.len())?,
+            template_nodes: 0,
+            premise_nodes: checked_u32(source.premises.len())?,
+            variable_slots: checked_u32(source.variables.len())?,
+        },
+    })
+}
+
+fn compile_judgment_atom(
+    source: &JudgmentAtomV1,
+    context: &CompileContext<'_>,
+) -> Result<TheoryImageJudgmentAtomV1, TheoryImageCompileError> {
+    Ok(TheoryImageJudgmentAtomV1 {
+        judgment: context.judgment(&source.judgment)?,
+        terms: clone_vec(&source.terms)?,
+    })
+}
+
 fn compile_patterns(
     rules: &[TheoryRuleProgramV1],
 ) -> Result<TheoryPatternAutomatonV1, TheoryImageCompileError> {
@@ -754,6 +930,59 @@ fn compile_patterns(
             source.push((PatternId(rule.id.0 as usize), flat_left_pattern(rule)?));
         }
     }
+    let (states, raw_entries) = compile_pattern_source(source)?;
+    let mut entries = empty_vec(raw_entries.len())?;
+    for entry in raw_entries {
+        entries.push(TheoryPatternEntryV1 {
+            id: entry.id,
+            rule: TheoryRuleProgramId(entry.program),
+            root: entry.root,
+            slot_variables: entry.slot_variables,
+        });
+    }
+    Ok(TheoryPatternAutomatonV1 { states, entries })
+}
+
+fn compile_judgment_patterns(
+    rules: &[TheoryJudgmentRuleProgramV1],
+) -> Result<TheoryJudgmentPatternAutomatonV1, TheoryImageCompileError> {
+    let mut source = empty_vec(rules.len())?;
+    for rule in rules {
+        if term_roots_are_positional(&rule.terms, &rule.conclusion.terms, rule.id.0)? {
+            source.push((
+                PatternId(rule.id.0 as usize),
+                flat_pattern_from_roots(
+                    &rule.terms,
+                    &rule.conclusion.terms,
+                    Some(TheoryImageOperatorV1::Judgment { judgment: rule.conclusion.judgment }),
+                    rule.id.0,
+                )?,
+            ));
+        }
+    }
+    let (states, raw_entries) = compile_pattern_source(source)?;
+    let mut entries = empty_vec(raw_entries.len())?;
+    for entry in raw_entries {
+        entries.push(TheoryJudgmentPatternEntryV1 {
+            id: entry.id,
+            rule: TheoryJudgmentRuleProgramId(entry.program),
+            root: entry.root,
+            slot_variables: entry.slot_variables,
+        });
+    }
+    Ok(TheoryJudgmentPatternAutomatonV1 { states, entries })
+}
+
+struct CompiledPatternEntry {
+    id: TheoryPatternEntryId,
+    program: u32,
+    root: TheoryPatternStateId,
+    slot_variables: Vec<TheoryVariableId>,
+}
+
+fn compile_pattern_source(
+    source: Vec<(PatternId, FlatPattern<TheoryImageOperatorV1>)>,
+) -> Result<(Vec<TheoryPatternStateV1>, Vec<CompiledPatternEntry>), TheoryImageCompileError> {
     let automaton = SetAutomaton::compile_structural_flat(source)?;
     let view = automaton.view();
 
@@ -787,43 +1016,55 @@ fn compile_patterns(
         for name in view.entry_slot_names(index) {
             slot_variables.push(parse_automaton_variable(name)?);
         }
-        entries.push(TheoryPatternEntryV1 {
+        entries.push(CompiledPatternEntry {
             id: TheoryPatternEntryId(checked_u32(index)?),
-            rule: TheoryRuleProgramId(checked_u32(view.entry_id(index).0)?),
+            program: checked_u32(view.entry_id(index).0)?,
             root: TheoryPatternStateId(checked_u32(view.entry_root_state(index).index())?),
             slot_variables,
         });
     }
-    Ok(TheoryPatternAutomatonV1 { states, entries })
+    Ok((states, entries))
 }
 
 fn rule_is_positional(rule: &TheoryRuleProgramV1) -> Result<bool, TheoryImageCompileError> {
     if rule.disposition != TheoryRuleDispositionV1::Executable {
         return Ok(false);
     }
-    let mut pending = vec![rule.left];
+    term_roots_are_positional(&rule.terms, &[rule.left], rule.id.0)
+}
+
+fn term_roots_are_positional(
+    terms: &[TheoryImageTermNodeV1],
+    roots: &[TheoryTermId],
+    owner: u32,
+) -> Result<bool, TheoryImageCompileError> {
+    let mut pending = roots.to_vec();
     let mut visited = BTreeSet::new();
     while let Some(term) = pending.pop() {
         if !visited.insert(term) {
             continue;
         }
-        let node = rule.terms.get(term.0 as usize).ok_or_else(|| {
+        let node = terms.get(term.0 as usize).ok_or_else(|| {
             TheoryImageCompileError::UnknownReference {
                 kind: "pattern term",
-                name: format!("#{}", term.0),
+                name: format!("rule#{owner}:term#{}", term.0),
             }
         })?;
-        if let TheoryImageTermFormV1::Apply { operator, arguments, remainder, .. } = &node.form {
+        if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } = &node.form {
             if remainder.is_some()
+                || !slots.is_empty()
                 || matches!(
                     operator,
-                    TheoryImageOperatorV1::Collection {
-                        kind: CollectionKind::Bag
-                            | CollectionKind::Set
-                            | CollectionKind::Map
-                            | CollectionKind::PathMap,
-                        ..
-                    }
+                    TheoryImageOperatorV1::Abstraction { .. }
+                        | TheoryImageOperatorV1::Map { .. }
+                        | TheoryImageOperatorV1::Judgment { .. }
+                        | TheoryImageOperatorV1::Collection {
+                            kind: CollectionKind::Bag
+                                | CollectionKind::Set
+                                | CollectionKind::Map
+                                | CollectionKind::PathMap,
+                            ..
+                        }
                 )
             {
                 return Ok(false);
@@ -837,10 +1078,19 @@ fn rule_is_positional(rule: &TheoryRuleProgramV1) -> Result<bool, TheoryImageCom
 fn flat_left_pattern(
     rule: &TheoryRuleProgramV1,
 ) -> Result<FlatPattern<TheoryImageOperatorV1>, TheoryImageCompileError> {
-    let mut reachable = vec![false; rule.terms.len()];
-    let mut pending = vec![rule.left];
+    flat_pattern_from_roots(&rule.terms, &[rule.left], None, rule.id.0)
+}
+
+fn flat_pattern_from_roots(
+    terms: &[TheoryImageTermNodeV1],
+    roots: &[TheoryTermId],
+    wrapper: Option<TheoryImageOperatorV1>,
+    owner: u32,
+) -> Result<FlatPattern<TheoryImageOperatorV1>, TheoryImageCompileError> {
+    let mut reachable = vec![false; terms.len()];
+    let mut pending = roots.to_vec();
     while let Some(term) = pending.pop() {
-        let node = rule.terms.get(term.0 as usize).ok_or_else(|| {
+        let node = terms.get(term.0 as usize).ok_or_else(|| {
             TheoryImageCompileError::UnknownReference {
                 kind: "pattern term",
                 name: format!("#{}", term.0),
@@ -855,8 +1105,7 @@ fn flat_left_pattern(
     }
 
     let reachable_count = reachable.iter().filter(|reachable| **reachable).count();
-    let slot_count = rule
-        .terms
+    let slot_count = terms
         .iter()
         .zip(&reachable)
         .filter(|(_, reachable)| **reachable)
@@ -876,8 +1125,8 @@ fn flat_left_pattern(
             .checked_add(slot_count)
             .ok_or(TheoryImageCompileError::LengthOverflow)?,
     )?;
-    let mut translated = vec![None; rule.terms.len()];
-    for (index, term) in rule.terms.iter().enumerate() {
+    let mut translated = vec![None; terms.len()];
+    for (index, term) in terms.iter().enumerate() {
         if !reachable[index] {
             continue;
         }
@@ -889,7 +1138,7 @@ fn flat_left_pattern(
                 if remainder.is_some() {
                     return Err(TheoryImageCompileError::UnknownReference {
                         kind: "positional collection remainder",
-                        name: format!("rule#{}", rule.id.0),
+                        name: format!("rule#{owner}"),
                     });
                 }
                 let mut children = empty_vec(slots.len() + arguments.len())?;
@@ -913,12 +1162,31 @@ fn flat_left_pattern(
         nodes.push(node);
         translated[index] = Some(target);
     }
-    let root = translated[rule.left.0 as usize].ok_or_else(|| {
-        TheoryImageCompileError::UnknownReference {
-            kind: "pattern root",
-            name: format!("#{}", rule.left.0),
+    let root = if let Some(operator) = wrapper {
+        let mut children = empty_vec(roots.len())?;
+        for root in roots {
+            children.push(translated[root.0 as usize].ok_or_else(|| {
+                TheoryImageCompileError::UnknownReference {
+                    kind: "pattern root",
+                    name: format!("#{}", root.0),
+                }
+            })?);
         }
-    })?;
+        let root = nodes.len();
+        nodes.push(FlatPatternNode::App { op: operator, args: children });
+        root
+    } else {
+        let [root] = roots else {
+            return Err(TheoryImageCompileError::UnknownReference {
+                kind: "pattern root arity",
+                name: owner.to_string(),
+            });
+        };
+        translated[root.0 as usize].ok_or_else(|| TheoryImageCompileError::UnknownReference {
+            kind: "pattern root",
+            name: format!("#{}", root.0),
+        })?
+    };
     Ok(FlatPattern { nodes, root })
 }
 
@@ -1020,13 +1288,22 @@ fn clone_vec<T: Clone>(source: &[T]) -> Result<Vec<T>, TheoryImageCompileError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        restore_theory_pattern_automaton, theory_operator_to_machine, SemanticInputDecision,
+        SemanticInputLimits, SemanticJudgmentDecision, SemanticJudgmentHeadDecision,
+        SemanticJudgmentLimits, SemanticMatchDecision, SemanticMatchRefutation,
+        SemanticMatchUndetermined, SemanticResourceReceipt, SemanticTransitionDecision,
+        SemanticTransitionInput, SemanticTransitionLimits, SemanticTransitionMatcher,
+    };
+    use dovetail::egraph::{EGraph, ENode};
     use mettail_grammar_core::{
         Associativity, Carrier, Category, CategoryId, ConstructorId, EffectDeclV1, FieldSource,
-        GrammarCoreV1, LanguageRight, LanguageRights, Precedence, Production, ProductionClass,
-        ProductionId, ReductionPlan, SemanticEffectClassV1, SyntaxItem, TheoryConstructorV1,
-        TheoryEquationV1, TheoryPremiseId, TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1,
-        TheorySortV1, TheoryTermNodeV1, TheoryVariableRoleV1, TheoryVariableV1,
-        LANGUAGE_CORE_ABI_V1,
+        GrammarCoreV1, JudgmentAtomV1, JudgmentDecisionV1, JudgmentDeclV1, JudgmentRuleV1,
+        LanguageCoreValidationError, LanguageRight, LanguageRights, Precedence, Production,
+        ProductionClass, ProductionId, ReductionPlan, SemanticEffectClassV1, SyntaxItem,
+        TheoryConstructorV1, TheoryEquationV1, TheoryLiteralV1, TheoryPremiseId,
+        TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1, TheorySortV1, TheoryTermNodeV1,
+        TheoryValidationError, TheoryVariableRoleV1, TheoryVariableV1, LANGUAGE_CORE_ABI_V1,
     };
 
     fn production(
@@ -1208,6 +1485,63 @@ mod tests {
         }
     }
 
+    fn judgment_fixture() -> LanguageCoreV1 {
+        let mut language = fixture();
+        let is_zero = JudgmentRuleV1 {
+            name: "zero-fact".into(),
+            variables: Vec::new(),
+            terms: vec![term_constructor("Zero", Vec::new())],
+            premises: Vec::new(),
+            conclusion: JudgmentAtomV1 {
+                judgment: "IsZero".into(),
+                terms: vec![TheoryTermId(0)],
+            },
+        };
+        let reach_reflexive = JudgmentRuleV1 {
+            name: "reach-reflexive".into(),
+            variables: vec![variable(0, "x")],
+            terms: vec![term_variable(0)],
+            premises: Vec::new(),
+            conclusion: JudgmentAtomV1 {
+                judgment: "Reach".into(),
+                terms: vec![TheoryTermId(0), TheoryTermId(0)],
+            },
+        };
+        let reach_wrap = JudgmentRuleV1 {
+            name: "reach-wrap".into(),
+            variables: vec![variable(0, "x"), variable(1, "y")],
+            terms: vec![
+                term_variable(0),
+                term_variable(1),
+                term_constructor("Wrap", vec![TheoryTermId(0)]),
+                term_constructor("Wrap", vec![TheoryTermId(1)]),
+            ],
+            premises: vec![JudgmentAtomV1 {
+                judgment: "Reach".into(),
+                terms: vec![TheoryTermId(0), TheoryTermId(1)],
+            }],
+            conclusion: JudgmentAtomV1 {
+                judgment: "Reach".into(),
+                terms: vec![TheoryTermId(2), TheoryTermId(3)],
+            },
+        };
+        language.theory.judgments = vec![
+            JudgmentDeclV1 {
+                name: "IsZero".into(),
+                arguments: vec!["Expr".into()],
+                decision: JudgmentDecisionV1::Exact,
+                rules: vec![is_zero],
+            },
+            JudgmentDeclV1 {
+                name: "Reach".into(),
+                arguments: vec!["Expr".into(), "Expr".into()],
+                decision: JudgmentDecisionV1::Bounded,
+                rules: vec![reach_reflexive, reach_wrap],
+            },
+        ];
+        language
+    }
+
     #[test]
     fn canonical_rules_compile_deterministically_to_checked_images() {
         let language = fixture();
@@ -1226,6 +1560,199 @@ mod tests {
         first
             .validate(&language, limits)
             .expect("independent image validation");
+    }
+
+    #[test]
+    fn rule_backed_actions_are_unary_and_match_their_rule_signature() {
+        let mut non_unary = fixture();
+        non_unary.theory.actions[0].domain.push("Expr".into());
+        let errors = non_unary
+            .validate()
+            .expect_err("a bare rule reference cannot define operand assembly");
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            LanguageCoreValidationError::Theory(
+                TheoryValidationError::RuleBackedActionArity {
+                    action,
+                    actual: 2,
+                }
+            ) if action == "reduce-add-zero"
+        )));
+
+        let mut wrong_source = fixture();
+        wrong_source.theory.sorts.push(TheorySortV1 {
+            name: "OpaqueInput".into(),
+            kind: TheorySortKindV1::Opaque { abi: "fixture/opaque-input/1".into() },
+        });
+        wrong_source.theory.actions[0].domain = vec!["OpaqueInput".into()];
+        let errors = wrong_source
+            .validate()
+            .expect_err("the action input must be the referenced redex sort");
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            LanguageCoreValidationError::Theory(
+                TheoryValidationError::RuleBackedActionSignature {
+                    action,
+                    rule,
+                    source,
+                    target,
+                    domain,
+                    codomain,
+                }
+            ) if action == "reduce-add-zero"
+                && rule == "add-zero"
+                && source == "Expr"
+                && target == "Expr"
+                && domain == &["OpaqueInput"]
+                && codomain == "Expr"
+        )));
+    }
+
+    #[test]
+    fn verified_pattern_image_restores_and_dispatches_original_rule_ids() {
+        let language = fixture();
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile image");
+        let automaton = restore_theory_pattern_automaton(&image.patterns)
+            .expect("the verified quotient restores");
+
+        let mut egraph = EGraph::new();
+        let zero = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(0))),
+            Vec::new(),
+        ));
+        let wrapped = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let root = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(2))),
+            vec![zero, wrapped],
+        ));
+
+        let run = automaton
+            .search_egraph_bounded(&egraph, u64::MAX, || false)
+            .expect("bounded scan completes");
+        let ids = run
+            .run
+            .matches
+            .iter()
+            .map(|matched| matched.pattern.0)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids, BTreeSet::from([0, 1, 2]));
+        let add_zero = run
+            .run
+            .matches
+            .iter()
+            .find(|matched| matched.pattern.0 == 2)
+            .expect("directed add-zero rule matches");
+        assert_eq!(add_zero.subst.get("v0"), Some(&wrapped));
+
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("the semantic matcher restores once");
+        let granted = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let decision = matcher.match_action(
+            &image,
+            TheoryActionId(0),
+            &granted,
+            &egraph,
+            root,
+            u64::MAX,
+            || false,
+        );
+        let SemanticMatchDecision::Proven(proven) = decision else {
+            panic!("the selected action must match: {decision:?}");
+        };
+        assert_eq!(proven.matches.len(), 1);
+        assert_eq!(proven.matches[0].rule, TheoryRuleProgramId(2));
+        assert_eq!(proven.matches[0].substitution.get(&TheoryVariableId(0)), Some(&wrapped),);
+
+        let forged_child = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Integer(7),
+            }),
+            Vec::new(),
+        ));
+        let forged_root = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(2))),
+            vec![zero, forged_child],
+        ));
+        assert_eq!(
+            matcher.match_action(
+                &image,
+                TheoryActionId(0),
+                &granted,
+                &egraph,
+                forged_root,
+                u64::MAX,
+                || false,
+            ),
+            SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
+            "a pattern variable must not admit a malformed value of its declared sort",
+        );
+
+        assert_eq!(
+            matcher.match_action(
+                &image,
+                TheoryActionId(0),
+                &LanguageRights::none(),
+                &egraph,
+                root,
+                u64::MAX,
+                || false,
+            ),
+            SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
+        );
+        assert!(matches!(
+            matcher.match_action(
+                &image,
+                TheoryActionId(0),
+                &granted,
+                &egraph,
+                root,
+                u64::MAX,
+                || true,
+            ),
+            SemanticMatchDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled,
+                ..
+            }
+        ));
+
+        let input = match SemanticTransitionInput::admit(
+            egraph,
+            root,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("the canonical input must be admitted"),
+        };
+        let decision = matcher.execute_action(
+            &image,
+            TheoryActionId(0),
+            &granted,
+            input,
+            SemanticTransitionLimits {
+                work: 10_000,
+                outputs: 4,
+                output_nodes: 16,
+                output_bytes: 64 * 1024,
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("the unconditional rewrite must execute");
+        };
+        assert_eq!(proven.transitions.len(), 1);
+        let transition = &proven.transitions[0];
+        assert_eq!(transition.receipt.rule, TheoryRuleProgramId(2));
+        assert_eq!(transition.output_sort, TheorySortId(0));
+        assert_eq!(transition.receipt.resource, SemanticResourceReceipt::NoSemanticGrade);
+        assert!(transition.receipt.work > 0);
+        assert_ne!(transition.receipt.input, transition.receipt.output);
+        assert!(proven.egraph().equiv(transition.output, wrapped));
     }
 
     #[test]
@@ -1329,14 +1856,28 @@ mod tests {
             .expect("decode admitted image");
         assert_eq!(decoded, image);
         assert_eq!(decoded.fingerprint().unwrap(), image.fingerprint().unwrap());
+        assert_eq!(decoded.resource_profile, TheoryResourceProfileV1::Uncosted);
+
+        let mut forged_profile = image.clone();
+        forged_profile.resource_profile =
+            TheoryResourceProfileV1::Costed { grade_sort: TheorySortId(0) };
+        assert!(matches!(
+            forged_profile.validate(&language, limits),
+            Err(TheoryImageError::SourceMismatch { kind: "resource profile", .. })
+        ));
 
         let mut forged_count = bytes.clone();
-        let constructor_count_offset = 8 + 2 + 2 + 32 + 32 + 32;
-        forged_count[constructor_count_offset..constructor_count_offset + 4]
+        let resource_profile_wire_len = match image.resource_profile {
+            TheoryResourceProfileV1::Uncosted => 1,
+            TheoryResourceProfileV1::Costed { .. } => 1 + std::mem::size_of::<u32>(),
+        };
+        let sort_count_offset =
+            8 + std::mem::size_of::<u16>() * 2 + 32 * 3 + resource_profile_wire_len;
+        forged_count[sort_count_offset..sort_count_offset + 4]
             .copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(matches!(
             TheorySemanticImageV1::decode(&forged_count, &language, limits),
-            Err(TheoryImageError::SourceMismatch { kind: "constructor count", .. })
+            Err(TheoryImageError::SourceMismatch { kind: "sort count", .. })
         ));
 
         let mut forged_fingerprint = bytes.clone();
@@ -1349,6 +1890,363 @@ mod tests {
             TheorySemanticImageV1::decode(&bytes[..bytes.len() - 1], &language, limits),
             Err(TheoryImageError::Truncated)
         );
+    }
+
+    #[test]
+    fn judgment_programs_compile_with_dense_ownership_and_round_trip_canonically() {
+        let language = judgment_fixture();
+        language.validate().expect("judgment fixture language");
+        let limits = TheoryImageAdmissionLimits::default();
+        let image = compile_theory_semantic_image(&language, limits)
+            .expect("compile judgment-bearing image");
+
+        assert_eq!(image.judgments.len(), 2);
+        assert_eq!(image.judgments[0].rules, vec![TheoryJudgmentRuleProgramId(0)]);
+        assert_eq!(
+            image.judgments[1].rules,
+            vec![TheoryJudgmentRuleProgramId(1), TheoryJudgmentRuleProgramId(2)]
+        );
+        assert_eq!(
+            image
+                .judgment_rules
+                .iter()
+                .map(|rule| (rule.id, rule.owner))
+                .collect::<Vec<_>>(),
+            vec![
+                (TheoryJudgmentRuleProgramId(0), TheoryJudgmentId(0)),
+                (TheoryJudgmentRuleProgramId(1), TheoryJudgmentId(1)),
+                (TheoryJudgmentRuleProgramId(2), TheoryJudgmentId(1)),
+            ]
+        );
+        assert_eq!(image.judgment_patterns.entries.len(), 3);
+
+        let bytes = image
+            .encode(&language, limits)
+            .expect("encode judgment image");
+        let decoded = TheorySemanticImageV1::decode(&bytes, &language, limits)
+            .expect("decode judgment image");
+        assert_eq!(decoded, image);
+        assert_eq!(
+            decoded
+                .encode(&language, limits)
+                .expect("re-encode judgment image"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn judgment_heads_use_the_virtual_root_and_separate_proof_authority() {
+        let language = judgment_fixture();
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile judgment-bearing image");
+        let matcher = SemanticTransitionMatcher::restore(&image)
+            .expect("restore transition and judgment automata");
+        let mut egraph = EGraph::new();
+        let zero = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(0))),
+            Vec::new(),
+        ));
+        let wrapped = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let nodes_before = egraph.node_count();
+        let proof_rights =
+            LanguageRights::from_rights([LanguageRight::Check, LanguageRight::SearchProof]);
+
+        let decision = matcher.match_judgment_heads(
+            &image,
+            TheoryJudgmentId(1),
+            &proof_rights,
+            &egraph,
+            &[wrapped, wrapped],
+            u64::MAX,
+            || false,
+        );
+        let SemanticJudgmentHeadDecision::Proven(proven) = decision else {
+            panic!("the Reach heads must match: {decision:?}");
+        };
+        assert_eq!(
+            proven
+                .matches
+                .iter()
+                .map(|matched| matched.rule)
+                .collect::<Vec<_>>(),
+            vec![TheoryJudgmentRuleProgramId(1), TheoryJudgmentRuleProgramId(2),]
+        );
+        assert_eq!(proven.matches[0].substitution.get(&TheoryVariableId(0)), Some(&wrapped));
+        assert_eq!(
+            proven.matches[1].substitution,
+            BTreeMap::from([(TheoryVariableId(0), zero), (TheoryVariableId(1), zero),])
+        );
+        assert_eq!(egraph.node_count(), nodes_before, "query roots stay virtual");
+
+        assert_eq!(
+            matcher.match_judgment_heads(
+                &image,
+                TheoryJudgmentId(1),
+                &LanguageRights::from_rights([LanguageRight::Check]),
+                &egraph,
+                &[wrapped, wrapped],
+                u64::MAX,
+                || false,
+            ),
+            SemanticJudgmentHeadDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
+        assert!(matches!(
+            matcher.match_judgment_heads(
+                &image,
+                TheoryJudgmentId(1),
+                &proof_rights,
+                &egraph,
+                &[wrapped, wrapped],
+                u64::MAX,
+                || true,
+            ),
+            SemanticJudgmentHeadDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled,
+                work: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn judgment_proof_search_is_recursive_bounded_and_fail_closed() {
+        let language = judgment_fixture();
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile judgment-bearing image");
+        let matcher = SemanticTransitionMatcher::restore(&image)
+            .expect("restore transition and judgment automata");
+        let mut egraph = EGraph::new();
+        let zero = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(0))),
+            Vec::new(),
+        ));
+        let wrapped = egraph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let forged = egraph.add(ENode::new(
+            dovetail::key::FramedSemanticOperator::new(17, vec![b"not-a-theory-term".to_vec()]),
+            Vec::new(),
+        ));
+        let proof_rights =
+            LanguageRights::from_rights([LanguageRight::Check, LanguageRight::SearchProof]);
+        let ample = SemanticJudgmentLimits {
+            work: u64::MAX,
+            frontier: 16,
+            proofs: 16,
+            proof_nodes: 16,
+            term_nodes: 16,
+            term_bytes: 4_096,
+        };
+
+        let decision = matcher.prove_ground_judgment(
+            &image,
+            TheoryJudgmentId(1),
+            &proof_rights,
+            &egraph,
+            &[wrapped, wrapped],
+            ample,
+            || false,
+        );
+        let SemanticJudgmentDecision::Proven(proven) = decision else {
+            panic!("Reach(Wrap(Zero), Wrap(Zero)) must be proved: {decision:?}");
+        };
+        assert_eq!(proven.proofs.len(), 2, "reflexivity and congruence are distinct proofs");
+        assert!(proven.proofs.iter().any(|proof| {
+            proof.steps.len() == 1
+                && proof.steps[0].rule == TheoryJudgmentRuleProgramId(1)
+                && proof.steps[0].parent_activation.is_none()
+        }));
+        assert!(proven.proofs.iter().any(|proof| {
+            proof.steps.len() == 2
+                && proof.steps[0].rule == TheoryJudgmentRuleProgramId(2)
+                && proof.steps[0].parent_activation.is_none()
+                && proof.steps[1].rule == TheoryJudgmentRuleProgramId(1)
+                && proof.steps[1].parent_activation == Some(proof.steps[0].activation)
+                && proof.steps[1].premise_index == Some(0)
+        }));
+        assert!(proven.proofs.iter().all(|proof| proof.work == proven.work));
+
+        let exact_work = proven.work;
+        let exact = matcher.prove_ground_judgment(
+            &image,
+            TheoryJudgmentId(1),
+            &proof_rights,
+            &egraph,
+            &[wrapped, wrapped],
+            SemanticJudgmentLimits { work: exact_work, ..ample },
+            || false,
+        );
+        assert!(matches!(exact, SemanticJudgmentDecision::Proven(_)));
+        let exhausted = matcher.prove_ground_judgment(
+            &image,
+            TheoryJudgmentId(1),
+            &proof_rights,
+            &egraph,
+            &[wrapped, wrapped],
+            SemanticJudgmentLimits { work: exact_work - 1, ..ample },
+            || false,
+        );
+        assert!(matches!(
+            exhausted,
+            SemanticJudgmentDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                ..
+            }
+        ));
+
+        assert_eq!(
+            matcher.prove_ground_judgment(
+                &image,
+                TheoryJudgmentId(0),
+                &proof_rights,
+                &egraph,
+                &[wrapped],
+                ample,
+                || false,
+            ),
+            SemanticJudgmentDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+        );
+        assert_eq!(
+            matcher.prove_ground_judgment(
+                &image,
+                TheoryJudgmentId(1),
+                &LanguageRights::from_rights([LanguageRight::Check]),
+                &egraph,
+                &[wrapped, wrapped],
+                ample,
+                || false,
+            ),
+            SemanticJudgmentDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
+        assert_eq!(
+            matcher.prove_ground_judgment(
+                &image,
+                TheoryJudgmentId(0),
+                &proof_rights,
+                &egraph,
+                &[forged],
+                ample,
+                || false,
+            ),
+            SemanticJudgmentDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
+        assert!(matches!(
+            matcher.prove_ground_judgment(
+                &image,
+                TheoryJudgmentId(1),
+                &proof_rights,
+                &egraph,
+                &[wrapped, wrapped],
+                ample,
+                || true,
+            ),
+            SemanticJudgmentDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled,
+                work: 0,
+                ..
+            }
+        ));
+        assert!(matches!(
+            matcher.prove_ground_judgment(
+                &image,
+                TheoryJudgmentId(1),
+                &proof_rights,
+                &egraph,
+                &[wrapped, wrapped],
+                SemanticJudgmentLimits { frontier: 1, ..ample },
+                || false,
+            ),
+            SemanticJudgmentDecision::Undetermined {
+                reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                ..
+            }
+        ));
+        assert!(matches!(
+            matcher.prove_ground_judgment(
+                &image,
+                TheoryJudgmentId(1),
+                &proof_rights,
+                &egraph,
+                &[wrapped, wrapped],
+                SemanticJudgmentLimits { proofs: 1, ..ample },
+                || false,
+            ),
+            SemanticJudgmentDecision::Undetermined {
+                reason: SemanticMatchUndetermined::ProofLimitExceeded,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn judgment_image_validation_rejects_owner_id_and_dispatch_tampering() {
+        let language = judgment_fixture();
+        let limits = TheoryImageAdmissionLimits::default();
+        let image = compile_theory_semantic_image(&language, limits)
+            .expect("compile judgment-bearing image");
+
+        let mut wrong_owner = image.clone();
+        wrong_owner.judgment_rules[0].owner = TheoryJudgmentId(1);
+        assert!(matches!(
+            wrong_owner.validate(&language, limits),
+            Err(TheoryImageError::SourceMismatch { kind: "judgment rule", .. })
+        ));
+
+        let mut sparse_rule = image.clone();
+        sparse_rule.judgment_rules[1].id = TheoryJudgmentRuleProgramId(7);
+        assert!(matches!(
+            sparse_rule.validate(&language, limits),
+            Err(TheoryImageError::NonDenseId { kind: "judgment rule", .. })
+        ));
+
+        let mut wrong_dispatch = image;
+        let root = wrong_dispatch
+            .judgment_patterns
+            .states
+            .iter_mut()
+            .find(|state| {
+                matches!(
+                    state.form,
+                    TheoryPatternStateFormV1::Apply {
+                        operator: TheoryImageOperatorV1::Judgment { .. },
+                        ..
+                    }
+                )
+            })
+            .expect("judgment root state");
+        let TheoryPatternStateFormV1::Apply { operator, .. } = &mut root.form else {
+            unreachable!("selected an application state")
+        };
+        *operator = TheoryImageOperatorV1::Judgment { judgment: TheoryJudgmentId(u32::MAX) };
+        assert!(matches!(
+            wrong_dispatch.validate(&language, limits),
+            Err(TheoryImageError::AutomatonShape { .. })
+        ));
+    }
+
+    #[test]
+    fn binder_bearing_patterns_stay_outside_the_positional_accelerator() {
+        let terms = vec![
+            TheoryImageTermNodeV1 {
+                sort: TheorySortId(0),
+                form: TheoryImageTermFormV1::Slot(TheoryVariableId(0)),
+            },
+            TheoryImageTermNodeV1 {
+                sort: TheorySortId(0),
+                form: TheoryImageTermFormV1::Apply {
+                    operator: TheoryImageOperatorV1::Abstraction { sort: TheorySortId(0) },
+                    arguments: vec![TheoryTermId(0)],
+                    slots: vec![TheoryVariableId(1)],
+                    remainder: None,
+                },
+            },
+        ];
+        assert!(!term_roots_are_positional(&terms, &[TheoryTermId(1)], 0)
+            .expect("well-formed artificial image"));
     }
 
     #[test]
