@@ -17,6 +17,7 @@ pub mod registry;
 pub mod resolve;
 pub mod rholang_literal;
 mod schema;
+mod theory_compile;
 pub mod wire;
 
 pub use diag::{Diag, DiagKind, SourceProvenance};
@@ -346,14 +347,21 @@ mod tests {
         let source = r#"
             Module Semantic {
               Theory T() {
+                Types { Datum; Grade; }
+                Terms {
+                  Zero . |- "zero" : Datum;
+                  Wrap . x:Datum |- "wrap" x : Datum;
+                }
+                Equations { (Wrap X) == (Wrap X); }
+                Rewrites { Unwrap : (Wrap X) ~> X; }
                 Data({
-                  "types": ["Datum", "Grade"],
                   "oslf": {
                     "effects": [{"name":"Pure", "requires":[], "emits":[]}],
                     "actions": [{
                       "id":"step", "domain":["Datum"], "codomain":"Datum",
-                      "transition":["handler","mtl:handler:step/1"],
-                      "effect":"Pure", "grade":"Grade"
+                      "transition":["rewrite","Unwrap"],
+                      "effect":"Pure", "effect_class":"pure",
+                      "required_rights":["Reduce"], "grade":"Grade"
                     }]
                   }
                 })
@@ -373,7 +381,75 @@ mod tests {
             mettail_grammar_core::TheoryProfileV1::Oslf
         );
         assert_eq!(language.language_core.theory.actions.len(), 1);
+        assert_eq!(language.language_core.theory.equations.len(), 1);
+        assert_eq!(language.language_core.theory.rewrites.len(), 1);
+        let rewrite = &language.language_core.theory.rewrites[0];
+        assert_eq!(rewrite.name, "Unwrap");
+        assert!(matches!(
+            rewrite.arena.terms[rewrite.left.0 as usize].form,
+            mettail_grammar_core::TheoryTermFormV1::Constructor { ref constructor, .. }
+                if constructor == "Wrap"
+        ));
+        assert!(matches!(
+            rewrite.arena.terms[rewrite.right.0 as usize].form,
+            mettail_grammar_core::TheoryTermFormV1::Variable(_)
+        ));
+        assert_eq!(
+            language.language_core.theory.actions[0].required_rights,
+            mettail_grammar_core::LanguageRights::from_rights([
+                mettail_grammar_core::LanguageRight::Reduce,
+            ])
+        );
         assert_eq!(language.grammar_core, language.language_core.grammar);
+
+        let encoded = core_value::language_core_to_value(&language.language_core)
+            .expect("executable LanguageCore has an exact value encoding");
+        let decoded = canonical::value_to_language_core(&encoded)
+            .expect("exact executable LanguageCore value decodes");
+        assert_eq!(decoded, language.language_core);
+
+        let mut changed = decoded.clone();
+        changed.theory.limits.max_steps -= 1;
+        assert_eq!(
+            changed.grammar_fingerprint().unwrap(),
+            decoded.grammar_fingerprint().unwrap(),
+            "semantic limits cannot split the parser projection"
+        );
+        assert_ne!(
+            changed.theory_fingerprint().unwrap(),
+            decoded.theory_fingerprint().unwrap(),
+            "semantic limits are committed by the theory identity"
+        );
+        assert_ne!(
+            changed.fingerprint().unwrap(),
+            decoded.fingerprint().unwrap(),
+            "the installed-language identity commits to the entire theory"
+        );
+    }
+
+    #[test]
+    fn language2_rules_remain_structural_and_data_compatible() {
+        let source = r#"
+            Theory Structural() {
+              Types { Expr; }
+              Terms { Wrap . x:Expr |- "wrap" x : Expr; }
+              Equations { (Wrap X) == X; }
+              Rewrites { Unwrap : (Wrap X) ~> X; }
+            }
+        "#;
+        let language = elaborate_theory_language(source).expect("language/2 rules elaborate");
+        assert_eq!(
+            language.language_core.theory.profile,
+            mettail_grammar_core::TheoryProfileV1::StructuralOnly
+        );
+        assert!(language.language_core.theory.equations.is_empty());
+        assert!(language.language_core.theory.rewrites.is_empty());
+        assert_eq!(language.grammar_core.semantic_program.equations.len(), 1);
+        assert_eq!(language.grammar_core.semantic_program.rewrites.len(), 1);
+        assert_eq!(
+            canonical::value_to_core(&language.canonical_value).unwrap(),
+            language.grammar_core
+        );
     }
 
     #[test]

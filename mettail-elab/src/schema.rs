@@ -1608,11 +1608,9 @@ fn decode_oslf(
         .iter()
         .enumerate()
     {
-        theory.judgments.push(decode_judgment(
-            value,
-            &format!("{path}.judgments[{index}]"),
-            &mut theory.terms,
-        )?);
+        theory
+            .judgments
+            .push(decode_judgment(value, &format!("{path}.judgments[{index}]"))?);
     }
     theory.observations = decode_sequence(
         values.get("observations"),
@@ -1650,9 +1648,14 @@ fn decode_oslf(
 
 fn decode_effect(value: &RhoValue, path: &str) -> Result<core::EffectDeclV1, ValueDecodeError> {
     let values = expect_map(value, path)?;
-    reject_unknown_keys(values, &["name", "requires", "emits"], path)?;
+    reject_unknown_keys(values, &["name", "class", "requires", "emits"], path)?;
     Ok(core::EffectDeclV1 {
         name: required_nonempty_string(values, "name", path)?,
+        class: values
+            .get("class")
+            .map(|value| decode_effect_class(value, &format!("{path}.class")))
+            .transpose()?
+            .unwrap_or(core::SemanticEffectClassV1::Pure),
         requires: decode_nonempty_string_list(values.get("requires"), &format!("{path}.requires"))?,
         emits: decode_nonempty_string_list(values.get("emits"), &format!("{path}.emits"))?,
     })
@@ -1662,7 +1665,16 @@ fn decode_action(value: &RhoValue, path: &str) -> Result<core::SemanticActionV1,
     let values = expect_map(value, path)?;
     reject_unknown_keys(
         values,
-        &["id", "domain", "codomain", "transition", "effect", "grade"],
+        &[
+            "id",
+            "domain",
+            "codomain",
+            "transition",
+            "effect",
+            "effect_class",
+            "required_rights",
+            "grade",
+        ],
         path,
     )?;
     Ok(core::SemanticActionV1 {
@@ -1674,8 +1686,61 @@ fn decode_action(value: &RhoValue, path: &str) -> Result<core::SemanticActionV1,
             &format!("{path}.transition"),
         )?,
         effect: required_nonempty_string(values, "effect", path)?,
+        effect_class: values
+            .get("effect_class")
+            .map(|value| decode_effect_class(value, &format!("{path}.effect_class")))
+            .transpose()?
+            .unwrap_or(core::SemanticEffectClassV1::Pure),
+        required_rights: decode_action_rights(
+            values.get("required_rights"),
+            &format!("{path}.required_rights"),
+        )?,
         grade: required_nonempty_string(values, "grade", path)?,
     })
+}
+
+fn decode_effect_class(
+    value: &RhoValue,
+    path: &str,
+) -> Result<core::SemanticEffectClassV1, ValueDecodeError> {
+    Ok(
+        match expect_enum_string(
+            value,
+            &["pure", "structural", "behavioral", "resource", "external"],
+            path,
+        )? {
+            "pure" => core::SemanticEffectClassV1::Pure,
+            "structural" => core::SemanticEffectClassV1::Structural,
+            "behavioral" => core::SemanticEffectClassV1::Behavioral,
+            "resource" => core::SemanticEffectClassV1::Resource,
+            _ => core::SemanticEffectClassV1::External,
+        },
+    )
+}
+
+fn decode_action_rights(
+    value: Option<&RhoValue>,
+    path: &str,
+) -> Result<core::LanguageRights, ValueDecodeError> {
+    let mut rights = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (index, value) in value
+        .map(|value| expect_list(value, path))
+        .transpose()?
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
+        let name = expect_nonempty_string(value, &format!("{path}[{index}]"))?;
+        let right = core::LanguageRight::from_name(name).ok_or_else(|| {
+            ValueDecodeError::new(format!("{path}[{index}]"), format!("unknown right `{name}`"))
+        })?;
+        if !seen.insert(right) {
+            return error(format!("{path}[{index}]"), format!("duplicate right `{name}`"));
+        }
+        rights.push(right);
+    }
+    Ok(core::LanguageRights::from_rights(rights))
 }
 
 fn decode_theory_rule_reference(
@@ -1693,11 +1758,7 @@ fn decode_theory_rule_reference(
     }
 }
 
-fn decode_judgment(
-    value: &RhoValue,
-    path: &str,
-    terms: &mut Vec<core::TheoryTermNodeV1>,
-) -> Result<core::JudgmentDeclV1, ValueDecodeError> {
+fn decode_judgment(value: &RhoValue, path: &str) -> Result<core::JudgmentDeclV1, ValueDecodeError> {
     let values = expect_map(value, path)?;
     reject_unknown_keys(values, &["name", "arguments", "decision", "rules"], path)?;
     let decision = match expect_enum_string(
@@ -1713,7 +1774,7 @@ fn decode_judgment(
         .iter()
         .enumerate()
     {
-        rules.push(decode_judgment_rule(value, &format!("{path}.rules[{index}]"), terms)?);
+        rules.push(decode_judgment_rule(value, &format!("{path}.rules[{index}]"))?);
     }
     Ok(core::JudgmentDeclV1 {
         name: required_nonempty_string(values, "name", path)?,
@@ -1726,32 +1787,47 @@ fn decode_judgment(
 fn decode_judgment_rule(
     value: &RhoValue,
     path: &str,
-    terms: &mut Vec<core::TheoryTermNodeV1>,
 ) -> Result<core::JudgmentRuleV1, ValueDecodeError> {
     let values = expect_map(value, path)?;
     reject_unknown_keys(values, &["name", "premises", "conclusion"], path)?;
+    let mut variables = Vec::new();
+    let mut variable_ids = BTreeMap::new();
+    let mut terms = Vec::new();
     let mut premises = Vec::new();
     for (index, value) in
         expect_list(required(values, "premises", path)?, &format!("{path}.premises"))?
             .iter()
             .enumerate()
     {
-        premises.push(decode_judgment_atom(value, &format!("{path}.premises[{index}]"), terms)?);
+        premises.push(decode_judgment_atom(
+            value,
+            &format!("{path}.premises[{index}]"),
+            &mut variables,
+            &mut variable_ids,
+            &mut terms,
+        )?);
     }
+    let conclusion = decode_judgment_atom(
+        required(values, "conclusion", path)?,
+        &format!("{path}.conclusion"),
+        &mut variables,
+        &mut variable_ids,
+        &mut terms,
+    )?;
     Ok(core::JudgmentRuleV1 {
         name: required_nonempty_string(values, "name", path)?,
+        variables,
+        terms,
         premises,
-        conclusion: decode_judgment_atom(
-            required(values, "conclusion", path)?,
-            &format!("{path}.conclusion"),
-            terms,
-        )?,
+        conclusion,
     })
 }
 
 fn decode_judgment_atom(
     value: &RhoValue,
     path: &str,
+    variables: &mut Vec<core::TheoryVariableV1>,
+    variable_ids: &mut BTreeMap<String, core::TheoryVariableId>,
     terms: &mut Vec<core::TheoryTermNodeV1>,
 ) -> Result<core::JudgmentAtomV1, ValueDecodeError> {
     let values = expect_map(value, path)?;
@@ -1761,7 +1837,13 @@ fn decode_judgment_atom(
         .iter()
         .enumerate()
     {
-        roots.push(decode_theory_term(value, &format!("{path}.terms[{index}]"), terms)?);
+        roots.push(decode_theory_term(
+            value,
+            &format!("{path}.terms[{index}]"),
+            variables,
+            variable_ids,
+            terms,
+        )?);
     }
     Ok(core::JudgmentAtomV1 {
         judgment: required_nonempty_string(values, "judgment", path)?,
@@ -1772,6 +1854,8 @@ fn decode_judgment_atom(
 fn decode_theory_term(
     value: &RhoValue,
     path: &str,
+    variables: &mut Vec<core::TheoryVariableV1>,
+    variable_ids: &mut BTreeMap<String, core::TheoryVariableId>,
     arena: &mut Vec<core::TheoryTermNodeV1>,
 ) -> Result<core::TheoryTermId, ValueDecodeError> {
     enum Task<'a> {
@@ -1788,10 +1872,26 @@ fn decode_theory_term(
                 match tag {
                     "var" => {
                         require_len(tagged, 2, &path)?;
+                        let name =
+                            expect_nonempty_string(&tagged[1], &format!("{path}[1]"))?.to_string();
+                        let variable = if let Some(variable) = variable_ids.get(&name) {
+                            *variable
+                        } else {
+                            let variable = core::TheoryVariableId(variables.len() as u32);
+                            variable_ids.insert(name.clone(), variable);
+                            variables.push(core::TheoryVariableV1 {
+                                id: variable,
+                                name,
+                                sort: String::new(),
+                                role: core::TheoryVariableRoleV1::Input,
+                            });
+                            variable
+                        };
                         let id = core::TheoryTermId(arena.len() as u32);
-                        arena.push(core::TheoryTermNodeV1::Variable(
-                            expect_nonempty_string(&tagged[1], &format!("{path}[1]"))?.to_string(),
-                        ));
+                        arena.push(core::TheoryTermNodeV1 {
+                            sort: String::new(),
+                            form: core::TheoryTermFormV1::Variable(variable),
+                        });
                         values.push(id);
                     },
                     "literal" => {
@@ -1808,7 +1908,10 @@ fn decode_theory_term(
                             },
                         };
                         let id = core::TheoryTermId(arena.len() as u32);
-                        arena.push(core::TheoryTermNodeV1::Literal(literal));
+                        arena.push(core::TheoryTermNodeV1 {
+                            sort: String::new(),
+                            form: core::TheoryTermFormV1::Literal(literal),
+                        });
                         values.push(id);
                     },
                     "ctor" => {
@@ -1831,7 +1934,10 @@ fn decode_theory_term(
                     .expect("constructor children are scheduled before their parent");
                 let arguments = values.drain(start..).collect();
                 let id = core::TheoryTermId(arena.len() as u32);
-                arena.push(core::TheoryTermNodeV1::Constructor { constructor: name, arguments });
+                arena.push(core::TheoryTermNodeV1 {
+                    sort: String::new(),
+                    form: core::TheoryTermFormV1::Constructor { constructor: name, arguments },
+                });
                 values.push(id);
             },
         }
@@ -1997,24 +2103,36 @@ fn decode_theory_limits(
     reject_unknown_keys(
         values,
         &[
+            "max_rule_variables",
             "max_term_nodes",
+            "max_premise_nodes",
             "max_proof_nodes",
             "max_frontier",
             "max_steps",
             "max_grade_bits",
+            "max_output_nodes",
+            "max_output_bytes",
         ],
         path,
     )?;
     let defaults = core::TheoryLimitsV1::default();
     Ok(core::TheoryLimitsV1 {
+        max_rule_variables: optional_u32(values, "max_rule_variables", path)?
+            .unwrap_or(defaults.max_rule_variables),
         max_term_nodes: optional_u32(values, "max_term_nodes", path)?
             .unwrap_or(defaults.max_term_nodes),
+        max_premise_nodes: optional_u32(values, "max_premise_nodes", path)?
+            .unwrap_or(defaults.max_premise_nodes),
         max_proof_nodes: optional_u32(values, "max_proof_nodes", path)?
             .unwrap_or(defaults.max_proof_nodes),
         max_frontier: optional_u32(values, "max_frontier", path)?.unwrap_or(defaults.max_frontier),
         max_steps: optional_u32(values, "max_steps", path)?.unwrap_or(defaults.max_steps),
         max_grade_bits: optional_u32(values, "max_grade_bits", path)?
             .unwrap_or(defaults.max_grade_bits),
+        max_output_nodes: optional_u32(values, "max_output_nodes", path)?
+            .unwrap_or(defaults.max_output_nodes),
+        max_output_bytes: optional_u32(values, "max_output_bytes", path)?
+            .unwrap_or(defaults.max_output_bytes),
     })
 }
 
@@ -2159,7 +2277,10 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
     })
 }
 
-fn decode_carrier(value: &RhoValue, path: &str) -> Result<core::Carrier, ValueDecodeError> {
+pub(crate) fn decode_carrier(
+    value: &RhoValue,
+    path: &str,
+) -> Result<core::Carrier, ValueDecodeError> {
     if let RhoValue::String(name) = value {
         return Ok(match name.as_str() {
             "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
@@ -4684,16 +4805,276 @@ impl LanguageSchema {
     }
 
     pub(crate) fn lower_language(&self) -> Result<core::LanguageCoreV1, ValueDecodeError> {
+        let grammar = self.lower()?;
+        let mut theory = self.theory.clone();
+        if theory.profile == core::TheoryProfileV1::Oslf {
+            self.complete_theory_signature(&mut theory)?;
+            crate::theory_compile::compile_surface_rules(
+                &self.equations,
+                &self.rewrites,
+                &mut theory,
+            )?;
+            crate::theory_compile::infer_judgment_types(&mut theory)?;
+        }
         let language = core::LanguageCoreV1 {
             abi: core::LANGUAGE_CORE_ABI_V1,
-            grammar: self.lower()?,
-            theory: self.theory.clone(),
+            grammar,
+            theory,
         };
         language.validate().map_err(|errors| {
             ValueDecodeError::new("$.oslf", format!("invalid LanguageCore: {errors:?}"))
         })?;
         Ok(language)
     }
+
+    fn complete_theory_signature(
+        &self,
+        theory: &mut core::TheoryCoreV1,
+    ) -> Result<(), ValueDecodeError> {
+        if !theory.sorts.is_empty()
+            || !theory.constructors.is_empty()
+            || !theory.binders.is_empty()
+            || !theory.equations.is_empty()
+            || !theory.rewrites.is_empty()
+        {
+            return error(
+                "$.oslf",
+                "presentation lowering cannot be mixed with an embedded executable signature",
+            );
+        }
+        let mut sort_indices = BTreeMap::<String, usize>::new();
+        for declaration in &self.types {
+            let literal = theory_literal_carrier(&declaration.carrier);
+            let index = theory.sorts.len();
+            if sort_indices
+                .insert(declaration.name.clone(), index)
+                .is_some()
+            {
+                return error("$.types", format!("duplicate theory sort `{}`", declaration.name));
+            }
+            theory.sorts.push(core::TheorySortV1 {
+                name: declaration.name.clone(),
+                kind: core::TheorySortKindV1::Syntax { literal },
+            });
+        }
+        let guard_sort = "mettail:sort:guard/1".to_string();
+        for term in &self.terms {
+            let mut domain = Vec::new();
+            let mut argument = 0usize;
+            let mut work: Vec<_> = term.context.iter().rev().collect();
+            while let Some(parameter) = work.pop() {
+                match parameter {
+                    Param::Plain { ty, .. } => {
+                        domain.push(ensure_theory_sort(ty, theory, &mut sort_indices)?);
+                        argument += 1;
+                    },
+                    Param::Binder { binder, body, ty, multiple } => {
+                        let TypeExpr::Arrow(from, to) = ty else {
+                            return error("$.terms", "binder parameter requires an arrow sort");
+                        };
+                        let bound_sort = ensure_theory_sort(from, theory, &mut sort_indices)?;
+                        let body_sort = ensure_theory_sort(to, theory, &mut sort_indices)?;
+                        let result_sort = if *multiple {
+                            let name = format!("[*{bound_sort} -> {body_sort}]");
+                            insert_theory_sort(
+                                name.clone(),
+                                core::TheorySortKindV1::Function {
+                                    domain: bound_sort.clone(),
+                                    codomain: body_sort.clone(),
+                                    multiple: true,
+                                },
+                                theory,
+                                &mut sort_indices,
+                            )?;
+                            name
+                        } else {
+                            ensure_theory_sort(ty, theory, &mut sort_indices)?
+                        };
+                        theory.binders.push(core::TheoryBinderV1 {
+                            name: format!("{}::{binder}.{body}", term.label),
+                            constructor: term.label.clone(),
+                            argument: u16::try_from(argument).map_err(|_| {
+                                ValueDecodeError::new(
+                                    "$.terms",
+                                    "constructor has more than u16::MAX semantic arguments",
+                                )
+                            })?,
+                            bound_sort,
+                            body_sort,
+                            result_sort: result_sort.clone(),
+                            multiple: *multiple,
+                        });
+                        domain.push(result_sort);
+                        argument += 1;
+                    },
+                    Param::Guard(_) => {
+                        if !sort_indices.contains_key(&guard_sort) {
+                            let index = theory.sorts.len();
+                            sort_indices.insert(guard_sort.clone(), index);
+                            theory.sorts.push(core::TheorySortV1 {
+                                name: guard_sort.clone(),
+                                kind: core::TheorySortKindV1::Opaque {
+                                    abi: "mettail:guard-value/1".into(),
+                                },
+                            });
+                        }
+                        domain.push(guard_sort.clone());
+                        argument += 1;
+                    },
+                    Param::Optional(parameters) => work.extend(parameters.iter().rev()),
+                }
+            }
+            theory.constructors.push(core::TheoryConstructorV1 {
+                name: term.label.clone(),
+                domain,
+                codomain: term.category.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn ensure_theory_sort(
+    root: &TypeExpr,
+    theory: &mut core::TheoryCoreV1,
+    indices: &mut BTreeMap<String, usize>,
+) -> Result<String, ValueDecodeError> {
+    enum Task<'a> {
+        Visit(&'a TypeExpr),
+        FinishList,
+        FinishCollection(core::CollectionKind, bool),
+        FinishArrow,
+    }
+    let mut tasks = vec![Task::Visit(root)];
+    let mut values = Vec::<String>::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(TypeExpr::Base(name)) => {
+                if !indices.contains_key(name) {
+                    return error("$.types", format!("unknown theory sort `{name}`"));
+                }
+                values.push(name.clone());
+            },
+            Task::Visit(TypeExpr::Multi(element)) => {
+                tasks.push(Task::FinishList);
+                tasks.push(Task::Visit(element));
+            },
+            Task::Visit(TypeExpr::Collection(kind, key, value)) => {
+                tasks.push(Task::FinishCollection(*kind, value.is_some()));
+                if let Some(value) = value {
+                    tasks.push(Task::Visit(value));
+                }
+                tasks.push(Task::Visit(key));
+            },
+            Task::Visit(TypeExpr::Arrow(domain, codomain)) => {
+                tasks.push(Task::FinishArrow);
+                tasks.push(Task::Visit(codomain));
+                tasks.push(Task::Visit(domain));
+            },
+            Task::FinishList => {
+                let element = values.pop().expect("list element sort is scheduled");
+                let name = format!("List({element})");
+                insert_theory_sort(
+                    name.clone(),
+                    core::TheorySortKindV1::Collection {
+                        kind: core::CollectionKind::List,
+                        key: None,
+                        element,
+                    },
+                    theory,
+                    indices,
+                )?;
+                values.push(name);
+            },
+            Task::FinishCollection(kind, has_value) => {
+                let value =
+                    has_value.then(|| values.pop().expect("collection value sort is scheduled"));
+                let key = values.pop().expect("collection key sort is scheduled");
+                let element = value.clone().unwrap_or_else(|| key.clone());
+                let name = match &value {
+                    Some(value) => format!("{}({key},{value})", collection_sort_name(kind)),
+                    None => format!("{}({key})", collection_sort_name(kind)),
+                };
+                insert_theory_sort(
+                    name.clone(),
+                    core::TheorySortKindV1::Collection { kind, key: value.map(|_| key), element },
+                    theory,
+                    indices,
+                )?;
+                values.push(name);
+            },
+            Task::FinishArrow => {
+                let codomain = values.pop().expect("arrow codomain sort is scheduled");
+                let domain = values.pop().expect("arrow domain sort is scheduled");
+                let name = format!("[{domain} -> {codomain}]");
+                insert_theory_sort(
+                    name.clone(),
+                    core::TheorySortKindV1::Function { domain, codomain, multiple: false },
+                    theory,
+                    indices,
+                )?;
+                values.push(name);
+            },
+        }
+    }
+    if values.len() != 1 {
+        return error("$.types", "theory sort compiler produced an invalid value stack");
+    }
+    Ok(values.pop().expect("checked one theory sort"))
+}
+
+fn insert_theory_sort(
+    name: String,
+    kind: core::TheorySortKindV1,
+    theory: &mut core::TheoryCoreV1,
+    indices: &mut BTreeMap<String, usize>,
+) -> Result<(), ValueDecodeError> {
+    if let Some(index) = indices.get(&name) {
+        if theory.sorts[*index].kind != kind {
+            return error("$.types", format!("inconsistent definitions of theory sort `{name}`"));
+        }
+        return Ok(());
+    }
+    indices.insert(name.clone(), theory.sorts.len());
+    theory.sorts.push(core::TheorySortV1 { name, kind });
+    Ok(())
+}
+
+fn collection_sort_name(kind: core::CollectionKind) -> &'static str {
+    match kind {
+        core::CollectionKind::Bag => "HashBag",
+        core::CollectionKind::Set => "Set",
+        core::CollectionKind::List => "List",
+        core::CollectionKind::Map => "Map",
+        core::CollectionKind::PathMap => "PathMap",
+    }
+}
+
+fn theory_literal_carrier(carrier: &core::Carrier) -> Option<core::TheoryLiteralCarrierV1> {
+    Some(match carrier {
+        core::Carrier::Dynamic | core::Carrier::Collection(_) => return None,
+        core::Carrier::Builtin(core::BuiltinCarrier::Boolean) => {
+            core::TheoryLiteralCarrierV1::Boolean
+        },
+        core::Carrier::Builtin(core::BuiltinCarrier::Integer) => {
+            core::TheoryLiteralCarrierV1::Integer
+        },
+        core::Carrier::Builtin(core::BuiltinCarrier::Rational) => {
+            core::TheoryLiteralCarrierV1::Rational
+        },
+        core::Carrier::Builtin(core::BuiltinCarrier::FixedPoint) => {
+            core::TheoryLiteralCarrierV1::FixedPoint
+        },
+        core::Carrier::Builtin(core::BuiltinCarrier::Float) => core::TheoryLiteralCarrierV1::Float,
+        core::Carrier::Builtin(core::BuiltinCarrier::String) => {
+            core::TheoryLiteralCarrierV1::String
+        },
+        core::Carrier::Builtin(core::BuiltinCarrier::Bytes) => core::TheoryLiteralCarrierV1::Bytes,
+        core::Carrier::Extern { urn } => core::TheoryLiteralCarrierV1::External(urn.clone()),
+        core::Carrier::HostOpaque { stable_name } => {
+            core::TheoryLiteralCarrierV1::HostOpaque(stable_name.clone())
+        },
+    })
 }
 
 fn rename_param_category(param: &mut Param, from: &str, to: &str) {
@@ -5900,6 +6281,15 @@ mod tests {
                         s("Located"),
                     ]),
                 ),
+                (
+                    "terms",
+                    l([m([
+                        ("label", s("Wrap")),
+                        ("category", s("Datum")),
+                        ("context", l([l([s("param"), s("x"), s("Datum")])])),
+                        ("syntax", l([s("x")])),
+                    ])]),
+                ),
                 ("oslf", oslf),
             ],
         );
@@ -5907,10 +6297,11 @@ mod tests {
         assert_eq!(language.theory.profile, core::TheoryProfileV1::Oslf);
         assert_eq!(language.theory.actions.len(), 1);
         assert_eq!(language.theory.judgments.len(), 1);
-        assert_eq!(language.theory.terms.len(), 2);
+        let rule = &language.theory.judgments[0].rules[0];
+        assert_eq!(rule.terms.len(), 2);
         assert!(matches!(
-            language.theory.terms[1],
-            core::TheoryTermNodeV1::Constructor { ref arguments, .. }
+            rule.terms[1].form,
+            core::TheoryTermFormV1::Constructor { ref arguments, .. }
                 if arguments == &[core::TheoryTermId(0)]
         ));
         assert!(language.theory.interactive.is_some());

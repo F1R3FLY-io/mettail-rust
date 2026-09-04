@@ -33,6 +33,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SharedTypedAssemblyKernel \
 	RuntimeGrammar.TerminalVariantIdentity \
 	RuntimeGrammar.GeneratedSemanticAdapter \
+	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.RegexGsltSyntax \
 	RuntimeGrammar.RegexGsltMatch \
 	RuntimeGrammar.RegexGsltSearch \

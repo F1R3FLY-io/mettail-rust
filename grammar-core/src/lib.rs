@@ -17,6 +17,7 @@ mod semantic_machine;
 mod semantic_term;
 mod string_literal;
 mod theorem;
+mod theory_rule;
 mod weight;
 
 pub use canonical::*;
@@ -32,4 +33,5 @@ pub use semantic_machine::*;
 pub use semantic_term::*;
 pub use string_literal::*;
 pub use theorem::*;
+pub use theory_rule::*;
 pub use weight::*;
