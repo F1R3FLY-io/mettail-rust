@@ -539,6 +539,8 @@ impl SemanticTransitionMatcher {
             work: 0,
             work_limit: limits.work,
             is_cancelled: &mut is_cancelled,
+            synthetic_terms: Vec::new(),
+            next_activation: 0,
         };
         if let Err(reason) = validator.validate_ground_term(root, *input_sort) {
             return match reason {
@@ -966,6 +968,8 @@ impl SemanticTransitionMatcher {
             work: 0,
             work_limit: limits.work,
             is_cancelled,
+            synthetic_terms: Vec::new(),
+            next_activation: 0,
         };
         let mut argument_keys = Vec::new();
         if argument_keys.try_reserve_exact(arguments.len()).is_err() {
@@ -1059,7 +1063,6 @@ impl SemanticTransitionMatcher {
             substitution: Vec::new(),
             steps: Vec::new(),
         });
-        let mut next_activation = 0u64;
         let mut proofs = Vec::new();
         let mut stats = SetAutomatonStats::default();
 
@@ -1262,17 +1265,8 @@ impl SemanticTransitionMatcher {
                         stats,
                     };
                 }
-                let activation = next_activation;
-                let Some(next) = next_activation.checked_add(1) else {
-                    return SemanticJudgmentDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::ProofLimitExceeded,
-                        work: evaluator.work,
-                        stats,
-                    };
-                };
-                next_activation = next;
-                let mut child = match clone_horn_branch(&branch) {
-                    Ok(child) => child,
+                let activation = match evaluator.fresh_activation() {
+                    Ok(activation) => activation,
                     Err(reason) => {
                         return SemanticJudgmentDecision::Undetermined {
                             reason,
@@ -1299,91 +1293,108 @@ impl SemanticTransitionMatcher {
                         },
                     ));
                 }
-                match evaluator.unify(&equations, &mut child.substitution) {
-                    Ok(true) => {},
-                    Ok(false) => continue,
-                    Err(reason) => {
+                let substitutions =
+                    match evaluator.unify_all(&equations, &branch.substitution, limits.frontier) {
+                        Ok(substitutions) => substitutions,
+                        Err(reason) => {
+                            return SemanticJudgmentDecision::Undetermined {
+                                reason,
+                                work: evaluator.work,
+                                stats,
+                            };
+                        },
+                    };
+                for substitution in substitutions {
+                    let mut child = match clone_horn_branch(&branch) {
+                        Ok(child) => child,
+                        Err(reason) => {
+                            return SemanticJudgmentDecision::Undetermined {
+                                reason,
+                                work: evaluator.work,
+                                stats,
+                            };
+                        },
+                    };
+                    child.substitution = substitution;
+                    if child.steps.len() == limits.proof_nodes {
                         return SemanticJudgmentDecision::Undetermined {
-                            reason,
+                            reason: SemanticMatchUndetermined::ProofLimitExceeded,
                             work: evaluator.work,
                             stats,
                         };
-                    },
-                }
-                if child.steps.len() == limits.proof_nodes {
-                    return SemanticJudgmentDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::ProofLimitExceeded,
-                        work: evaluator.work,
-                        stats,
+                    }
+                    child.steps.push(SemanticJudgmentProofStep {
+                        activation,
+                        rule: rule.id,
+                        parent_activation: goal.parent_activation,
+                        premise_index: goal.premise_index,
+                    });
+                    let total_goals = match rule.premises.len().checked_add(child.goals.len()) {
+                        Some(total) => total,
+                        None => {
+                            return SemanticJudgmentDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                                work: evaluator.work,
+                                stats,
+                            };
+                        },
                     };
-                }
-                child.steps.push(SemanticJudgmentProofStep {
-                    activation,
-                    rule: rule.id,
-                    parent_activation: goal.parent_activation,
-                    premise_index: goal.premise_index,
-                });
-                let total_goals = match rule.premises.len().checked_add(child.goals.len()) {
-                    Some(total) => total,
-                    None => {
-                        return SemanticJudgmentDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::FrontierLimitExceeded,
-                            work: evaluator.work,
-                            stats,
-                        };
-                    },
-                };
-                let mut goals = VecDeque::new();
-                if goals.try_reserve_exact(total_goals).is_err() {
-                    return SemanticJudgmentDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::AllocationFailed,
-                        work: evaluator.work,
-                        stats,
-                    };
-                }
-                for (premise_index, premise) in rule.premises.iter().enumerate() {
-                    let Ok(premise_index) = u32::try_from(premise_index) else {
-                        return SemanticJudgmentDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                            work: evaluator.work,
-                            stats,
-                        };
-                    };
-                    let mut terms = Vec::new();
-                    if terms.try_reserve_exact(premise.terms.len()).is_err() {
+                    let mut goals = VecDeque::new();
+                    if goals.try_reserve_exact(total_goals).is_err() {
                         return SemanticJudgmentDecision::Undetermined {
                             reason: SemanticMatchUndetermined::AllocationFailed,
                             work: evaluator.work,
                             stats,
                         };
                     }
-                    for term in &premise.terms {
-                        terms.push(HornTermRef::Clause { activation, rule: rule.id, term: *term });
+                    for (premise_index, premise) in rule.premises.iter().enumerate() {
+                        let Ok(premise_index) = u32::try_from(premise_index) else {
+                            return SemanticJudgmentDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work: evaluator.work,
+                                stats,
+                            };
+                        };
+                        let mut terms = Vec::new();
+                        if terms.try_reserve_exact(premise.terms.len()).is_err() {
+                            return SemanticJudgmentDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::AllocationFailed,
+                                work: evaluator.work,
+                                stats,
+                            };
+                        }
+                        for term in &premise.terms {
+                            terms.push(HornTermRef::Clause {
+                                activation,
+                                rule: rule.id,
+                                term: *term,
+                            });
+                        }
+                        goals.push_back(HornGoal {
+                            judgment: premise.judgment,
+                            terms,
+                            parent_activation: Some(activation),
+                            premise_index: Some(premise_index),
+                        });
                     }
-                    goals.push_back(HornGoal {
-                        judgment: premise.judgment,
-                        terms,
-                        parent_activation: Some(activation),
-                        premise_index: Some(premise_index),
-                    });
+                    goals.append(&mut child.goals);
+                    child.goals = goals;
+                    if frontier.len() == limits.frontier {
+                        return SemanticJudgmentDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                            work: evaluator.work,
+                            stats,
+                        };
+                    }
+                    if frontier.try_reserve(1).is_err() {
+                        return SemanticJudgmentDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::AllocationFailed,
+                            work: evaluator.work,
+                            stats,
+                        };
+                    }
+                    frontier.push_back(child);
                 }
-                goals.append(&mut child.goals);
-                child.goals = goals;
-                if frontier.len() == limits.frontier {
-                    return SemanticJudgmentDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::FrontierLimitExceeded,
-                        work: evaluator.work,
-                        stats,
-                    };
-                }
-                if frontier.try_reserve(1).is_err() {
-                    return SemanticJudgmentDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::AllocationFailed,
-                        work: evaluator.work,
-                        stats,
-                    };
-                }
-                frontier.push_back(child);
             }
         }
 
@@ -1727,6 +1738,10 @@ enum HornTermRef {
         variable: ScopedClauseVariable,
         sort: TheorySortId,
     },
+    Synthetic {
+        term: usize,
+        sort: TheorySortId,
+    },
 }
 
 type HornSubstitution = Vec<(ScopedClauseVariable, HornTermRef)>;
@@ -1744,12 +1759,44 @@ struct HornBranch {
     steps: Vec<SemanticJudgmentProofStep>,
 }
 
+struct HornUnificationBranch {
+    pending: Vec<(HornTermRef, HornTermRef)>,
+    substitution: HornSubstitution,
+}
+
+struct HornRowPairingBranch {
+    next_left: usize,
+    used_right: Vec<bool>,
+    equations: Vec<(HornTermRef, HornTermRef)>,
+    unmatched_left: Vec<HornTermRef>,
+}
+
+struct HornCollectionEquation {
+    sort: TheorySortId,
+    operator: FramedSemanticOperator,
+    collection: CollectionKind,
+    left_arguments: Vec<HornTermRef>,
+    left_remainder: Option<HornTermRef>,
+    right_arguments: Vec<HornTermRef>,
+    right_remainder: Option<HornTermRef>,
+}
+
 enum HornTermForm {
     Variable(ScopedClauseVariable),
     Application {
         operator: FramedSemanticOperator,
         arguments: Vec<HornTermRef>,
+        collection: Option<CollectionKind>,
+        remainder: Option<HornTermRef>,
     },
+}
+
+struct HornSyntheticTerm {
+    sort: TheorySortId,
+    operator: FramedSemanticOperator,
+    arguments: Vec<HornTermRef>,
+    collection: CollectionKind,
+    remainder: Option<HornTermRef>,
 }
 
 struct HornTermView {
@@ -1774,6 +1821,8 @@ struct HornEvaluator<'a, C> {
     work: u64,
     work_limit: u64,
     is_cancelled: C,
+    synthetic_terms: Vec<HornSyntheticTerm>,
+    next_activation: u64,
 }
 
 impl<'a, C> HornEvaluator<'a, C>
@@ -1796,6 +1845,37 @@ where
             .filter(|work| *work <= self.work_limit)
             .ok_or(SemanticMatchUndetermined::WorkBudgetExhausted)?;
         Ok(())
+    }
+
+    fn fresh_activation(&mut self) -> Result<u64, SemanticMatchUndetermined> {
+        let activation = self.next_activation;
+        self.next_activation = self
+            .next_activation
+            .checked_add(1)
+            .ok_or(SemanticMatchUndetermined::ProofLimitExceeded)?;
+        Ok(activation)
+    }
+
+    fn synthetic_collection(
+        &mut self,
+        sort: TheorySortId,
+        operator: FramedSemanticOperator,
+        collection: CollectionKind,
+        arguments: Vec<HornTermRef>,
+        remainder: Option<HornTermRef>,
+    ) -> Result<HornTermRef, SemanticMatchUndetermined> {
+        self.synthetic_terms
+            .try_reserve(1)
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        let term = self.synthetic_terms.len();
+        self.synthetic_terms.push(HornSyntheticTerm {
+            sort,
+            operator,
+            arguments,
+            collection,
+            remainder,
+        });
+        Ok(HornTermRef::Synthetic { term, sort })
     }
 
     fn lookup_substitution(
@@ -1858,9 +1938,6 @@ where
                             };
                         },
                         TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } => {
-                            if remainder.is_some() {
-                                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
-                            }
                             let signature = runtime_operator_signature(self.image, operator)?;
                             if signature.result != node.sort {
                                 return Err(SemanticMatchUndetermined::InvalidImageEvidence);
@@ -1871,8 +1948,8 @@ where
                                 .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
                             match &signature.children {
                                 RuntimeChildSortContract::Fixed(sorts)
-                                    if sorts.len() == child_count => {},
-                                RuntimeChildSortContract::Homogeneous(_) if slots.is_empty() => {},
+                                    if sorts.len() == child_count && remainder.is_none() => {},
+                                RuntimeChildSortContract::Homogeneous(_) => {},
                                 _ => {
                                     return Err(SemanticMatchUndetermined::InvalidImageEvidence);
                                 },
@@ -1890,11 +1967,7 @@ where
                                     .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
                                 let expected = match &signature.children {
                                     RuntimeChildSortContract::Fixed(sorts) => sorts[index],
-                                    RuntimeChildSortContract::Homogeneous(_) => {
-                                        return Err(
-                                            SemanticMatchUndetermined::InvalidImageEvidence,
-                                        );
-                                    },
+                                    RuntimeChildSortContract::Homogeneous(sort) => *sort,
                                 };
                                 if declaration.sort != expected {
                                     return Err(SemanticMatchUndetermined::InvalidImageEvidence);
@@ -1927,12 +2000,47 @@ where
                                     term: *argument,
                                 });
                             }
+                            let remainder = match remainder {
+                                Some(variable) => {
+                                    let RuntimeChildSortContract::Homogeneous(_) =
+                                        &signature.children
+                                    else {
+                                        return Err(
+                                            SemanticMatchUndetermined::InvalidImageEvidence,
+                                        );
+                                    };
+                                    let declaration = rule
+                                        .variables
+                                        .get(variable.0 as usize)
+                                        .filter(|candidate| candidate.id == *variable)
+                                        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+                                    if declaration.sort != node.sort {
+                                        return Err(
+                                            SemanticMatchUndetermined::InvalidImageEvidence,
+                                        );
+                                    }
+                                    Some(HornTermRef::Variable {
+                                        variable: ScopedClauseVariable {
+                                            activation,
+                                            variable: *variable,
+                                        },
+                                        sort: node.sort,
+                                    })
+                                },
+                                None => None,
+                            };
+                            let collection = match operator {
+                                TheoryImageOperatorV1::Collection { kind, .. } => Some(*kind),
+                                _ => None,
+                            };
                             return Ok(HornTermView {
                                 term,
                                 sort: node.sort,
                                 form: HornTermForm::Application {
                                     operator: theory_operator_to_machine(operator),
                                     arguments: children,
+                                    collection,
+                                    remainder,
                                 },
                             });
                         },
@@ -1940,6 +2048,25 @@ where
                 },
                 HornTermRef::Ground { class, sort } => {
                     return self.view_ground(class, sort);
+                },
+                HornTermRef::Synthetic { term: term_id, sort } => {
+                    let synthetic = self
+                        .synthetic_terms
+                        .get(term_id)
+                        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+                    if synthetic.sort != sort {
+                        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+                    }
+                    return Ok(HornTermView {
+                        term,
+                        sort,
+                        form: HornTermForm::Application {
+                            operator: synthetic.operator.clone(),
+                            arguments: clone_copy_slice(&synthetic.arguments)?,
+                            collection: Some(synthetic.collection),
+                            remainder: synthetic.remainder,
+                        },
+                    });
                 },
             }
         }
@@ -1967,6 +2094,7 @@ where
             .split_first()
             .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
         let mut arguments = Vec::new();
+        let mut collection = None;
         match tag {
             0 => {
                 if payload.len() != 4 {
@@ -2060,6 +2188,7 @@ where
                 if sort != expected_sort || kind != *declared_kind || element != *declared_element {
                     return Err(SemanticMatchUndetermined::InvalidImageEvidence);
                 }
+                collection = Some(kind);
                 arguments
                     .try_reserve_exact(node.children.len())
                     .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
@@ -2189,7 +2318,12 @@ where
         Ok(HornTermView {
             term: HornTermRef::Ground { class, sort: expected_sort },
             sort: expected_sort,
-            form: HornTermForm::Application { operator: node.op.clone(), arguments },
+            form: HornTermForm::Application {
+                operator: node.op.clone(),
+                arguments,
+                collection,
+                remainder: None,
+            },
         })
     }
 
@@ -2280,71 +2414,467 @@ where
         Ok(false)
     }
 
-    fn unify(
-        &mut self,
+    fn push_unification_branch(
+        frontier: &mut VecDeque<HornUnificationBranch>,
+        branch: HornUnificationBranch,
+        frontier_limit: usize,
+    ) -> Result<(), SemanticMatchUndetermined> {
+        if frontier.len() == frontier_limit {
+            return Err(SemanticMatchUndetermined::FrontierLimitExceeded);
+        }
+        frontier
+            .try_reserve(1)
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        frontier.push_back(branch);
+        Ok(())
+    }
+
+    fn extend_unification_equations(
+        pending: &mut Vec<(HornTermRef, HornTermRef)>,
         equations: &[(HornTermRef, HornTermRef)],
-        substitution: &mut HornSubstitution,
-    ) -> Result<bool, SemanticMatchUndetermined> {
-        let mut pending = Vec::new();
+    ) -> Result<(), SemanticMatchUndetermined> {
         pending
-            .try_reserve_exact(equations.len())
+            .try_reserve(equations.len())
             .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
         pending.extend(equations.iter().copied().rev());
-        while let Some((left, right)) = pending.pop() {
-            self.charge()?;
-            let left = self.view(left, substitution)?;
-            let right = self.view(right, substitution)?;
-            if left.sort != right.sort {
-                return Ok(false);
+        Ok(())
+    }
+
+    fn collection_fragment(
+        &mut self,
+        sort: TheorySortId,
+        operator: &FramedSemanticOperator,
+        collection: CollectionKind,
+        arguments: Vec<HornTermRef>,
+        remainder: Option<HornTermRef>,
+    ) -> Result<HornTermRef, SemanticMatchUndetermined> {
+        if arguments.is_empty() {
+            if let Some(remainder) = remainder {
+                return Ok(remainder);
             }
+        }
+        self.charge()?;
+        self.synthetic_collection(sort, operator.clone(), collection, arguments, remainder)
+    }
+
+    fn expand_ordered_collection(
+        &mut self,
+        mut branch: HornUnificationBranch,
+        equation: HornCollectionEquation,
+    ) -> Result<Option<HornUnificationBranch>, SemanticMatchUndetermined> {
+        let HornCollectionEquation {
+            sort,
+            operator,
+            left_arguments,
+            left_remainder,
+            right_arguments,
+            right_remainder,
+            ..
+        } = equation;
+        let common = left_arguments.len().min(right_arguments.len());
+        let mut equations = Vec::new();
+        equations
+            .try_reserve_exact(common.saturating_add(1))
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        equations.extend(
+            left_arguments[..common]
+                .iter()
+                .copied()
+                .zip(right_arguments[..common].iter().copied()),
+        );
+
+        match left_arguments.len().cmp(&right_arguments.len()) {
+            std::cmp::Ordering::Equal => match (left_remainder, right_remainder) {
+                (Some(left), Some(right)) => equations.push((left, right)),
+                (Some(left), None) => {
+                    let empty = self.collection_fragment(
+                        sort,
+                        &operator,
+                        CollectionKind::List,
+                        Vec::new(),
+                        None,
+                    )?;
+                    equations.push((left, empty));
+                },
+                (None, Some(right)) => {
+                    let empty = self.collection_fragment(
+                        sort,
+                        &operator,
+                        CollectionKind::List,
+                        Vec::new(),
+                        None,
+                    )?;
+                    equations.push((empty, right));
+                },
+                (None, None) => {},
+            },
+            std::cmp::Ordering::Greater => {
+                let Some(right_tail) = right_remainder else {
+                    return Ok(None);
+                };
+                let left_extra = clone_copy_slice(&left_arguments[common..])?;
+                let fragment = self.collection_fragment(
+                    sort,
+                    &operator,
+                    CollectionKind::List,
+                    left_extra,
+                    left_remainder,
+                )?;
+                equations.push((right_tail, fragment));
+            },
+            std::cmp::Ordering::Less => {
+                let Some(left_tail) = left_remainder else {
+                    return Ok(None);
+                };
+                let right_extra = clone_copy_slice(&right_arguments[common..])?;
+                let fragment = self.collection_fragment(
+                    sort,
+                    &operator,
+                    CollectionKind::List,
+                    right_extra,
+                    right_remainder,
+                )?;
+                equations.push((left_tail, fragment));
+            },
+        }
+        Self::extend_unification_equations(&mut branch.pending, &equations)?;
+        Ok(Some(branch))
+    }
+
+    fn clone_row_pairing_branch(
+        branch: &HornRowPairingBranch,
+    ) -> Result<HornRowPairingBranch, SemanticMatchUndetermined> {
+        Ok(HornRowPairingBranch {
+            next_left: branch.next_left,
+            used_right: clone_copy_slice(&branch.used_right)?,
+            equations: clone_copy_slice(&branch.equations)?,
+            unmatched_left: clone_copy_slice(&branch.unmatched_left)?,
+        })
+    }
+
+    fn expand_unordered_collection(
+        &mut self,
+        branch: &HornUnificationBranch,
+        equation: &HornCollectionEquation,
+        frontier_limit: usize,
+    ) -> Result<Vec<HornUnificationBranch>, SemanticMatchUndetermined> {
+        let HornCollectionEquation {
+            sort,
+            operator,
+            collection,
+            left_arguments,
+            left_remainder,
+            right_arguments,
+            right_remainder,
+        } = equation;
+        let mut pairing_frontier = VecDeque::new();
+        let mut used_right = Vec::new();
+        used_right
+            .try_reserve_exact(right_arguments.len())
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        used_right.resize(right_arguments.len(), false);
+        Self::push_row_pairing_branch(
+            &mut pairing_frontier,
+            HornRowPairingBranch {
+                next_left: 0,
+                used_right,
+                equations: Vec::new(),
+                unmatched_left: Vec::new(),
+            },
+            frontier_limit,
+        )?;
+        let mut expanded = Vec::new();
+
+        while let Some(pairing) = pairing_frontier.pop_front() {
+            self.charge()?;
+            if pairing.next_left < left_arguments.len() {
+                let left = left_arguments[pairing.next_left];
+                for (right_index, &right) in right_arguments.iter().enumerate() {
+                    if pairing.used_right[right_index] {
+                        continue;
+                    }
+                    let mut candidate = Self::clone_row_pairing_branch(&pairing)?;
+                    candidate.next_left += 1;
+                    candidate.used_right[right_index] = true;
+                    candidate
+                        .equations
+                        .try_reserve(1)
+                        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+                    candidate.equations.push((left, right));
+                    Self::push_row_pairing_branch(
+                        &mut pairing_frontier,
+                        candidate,
+                        frontier_limit,
+                    )?;
+                }
+                if right_remainder.is_some() {
+                    let mut unmatched = Self::clone_row_pairing_branch(&pairing)?;
+                    unmatched.next_left += 1;
+                    unmatched
+                        .unmatched_left
+                        .try_reserve(1)
+                        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+                    unmatched.unmatched_left.push(left);
+                    Self::push_row_pairing_branch(
+                        &mut pairing_frontier,
+                        unmatched,
+                        frontier_limit,
+                    )?;
+                }
+                continue;
+            }
+
+            let mut unmatched_right = Vec::new();
+            unmatched_right
+                .try_reserve_exact(right_arguments.len())
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            unmatched_right.extend(
+                right_arguments
+                    .iter()
+                    .zip(&pairing.used_right)
+                    .filter_map(|(&term, &used)| (!used).then_some(term)),
+            );
+            if left_remainder.is_none() && !unmatched_right.is_empty() {
+                continue;
+            }
+
+            let mut equations = pairing.equations;
+            match (*left_remainder, *right_remainder) {
+                (None, None) => {
+                    if !pairing.unmatched_left.is_empty() {
+                        continue;
+                    }
+                },
+                (Some(left_tail), None) => {
+                    if !pairing.unmatched_left.is_empty() {
+                        continue;
+                    }
+                    let right_fragment = self.collection_fragment(
+                        *sort,
+                        operator,
+                        *collection,
+                        unmatched_right,
+                        None,
+                    )?;
+                    equations.push((left_tail, right_fragment));
+                },
+                (None, Some(right_tail)) => {
+                    let left_fragment = self.collection_fragment(
+                        *sort,
+                        operator,
+                        *collection,
+                        pairing.unmatched_left,
+                        None,
+                    )?;
+                    equations.push((right_tail, left_fragment));
+                },
+                (Some(left_tail), Some(right_tail)) => {
+                    let residual = HornTermRef::Variable {
+                        variable: ScopedClauseVariable {
+                            activation: self.fresh_activation()?,
+                            variable: TheoryVariableId(0),
+                        },
+                        sort: *sort,
+                    };
+                    let left_fragment = self.collection_fragment(
+                        *sort,
+                        operator,
+                        *collection,
+                        unmatched_right,
+                        Some(residual),
+                    )?;
+                    let right_fragment = self.collection_fragment(
+                        *sort,
+                        operator,
+                        *collection,
+                        pairing.unmatched_left,
+                        Some(residual),
+                    )?;
+                    equations.push((left_tail, left_fragment));
+                    equations.push((right_tail, right_fragment));
+                },
+            }
+
+            if expanded.len() == frontier_limit {
+                return Err(SemanticMatchUndetermined::FrontierLimitExceeded);
+            }
+            expanded
+                .try_reserve(1)
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            let mut pending = clone_copy_slice(&branch.pending)?;
+            Self::extend_unification_equations(&mut pending, &equations)?;
+            expanded.push(HornUnificationBranch {
+                pending,
+                substitution: clone_copy_slice(&branch.substitution)?,
+            });
+        }
+        Ok(expanded)
+    }
+
+    fn push_row_pairing_branch(
+        frontier: &mut VecDeque<HornRowPairingBranch>,
+        branch: HornRowPairingBranch,
+        frontier_limit: usize,
+    ) -> Result<(), SemanticMatchUndetermined> {
+        if frontier.len() == frontier_limit {
+            return Err(SemanticMatchUndetermined::FrontierLimitExceeded);
+        }
+        frontier
+            .try_reserve(1)
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        frontier.push_back(branch);
+        Ok(())
+    }
+
+    fn unify_all(
+        &mut self,
+        equations: &[(HornTermRef, HornTermRef)],
+        substitution: &HornSubstitution,
+        frontier_limit: usize,
+    ) -> Result<Vec<HornSubstitution>, SemanticMatchUndetermined> {
+        let mut pending = Vec::new();
+        Self::extend_unification_equations(&mut pending, equations)?;
+        let mut frontier = VecDeque::new();
+        Self::push_unification_branch(
+            &mut frontier,
+            HornUnificationBranch {
+                pending,
+                substitution: clone_copy_slice(substitution)?,
+            },
+            frontier_limit,
+        )?;
+        let mut solutions = Vec::new();
+
+        while let Some(mut branch) = frontier.pop_front() {
+            self.charge()?;
+            let Some((left, right)) = branch.pending.pop() else {
+                branch
+                    .substitution
+                    .sort_unstable_by_key(|(variable, _)| *variable);
+                if solutions.len() == frontier_limit {
+                    return Err(SemanticMatchUndetermined::FrontierLimitExceeded);
+                }
+                solutions
+                    .try_reserve(1)
+                    .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+                solutions.push(branch.substitution);
+                continue;
+            };
+            let left = self.view(left, &branch.substitution)?;
+            let right = self.view(right, &branch.substitution)?;
+            if left.sort != right.sort {
+                continue;
+            }
+            let sort = left.sort;
             let left_term = left.term;
             let right_term = right.term;
             match (left.form, right.form) {
                 (HornTermForm::Variable(left), HornTermForm::Variable(right)) if left == right => {
+                    Self::push_unification_branch(&mut frontier, branch, frontier_limit)?;
                 },
-                (HornTermForm::Variable(variable), form) => {
-                    let _ = form;
-                    if self.occurs(variable, right_term, substitution)? {
-                        return Ok(false);
+                (HornTermForm::Variable(variable), _) => {
+                    if self.occurs(variable, right_term, &branch.substitution)? {
+                        continue;
                     }
-                    substitution
+                    branch
+                        .substitution
                         .try_reserve(1)
                         .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
-                    substitution.push((variable, right_term));
+                    branch.substitution.push((variable, right_term));
+                    Self::push_unification_branch(&mut frontier, branch, frontier_limit)?;
                 },
-                (form, HornTermForm::Variable(variable)) => {
-                    let _ = form;
-                    if self.occurs(variable, left_term, substitution)? {
-                        return Ok(false);
+                (_, HornTermForm::Variable(variable)) => {
+                    if self.occurs(variable, left_term, &branch.substitution)? {
+                        continue;
                     }
-                    substitution
+                    branch
+                        .substitution
                         .try_reserve(1)
                         .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
-                    substitution.push((variable, left_term));
+                    branch.substitution.push((variable, left_term));
+                    Self::push_unification_branch(&mut frontier, branch, frontier_limit)?;
                 },
                 (
                     HornTermForm::Application {
                         operator: left_operator,
                         arguments: left_arguments,
+                        collection: left_collection,
+                        remainder: left_remainder,
                     },
                     HornTermForm::Application {
                         operator: right_operator,
                         arguments: right_arguments,
+                        collection: right_collection,
+                        remainder: right_remainder,
                     },
                 ) => {
-                    if left_operator != right_operator
-                        || left_arguments.len() != right_arguments.len()
-                    {
-                        return Ok(false);
+                    if left_operator != right_operator || left_collection != right_collection {
+                        continue;
                     }
-                    pending
-                        .try_reserve(left_arguments.len())
-                        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
-                    pending.extend(left_arguments.into_iter().zip(right_arguments).rev());
+                    match left_collection {
+                        None => {
+                            if left_remainder.is_some()
+                                || right_remainder.is_some()
+                                || left_arguments.len() != right_arguments.len()
+                            {
+                                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+                            }
+                            let equations = left_arguments
+                                .into_iter()
+                                .zip(right_arguments)
+                                .collect::<Vec<_>>();
+                            Self::extend_unification_equations(&mut branch.pending, &equations)?;
+                            Self::push_unification_branch(&mut frontier, branch, frontier_limit)?;
+                        },
+                        Some(CollectionKind::List) => {
+                            if let Some(branch) = self.expand_ordered_collection(
+                                branch,
+                                HornCollectionEquation {
+                                    sort,
+                                    operator: left_operator,
+                                    collection: CollectionKind::List,
+                                    left_arguments,
+                                    left_remainder,
+                                    right_arguments,
+                                    right_remainder,
+                                },
+                            )? {
+                                Self::push_unification_branch(
+                                    &mut frontier,
+                                    branch,
+                                    frontier_limit,
+                                )?;
+                            }
+                        },
+                        Some(collection) => {
+                            let equation = HornCollectionEquation {
+                                sort,
+                                operator: left_operator,
+                                collection,
+                                left_arguments,
+                                left_remainder,
+                                right_arguments,
+                                right_remainder,
+                            };
+                            for branch in self.expand_unordered_collection(
+                                &branch,
+                                &equation,
+                                frontier_limit,
+                            )? {
+                                Self::push_unification_branch(
+                                    &mut frontier,
+                                    branch,
+                                    frontier_limit,
+                                )?;
+                            }
+                        },
+                    }
                 },
             }
         }
-        Ok(true)
+        solutions.sort_unstable();
+        solutions.dedup();
+        Ok(solutions)
     }
 }
 
@@ -3087,13 +3617,35 @@ mod tests {
                     },
                 ),
                 sort(10, TheorySortKindImageV1::Opaque { abi: "test/opaque/1".into() }),
+                sort(
+                    11,
+                    TheorySortKindImageV1::Collection {
+                        kind: CollectionKind::Bag,
+                        key: None,
+                        element: TheorySortId(2),
+                    },
+                ),
             ],
-            constructors: vec![TheoryConstructorImageV1 {
-                id: TheoryConstructorId(0),
-                domain: Vec::new(),
-                codomain: TheorySortId(2),
-                grammar: None,
-            }],
+            constructors: vec![
+                TheoryConstructorImageV1 {
+                    id: TheoryConstructorId(0),
+                    domain: Vec::new(),
+                    codomain: TheorySortId(2),
+                    grammar: None,
+                },
+                TheoryConstructorImageV1 {
+                    id: TheoryConstructorId(1),
+                    domain: Vec::new(),
+                    codomain: TheorySortId(2),
+                    grammar: None,
+                },
+                TheoryConstructorImageV1 {
+                    id: TheoryConstructorId(2),
+                    domain: vec![TheorySortId(2)],
+                    codomain: TheorySortId(2),
+                    grammar: None,
+                },
+            ],
             rules: Vec::new(),
             patterns: TheoryPatternAutomatonV1 { states: Vec::new(), entries: Vec::new() },
             judgments: Vec::new(),
@@ -3127,8 +3679,24 @@ mod tests {
             work: 0,
             work_limit,
             is_cancelled: || false,
+            synthetic_terms: Vec::new(),
+            next_activation: 0,
         }
         .validate_ground_term(root, sort)
+    }
+
+    fn horn_variable(activation: u64, variable: u32, sort: u32) -> HornTermRef {
+        HornTermRef::Variable {
+            variable: ScopedClauseVariable {
+                activation,
+                variable: TheoryVariableId(variable),
+            },
+            sort: TheorySortId(sort),
+        }
+    }
+
+    fn horn_ground(class: EClassId, sort: u32) -> HornTermRef {
+        HornTermRef::Ground { class, sort: TheorySortId(sort) }
     }
 
     #[test]
@@ -3317,5 +3885,318 @@ mod tests {
             validate(&image, &egraph, wide, TheorySortId(3), 2),
             Err(SemanticMatchUndetermined::WorkBudgetExhausted),
         );
+    }
+
+    #[test]
+    fn horn_ordered_row_unification_binds_the_exact_suffix() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let zero = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            Vec::new(),
+        );
+        let one = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)),
+            Vec::new(),
+        );
+        let operator = TheoryImageOperatorV1::Collection {
+            sort: TheorySortId(3),
+            element: TheorySortId(2),
+            kind: CollectionKind::List,
+        };
+        let subject = add(&mut egraph, operator.clone(), vec![zero, one]);
+        let tail = horn_variable(7, 0, 3);
+        let mut evaluator = HornEvaluator {
+            image: &image,
+            egraph: &egraph,
+            work: 0,
+            work_limit: 10_000,
+            is_cancelled: || false,
+            synthetic_terms: Vec::new(),
+            next_activation: 100,
+        };
+        let pattern = evaluator
+            .synthetic_collection(
+                TheorySortId(3),
+                theory_operator_to_machine(&operator),
+                CollectionKind::List,
+                vec![horn_ground(zero, 2)],
+                Some(tail),
+            )
+            .expect("allocate ordered row pattern");
+        let solutions = evaluator
+            .unify_all(&[(pattern, horn_ground(subject, 3))], &Vec::new(), 16)
+            .expect("unify ordered row");
+        assert_eq!(solutions.len(), 1);
+        let view = evaluator
+            .view(tail, &solutions[0])
+            .expect("view exact suffix");
+        let HornTermForm::Application { arguments, collection, remainder, .. } = view.form else {
+            panic!("the ordered remainder must be a list");
+        };
+        assert_eq!(collection, Some(CollectionKind::List));
+        assert_eq!(remainder, None);
+        assert_eq!(arguments, vec![horn_ground(one, 2)]);
+    }
+
+    #[test]
+    fn horn_unordered_row_unification_enumerates_selection_and_exact_complement() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let zero = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            Vec::new(),
+        );
+        let one = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)),
+            Vec::new(),
+        );
+        let operator = TheoryImageOperatorV1::Collection {
+            sort: TheorySortId(11),
+            element: TheorySortId(2),
+            kind: CollectionKind::Bag,
+        };
+        let subject = add(&mut egraph, operator.clone(), vec![zero, one]);
+        let selected = horn_variable(7, 0, 2);
+        let remainder = horn_variable(7, 1, 11);
+        let mut evaluator = HornEvaluator {
+            image: &image,
+            egraph: &egraph,
+            work: 0,
+            work_limit: 10_000,
+            is_cancelled: || false,
+            synthetic_terms: Vec::new(),
+            next_activation: 100,
+        };
+        let pattern = evaluator
+            .synthetic_collection(
+                TheorySortId(11),
+                theory_operator_to_machine(&operator),
+                CollectionKind::Bag,
+                vec![selected],
+                Some(remainder),
+            )
+            .expect("allocate unordered row pattern");
+        let solutions = evaluator
+            .unify_all(&[(pattern, horn_ground(subject, 11))], &Vec::new(), 16)
+            .expect("unify unordered row");
+        assert_eq!(solutions.len(), 2);
+
+        let mut selections = Vec::new();
+        for solution in &solutions {
+            let selected_view = evaluator.view(selected, solution).expect("view selection");
+            let HornTermRef::Ground { class: selected_class, .. } = selected_view.term else {
+                panic!("selection must be ground");
+            };
+            let remainder_view = evaluator
+                .view(remainder, solution)
+                .expect("view complement");
+            let HornTermForm::Application {
+                arguments,
+                collection: Some(CollectionKind::Bag),
+                remainder: None,
+                ..
+            } = remainder_view.form
+            else {
+                panic!("complement must be one closed bag");
+            };
+            let [complement] = arguments.as_slice() else {
+                panic!("complement must preserve one occurrence");
+            };
+            let HornTermRef::Ground { class: complement_class, .. } = complement else {
+                panic!("complement occurrence must be ground");
+            };
+            selections.push((selected_class, *complement_class));
+        }
+        selections.sort_unstable();
+        assert_eq!(selections, vec![(zero, one), (one, zero)]);
+    }
+
+    #[test]
+    fn horn_open_rows_share_a_fresh_non_capturing_residual() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let zero = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            Vec::new(),
+        );
+        let one = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)),
+            Vec::new(),
+        );
+        let operator = TheoryImageOperatorV1::Collection {
+            sort: TheorySortId(11),
+            element: TheorySortId(2),
+            kind: CollectionKind::Bag,
+        };
+        let left_tail = horn_variable(7, 0, 11);
+        let right_tail = horn_variable(8, 0, 11);
+        let mut evaluator = HornEvaluator {
+            image: &image,
+            egraph: &egraph,
+            work: 0,
+            work_limit: 10_000,
+            is_cancelled: || false,
+            synthetic_terms: Vec::new(),
+            next_activation: 100,
+        };
+        let left = evaluator
+            .synthetic_collection(
+                TheorySortId(11),
+                theory_operator_to_machine(&operator),
+                CollectionKind::Bag,
+                vec![horn_ground(zero, 2)],
+                Some(left_tail),
+            )
+            .expect("allocate left row");
+        let right = evaluator
+            .synthetic_collection(
+                TheorySortId(11),
+                theory_operator_to_machine(&operator),
+                CollectionKind::Bag,
+                vec![horn_ground(one, 2)],
+                Some(right_tail),
+            )
+            .expect("allocate right row");
+        let solutions = evaluator
+            .unify_all(&[(left, right)], &Vec::new(), 16)
+            .expect("unify two open rows");
+        assert_eq!(solutions.len(), 1);
+
+        let left_view = evaluator
+            .view(left_tail, &solutions[0])
+            .expect("view left tail");
+        let right_view = evaluator
+            .view(right_tail, &solutions[0])
+            .expect("view right tail");
+        let HornTermForm::Application {
+            arguments: left_arguments,
+            remainder: Some(left_residual),
+            ..
+        } = left_view.form
+        else {
+            panic!("left tail must retain the shared residual");
+        };
+        let HornTermForm::Application {
+            arguments: right_arguments,
+            remainder: Some(right_residual),
+            ..
+        } = right_view.form
+        else {
+            panic!("right tail must retain the shared residual");
+        };
+        assert_eq!(left_arguments, vec![horn_ground(one, 2)]);
+        assert_eq!(right_arguments, vec![horn_ground(zero, 2)]);
+        assert_eq!(left_residual, right_residual);
+        let HornTermRef::Variable { variable: residual, .. } = left_residual else {
+            panic!("the residual must remain a fresh row variable");
+        };
+        assert_ne!(residual.activation, 7);
+        assert_ne!(residual.activation, 8);
+    }
+
+    #[test]
+    fn horn_row_unification_bounds_branching_and_cancellation_without_partial_results() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let zero = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            Vec::new(),
+        );
+        let one = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)),
+            Vec::new(),
+        );
+        let operator = TheoryImageOperatorV1::Collection {
+            sort: TheorySortId(11),
+            element: TheorySortId(2),
+            kind: CollectionKind::Bag,
+        };
+        let subject = add(&mut egraph, operator.clone(), vec![zero, one]);
+        let mut bounded = HornEvaluator {
+            image: &image,
+            egraph: &egraph,
+            work: 0,
+            work_limit: 10_000,
+            is_cancelled: || false,
+            synthetic_terms: Vec::new(),
+            next_activation: 100,
+        };
+        let pattern = bounded
+            .synthetic_collection(
+                TheorySortId(11),
+                theory_operator_to_machine(&operator),
+                CollectionKind::Bag,
+                vec![horn_variable(7, 0, 2)],
+                Some(horn_variable(7, 1, 11)),
+            )
+            .expect("allocate bounded pattern");
+        assert_eq!(
+            bounded.unify_all(&[(pattern, horn_ground(subject, 11))], &Vec::new(), 1),
+            Err(SemanticMatchUndetermined::FrontierLimitExceeded),
+        );
+
+        let mut cancelled = HornEvaluator {
+            image: &image,
+            egraph: &egraph,
+            work: 0,
+            work_limit: 10_000,
+            is_cancelled: || true,
+            synthetic_terms: Vec::new(),
+            next_activation: 100,
+        };
+        assert_eq!(
+            cancelled.unify_all(&[(horn_ground(zero, 2), horn_ground(zero, 2))], &Vec::new(), 16,),
+            Err(SemanticMatchUndetermined::Cancelled),
+        );
+    }
+
+    #[test]
+    fn horn_unification_is_stack_safe_at_twenty_thousand_constructor_layers() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let image = signature_image();
+                let mut egraph = EGraph::new();
+                let mut root = add(
+                    &mut egraph,
+                    TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+                    Vec::new(),
+                );
+                for _ in 0..20_000 {
+                    root = add(
+                        &mut egraph,
+                        TheoryImageOperatorV1::Constructor(TheoryConstructorId(2)),
+                        vec![root],
+                    );
+                }
+                let mut evaluator = HornEvaluator {
+                    image: &image,
+                    egraph: &egraph,
+                    work: 0,
+                    work_limit: 200_000,
+                    is_cancelled: || false,
+                    synthetic_terms: Vec::new(),
+                    next_activation: 0,
+                };
+                assert_eq!(
+                    evaluator
+                        .unify_all(&[(horn_ground(root, 2), horn_ground(root, 2))], &Vec::new(), 1,)
+                        .expect("unify deep ground terms")
+                        .len(),
+                    1,
+                );
+            })
+            .expect("spawn small-stack unifier test")
+            .join()
+            .expect("small-stack unifier test must not overflow");
     }
 }

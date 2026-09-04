@@ -927,6 +927,125 @@ Proof.
   apply scoped_variable_eqb_spec in Hequal. contradiction.
 Qed.
 
+(** Nested semantic transitions execute in a fresh child frame.  Returning a
+    child result resumes from the saved parent substitution and binds only the
+    declared target variable; the child's private substitution is deliberately
+    not an argument to [resume_transition].  This is the semantic counterpart
+    of the runtime's explicit continuation stack. *)
+Record TransitionResumeFrame := {
+  transition_parent_substitution : ScopedSubstitution;
+  transition_target_variable : ScopedVariable
+}.
+
+Definition resume_transition
+    (frame : TransitionResumeFrame) (successor : LogicTerm)
+    : ScopedSubstitution :=
+  extend_scoped
+    (transition_target_variable frame)
+    successor
+    (transition_parent_substitution frame).
+
+Definition resume_nested_transition
+    (frame : TransitionResumeFrame) (successor : LogicTerm)
+    (_child_private_substitution : ScopedSubstitution)
+    : ScopedSubstitution :=
+  resume_transition frame successor.
+
+Theorem resumed_transition_binds_exact_target :
+  forall frame successor,
+    lookup_scoped
+      (transition_target_variable frame)
+      (resume_transition frame successor) = Some successor.
+Proof.
+  intros frame successor.
+  unfold resume_transition, extend_scoped. simpl.
+  rewrite (proj2
+    (scoped_variable_eqb_spec
+      (transition_target_variable frame)
+      (transition_target_variable frame)) eq_refl).
+  reflexivity.
+Qed.
+
+Theorem resumed_transition_preserves_every_parent_binding :
+  forall frame successor other,
+    other <> transition_target_variable frame ->
+    lookup_scoped other (resume_transition frame successor) =
+    lookup_scoped other (transition_parent_substitution frame).
+Proof.
+  intros frame successor other Hdifferent.
+  unfold resume_transition.
+  now apply extending_one_scoped_variable_preserves_every_other_lookup.
+Qed.
+
+Theorem child_substitutions_cannot_escape_transition_resume :
+  forall frame successor
+    (child_left child_right : ScopedSubstitution),
+    resume_nested_transition frame successor child_left =
+    resume_nested_transition frame successor child_right.
+Proof. reflexivity. Qed.
+
+(** A universal collection premise evaluates its body in an overlay and then
+    restores the exact saved outer substitution.  Consequently quantified and
+    body-local derived variables cannot survive one element iteration or leak
+    into the next. *)
+Record ForAllScope := {
+  forall_outer_substitution : ScopedSubstitution;
+  forall_parameter_variable : ScopedVariable;
+  forall_element_value : LogicTerm
+}.
+
+Definition enter_forall_scope (scope : ForAllScope) : ScopedSubstitution :=
+  extend_scoped
+    (forall_parameter_variable scope)
+    (forall_element_value scope)
+    (forall_outer_substitution scope).
+
+Definition leave_forall_scope
+    (scope : ForAllScope) (_body_private_substitution : ScopedSubstitution)
+    : ScopedSubstitution :=
+  forall_outer_substitution scope.
+
+Theorem entered_forall_scope_binds_exact_element :
+  forall scope,
+    lookup_scoped
+      (forall_parameter_variable scope)
+      (enter_forall_scope scope) = Some (forall_element_value scope).
+Proof.
+  intro scope.
+  unfold enter_forall_scope, extend_scoped. simpl.
+  rewrite (proj2
+    (scoped_variable_eqb_spec
+      (forall_parameter_variable scope)
+      (forall_parameter_variable scope)) eq_refl).
+  reflexivity.
+Qed.
+
+Theorem leaving_forall_scope_restores_exact_outer_substitution :
+  forall scope (body_private_substitution : ScopedSubstitution),
+    leave_forall_scope scope body_private_substitution =
+    forall_outer_substitution scope.
+Proof. reflexivity. Qed.
+
+(** AC row unification may need a fresh residual row shared by the two tail
+    bindings.  The residual row is allocated in a globally fresh activation,
+    rather than borrowing a clause-local index.  This is the same monotone
+    activation namespace used by the runtime and makes non-capture independent
+    of how many locals a clause declares. *)
+Definition internal_scoped_variable
+    (fresh_activation : nat) : ScopedVariable :=
+  {| scoped_activation := fresh_activation;
+     scoped_local := 0 |}.
+
+Theorem internal_row_variable_cannot_capture_declared_variable :
+  forall fresh_activation clause_activation declared_local,
+    fresh_activation <> clause_activation ->
+    internal_scoped_variable fresh_activation <>
+    {| scoped_activation := clause_activation; scoped_local := declared_local |}.
+Proof.
+  intros fresh_activation clause_activation declared_local Hfresh Hequal.
+  inversion Hequal. contradiction.
+Qed.
+
 Inductive UnificationHeadDecision :=
 | UnificationHeadIdentity
 | UnificationHeadBind (decision : BindingDecision)
@@ -1038,6 +1157,38 @@ Proof.
   intros subject fixed_count selected remainder Hadmitted.
   unfold admitted_unordered_collection_branch in Hadmitted.
   now apply ac_select_partitions_bag in Hadmitted.
+Qed.
+
+(** A two-sided unordered-row branch chooses the same number of fixed
+    occurrences from each side.  Semantic unification subsequently pairs the
+    two selected lists; before any pair is admitted, both selections already
+    carry exact, disjoint complements.  Unmatched right occurrences populate
+    the left tail, unmatched left occurrences populate the right tail, and an
+    internal fresh residual row is shared when both source rows are open. *)
+Definition admitted_unordered_row_pairing
+    (left right : list nat) (paired_count : nat)
+    (left_selected left_unmatched right_selected right_unmatched : list nat)
+    : Prop :=
+  In (left_selected, left_unmatched) (ac_select left paired_count) /\
+  In (right_selected, right_unmatched) (ac_select right paired_count).
+
+Theorem admitted_unordered_row_pairing_partitions_both_sides :
+  forall left right paired_count
+    left_selected left_unmatched right_selected right_unmatched,
+    admitted_unordered_row_pairing
+      left right paired_count
+      left_selected left_unmatched right_selected right_unmatched ->
+    Permutation left (left_selected ++ left_unmatched) /\
+    length left_selected = paired_count /\
+    Permutation right (right_selected ++ right_unmatched) /\
+    length right_selected = paired_count.
+Proof.
+  intros left right paired_count
+    left_selected left_unmatched right_selected right_unmatched
+    [Hleft Hright].
+  apply ac_select_partitions_bag in Hleft.
+  apply ac_select_partitions_bag in Hright.
+  tauto.
 Qed.
 
 (** Range restriction is a sufficient fast-path condition, not an admission
@@ -1301,11 +1452,18 @@ Print Assumptions different_activations_cannot_capture_the_same_local_variable.
 Print Assumptions accepted_binding_is_occurs_free.
 Print Assumptions self_binding_is_identity_not_a_cycle.
 Print Assumptions extending_one_scoped_variable_preserves_every_other_lookup.
+Print Assumptions resumed_transition_binds_exact_target.
+Print Assumptions resumed_transition_preserves_every_parent_binding.
+Print Assumptions child_substitutions_cannot_escape_transition_resume.
+Print Assumptions entered_forall_scope_binds_exact_element.
+Print Assumptions leaving_forall_scope_restores_exact_outer_substitution.
+Print Assumptions internal_row_variable_cannot_capture_declared_variable.
 Print Assumptions different_constructor_heads_are_rejected_before_decomposition.
 Print Assumptions different_constructor_arities_are_rejected_before_decomposition.
 Print Assumptions compatible_constructor_heads_decompose_positionally.
 Print Assumptions accepted_ordered_collection_split_is_exact.
 Print Assumptions admitted_unordered_collection_branch_is_exact.
+Print Assumptions admitted_unordered_row_pairing_partitions_both_sides.
 Print Assumptions range_restricted_premise_is_ground_after_conclusion_match.
 Print Assumptions substitution_signature_recovers_the_function_domain_and_codomain.
 Print Assumptions abstraction_signature_places_the_binder_before_the_body.
