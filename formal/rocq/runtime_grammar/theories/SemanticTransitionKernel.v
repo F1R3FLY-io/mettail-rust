@@ -18,8 +18,9 @@
   Rocq 9.1 compatible.  No admitted results, axioms, or assumptions.
 *)
 
-From Stdlib Require Import List Bool PeanoNat.
+From Stdlib Require Import List Bool PeanoNat Permutation.
 From Stdlib Require Import Lia.
+From Dovetail.Lowering Require Import CollectionAcLowering.
 
 Import ListNotations.
 
@@ -993,6 +994,81 @@ Proof.
   simpl. rewrite !Nat.eqb_refl. now rewrite Harity, Nat.eqb_refl.
 Qed.
 
+(** Collection patterns are not positional applications.  An ordered
+    collection with a remainder consumes a prefix and binds the exact suffix;
+    an unordered collection enumerates positional sub-multiset splits and
+    binds the exact complement.  The latter reuses Dovetail's proved lazy
+    selector rather than introducing a second enumeration semantics in the
+    semantic kernel. *)
+Definition ordered_collection_split
+    (fixed_count : nat) (subject : list nat)
+    : option (list nat * list nat) :=
+  if fixed_count <=? length subject
+  then Some (firstn fixed_count subject, skipn fixed_count subject)
+  else None.
+
+Theorem accepted_ordered_collection_split_is_exact :
+  forall fixed_count subject selected remainder,
+    ordered_collection_split fixed_count subject =
+      Some (selected, remainder) ->
+    subject = selected ++ remainder /\
+    length selected = fixed_count.
+Proof.
+  intros fixed_count subject selected remainder Hsplit.
+  unfold ordered_collection_split in Hsplit.
+  destruct (fixed_count <=? length subject) eqn:Hfits; try discriminate.
+  inversion Hsplit; subst; clear Hsplit.
+  split.
+  - symmetry. apply firstn_skipn.
+  - rewrite length_firstn. apply Nat.min_l. now apply Nat.leb_le.
+Qed.
+
+Definition admitted_unordered_collection_branch
+    (subject : list nat) (fixed_count : nat)
+    (selected remainder : list nat) : Prop :=
+  In (selected, remainder) (ac_select subject fixed_count).
+
+Theorem admitted_unordered_collection_branch_is_exact :
+  forall subject fixed_count selected remainder,
+    admitted_unordered_collection_branch
+      subject fixed_count selected remainder ->
+    Permutation subject (selected ++ remainder) /\
+    length selected = fixed_count.
+Proof.
+  intros subject fixed_count selected remainder Hadmitted.
+  unfold admitted_unordered_collection_branch in Hadmitted.
+  now apply ac_select_partitions_bag in Hadmitted.
+Qed.
+
+(** Range restriction is a sufficient fast-path condition, not an admission
+    restriction on the Horn language.  When every variable used by a premise
+    occurs in its conclusion, matching a ground conclusion grounds every
+    recursive premise.  The full evaluator additionally gives each clause
+    activation a fresh variable namespace (proved above), so premise-only
+    variables remain sound bounded search variables rather than being captured
+    or silently rejected.  Collection matching itself remains directional;
+    unrestricted symmetric AC row unification is not confused with matching. *)
+Definition variables_covered
+    (conclusion_variables premise_variables : list nat) : Prop :=
+  forall variable,
+    In variable premise_variables -> In variable conclusion_variables.
+
+Definition variables_bound
+    (substitution_domain variables : list nat) : Prop :=
+  forall variable,
+    In variable variables -> In variable substitution_domain.
+
+Theorem range_restricted_premise_is_ground_after_conclusion_match :
+  forall conclusion_variables premise_variables substitution_domain,
+    variables_covered conclusion_variables premise_variables ->
+    variables_bound substitution_domain conclusion_variables ->
+    variables_bound substitution_domain premise_variables.
+Proof.
+  intros conclusion_variables premise_variables substitution_domain
+    Hcovered Hbound variable Hvariable.
+  apply Hbound. now apply Hcovered.
+Qed.
+
 (** Runtime terms are supplied by an untrusted caller, whereas the source
     theory is no longer consulted on the execution hot path.  The semantic
     image must therefore retain a dense, independently checked description of
@@ -1228,6 +1304,9 @@ Print Assumptions extending_one_scoped_variable_preserves_every_other_lookup.
 Print Assumptions different_constructor_heads_are_rejected_before_decomposition.
 Print Assumptions different_constructor_arities_are_rejected_before_decomposition.
 Print Assumptions compatible_constructor_heads_decompose_positionally.
+Print Assumptions accepted_ordered_collection_split_is_exact.
+Print Assumptions admitted_unordered_collection_branch_is_exact.
+Print Assumptions range_restricted_premise_is_ground_after_conclusion_match.
 Print Assumptions substitution_signature_recovers_the_function_domain_and_codomain.
 Print Assumptions abstraction_signature_places_the_binder_before_the_body.
 Print Assumptions result_only_substitution_signature_is_ambiguous.

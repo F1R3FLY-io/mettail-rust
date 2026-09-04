@@ -1081,7 +1081,7 @@ fn flat_left_pattern(
     flat_pattern_from_roots(&rule.terms, &[rule.left], None, rule.id.0)
 }
 
-fn flat_pattern_from_roots(
+pub(crate) fn flat_pattern_from_roots(
     terms: &[TheoryImageTermNodeV1],
     roots: &[TheoryTermId],
     wrapper: Option<TheoryImageOperatorV1>,
@@ -1130,34 +1130,59 @@ fn flat_pattern_from_roots(
         if !reachable[index] {
             continue;
         }
-        let node = match &term.form {
-            TheoryImageTermFormV1::Slot(variable) => {
-                FlatPatternNode::Var(automaton_variable(*variable))
-            },
-            TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } => {
-                if remainder.is_some() {
-                    return Err(TheoryImageCompileError::UnknownReference {
-                        kind: "positional collection remainder",
-                        name: format!("rule#{owner}"),
-                    });
-                }
-                let mut children = empty_vec(slots.len() + arguments.len())?;
-                for variable in slots {
-                    let child = nodes.len();
-                    nodes.push(FlatPatternNode::Var(automaton_variable(*variable)));
-                    children.push(child);
-                }
-                for argument in arguments {
-                    children.push(translated[argument.0 as usize].ok_or_else(|| {
-                        TheoryImageCompileError::UnknownReference {
-                            kind: "backward pattern term",
-                            name: format!("#{}", argument.0),
-                        }
-                    })?);
-                }
-                FlatPatternNode::App { op: operator.clone(), args: children }
-            },
-        };
+        let node =
+            match &term.form {
+                TheoryImageTermFormV1::Slot(variable) => {
+                    FlatPatternNode::Var(automaton_variable(*variable))
+                },
+                TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } => {
+                    let mut children = empty_vec(slots.len() + arguments.len())?;
+                    for variable in slots {
+                        let child = nodes.len();
+                        nodes.push(FlatPatternNode::Var(automaton_variable(*variable)));
+                        children.push(child);
+                    }
+                    for argument in arguments {
+                        children.push(translated[argument.0 as usize].ok_or_else(|| {
+                            TheoryImageCompileError::UnknownReference {
+                                kind: "backward pattern term",
+                                name: format!("#{}", argument.0),
+                            }
+                        })?);
+                    }
+                    match operator {
+                        TheoryImageOperatorV1::Collection {
+                            kind: CollectionKind::List, ..
+                        } if remainder.is_some() => FlatPatternNode::OrderedCollection {
+                            op: operator.clone(),
+                            fixed: children,
+                            rest: remainder.map(automaton_variable),
+                        },
+                        TheoryImageOperatorV1::Collection {
+                            kind:
+                                CollectionKind::Bag
+                                | CollectionKind::Set
+                                | CollectionKind::Map
+                                | CollectionKind::PathMap,
+                            ..
+                        } => FlatPatternNode::UnorderedCollection {
+                            op: operator.clone(),
+                            fixed: children,
+                            rest: remainder.map(automaton_variable),
+                        },
+                        TheoryImageOperatorV1::Collection { .. } => {
+                            FlatPatternNode::App { op: operator.clone(), args: children }
+                        },
+                        _ if remainder.is_some() => {
+                            return Err(TheoryImageCompileError::UnknownReference {
+                                kind: "non-collection pattern remainder",
+                                name: format!("rule#{owner}"),
+                            });
+                        },
+                        _ => FlatPatternNode::App { op: operator.clone(), args: children },
+                    }
+                },
+            };
         let target = nodes.len();
         nodes.push(node);
         translated[index] = Some(target);
@@ -1651,13 +1676,20 @@ mod tests {
         let matcher =
             SemanticTransitionMatcher::restore(&image).expect("the semantic matcher restores once");
         let granted = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let match_limits = SemanticTransitionLimits {
+            work: 100_000,
+            outputs: 64,
+            frontier: 100_000,
+            output_nodes: 64,
+            output_bytes: 64 * 1024,
+        };
         let decision = matcher.match_action(
             &image,
             TheoryActionId(0),
             &granted,
-            &egraph,
+            &mut egraph,
             root,
-            u64::MAX,
+            match_limits,
             || false,
         );
         let SemanticMatchDecision::Proven(proven) = decision else {
@@ -1683,9 +1715,9 @@ mod tests {
                 &image,
                 TheoryActionId(0),
                 &granted,
-                &egraph,
+                &mut egraph,
                 forged_root,
-                u64::MAX,
+                match_limits,
                 || false,
             ),
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
@@ -1697,9 +1729,9 @@ mod tests {
                 &image,
                 TheoryActionId(0),
                 &LanguageRights::none(),
-                &egraph,
+                &mut egraph,
                 root,
-                u64::MAX,
+                match_limits,
                 || false,
             ),
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
@@ -1709,9 +1741,9 @@ mod tests {
                 &image,
                 TheoryActionId(0),
                 &granted,
-                &egraph,
+                &mut egraph,
                 root,
-                u64::MAX,
+                match_limits,
                 || true,
             ),
             SemanticMatchDecision::Undetermined {
@@ -1737,6 +1769,7 @@ mod tests {
             SemanticTransitionLimits {
                 work: 10_000,
                 outputs: 4,
+                frontier: 1_000,
                 output_nodes: 16,
                 output_bytes: 64 * 1024,
             },
@@ -2346,6 +2379,147 @@ mod tests {
         image
             .validate(&language, TheoryImageAdmissionLimits::default())
             .expect("complete non-positional program validates");
+    }
+
+    #[test]
+    fn generalized_collection_rule_executes_with_exact_remainder_binding() {
+        let mut language = fixture();
+        language.theory.sorts.push(TheorySortV1 {
+            name: "SetExpr".into(),
+            kind: TheorySortKindV1::Collection {
+                kind: CollectionKind::Set,
+                key: None,
+                element: "Expr".into(),
+            },
+        });
+        language.theory.rewrites.push(TheoryRewriteV1 {
+            name: "choose-one".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![
+                    variable(0, "x"),
+                    TheoryVariableV1 {
+                        id: TheoryVariableId(1),
+                        name: "rest".into(),
+                        sort: "SetExpr".into(),
+                        role: TheoryVariableRoleV1::Remainder,
+                    },
+                ],
+                terms: vec![
+                    term_variable(0),
+                    TheoryTermNodeV1 {
+                        sort: "SetExpr".into(),
+                        form: TheoryTermFormV1::Collection {
+                            elements: vec![TheoryTermId(0)],
+                            remainder: Some(TheoryVariableId(1)),
+                        },
+                    },
+                    TheoryTermNodeV1 {
+                        sort: "SetExpr".into(),
+                        form: TheoryTermFormV1::Collection {
+                            elements: vec![TheoryTermId(0)],
+                            remainder: None,
+                        },
+                    },
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(2),
+        });
+        let action = &mut language.theory.actions[0];
+        action.domain = vec!["SetExpr".into()];
+        action.codomain = "SetExpr".into();
+        action.grade = "SetExpr".into();
+        action.transition = TheoryRuleReferenceV1::Rewrite("choose-one".into());
+        language
+            .validate()
+            .expect("generalized language is admitted");
+
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile generalized executable image");
+        assert_eq!(image.actions[0].transitions, vec![TheoryRuleProgramId(3)]);
+        assert!(image
+            .patterns
+            .entries
+            .iter()
+            .all(|entry| entry.rule != TheoryRuleProgramId(3)));
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("restore generalized matcher");
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let collection_operator = theory_operator_to_machine(&TheoryImageOperatorV1::Collection {
+            sort: TheorySortId(1),
+            element: TheorySortId(0),
+            kind: CollectionKind::Set,
+        });
+        let mut children = vec![zero, wrapped];
+        children.sort_by_cached_key(|&child| graph.canonical_class_key(child));
+        let root = graph.add(ENode::new(collection_operator.clone(), children));
+        let granted = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let limits = SemanticTransitionLimits {
+            work: 100_000,
+            outputs: 8,
+            frontier: 100_000,
+            output_nodes: 64,
+            output_bytes: 64 * 1024,
+        };
+        let decision = matcher.match_action(
+            &image,
+            TheoryActionId(0),
+            &granted,
+            &mut graph,
+            root,
+            limits,
+            || false,
+        );
+        let SemanticMatchDecision::Proven(proven) = decision else {
+            panic!("generalized action must match: {decision:?}");
+        };
+        assert_eq!(proven.matches.len(), 2);
+        for matched in &proven.matches {
+            let selected = matched.substitution[&TheoryVariableId(0)];
+            let rest = matched.substitution[&TheoryVariableId(1)];
+            assert_ne!(graph.find(selected), graph.find(rest));
+            assert!(graph
+                .nodes(rest)
+                .iter()
+                .any(|node| { node.op == collection_operator && node.children.len() == 1 }));
+        }
+
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            root,
+            SemanticInputLimits {
+                work: 10_000,
+                nodes: 64,
+                bytes: 64 * 1024,
+            },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("generalized input must be admitted"),
+        };
+        let decision =
+            matcher.execute_action(&image, TheoryActionId(0), &granted, input, limits, || false);
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("generalized action must execute");
+        };
+        assert_eq!(proven.transitions.len(), 2);
+        assert!(proven.transitions.iter().all(|transition| {
+            proven
+                .egraph()
+                .nodes(transition.output)
+                .iter()
+                .any(|node| node.op == collection_operator && node.children.len() == 1)
+        }));
     }
 
     #[test]

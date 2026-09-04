@@ -37,6 +37,7 @@
 
 pub mod egraph;
 pub mod extract;
+pub mod flat_matcher;
 pub mod hash;
 pub mod key;
 pub mod report;

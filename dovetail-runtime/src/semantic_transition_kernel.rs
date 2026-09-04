@@ -1,15 +1,18 @@
 //! Runtime execution boundary for verified GSLT semantic images.
 //!
-//! This module restores the compiler-produced positional pattern quotient
-//! directly into Dovetail's existing bounded set-automaton evaluator.  It does
-//! not rebuild source patterns, parse text, or introduce another matcher.
+//! This module restores the compiler-produced positional pattern quotient and
+//! source-exact generalized flat patterns directly into Dovetail's bounded
+//! evaluators. It does not rebuild source syntax, parse text, or introduce a
+//! second semantic evaluator.
 
+use crate::theory_image_compiler::flat_pattern_from_roots;
+use dovetail::flat_matcher::{match_flat_eclass_bounded, FlatMatchLimits, FlatMatchStop};
 use dovetail::key::{ContentKey, FramedSemanticOperator, SemanticHash};
 use dovetail::rules::Subst;
 use dovetail::set_automaton::{
     FlatAutomatonEntryImage, FlatAutomatonImage, FlatAutomatonInvocationImage,
-    FlatAutomatonNodeImage, FlatAutomatonRestoreError, FlatAutomatonStateImage, PatternId,
-    SetAutomaton, SetAutomatonSearchStop, SetAutomatonStats,
+    FlatAutomatonNodeImage, FlatAutomatonRestoreError, FlatAutomatonStateImage, FlatPattern,
+    FlatPatternNode, PatternId, SetAutomaton, SetAutomatonSearchStop, SetAutomatonStats,
 };
 use dovetail::{egraph::EClassId, egraph::EGraph, egraph::ENode};
 use mettail_grammar_core::{
@@ -17,8 +20,9 @@ use mettail_grammar_core::{
     TheoryEffectId, TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
     TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId, TheoryLimitsV1,
     TheoryLiteralCarrierV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
-    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleProgramId,
-    TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1, TheoryVariableId,
+    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
+    TheoryRuleProgramId, TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1,
+    TheoryVariableId,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -38,13 +42,18 @@ pub fn theory_operator_to_machine(operator: &TheoryImageOperatorV1) -> FramedSem
     )
 }
 
-/// Failure restoring an admitted theory's positional matcher.
+/// Failure restoring an admitted theory's reusable matchers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TheoryPatternRestoreError {
     /// A dense image identifier cannot be represented on this target.
     IdentifierOverflow,
     /// The image violated Dovetail's canonical flat-automaton contract.
     Automaton(FlatAutomatonRestoreError),
+    /// A source-exact rule program could not be projected to the generalized
+    /// flat algebra. An admitted image must never reach this state.
+    InvalidGeneralizedPattern,
+    /// A checked allocation failed while restoring reusable matcher state.
+    Allocation,
 }
 
 impl From<FlatAutomatonRestoreError> for TheoryPatternRestoreError {
@@ -186,6 +195,39 @@ fn restore_theory_pattern_parts(
     }
 
     SetAutomaton::restore_flat_image(FlatAutomatonImage { states, entries }).map_err(Into::into)
+}
+
+fn theory_flat_pattern_to_machine(
+    source: FlatPattern<TheoryImageOperatorV1>,
+) -> Result<FlatPattern<FramedSemanticOperator>, TheoryPatternRestoreError> {
+    let mut nodes = Vec::new();
+    nodes
+        .try_reserve_exact(source.nodes.len())
+        .map_err(|_| TheoryPatternRestoreError::Allocation)?;
+    for node in source.nodes {
+        nodes.push(match node {
+            FlatPatternNode::Var(name) => FlatPatternNode::Var(name),
+            FlatPatternNode::App { op, args } => FlatPatternNode::App {
+                op: theory_operator_to_machine(&op),
+                args,
+            },
+            FlatPatternNode::OrderedCollection { op, fixed, rest } => {
+                FlatPatternNode::OrderedCollection {
+                    op: theory_operator_to_machine(&op),
+                    fixed,
+                    rest,
+                }
+            },
+            FlatPatternNode::UnorderedCollection { op, fixed, rest } => {
+                FlatPatternNode::UnorderedCollection {
+                    op: theory_operator_to_machine(&op),
+                    fixed,
+                    rest,
+                }
+            },
+        });
+    }
+    Ok(FlatPattern { nodes, root: source.root })
 }
 
 /// Why bounded semantic matching could not establish a complete answer.
@@ -412,37 +454,62 @@ pub enum SemanticInputDecision {
     },
 }
 
-/// Verified positional matcher shared by action execution and OSLF checking.
+/// Verified matcher shared by action execution and OSLF checking.
 ///
-/// Construction restores the exact quotient once. Calls never mutate the
-/// matcher; all per-request substitutions and diagnostics remain private until
-/// a complete bounded scan and action filter have succeeded.
+/// Construction restores the exact positional quotient and prepares only the
+/// non-positional flat rule programs once. Calls never mutate the matcher; all
+/// per-request substitutions and diagnostics remain private until a complete
+/// bounded scan and action filter have succeeded.
 pub struct SemanticTransitionMatcher {
     transition_automaton: SetAutomaton<FramedSemanticOperator>,
     judgment_automaton: SetAutomaton<FramedSemanticOperator>,
+    generalized_transition_patterns: Vec<Option<FlatPattern<FramedSemanticOperator>>>,
 }
 
 impl SemanticTransitionMatcher {
     pub fn restore(image: &TheorySemanticImageV1) -> Result<Self, TheoryPatternRestoreError> {
+        let positional: BTreeSet<_> = image
+            .patterns
+            .entries
+            .iter()
+            .map(|entry| entry.rule)
+            .collect();
+        let mut generalized_transition_patterns = Vec::new();
+        generalized_transition_patterns
+            .try_reserve_exact(image.rules.len())
+            .map_err(|_| TheoryPatternRestoreError::Allocation)?;
+        for rule in &image.rules {
+            let pattern = if rule.disposition == TheoryRuleDispositionV1::Executable
+                && !positional.contains(&rule.id)
+            {
+                let source = flat_pattern_from_roots(&rule.terms, &[rule.left], None, rule.id.0)
+                    .map_err(|_| TheoryPatternRestoreError::InvalidGeneralizedPattern)?;
+                Some(theory_flat_pattern_to_machine(source)?)
+            } else {
+                None
+            };
+            generalized_transition_patterns.push(pattern);
+        }
         Ok(Self {
             transition_automaton: restore_theory_pattern_automaton(&image.patterns)?,
             judgment_automaton: restore_theory_judgment_pattern_automaton(
                 &image.judgment_patterns,
             )?,
+            generalized_transition_patterns,
         })
     }
 
     /// Match one action at one canonical root under explicit authority and
     /// work bounds. Nested redexes found by the shared e-graph scan are not
     /// action successors of `root` and are discarded before publication.
-    pub fn match_action<C>(
+    pub(crate) fn match_action<C>(
         &self,
         image: &TheorySemanticImageV1,
         action: TheoryActionId,
         granted_rights: &LanguageRights,
-        egraph: &EGraph<FramedSemanticOperator>,
+        egraph: &mut EGraph<FramedSemanticOperator>,
         root: EClassId,
-        work_limit: u64,
+        limits: SemanticTransitionLimits,
         mut is_cancelled: C,
     ) -> SemanticMatchDecision
     where
@@ -470,7 +537,7 @@ impl SemanticTransitionMatcher {
             image,
             egraph,
             work: 0,
-            work_limit,
+            work_limit: limits.work,
             is_cancelled: &mut is_cancelled,
         };
         if let Err(reason) = validator.validate_ground_term(root, *input_sort) {
@@ -487,7 +554,7 @@ impl SemanticTransitionMatcher {
         }
         let validation_work = validator.work;
         drop(validator);
-        let Some(remaining_work) = work_limit.checked_sub(validation_work) else {
+        let Some(remaining_work) = limits.work.checked_sub(validation_work) else {
             return SemanticMatchDecision::Undetermined {
                 reason: SemanticMatchUndetermined::InvalidImageEvidence,
                 work: validation_work,
@@ -525,27 +592,35 @@ impl SemanticTransitionMatcher {
             .iter()
             .map(|entry| (entry.rule, entry))
             .collect();
+        let mut stats = scan.run.stats;
         let Some(mut work) = validation_work.checked_add(scan.work) else {
             return SemanticMatchDecision::Undetermined {
                 reason: SemanticMatchUndetermined::InvalidImageEvidence,
                 work: validation_work,
-                stats: scan.run.stats,
+                stats,
             };
         };
         let mut matches = Vec::new();
+        if matches.try_reserve_exact(action.transitions.len()).is_err() {
+            return SemanticMatchDecision::Undetermined {
+                reason: SemanticMatchUndetermined::AllocationFailed,
+                work,
+                stats,
+            };
+        }
         for matched in scan.run.matches {
             if is_cancelled() {
                 return SemanticMatchDecision::Undetermined {
                     reason: SemanticMatchUndetermined::Cancelled,
                     work,
-                    stats: scan.run.stats,
+                    stats,
                 };
             }
-            if work == work_limit {
+            if work == limits.work {
                 return SemanticMatchDecision::Undetermined {
                     reason: SemanticMatchUndetermined::WorkBudgetExhausted,
                     work,
-                    stats: scan.run.stats,
+                    stats,
                 };
             }
             work += 1;
@@ -553,7 +628,7 @@ impl SemanticTransitionMatcher {
                 return SemanticMatchDecision::Undetermined {
                     reason: SemanticMatchUndetermined::InvalidImageEvidence,
                     work,
-                    stats: scan.run.stats,
+                    stats,
                 };
             };
             if !selected.contains(&rule_id) || !egraph.equiv(matched.root, root) {
@@ -563,7 +638,7 @@ impl SemanticTransitionMatcher {
                 return SemanticMatchDecision::Undetermined {
                     reason: SemanticMatchUndetermined::InvalidImageEvidence,
                     work,
-                    stats: scan.run.stats,
+                    stats,
                 };
             };
             let substitution = match project_automaton_substitution(
@@ -571,18 +646,21 @@ impl SemanticTransitionMatcher {
                 &matched.subst,
                 egraph,
                 &mut work,
-                work_limit,
+                limits.work,
                 &mut is_cancelled,
             ) {
                 Ok(substitution) => substitution,
                 Err(reason) => {
-                    return SemanticMatchDecision::Undetermined {
-                        reason,
-                        work,
-                        stats: scan.run.stats,
-                    };
+                    return SemanticMatchDecision::Undetermined { reason, work, stats };
                 },
             };
+            if matches.len() == limits.outputs {
+                return SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                    work,
+                    stats,
+                };
+            }
             matches.push(SemanticRuleMatch {
                 rule: rule_id,
                 root: egraph.find(matched.root),
@@ -590,14 +668,120 @@ impl SemanticTransitionMatcher {
             });
         }
 
+        let positional: BTreeSet<_> = entries.keys().copied().collect();
+        for &rule_id in &action.transitions {
+            if positional.contains(&rule_id) {
+                continue;
+            }
+            let Some(rule) = image.rules.get(rule_id.0 as usize).filter(|candidate| {
+                candidate.id == rule_id
+                    && candidate.disposition == TheoryRuleDispositionV1::Executable
+            }) else {
+                return SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work,
+                    stats,
+                };
+            };
+            let Some(pattern) = self
+                .generalized_transition_patterns
+                .get(rule_id.0 as usize)
+                .and_then(Option::as_ref)
+            else {
+                return SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work,
+                    stats,
+                };
+            };
+            let Some(remaining_work) = limits.work.checked_sub(work) else {
+                return SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work,
+                    stats,
+                };
+            };
+            let Some(remaining_outputs) = limits.outputs.checked_sub(matches.len()) else {
+                return SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                    work,
+                    stats,
+                };
+            };
+            let generalized = match match_flat_eclass_bounded(
+                egraph,
+                pattern,
+                root,
+                FlatMatchLimits {
+                    work: remaining_work,
+                    outputs: remaining_outputs,
+                    frontier: limits.frontier,
+                },
+                &mut is_cancelled,
+            ) {
+                Ok(run) => run,
+                Err(failure) => {
+                    let reason = flat_match_stop_reason(failure.reason);
+                    if absorb_matcher_accounting(
+                        &mut work,
+                        limits.work,
+                        &mut stats,
+                        failure.work,
+                        failure.stats,
+                    )
+                    .is_err()
+                    {
+                        return SemanticMatchDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                            work,
+                            stats,
+                        };
+                    }
+                    return SemanticMatchDecision::Undetermined { reason, work, stats };
+                },
+            };
+            if let Err(reason) = absorb_matcher_accounting(
+                &mut work,
+                limits.work,
+                &mut stats,
+                generalized.work,
+                generalized.stats,
+            ) {
+                return SemanticMatchDecision::Undetermined { reason, work, stats };
+            }
+            for matched in generalized.matches {
+                let substitution = match project_named_substitution(
+                    rule,
+                    &matched.subst,
+                    egraph,
+                    &mut work,
+                    limits.work,
+                    &mut is_cancelled,
+                ) {
+                    Ok(substitution) => substitution,
+                    Err(reason) => {
+                        return SemanticMatchDecision::Undetermined { reason, work, stats };
+                    },
+                };
+                if matches.len() == limits.outputs {
+                    return SemanticMatchDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                        work,
+                        stats,
+                    };
+                }
+                matches.push(SemanticRuleMatch {
+                    rule: rule_id,
+                    root: egraph.find(matched.root),
+                    substitution,
+                });
+            }
+        }
+
         if matches.is_empty() {
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::NoTransition)
         } else {
-            SemanticMatchDecision::Proven(ProvenSemanticMatches {
-                matches,
-                work,
-                stats: scan.run.stats,
-            })
+            SemanticMatchDecision::Proven(ProvenSemanticMatches { matches, work, stats })
         }
     }
 
@@ -1238,7 +1422,7 @@ impl SemanticTransitionMatcher {
         C: FnMut() -> bool,
     {
         let SemanticTransitionInput {
-            egraph,
+            mut egraph,
             root,
             exact_key: input_key,
             admission_work: prefix_work,
@@ -1254,9 +1438,12 @@ impl SemanticTransitionMatcher {
             image,
             action,
             granted_rights,
-            &egraph,
+            &mut egraph,
             root,
-            limits.work.saturating_sub(prefix_work),
+            SemanticTransitionLimits {
+                work: limits.work.saturating_sub(prefix_work),
+                ..limits
+            },
             &mut is_cancelled,
         );
         let ProvenSemanticMatches { matches, work: match_work, stats } = match matches {
@@ -1438,6 +1625,7 @@ impl SemanticTransitionMatcher {
 pub struct SemanticTransitionLimits {
     pub work: u64,
     pub outputs: usize,
+    pub frontier: usize,
     pub output_nodes: usize,
     pub output_bytes: usize,
 }
@@ -1447,6 +1635,7 @@ impl From<TheoryLimitsV1> for SemanticTransitionLimits {
         Self {
             work: u64::from(limits.max_steps),
             outputs: limits.max_frontier as usize,
+            frontier: limits.max_frontier as usize,
             output_nodes: limits.max_output_nodes as usize,
             output_bytes: limits.max_output_bytes as usize,
         }
@@ -2484,6 +2673,51 @@ fn semantic_stop_reason(reason: SetAutomatonSearchStop) -> SemanticMatchUndeterm
         SetAutomatonSearchStop::Cancelled => SemanticMatchUndetermined::Cancelled,
         SetAutomatonSearchStop::AllocationFailed => SemanticMatchUndetermined::AllocationFailed,
     }
+}
+
+fn flat_match_stop_reason(reason: FlatMatchStop) -> SemanticMatchUndetermined {
+    match reason {
+        FlatMatchStop::InvalidPattern(_) => SemanticMatchUndetermined::InvalidImageEvidence,
+        FlatMatchStop::WorkBudgetExhausted => SemanticMatchUndetermined::WorkBudgetExhausted,
+        FlatMatchStop::Cancelled => SemanticMatchUndetermined::Cancelled,
+        FlatMatchStop::OutputLimitExceeded => SemanticMatchUndetermined::OutputLimitExceeded,
+        FlatMatchStop::FrontierLimitExceeded => SemanticMatchUndetermined::FrontierLimitExceeded,
+        FlatMatchStop::EGraphNodeBudgetExhausted => {
+            SemanticMatchUndetermined::EGraphNodeBudgetExhausted
+        },
+        FlatMatchStop::AllocationFailed => SemanticMatchUndetermined::AllocationFailed,
+    }
+}
+
+fn project_named_substitution<C>(
+    rule: &mettail_grammar_core::TheoryRuleProgramV1,
+    matched: &Subst,
+    egraph: &EGraph<FramedSemanticOperator>,
+    work: &mut u64,
+    work_limit: u64,
+    is_cancelled: &mut C,
+) -> Result<BTreeMap<TheoryVariableId, EClassId>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    let mut substitution = BTreeMap::new();
+    for (name, &value) in matched {
+        charge_work(work, work_limit, is_cancelled)?;
+        let variable = name
+            .strip_prefix('v')
+            .and_then(|digits| digits.parse::<u32>().ok())
+            .map(TheoryVariableId)
+            .filter(|variable| format!("v{}", variable.0) == *name)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        rule.variables
+            .get(variable.0 as usize)
+            .filter(|declaration| declaration.id == variable)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        if substitution.insert(variable, egraph.find(value)).is_some() {
+            return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+        }
+    }
+    Ok(substitution)
 }
 
 fn project_automaton_substitution<C>(

@@ -245,16 +245,41 @@ pub struct LazyAcSelect {
     combo: Option<Vec<usize>>,
 }
 
+/// Allocation failure while constructing or advancing a lazy AC selector.
+/// Runtime-defined theories use the fallible interface so an untrusted width
+/// cannot turn process allocation failure into a partial semantic result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LazyAcSelectAllocationError;
+
+/// One exact positional selection and its disjoint positional complement.
+pub type LazyAcSelection = (Vec<EClassId>, Vec<EClassId>);
+
 impl LazyAcSelect {
     fn new(bag: &[EClassId], k: usize) -> Self {
+        Self::try_new(bag, k).expect("legacy AC selector allocation failed")
+    }
+
+    /// Construct a lazy selector with every backing allocation checked before
+    /// publication.
+    pub fn try_new(bag: &[EClassId], k: usize) -> Result<Self, LazyAcSelectAllocationError> {
         let n = bag.len();
         let combo = if k <= n {
             // The first combination is [0, 1, ..., k-1].
-            Some((0..k).collect())
+            let mut combo = Vec::new();
+            combo
+                .try_reserve_exact(k)
+                .map_err(|_| LazyAcSelectAllocationError)?;
+            combo.extend(0..k);
+            Some(combo)
         } else {
             None // k > n: no size-k selection exists.
         };
-        LazyAcSelect { bag: bag.to_vec(), k, combo }
+        let mut owned_bag = Vec::new();
+        owned_bag
+            .try_reserve_exact(bag.len())
+            .map_err(|_| LazyAcSelectAllocationError)?;
+        owned_bag.extend_from_slice(bag);
+        Ok(LazyAcSelect { bag: owned_bag, k, combo })
     }
 
     /// Advance `self.combo` to the lexicographically-next strictly-increasing
@@ -288,16 +313,26 @@ impl LazyAcSelect {
             }
         }
     }
-}
 
-impl Iterator for LazyAcSelect {
-    type Item = (Vec<EClassId>, Vec<EClassId>);
+    /// Produce one exact selection/complement pair with checked allocations.
+    pub fn try_next(&mut self) -> Result<Option<LazyAcSelection>, LazyAcSelectAllocationError> {
+        let Some(current) = self.combo.as_ref() else {
+            return Ok(None);
+        };
+        let mut combo = Vec::new();
+        combo
+            .try_reserve_exact(current.len())
+            .map_err(|_| LazyAcSelectAllocationError)?;
+        combo.extend_from_slice(current);
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let combo = self.combo.clone()?;
-        // Build (selection, complement) from the current index combination.
-        let mut selection = Vec::with_capacity(self.k);
-        let mut complement = Vec::with_capacity(self.bag.len() - self.k);
+        let mut selection = Vec::new();
+        selection
+            .try_reserve_exact(self.k)
+            .map_err(|_| LazyAcSelectAllocationError)?;
+        let mut complement = Vec::new();
+        complement
+            .try_reserve_exact(self.bag.len() - self.k)
+            .map_err(|_| LazyAcSelectAllocationError)?;
         let mut ci = 0usize;
         for (idx, &child) in self.bag.iter().enumerate() {
             if ci < combo.len() && combo[ci] == idx {
@@ -308,7 +343,16 @@ impl Iterator for LazyAcSelect {
             }
         }
         self.advance();
-        Some((selection, complement))
+        Ok(Some((selection, complement)))
+    }
+}
+
+impl Iterator for LazyAcSelect {
+    type Item = (Vec<EClassId>, Vec<EClassId>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.try_next()
+            .expect("legacy AC selector allocation failed")
     }
 }
 

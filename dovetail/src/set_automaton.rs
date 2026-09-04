@@ -4,8 +4,9 @@
 //! runtime plan: compile a set of left-hand-side patterns once, scan the
 //! subject e-graph once at the root level, and dispatch only the candidate
 //! patterns whose root symbol and arity can match the inspected e-node.
-//! Associative-commutative (`AcApp`) patterns remain on the existing lazy AC
-//! path because matching them may materialize budget-gated rest complements.
+//! Ordered and unordered collection nodes are represented by the same flat
+//! pattern algebra, but deliberately remain outside the positional quotient:
+//! their exact remainder semantics are evaluated by the bounded flat matcher.
 
 use crate::hash::{HashMap, HashSet};
 use std::hash::Hash;
@@ -18,14 +19,34 @@ use crate::rules::{Pattern, Subst};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PatternId(pub usize);
 
-/// One node in a stack-safe positional pattern DAG.  Child indices must point
-/// backward, and the root must be the final node.  This is the source-neutral
-/// entrypoint for runtime-compiled grammars whose canonical rule arenas are
-/// already flat; it avoids materializing a recursive [`Pattern`] first.
+/// One node in a stack-safe pattern DAG. Child indices must point backward, and
+/// the root must be the final node. This is the source-neutral entrypoint for
+/// runtime-compiled grammars whose canonical rule arenas are already flat; it
+/// avoids materializing a recursive [`Pattern`] first.
+///
+/// `OrderedCollection` matches its fixed children against an exact prefix.
+/// `UnorderedCollection` matches them injectively against distinct subject
+/// positions. In both forms, `rest = Some(name)` binds the exact complement;
+/// `rest = None` requires the complement to be empty. These exact collection
+/// semantics intentionally differ from [`Pattern::AcApp`]'s sub-multiset
+/// selection semantics when that legacy form has no `rest` binding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlatPatternNode<L> {
     Var(String),
-    App { op: L, args: Vec<usize> },
+    App {
+        op: L,
+        args: Vec<usize>,
+    },
+    OrderedCollection {
+        op: L,
+        fixed: Vec<usize>,
+        rest: Option<String>,
+    },
+    UnorderedCollection {
+        op: L,
+        fixed: Vec<usize>,
+        rest: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,16 +58,80 @@ pub struct FlatPattern<L> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlatPatternError {
     Empty,
-    Root { root: usize, nodes: usize },
-    RootNotLast { root: usize, nodes: usize },
-    ForwardReference { owner: usize, target: usize },
-    UnreachableNode { node: usize },
+    Root {
+        root: usize,
+        nodes: usize,
+    },
+    RootNotLast {
+        root: usize,
+        nodes: usize,
+    },
+    ForwardReference {
+        owner: usize,
+        target: usize,
+    },
+    UnreachableNode {
+        node: usize,
+    },
+    /// A well-formed generalized node was passed to the positional compiler.
+    NonPositionalNode {
+        node: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlatSetAutomatonError {
     pub pattern: PatternId,
     pub error: FlatPatternError,
+}
+
+/// Validate one complete backward-referencing flat pattern arena.
+///
+/// Validation is iterative and accepts both positional and collection nodes.
+/// The positional set-automaton compiler applies the additional
+/// [`FlatPatternError::NonPositionalNode`] restriction after this structural
+/// check; the generalized flat matcher consumes the complete algebra.
+pub fn validate_flat_pattern<L>(pattern: &FlatPattern<L>) -> Result<(), FlatPatternError> {
+    if pattern.nodes.is_empty() {
+        return Err(FlatPatternError::Empty);
+    }
+    if pattern.root >= pattern.nodes.len() {
+        return Err(FlatPatternError::Root {
+            root: pattern.root,
+            nodes: pattern.nodes.len(),
+        });
+    }
+    if pattern.root + 1 != pattern.nodes.len() {
+        return Err(FlatPatternError::RootNotLast {
+            root: pattern.root,
+            nodes: pattern.nodes.len(),
+        });
+    }
+
+    let mut reachable = vec![false; pattern.nodes.len()];
+    let mut pending = vec![pattern.root];
+    while let Some(index) = pending.pop() {
+        if reachable[index] {
+            continue;
+        }
+        reachable[index] = true;
+        let children = match &pattern.nodes[index] {
+            FlatPatternNode::Var(_) => &[][..],
+            FlatPatternNode::App { args, .. } => args.as_slice(),
+            FlatPatternNode::OrderedCollection { fixed, .. }
+            | FlatPatternNode::UnorderedCollection { fixed, .. } => fixed.as_slice(),
+        };
+        for target in children {
+            if *target >= index {
+                return Err(FlatPatternError::ForwardReference { owner: index, target: *target });
+            }
+            pending.push(*target);
+        }
+    }
+    if let Some(node) = reachable.iter().position(|reachable| !reachable) {
+        return Err(FlatPatternError::UnreachableNode { node });
+    }
+    Ok(())
 }
 
 /// One match produced by a compiled set automaton.
@@ -448,44 +533,7 @@ impl<L: Clone + Eq + Hash> PatternCompiler<L> {
         &mut self,
         pattern: &FlatPattern<L>,
     ) -> Result<(StateId, Vec<String>), FlatPatternError> {
-        if pattern.nodes.is_empty() {
-            return Err(FlatPatternError::Empty);
-        }
-        if pattern.root >= pattern.nodes.len() {
-            return Err(FlatPatternError::Root {
-                root: pattern.root,
-                nodes: pattern.nodes.len(),
-            });
-        }
-        if pattern.root + 1 != pattern.nodes.len() {
-            return Err(FlatPatternError::RootNotLast {
-                root: pattern.root,
-                nodes: pattern.nodes.len(),
-            });
-        }
-
-        let mut reachable = vec![false; pattern.nodes.len()];
-        let mut pending = vec![pattern.root];
-        while let Some(index) = pending.pop() {
-            if reachable[index] {
-                continue;
-            }
-            reachable[index] = true;
-            if let FlatPatternNode::App { args, .. } = &pattern.nodes[index] {
-                for target in args {
-                    if *target >= index {
-                        return Err(FlatPatternError::ForwardReference {
-                            owner: index,
-                            target: *target,
-                        });
-                    }
-                    pending.push(*target);
-                }
-            }
-        }
-        if let Some(node) = reachable.iter().position(|reachable| !reachable) {
-            return Err(FlatPatternError::UnreachableNode { node });
-        }
+        validate_flat_pattern(pattern)?;
 
         let mut compiled = Vec::with_capacity(pattern.nodes.len());
         let mut names: HashMap<&str, Rc<str>> = HashMap::default();
@@ -508,6 +556,10 @@ impl<L: Clone + Eq + Hash> PatternCompiler<L> {
                 FlatPatternNode::App { op, args } => {
                     let children = args.iter().map(|index| compiled[*index].clone()).collect();
                     compiled.push(self.assemble(op.clone(), children));
+                },
+                FlatPatternNode::OrderedCollection { .. }
+                | FlatPatternNode::UnorderedCollection { .. } => {
+                    return Err(FlatPatternError::NonPositionalNode { node: compiled.len() });
                 },
             }
         }
@@ -1063,6 +1115,15 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
             let root_shape = match pattern.nodes.get(pattern.root) {
                 Some(FlatPatternNode::Var(_)) => None,
                 Some(FlatPatternNode::App { op, args }) => Some((op.clone(), args.len())),
+                Some(
+                    FlatPatternNode::OrderedCollection { .. }
+                    | FlatPatternNode::UnorderedCollection { .. },
+                ) => {
+                    return Err(FlatSetAutomatonError {
+                        pattern: id,
+                        error: FlatPatternError::NonPositionalNode { node: pattern.root },
+                    });
+                },
                 None if pattern.nodes.is_empty() => {
                     return Err(FlatSetAutomatonError {
                         pattern: id,
@@ -2189,6 +2250,35 @@ mod tests {
         )])
         .expect_err("unreachable nodes are non-canonical");
         assert_eq!(unreachable.error, FlatPatternError::UnreachableNode { node: 0 });
+    }
+
+    #[test]
+    fn positional_flat_compiler_rejects_generalized_nodes_atomically() {
+        let generalized = FlatPattern {
+            nodes: vec![FlatPatternNode::OrderedCollection {
+                op: "list".to_string(),
+                fixed: Vec::new(),
+                rest: Some("tail".to_string()),
+            }],
+            root: 0,
+        };
+        let positional = FlatPattern {
+            nodes: vec![FlatPatternNode::Var("value".to_string())],
+            root: 0,
+        };
+
+        let rejected = SetAutomaton::compile_structural_flat([
+            (PatternId(3), positional),
+            (PatternId(5), generalized),
+        ])
+        .expect_err("a generalized node rejects the complete positional batch");
+        assert_eq!(
+            rejected,
+            FlatSetAutomatonError {
+                pattern: PatternId(5),
+                error: FlatPatternError::NonPositionalNode { node: 0 },
+            }
+        );
     }
 
     #[test]
