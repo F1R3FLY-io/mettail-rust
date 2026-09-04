@@ -32,7 +32,13 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.TaggedNormalizationMachine \
 	RuntimeGrammar.SharedTypedAssemblyKernel \
 	RuntimeGrammar.TerminalVariantIdentity \
-	RuntimeGrammar.GeneratedSemanticAdapter
+	RuntimeGrammar.GeneratedSemanticAdapter \
+	RuntimeGrammar.RegexGsltSyntax \
+	RuntimeGrammar.RegexGsltMatch \
+	RuntimeGrammar.RegexGsltSearch \
+	RuntimeGrammar.RegexGsltReplace \
+	RuntimeGrammar.RegexGsltRules \
+	RuntimeGrammar.RegexGsltOracle
 
 all: check-security-kernel
 

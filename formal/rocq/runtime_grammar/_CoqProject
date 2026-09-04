@@ -59,3 +59,9 @@ theories/ExactCollectionSemanticKey.v
 theories/TerminalVariantIdentity.v
 theories/StructuralProjectionImage.v
 theories/GeneratedSemanticAdapter.v
+theories/RegexGsltSyntax.v
+theories/RegexGsltMatch.v
+theories/RegexGsltSearch.v
+theories/RegexGsltReplace.v
+theories/RegexGsltRules.v
+theories/RegexGsltOracle.v
