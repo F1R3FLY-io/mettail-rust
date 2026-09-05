@@ -66,6 +66,17 @@ impl ParserImageV1 {
         postcard::to_allocvec(self)
     }
 
+    /// Domain-separated commitment to the complete parser artifact, including
+    /// its verified tables and limits rather than only the source grammar.
+    pub fn fingerprint(&self) -> Result<[u8; 32], postcard::Error> {
+        let bytes = self.encode()?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"mettail-parser-image/1\0");
+        hasher.update(&(bytes.len() as u64).to_be_bytes());
+        hasher.update(&bytes);
+        Ok(*hasher.finalize().as_bytes())
+    }
+
     pub fn decode_verified(bytes: &[u8], expected_core: [u8; 32]) -> Result<Self, ImageError> {
         let image: Self = postcard::from_bytes(bytes).map_err(ImageError::Decode)?;
         image.verify(expected_core)?;
@@ -345,6 +356,27 @@ impl Default for ParserImageAdmissionLimits {
 }
 
 impl ParserImageAdmissionLimits {
+    /// Consensus-stable commitment to the host's parser-image admission
+    /// envelope. `usize` values are widened before encoding so the commitment
+    /// does not depend on the target pointer width.
+    pub fn fingerprint(self) -> [u8; 32] {
+        let mut bytes = Vec::with_capacity(6 * std::mem::size_of::<u128>());
+        for limit in [
+            self.max_encoded_bytes,
+            self.max_lexer_states,
+            self.max_lexer_transitions,
+            self.max_nonterminals as usize,
+            self.max_runtime_rules,
+            self.max_runtime_symbols,
+        ] {
+            bytes.extend_from_slice(&(limit as u128).to_be_bytes());
+        }
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"mettail-parser-image-admission-limits/1\0");
+        hasher.update(&bytes);
+        *hasher.finalize().as_bytes()
+    }
+
     fn verify(self, image: &ParserImageV1) -> Result<(), ImageError> {
         for (exceeded, name) in [
             (image.lexer.states.len() > self.max_lexer_states, "lexer states"),
@@ -1087,5 +1119,40 @@ mod tests {
             image.verify_executable(&core, "test", "15.1"),
             Err(ImageError::NotExecutable)
         ));
+    }
+
+    #[test]
+    fn parser_admission_limit_commitment_is_exact_and_field_sensitive() {
+        let limits = ParserImageAdmissionLimits::default();
+        assert_eq!(limits.fingerprint(), limits.fingerprint());
+
+        for changed in [
+            ParserImageAdmissionLimits {
+                max_encoded_bytes: limits.max_encoded_bytes - 1,
+                ..limits
+            },
+            ParserImageAdmissionLimits {
+                max_lexer_states: limits.max_lexer_states - 1,
+                ..limits
+            },
+            ParserImageAdmissionLimits {
+                max_lexer_transitions: limits.max_lexer_transitions - 1,
+                ..limits
+            },
+            ParserImageAdmissionLimits {
+                max_nonterminals: limits.max_nonterminals - 1,
+                ..limits
+            },
+            ParserImageAdmissionLimits {
+                max_runtime_rules: limits.max_runtime_rules - 1,
+                ..limits
+            },
+            ParserImageAdmissionLimits {
+                max_runtime_symbols: limits.max_runtime_symbols - 1,
+                ..limits
+            },
+        ] {
+            assert_ne!(limits.fingerprint(), changed.fingerprint());
+        }
     }
 }

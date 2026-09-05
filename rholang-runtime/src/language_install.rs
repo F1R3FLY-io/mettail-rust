@@ -8,22 +8,23 @@
 //! implements the resolver contract; this module never calls ambient filesystem
 //! APIs.
 
+use mettail_dovetail_runtime::{compile_theory_semantic_image, TheoryImageCompileError};
 use mettail_elab::canonical::{RhoValue, ValueToCoreError};
 use mettail_elab::module::{CanonicalModuleValue, CANONICAL_MODULE_SCHEMA_V1};
 use mettail_elab::registry::{
-    InstallRegistryError, ParserCacheDisposition, RegistryLanguageRecord,
-    VersionedLanguageRegistryReader,
+    FinishExecutableRegistryInstallError, InstallExecutableRegistryError, ParserCacheDisposition,
+    RegistryLanguageRecord, SemanticCacheDisposition, VersionedLanguageRegistryReader,
 };
 use mettail_elab::resolve::{
     ModuleRef, RegistryModuleValue, RegistryResolver, VersionedRegistryReader,
 };
 use mettail_elab::wire::{decode_ddl_value, ParsedDdl};
 use mettail_grammar_core::{
-    CategoryId, DefaultRuntimeHost, InstallLanguageError, InstalledLanguageHandle,
-    InstalledLanguageTable, InstalledParseError, LanguageAccessError, LanguageRevocationAuthority,
-    LanguageRight, LanguageRights, RuntimeCapabilityError, RuntimeError, RuntimeHost,
-    RuntimeLanguageInstall, RuntimePolicy, RuntimeTemplateHole, RuntimeTemplatePiece,
-    WeightedParse,
+    CategoryId, DefaultRuntimeHost, ExecutableLanguageInstall, InstallLanguageError,
+    InstalledLanguageHandle, InstalledLanguageTable, InstalledParseError, LanguageAccessError,
+    LanguageRevocationAuthority, LanguageRight, LanguageRights, ParserImageAdmissionLimits,
+    RuntimeCapabilityError, RuntimeError, RuntimeHost, RuntimePolicy, RuntimeTemplateHole,
+    RuntimeTemplatePiece, TheoryImageAdmissionLimits, WeightedParse,
 };
 use mettail_prattail::runtime_backend::{
     compile_parser_image, RuntimeCompileError, RUNTIME_COMPILER_ABI, RUNTIME_UNICODE_ABI,
@@ -56,6 +57,8 @@ use std::sync::{Arc, RwLock};
 pub use mettail_elab::wire::DDL_AST_ENVELOPE_V2;
 
 pub const LANGUAGE_CAPABILITY_ABI_V1: &str = "mettail-language-capability/1";
+pub const LANGUAGE_CAPABILITY_ABI_V2: &str = "mettail-language-capability/2";
+pub const LANGUAGE_CAPABILITY_ABI_CURRENT: &str = LANGUAGE_CAPABILITY_ABI_V2;
 pub const LANGUAGE_INSTALL_URN: &str = "rho:mettail:install";
 pub const LANGUAGE_PARSE_ABI_V1: &str = "mettail-language-parse/1";
 pub const LANGUAGE_PARSE_URN: &str = "rho:mettail:parse";
@@ -66,7 +69,10 @@ pub const LANGUAGE_FLT_PATTERN_URN: &str = "rho:mettail:flt:pattern";
 pub const DYNAMIC_FLT_PATTERN_ENVELOPE_V1: &str = "mettail.dynamic-flt-pattern.v1";
 pub const REGISTRY_MODULE_REFERENCE_V1: &str = "mettail-registry-module-ref/1";
 pub const REGISTRY_LANGUAGE_REFERENCE_V1: &str = "mettail-registry-language-ref/1";
+#[cfg(test)]
 const LANGUAGE_HANDLE_DOMAIN_V1: &[u8] = b"mettail-installed-language-handle/1\0";
+const LANGUAGE_HANDLE_DOMAIN_V2: &[u8] = b"mettail-installed-language-handle/2\0";
+const LANGUAGE_HANDLE_DOMAIN_CURRENT: &[u8] = LANGUAGE_HANDLE_DOMAIN_V2;
 const PREPARED_PATTERN_DOMAIN_V1: &[u8] = b"mettail-prepared-flt-pattern/1\0";
 const MAX_PUBLIC_ERROR_CHARS: usize = 512;
 pub const MAX_INSTALL_CANDIDATE_ENCODED_BYTES: usize = 128 * 1024 * 1024;
@@ -139,6 +145,8 @@ pub struct StagedModuleProgram {
 pub struct LanguageInstallPolicy {
     pub host_grants: LanguageRights,
     pub runtime: RuntimePolicy,
+    pub parser_image: ParserImageAdmissionLimits,
+    pub semantic_image: TheoryImageAdmissionLimits,
     pub max_installed_languages: u64,
     pub capability_abi: String,
     pub fingerprint: [u8; 32],
@@ -159,12 +167,54 @@ impl LanguageInstallPolicy {
         max_installed_languages: u64,
         capability_abi: impl Into<String>,
     ) -> Self {
+        Self::with_language_and_semantic_limits(
+            host_grants,
+            runtime,
+            TheoryImageAdmissionLimits::default(),
+            max_installed_languages,
+            capability_abi,
+        )
+    }
+
+    pub fn with_language_and_semantic_limits(
+        host_grants: LanguageRights,
+        runtime: RuntimePolicy,
+        semantic_image: TheoryImageAdmissionLimits,
+        max_installed_languages: u64,
+        capability_abi: impl Into<String>,
+    ) -> Self {
+        Self::with_language_and_artifact_limits(
+            host_grants,
+            runtime,
+            ParserImageAdmissionLimits::default(),
+            semantic_image,
+            max_installed_languages,
+            capability_abi,
+        )
+    }
+
+    pub fn with_language_and_artifact_limits(
+        host_grants: LanguageRights,
+        runtime: RuntimePolicy,
+        parser_image: ParserImageAdmissionLimits,
+        semantic_image: TheoryImageAdmissionLimits,
+        max_installed_languages: u64,
+        capability_abi: impl Into<String>,
+    ) -> Self {
         let capability_abi = capability_abi.into();
-        let fingerprint =
-            fingerprint_policy(&host_grants, runtime, max_installed_languages, &capability_abi);
+        let fingerprint = fingerprint_policy(
+            &host_grants,
+            runtime,
+            parser_image,
+            semantic_image,
+            max_installed_languages,
+            &capability_abi,
+        );
         Self {
             host_grants,
             runtime,
+            parser_image,
+            semantic_image,
             max_installed_languages,
             capability_abi,
             fingerprint,
@@ -174,18 +224,20 @@ impl LanguageInstallPolicy {
 
 impl Default for LanguageInstallPolicy {
     fn default() -> Self {
-        Self::new(LanguageRights::all(), RuntimePolicy::default(), LANGUAGE_CAPABILITY_ABI_V1)
+        Self::new(LanguageRights::all(), RuntimePolicy::default(), LANGUAGE_CAPABILITY_ABI_CURRENT)
     }
 }
 
 fn fingerprint_policy(
     grants: &LanguageRights,
     runtime: RuntimePolicy,
+    parser_image: ParserImageAdmissionLimits,
+    semantic_image: TheoryImageAdmissionLimits,
     max_installed_languages: u64,
     capability_abi: &str,
 ) -> [u8; 32] {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"mettail-install-policy/2\0");
+    bytes.extend_from_slice(b"mettail-install-policy/4\0");
     for right in grants.iter() {
         bytes.extend_from_slice(right.name().as_bytes());
         bytes.push(0);
@@ -199,6 +251,8 @@ fn fingerprint_policy(
     bytes.extend_from_slice(&runtime.max_symbolic_template_cache_weight.to_be_bytes());
     bytes.extend_from_slice(&runtime.max_lexer_mode_depth.to_be_bytes());
     bytes.extend_from_slice(&runtime.max_foreign_nesting.to_be_bytes());
+    bytes.extend_from_slice(&parser_image.fingerprint());
+    bytes.extend_from_slice(&semantic_image.fingerprint());
     bytes.extend_from_slice(&max_installed_languages.to_be_bytes());
     bytes.extend_from_slice(&(capability_abi.len() as u64).to_be_bytes());
     bytes.extend_from_slice(capability_abi.as_bytes());
@@ -212,6 +266,7 @@ pub struct InstalledLanguageReceipt {
     pub requested_rights: LanguageRights,
     pub granted_rights: LanguageRights,
     pub cache_disposition: ParserCacheDisposition,
+    pub semantic_cache_disposition: SemanticCacheDisposition,
 }
 
 #[derive(Debug)]
@@ -322,25 +377,67 @@ impl LanguageInstallService {
         let mut pending = Vec::with_capacity(records.len());
         let mut requests = Vec::with_capacity(records.len());
         for (expected_name, record) in records {
-            let installed = record
-                .install_with_registry(
+            let prepared = record
+                .prepare_executable_install_with_registry_and_artifact_limits(
                     RUNTIME_COMPILER_ABI,
                     RUNTIME_UNICODE_ABI,
+                    self.policy.parser_image,
+                    self.policy.semantic_image,
                     &reader,
-                    compile_parser_image,
                 )
-                .map_err(InstallServiceError::Canonical)?;
-            let name = expected_name.unwrap_or_else(|| installed.core.name.clone());
-            if installed.core.name != name {
+                .map_err(|error| {
+                    InstallServiceError::Canonical(InstallExecutableRegistryError::Prepare(error))
+                })?;
+            let name = expected_name.unwrap_or_else(|| prepared.language.grammar.name.clone());
+            if prepared.language.grammar.name != name {
                 return Err(InstallServiceError::ExportNameMismatch {
                     export: name,
-                    language: installed.core.name,
+                    language: prepared.language.grammar.name,
                 });
             }
-            let requested_rights = installed.core.requested_rights.clone();
+            if !prepared.language.theory.checker_requirements.is_empty() {
+                return Err(InstallServiceError::CheckerRequirementsUnavailable {
+                    count: prepared.language.theory.checker_requirements.len(),
+                });
+            }
+            let requested_rights = prepared.requested_rights.clone();
+            if let Some(action) = prepared
+                .language
+                .theory
+                .actions
+                .iter()
+                .find(|action| !action.required_rights.is_subset_of(&requested_rights))
+            {
+                return Err(InstallServiceError::TheoryRightsNotRequested {
+                    action: action.id.clone(),
+                });
+            }
+            let installed = prepared
+                .install(
+                    RUNTIME_COMPILER_ABI,
+                    RUNTIME_UNICODE_ABI,
+                    compile_parser_image,
+                    compile_theory_semantic_image,
+                )
+                .map_err(|error| {
+                    InstallServiceError::Canonical(match error {
+                        FinishExecutableRegistryInstallError::CompileParser(error) => {
+                            InstallExecutableRegistryError::CompileParser(error)
+                        },
+                        FinishExecutableRegistryInstallError::CompileSemantic(error) => {
+                            InstallExecutableRegistryError::CompileSemantic(error)
+                        },
+                        FinishExecutableRegistryInstallError::InvalidParserImage(error) => {
+                            InstallExecutableRegistryError::InvalidParserImage(error)
+                        },
+                        FinishExecutableRegistryInstallError::InvalidSemanticImage(error) => {
+                            InstallExecutableRegistryError::InvalidSemanticImage(error)
+                        },
+                    })
+                })?;
             let granted_rights = self.policy.host_grants.attenuate(&requested_rights);
             let fingerprint = installed
-                .core
+                .language
                 .fingerprint()
                 .map_err(|error| InstallServiceError::Fingerprint(error.to_string()))?;
             pending.push((
@@ -348,11 +445,13 @@ impl LanguageInstallService {
                 fingerprint,
                 requested_rights,
                 granted_rights.clone(),
-                installed.cache_disposition,
+                installed.parser_cache_disposition,
+                installed.semantic_cache_disposition,
             ));
-            requests.push(RuntimeLanguageInstall {
-                core: installed.core,
-                image: installed.parser_image,
+            requests.push(ExecutableLanguageInstall {
+                language: installed.language,
+                parser_image: installed.parser_image,
+                semantic_image: installed.semantic_image,
                 granted_rights,
             });
         }
@@ -385,12 +484,14 @@ impl LanguageInstallService {
         }
         let grants = self
             .table
-            .install_runtime_batch_with_host(
+            .install_executable_runtime_batch_with_artifact_limits_and_host(
                 requests,
                 RUNTIME_COMPILER_ABI,
                 RUNTIME_UNICODE_ABI,
                 &self.policy.capability_abi,
                 self.policy.fingerprint,
+                self.policy.parser_image,
+                self.policy.semantic_image,
                 host,
             )
             .map_err(InstallServiceError::Commit)?;
@@ -399,7 +500,14 @@ impl LanguageInstallService {
             .zip(grants)
             .map(
                 |(
-                    (name, fingerprint, requested_rights, granted_rights, cache_disposition),
+                    (
+                        name,
+                        fingerprint,
+                        requested_rights,
+                        granted_rights,
+                        cache_disposition,
+                        semantic_cache_disposition,
+                    ),
                     grant,
                 )| {
                     revocations.insert(fingerprint, grant.revocation);
@@ -411,6 +519,7 @@ impl LanguageInstallService {
                             requested_rights,
                             granted_rights,
                             cache_disposition,
+                            semantic_cache_disposition,
                         },
                     }
                 },
@@ -697,9 +806,14 @@ impl VersionedRegistryReader for PinnedRegistryReader<'_> {
 pub enum InstallServiceError {
     Surface(mettail_elab::Diag),
     StagedProgramShape(String),
-    ExportNameMismatch { export: String, language: String },
+    ExportNameMismatch {
+        export: String,
+        language: String,
+    },
     EmptyExportSet,
-    MultipleExports { count: usize },
+    MultipleExports {
+        count: usize,
+    },
     Registry(String),
     RegistryLanguageNotFound(String),
     RegistryModuleNotFound(String),
@@ -707,12 +821,26 @@ pub enum InstallServiceError {
     RegistryModule(mettail_elab::registry::RegistryModuleError),
     RegistryTrust(String),
     CanonicalModule(mettail_elab::canonical::ValueDecodeError),
-    Canonical(InstallRegistryError<ValueToCoreError, RuntimeCompileError>),
+    Canonical(
+        InstallExecutableRegistryError<
+            ValueToCoreError,
+            RuntimeCompileError,
+            TheoryImageCompileError,
+        >,
+    ),
+    CheckerRequirementsUnavailable {
+        count: usize,
+    },
+    TheoryRightsNotRequested {
+        action: String,
+    },
     Fingerprint(String),
     Commit(InstallLanguageError),
     Revoke(mettail_grammar_core::LanguageAccessError),
     UnknownRevocation([u8; 32]),
-    InstalledLanguageLimit { limit: u64 },
+    InstalledLanguageLimit {
+        limit: u64,
+    },
     Poisoned,
 }
 
@@ -750,6 +878,14 @@ impl fmt::Display for InstallServiceError {
             },
             Self::CanonicalModule(error) => write!(formatter, "canonical module rejected: {error}"),
             Self::Canonical(error) => write!(formatter, "canonical language rejected: {error:?}"),
+            Self::CheckerRequirementsUnavailable { count } => write!(
+                formatter,
+                "language requests {count} theorem checker bindings, but no checker resolver was supplied"
+            ),
+            Self::TheoryRightsNotRequested { action } => write!(
+                formatter,
+                "theory action `{action}` requires a language right absent from the installation request"
+            ),
             Self::Fingerprint(error) => write!(formatter, "language identity failed: {error}"),
             Self::Commit(error) => write!(formatter, "atomic installation failed: {error:?}"),
             Self::Revoke(error) => write!(formatter, "revocation failed: {error:?}"),
@@ -2196,7 +2332,7 @@ fn capability_token_id(
     policy: &LanguageInstallPolicy,
 ) -> Vec<u8> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(LANGUAGE_HANDLE_DOMAIN_V1);
+    hasher.update(LANGUAGE_HANDLE_DOMAIN_CURRENT);
     hasher.update(&fingerprint);
     hasher.update(&generation.to_be_bytes());
     hasher.update(&policy.fingerprint);
@@ -2204,8 +2340,8 @@ fn capability_token_id(
         hasher.update(right.name().as_bytes());
         hasher.update(&[0]);
     }
-    let mut id = Vec::with_capacity(LANGUAGE_HANDLE_DOMAIN_V1.len() + 32);
-    id.extend_from_slice(LANGUAGE_HANDLE_DOMAIN_V1);
+    let mut id = Vec::with_capacity(LANGUAGE_HANDLE_DOMAIN_CURRENT.len() + 32);
+    id.extend_from_slice(LANGUAGE_HANDLE_DOMAIN_CURRENT);
     id.extend_from_slice(hasher.finalize().as_bytes());
     id
 }
@@ -2217,7 +2353,7 @@ pub(crate) fn private_name(id: Vec<u8>) -> Par {
 }
 
 fn private_name_id(value: &Par) -> Option<&[u8]> {
-    single_private_name_id(value).filter(|id| id.starts_with(LANGUAGE_HANDLE_DOMAIN_V1))
+    single_private_name_id(value).filter(|id| id.starts_with(LANGUAGE_HANDLE_DOMAIN_CURRENT))
 }
 
 fn prepared_pattern_name_id(value: &Par) -> Option<&[u8]> {
@@ -2327,12 +2463,12 @@ impl std::error::Error for LanguageRuntimeError {}
 pub fn language_install_definition(runtime: Arc<RholangLanguageRuntime>) -> Definition {
     Definition {
         urn: LANGUAGE_INSTALL_URN.into(),
-        fixed_channel: LANGUAGE_INSTALL_BAND.channel(0, LANGUAGE_CAPABILITY_ABI_V1),
+        fixed_channel: LANGUAGE_INSTALL_BAND.channel(0, LANGUAGE_CAPABILITY_ABI_CURRENT),
         // Nouveau Rholang has one datum per send.  Its surface
         // `install!(specification, *reply)` is lowered to the canonical arity
         // list `[specification, reply]` inside that datum.
         arity: 1,
-        body_ref: LANGUAGE_INSTALL_BAND.body_ref(0, LANGUAGE_CAPABILITY_ABI_V1),
+        body_ref: LANGUAGE_INSTALL_BAND.body_ref(0, LANGUAGE_CAPABILITY_ABI_CURRENT),
         remainder: None,
         handler: Box::new(move |context| {
             let space = context.space.clone();
@@ -3459,6 +3595,12 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
         LanguageRuntimeError::Install(InstallServiceError::Canonical(_)) => {
             "InvalidCanonicalLanguage"
         },
+        LanguageRuntimeError::Install(InstallServiceError::CheckerRequirementsUnavailable {
+            ..
+        }) => "CheckerRequirementsUnavailable",
+        LanguageRuntimeError::Install(InstallServiceError::TheoryRightsNotRequested { .. }) => {
+            "TheoryRightsNotRequested"
+        },
         LanguageRuntimeError::Install(InstallServiceError::Fingerprint(_)) => "FingerprintFailure",
         LanguageRuntimeError::Install(InstallServiceError::Commit(_)) => "InstallConflict",
         LanguageRuntimeError::Install(InstallServiceError::Revoke(_)) => "RevocationFailure",
@@ -3724,14 +3866,25 @@ mod tests {
     fn registry_module_with_images(source: &str) -> RegistryModuleValue {
         let mut record = registry_module(source);
         for spec in record.exports.values() {
-            let core =
-                mettail_elab::canonical::value_to_core(spec).expect("test Registry export lowers");
-            let fingerprint = core.fingerprint().expect("test core fingerprints");
-            let image = compile_parser_image(&core)
+            let language = mettail_elab::canonical::value_to_language_core(spec)
+                .expect("test Registry export lowers");
+            let grammar_fingerprint = language
+                .grammar_fingerprint()
+                .expect("test grammar fingerprints");
+            let language_fingerprint = language.fingerprint().expect("test language fingerprints");
+            let image = compile_parser_image(&language.grammar)
                 .expect("test parser image compiles")
                 .encode()
                 .expect("test parser image encodes");
-            record.images.insert(fingerprint, image);
+            record.images.insert(grammar_fingerprint, image);
+            let semantic =
+                compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+                    .expect("test semantic image compiles")
+                    .encode(&language, TheoryImageAdmissionLimits::default())
+                    .expect("test semantic image encodes");
+            record
+                .semantic_images
+                .insert(language_fingerprint, semantic);
         }
         record
     }
@@ -3947,11 +4100,6 @@ mod tests {
             mut language: mettail_grammar_core::LanguageCoreV1,
         ) -> mettail_grammar_core::LanguageCoreV1 {
             language.grammar.name.clear();
-            if let Some(mettail_grammar_core::CanonicalValue::Map(fields)) =
-                &mut language.grammar.canonical_specification
-            {
-                fields.remove("name");
-            }
             language
         }
 
@@ -4014,7 +4162,7 @@ mod tests {
             .expect("canonical presentation installs");
 
         assert_eq!(from_surface.fingerprint, from_value.fingerprint);
-        assert_eq!(from_surface.fingerprint, expected.grammar_fingerprint().unwrap());
+        assert_eq!(from_surface.fingerprint, expected.fingerprint().unwrap());
         assert_eq!(service.installed_count().unwrap(), 1);
     }
 
@@ -4369,7 +4517,12 @@ mod tests {
                 Err(LanguageRuntimeError::InvalidHandleShape)
             ));
         }
-        let unknown_private = private_name([LANGUAGE_HANDLE_DOMAIN_V1, b"unknown"].concat());
+        let legacy_private = private_name([LANGUAGE_HANDLE_DOMAIN_V1, b"legacy"].concat());
+        assert!(matches!(
+            runtime.parse_source(&legacy_private, "0", "Expr"),
+            Err(LanguageRuntimeError::InvalidHandleShape)
+        ));
+        let unknown_private = private_name([LANGUAGE_HANDLE_DOMAIN_CURRENT, b"unknown"].concat());
         assert!(matches!(
             runtime.parse_source(&unknown_private, "0", "Expr"),
             Err(LanguageRuntimeError::UnknownHandle)
@@ -4428,6 +4581,184 @@ mod tests {
             .expect_err("invalid grammar must fail");
         assert!(error.to_string().contains("canonical language rejected"));
         assert_eq!(service.installed_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn identical_grammar_with_distinct_theories_installs_distinct_full_language_handles() {
+        let service = LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        );
+        let source = |effect: &str| {
+            format!(
+                r#"Theory T() {{
+                    Types {{ Expr; }}
+                    Terms {{ Zero . |- "0" : Expr; }}
+                    Data({{
+                      "oslf": {{
+                        "effects": [{{"name":"{effect}","requires":[],"emits":[]}}]
+                      }}
+                    }})
+                }}"#,
+            )
+        };
+        let left = service
+            .install(rholang_ddl_candidate(&source("LeftEffect")))
+            .expect("first full language installs");
+        let right = service
+            .install(rholang_ddl_candidate(&source("RightEffect")))
+            .expect("same grammar with a distinct theory also installs");
+
+        assert_ne!(left.fingerprint, right.fingerprint);
+        assert_eq!(service.table().installed_count().expect("table readable"), 2);
+        let left_language = service
+            .table()
+            .authorize(&left.handle, LanguageRight::Parse)
+            .expect("left handle authorizes");
+        let right_language = service
+            .table()
+            .authorize(&right.handle, LanguageRight::Parse)
+            .expect("right handle authorizes");
+        assert_eq!(left_language.core(), right_language.core());
+        assert_ne!(left_language.language_core().theory, right_language.language_core().theory,);
+        assert!(left_language.semantic_image().is_some());
+        assert!(right_language.semantic_image().is_some());
+        assert_eq!(
+            left_language.commitment().parser_limits_fingerprint,
+            Some(service.policy().parser_image.fingerprint()),
+        );
+    }
+
+    #[test]
+    fn theory_actions_cannot_amplify_the_installation_manifest() {
+        let service = LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        );
+        let source = r#"Theory Attenuated() {
+            Types { Expr; Grade; }
+            Terms { Zero . |- "0" : Expr; }
+            Data({
+              "rights": ["Parse"],
+              "oslf": {
+                "effects": [{"name":"Pure","requires":[],"emits":[]}],
+                "actions": [{
+                  "id":"step", "domain":["Expr"], "codomain":"Expr",
+                  "transition":["handler","mtl:test:step/1"],
+                  "effect":"Pure", "effect_class":"pure",
+                  "required_rights":["Reduce"], "grade":"Grade",
+                  "execution":"one_step"
+                }]
+              }
+            })
+        }"#;
+        let result = service.install(rholang_ddl_candidate(source));
+        assert!(
+            matches!(
+                &result,
+                Err(InstallServiceError::TheoryRightsNotRequested { ref action })
+                    if action == "step"
+            ),
+            "unexpected installation result: {result:?}"
+        );
+        assert_eq!(service.table().installed_count().expect("table readable"), 0);
+        assert_eq!(service.installed_count().expect("revocations readable"), 0);
+    }
+
+    #[test]
+    fn parser_and_semantic_artifacts_are_admitted_before_atomic_publication() {
+        let language = mettail_elab::elaborate_theory_language(
+            r#"Theory T() { Types { Expr; } Terms { Zero . |- "0" : Expr; } }"#,
+        )
+        .expect("test language elaborates")
+        .language_core;
+        let parser_image = compile_parser_image(&language.grammar).expect("parser compiles");
+        let semantic_limits = TheoryImageAdmissionLimits::default();
+        let semantic_image = compile_theory_semantic_image(&language, semantic_limits)
+            .expect("semantic image compiles");
+
+        let table = InstalledLanguageTable::new();
+        let mut bad_semantic = semantic_image.clone();
+        bad_semantic.language_fingerprint = [0xff; 32];
+        let semantic_result = table.install_executable_runtime_batch(
+            vec![
+                ExecutableLanguageInstall {
+                    language: language.clone(),
+                    parser_image: parser_image.clone(),
+                    semantic_image: semantic_image.clone(),
+                    granted_rights: LanguageRights::all(),
+                },
+                ExecutableLanguageInstall {
+                    language: language.clone(),
+                    parser_image: parser_image.clone(),
+                    semantic_image: bad_semantic,
+                    granted_rights: LanguageRights::all(),
+                },
+            ],
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            LANGUAGE_CAPABILITY_ABI_V1,
+            [0; 32],
+            semantic_limits,
+        );
+        assert!(matches!(semantic_result, Err(InstallLanguageError::InvalidTheoryImage(_))));
+        assert_eq!(table.installed_count().expect("table readable"), 0);
+
+        let table = InstalledLanguageTable::new();
+        let parser_limits = ParserImageAdmissionLimits {
+            max_runtime_rules: 0,
+            ..ParserImageAdmissionLimits::default()
+        };
+        let parser_limit_result = table
+            .install_executable_runtime_batch_with_artifact_limits_and_host(
+                vec![ExecutableLanguageInstall {
+                    language: language.clone(),
+                    parser_image: parser_image.clone(),
+                    semantic_image: semantic_image.clone(),
+                    granted_rights: LanguageRights::all(),
+                }],
+                RUNTIME_COMPILER_ABI,
+                RUNTIME_UNICODE_ABI,
+                LANGUAGE_CAPABILITY_ABI_CURRENT,
+                [0; 32],
+                parser_limits,
+                semantic_limits,
+                &DefaultRuntimeHost,
+            );
+        assert!(matches!(
+            parser_limit_result,
+            Err(InstallLanguageError::InvalidImage(
+                mettail_grammar_core::ImageError::ImageLimitExceeded("runtime rules")
+            ))
+        ));
+        assert_eq!(table.installed_count().expect("table readable"), 0);
+
+        let table = InstalledLanguageTable::new();
+        let mut bad_parser = parser_image.clone();
+        bad_parser.core_fingerprint = [0xff; 32];
+        let parser_result = table.install_executable_runtime_batch(
+            vec![
+                ExecutableLanguageInstall {
+                    language: language.clone(),
+                    parser_image,
+                    semantic_image: semantic_image.clone(),
+                    granted_rights: LanguageRights::all(),
+                },
+                ExecutableLanguageInstall {
+                    language,
+                    parser_image: bad_parser,
+                    semantic_image,
+                    granted_rights: LanguageRights::all(),
+                },
+            ],
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            LANGUAGE_CAPABILITY_ABI_V1,
+            [0; 32],
+            semantic_limits,
+        );
+        assert!(matches!(parser_result, Err(InstallLanguageError::InvalidImage(_))));
+        assert_eq!(table.installed_count().expect("table readable"), 0);
     }
 
     #[test]
@@ -4496,6 +4827,10 @@ mod tests {
         assert_eq!(
             batch.exports[0].receipt.cache_disposition,
             ParserCacheDisposition::ReusedVerified,
+        );
+        assert_eq!(
+            batch.exports[0].receipt.semantic_cache_disposition,
+            SemanticCacheDisposition::ReusedVerified,
         );
     }
 
@@ -5222,11 +5557,11 @@ mod tests {
         assert_eq!(definition.remainder, None);
         assert_eq!(
             definition.fixed_channel,
-            LANGUAGE_INSTALL_BAND.channel(0, LANGUAGE_CAPABILITY_ABI_V1)
+            LANGUAGE_INSTALL_BAND.channel(0, LANGUAGE_CAPABILITY_ABI_CURRENT)
         );
         assert_eq!(
             definition.body_ref,
-            LANGUAGE_INSTALL_BAND.body_ref(0, LANGUAGE_CAPABILITY_ABI_V1)
+            LANGUAGE_INSTALL_BAND.body_ref(0, LANGUAGE_CAPABILITY_ABI_CURRENT)
         );
     }
 
@@ -5243,7 +5578,7 @@ mod tests {
         assert_eq!(definition.fixed_channel, LANGUAGE_PARSE_BAND.channel(0, LANGUAGE_PARSE_ABI_V1));
         assert_eq!(definition.body_ref, LANGUAGE_PARSE_BAND.body_ref(0, LANGUAGE_PARSE_ABI_V1));
 
-        let handle = private_name([LANGUAGE_HANDLE_DOMAIN_V1, b"wire"].concat());
+        let handle = private_name([LANGUAGE_HANDLE_DOMAIN_CURRENT, b"wire"].concat());
         let reply = new_gstring_par("reply".into(), Vec::new(), false);
         let encoded = encode_language_parse_call(handle.clone(), "0", "Expr", reply.clone());
         let decoded = decode_language_parse_call(&encoded).expect("canonical request decodes");
@@ -5254,7 +5589,7 @@ mod tests {
 
         let wrong_abi = wire_list(vec![
             new_gstring_par("mettail-language-parse/2".into(), Vec::new(), false),
-            private_name([LANGUAGE_HANDLE_DOMAIN_V1, b"wire"].concat()),
+            private_name([LANGUAGE_HANDLE_DOMAIN_CURRENT, b"wire"].concat()),
             new_gstring_par("0".into(), Vec::new(), false),
             new_gstring_par("Expr".into(), Vec::new(), false),
             new_gstring_par("reply".into(), Vec::new(), false),

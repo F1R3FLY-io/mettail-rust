@@ -5,11 +5,14 @@
 //! caller has lowered the value to `GrammarCoreV1` and every cache contract
 //! field has been verified against that result.
 
-use crate::canonical::{LanguageValueResolver, RhoValue, ValueToCoreError};
+use crate::canonical::{
+    InstallableLanguageCore, LanguageValueResolver, RhoValue, ValueToCoreError,
+};
 use crate::module::{CanonicalModuleDependency, CanonicalModuleValue};
 use mettail_grammar_core::{
     GrammarCoreV1, ImageError, InstallLanguageError, InstalledLanguageGrant,
-    InstalledLanguageTable, LanguageRights, ParserImageV1,
+    InstalledLanguageTable, LanguageCoreV1, LanguageRights, ParserImageAdmissionLimits,
+    ParserImageV1, TheoryImageAdmissionLimits, TheoryImageError, TheorySemanticImageV1,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -34,6 +37,7 @@ pub struct RegistryModuleRecord {
     pub exports: BTreeMap<String, RhoValue>,
     pub dependencies: Vec<CanonicalModuleDependency>,
     pub images: BTreeMap<[u8; 32], Vec<u8>>,
+    pub semantic_images: BTreeMap<[u8; 32], Vec<u8>>,
     pub signatures: RhoValue,
 }
 
@@ -58,6 +62,7 @@ impl RegistryModuleRecord {
             exports,
             dependencies,
             images: BTreeMap::new(),
+            semantic_images: BTreeMap::new(),
             signatures,
         }
     }
@@ -144,13 +149,18 @@ impl RegistryModuleRecord {
     ) -> Result<Vec<(String, RegistryLanguageRecord)>, RegistryModuleError> {
         let module = self.validate_structure()?;
         let images = Arc::new(self.images.clone());
+        let semantic_images = Arc::new(self.semantic_images.clone());
         Ok(module
             .exports
             .into_iter()
             .map(|export| {
                 (
                     export.name,
-                    RegistryLanguageRecord::with_parser_images(export.spec, images.clone()),
+                    RegistryLanguageRecord::with_images(
+                        export.spec,
+                        images.clone(),
+                        semantic_images.clone(),
+                    ),
                 )
             })
             .collect())
@@ -199,6 +209,10 @@ pub struct RegistryLanguageRecord {
     /// Content-addressed image set used by module records. Selection happens
     /// only after authoritative lowering computes the language fingerprint.
     pub parser_images: Arc<BTreeMap<[u8; 32], Vec<u8>>>,
+    pub semantic_image: Option<Vec<u8>>,
+    /// Semantic images are keyed by the complete language fingerprint. They
+    /// are untrusted caches and never enter the signed Registry payload.
+    pub semantic_images: Arc<BTreeMap<[u8; 32], Vec<u8>>>,
 }
 
 impl RegistryLanguageRecord {
@@ -208,6 +222,8 @@ impl RegistryLanguageRecord {
             spec,
             parser_image: None,
             parser_images: Arc::new(BTreeMap::new()),
+            semantic_image: None,
+            semantic_images: Arc::new(BTreeMap::new()),
         }
     }
 
@@ -220,6 +236,23 @@ impl RegistryLanguageRecord {
             spec,
             parser_image: None,
             parser_images,
+            semantic_image: None,
+            semantic_images: Arc::new(BTreeMap::new()),
+        }
+    }
+
+    pub fn with_images(
+        spec: RhoValue,
+        parser_images: Arc<BTreeMap<[u8; 32], Vec<u8>>>,
+        semantic_images: Arc<BTreeMap<[u8; 32], Vec<u8>>>,
+    ) -> Self {
+        Self {
+            schema: REGISTRY_LANGUAGE_SCHEMA_V1.into(),
+            spec,
+            parser_image: None,
+            parser_images,
+            semantic_image: None,
+            semantic_images,
         }
     }
 
@@ -275,6 +308,125 @@ impl RegistryLanguageRecord {
         })
     }
 
+    /// Prepare the complete executable language without projecting away its
+    /// theory. Parser caches are selected by grammar identity; semantic caches
+    /// are independently selected by full-language identity.
+    pub fn prepare_executable_install<E>(
+        &self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        semantic_limits: TheoryImageAdmissionLimits,
+        lower: impl FnOnce(&RhoValue) -> Result<InstallableLanguageCore, E>,
+    ) -> Result<PreparedRegistryExecutableLanguage, PrepareRegistryError<E>> {
+        self.prepare_executable_install_with_artifact_limits(
+            compiler_abi,
+            unicode_version,
+            ParserImageAdmissionLimits::default(),
+            semantic_limits,
+            lower,
+        )
+    }
+
+    pub fn prepare_executable_install_with_artifact_limits<E>(
+        &self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        lower: impl FnOnce(&RhoValue) -> Result<InstallableLanguageCore, E>,
+    ) -> Result<PreparedRegistryExecutableLanguage, PrepareRegistryError<E>> {
+        if self.schema != REGISTRY_LANGUAGE_SCHEMA_V1 {
+            return Err(PrepareRegistryError::UnsupportedSchema(self.schema.clone()));
+        }
+        let installable = lower(&self.spec).map_err(PrepareRegistryError::Lowering)?;
+        let language = installable.language;
+        language
+            .validate()
+            .map_err(PrepareRegistryError::InvalidLanguage)?;
+        let grammar_fingerprint = language
+            .grammar_fingerprint()
+            .map_err(|error| PrepareRegistryError::Fingerprint(format!("{error:?}")))?;
+        let language_fingerprint = language
+            .fingerprint()
+            .map_err(|error| PrepareRegistryError::Fingerprint(format!("{error:?}")))?;
+
+        let parser_bytes = self
+            .parser_images
+            .get(&grammar_fingerprint)
+            .or(self.parser_image.as_ref());
+        let parser_cache = match parser_bytes {
+            None => ParserCache::Missing,
+            Some(bytes) => match ParserImageV1::decode_executable_verified_with_limits(
+                bytes,
+                &language.grammar,
+                compiler_abi,
+                unicode_version,
+                parser_limits,
+            ) {
+                Ok(image) => ParserCache::Verified(Box::new(image)),
+                Err(error) => ParserCache::Rejected(format!("{error:?}")),
+            },
+        };
+
+        let semantic_bytes = self
+            .semantic_images
+            .get(&language_fingerprint)
+            .or(self.semantic_image.as_ref());
+        let semantic_cache = match semantic_bytes {
+            None => SemanticCache::Missing,
+            Some(bytes) => match TheorySemanticImageV1::decode(bytes, &language, semantic_limits) {
+                Ok(image) => SemanticCache::Verified(Box::new(image)),
+                Err(error) => SemanticCache::Rejected(format!("{error:?}")),
+            },
+        };
+
+        Ok(PreparedRegistryExecutableLanguage {
+            authoritative_spec: self.spec.clone(),
+            language,
+            requested_rights: installable.requested_rights,
+            parser_cache,
+            semantic_cache,
+            parser_limits,
+            semantic_limits,
+        })
+    }
+
+    pub fn prepare_executable_install_with_registry(
+        &self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        semantic_limits: TheoryImageAdmissionLimits,
+        registry: &dyn VersionedLanguageRegistryReader,
+    ) -> Result<PreparedRegistryExecutableLanguage, PrepareRegistryError<ValueToCoreError>> {
+        self.prepare_executable_install_with_registry_and_artifact_limits(
+            compiler_abi,
+            unicode_version,
+            ParserImageAdmissionLimits::default(),
+            semantic_limits,
+            registry,
+        )
+    }
+
+    pub fn prepare_executable_install_with_registry_and_artifact_limits(
+        &self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        registry: &dyn VersionedLanguageRegistryReader,
+    ) -> Result<PreparedRegistryExecutableLanguage, PrepareRegistryError<ValueToCoreError>> {
+        let resolver = RegistryLanguageResolver { registry };
+        self.prepare_executable_install_with_artifact_limits(
+            compiler_abi,
+            unicode_version,
+            parser_limits,
+            semantic_limits,
+            |value| {
+                crate::canonical::value_to_installable_language_core_with_resolver(value, &resolver)
+            },
+        )
+    }
+
     pub fn install<E, C>(
         &self,
         compiler_abi: &str,
@@ -309,6 +461,77 @@ impl RegistryLanguageRecord {
             |value| crate::canonical::value_to_core_with_resolver(value, &resolver),
             compile,
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_executable_with_registry<PC, SC>(
+        &self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        semantic_limits: TheoryImageAdmissionLimits,
+        registry: &dyn VersionedLanguageRegistryReader,
+        compile_parser: impl FnOnce(&GrammarCoreV1) -> Result<ParserImageV1, PC>,
+        compile_semantic: impl FnOnce(
+            &LanguageCoreV1,
+            TheoryImageAdmissionLimits,
+        ) -> Result<TheorySemanticImageV1, SC>,
+    ) -> Result<
+        InstalledRegistryExecutableLanguage,
+        InstallExecutableRegistryError<ValueToCoreError, PC, SC>,
+    > {
+        self.install_executable_with_registry_and_artifact_limits(
+            compiler_abi,
+            unicode_version,
+            ParserImageAdmissionLimits::default(),
+            semantic_limits,
+            registry,
+            compile_parser,
+            compile_semantic,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_executable_with_registry_and_artifact_limits<PC, SC>(
+        &self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        registry: &dyn VersionedLanguageRegistryReader,
+        compile_parser: impl FnOnce(&GrammarCoreV1) -> Result<ParserImageV1, PC>,
+        compile_semantic: impl FnOnce(
+            &LanguageCoreV1,
+            TheoryImageAdmissionLimits,
+        ) -> Result<TheorySemanticImageV1, SC>,
+    ) -> Result<
+        InstalledRegistryExecutableLanguage,
+        InstallExecutableRegistryError<ValueToCoreError, PC, SC>,
+    > {
+        let prepared = self
+            .prepare_executable_install_with_registry_and_artifact_limits(
+                compiler_abi,
+                unicode_version,
+                parser_limits,
+                semantic_limits,
+                registry,
+            )
+            .map_err(InstallExecutableRegistryError::Prepare)?;
+        prepared
+            .install(compiler_abi, unicode_version, compile_parser, compile_semantic)
+            .map_err(|error| match error {
+                FinishExecutableRegistryInstallError::CompileParser(error) => {
+                    InstallExecutableRegistryError::CompileParser(error)
+                },
+                FinishExecutableRegistryInstallError::CompileSemantic(error) => {
+                    InstallExecutableRegistryError::CompileSemantic(error)
+                },
+                FinishExecutableRegistryInstallError::InvalidParserImage(error) => {
+                    InstallExecutableRegistryError::InvalidParserImage(error)
+                },
+                FinishExecutableRegistryInstallError::InvalidSemanticImage(error) => {
+                    InstallExecutableRegistryError::InvalidSemanticImage(error)
+                },
+            })
     }
 }
 
@@ -385,6 +608,129 @@ pub struct InstalledRegistryLanguage {
     pub cache_disposition: ParserCacheDisposition,
 }
 
+pub struct PreparedRegistryExecutableLanguage {
+    pub authoritative_spec: RhoValue,
+    pub language: LanguageCoreV1,
+    pub requested_rights: LanguageRights,
+    pub parser_cache: ParserCache,
+    pub semantic_cache: SemanticCache,
+    pub parser_limits: ParserImageAdmissionLimits,
+    pub semantic_limits: TheoryImageAdmissionLimits,
+}
+
+impl PreparedRegistryExecutableLanguage {
+    pub fn install<PC, SC>(
+        self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        compile_parser: impl FnOnce(&GrammarCoreV1) -> Result<ParserImageV1, PC>,
+        compile_semantic: impl FnOnce(
+            &LanguageCoreV1,
+            TheoryImageAdmissionLimits,
+        ) -> Result<TheorySemanticImageV1, SC>,
+    ) -> Result<InstalledRegistryExecutableLanguage, FinishExecutableRegistryInstallError<PC, SC>>
+    {
+        let (parser_image, parser_cache_disposition) = match self.parser_cache {
+            ParserCache::Verified(image) => (*image, ParserCacheDisposition::ReusedVerified),
+            ParserCache::Missing => {
+                let image = compile_parser(&self.language.grammar)
+                    .map_err(FinishExecutableRegistryInstallError::CompileParser)?;
+                image
+                    .verify_executable_with_limits(
+                        &self.language.grammar,
+                        compiler_abi,
+                        unicode_version,
+                        self.parser_limits,
+                    )
+                    .map_err(FinishExecutableRegistryInstallError::InvalidParserImage)?;
+                (image, ParserCacheDisposition::CompiledMissing)
+            },
+            ParserCache::Rejected(reason) => {
+                let image = compile_parser(&self.language.grammar)
+                    .map_err(FinishExecutableRegistryInstallError::CompileParser)?;
+                image
+                    .verify_executable_with_limits(
+                        &self.language.grammar,
+                        compiler_abi,
+                        unicode_version,
+                        self.parser_limits,
+                    )
+                    .map_err(FinishExecutableRegistryInstallError::InvalidParserImage)?;
+                (image, ParserCacheDisposition::RecompiledRejected { reason })
+            },
+        };
+        let (semantic_image, semantic_cache_disposition) = match self.semantic_cache {
+            SemanticCache::Verified(image) => (*image, SemanticCacheDisposition::ReusedVerified),
+            SemanticCache::Missing => {
+                let image = compile_semantic(&self.language, self.semantic_limits)
+                    .map_err(FinishExecutableRegistryInstallError::CompileSemantic)?;
+                image
+                    .validate(&self.language, self.semantic_limits)
+                    .map_err(FinishExecutableRegistryInstallError::InvalidSemanticImage)?;
+                (image, SemanticCacheDisposition::CompiledMissing)
+            },
+            SemanticCache::Rejected(reason) => {
+                let image = compile_semantic(&self.language, self.semantic_limits)
+                    .map_err(FinishExecutableRegistryInstallError::CompileSemantic)?;
+                image
+                    .validate(&self.language, self.semantic_limits)
+                    .map_err(FinishExecutableRegistryInstallError::InvalidSemanticImage)?;
+                (image, SemanticCacheDisposition::RecompiledRejected { reason })
+            },
+        };
+        Ok(InstalledRegistryExecutableLanguage {
+            authoritative_spec: self.authoritative_spec,
+            language: self.language,
+            requested_rights: self.requested_rights,
+            parser_image,
+            semantic_image,
+            parser_cache_disposition,
+            semantic_cache_disposition,
+            parser_limits: self.parser_limits,
+            semantic_limits: self.semantic_limits,
+        })
+    }
+}
+
+pub struct InstalledRegistryExecutableLanguage {
+    pub authoritative_spec: RhoValue,
+    pub language: LanguageCoreV1,
+    pub requested_rights: LanguageRights,
+    pub parser_image: ParserImageV1,
+    pub semantic_image: TheorySemanticImageV1,
+    pub parser_cache_disposition: ParserCacheDisposition,
+    pub semantic_cache_disposition: SemanticCacheDisposition,
+    pub parser_limits: ParserImageAdmissionLimits,
+    pub semantic_limits: TheoryImageAdmissionLimits,
+}
+
+impl InstalledRegistryExecutableLanguage {
+    /// Publish the complete verified language and both artifacts in one table
+    /// transaction. No grammar-only entry can become visible on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit(
+        self,
+        table: &InstalledLanguageTable,
+        granted_rights: LanguageRights,
+        compiler_abi: &str,
+        unicode_version: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+    ) -> Result<InstalledLanguageGrant, InstallLanguageError> {
+        table.install_executable_runtime(
+            self.language,
+            self.parser_image,
+            self.semantic_image,
+            granted_rights,
+            compiler_abi,
+            unicode_version,
+            capability_abi,
+            policy_fingerprint,
+            self.semantic_limits,
+        )
+    }
+}
+
 impl InstalledRegistryLanguage {
     /// Atomically publish this fully prepared Registry record into the neutral
     /// installed-language capability table. The canonical Registry value was
@@ -419,6 +765,13 @@ pub enum ParserCacheDisposition {
     RecompiledRejected { reason: String },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SemanticCacheDisposition {
+    ReusedVerified,
+    CompiledMissing,
+    RecompiledRejected { reason: String },
+}
+
 pub enum ParserCache {
     Missing,
     Verified(Box<ParserImageV1>),
@@ -427,11 +780,18 @@ pub enum ParserCache {
     Rejected(String),
 }
 
+pub enum SemanticCache {
+    Missing,
+    Verified(Box<TheorySemanticImageV1>),
+    Rejected(String),
+}
+
 #[derive(Debug)]
 pub enum PrepareRegistryError<E> {
     UnsupportedSchema(String),
     Lowering(E),
     InvalidGrammar(Vec<mettail_grammar_core::ValidationError>),
+    InvalidLanguage(Vec<mettail_grammar_core::LanguageCoreValidationError>),
     Fingerprint(String),
 }
 
@@ -448,6 +808,23 @@ pub enum FinishRegistryInstallError<C> {
     InvalidCompilerImage(ImageError),
 }
 
+#[derive(Debug)]
+pub enum InstallExecutableRegistryError<E, PC, SC> {
+    Prepare(PrepareRegistryError<E>),
+    CompileParser(PC),
+    CompileSemantic(SC),
+    InvalidParserImage(ImageError),
+    InvalidSemanticImage(TheoryImageError),
+}
+
+#[derive(Debug)]
+pub enum FinishExecutableRegistryInstallError<PC, SC> {
+    CompileParser(PC),
+    CompileSemantic(SC),
+    InvalidParserImage(ImageError),
+    InvalidSemanticImage(TheoryImageError),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,8 +832,8 @@ mod tests {
     use crate::resolve::ModuleRef;
     use mettail_grammar_core::{
         normalize_runtime_engine, Carrier, Category, CategoryId, IndexWidth, LanguageAccessError,
-        LanguageRight, LexerImage, LexerState, ParserImageKind, PARSER_IMAGE_ABI_V1,
-        PARSER_IMAGE_MAGIC,
+        LanguageRight, LexerImage, LexerState, ParserImageKind, TheoryProfileV1, TheorySortKindV1,
+        TheorySortV1, PARSER_IMAGE_ABI_V1, PARSER_IMAGE_MAGIC,
     };
 
     fn core(name: &str) -> GrammarCoreV1 {
@@ -528,12 +905,13 @@ mod tests {
     }
 
     #[test]
-    fn content_commitment_excludes_source_oracle_bytes_and_parser_images() {
+    fn content_commitment_excludes_source_oracle_and_derived_images() {
         let mut record =
             RegistryModuleRecord::new("Module Pair {}", canonical_module(), RhoValue::Nil);
         let commitment = record.content_commitment().expect("record validates");
         record.source = "not even valid MeTTaIL source".into();
         record.images.insert([0x44; 32], vec![1, 2, 3]);
+        record.semantic_images.insert([0x55; 32], vec![4, 5, 6]);
         assert_eq!(
             record
                 .content_commitment()
@@ -548,6 +926,7 @@ mod tests {
             RegistryModuleRecord::new("Module Pair {}", canonical_module(), RhoValue::Nil);
         let payload = record.signed_payload().expect("canonical record validates");
         record.images.insert([0x44; 32], Vec::new());
+        record.semantic_images.insert([0x55; 32], Vec::new());
         assert_eq!(
             record
                 .signed_payload()
@@ -666,6 +1045,85 @@ mod tests {
             )
             .expect("install");
         assert_eq!(installed.cache_disposition, ParserCacheDisposition::ReusedVerified);
+    }
+
+    #[test]
+    fn executable_cache_identity_is_grammar_only_and_rights_are_manifest_only() {
+        let grammar = core("shared");
+        let parser = executable(&grammar, "compiler/1", "15.1");
+        let grammar_fingerprint = grammar.fingerprint().expect("grammar fingerprint");
+        let parser_images = Arc::new(BTreeMap::from([(
+            grammar_fingerprint,
+            parser.encode().expect("parser image encodes"),
+        )]));
+
+        let mut left = LanguageCoreV1::structural(grammar.clone());
+        left.theory.profile = TheoryProfileV1::Oslf;
+        left.theory.sorts.push(TheorySortV1 {
+            name: "Term".into(),
+            kind: TheorySortKindV1::Syntax { literal: None },
+        });
+        let mut right = left.clone();
+        right.theory.limits.max_steps -= 1;
+        left.validate().expect("left language validates");
+        right.validate().expect("right language validates");
+        assert_ne!(left.fingerprint().unwrap(), right.fingerprint().unwrap());
+        assert_eq!(left.grammar_fingerprint().unwrap(), right.grammar_fingerprint().unwrap());
+
+        let record = RegistryLanguageRecord::with_parser_images(
+            RhoValue::String("authoritative".into()),
+            Arc::clone(&parser_images),
+        );
+        let prepare = |language: LanguageCoreV1, rights: LanguageRights| {
+            record
+                .prepare_executable_install_with_artifact_limits(
+                    "compiler/1",
+                    "15.1",
+                    ParserImageAdmissionLimits::default(),
+                    TheoryImageAdmissionLimits::default(),
+                    |_| Ok::<_, ()>(InstallableLanguageCore { language, requested_rights: rights }),
+                )
+                .expect("executable language prepares")
+        };
+        let left_prepared =
+            prepare(left.clone(), LanguageRights::from_rights([LanguageRight::Parse]));
+        let right_prepared = prepare(
+            right,
+            LanguageRights::from_rights([LanguageRight::Parse, LanguageRight::Match]),
+        );
+        let ParserCache::Verified(left_parser) = left_prepared.parser_cache else {
+            panic!("left parser cache was not reused")
+        };
+        let ParserCache::Verified(right_parser) = right_prepared.parser_cache else {
+            panic!("right parser cache was not reused")
+        };
+        assert_eq!(left_parser.fingerprint().unwrap(), right_parser.fingerprint().unwrap());
+        assert_ne!(left_prepared.requested_rights, right_prepared.requested_rights);
+        assert!(matches!(left_prepared.semantic_cache, SemanticCache::Missing));
+        assert!(matches!(right_prepared.semantic_cache, SemanticCache::Missing));
+
+        let mut changed_grammar = grammar;
+        changed_grammar.categories[0].admits_variables = true;
+        let changed = LanguageCoreV1::structural(changed_grammar);
+        let changed_record = RegistryLanguageRecord::with_parser_images(
+            RhoValue::String("changed".into()),
+            parser_images,
+        );
+        let changed_prepared = changed_record
+            .prepare_executable_install_with_artifact_limits(
+                "compiler/1",
+                "15.1",
+                ParserImageAdmissionLimits::default(),
+                TheoryImageAdmissionLimits::default(),
+                |_| {
+                    Ok::<_, ()>(InstallableLanguageCore {
+                        language: changed,
+                        requested_rights: LanguageRights::none(),
+                    })
+                },
+            )
+            .expect("syntax-changed language prepares");
+        assert!(matches!(changed_prepared.parser_cache, ParserCache::Missing));
     }
 
     #[test]

@@ -9167,7 +9167,8 @@ mod tests {
     use mettail_grammar_core::{
         TheoryConstructorId, TheoryConstructorImageV1, TheoryJudgmentPatternAutomatonV1,
         TheoryLiteralV1, TheoryPatternAutomatonV1, TheorySortImageV1,
-        THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+        THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
+        THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
     };
 
     fn sort(id: u32, kind: TheorySortKindImageV1) -> TheorySortImageV1 {
@@ -9178,6 +9179,7 @@ mod tests {
         TheorySemanticImageV1 {
             abi: THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
             compiler_abi: THEORY_IMAGE_COMPILER_ABI_CURRENT,
+            primitive_substrate_abi: THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
             language_fingerprint: [0; 32],
             grammar_fingerprint: [0; 32],
             theory_fingerprint: [0; 32],

@@ -51,7 +51,6 @@ pub(crate) struct LanguageSchema {
     context: Option<String>,
     documentation: Option<String>,
     theory: core::TheoryCoreV1,
-    normalized: RhoValue,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -326,6 +325,12 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
     let rewrites = validate_value_sequence(spec.get("rewrites"), "$.rewrites", validate_rewrite)?;
     let relations =
         validate_value_sequence(spec.get("relations"), "$.relations", validate_relation)?;
+    if notation == "language/3" && !relations.is_empty() {
+        return error(
+            "$.relations",
+            "language/3 relations require typed `oslf.judgments`; legacy relation declarations do not identify argument sorts or a decision policy",
+        );
+    }
     let theory = if notation == "language/3" {
         decode_oslf(spec.get("oslf"), "$.oslf")?
     } else {
@@ -343,7 +348,6 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
     validate_unique_names(modes.iter().map(|value| &value.name), "$.modes")?;
     validate_unique_names(terms.iter().map(|value| &value.label), "$.terms")?;
     validate_unique_names(tree_invariants.iter().map(|value| &value.name), "$.tree_invariants")?;
-    let normalized = normalize_spec(spec, &requested_rights);
     Ok(LanguageSchema {
         notation: notation.to_string(),
         name,
@@ -365,7 +369,6 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
         context,
         documentation,
         theory,
-        normalized,
     })
 }
 
@@ -4317,127 +4320,6 @@ fn identifier(value: &str, path: &str) -> Result<String, ValueDecodeError> {
     Ok(value.to_string())
 }
 
-fn normalize_spec(
-    values: &BTreeMap<String, RhoValue>,
-    requested_rights: &core::LanguageRights,
-) -> RhoValue {
-    let mut normalized = values.clone();
-    normalized.remove("context");
-    normalized.remove("doc");
-    if normalized.get("semantics") == Some(&RhoValue::String("Rust".into())) {
-        normalized.remove("semantics");
-    }
-    if requested_rights == &core::LanguageRights::native_flt_default() {
-        normalized.remove("rights");
-    } else {
-        normalized.insert(
-            "rights".into(),
-            RhoValue::List(
-                requested_rights
-                    .iter()
-                    .map(|right| RhoValue::String(right.name().into()))
-                    .collect(),
-            ),
-        );
-    }
-    normalize_record_list(&mut normalized, "tokens", normalize_token_record);
-    normalize_record_list(&mut normalized, "terms", normalize_term_record);
-    normalize_record_list(&mut normalized, "equations", normalize_semantic_rule_record);
-    normalize_record_list(&mut normalized, "rewrites", normalize_semantic_rule_record);
-    normalize_record_list(&mut normalized, "tree_invariants", remove_record_doc);
-    normalize_record_list(&mut normalized, "relations", normalize_relation_record);
-    if let Some(RhoValue::List(modes)) = normalized.get_mut("modes") {
-        for mode in modes {
-            let RhoValue::Map(mode) = mode else { continue };
-            remove_default(mode, "raw", &RhoValue::Boolean(false));
-            normalize_record_list(mode, "tokens", normalize_token_record);
-        }
-    }
-    normalize_guard_docs(normalized.get_mut("guards"));
-    for key in [
-        "types",
-        "literals",
-        "tokens",
-        "modes",
-        "sync",
-        "tree_invariants",
-        "terms",
-        "equations",
-        "rewrites",
-        "relations",
-        "extends",
-        "includes",
-        "mixins",
-        "exports",
-        "replacements",
-    ] {
-        if matches!(normalized.get(key), Some(RhoValue::List(values)) if values.is_empty()) {
-            normalized.remove(key);
-        }
-    }
-    RhoValue::Map(normalized)
-}
-
-fn normalize_record_list(
-    record: &mut BTreeMap<String, RhoValue>,
-    key: &str,
-    normalize: fn(&mut BTreeMap<String, RhoValue>),
-) {
-    let Some(RhoValue::List(values)) = record.get_mut(key) else {
-        return;
-    };
-    for value in values {
-        if let RhoValue::Map(value) = value {
-            normalize(value);
-        }
-    }
-}
-
-fn normalize_token_record(record: &mut BTreeMap<String, RhoValue>) {
-    remove_default(record, "priority", &RhoValue::Integer(0));
-    remove_default(record, "pop", &RhoValue::Boolean(false));
-}
-
-fn normalize_term_record(record: &mut BTreeMap<String, RhoValue>) {
-    remove_empty_list(record, "context");
-    remove_default(record, "assoc", &RhoValue::String("left".into()));
-    remove_default(record, "mode", &RhoValue::String("fold".into()));
-    record.remove("doc");
-}
-
-fn normalize_semantic_rule_record(record: &mut BTreeMap<String, RhoValue>) {
-    remove_empty_list(record, "premises");
-    remove_empty_list(record, "context");
-}
-
-fn normalize_relation_record(record: &mut BTreeMap<String, RhoValue>) {
-    record.remove("doc");
-}
-
-fn remove_record_doc(record: &mut BTreeMap<String, RhoValue>) {
-    record.remove("doc");
-}
-
-fn normalize_guard_docs(value: Option<&mut RhoValue>) {
-    let Some(RhoValue::Map(guards)) = value else {
-        return;
-    };
-    normalize_record_list(guards, "predicates", remove_record_doc);
-    normalize_record_list(guards, "theories", remove_record_doc);
-}
-
-fn remove_empty_list(record: &mut BTreeMap<String, RhoValue>, key: &str) {
-    if matches!(record.get(key), Some(RhoValue::List(values)) if values.is_empty()) {
-        record.remove(key);
-    }
-}
-
-fn remove_default(record: &mut BTreeMap<String, RhoValue>, key: &str, default: &RhoValue) {
-    if record.get(key) == Some(default) {
-        record.remove(key);
-    }
-}
-
 pub(crate) fn to_core_value(value: &RhoValue) -> core::CanonicalValue {
     enum Task<'a> {
         Visit(&'a RhoValue),
@@ -4594,18 +4476,18 @@ impl LanguageSchema {
     pub(crate) fn lower(&self) -> Result<core::GrammarCoreV1, ValueDecodeError> {
         let mut output = core::GrammarCoreV1::new(&self.name);
         output.provenance.frontend = format!("rholang-{}", self.notation);
-        output.canonical_specification = Some(to_core_value(&self.normalized));
         output.backend_context = self.context.clone();
         output.documentation = self.documentation.clone();
-        output.semantic_program.target = self.semantics.clone();
-        output.requested_rights = self.requested_rights.clone();
-        output.semantic_program.equations = self.equations.iter().map(to_core_value).collect();
-        output.semantic_program.rewrites = self.rewrites.iter().map(to_core_value).collect();
-        output.semantic_program.relations = self.relations.iter().map(to_core_value).collect();
-        output.semantic_program.guards = self
-            .guards
-            .as_ref()
-            .map(|guards| to_core_value(&guards.value));
+        if self.notation == "language/2" {
+            output.semantic_program.target = self.semantics.clone();
+            output.semantic_program.equations = self.equations.iter().map(to_core_value).collect();
+            output.semantic_program.rewrites = self.rewrites.iter().map(to_core_value).collect();
+            output.semantic_program.relations = self.relations.iter().map(to_core_value).collect();
+            output.semantic_program.guards = self
+                .guards
+                .as_ref()
+                .map(|guards| to_core_value(&guards.value));
+        }
         if let Some(beam_width) = self.options.beam_width {
             output.parser_configuration.beam_width = beam_width;
         }
@@ -4856,16 +4738,18 @@ impl LanguageSchema {
             .iter()
             .map(|production| (production.label.clone(), production.constructor))
             .collect();
-        output.semantic_dependencies = self
-            .equations
-            .iter()
-            .chain(self.rewrites.iter())
-            .map(|value| {
-                let mut dependencies = BTreeSet::new();
-                collect_constructor_references(value, &constructors, &mut dependencies);
-                dependencies.into_iter().collect()
-            })
-            .collect();
+        if self.notation == "language/2" {
+            output.semantic_dependencies = self
+                .equations
+                .iter()
+                .chain(self.rewrites.iter())
+                .map(|value| {
+                    let mut dependencies = BTreeSet::new();
+                    collect_constructor_references(value, &constructors, &mut dependencies);
+                    dependencies.into_iter().collect()
+                })
+                .collect();
+        }
         output.validate().map_err(|errors| {
             ValueDecodeError::new("$", format!("invalid GrammarCore: {errors:?}"))
         })?;
@@ -4893,6 +4777,10 @@ impl LanguageSchema {
             ValueDecodeError::new("$.oslf", format!("invalid LanguageCore: {errors:?}"))
         })?;
         Ok(language)
+    }
+
+    pub(crate) fn requested_rights(&self) -> core::LanguageRights {
+        self.requested_rights.clone()
     }
 
     fn complete_theory_signature(
@@ -5865,7 +5753,8 @@ fn error<T>(path: impl Into<String>, message: impl Into<String>) -> Result<T, Va
 mod tests {
     use super::*;
     use crate::canonical::{
-        value_to_core, value_to_core_with_resolver, value_to_language_core,
+        value_to_core, value_to_core_with_resolver, value_to_installable_language_core,
+        value_to_installable_language_core_with_resolver, value_to_language_core,
         value_to_language_core_with_resolver, LanguageValueResolver,
     };
 
@@ -6449,6 +6338,22 @@ mod tests {
         let error = value_to_language_core(&cost_without_continuation)
             .expect_err("Cost(G) without continued structure must fail");
         assert!(format!("{error:?}").contains("CostRequiresContinued"));
+
+        let untyped_relation = language3(
+            "UntypedRelation",
+            [(
+                "relations",
+                l([m([
+                    ("relation", s("Reachable")),
+                    ("params", l([s("left"), s("right")])),
+                    ("rules", l([])),
+                ])]),
+            )],
+        );
+        let error = value_to_language_core(&untyped_relation).expect_err(
+            "language/3 must not guess sorts or a decision policy for legacy relations",
+        );
+        assert!(format!("{error:?}").contains("typed `oslf.judgments`"));
     }
 
     #[test]
@@ -6484,22 +6389,25 @@ mod tests {
                 ("types", l([s("Expr")])),
             ],
         );
-        let omitted_core = value_to_core(&omitted).expect("default rights lower");
-        let explicit_core = value_to_core(&explicit_default).expect("explicit rights lower");
-        assert_eq!(omitted_core.requested_rights, core::LanguageRights::native_flt_default());
-        assert_eq!(omitted_core.requested_rights, explicit_core.requested_rights);
-        assert_eq!(omitted_core.canonical_specification, explicit_core.canonical_specification);
-        assert_eq!(omitted_core.fingerprint().unwrap(), explicit_core.fingerprint().unwrap());
+        let omitted_install =
+            value_to_installable_language_core(&omitted).expect("default rights lower");
+        let explicit_install =
+            value_to_installable_language_core(&explicit_default).expect("explicit rights lower");
+        assert_eq!(omitted_install.requested_rights, core::LanguageRights::native_flt_default());
+        assert_eq!(omitted_install.requested_rights, explicit_install.requested_rights);
+        assert_eq!(omitted_install.language, explicit_install.language);
+        assert_eq!(
+            omitted_install.language.grammar_fingerprint().unwrap(),
+            explicit_install.language.grammar_fingerprint().unwrap()
+        );
 
-        let no_rights =
-            value_to_core(&language("NoRights", [("rights", l([])), ("types", l([s("Expr")]))]))
-                .expect("an explicit empty request is valid");
+        let no_rights = value_to_installable_language_core(&language(
+            "Rights",
+            [("rights", l([])), ("types", l([s("Expr")]))],
+        ))
+        .expect("an explicit empty request is valid");
         assert_eq!(no_rights.requested_rights, core::LanguageRights::none());
-        assert!(matches!(
-            no_rights.canonical_specification,
-            Some(core::CanonicalValue::Map(ref values))
-                if values.get("rights") == Some(&core::CanonicalValue::List(Vec::new()))
-        ));
+        assert_eq!(no_rights.language, omitted_install.language);
     }
 
     #[test]
@@ -6598,10 +6506,17 @@ mod tests {
             ],
         );
         let resolver = Values(BTreeMap::from([("Base".into(), base)]));
-        let core = value_to_core_with_resolver(&local, &resolver).expect("composition lowers");
-        assert!(core.requested_rights.contains(core::LanguageRight::Parse));
-        assert!(core.requested_rights.contains(core::LanguageRight::Bridge));
-        assert!(!core.requested_rights.contains(core::LanguageRight::Publish));
+        let install = value_to_installable_language_core_with_resolver(&local, &resolver)
+            .expect("composition lowers");
+        assert!(install
+            .requested_rights
+            .contains(core::LanguageRight::Parse));
+        assert!(install
+            .requested_rights
+            .contains(core::LanguageRight::Bridge));
+        assert!(!install
+            .requested_rights
+            .contains(core::LanguageRight::Publish));
     }
 
     #[test]
@@ -6657,8 +6572,9 @@ mod tests {
         let local = language("Local", [("mixins", l([s("LexicalFragment")]))]);
         let resolver = Values(BTreeMap::from([("LexicalFragment".into(), fragment)]));
 
-        let core = value_to_core_with_resolver(&local, &resolver)
+        let install = value_to_installable_language_core_with_resolver(&local, &resolver)
             .expect("the complete grammar fragment must survive runtime mixin projection");
+        let core = &install.language.grammar;
         assert!(core
             .categories
             .iter()
@@ -6681,8 +6597,12 @@ mod tests {
         }
         assert_eq!(core.semantic_program.equations, Vec::new());
         assert_eq!(core.semantic_program.rewrites, Vec::new());
-        assert!(core.requested_rights.contains(core::LanguageRight::Parse));
-        assert!(!core.requested_rights.contains(core::LanguageRight::Publish));
+        assert!(install
+            .requested_rights
+            .contains(core::LanguageRight::Parse));
+        assert!(!install
+            .requested_rights
+            .contains(core::LanguageRight::Publish));
     }
 
     #[test]

@@ -25,7 +25,7 @@ use mettail_grammar_core::{
     TheoryRuleSuppressionV1, TheorySemanticImageV1, TheorySortId, TheorySortImageV1,
     TheorySortKindImageV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1,
     TheoryVariableId, TheoryWorkChargeV1, THEORY_IMAGE_COMPILER_ABI_CURRENT,
-    THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+    THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -109,6 +109,7 @@ pub fn compile_theory_semantic_image(
     let image = TheorySemanticImageV1 {
         abi: THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
         compiler_abi: THEORY_IMAGE_COMPILER_ABI_CURRENT,
+        primitive_substrate_abi: THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
         language_fingerprint: language
             .fingerprint()
             .map_err(|error| TheoryImageError::Fingerprint(error.to_string()))?,

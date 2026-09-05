@@ -67,7 +67,7 @@ impl TheorySemanticImageV1 {
     /// copy of the image.
     pub fn fingerprint(&self) -> Result<[u8; 32], TheoryImageError> {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-theory-semantic-image/2\0");
+        hasher.update(b"mettail-theory-semantic-image/3\0");
         encode_image(self, &mut HashSink(&mut hasher))?;
         Ok(*hasher.finalize().as_bytes())
     }
@@ -105,6 +105,7 @@ impl TheorySemanticImageV1 {
             return Err(TheoryImageError::UnsupportedAbi(abi));
         }
         let compiler_abi = reader.read_u16()?;
+        let primitive_substrate_abi = reader.read_u16()?;
         let language_fingerprint = reader.read_array()?;
         let grammar_fingerprint = reader.read_array()?;
         let theory_fingerprint = reader.read_array()?;
@@ -197,6 +198,7 @@ impl TheorySemanticImageV1 {
         let image = Self {
             abi,
             compiler_abi,
+            primitive_substrate_abi,
             language_fingerprint,
             grammar_fingerprint,
             theory_fingerprint,
@@ -230,6 +232,7 @@ fn encode_image<S: ImageSink>(
     sink.write(THEORY_IMAGE_MAGIC)?;
     write_u16(sink, image.abi)?;
     write_u16(sink, image.compiler_abi)?;
+    write_u16(sink, image.primitive_substrate_abi)?;
     sink.write(&image.language_fingerprint)?;
     sink.write(&image.grammar_fingerprint)?;
     sink.write(&image.theory_fingerprint)?;

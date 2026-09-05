@@ -27,6 +27,9 @@ pub use pres::Presentation;
 pub struct ElaboratedLanguage {
     pub presentation: Presentation,
     pub canonical_value: canonical::RhoValue,
+    /// Declarative attenuation request carried beside, never inside, the
+    /// immutable language/parser identity.
+    pub requested_rights: mettail_grammar_core::LanguageRights,
     /// Authoritative complete syntax-and-theory artifact.
     pub language_core: mettail_grammar_core::LanguageCoreV1,
     /// Compatibility projection for parser-only consumers. New installation
@@ -272,16 +275,19 @@ fn finish_language(name: &str, presentation: Presentation) -> Result<ElaboratedL
     // boundary even though `presentation` is already available so the surface
     // DDL and programmatically constructed values cannot acquire distinct
     // lowering behavior.
-    let language_core = canonical::value_to_language_core(&canonical_value).map_err(|error| {
-        Diag::new(
-            DiagKind::Resolution,
-            format!("cannot lower canonical language value: {error:?}"),
-            lex::Span { line: 0, col: 0 },
-        )
-    })?;
+    let installable =
+        canonical::value_to_installable_language_core(&canonical_value).map_err(|error| {
+            Diag::new(
+                DiagKind::Resolution,
+                format!("cannot lower canonical language value: {error:?}"),
+                lex::Span { line: 0, col: 0 },
+            )
+        })?;
+    let language_core = installable.language;
     Ok(ElaboratedLanguage {
         presentation,
         canonical_value,
+        requested_rights: installable.requested_rights,
         grammar_core: language_core.grammar.clone(),
         language_core,
     })
@@ -402,6 +408,9 @@ mod tests {
             ])
         );
         assert_eq!(language.grammar_core, language.language_core.grammar);
+        assert!(language.grammar_core.semantic_program.equations.is_empty());
+        assert!(language.grammar_core.semantic_program.rewrites.is_empty());
+        assert!(language.grammar_core.semantic_dependencies.is_empty());
 
         let encoded = core_value::language_core_to_value(&language.language_core)
             .expect("executable LanguageCore has an exact value encoding");

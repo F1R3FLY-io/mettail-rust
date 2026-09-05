@@ -29,12 +29,16 @@ pub const THEORY_SEMANTIC_IMAGE_ABI_V1: u16 = 1;
 pub const THEORY_SEMANTIC_IMAGE_ABI_V2: u16 = 2;
 pub const THEORY_SEMANTIC_IMAGE_ABI_V3: u16 = 3;
 pub const THEORY_SEMANTIC_IMAGE_ABI_V4: u16 = 4;
-pub const THEORY_SEMANTIC_IMAGE_ABI_CURRENT: u16 = THEORY_SEMANTIC_IMAGE_ABI_V4;
+pub const THEORY_SEMANTIC_IMAGE_ABI_V5: u16 = 5;
+pub const THEORY_SEMANTIC_IMAGE_ABI_CURRENT: u16 = THEORY_SEMANTIC_IMAGE_ABI_V5;
 pub const THEORY_IMAGE_COMPILER_ABI_V1: u16 = 1;
 pub const THEORY_IMAGE_COMPILER_ABI_V2: u16 = 2;
 pub const THEORY_IMAGE_COMPILER_ABI_V3: u16 = 3;
 pub const THEORY_IMAGE_COMPILER_ABI_V4: u16 = 4;
-pub const THEORY_IMAGE_COMPILER_ABI_CURRENT: u16 = THEORY_IMAGE_COMPILER_ABI_V4;
+pub const THEORY_IMAGE_COMPILER_ABI_V5: u16 = 5;
+pub const THEORY_IMAGE_COMPILER_ABI_CURRENT: u16 = THEORY_IMAGE_COMPILER_ABI_V5;
+pub const THEORY_PRIMITIVE_SUBSTRATE_ABI_V1: u16 = 1;
+pub const THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT: u16 = THEORY_PRIMITIVE_SUBSTRATE_ABI_V1;
 
 macro_rules! image_id {
     ($name:ident) => {
@@ -554,6 +558,9 @@ pub enum TheoryResourceProfileV1 {
 pub struct TheorySemanticImageV1 {
     pub abi: u16,
     pub compiler_abi: u16,
+    /// Closed implementation ABI for every built-in semantic intrinsic. The
+    /// image selects no host code; admission requires this exact substrate.
+    pub primitive_substrate_abi: u16,
     pub language_fingerprint: [u8; 32],
     pub grammar_fingerprint: [u8; 32],
     pub theory_fingerprint: [u8; 32],
@@ -634,6 +641,46 @@ impl Default for TheoryImageAdmissionLimits {
 }
 
 impl TheoryImageAdmissionLimits {
+    /// Architecture-independent commitment to every semantic-image admission
+    /// ceiling. Installation binds this value so a replay cannot silently use
+    /// a more permissive checker policy.
+    pub fn fingerprint(self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"mettail-theory-image-admission-limits/1\0");
+        for limit in [
+            self.max_encoded_bytes,
+            self.max_sorts,
+            self.max_constructors,
+            self.max_judgments,
+            self.max_effects,
+            self.max_rules,
+            self.max_actions,
+            self.max_total_sort_references,
+            self.max_total_sort_metadata_bytes,
+            self.max_total_constructor_arguments,
+            self.max_total_action_arguments,
+            self.max_total_action_terminal_constructors,
+            self.max_total_rule_variables,
+            self.max_total_term_nodes,
+            self.max_total_term_references,
+            self.max_total_premise_nodes,
+            self.max_total_premise_roots,
+            self.max_total_name_bytes,
+            self.max_total_literal_bytes,
+            self.max_total_guard_nodes,
+            self.max_total_guard_bytes,
+            self.max_total_action_transitions,
+            self.max_automaton_states,
+            self.max_automaton_entries,
+            self.max_automaton_edges,
+            self.max_automaton_slot_references,
+            self.max_automaton_checks,
+        ] {
+            hasher.update(&(limit as u128).to_be_bytes());
+        }
+        *hasher.finalize().as_bytes()
+    }
+
     /// Preflight the complete source expansion before an image compiler clones
     /// any rule arena or allocates automaton state.  Equation orientations are
     /// counted separately because both remain auditable image programs even
@@ -1072,6 +1119,7 @@ pub enum TheoryImageError {
     InvalidLanguage(String),
     UnsupportedAbi(u16),
     UnsupportedCompilerAbi(u16),
+    UnsupportedPrimitiveSubstrateAbi(u16),
     Fingerprint(String),
     FingerprintMismatch(&'static str),
     LimitExceeded(&'static str),
@@ -1127,6 +1175,11 @@ impl TheorySemanticImageV1 {
         }
         if self.compiler_abi != THEORY_IMAGE_COMPILER_ABI_CURRENT {
             return Err(TheoryImageError::UnsupportedCompilerAbi(self.compiler_abi));
+        }
+        if self.primitive_substrate_abi != THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT {
+            return Err(TheoryImageError::UnsupportedPrimitiveSubstrateAbi(
+                self.primitive_substrate_abi,
+            ));
         }
         check_fingerprint(
             self.language_fingerprint,

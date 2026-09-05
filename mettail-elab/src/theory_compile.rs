@@ -1444,6 +1444,140 @@ impl<'a> RuleCompiler<'a> {
                                 &tagged[1],
                             ))
                         },
+                        "intrinsic" => {
+                            require_len(tagged, 2, &path)?;
+                            let spec = expect_map(&tagged[1], &format!("{path}[1]"))?;
+                            if spec.len() != 3
+                                || !spec.contains_key("op")
+                                || !spec.contains_key("inputs")
+                                || !spec.contains_key("outputs")
+                            {
+                                return error(
+                                    format!("{path}[1]"),
+                                    "intrinsic requires exactly op, inputs, and outputs",
+                                );
+                            }
+                            let op = required_string(spec, "op", &format!("{path}[1]"))?;
+                            let inputs = expect_list(
+                                required(spec, "inputs", &format!("{path}[1]"))?,
+                                &format!("{path}[1].inputs"),
+                            )?;
+                            let output_values = expect_list(
+                                required(spec, "outputs", &format!("{path}[1]"))?,
+                                &format!("{path}[1].outputs"),
+                            )?;
+                            let (input_arity, output_arity) = match op {
+                                "exact_term_eq" => (2, 1),
+                                "utf8_at_end" => (2, 1),
+                                "utf8_scalar_at" => (2, 2),
+                                "utf8_slice" => (3, 1),
+                                "checked_nat_add" => (2, 1),
+                                "utf8_concat_many" => (1, 1),
+                                _ => {
+                                    return error(
+                                        format!("{path}[1].op"),
+                                        format!("unknown closed intrinsic `{op}`"),
+                                    )
+                                },
+                            };
+                            if inputs.len() != input_arity || output_values.len() != output_arity {
+                                return error(
+                                    &path,
+                                    format!(
+                                        "intrinsic `{op}` expects {input_arity} inputs and {output_arity} outputs",
+                                    ),
+                                );
+                            }
+                            let mut input_ids = Vec::with_capacity(input_arity);
+                            for (index, input) in inputs.iter().enumerate() {
+                                let name = expect_nonempty_string(
+                                    input,
+                                    &format!("{path}[1].inputs[{index}]"),
+                                )?;
+                                input_ids.push(*self.variable_ids.get(name).ok_or_else(|| {
+                                    ValueDecodeError::new(
+                                        format!("{path}[1].inputs[{index}]"),
+                                        format!("intrinsic input `{name}` is not available"),
+                                    )
+                                })?);
+                            }
+                            let mut output_specs = Vec::with_capacity(output_arity);
+                            let mut output_names = BTreeSet::new();
+                            for (index, output) in output_values.iter().enumerate() {
+                                let output_path = format!("{path}[1].outputs[{index}]");
+                                let output = expect_list(output, &output_path)?;
+                                if output.len() != 3
+                                    || expect_string(&output[0], &format!("{output_path}[0]"))?
+                                        != "typed"
+                                {
+                                    return error(&output_path, "expected [\"typed\", name, sort]");
+                                }
+                                let name = expect_nonempty_string(
+                                    &output[1],
+                                    &format!("{output_path}[1]"),
+                                )?;
+                                let sort =
+                                    decode_context_sort(&output[2], &format!("{output_path}[2]"))?;
+                                if self.signature.sort(&sort).is_none() {
+                                    return error(
+                                        &output_path,
+                                        format!("unknown theory sort `{sort}`"),
+                                    );
+                                }
+                                if self.variable_ids.contains_key(name)
+                                    || !output_names.insert(name.to_string())
+                                {
+                                    return error(
+                                        &output_path,
+                                        format!("intrinsic output `{name}` is not fresh"),
+                                    );
+                                }
+                                output_specs.push((name.to_string(), sort, output_path));
+                            }
+                            let mut output_ids = Vec::with_capacity(output_arity);
+                            for (name, sort, output_path) in output_specs {
+                                output_ids.push(self.add_variable(
+                                    &name,
+                                    &sort,
+                                    core::TheoryVariableRoleV1::Derived,
+                                    &output_path,
+                                )?);
+                            }
+                            core::TheoryPremiseFormV1::Intrinsic(match op {
+                                "exact_term_eq" => core::TheoryIntrinsicV1::ExactTermEq {
+                                    left: input_ids[0],
+                                    right: input_ids[1],
+                                    output: output_ids[0],
+                                },
+                                "utf8_at_end" => core::TheoryIntrinsicV1::Utf8AtEnd {
+                                    text: input_ids[0],
+                                    cursor: input_ids[1],
+                                    output: output_ids[0],
+                                },
+                                "utf8_scalar_at" => core::TheoryIntrinsicV1::Utf8ScalarAt {
+                                    text: input_ids[0],
+                                    cursor: input_ids[1],
+                                    scalar: output_ids[0],
+                                    next_cursor: output_ids[1],
+                                },
+                                "utf8_slice" => core::TheoryIntrinsicV1::Utf8Slice {
+                                    text: input_ids[0],
+                                    start: input_ids[1],
+                                    end: input_ids[2],
+                                    output: output_ids[0],
+                                },
+                                "checked_nat_add" => core::TheoryIntrinsicV1::CheckedNatAdd {
+                                    left: input_ids[0],
+                                    right: input_ids[1],
+                                    output: output_ids[0],
+                                },
+                                "utf8_concat_many" => core::TheoryIntrinsicV1::Utf8ConcatMany {
+                                    pieces: input_ids[0],
+                                    output: output_ids[0],
+                                },
+                                _ => unreachable!("closed intrinsic checked above"),
+                            })
+                        },
                         tag => return error(&path, format!("unknown premise tag `{tag}`")),
                     }
                 },
@@ -2036,6 +2170,107 @@ mod tests {
             arena.terms[theory.rewrites[0].right.0 as usize].form,
             core::TheoryTermFormV1::Variable(core::TheoryVariableId(0))
         ));
+    }
+
+    #[test]
+    fn canonical_intrinsic_premise_has_closed_opcode_and_fresh_typed_outputs() {
+        let mut compiled = theory();
+        compiled.sorts.extend([
+            core::TheorySortV1 {
+                name: "Text".into(),
+                kind: core::TheorySortKindV1::Syntax {
+                    literal: Some(core::TheoryLiteralCarrierV1::String),
+                },
+            },
+            core::TheorySortV1 {
+                name: "Bool".into(),
+                kind: core::TheorySortKindV1::Syntax {
+                    literal: Some(core::TheoryLiteralCarrierV1::Boolean),
+                },
+            },
+        ]);
+        let rewrite = map([
+            ("name", string("ReadScalar")),
+            (
+                "context",
+                list([
+                    list([string("typed"), string("text"), string("Text")]),
+                    list([string("typed"), string("cursor"), string("Int")]),
+                ]),
+            ),
+            (
+                "premises",
+                list([list([
+                    string("intrinsic"),
+                    map([
+                        ("op", string("utf8_scalar_at")),
+                        ("inputs", list([string("text"), string("cursor")])),
+                        (
+                            "outputs",
+                            list([
+                                list([string("typed"), string("scalar"), string("Text")]),
+                                list([string("typed"), string("next"), string("Int")]),
+                            ]),
+                        ),
+                    ]),
+                ])]),
+            ),
+            ("left", string("text")),
+            ("right", string("scalar")),
+        ]);
+
+        compile_surface_rules(&[], &[rewrite], &mut compiled).expect("intrinsic compiles");
+        let arena = &compiled.rewrites[0].arena;
+        assert!(matches!(
+            arena.premises[0].form,
+            core::TheoryPremiseFormV1::Intrinsic(core::TheoryIntrinsicV1::Utf8ScalarAt {
+                text: core::TheoryVariableId(0),
+                cursor: core::TheoryVariableId(1),
+                scalar: core::TheoryVariableId(2),
+                next_cursor: core::TheoryVariableId(3),
+            })
+        ));
+        assert_eq!(arena.variables[2].role, core::TheoryVariableRoleV1::Derived);
+        assert_eq!(arena.variables[3].role, core::TheoryVariableRoleV1::Derived);
+    }
+
+    #[test]
+    fn canonical_intrinsic_rejects_unknown_opcodes_and_nonfresh_outputs() {
+        let base = |op: &str, output: &str| {
+            map([
+                ("name", string("BadIntrinsic")),
+                (
+                    "context",
+                    list([
+                        list([string("typed"), string("x"), string("Int")]),
+                        list([string("typed"), string("y"), string("Int")]),
+                    ]),
+                ),
+                (
+                    "premises",
+                    list([list([
+                        string("intrinsic"),
+                        map([
+                            ("op", string(op)),
+                            ("inputs", list([string("x"), string("y")])),
+                            (
+                                "outputs",
+                                list([list([string("typed"), string(output), string("Int")])]),
+                            ),
+                        ]),
+                    ])]),
+                ),
+                ("left", string("x")),
+                ("right", string("x")),
+            ])
+        };
+        let unknown = compile_surface_rules(&[], &[base("host_callback", "z")], &mut theory())
+            .expect_err("arbitrary callbacks are not intrinsic opcodes");
+        assert!(unknown.message.contains("unknown closed intrinsic"), "{unknown:?}");
+
+        let nonfresh = compile_surface_rules(&[], &[base("checked_nat_add", "x")], &mut theory())
+            .expect_err("intrinsic outputs must be fresh");
+        assert!(nonfresh.message.contains("is not fresh"), "{nonfresh:?}");
     }
 
     #[test]

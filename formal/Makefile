@@ -29,7 +29,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: prattail-wpda rocq-support
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail tla-prattail-wpda-binder-broadcast-expected-fail tla-runtime-grammar rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
-.PHONY: rocq-prattail-wpda rocq-runtime-grammar rocq-runtime-grammar-dovetail-deps rocq-runtime-collection-comprehension rocq-runtime-semantic-intrinsics rocq-runtime-semantic-normalization rocq-runtime-regex-gslt rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-slot rocq-advanced-automata-inrho-indexed-channels rocq-advanced-automata-inrho-ac-rest
+.PHONY: rocq-prattail-wpda rocq-runtime-grammar rocq-runtime-grammar-dovetail-deps rocq-runtime-installed-language-authority rocq-runtime-collection-comprehension rocq-runtime-semantic-intrinsics rocq-runtime-semantic-normalization rocq-runtime-regex-gslt rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-slot rocq-advanced-automata-inrho-indexed-channels rocq-advanced-automata-inrho-ac-rest
 .PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail-exact-keys rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
 .PHONY: rocq-rho-bridge rocq-rho-bridge-artifact-boundary rocq-rho-bridge-rejected-coverage rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family rocq-rho-bridge-cbn-budget rocq-rho-bridge-escrow-settlement rocq-rho-bridge-purse-determinism rocq-rho-bridge-inrho-ix rocq-rho-bridge-inrho-iv rocq-rho-bridge-inrho-vi rocq-rho-bridge-persistent-root
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
@@ -110,6 +110,9 @@ rocq-runtime-grammar: require-capped rocq-runtime-grammar-dovetail-deps
 rocq-runtime-grammar-dovetail-deps: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq theories/ExactKeys/ExactKeyDedup.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Lowering/CollectionAcLowering.vo
+
+rocq-runtime-installed-language-authority: require-capped
+	$(MAKE) -C rocq/runtime_grammar theories/InstalledLanguageAuthority.vo
 
 # Focused, memory-efficient development target for exact collection
 # comprehensions. The full runtime-grammar target remains the trusted release

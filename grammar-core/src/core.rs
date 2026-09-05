@@ -1,6 +1,4 @@
-use crate::{
-    CanonicalValue, LanguageRights, NativeEvaluation, ReductionPlan, SemanticProgram, WeightProfile,
-};
+use crate::{CanonicalValue, NativeEvaluation, ReductionPlan, SemanticProgram, WeightProfile};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,12 +28,13 @@ id_type!(ProductionId);
 id_type!(ConstructorId);
 
 pub const GRAMMAR_CORE_ABI_V1: u16 = 1;
+pub const GRAMMAR_CORE_ABI_V2: u16 = 2;
+pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GrammarCoreV1 {
     pub abi: u16,
     pub name: String,
-    pub canonical_specification: Option<CanonicalValue>,
     pub backend_context: Option<String>,
     pub documentation: Option<String>,
     pub categories: Vec<Category>,
@@ -51,10 +50,6 @@ pub struct GrammarCoreV1 {
     pub refinement_types: Vec<RefinementType>,
     pub guard_configuration: Option<GuardConfiguration>,
     pub capabilities: BTreeSet<Capability>,
-    /// Operations the specification asks an installer to place on the returned
-    /// handle. This is declarative demand, never authority; the host intersects
-    /// it with an injected grant before publication.
-    pub requested_rights: LanguageRights,
     pub provenance: Provenance,
     pub limits: GrammarLimits,
     pub weight_profile: WeightProfile,
@@ -63,9 +58,8 @@ pub struct GrammarCoreV1 {
 impl GrammarCoreV1 {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            abi: GRAMMAR_CORE_ABI_V1,
+            abi: GRAMMAR_CORE_ABI_CURRENT,
             name: name.into(),
-            canonical_specification: None,
             backend_context: None,
             documentation: None,
             categories: Vec::new(),
@@ -86,7 +80,6 @@ impl GrammarCoreV1 {
             refinement_types: Vec::new(),
             guard_configuration: None,
             capabilities: BTreeSet::new(),
-            requested_rights: LanguageRights::native_flt_default(),
             provenance: Provenance::default(),
             limits: GrammarLimits::default(),
             weight_profile: WeightProfile::exact(),
@@ -105,12 +98,15 @@ impl GrammarCoreV1 {
             production.provenance = None;
         }
         let bytes = postcard::to_allocvec(&semantic)?;
-        Ok(*blake3::hash(&bytes).as_bytes())
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"mettail-grammar-core/2\0");
+        hasher.update(&bytes);
+        Ok(*hasher.finalize().as_bytes())
     }
 
     pub fn validate(&self) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
-        if self.abi != GRAMMAR_CORE_ABI_V1 {
+        if self.abi != GRAMMAR_CORE_ABI_CURRENT {
             errors.push(ValidationError::UnsupportedAbi(self.abi));
         }
         validate_dense_ids(&self.categories, |x| x.id.0, Entity::Category, &mut errors);
@@ -1196,6 +1192,16 @@ mod tests {
             left.fingerprint().expect("fingerprint"),
             right.fingerprint().expect("fingerprint")
         );
+    }
+
+    #[test]
+    fn stale_grammar_abi_is_rejected_before_fingerprinted_artifacts_are_admitted() {
+        let mut core = one_category_core();
+        core.abi = GRAMMAR_CORE_ABI_V1;
+        assert!(matches!(
+            core.validate(),
+            Err(errors) if errors.contains(&ValidationError::UnsupportedAbi(GRAMMAR_CORE_ABI_V1))
+        ));
     }
 
     #[test]

@@ -14,7 +14,8 @@ use std::collections::BTreeMap;
 /// ABI of the structural payload stored under `language/3`'s `core` key.
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V1: &str = "mettail-language-core-value/1";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V2: &str = "mettail-language-core-value/2";
-pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V2;
+pub const LANGUAGE_CORE_VALUE_SCHEMA_V3: &str = "mettail-language-core-value/3";
+pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V3;
 
 /// Serde's tagged structural encoding introduces a small fixed amount of
 /// framing around each semantic node. Four times the admitted DDL depth is a
@@ -407,10 +408,6 @@ mod tests {
 
     fn comprehensive_language() -> core::LanguageCoreV1 {
         let mut grammar = GrammarCoreV1::new("RoundTrip");
-        grammar.canonical_specification = Some(core::CanonicalValue::Map(BTreeMap::from([
-            ("wide".into(), core::CanonicalValue::Integer(i128::MAX)),
-            ("bits".into(), core::CanonicalValue::FloatBits(u64::MAX)),
-        ])));
         grammar.backend_context = Some("diagnostic context".into());
         grammar.documentation = Some("documentation".into());
         grammar.categories = vec![Category {
@@ -540,7 +537,6 @@ mod tests {
             Capability::TokenDecoder("urn:decoder:body/1".into()),
             Capability::NativeEvaluator("urn:handler:test/1".into()),
         ]);
-        grammar.requested_rights = core::LanguageRights::all();
         grammar.provenance = Provenance {
             source_uri: Some("rho:test".into()),
             source_hash: Some([0xA5; 32]),
@@ -633,39 +629,62 @@ mod tests {
     }
 
     #[test]
-    fn structural_arm_rejects_every_v1_identity_before_reinterpretation() {
-        let mut old_schema = language_core_to_value(&comprehensive_language()).unwrap();
-        let RhoValue::Map(envelope) = &mut old_schema else {
-            unreachable!()
-        };
-        envelope
-            .insert("core_schema".into(), RhoValue::String(LANGUAGE_CORE_VALUE_SCHEMA_V1.into()));
-        let error = decode_language_core_value(&old_schema).unwrap_err();
-        assert!(error.message.contains(LANGUAGE_CORE_VALUE_SCHEMA_CURRENT));
+    fn structural_arm_rejects_every_stale_identity_before_reinterpretation() {
+        for schema in [LANGUAGE_CORE_VALUE_SCHEMA_V1, LANGUAGE_CORE_VALUE_SCHEMA_V2] {
+            let mut old_schema = language_core_to_value(&comprehensive_language()).unwrap();
+            let RhoValue::Map(envelope) = &mut old_schema else {
+                unreachable!()
+            };
+            envelope.insert("core_schema".into(), RhoValue::String(schema.into()));
+            let error = decode_language_core_value(&old_schema).unwrap_err();
+            assert!(error.message.contains(LANGUAGE_CORE_VALUE_SCHEMA_CURRENT));
+        }
 
-        let mut old_language = language_core_to_value(&comprehensive_language()).unwrap();
-        let RhoValue::Map(envelope) = &mut old_language else {
+        for abi in [
+            core::LANGUAGE_CORE_ABI_V1,
+            core::LANGUAGE_CORE_ABI_V2,
+            core::LANGUAGE_CORE_ABI_V3,
+        ] {
+            let mut old_language = language_core_to_value(&comprehensive_language()).unwrap();
+            let RhoValue::Map(envelope) = &mut old_language else {
+                unreachable!()
+            };
+            let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
+                unreachable!()
+            };
+            language.insert("abi".into(), RhoValue::Integer(abi.into()));
+            let error = decode_language_core_value(&old_language).unwrap_err();
+            assert!(error.message.contains("UnsupportedLanguageAbi"));
+        }
+
+        let mut old_grammar = language_core_to_value(&comprehensive_language()).unwrap();
+        let RhoValue::Map(envelope) = &mut old_grammar else {
             unreachable!()
         };
         let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
             unreachable!()
         };
-        language.insert("abi".into(), RhoValue::Integer(core::LANGUAGE_CORE_ABI_V1.into()));
-        let error = decode_language_core_value(&old_language).unwrap_err();
-        assert!(error.message.contains("UnsupportedLanguageAbi"));
+        let RhoValue::Map(grammar) = language.get_mut("grammar").unwrap() else {
+            unreachable!()
+        };
+        grammar.insert("abi".into(), RhoValue::Integer(core::GRAMMAR_CORE_ABI_V1.into()));
+        let error = decode_language_core_value(&old_grammar).unwrap_err();
+        assert!(error.message.contains("UnsupportedAbi"));
 
-        let mut old_theory = language_core_to_value(&comprehensive_language()).unwrap();
-        let RhoValue::Map(envelope) = &mut old_theory else {
-            unreachable!()
-        };
-        let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
-            unreachable!()
-        };
-        let RhoValue::Map(theory) = language.get_mut("theory").unwrap() else {
-            unreachable!()
-        };
-        theory.insert("abi".into(), RhoValue::Integer(core::THEORY_CORE_ABI_V1.into()));
-        let error = decode_language_core_value(&old_theory).unwrap_err();
-        assert!(error.message.contains("UnsupportedTheoryAbi"));
+        for abi in [core::THEORY_CORE_ABI_V1, core::THEORY_CORE_ABI_V2] {
+            let mut old_theory = language_core_to_value(&comprehensive_language()).unwrap();
+            let RhoValue::Map(envelope) = &mut old_theory else {
+                unreachable!()
+            };
+            let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
+                unreachable!()
+            };
+            let RhoValue::Map(theory) = language.get_mut("theory").unwrap() else {
+                unreachable!()
+            };
+            theory.insert("abi".into(), RhoValue::Integer(abi.into()));
+            let error = decode_language_core_value(&old_theory).unwrap_err();
+            assert!(error.message.contains("UnsupportedTheoryAbi"));
+        }
     }
 }

@@ -20,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const LANGUAGE_CORE_ABI_V1: u16 = 1;
 pub const LANGUAGE_CORE_ABI_V2: u16 = 2;
 pub const LANGUAGE_CORE_ABI_V3: u16 = 3;
-pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V3;
+pub const LANGUAGE_CORE_ABI_V4: u16 = 4;
+pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V4;
 pub const THEORY_CORE_ABI_V1: u16 = 1;
 pub const THEORY_CORE_ABI_V2: u16 = 2;
 pub const THEORY_CORE_ABI_V3: u16 = 3;
@@ -54,7 +55,7 @@ impl LanguageCoreV1 {
         let grammar = self.grammar_fingerprint()?;
         let theory = self.theory_fingerprint()?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-language-core/3\0");
+        hasher.update(b"mettail-language-core/4\0");
         hasher.update(&self.abi.to_be_bytes());
         hasher.update(&grammar);
         hasher.update(&theory);
@@ -293,15 +294,6 @@ impl TheoryCoreV1 {
                         name: format!("{}::{:?}", action.effect, action.effect_class),
                     });
                 }
-            }
-            if !action
-                .required_rights
-                .is_subset_of(&grammar.requested_rights)
-            {
-                errors.push(TheoryValidationError::UnknownReference {
-                    kind: "requested right",
-                    name: action.id.clone(),
-                });
             }
             match &action.transition {
                 TheoryRuleReferenceV1::Rewrite(name)

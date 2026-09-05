@@ -66,6 +66,7 @@ rholang-runtime = [
     "dep:mettail-ast",
     "dep:mettail-elab",
     "dep:mettail-grammar-core",
+    "dep:mettail-dovetail-runtime",
     "dep:mettail-languages",
     "dep:syn",
     "mettail-languages/rholang",

@@ -673,6 +673,16 @@ pub enum ValueToCoreError {
     Lower(LoweringError),
 }
 
+/// Complete immutable language identity paired with its declarative install
+/// request. Requested rights are intentionally outside `GrammarCoreV1` and
+/// `LanguageCoreV1`: changing attenuation demand cannot invalidate a parser or
+/// semantic artifact, and this value never grants authority by itself.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InstallableLanguageCore {
+    pub language: core::LanguageCoreV1,
+    pub requested_rights: core::LanguageRights,
+}
+
 pub trait LanguageValueResolver {
     fn resolve_language(&self, name: &str) -> Result<Option<RhoValue>, String>;
 }
@@ -833,19 +843,31 @@ pub fn value_to_core(value: &RhoValue) -> Result<core::GrammarCoreV1, ValueToCor
 }
 
 pub fn value_to_language_core(value: &RhoValue) -> Result<core::LanguageCoreV1, ValueToCoreError> {
+    Ok(value_to_installable_language_core(value)?.language)
+}
+
+pub fn value_to_installable_language_core(
+    value: &RhoValue,
+) -> Result<InstallableLanguageCore, ValueToCoreError> {
     if crate::core_value::is_language_core_value(value) {
-        return crate::core_value::decode_language_core_value(value)
+        let language = crate::core_value::decode_language_core_value(value)
             .map_err(ValueToCoreError::Decode)?
             .ok_or_else(|| {
                 ValueToCoreError::Decode(ValueDecodeError::new(
                     "$.core",
                     "structural LanguageCore arm disappeared during decoding",
                 ))
-            });
+            })?;
+        return Ok(InstallableLanguageCore {
+            language,
+            requested_rights: core::LanguageRights::native_flt_default(),
+        });
     }
     admit_canonical_value(value).map_err(ValueToCoreError::Decode)?;
     let schema = crate::schema::decode_composed(value, None).map_err(ValueToCoreError::Decode)?;
-    schema.lower_language().map_err(ValueToCoreError::Decode)
+    let requested_rights = schema.requested_rights();
+    let language = schema.lower_language().map_err(ValueToCoreError::Decode)?;
+    Ok(InstallableLanguageCore { language, requested_rights })
 }
 
 pub fn value_to_core_with_resolver(
@@ -859,20 +881,33 @@ pub fn value_to_language_core_with_resolver(
     value: &RhoValue,
     resolver: &dyn LanguageValueResolver,
 ) -> Result<core::LanguageCoreV1, ValueToCoreError> {
+    Ok(value_to_installable_language_core_with_resolver(value, resolver)?.language)
+}
+
+pub fn value_to_installable_language_core_with_resolver(
+    value: &RhoValue,
+    resolver: &dyn LanguageValueResolver,
+) -> Result<InstallableLanguageCore, ValueToCoreError> {
     if crate::core_value::is_language_core_value(value) {
-        return crate::core_value::decode_language_core_value(value)
+        let language = crate::core_value::decode_language_core_value(value)
             .map_err(ValueToCoreError::Decode)?
             .ok_or_else(|| {
                 ValueToCoreError::Decode(ValueDecodeError::new(
                     "$.core",
                     "structural LanguageCore arm disappeared during decoding",
                 ))
-            });
+            })?;
+        return Ok(InstallableLanguageCore {
+            language,
+            requested_rights: core::LanguageRights::native_flt_default(),
+        });
     }
     admit_canonical_value(value).map_err(ValueToCoreError::Decode)?;
     let schema =
         crate::schema::decode_composed(value, Some(resolver)).map_err(ValueToCoreError::Decode)?;
-    schema.lower_language().map_err(ValueToCoreError::Decode)
+    let requested_rights = schema.requested_rights();
+    let language = schema.lower_language().map_err(ValueToCoreError::Decode)?;
+    Ok(InstallableLanguageCore { language, requested_rights })
 }
 
 /// Decode a `Data(v)` fragment through the canonical schema. The two

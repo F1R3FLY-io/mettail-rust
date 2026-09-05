@@ -1,8 +1,9 @@
 use crate::{
     runtime_capability_requirements, CategoryId, DefaultRuntimeHost, GrammarCoreV1, ImageError,
-    ParserImageV1, RuntimeCapabilityBindings, RuntimeCapabilityError, RuntimeEffect, RuntimeError,
-    RuntimeHost, RuntimeParser, RuntimePolicy, RuntimeTemplateHole, RuntimeTemplatePiece,
-    SyntaxItem, TokenDecoder, WeightedParse,
+    LanguageCoreV1, ParserImageAdmissionLimits, ParserImageV1, RuntimeCapabilityBindings,
+    RuntimeCapabilityError, RuntimeEffect, RuntimeError, RuntimeHost, RuntimeParser, RuntimePolicy,
+    RuntimeTemplateHole, RuntimeTemplatePiece, SyntaxItem, TheoryImageAdmissionLimits,
+    TheoryImageError, TheorySemanticImageV1, TokenDecoder, WeightedParse,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -224,6 +225,23 @@ pub struct RuntimeLanguageInstall {
     pub granted_rights: LanguageRights,
 }
 
+/// One complete runtime language and both verified artifacts submitted to an
+/// atomic table commit. The language is authoritative; images are derived,
+/// replaceable caches bound back to its exact fingerprints.
+pub struct ExecutableLanguageInstall {
+    pub language: LanguageCoreV1,
+    pub parser_image: ParserImageV1,
+    pub semantic_image: TheorySemanticImageV1,
+    pub granted_rights: LanguageRights,
+}
+
+struct RuntimeLanguageBundleInstall {
+    language: LanguageCoreV1,
+    parser_image: ParserImageV1,
+    semantic_image: Option<TheorySemanticImageV1>,
+    granted_rights: LanguageRights,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstalledParserKind {
     RuntimeImage,
@@ -232,10 +250,19 @@ pub enum InstalledParserKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstallCommitment {
-    pub core_fingerprint: [u8; 32],
+    pub language_fingerprint: [u8; 32],
+    pub grammar_fingerprint: [u8; 32],
+    pub theory_fingerprint: [u8; 32],
+    pub parser_image_fingerprint: Option<[u8; 32]>,
+    pub semantic_image_fingerprint: Option<[u8; 32]>,
     pub parser_kind: InstalledParserKind,
     pub compiler_abi: String,
     pub unicode_abi: String,
+    pub semantic_image_abi: Option<u16>,
+    pub semantic_compiler_abi: Option<u16>,
+    pub primitive_substrate_abi: Option<u16>,
+    pub parser_limits_fingerprint: Option<[u8; 32]>,
+    pub semantic_limits_fingerprint: Option<[u8; 32]>,
     pub capability_abi: String,
     /// Exact code/ABI/effect/cost manifests selected from injected host
     /// authority for this fingerprint-scoped runtime language.
@@ -457,8 +484,9 @@ fn symbolic_template_weight(parses: &Vec<WeightedParse>) -> usize {
 }
 
 pub struct InstalledLanguage {
-    core: Arc<GrammarCoreV1>,
+    language: Arc<LanguageCoreV1>,
     parser: InstalledParser,
+    semantic_image: Option<Arc<TheorySemanticImageV1>>,
     commitment: InstallCommitment,
     effect_rights: LanguageRights,
     capability_bindings: RuntimeCapabilityBindings,
@@ -467,7 +495,15 @@ pub struct InstalledLanguage {
 
 impl InstalledLanguage {
     pub fn core(&self) -> &GrammarCoreV1 {
-        &self.core
+        &self.language.grammar
+    }
+
+    pub fn language_core(&self) -> &LanguageCoreV1 {
+        &self.language
+    }
+
+    pub fn semantic_image(&self) -> Option<&TheorySemanticImageV1> {
+        self.semantic_image.as_deref()
     }
 
     pub fn commitment(&self) -> &InstallCommitment {
@@ -501,7 +537,7 @@ impl InstalledLanguage {
         match &self.parser {
             InstalledParser::Runtime(image) => {
                 let parser = RuntimeParser::new_with_policy_and_bindings(
-                    &self.core,
+                    &self.language.grammar,
                     image,
                     &self.commitment.compiler_abi,
                     &self.commitment.unicode_abi,
@@ -528,7 +564,7 @@ impl InstalledLanguage {
     ) -> Result<Vec<WeightedParse>, RuntimeError> {
         match &self.parser {
             InstalledParser::Runtime(image) => RuntimeParser::new_with_policy_and_bindings(
-                &self.core,
+                &self.language.grammar,
                 image,
                 &self.commitment.compiler_abi,
                 &self.commitment.unicode_abi,
@@ -696,7 +732,7 @@ impl InstalledLanguage {
     ) -> SymbolicTemplateCacheKey {
         let mut hasher = blake3::Hasher::new();
         hash_cache_field(&mut hasher, b"mettail-symbolic-template-cache-key/1");
-        hash_cache_field(&mut hasher, &self.commitment.core_fingerprint);
+        hash_cache_field(&mut hasher, &self.commitment.language_fingerprint);
         match &self.commitment.parser_kind {
             InstalledParserKind::RuntimeImage => hash_cache_field(&mut hasher, b"runtime"),
             InstalledParserKind::StaticTyped { adapter_abi } => {
@@ -896,49 +932,247 @@ impl InstalledLanguageTable {
         policy_fingerprint: [u8; 32],
         host: &dyn RuntimeHost,
     ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
+        let requests = requests
+            .into_iter()
+            .map(|request| RuntimeLanguageBundleInstall {
+                language: LanguageCoreV1::structural(request.core),
+                parser_image: request.image,
+                semantic_image: None,
+                granted_rights: request.granted_rights,
+            })
+            .collect();
+        self.install_runtime_language_batch_with_host(
+            requests,
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            ParserImageAdmissionLimits::default(),
+            None,
+            host,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_executable_runtime(
+        &self,
+        language: LanguageCoreV1,
+        parser_image: ParserImageV1,
+        semantic_image: TheorySemanticImageV1,
+        granted_rights: LanguageRights,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        semantic_limits: TheoryImageAdmissionLimits,
+    ) -> Result<InstalledLanguageGrant, InstallLanguageError> {
+        self.install_executable_runtime_batch(
+            vec![ExecutableLanguageInstall {
+                language,
+                parser_image,
+                semantic_image,
+                granted_rights,
+            }],
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            semantic_limits,
+        )?
+        .into_iter()
+        .next()
+        .ok_or(InstallLanguageError::EmptyBatch)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_executable_runtime_batch(
+        &self,
+        requests: Vec<ExecutableLanguageInstall>,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        semantic_limits: TheoryImageAdmissionLimits,
+    ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
+        self.install_executable_runtime_batch_with_host(
+            requests,
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            semantic_limits,
+            &DefaultRuntimeHost,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_executable_runtime_batch_with_host(
+        &self,
+        requests: Vec<ExecutableLanguageInstall>,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        semantic_limits: TheoryImageAdmissionLimits,
+        host: &dyn RuntimeHost,
+    ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
+        self.install_executable_runtime_batch_with_artifact_limits_and_host(
+            requests,
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            ParserImageAdmissionLimits::default(),
+            semantic_limits,
+            host,
+        )
+    }
+
+    /// Admit parser and semantic artifacts under the exact host policy, then
+    /// publish the complete batch atomically.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_executable_runtime_batch_with_artifact_limits_and_host(
+        &self,
+        requests: Vec<ExecutableLanguageInstall>,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        host: &dyn RuntimeHost,
+    ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
+        let requests = requests
+            .into_iter()
+            .map(|request| RuntimeLanguageBundleInstall {
+                language: request.language,
+                parser_image: request.parser_image,
+                semantic_image: Some(request.semantic_image),
+                granted_rights: request.granted_rights,
+            })
+            .collect();
+        self.install_runtime_language_batch_with_host(
+            requests,
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            parser_limits,
+            Some(semantic_limits),
+            host,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn install_runtime_language_batch_with_host(
+        &self,
+        requests: Vec<RuntimeLanguageBundleInstall>,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: Option<TheoryImageAdmissionLimits>,
+        host: &dyn RuntimeHost,
+    ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
         if requests.is_empty() {
             return Err(InstallLanguageError::EmptyBatch);
         }
         let mut prepared = Vec::with_capacity(requests.len());
         for request in requests {
             request
-                .core
+                .language
                 .validate()
-                .map_err(InstallLanguageError::InvalidGrammar)?;
-            reject_runtime_source(&request.core)?;
+                .map_err(InstallLanguageError::InvalidLanguage)?;
+            reject_runtime_source(&request.language.grammar)?;
             request
-                .image
-                .verify_executable(&request.core, compiler_abi, unicode_abi)
+                .parser_image
+                .verify_executable_with_limits(
+                    &request.language.grammar,
+                    compiler_abi,
+                    unicode_abi,
+                    parser_limits,
+                )
                 .map_err(InstallLanguageError::InvalidImage)?;
-            let core_fingerprint = request
-                .core
+            let language_fingerprint = request
+                .language
                 .fingerprint()
                 .map_err(InstallLanguageError::EncodeCore)?;
-            let requirements = runtime_capability_requirements(&request.core, core_fingerprint)
-                .map_err(InstallLanguageError::Capability)?;
+            let grammar_fingerprint = request
+                .language
+                .grammar_fingerprint()
+                .map_err(InstallLanguageError::EncodeCore)?;
+            let theory_fingerprint = request
+                .language
+                .theory_fingerprint()
+                .map_err(InstallLanguageError::EncodeCore)?;
+            let parser_image_fingerprint = request
+                .parser_image
+                .fingerprint()
+                .map_err(InstallLanguageError::EncodeParserImage)?;
+            let (
+                semantic_image_fingerprint,
+                semantic_image_abi,
+                semantic_compiler_abi,
+                primitive_substrate_abi,
+                semantic_limits_fingerprint,
+            ) = match (&request.semantic_image, semantic_limits) {
+                (Some(image), Some(limits)) => {
+                    image
+                        .validate(&request.language, limits)
+                        .map_err(InstallLanguageError::InvalidTheoryImage)?;
+                    (
+                        Some(
+                            image
+                                .fingerprint()
+                                .map_err(InstallLanguageError::InvalidTheoryImage)?,
+                        ),
+                        Some(image.abi),
+                        Some(image.compiler_abi),
+                        Some(image.primitive_substrate_abi),
+                        Some(limits.fingerprint()),
+                    )
+                },
+                (None, None) => (None, None, None, None, None),
+                _ => return Err(InstallLanguageError::SemanticArtifactPolicyMismatch),
+            };
+            let requirements =
+                runtime_capability_requirements(&request.language.grammar, grammar_fingerprint)
+                    .map_err(InstallLanguageError::Capability)?;
             let capability_bindings =
                 RuntimeCapabilityBindings::bind(&requirements, |key| host.capability_manifest(key))
                     .map_err(InstallLanguageError::Capability)?;
             let capability_manifest_fingerprint = capability_bindings
                 .commitment()
                 .map_err(InstallLanguageError::Capability)?;
-            let effect_rights = runtime_effect_rights(&request.core, &capability_bindings);
+            let effect_rights =
+                runtime_effect_rights(&request.language.grammar, &capability_bindings);
             let commitment = InstallCommitment {
-                core_fingerprint,
+                language_fingerprint,
+                grammar_fingerprint,
+                theory_fingerprint,
+                parser_image_fingerprint: Some(parser_image_fingerprint),
+                semantic_image_fingerprint,
                 parser_kind: InstalledParserKind::RuntimeImage,
                 compiler_abi: compiler_abi.into(),
                 unicode_abi: unicode_abi.into(),
+                semantic_image_abi,
+                semantic_compiler_abi,
+                primitive_substrate_abi,
+                parser_limits_fingerprint: Some(parser_limits.fingerprint()),
+                semantic_limits_fingerprint,
                 capability_abi: capability_abi.into(),
                 capability_manifest_fingerprint,
                 policy_fingerprint,
                 effect_rights: effect_rights.clone(),
             };
             prepared.push((
-                core_fingerprint,
+                language_fingerprint,
                 request.granted_rights,
                 InstalledLanguage {
-                    core: Arc::new(request.core),
-                    parser: InstalledParser::Runtime(Arc::new(request.image)),
+                    language: Arc::new(request.language),
+                    parser: InstalledParser::Runtime(Arc::new(request.parser_image)),
+                    semantic_image: request.semantic_image.map(Arc::new),
                     commitment,
                     effect_rights,
                     capability_bindings,
@@ -963,16 +1197,35 @@ impl InstalledLanguageTable {
     ) -> Result<InstalledLanguageGrant, InstallLanguageError> {
         core.validate()
             .map_err(InstallLanguageError::InvalidGrammar)?;
-        let core_fingerprint = core
+        let language = LanguageCoreV1::structural(core);
+        language
+            .validate()
+            .map_err(InstallLanguageError::InvalidLanguage)?;
+        let language_fingerprint = language
             .fingerprint()
+            .map_err(InstallLanguageError::EncodeCore)?;
+        let grammar_fingerprint = language
+            .grammar_fingerprint()
+            .map_err(InstallLanguageError::EncodeCore)?;
+        let theory_fingerprint = language
+            .theory_fingerprint()
             .map_err(InstallLanguageError::EncodeCore)?;
         let effect_rights = adapter.required_effect_rights();
         let capability_bindings = RuntimeCapabilityBindings::default();
         let commitment = InstallCommitment {
-            core_fingerprint,
+            language_fingerprint,
+            grammar_fingerprint,
+            theory_fingerprint,
+            parser_image_fingerprint: None,
+            semantic_image_fingerprint: None,
             parser_kind: InstalledParserKind::StaticTyped { adapter_abi: adapter_abi.into() },
             compiler_abi: compiler_abi.into(),
             unicode_abi: unicode_abi.into(),
+            semantic_image_abi: None,
+            semantic_compiler_abi: None,
+            primitive_substrate_abi: None,
+            parser_limits_fingerprint: None,
+            semantic_limits_fingerprint: None,
             capability_abi: capability_abi.into(),
             capability_manifest_fingerprint: capability_bindings
                 .commitment()
@@ -981,11 +1234,12 @@ impl InstalledLanguageTable {
             effect_rights: effect_rights.clone(),
         };
         self.commit(
-            core_fingerprint,
+            language_fingerprint,
             granted_rights,
             InstalledLanguage {
-                core: Arc::new(core),
+                language: Arc::new(language),
                 parser: InstalledParser::Static(adapter),
+                semantic_image: None,
                 commitment,
                 effect_rights,
                 capability_bindings,
@@ -1024,7 +1278,8 @@ impl InstalledLanguageTable {
         for (index, (fingerprint, _, language)) in requests.iter().enumerate() {
             if let Some(previous) = unique.insert(*fingerprint, index) {
                 let previous_language = &requests[previous].2;
-                if previous_language.core != language.core
+                if previous_language.language != language.language
+                    || previous_language.semantic_image != language.semantic_image
                     || previous_language.commitment != language.commitment
                 {
                     return Err(InstallLanguageError::ConflictingInstallation(*fingerprint));
@@ -1035,7 +1290,8 @@ impl InstalledLanguageTable {
                 .get(fingerprint)
                 .filter(|entry| !entry.revoked)
             {
-                if entry.language.core != language.core
+                if entry.language.language != language.language
+                    || entry.language.semantic_image != language.semantic_image
                     || entry.language.commitment != language.commitment
                 {
                     return Err(InstallLanguageError::ConflictingInstallation(*fingerprint));
@@ -1402,9 +1658,13 @@ impl LanguageAliasScope {
 #[derive(Debug)]
 pub enum InstallLanguageError {
     InvalidGrammar(Vec<crate::ValidationError>),
+    InvalidLanguage(Vec<crate::LanguageCoreValidationError>),
     NativeSourceForbidden(String),
     InvalidImage(ImageError),
+    InvalidTheoryImage(TheoryImageError),
     EncodeCore(postcard::Error),
+    EncodeParserImage(postcard::Error),
+    SemanticArtifactPolicyMismatch,
     Capability(RuntimeCapabilityError),
     ConflictingInstallation([u8; 32]),
     EntryIdExhausted,
