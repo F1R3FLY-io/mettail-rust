@@ -73,8 +73,11 @@ fn formula_pda_main_thread_stack_is_depth_independent() {
         "formula PDA native-stack requirement grew by {growth} B from depth 512 ({low} B) to \
          depth 4,096 ({high} B); the explicit traversal must be depth-independent"
     );
+    // Keep diagnostic output compatible with libtest/nextest's test-list parser.  A bare
+    // diagnostic line is interpreted as a malformed test-list entry when nextest probes the
+    // executable, so terminate it with the same marker used by libtest's list format.
     println!(
         "formula PDA main-thread stack: depth 512 = {low} B, depth 4096 = {high} B, growth = \
-         {growth} B"
+         {growth} B: test"
     );
 }
