@@ -95,6 +95,82 @@ pub struct TheoryPremiseNodeV1 {
     pub form: TheoryPremiseFormV1,
 }
 
+/// Closed, pure operations over canonical literal payloads.
+///
+/// Inputs must already be bound when the premise runs. Outputs are fresh
+/// [`TheoryVariableRoleV1::Derived`] slots and become visible only after the
+/// premise succeeds. The finite enum is the complete runtime dispatch table:
+/// no value can name a callback, parser, URI, or ambient capability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryIntrinsicV1 {
+    ExactTermEq {
+        left: TheoryVariableId,
+        right: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    Utf8AtEnd {
+        text: TheoryVariableId,
+        cursor: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    Utf8ScalarAt {
+        text: TheoryVariableId,
+        cursor: TheoryVariableId,
+        scalar: TheoryVariableId,
+        next_cursor: TheoryVariableId,
+    },
+    Utf8Slice {
+        text: TheoryVariableId,
+        start: TheoryVariableId,
+        end: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    CheckedNatAdd {
+        left: TheoryVariableId,
+        right: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    Utf8ConcatMany {
+        pieces: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+}
+
+impl TheoryIntrinsicV1 {
+    pub fn for_each_input(&self, mut visit: impl FnMut(TheoryVariableId)) {
+        match self {
+            Self::ExactTermEq { left, right, .. } | Self::CheckedNatAdd { left, right, .. } => {
+                visit(*left);
+                visit(*right);
+            },
+            Self::Utf8AtEnd { text, cursor, .. } | Self::Utf8ScalarAt { text, cursor, .. } => {
+                visit(*text);
+                visit(*cursor);
+            },
+            Self::Utf8Slice { text, start, end, .. } => {
+                visit(*text);
+                visit(*start);
+                visit(*end);
+            },
+            Self::Utf8ConcatMany { pieces, .. } => visit(*pieces),
+        }
+    }
+
+    pub fn for_each_output(&self, mut visit: impl FnMut(TheoryVariableId)) {
+        match self {
+            Self::ExactTermEq { output, .. }
+            | Self::Utf8AtEnd { output, .. }
+            | Self::Utf8Slice { output, .. }
+            | Self::CheckedNatAdd { output, .. }
+            | Self::Utf8ConcatMany { output, .. } => visit(*output),
+            Self::Utf8ScalarAt { scalar, next_cursor, .. } => {
+                visit(*scalar);
+                visit(*next_cursor);
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TheoryPremiseFormV1 {
     Freshness {
@@ -112,6 +188,7 @@ pub enum TheoryPremiseFormV1 {
         parameter: TheoryVariableId,
         body: TheoryPremiseId,
     },
+    Intrinsic(TheoryIntrinsicV1),
     Guard(CanonicalValue),
 }
 

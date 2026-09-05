@@ -15,7 +15,8 @@
 
 use crate::{
     CategoryId, CollectionKind, ConstructorId, JudgmentAtomV1, JudgmentDecisionV1, JudgmentRuleV1,
-    LanguageCoreV1, LanguageRights, PathMapModeV1, SemanticEffectClassV1, TheoryCoreV1,
+    LanguageCoreV1, LanguageRights, PathMapModeV1, SemanticActionExecutionV1,
+    SemanticEffectClassV1, SemanticNormalizationBranchingV1, TheoryCoreV1, TheoryIntrinsicV1,
     TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPremiseFormV1, TheoryRuleArenaV1,
     TheoryRuleReferenceV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryVariableId,
     TheoryVariableRoleV1,
@@ -27,11 +28,13 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const THEORY_SEMANTIC_IMAGE_ABI_V1: u16 = 1;
 pub const THEORY_SEMANTIC_IMAGE_ABI_V2: u16 = 2;
 pub const THEORY_SEMANTIC_IMAGE_ABI_V3: u16 = 3;
-pub const THEORY_SEMANTIC_IMAGE_ABI_CURRENT: u16 = THEORY_SEMANTIC_IMAGE_ABI_V3;
+pub const THEORY_SEMANTIC_IMAGE_ABI_V4: u16 = 4;
+pub const THEORY_SEMANTIC_IMAGE_ABI_CURRENT: u16 = THEORY_SEMANTIC_IMAGE_ABI_V4;
 pub const THEORY_IMAGE_COMPILER_ABI_V1: u16 = 1;
 pub const THEORY_IMAGE_COMPILER_ABI_V2: u16 = 2;
 pub const THEORY_IMAGE_COMPILER_ABI_V3: u16 = 3;
-pub const THEORY_IMAGE_COMPILER_ABI_CURRENT: u16 = THEORY_IMAGE_COMPILER_ABI_V3;
+pub const THEORY_IMAGE_COMPILER_ABI_V4: u16 = 4;
+pub const THEORY_IMAGE_COMPILER_ABI_CURRENT: u16 = THEORY_IMAGE_COMPILER_ABI_V4;
 
 macro_rules! image_id {
     ($name:ident) => {
@@ -289,10 +292,82 @@ pub enum TheoryImagePremiseFormV1 {
         parameter: TheoryVariableId,
         body: u32,
     },
+    Intrinsic(TheoryImageIntrinsicV1),
     /// The guard value remains in the authoritative TheoryCore.  This exact
     /// commitment prevents substitution while keeping the executable image
     /// flat and allocation-bounded.
-    Guard { commitment: [u8; 32] },
+    Guard {
+        commitment: [u8; 32],
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryImageIntrinsicV1 {
+    ExactTermEq {
+        left: TheoryVariableId,
+        right: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    Utf8AtEnd {
+        text: TheoryVariableId,
+        cursor: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    Utf8ScalarAt {
+        text: TheoryVariableId,
+        cursor: TheoryVariableId,
+        scalar: TheoryVariableId,
+        next_cursor: TheoryVariableId,
+    },
+    Utf8Slice {
+        text: TheoryVariableId,
+        start: TheoryVariableId,
+        end: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    CheckedNatAdd {
+        left: TheoryVariableId,
+        right: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+    Utf8ConcatMany {
+        pieces: TheoryVariableId,
+        output: TheoryVariableId,
+    },
+}
+
+impl TheoryImageIntrinsicV1 {
+    pub fn for_each_variable(&self, mut visit: impl FnMut(TheoryVariableId)) {
+        match self {
+            Self::ExactTermEq { left, right, output }
+            | Self::CheckedNatAdd { left, right, output } => {
+                visit(*left);
+                visit(*right);
+                visit(*output);
+            },
+            Self::Utf8AtEnd { text, cursor, output } => {
+                visit(*text);
+                visit(*cursor);
+                visit(*output);
+            },
+            Self::Utf8ScalarAt { text, cursor, scalar, next_cursor } => {
+                visit(*text);
+                visit(*cursor);
+                visit(*scalar);
+                visit(*next_cursor);
+            },
+            Self::Utf8Slice { text, start, end, output } => {
+                visit(*text);
+                visit(*start);
+                visit(*end);
+                visit(*output);
+            },
+            Self::Utf8ConcatMany { pieces, output } => {
+                visit(*pieces);
+                visit(*output);
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -448,6 +523,17 @@ pub struct TheoryActionImageV1 {
     /// supplied handle grant before the kernel can run.
     pub required_rights: LanguageRights,
     pub grade: TheorySortId,
+    pub execution: TheoryActionExecutionImageV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TheoryActionExecutionImageV1 {
+    OneStep,
+    Normalize {
+        relation_sort: TheorySortId,
+        terminal_constructors: Vec<TheoryConstructorId>,
+        branching: SemanticNormalizationBranchingV1,
+    },
 }
 
 /// Whether the authoritative theory carries the checked additional structure
@@ -495,6 +581,7 @@ pub struct TheoryImageAdmissionLimits {
     pub max_total_sort_metadata_bytes: usize,
     pub max_total_constructor_arguments: usize,
     pub max_total_action_arguments: usize,
+    pub max_total_action_terminal_constructors: usize,
     pub max_total_rule_variables: usize,
     pub max_total_term_nodes: usize,
     pub max_total_term_references: usize,
@@ -526,6 +613,7 @@ impl Default for TheoryImageAdmissionLimits {
             max_total_sort_metadata_bytes: 64 * 1024 * 1024,
             max_total_constructor_arguments: 10_000_000,
             max_total_action_arguments: 10_000_000,
+            max_total_action_terminal_constructors: 10_000_000,
             max_total_rule_variables: 10_000_000,
             max_total_term_nodes: 10_000_000,
             max_total_term_references: 20_000_000,
@@ -664,6 +752,16 @@ impl TheoryImageAdmissionLimits {
                 self.max_total_action_arguments,
                 "action arguments",
             )?;
+            if let SemanticActionExecutionV1::Normalize { terminal_constructors, .. } =
+                &action.execution
+            {
+                totals.action_terminal_constructors = checked_total(
+                    totals.action_terminal_constructors,
+                    terminal_constructors.len(),
+                    self.max_total_action_terminal_constructors,
+                    "action terminal constructors",
+                )?;
+            }
             let count = match &action.transition {
                 TheoryRuleReferenceV1::Equation(name) => language
                     .theory
@@ -701,6 +799,7 @@ impl TheoryImageAdmissionLimits {
 struct SourceImageTotals {
     constructor_arguments: usize,
     action_arguments: usize,
+    action_terminal_constructors: usize,
     variables: usize,
     terms: usize,
     term_references: usize,
@@ -849,7 +948,8 @@ fn account_source_arena(
             },
             TheoryPremiseFormV1::Freshness { .. }
             | TheoryPremiseFormV1::Transition { .. }
-            | TheoryPremiseFormV1::ForAll { .. } => {},
+            | TheoryPremiseFormV1::ForAll { .. }
+            | TheoryPremiseFormV1::Intrinsic(_) => {},
         }
     }
     totals.term_references = checked_total(
@@ -1392,6 +1492,7 @@ fn validate_image_totals(
     let mut names = 0usize;
     let mut literals = 0usize;
     let mut action_arguments = 0usize;
+    let mut action_terminal_constructors = 0usize;
     let mut transitions = 0usize;
     for rule in &image.rules {
         variables = checked_total(
@@ -1564,6 +1665,16 @@ fn validate_image_totals(
             limits.max_total_action_transitions,
             "action transitions",
         )?;
+        if let TheoryActionExecutionImageV1::Normalize { terminal_constructors, .. } =
+            &action.execution
+        {
+            action_terminal_constructors = checked_total(
+                action_terminal_constructors,
+                terminal_constructors.len(),
+                limits.max_total_action_terminal_constructors,
+                "action terminal constructors",
+            )?;
+        }
     }
     for state in image
         .patterns
@@ -2131,10 +2242,58 @@ fn expected_premise_form(
                 body: body.0,
             }
         },
+        TheoryPremiseFormV1::Intrinsic(intrinsic) => {
+            TheoryImagePremiseFormV1::Intrinsic(expected_intrinsic(intrinsic))
+        },
         TheoryPremiseFormV1::Guard(value) => TheoryImagePremiseFormV1::Guard {
             commitment: theory_guard_commitment_v1(value)?,
         },
     })
+}
+
+fn expected_intrinsic(intrinsic: &TheoryIntrinsicV1) -> TheoryImageIntrinsicV1 {
+    match intrinsic {
+        TheoryIntrinsicV1::ExactTermEq { left, right, output } => {
+            TheoryImageIntrinsicV1::ExactTermEq {
+                left: *left,
+                right: *right,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::Utf8AtEnd { text, cursor, output } => {
+            TheoryImageIntrinsicV1::Utf8AtEnd {
+                text: *text,
+                cursor: *cursor,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::Utf8ScalarAt { text, cursor, scalar, next_cursor } => {
+            TheoryImageIntrinsicV1::Utf8ScalarAt {
+                text: *text,
+                cursor: *cursor,
+                scalar: *scalar,
+                next_cursor: *next_cursor,
+            }
+        },
+        TheoryIntrinsicV1::Utf8Slice { text, start, end, output } => {
+            TheoryImageIntrinsicV1::Utf8Slice {
+                text: *text,
+                start: *start,
+                end: *end,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::CheckedNatAdd { left, right, output } => {
+            TheoryImageIntrinsicV1::CheckedNatAdd {
+                left: *left,
+                right: *right,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::Utf8ConcatMany { pieces, output } => {
+            TheoryImageIntrinsicV1::Utf8ConcatMany { pieces: *pieces, output: *output }
+        },
+    }
 }
 
 /// Domain-separated, representation-independent commitment to a guard value.
@@ -2299,6 +2458,15 @@ fn validate_premise_references(
                 });
             }
             Ok(())
+        },
+        TheoryImagePremiseFormV1::Intrinsic(intrinsic) => {
+            let mut result = Ok(());
+            intrinsic.for_each_variable(|variable| {
+                if result.is_ok() {
+                    result = variable_reference(variable, owner, variables);
+                }
+            });
+            result
         },
         TheoryImagePremiseFormV1::Guard { .. } => Ok(()),
     }
@@ -2627,6 +2795,22 @@ fn unavailable_premise_variable(
                     scope.insert(*parameter);
                     pending.push((body.0, scope, false));
                 },
+                TheoryPremiseFormV1::Intrinsic(intrinsic) => {
+                    let mut missing = None;
+                    intrinsic.for_each_input(|variable| {
+                        if missing.is_none() {
+                            missing = require(variable, &scope);
+                        }
+                    });
+                    if missing.is_some() {
+                        return Ok(missing);
+                    }
+                    if is_root {
+                        intrinsic.for_each_output(|variable| {
+                            available.insert(variable);
+                        });
+                    }
+                },
                 TheoryPremiseFormV1::Guard(_) => {},
             }
         }
@@ -2668,6 +2852,7 @@ fn validate_actions(
             effect_class: source.effect_class,
             required_rights: source.required_rights.clone(),
             grade: context.sort(&source.grade)?,
+            execution: expected_action_execution(&source.execution, context)?,
         };
         if actual != &expected {
             return Err(TheoryImageError::SourceMismatch { kind: "action", index });
@@ -2681,6 +2866,38 @@ fn validate_actions(
         }
     }
     Ok(())
+}
+
+fn expected_action_execution(
+    execution: &SemanticActionExecutionV1,
+    context: &ImageSourceContext<'_>,
+) -> Result<TheoryActionExecutionImageV1, TheoryImageError> {
+    Ok(match execution {
+        SemanticActionExecutionV1::OneStep => TheoryActionExecutionImageV1::OneStep,
+        SemanticActionExecutionV1::Normalize {
+            relation_sort,
+            terminal_constructors,
+            branching,
+        } => {
+            let mut terminals = Vec::new();
+            terminals
+                .try_reserve_exact(terminal_constructors.len())
+                .map_err(|_| TheoryImageError::Allocation)?;
+            for constructor in terminal_constructors {
+                terminals.push(*context.constructors.get(constructor.as_str()).ok_or(
+                    TheoryImageError::SourceMismatch {
+                        kind: "action terminal constructor",
+                        index: u32::MAX,
+                    },
+                )?);
+            }
+            TheoryActionExecutionImageV1::Normalize {
+                relation_sort: context.sort(relation_sort)?,
+                terminal_constructors: terminals,
+                branching: *branching,
+            }
+        },
+    })
 }
 
 fn resolve_action_rules(

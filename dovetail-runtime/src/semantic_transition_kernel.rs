@@ -16,12 +16,14 @@ use dovetail::set_automaton::{
 use dovetail::{egraph::EClassId, egraph::EGraph, egraph::EGraphConfig, egraph::ENode};
 use mettail_grammar_core::{
     CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, SemanticEffectClassV1,
-    TheoryActionId, TheoryEffectId, TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
-    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId, TheoryLimitsV1,
-    TheoryLiteralCarrierV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
-    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
-    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheorySemanticImageV1,
-    TheorySortId, TheorySortKindImageV1, TheoryVariableId,
+    SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1, TheoryActionId,
+    TheoryConstructorId, TheoryEffectId, TheoryImageIntrinsicV1, TheoryImageOperatorV1,
+    TheoryImageTermFormV1, TheoryJudgmentId, TheoryJudgmentPatternAutomatonV1,
+    TheoryJudgmentRuleProgramId, TheoryLimitsV1, TheoryLiteralCarrierV1, TheoryLiteralV1,
+    TheoryPatternAutomatonV1, TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1,
+    TheoryResourceProfileV1, TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId,
+    TheoryRuleProgramV1, TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1,
+    TheoryVariableId,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -229,6 +231,8 @@ pub enum SemanticMatchUndetermined {
     AllocationFailed,
     FrontierLimitExceeded,
     ProofLimitExceeded,
+    NormalizationStepLimitExceeded,
+    NormalizationCycleDetected,
 }
 
 /// A complete negative semantic-matching result.
@@ -237,6 +241,8 @@ pub enum SemanticMatchRefutation {
     RequestRejected,
     NoTransition,
     PremiseRefuted,
+    StuckNonterminal,
+    NormalizationDeterminismClaimViolated,
 }
 
 /// One matcher-owned substitution for an action-selected rule.
@@ -1927,822 +1933,67 @@ impl SemanticTransitionMatcher {
             },
         };
         let mut frontier = VecDeque::new();
-        for matched in matches {
-            let Some(rule) = image
-                .rules
-                .get(matched.rule.0 as usize)
-                .filter(|candidate| candidate.id == matched.rule)
-            else {
-                return SemanticTransitionDecision::Undetermined {
-                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                    work,
-                    stats,
-                };
-            };
-            let substitution = match action_substitution_from_map(matched.substitution) {
-                Ok(substitution) => substitution,
-                Err(reason) => {
-                    return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                },
-            };
-            let frame = match action_frame(rule, egraph.find(root), substitution, None) {
-                Ok(frame) => frame,
-                Err(reason) => {
-                    return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                },
-            };
-            let mut frames = Vec::new();
-            if frames.try_reserve_exact(1).is_err() {
-                return SemanticTransitionDecision::Undetermined {
-                    reason: SemanticMatchUndetermined::AllocationFailed,
-                    work,
-                    stats,
-                };
-            }
-            frames.push(frame);
-            if let Err(reason) = push_action_branch(
-                &mut frontier,
-                ActionBranch { frames, premises: Vec::new() },
-                limits.frontier,
-            ) {
-                return SemanticTransitionDecision::Undetermined { reason, work, stats };
-            }
+        if let Err(reason) =
+            enqueue_action_matches(image, &egraph, root, matches, &mut frontier, limits.frontier)
+        {
+            return SemanticTransitionDecision::Undetermined { reason, work, stats };
         }
         let mut completed = Vec::new();
-        while let Some(mut branch) = frontier.pop_front() {
-            if let Err(reason) = charge_work(&mut work, limits.work, &mut is_cancelled) {
-                return SemanticTransitionDecision::Undetermined { reason, work, stats };
-            }
-            let Some(frame) = branch.frames.last_mut() else {
-                return SemanticTransitionDecision::Undetermined {
-                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                    work,
-                    stats,
-                };
-            };
-            let task = frame.pending.pop_front();
-            let frame_rule = frame.rule;
-            let Some(rule) = image
-                .rules
-                .get(frame_rule.0 as usize)
-                .filter(|candidate| candidate.id == frame_rule)
-            else {
-                return SemanticTransitionDecision::Undetermined {
-                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                    work,
-                    stats,
-                };
-            };
-
-            let Some(task) = task else {
-                if !frame.saved_forall_scopes.is_empty() {
-                    return SemanticTransitionDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                        work,
-                        stats,
-                    };
+        let mut execution_stage = ActionExecutionStage::Entry;
+        let mut normalization_frontier = VecDeque::new();
+        let mut normal_forms = Vec::new();
+        let mut fair_scheduler_visits = 0usize;
+        loop {
+            while let Some(mut branch) = frontier.pop_front() {
+                if let Err(reason) = charge_work(&mut work, limits.work, &mut is_cancelled) {
+                    return SemanticTransitionDecision::Undetermined { reason, work, stats };
                 }
-                let output = match instantiate_rule_term(
-                    TermInstantiation {
-                        image,
-                        rule,
-                        substitution: &frame.substitution,
-                        root: rule.right,
-                        limits: TermConstructionLimits {
-                            work: limits.work,
-                            nodes: private_node_limit,
-                            bytes: limits.output_bytes,
-                        },
-                    },
-                    &mut egraph,
-                    &mut work,
-                    &mut is_cancelled,
-                ) {
-                    Ok(output) => output,
-                    Err(reason) => {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                    },
-                };
-                if egraph.node_count().saturating_sub(initial_nodes) > private_node_limit {
-                    return SemanticTransitionDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::EGraphNodeBudgetExhausted,
-                        work,
-                        stats,
-                    };
-                }
-                let Some(frame) = branch.frames.pop() else {
+                let Some(frame) = branch.frames.last_mut() else {
                     return SemanticTransitionDecision::Undetermined {
                         reason: SemanticMatchUndetermined::InvalidImageEvidence,
                         work,
                         stats,
                     };
                 };
-                if let Some(return_to_parent) = frame.return_to_parent {
-                    let Some(parent) = branch.frames.last_mut() else {
-                        return SemanticTransitionDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                            work,
-                            stats,
-                        };
+                let task = frame.pending.pop_front();
+                let frame_rule = frame.rule;
+                let Some(rule) = image
+                    .rules
+                    .get(frame_rule.0 as usize)
+                    .filter(|candidate| candidate.id == frame_rule)
+                else {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work,
+                        stats,
                     };
-                    if parent.rule != return_to_parent.parent_rule {
-                        return SemanticTransitionDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                            work,
-                            stats,
-                        };
-                    }
-                    if let Err(reason) = action_bind_new(
-                        &mut parent.substitution,
-                        return_to_parent.target,
-                        egraph.find(output),
-                    ) {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                    }
-                    if let Err(reason) = push_premise_receipt(
-                        &mut branch,
-                        SemanticPremiseReceipt::Transition {
-                            rule: return_to_parent.parent_rule,
-                            premise: return_to_parent.parent_premise,
-                            child_rule: frame.rule,
-                        },
-                        limits.proof_nodes,
-                    ) {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                    }
-                    if let Err(reason) = push_action_branch(&mut frontier, branch, limits.frontier)
-                    {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                    }
-                } else {
-                    if completed.len() == limits.frontier {
-                        return SemanticTransitionDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::FrontierLimitExceeded,
-                            work,
-                            stats,
-                        };
-                    }
-                    if completed.try_reserve(1).is_err() {
-                        return SemanticTransitionDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::AllocationFailed,
-                            work,
-                            stats,
-                        };
-                    }
-                    completed.push(CompletedActionBranch {
-                        rule: frame.rule,
-                        output: egraph.find(output),
-                        substitution: frame.substitution,
-                        premises: branch.premises,
-                    });
-                }
-                continue;
-            };
+                };
 
-            match task {
-                ActionPremiseTask::Evaluate { premise } => {
-                    let Some(premise_node) = rule.premises.get(premise as usize) else {
+                let Some(task) = task else {
+                    if !frame.saved_forall_scopes.is_empty() {
                         return SemanticTransitionDecision::Undetermined {
                             reason: SemanticMatchUndetermined::InvalidImageEvidence,
                             work,
                             stats,
                         };
-                    };
-                    match &premise_node.form {
-                        mettail_grammar_core::TheoryImagePremiseFormV1::Freshness {
-                            variable,
-                            target,
-                            remainder,
-                        } => {
-                            let Some(variable_value) =
-                                action_lookup(&frame.substitution, *variable)
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            let Some(target_value) = action_lookup(&frame.substitution, *target)
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            let target_is_remainder = rule
-                                .variables
-                                .get(target.0 as usize)
-                                .filter(|declaration| declaration.id == *target)
-                                .map(|declaration| {
-                                    declaration.role
-                                        == mettail_grammar_core::TheoryVariableRoleV1::Remainder
-                                });
-                            if target_is_remainder != Some(*remainder) {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            match freshness_holds(
-                                &egraph,
-                                variable_value,
-                                target_value,
-                                &mut work,
-                                limits.work,
-                                &mut is_cancelled,
-                            ) {
-                                Ok(true) => {},
-                                Ok(false) => continue,
-                                Err(reason) => {
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason,
-                                        work,
-                                        stats,
-                                    };
-                                },
-                            }
-                            if let Err(reason) = push_premise_receipt(
-                                &mut branch,
-                                SemanticPremiseReceipt::Freshness { rule: frame_rule, premise },
-                                limits.proof_nodes,
-                            ) {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            if let Err(reason) =
-                                push_action_branch(&mut frontier, branch, limits.frontier)
-                            {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason,
-                                    work,
-                                    stats,
-                                };
-                            }
-                        },
-                        mettail_grammar_core::TheoryImagePremiseFormV1::Transition {
-                            source,
-                            target,
-                        } => {
-                            let Some(source_declaration) = rule
-                                .variables
-                                .get(source.0 as usize)
-                                .filter(|declaration| declaration.id == *source)
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            let Some(target_declaration) =
-                                rule.variables.get(target.0 as usize).filter(|declaration| {
-                                    declaration.id == *target
-                                        && declaration.role
-                                            == mettail_grammar_core::TheoryVariableRoleV1::Derived
-                                })
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            if source_declaration.sort != target_declaration.sort {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            let Some(source_value) = action_lookup(&frame.substitution, *source)
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            if action_lookup(&frame.substitution, *target).is_some() {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            let remaining = limits.work.saturating_sub(work);
-                            let decision = self.match_rewrite_relation(
-                                source_declaration.sort,
-                                SemanticActionMatchRequest {
-                                    image,
-                                    granted_rights,
-                                    egraph: &mut egraph,
-                                    root: source_value,
-                                    limits: SemanticTransitionLimits {
-                                        work: remaining,
-                                        outputs: limits.frontier,
-                                        ..limits
-                                    },
-                                },
-                                &mut is_cancelled,
-                            );
-                            let nested_matches = match decision {
-                                SemanticMatchDecision::Proven(proven) => {
-                                    if let Err(reason) = absorb_matcher_accounting(
-                                        &mut work,
-                                        limits.work,
-                                        &mut stats,
-                                        proven.work,
-                                        proven.stats,
-                                    ) {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                    proven.matches
-                                },
-                                SemanticMatchDecision::Refuted(
-                                    SemanticMatchRefutation::NoTransition,
-                                ) => continue,
-                                SemanticMatchDecision::Refuted(reason) => {
-                                    return SemanticTransitionDecision::Refuted(reason);
-                                },
-                                SemanticMatchDecision::Undetermined {
-                                    reason,
-                                    work: nested_work,
-                                    stats: nested_stats,
-                                } => {
-                                    if let Err(accounting_reason) = absorb_matcher_accounting(
-                                        &mut work,
-                                        limits.work,
-                                        &mut stats,
-                                        nested_work,
-                                        nested_stats,
-                                    ) {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason: accounting_reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason,
-                                        work,
-                                        stats,
-                                    };
-                                },
-                            };
-                            for nested in nested_matches {
-                                if nested.root != egraph.find(source_value) {
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                        work,
-                                        stats,
-                                    };
-                                }
-                                let Some(child_rule) = image
-                                    .rules
-                                    .get(nested.rule.0 as usize)
-                                    .filter(|candidate| candidate.id == nested.rule)
-                                else {
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                        work,
-                                        stats,
-                                    };
-                                };
-                                let mut child = match clone_action_branch(&branch) {
-                                    Ok(child) => child,
-                                    Err(reason) => {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    },
-                                };
-                                let substitution =
-                                    match action_substitution_from_map(nested.substitution) {
-                                        Ok(substitution) => substitution,
-                                        Err(reason) => {
-                                            return SemanticTransitionDecision::Undetermined {
-                                                reason,
-                                                work,
-                                                stats,
-                                            };
-                                        },
-                                    };
-                                let frame = match action_frame(
-                                    child_rule,
-                                    egraph.find(source_value),
-                                    substitution,
-                                    Some(ActionReturnFrame {
-                                        parent_rule: frame_rule,
-                                        parent_premise: premise,
-                                        target: *target,
-                                    }),
-                                ) {
-                                    Ok(frame) => frame,
-                                    Err(reason) => {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    },
-                                };
-                                if child.frames.len() == limits.proof_nodes {
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason: SemanticMatchUndetermined::ProofLimitExceeded,
-                                        work,
-                                        stats,
-                                    };
-                                }
-                                if child.frames.try_reserve(1).is_err() {
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason: SemanticMatchUndetermined::AllocationFailed,
-                                        work,
-                                        stats,
-                                    };
-                                }
-                                child.frames.push(frame);
-                                if let Err(reason) =
-                                    push_action_branch(&mut frontier, child, limits.frontier)
-                                {
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason,
-                                        work,
-                                        stats,
-                                    };
-                                }
-                            }
-                        },
-                        mettail_grammar_core::TheoryImagePremiseFormV1::Judgment {
-                            judgment,
-                            terms,
-                        } => {
-                            let mut arguments = Vec::new();
-                            if arguments.try_reserve_exact(terms.len()).is_err() {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::AllocationFailed,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            for term in terms {
-                                let argument = match instantiate_rule_term(
-                                    TermInstantiation {
-                                        image,
-                                        rule,
-                                        substitution: &frame.substitution,
-                                        root: *term,
-                                        limits: TermConstructionLimits {
-                                            work: limits.work,
-                                            nodes: private_node_limit,
-                                            bytes: limits.term_bytes,
-                                        },
-                                    },
-                                    &mut egraph,
-                                    &mut work,
-                                    &mut is_cancelled,
-                                ) {
-                                    Ok(argument) => argument,
-                                    Err(reason) => {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    },
-                                };
-                                arguments.push(argument);
-                            }
-                            if egraph.node_count().saturating_sub(initial_nodes)
-                                > private_node_limit
-                            {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::EGraphNodeBudgetExhausted,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            let remaining = limits.work.saturating_sub(work);
-                            let decision = self.prove_ground_judgment(
-                                SemanticJudgmentProofRequest {
-                                    image,
-                                    judgment: *judgment,
-                                    granted_rights,
-                                    egraph: &egraph,
-                                    arguments: &arguments,
-                                    limits: SemanticJudgmentLimits {
-                                        work: remaining,
-                                        frontier: limits.frontier,
-                                        proofs: limits.proofs,
-                                        proof_nodes: limits.proof_nodes,
-                                        term_nodes: limits.term_nodes,
-                                        term_bytes: limits.term_bytes,
-                                    },
-                                },
-                                &mut is_cancelled,
-                            );
-                            match decision {
-                                SemanticJudgmentDecision::Proven(proven) => {
-                                    if let Err(reason) = absorb_matcher_accounting(
-                                        &mut work,
-                                        limits.work,
-                                        &mut stats,
-                                        proven.work,
-                                        proven.stats,
-                                    ) {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                    let Ok(proofs) = u32::try_from(proven.proofs.len()) else {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason: SemanticMatchUndetermined::ProofLimitExceeded,
-                                            work,
-                                            stats,
-                                        };
-                                    };
-                                    let proof_steps =
-                                        proven.proofs.iter().try_fold(0u32, |total, proof| {
-                                            u32::try_from(proof.steps.len())
-                                                .ok()
-                                                .and_then(|steps| total.checked_add(steps))
-                                        });
-                                    let Some(proof_steps) = proof_steps else {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason: SemanticMatchUndetermined::ProofLimitExceeded,
-                                            work,
-                                            stats,
-                                        };
-                                    };
-                                    if let Err(reason) = push_premise_receipt(
-                                        &mut branch,
-                                        SemanticPremiseReceipt::Judgment {
-                                            rule: frame_rule,
-                                            premise,
-                                            judgment: *judgment,
-                                            proofs,
-                                            proof_steps,
-                                        },
-                                        limits.proof_nodes,
-                                    ) {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                    if let Err(reason) =
-                                        push_action_branch(&mut frontier, branch, limits.frontier)
-                                    {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                },
-                                SemanticJudgmentDecision::Refuted(
-                                    SemanticMatchRefutation::PremiseRefuted
-                                    | SemanticMatchRefutation::NoTransition,
-                                ) => {},
-                                SemanticJudgmentDecision::Refuted(reason) => {
-                                    return SemanticTransitionDecision::Refuted(reason);
-                                },
-                                SemanticJudgmentDecision::Undetermined {
-                                    reason,
-                                    work: judgment_work,
-                                    stats: judgment_stats,
-                                } => {
-                                    if let Err(accounting_reason) = absorb_matcher_accounting(
-                                        &mut work,
-                                        limits.work,
-                                        &mut stats,
-                                        judgment_work,
-                                        judgment_stats,
-                                    ) {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason: accounting_reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason,
-                                        work,
-                                        stats,
-                                    };
-                                },
-                            }
-                        },
-                        mettail_grammar_core::TheoryImagePremiseFormV1::ForAll {
-                            collection,
-                            parameter,
-                            body,
-                        } => {
-                            let Some(collection_value) =
-                                action_lookup(&frame.substitution, *collection)
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            let Some(collection_declaration) = rule
-                                .variables
-                                .get(collection.0 as usize)
-                                .filter(|declaration| declaration.id == *collection)
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            let (element_sort, elements) = match concrete_collection_elements(
-                                image,
-                                &egraph,
-                                collection_value,
-                                collection_declaration.sort,
-                                &mut work,
-                                limits.work,
-                                &mut is_cancelled,
-                            ) {
-                                Ok(elements) => elements,
-                                Err(reason) => {
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason,
-                                        work,
-                                        stats,
-                                    };
-                                },
-                            };
-                            let Some(parameter_declaration) = rule
-                                .variables
-                                .get(parameter.0 as usize)
-                                .filter(|declaration| declaration.id == *parameter)
-                            else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            if parameter_declaration.sort != element_sort
-                                || rule.premises.get(*body as usize).is_none()
-                            {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            let Ok(element_count) = u32::try_from(elements.len()) else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::ProofLimitExceeded,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            let Some(additional) = elements.len().checked_add(1) else {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::FrontierLimitExceeded,
-                                    work,
-                                    stats,
-                                };
-                            };
-                            if frame.pending.try_reserve(additional).is_err() {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason: SemanticMatchUndetermined::AllocationFailed,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            frame.pending.push_front(ActionPremiseTask::RecordForAll {
-                                premise,
-                                elements: element_count,
-                            });
-                            for element in elements.into_iter().rev() {
-                                frame.pending.push_front(ActionPremiseTask::ForAllElement {
-                                    body: *body,
-                                    parameter: *parameter,
-                                    element,
-                                });
-                            }
-                            if let Err(reason) =
-                                push_action_branch(&mut frontier, branch, limits.frontier)
-                            {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason,
-                                    work,
-                                    stats,
-                                };
-                            }
-                        },
-                        mettail_grammar_core::TheoryImagePremiseFormV1::Guard { commitment } => {
-                            let remaining = limits.work.saturating_sub(work);
-                            let decision = guards.evaluate_guard(SemanticGuardRequest {
-                                language_fingerprint: image.language_fingerprint,
-                                theory_fingerprint: image.theory_fingerprint,
-                                image_fingerprint,
-                                rule: frame_rule,
-                                premise,
-                                guard_commitment: *commitment,
-                                redex: frame.redex,
-                                substitution: &frame.substitution,
-                                egraph: &egraph,
-                                work_limit: remaining,
-                            });
-                            let (evidence_commitment, guard_work) = match decision {
-                                SemanticGuardDecision::Proven {
-                                    evidence_commitment,
-                                    work: guard_work,
-                                } => (evidence_commitment, guard_work),
-                                SemanticGuardDecision::Refuted { work: guard_work } => {
-                                    if let Err(reason) =
-                                        absorb_reported_work(&mut work, limits.work, guard_work)
-                                    {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                    continue;
-                                },
-                                SemanticGuardDecision::Undetermined {
-                                    reason,
-                                    work: guard_work,
-                                } => {
-                                    if let Err(accounting_reason) =
-                                        absorb_reported_work(&mut work, limits.work, guard_work)
-                                    {
-                                        return SemanticTransitionDecision::Undetermined {
-                                            reason: accounting_reason,
-                                            work,
-                                            stats,
-                                        };
-                                    }
-                                    return SemanticTransitionDecision::Undetermined {
-                                        reason,
-                                        work,
-                                        stats,
-                                    };
-                                },
-                            };
-                            if let Err(reason) =
-                                absorb_reported_work(&mut work, limits.work, guard_work)
-                            {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            if let Err(reason) = push_premise_receipt(
-                                &mut branch,
-                                SemanticPremiseReceipt::Guard {
-                                    rule: frame_rule,
-                                    premise,
-                                    guard_commitment: *commitment,
-                                    evidence_commitment,
-                                },
-                                limits.proof_nodes,
-                            ) {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason,
-                                    work,
-                                    stats,
-                                };
-                            }
-                            if let Err(reason) =
-                                push_action_branch(&mut frontier, branch, limits.frontier)
-                            {
-                                return SemanticTransitionDecision::Undetermined {
-                                    reason,
-                                    work,
-                                    stats,
-                                };
-                            }
-                        },
                     }
-                },
-                ActionPremiseTask::ForAllElement { body, parameter, element } => {
-                    let scope = match clone_copy_slice(&frame.substitution) {
-                        Ok(scope) => scope,
+                    let output = match instantiate_rule_term(
+                        TermInstantiation {
+                            image,
+                            rule,
+                            substitution: &frame.substitution,
+                            root: rule.right,
+                            limits: TermConstructionLimits {
+                                work: limits.work,
+                                nodes: private_node_limit,
+                                bytes: limits.output_bytes,
+                            },
+                        },
+                        &mut egraph,
+                        &mut work,
+                        &mut is_cancelled,
+                    ) {
+                        Ok(output) => output,
                         Err(reason) => {
                             return SemanticTransitionDecision::Undetermined {
                                 reason,
@@ -2751,69 +2002,1369 @@ impl SemanticTransitionMatcher {
                             };
                         },
                     };
-                    if frame.saved_forall_scopes.len() == limits.proof_nodes {
+                    if egraph.node_count().saturating_sub(initial_nodes) > private_node_limit {
                         return SemanticTransitionDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::ProofLimitExceeded,
+                            reason: SemanticMatchUndetermined::EGraphNodeBudgetExhausted,
                             work,
                             stats,
                         };
                     }
-                    if frame.saved_forall_scopes.try_reserve(1).is_err() {
-                        return SemanticTransitionDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::AllocationFailed,
-                            work,
-                            stats,
-                        };
-                    }
-                    frame.saved_forall_scopes.push(scope);
-                    if let Err(reason) =
-                        action_bind_overlay(&mut frame.substitution, parameter, element)
-                    {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                    }
-                    if frame.pending.try_reserve(2).is_err() {
-                        return SemanticTransitionDecision::Undetermined {
-                            reason: SemanticMatchUndetermined::AllocationFailed,
-                            work,
-                            stats,
-                        };
-                    }
-                    frame.pending.push_front(ActionPremiseTask::RestoreForAll);
-                    frame
-                        .pending
-                        .push_front(ActionPremiseTask::Evaluate { premise: body });
-                    if let Err(reason) = push_action_branch(&mut frontier, branch, limits.frontier)
-                    {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
-                    }
-                },
-                ActionPremiseTask::RestoreForAll => {
-                    let Some(scope) = frame.saved_forall_scopes.pop() else {
+                    let Some(frame) = branch.frames.pop() else {
                         return SemanticTransitionDecision::Undetermined {
                             reason: SemanticMatchUndetermined::InvalidImageEvidence,
                             work,
                             stats,
                         };
                     };
-                    frame.substitution = scope;
-                    if let Err(reason) = push_action_branch(&mut frontier, branch, limits.frontier)
-                    {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
+                    if let Some(return_to_parent) = frame.return_to_parent {
+                        let Some(parent) = branch.frames.last_mut() else {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work,
+                                stats,
+                            };
+                        };
+                        if parent.rule != return_to_parent.parent_rule {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work,
+                                stats,
+                            };
+                        }
+                        if let Err(reason) = action_bind_new(
+                            &mut parent.substitution,
+                            return_to_parent.target,
+                            egraph.find(output),
+                        ) {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                        if let Err(reason) = push_premise_receipt(
+                            &mut branch,
+                            SemanticPremiseReceipt::Transition {
+                                rule: return_to_parent.parent_rule,
+                                premise: return_to_parent.parent_premise,
+                                child_rule: frame.rule,
+                            },
+                            limits.proof_nodes,
+                        ) {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                        if let Err(reason) =
+                            push_action_branch(&mut frontier, branch, limits.frontier)
+                        {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                    } else {
+                        if completed.len() == limits.frontier {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                                work,
+                                stats,
+                            };
+                        }
+                        if completed.try_reserve(1).is_err() {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::AllocationFailed,
+                                work,
+                                stats,
+                            };
+                        }
+                        completed.push(CompletedActionBranch {
+                            rule: frame.rule,
+                            output: egraph.find(output),
+                            substitution: frame.substitution,
+                            premises: branch.premises,
+                            normalization_hops: Vec::new(),
+                        });
+                    }
+                    continue;
+                };
+
+                match task {
+                    ActionPremiseTask::Evaluate { premise } => {
+                        let Some(premise_node) = rule.premises.get(premise as usize) else {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work,
+                                stats,
+                            };
+                        };
+                        match &premise_node.form {
+                            mettail_grammar_core::TheoryImagePremiseFormV1::Freshness {
+                                variable,
+                                target,
+                                remainder,
+                            } => {
+                                let Some(variable_value) =
+                                    action_lookup(&frame.substitution, *variable)
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                let Some(target_value) =
+                                    action_lookup(&frame.substitution, *target)
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                let target_is_remainder = rule
+                                    .variables
+                                    .get(target.0 as usize)
+                                    .filter(|declaration| declaration.id == *target)
+                                    .map(|declaration| {
+                                        declaration.role
+                                            == mettail_grammar_core::TheoryVariableRoleV1::Remainder
+                                    });
+                                if target_is_remainder != Some(*remainder) {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                match freshness_holds(
+                                    &egraph,
+                                    variable_value,
+                                    target_value,
+                                    &mut work,
+                                    limits.work,
+                                    &mut is_cancelled,
+                                ) {
+                                    Ok(true) => {},
+                                    Ok(false) => continue,
+                                    Err(reason) => {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    },
+                                }
+                                if let Err(reason) = push_premise_receipt(
+                                    &mut branch,
+                                    SemanticPremiseReceipt::Freshness { rule: frame_rule, premise },
+                                    limits.proof_nodes,
+                                ) {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                if let Err(reason) =
+                                    push_action_branch(&mut frontier, branch, limits.frontier)
+                                {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                            },
+                            mettail_grammar_core::TheoryImagePremiseFormV1::Transition {
+                                source,
+                                target,
+                            } => {
+                                let Some(source_declaration) = rule
+                                    .variables
+                                    .get(source.0 as usize)
+                                    .filter(|declaration| declaration.id == *source)
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                let Some(target_declaration) =
+                                    rule.variables.get(target.0 as usize).filter(|declaration| {
+                                        declaration.id == *target
+                                        && declaration.role
+                                            == mettail_grammar_core::TheoryVariableRoleV1::Derived
+                                    })
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                if source_declaration.sort != target_declaration.sort {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                let Some(source_value) =
+                                    action_lookup(&frame.substitution, *source)
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                if action_lookup(&frame.substitution, *target).is_some() {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                let remaining = limits.work.saturating_sub(work);
+                                let decision = self.match_rewrite_relation(
+                                    source_declaration.sort,
+                                    SemanticActionMatchRequest {
+                                        image,
+                                        granted_rights,
+                                        egraph: &mut egraph,
+                                        root: source_value,
+                                        limits: SemanticTransitionLimits {
+                                            work: remaining,
+                                            outputs: limits.frontier,
+                                            ..limits
+                                        },
+                                    },
+                                    &mut is_cancelled,
+                                );
+                                let nested_matches = match decision {
+                                    SemanticMatchDecision::Proven(proven) => {
+                                        if let Err(reason) = absorb_matcher_accounting(
+                                            &mut work,
+                                            limits.work,
+                                            &mut stats,
+                                            proven.work,
+                                            proven.stats,
+                                        ) {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                        proven.matches
+                                    },
+                                    SemanticMatchDecision::Refuted(
+                                        SemanticMatchRefutation::NoTransition,
+                                    ) => continue,
+                                    SemanticMatchDecision::Refuted(reason) => {
+                                        return SemanticTransitionDecision::Refuted(reason);
+                                    },
+                                    SemanticMatchDecision::Undetermined {
+                                        reason,
+                                        work: nested_work,
+                                        stats: nested_stats,
+                                    } => {
+                                        if let Err(accounting_reason) = absorb_matcher_accounting(
+                                            &mut work,
+                                            limits.work,
+                                            &mut stats,
+                                            nested_work,
+                                            nested_stats,
+                                        ) {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason: accounting_reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    },
+                                };
+                                for nested in nested_matches {
+                                    if nested.root != egraph.find(source_value) {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                            work,
+                                            stats,
+                                        };
+                                    }
+                                    let Some(child_rule) = image
+                                        .rules
+                                        .get(nested.rule.0 as usize)
+                                        .filter(|candidate| candidate.id == nested.rule)
+                                    else {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                            work,
+                                            stats,
+                                        };
+                                    };
+                                    let mut child = match clone_action_branch(&branch) {
+                                        Ok(child) => child,
+                                        Err(reason) => {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        },
+                                    };
+                                    let substitution =
+                                        match action_substitution_from_map(nested.substitution) {
+                                            Ok(substitution) => substitution,
+                                            Err(reason) => {
+                                                return SemanticTransitionDecision::Undetermined {
+                                                    reason,
+                                                    work,
+                                                    stats,
+                                                };
+                                            },
+                                        };
+                                    let frame = match action_frame(
+                                        child_rule,
+                                        egraph.find(source_value),
+                                        substitution,
+                                        Some(ActionReturnFrame {
+                                            parent_rule: frame_rule,
+                                            parent_premise: premise,
+                                            target: *target,
+                                        }),
+                                    ) {
+                                        Ok(frame) => frame,
+                                        Err(reason) => {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        },
+                                    };
+                                    if child.frames.len() == limits.proof_nodes {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason: SemanticMatchUndetermined::ProofLimitExceeded,
+                                            work,
+                                            stats,
+                                        };
+                                    }
+                                    if child.frames.try_reserve(1).is_err() {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason: SemanticMatchUndetermined::AllocationFailed,
+                                            work,
+                                            stats,
+                                        };
+                                    }
+                                    child.frames.push(frame);
+                                    if let Err(reason) =
+                                        push_action_branch(&mut frontier, child, limits.frontier)
+                                    {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    }
+                                }
+                            },
+                            mettail_grammar_core::TheoryImagePremiseFormV1::Judgment {
+                                judgment,
+                                terms,
+                            } => {
+                                let mut arguments = Vec::new();
+                                if arguments.try_reserve_exact(terms.len()).is_err() {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::AllocationFailed,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                for term in terms {
+                                    let argument = match instantiate_rule_term(
+                                        TermInstantiation {
+                                            image,
+                                            rule,
+                                            substitution: &frame.substitution,
+                                            root: *term,
+                                            limits: TermConstructionLimits {
+                                                work: limits.work,
+                                                nodes: private_node_limit,
+                                                bytes: limits.term_bytes,
+                                            },
+                                        },
+                                        &mut egraph,
+                                        &mut work,
+                                        &mut is_cancelled,
+                                    ) {
+                                        Ok(argument) => argument,
+                                        Err(reason) => {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        },
+                                    };
+                                    arguments.push(argument);
+                                }
+                                if egraph.node_count().saturating_sub(initial_nodes)
+                                    > private_node_limit
+                                {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason:
+                                            SemanticMatchUndetermined::EGraphNodeBudgetExhausted,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                let remaining = limits.work.saturating_sub(work);
+                                let decision = self.prove_ground_judgment(
+                                    SemanticJudgmentProofRequest {
+                                        image,
+                                        judgment: *judgment,
+                                        granted_rights,
+                                        egraph: &egraph,
+                                        arguments: &arguments,
+                                        limits: SemanticJudgmentLimits {
+                                            work: remaining,
+                                            frontier: limits.frontier,
+                                            proofs: limits.proofs,
+                                            proof_nodes: limits.proof_nodes,
+                                            term_nodes: limits.term_nodes,
+                                            term_bytes: limits.term_bytes,
+                                        },
+                                    },
+                                    &mut is_cancelled,
+                                );
+                                match decision {
+                                    SemanticJudgmentDecision::Proven(proven) => {
+                                        if let Err(reason) = absorb_matcher_accounting(
+                                            &mut work,
+                                            limits.work,
+                                            &mut stats,
+                                            proven.work,
+                                            proven.stats,
+                                        ) {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                        let Ok(proofs) = u32::try_from(proven.proofs.len()) else {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason:
+                                                    SemanticMatchUndetermined::ProofLimitExceeded,
+                                                work,
+                                                stats,
+                                            };
+                                        };
+                                        let proof_steps =
+                                            proven.proofs.iter().try_fold(0u32, |total, proof| {
+                                                u32::try_from(proof.steps.len())
+                                                    .ok()
+                                                    .and_then(|steps| total.checked_add(steps))
+                                            });
+                                        let Some(proof_steps) = proof_steps else {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason:
+                                                    SemanticMatchUndetermined::ProofLimitExceeded,
+                                                work,
+                                                stats,
+                                            };
+                                        };
+                                        if let Err(reason) = push_premise_receipt(
+                                            &mut branch,
+                                            SemanticPremiseReceipt::Judgment {
+                                                rule: frame_rule,
+                                                premise,
+                                                judgment: *judgment,
+                                                proofs,
+                                                proof_steps,
+                                            },
+                                            limits.proof_nodes,
+                                        ) {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                        if let Err(reason) = push_action_branch(
+                                            &mut frontier,
+                                            branch,
+                                            limits.frontier,
+                                        ) {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                    },
+                                    SemanticJudgmentDecision::Refuted(
+                                        SemanticMatchRefutation::PremiseRefuted
+                                        | SemanticMatchRefutation::NoTransition,
+                                    ) => {},
+                                    SemanticJudgmentDecision::Refuted(reason) => {
+                                        return SemanticTransitionDecision::Refuted(reason);
+                                    },
+                                    SemanticJudgmentDecision::Undetermined {
+                                        reason,
+                                        work: judgment_work,
+                                        stats: judgment_stats,
+                                    } => {
+                                        if let Err(accounting_reason) = absorb_matcher_accounting(
+                                            &mut work,
+                                            limits.work,
+                                            &mut stats,
+                                            judgment_work,
+                                            judgment_stats,
+                                        ) {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason: accounting_reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    },
+                                }
+                            },
+                            mettail_grammar_core::TheoryImagePremiseFormV1::ForAll {
+                                collection,
+                                parameter,
+                                body,
+                            } => {
+                                let Some(collection_value) =
+                                    action_lookup(&frame.substitution, *collection)
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                let Some(collection_declaration) = rule
+                                    .variables
+                                    .get(collection.0 as usize)
+                                    .filter(|declaration| declaration.id == *collection)
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                let (element_sort, elements) = match concrete_collection_elements(
+                                    image,
+                                    &egraph,
+                                    collection_value,
+                                    collection_declaration.sort,
+                                    &mut work,
+                                    limits.work,
+                                    &mut is_cancelled,
+                                ) {
+                                    Ok(elements) => elements,
+                                    Err(reason) => {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    },
+                                };
+                                let Some(parameter_declaration) = rule
+                                    .variables
+                                    .get(parameter.0 as usize)
+                                    .filter(|declaration| declaration.id == *parameter)
+                                else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                if parameter_declaration.sort != element_sort
+                                    || rule.premises.get(*body as usize).is_none()
+                                {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                let Ok(element_count) = u32::try_from(elements.len()) else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::ProofLimitExceeded,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                let Some(additional) = elements.len().checked_add(1) else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                if frame.pending.try_reserve(additional).is_err() {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::AllocationFailed,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                frame.pending.push_front(ActionPremiseTask::RecordForAll {
+                                    premise,
+                                    elements: element_count,
+                                });
+                                for element in elements.into_iter().rev() {
+                                    frame.pending.push_front(ActionPremiseTask::ForAllElement {
+                                        body: *body,
+                                        parameter: *parameter,
+                                        element,
+                                    });
+                                }
+                                if let Err(reason) =
+                                    push_action_branch(&mut frontier, branch, limits.frontier)
+                                {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                            },
+                            mettail_grammar_core::TheoryImagePremiseFormV1::Intrinsic(
+                                intrinsic,
+                            ) => {
+                                let evaluated = match execute_intrinsic(
+                                    image,
+                                    rule,
+                                    intrinsic,
+                                    &frame.substitution,
+                                    &mut egraph,
+                                    &mut work,
+                                    limits,
+                                    &mut is_cancelled,
+                                ) {
+                                    Ok(Some(evaluated)) => evaluated,
+                                    Ok(None) => continue,
+                                    Err(reason) => {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    },
+                                };
+                                for (variable, value) in evaluated.bindings {
+                                    if let Err(reason) = action_bind_new(
+                                        &mut frame.substitution,
+                                        variable,
+                                        egraph.find(value),
+                                    ) {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    }
+                                }
+                                if let Err(reason) = push_premise_receipt(
+                                    &mut branch,
+                                    SemanticPremiseReceipt::Intrinsic {
+                                        rule: frame_rule,
+                                        premise,
+                                        receipt: evaluated.receipt,
+                                    },
+                                    limits.proof_nodes,
+                                ) {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                if let Err(reason) =
+                                    push_action_branch(&mut frontier, branch, limits.frontier)
+                                {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                            },
+                            mettail_grammar_core::TheoryImagePremiseFormV1::Guard {
+                                commitment,
+                            } => {
+                                let remaining = limits.work.saturating_sub(work);
+                                let decision = guards.evaluate_guard(SemanticGuardRequest {
+                                    language_fingerprint: image.language_fingerprint,
+                                    theory_fingerprint: image.theory_fingerprint,
+                                    image_fingerprint,
+                                    rule: frame_rule,
+                                    premise,
+                                    guard_commitment: *commitment,
+                                    redex: frame.redex,
+                                    substitution: &frame.substitution,
+                                    egraph: &egraph,
+                                    work_limit: remaining,
+                                });
+                                let (evidence_commitment, guard_work) = match decision {
+                                    SemanticGuardDecision::Proven {
+                                        evidence_commitment,
+                                        work: guard_work,
+                                    } => (evidence_commitment, guard_work),
+                                    SemanticGuardDecision::Refuted { work: guard_work } => {
+                                        if let Err(reason) =
+                                            absorb_reported_work(&mut work, limits.work, guard_work)
+                                        {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                        continue;
+                                    },
+                                    SemanticGuardDecision::Undetermined {
+                                        reason,
+                                        work: guard_work,
+                                    } => {
+                                        if let Err(accounting_reason) =
+                                            absorb_reported_work(&mut work, limits.work, guard_work)
+                                        {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason: accounting_reason,
+                                                work,
+                                                stats,
+                                            };
+                                        }
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    },
+                                };
+                                if let Err(reason) =
+                                    absorb_reported_work(&mut work, limits.work, guard_work)
+                                {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                if let Err(reason) = push_premise_receipt(
+                                    &mut branch,
+                                    SemanticPremiseReceipt::Guard {
+                                        rule: frame_rule,
+                                        premise,
+                                        guard_commitment: *commitment,
+                                        evidence_commitment,
+                                    },
+                                    limits.proof_nodes,
+                                ) {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                                if let Err(reason) =
+                                    push_action_branch(&mut frontier, branch, limits.frontier)
+                                {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                }
+                            },
+                        }
+                    },
+                    ActionPremiseTask::ForAllElement { body, parameter, element } => {
+                        let scope = match clone_copy_slice(&frame.substitution) {
+                            Ok(scope) => scope,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                        if frame.saved_forall_scopes.len() == limits.proof_nodes {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::ProofLimitExceeded,
+                                work,
+                                stats,
+                            };
+                        }
+                        if frame.saved_forall_scopes.try_reserve(1).is_err() {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::AllocationFailed,
+                                work,
+                                stats,
+                            };
+                        }
+                        frame.saved_forall_scopes.push(scope);
+                        if let Err(reason) =
+                            action_bind_overlay(&mut frame.substitution, parameter, element)
+                        {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                        if frame.pending.try_reserve(2).is_err() {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::AllocationFailed,
+                                work,
+                                stats,
+                            };
+                        }
+                        frame.pending.push_front(ActionPremiseTask::RestoreForAll);
+                        frame
+                            .pending
+                            .push_front(ActionPremiseTask::Evaluate { premise: body });
+                        if let Err(reason) =
+                            push_action_branch(&mut frontier, branch, limits.frontier)
+                        {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                    },
+                    ActionPremiseTask::RestoreForAll => {
+                        let Some(scope) = frame.saved_forall_scopes.pop() else {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work,
+                                stats,
+                            };
+                        };
+                        frame.substitution = scope;
+                        if let Err(reason) =
+                            push_action_branch(&mut frontier, branch, limits.frontier)
+                        {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                    },
+                    ActionPremiseTask::RecordForAll { premise, elements } => {
+                        if let Err(reason) = push_premise_receipt(
+                            &mut branch,
+                            SemanticPremiseReceipt::ForAll { rule: frame_rule, premise, elements },
+                            limits.proof_nodes,
+                        ) {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                        if let Err(reason) =
+                            push_action_branch(&mut frontier, branch, limits.frontier)
+                        {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        }
+                    },
+                }
+            }
+
+            match std::mem::replace(&mut execution_stage, ActionExecutionStage::Entry) {
+                ActionExecutionStage::Entry => {
+                    if completed.is_empty() {
+                        return SemanticTransitionDecision::Refuted(
+                            SemanticMatchRefutation::PremiseRefuted,
+                        );
+                    }
+                    let TheoryActionExecutionImageV1::Normalize {
+                        relation_sort,
+                        terminal_constructors: _,
+                        branching: _,
+                    } = &action_image.execution
+                    else {
+                        break;
+                    };
+                    let entries = std::mem::take(&mut completed);
+                    if normalization_frontier.try_reserve(entries.len()).is_err() {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::AllocationFailed,
+                            work,
+                            stats,
+                        };
+                    }
+                    for entry in entries {
+                        let rule = match image
+                            .rules
+                            .get(entry.rule.0 as usize)
+                            .filter(|candidate| candidate.id == entry.rule)
+                        {
+                            Some(rule) => rule,
+                            None => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                        if rule.terms.get(rule.right.0 as usize).map(|term| term.sort)
+                            != Some(*relation_sort)
+                        {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work,
+                                stats,
+                            };
+                        }
+                        let current = egraph.find(entry.output);
+                        let key = match exact_ground_key(
+                            &egraph,
+                            current,
+                            &mut work,
+                            GroundKeyLimits {
+                                work: limits.work,
+                                nodes: limits.output_nodes,
+                                bytes: limits.output_bytes,
+                                limit_reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                            },
+                            &mut is_cancelled,
+                        ) {
+                            Ok(key) => key,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                        let current_key = match clone_copy_slice(key.as_bytes()) {
+                            Ok(key) => key,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                        let mut seen = Vec::new();
+                        if seen.try_reserve_exact(1).is_err() {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::AllocationFailed,
+                                work,
+                                stats,
+                            };
+                        }
+                        seen.push(match clone_copy_slice(&current_key) {
+                            Ok(key) => key,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        });
+                        normalization_frontier.push_back(PrivateNormalizationBranch {
+                            entry,
+                            current,
+                            current_key,
+                            seen,
+                            hops: Vec::new(),
+                        });
+                    }
+                    if normalization_frontier.len() > limits.frontier {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                            work,
+                            stats,
+                        };
                     }
                 },
-                ActionPremiseTask::RecordForAll { premise, elements } => {
-                    if let Err(reason) = push_premise_receipt(
-                        &mut branch,
-                        SemanticPremiseReceipt::ForAll { rule: frame_rule, premise, elements },
-                        limits.proof_nodes,
+                ActionExecutionStage::Rewrite { branch, work_before_enumeration } => {
+                    let (relation_sort, branching) = match &action_image.execution {
+                        TheoryActionExecutionImageV1::Normalize {
+                            relation_sort,
+                            branching,
+                            ..
+                        } => (*relation_sort, *branching),
+                        TheoryActionExecutionImageV1::OneStep => {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work,
+                                stats,
+                            };
+                        },
+                    };
+                    let groups = match normalization_successor_groups(
+                        image,
+                        &egraph,
+                        relation_sort,
+                        &branch.current_key,
+                        std::mem::take(&mut completed),
+                        &mut work,
+                        limits,
+                        &mut is_cancelled,
                     ) {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
+                        Ok(groups) => groups,
+                        Err(reason) => {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        },
+                    };
+                    if groups.is_empty() {
+                        return SemanticTransitionDecision::Refuted(
+                            SemanticMatchRefutation::StuckNonterminal,
+                        );
                     }
-                    if let Err(reason) = push_action_branch(&mut frontier, branch, limits.frontier)
+                    if branching == SemanticNormalizationBranchingV1::Deterministic
+                        && groups.len() != 1
                     {
-                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
+                        return SemanticTransitionDecision::Refuted(
+                            SemanticMatchRefutation::NormalizationDeterminismClaimViolated,
+                        );
+                    }
+                    let Some(charged_work) = work.checked_sub(work_before_enumeration) else {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                            work,
+                            stats,
+                        };
+                    };
+                    let Some(next_frontier_len) =
+                        normalization_frontier.len().checked_add(groups.len())
+                    else {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                            work,
+                            stats,
+                        };
+                    };
+                    if next_frontier_len > limits.frontier {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                            work,
+                            stats,
+                        };
+                    }
+                    if normalization_frontier.try_reserve(groups.len()).is_err() {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::AllocationFailed,
+                            work,
+                            stats,
+                        };
+                    }
+                    let group_count = groups.len();
+                    let mut reusable_branch = Some(branch);
+                    for (index, group) in groups.into_iter().enumerate() {
+                        let Some(base_branch) = reusable_branch.as_ref() else {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                                work,
+                                stats,
+                            };
+                        };
+                        if base_branch.seen.iter().any(|seen| *seen == group.key) {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::NormalizationCycleDetected,
+                                work,
+                                stats,
+                            };
+                        }
+                        let next = if index + 1 == group_count {
+                            reusable_branch
+                                .take()
+                                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)
+                        } else {
+                            clone_private_normalization_branch(base_branch)
+                        };
+                        let mut next = match next {
+                            Ok(next) => next,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                        let before = match clone_copy_slice(&next.current_key) {
+                            Ok(key) => key,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                        let after = match clone_copy_slice(&group.key) {
+                            Ok(key) => key,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                        if next.hops.len() == limits.proof_nodes {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::ProofLimitExceeded,
+                                work,
+                                stats,
+                            };
+                        }
+                        if next.hops.try_reserve(1).is_err() || next.seen.try_reserve(1).is_err() {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::AllocationFailed,
+                                work,
+                                stats,
+                            };
+                        }
+                        next.hops.push(SemanticNormalizationHopReceiptV1 {
+                            before,
+                            after,
+                            exhaustive_proofs: group.proofs,
+                            charged_work,
+                        });
+                        next.current = egraph.find(group.output);
+                        next.current_key = group.key;
+                        next.seen.push(match clone_copy_slice(&next.current_key) {
+                            Ok(key) => key,
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        });
+                        normalization_frontier.push_back(next);
                     }
                 },
+            }
+
+            let (relation_sort, terminal_constructors, branching) = match &action_image.execution {
+                TheoryActionExecutionImageV1::OneStep => {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work,
+                        stats,
+                    };
+                },
+                TheoryActionExecutionImageV1::Normalize {
+                    relation_sort,
+                    terminal_constructors,
+                    branching,
+                } => (*relation_sort, terminal_constructors.as_slice(), *branching),
+            };
+            let mut scheduled = false;
+            while let Some(mut branch) = normalization_frontier.pop_front() {
+                if is_cancelled() {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::Cancelled,
+                        work,
+                        stats,
+                    };
+                }
+                if branching == SemanticNormalizationBranchingV1::FairAllNormalForms {
+                    if fair_scheduler_visits == limits.normalization_steps {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::NormalizationStepLimitExceeded,
+                            work,
+                            stats,
+                        };
+                    }
+                    fair_scheduler_visits += 1;
+                }
+                let terminal = match normalization_terminal_state(
+                    image,
+                    &egraph,
+                    branch.current,
+                    relation_sort,
+                    terminal_constructors,
+                ) {
+                    Ok(terminal) => terminal,
+                    Err(reason) => {
+                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
+                    },
+                };
+                if terminal {
+                    if normal_forms.len() == limits.outputs {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                            work,
+                            stats,
+                        };
+                    }
+                    if normal_forms.try_reserve(1).is_err() {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::AllocationFailed,
+                            work,
+                            stats,
+                        };
+                    }
+                    branch.entry.output = egraph.find(branch.current);
+                    branch.entry.normalization_hops = branch.hops;
+                    normal_forms.push(branch.entry);
+                    continue;
+                }
+                if branching == SemanticNormalizationBranchingV1::Deterministic
+                    && branch.hops.len() == limits.normalization_steps
+                {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::NormalizationStepLimitExceeded,
+                        work,
+                        stats,
+                    };
+                }
+                let work_before_enumeration = work;
+                let decision = self.match_rewrite_relation(
+                    relation_sort,
+                    SemanticActionMatchRequest {
+                        image,
+                        granted_rights,
+                        egraph: &mut egraph,
+                        root: branch.current,
+                        limits: SemanticTransitionLimits {
+                            work: limits.work.saturating_sub(work),
+                            outputs: limits.frontier,
+                            ..limits
+                        },
+                    },
+                    &mut is_cancelled,
+                );
+                let ProvenSemanticMatches {
+                    matches,
+                    work: match_work,
+                    stats: match_stats,
+                } = match decision {
+                    SemanticMatchDecision::Proven(matches) => matches,
+                    SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected) => {
+                        return SemanticTransitionDecision::Refuted(
+                            SemanticMatchRefutation::RequestRejected,
+                        );
+                    },
+                    SemanticMatchDecision::Refuted(_) => {
+                        return SemanticTransitionDecision::Refuted(
+                            SemanticMatchRefutation::StuckNonterminal,
+                        );
+                    },
+                    SemanticMatchDecision::Undetermined {
+                        reason,
+                        work: match_work,
+                        stats: match_stats,
+                    } => {
+                        let total_work = work.saturating_add(match_work);
+                        if add_matcher_stats(&mut stats, match_stats).is_err() {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                                work: total_work,
+                                stats,
+                            };
+                        }
+                        let reason = match reason {
+                            // This nested matcher deliberately receives the
+                            // private frontier bound as its match-output
+                            // bound. Exhausting it is therefore a frontier
+                            // failure of the normalizer, not exhaustion of
+                            // the caller's completed-normal-form allowance.
+                            SemanticMatchUndetermined::OutputLimitExceeded => {
+                                SemanticMatchUndetermined::FrontierLimitExceeded
+                            },
+                            reason => reason,
+                        };
+                        return SemanticTransitionDecision::Undetermined {
+                            reason,
+                            work: total_work,
+                            stats,
+                        };
+                    },
+                };
+                work = match work
+                    .checked_add(match_work)
+                    .filter(|work| *work <= limits.work)
+                {
+                    Some(work) => work,
+                    None => {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                            work: limits.work,
+                            stats,
+                        };
+                    },
+                };
+                if add_matcher_stats(&mut stats, match_stats).is_err() {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                        work,
+                        stats,
+                    };
+                }
+                if matches.len() > limits.frontier {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                        work,
+                        stats,
+                    };
+                }
+                if let Err(reason) = enqueue_action_matches(
+                    image,
+                    &egraph,
+                    branch.current,
+                    matches,
+                    &mut frontier,
+                    limits.frontier,
+                ) {
+                    return SemanticTransitionDecision::Undetermined { reason, work, stats };
+                }
+                completed.clear();
+                execution_stage = ActionExecutionStage::Rewrite { branch, work_before_enumeration };
+                scheduled = true;
+                break;
+            }
+            if !scheduled {
+                completed = normal_forms;
+                break;
             }
         }
 
@@ -2896,6 +3447,7 @@ impl SemanticTransitionMatcher {
                     effect_class: action_image.effect_class,
                     resource: SemanticResourceReceipt::NoSemanticGrade,
                     premises: completed.premises,
+                    normalization_hops: completed.normalization_hops,
                     work: 0,
                 },
             });
@@ -2907,11 +3459,17 @@ impl SemanticTransitionMatcher {
                 .then_with(|| left.receipt.rule.cmp(&right.receipt.rule))
                 .then_with(|| left.substitution.cmp(&right.substitution))
                 .then_with(|| left.receipt.premises.cmp(&right.receipt.premises))
+                .then_with(|| {
+                    left.receipt
+                        .normalization_hops
+                        .cmp(&right.receipt.normalization_hops)
+                })
         });
         transitions.dedup_by(|left, right| {
             left.receipt.output == right.receipt.output
                 && left.receipt.rule == right.receipt.rule
                 && left.substitution == right.substitution
+                && left.receipt.normalization_hops == right.receipt.normalization_hops
         });
         if transitions.len() > limits.outputs {
             return SemanticTransitionDecision::Undetermined {
@@ -3007,6 +3565,10 @@ impl SemanticTransitionMatcher {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SemanticTransitionLimits {
     pub work: u64,
+    /// Independent bound on private normalization-machine transitions. It is
+    /// not interchangeable with logical work: a cheap cyclic rewrite must
+    /// still be unable to run indefinitely.
+    pub normalization_steps: usize,
     pub outputs: usize,
     pub frontier: usize,
     pub proofs: usize,
@@ -3021,6 +3583,7 @@ impl From<TheoryLimitsV1> for SemanticTransitionLimits {
     fn from(limits: TheoryLimitsV1) -> Self {
         Self {
             work: u64::from(limits.max_steps),
+            normalization_steps: limits.max_steps as usize,
             outputs: limits.max_frontier as usize,
             frontier: limits.max_frontier as usize,
             proofs: limits.max_frontier as usize,
@@ -3047,6 +3610,28 @@ pub enum SemanticResourceReceipt {
     },
 }
 
+/// One complete proof of a directed rewrite used by private normalization.
+/// Exact before/after keys make the witness independent of transient e-class
+/// identifiers while the premise receipts retain the complete derivation.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SemanticNormalizationStepReceiptV1 {
+    pub rule: TheoryRuleProgramId,
+    pub before: Vec<u8>,
+    pub after: Vec<u8>,
+    pub premises: Vec<SemanticPremiseReceipt>,
+}
+
+/// One exhaustively enumerated private normalization hop. Multiple proofs of
+/// the same exact successor remain visible instead of becoming duplicate
+/// public states.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SemanticNormalizationHopReceiptV1 {
+    pub before: Vec<u8>,
+    pub after: Vec<u8>,
+    pub exhaustive_proofs: Vec<SemanticNormalizationStepReceiptV1>,
+    pub charged_work: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SemanticTransitionReceipt {
     pub language_fingerprint: [u8; 32],
@@ -3060,6 +3645,7 @@ pub struct SemanticTransitionReceipt {
     pub effect_class: SemanticEffectClassV1,
     pub resource: SemanticResourceReceipt,
     pub premises: Vec<SemanticPremiseReceipt>,
+    pub normalization_hops: Vec<SemanticNormalizationHopReceiptV1>,
     pub work: u64,
 }
 
@@ -3129,6 +3715,27 @@ pub enum SemanticTransitionDecision {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SemanticIntrinsicOpcodeV1 {
+    ExactTermEq,
+    Utf8AtEnd,
+    Utf8ScalarAt,
+    Utf8Slice,
+    CheckedNatAdd,
+    Utf8ConcatMany,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SemanticIntrinsicReceiptV1 {
+    pub opcode: SemanticIntrinsicOpcodeV1,
+    /// Recursive exact semantic keys in the opcode's declared input order.
+    pub inputs: Vec<Vec<u8>>,
+    /// Recursive exact semantic keys in the opcode's declared output order.
+    pub outputs: Vec<Vec<u8>>,
+    /// Intrinsic-local logical work; always strictly positive.
+    pub work: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SemanticPremiseReceipt {
     Freshness {
         rule: TheoryRuleProgramId,
@@ -3150,6 +3757,11 @@ pub enum SemanticPremiseReceipt {
         rule: TheoryRuleProgramId,
         premise: u32,
         elements: u32,
+    },
+    Intrinsic {
+        rule: TheoryRuleProgramId,
+        premise: u32,
+        receipt: SemanticIntrinsicReceiptV1,
     },
     Guard {
         rule: TheoryRuleProgramId,
@@ -3284,6 +3896,29 @@ struct CompletedActionBranch {
     output: EClassId,
     substitution: ActionSubstitution,
     premises: Vec<SemanticPremiseReceipt>,
+    normalization_hops: Vec<SemanticNormalizationHopReceiptV1>,
+}
+
+struct PrivateNormalizationBranch {
+    entry: CompletedActionBranch,
+    current: EClassId,
+    current_key: Vec<u8>,
+    seen: Vec<Vec<u8>>,
+    hops: Vec<SemanticNormalizationHopReceiptV1>,
+}
+
+struct NormalizationSuccessorGroup {
+    output: EClassId,
+    key: Vec<u8>,
+    proofs: Vec<SemanticNormalizationStepReceiptV1>,
+}
+
+enum ActionExecutionStage {
+    Entry,
+    Rewrite {
+        branch: PrivateNormalizationBranch,
+        work_before_enumeration: u64,
+    },
 }
 
 type HornSubstitution = Vec<(ScopedClauseVariable, HornTermRef)>;
@@ -6194,8 +6829,75 @@ fn clone_action_branch(source: &ActionBranch) -> Result<ActionBranch, SemanticMa
     }
     Ok(ActionBranch {
         frames,
-        premises: clone_copy_slice(&source.premises)?,
+        premises: clone_premise_receipts(&source.premises)?,
     })
+}
+
+fn clone_premise_receipts(
+    source: &[SemanticPremiseReceipt],
+) -> Result<Vec<SemanticPremiseReceipt>, SemanticMatchUndetermined> {
+    let mut receipts = Vec::new();
+    receipts
+        .try_reserve_exact(source.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for receipt in source {
+        receipts.push(match receipt {
+            SemanticPremiseReceipt::Freshness { rule, premise } => {
+                SemanticPremiseReceipt::Freshness { rule: *rule, premise: *premise }
+            },
+            SemanticPremiseReceipt::Transition { rule, premise, child_rule } => {
+                SemanticPremiseReceipt::Transition {
+                    rule: *rule,
+                    premise: *premise,
+                    child_rule: *child_rule,
+                }
+            },
+            SemanticPremiseReceipt::Judgment {
+                rule,
+                premise,
+                judgment,
+                proofs,
+                proof_steps,
+            } => SemanticPremiseReceipt::Judgment {
+                rule: *rule,
+                premise: *premise,
+                judgment: *judgment,
+                proofs: *proofs,
+                proof_steps: *proof_steps,
+            },
+            SemanticPremiseReceipt::ForAll { rule, premise, elements } => {
+                SemanticPremiseReceipt::ForAll {
+                    rule: *rule,
+                    premise: *premise,
+                    elements: *elements,
+                }
+            },
+            SemanticPremiseReceipt::Intrinsic { rule, premise, receipt } => {
+                SemanticPremiseReceipt::Intrinsic {
+                    rule: *rule,
+                    premise: *premise,
+                    receipt: SemanticIntrinsicReceiptV1 {
+                        opcode: receipt.opcode,
+                        inputs: clone_byte_vectors(&receipt.inputs)?,
+                        outputs: clone_byte_vectors(&receipt.outputs)?,
+                        work: receipt.work,
+                    },
+                }
+            },
+            SemanticPremiseReceipt::Guard {
+                rule,
+                premise,
+                guard_commitment,
+                evidence_commitment,
+            } => SemanticPremiseReceipt::Guard {
+                rule: *rule,
+                premise: *premise,
+                guard_commitment: *guard_commitment,
+                evidence_commitment: *evidence_commitment,
+            },
+        });
+    }
+    Ok(receipts)
 }
 
 fn push_action_branch(
@@ -6252,6 +6954,224 @@ fn action_frame(
         pending,
         saved_forall_scopes: Vec::new(),
         return_to_parent,
+    })
+}
+
+fn enqueue_action_matches(
+    image: &TheorySemanticImageV1,
+    egraph: &EGraph<FramedSemanticOperator>,
+    root: EClassId,
+    matches: Vec<SemanticRuleMatch>,
+    frontier: &mut VecDeque<ActionBranch>,
+    frontier_limit: usize,
+) -> Result<(), SemanticMatchUndetermined> {
+    for matched in matches {
+        let rule = image
+            .rules
+            .get(matched.rule.0 as usize)
+            .filter(|candidate| candidate.id == matched.rule)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        let substitution = action_substitution_from_map(matched.substitution)?;
+        let frame = action_frame(rule, egraph.find(root), substitution, None)?;
+        let mut frames = Vec::new();
+        frames
+            .try_reserve_exact(1)
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        frames.push(frame);
+        push_action_branch(
+            frontier,
+            ActionBranch { frames, premises: Vec::new() },
+            frontier_limit,
+        )?;
+    }
+    Ok(())
+}
+
+fn normalization_terminal_state(
+    image: &TheorySemanticImageV1,
+    egraph: &EGraph<FramedSemanticOperator>,
+    root: EClassId,
+    relation_sort: TheorySortId,
+    terminal_constructors: &[TheoryConstructorId],
+) -> Result<bool, SemanticMatchUndetermined> {
+    let [node] = egraph.nodes(egraph.find(root)) else {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    };
+    for terminal in terminal_constructors {
+        let signature = image
+            .constructors
+            .get(terminal.0 as usize)
+            .filter(|candidate| candidate.id == *terminal)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        if signature.codomain != relation_sort {
+            return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+        }
+        if node.op == theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(*terminal)) {
+            if node.children.len() != signature.domain.len() {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn normalization_successor_groups<C>(
+    image: &TheorySemanticImageV1,
+    egraph: &EGraph<FramedSemanticOperator>,
+    relation_sort: TheorySortId,
+    before: &[u8],
+    completed: Vec<CompletedActionBranch>,
+    work: &mut u64,
+    limits: SemanticTransitionLimits,
+    is_cancelled: &mut C,
+) -> Result<Vec<NormalizationSuccessorGroup>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    let mut steps = Vec::new();
+    steps
+        .try_reserve_exact(completed.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for completed in completed {
+        if !completed.normalization_hops.is_empty() {
+            return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+        }
+        let rule = image
+            .rules
+            .get(completed.rule.0 as usize)
+            .filter(|candidate| {
+                candidate.id == completed.rule
+                    && candidate.disposition == TheoryRuleDispositionV1::Executable
+                    && matches!(candidate.origin, TheoryRuleOriginV1::Rewrite { .. })
+            })
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        let source_sort = rule
+            .terms
+            .get(rule.left.0 as usize)
+            .map(|term| term.sort)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        let output_sort = rule
+            .terms
+            .get(rule.right.0 as usize)
+            .map(|term| term.sort)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        if source_sort != relation_sort || output_sort != relation_sort {
+            return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+        }
+        let output = egraph.find(completed.output);
+        let key = exact_ground_key(
+            egraph,
+            output,
+            work,
+            GroundKeyLimits {
+                work: limits.work,
+                nodes: limits.output_nodes,
+                bytes: limits.output_bytes,
+                limit_reason: SemanticMatchUndetermined::OutputLimitExceeded,
+            },
+            is_cancelled,
+        )?;
+        let after = clone_copy_slice(key.as_bytes())?;
+        steps.push((
+            clone_copy_slice(&after)?,
+            output,
+            SemanticNormalizationStepReceiptV1 {
+                rule: completed.rule,
+                before: clone_copy_slice(before)?,
+                after,
+                premises: completed.premises,
+            },
+        ));
+        if steps.len() > limits.proof_nodes {
+            return Err(SemanticMatchUndetermined::ProofLimitExceeded);
+        }
+    }
+    steps.sort_unstable_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.2.rule.cmp(&right.2.rule))
+            .then_with(|| left.2.premises.cmp(&right.2.premises))
+    });
+    let mut groups: Vec<NormalizationSuccessorGroup> = Vec::new();
+    groups
+        .try_reserve_exact(steps.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for (key, output, proof) in steps {
+        if let Some(group) = groups.last_mut().filter(|group| group.key == key) {
+            group
+                .proofs
+                .try_reserve(1)
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            group.proofs.push(proof);
+        } else {
+            let mut proofs = Vec::new();
+            proofs
+                .try_reserve_exact(1)
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            proofs.push(proof);
+            groups.push(NormalizationSuccessorGroup { output, key, proofs });
+        }
+    }
+    Ok(groups)
+}
+
+fn clone_completed_action_branch(
+    source: &CompletedActionBranch,
+) -> Result<CompletedActionBranch, SemanticMatchUndetermined> {
+    Ok(CompletedActionBranch {
+        rule: source.rule,
+        output: source.output,
+        substitution: clone_copy_slice(&source.substitution)?,
+        premises: clone_premise_receipts(&source.premises)?,
+        normalization_hops: clone_normalization_hops(&source.normalization_hops)?,
+    })
+}
+
+fn clone_normalization_hops(
+    source: &[SemanticNormalizationHopReceiptV1],
+) -> Result<Vec<SemanticNormalizationHopReceiptV1>, SemanticMatchUndetermined> {
+    let mut hops = Vec::new();
+    hops.try_reserve_exact(source.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for hop in source {
+        let mut proofs = Vec::new();
+        proofs
+            .try_reserve_exact(hop.exhaustive_proofs.len())
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        for proof in &hop.exhaustive_proofs {
+            proofs.push(SemanticNormalizationStepReceiptV1 {
+                rule: proof.rule,
+                before: clone_copy_slice(&proof.before)?,
+                after: clone_copy_slice(&proof.after)?,
+                premises: clone_premise_receipts(&proof.premises)?,
+            });
+        }
+        hops.push(SemanticNormalizationHopReceiptV1 {
+            before: clone_copy_slice(&hop.before)?,
+            after: clone_copy_slice(&hop.after)?,
+            exhaustive_proofs: proofs,
+            charged_work: hop.charged_work,
+        });
+    }
+    Ok(hops)
+}
+
+fn clone_private_normalization_branch(
+    source: &PrivateNormalizationBranch,
+) -> Result<PrivateNormalizationBranch, SemanticMatchUndetermined> {
+    let mut seen = Vec::new();
+    seen.try_reserve_exact(source.seen.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for key in &source.seen {
+        seen.push(clone_copy_slice(key)?);
+    }
+    Ok(PrivateNormalizationBranch {
+        entry: clone_completed_action_branch(&source.entry)?,
+        current: source.current,
+        current_key: clone_copy_slice(&source.current_key)?,
+        seen,
+        hops: clone_normalization_hops(&source.hops)?,
     })
 }
 
@@ -6361,6 +7281,599 @@ fn absorb_reported_work(
         .filter(|total| *total <= limit)
         .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
     Ok(())
+}
+
+fn charge_work_units<C>(
+    work: &mut u64,
+    limit: u64,
+    units: usize,
+    is_cancelled: &mut C,
+) -> Result<(), SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    if is_cancelled() {
+        return Err(SemanticMatchUndetermined::Cancelled);
+    }
+    let units = u64::try_from(units).map_err(|_| SemanticMatchUndetermined::WorkBudgetExhausted)?;
+    *work = work
+        .checked_add(units)
+        .filter(|total| *total <= limit)
+        .ok_or(SemanticMatchUndetermined::WorkBudgetExhausted)?;
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct IntrinsicInput {
+    variable: TheoryVariableId,
+    sort: TheorySortId,
+    value: EClassId,
+}
+
+struct ProvenIntrinsic {
+    bindings: Vec<(TheoryVariableId, EClassId)>,
+    receipt: SemanticIntrinsicReceiptV1,
+}
+
+enum RuntimeLiteralRef<'a> {
+    String(&'a str),
+    Integer(i128),
+    #[cfg(test)]
+    Boolean(bool),
+}
+
+fn rule_variable(
+    rule: &TheoryRuleProgramV1,
+    variable: TheoryVariableId,
+) -> Result<&mettail_grammar_core::TheoryImageVariableV1, SemanticMatchUndetermined> {
+    rule.variables
+        .get(variable.0 as usize)
+        .filter(|declaration| declaration.id == variable)
+        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)
+}
+
+fn runtime_literal_ref<'a, C>(
+    image: &TheorySemanticImageV1,
+    egraph: &'a EGraph<FramedSemanticOperator>,
+    value: EClassId,
+    expected_sort: TheorySortId,
+    work: &mut u64,
+    work_limit: u64,
+    is_cancelled: &mut C,
+) -> Result<Option<RuntimeLiteralRef<'a>>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    charge_work(work, work_limit, is_cancelled)?;
+    let value = egraph.find(value);
+    let [node] = egraph.nodes(value) else {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    };
+    if !node.children.is_empty() {
+        return Ok(None);
+    }
+    let exact = exact_theory_operator_bytes(&node.op)
+        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+    if exact.first() != Some(&5) {
+        return Ok(None);
+    }
+    if exact.len() < 6 || TheorySortId(read_u32(&exact[1..5])) != expected_sort {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    }
+    let TheorySortKindImageV1::Syntax { literal: Some(carrier) } =
+        runtime_sort_kind(image, expected_sort)?
+    else {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    };
+    let tag = exact[5];
+    let payload = &exact[6..];
+    match (tag, carrier) {
+        (0, TheoryLiteralCarrierV1::String) => {
+            if payload.len() < 8 {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            let mut length = [0u8; 8];
+            length.copy_from_slice(&payload[..8]);
+            let length = usize::try_from(u64::from_le_bytes(length))
+                .map_err(|_| SemanticMatchUndetermined::InvalidImageEvidence)?;
+            let bytes = payload
+                .get(8..)
+                .filter(|bytes| bytes.len() == length)
+                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+            charge_work_units(work, work_limit, bytes.len(), is_cancelled)?;
+            let text = std::str::from_utf8(bytes)
+                .map_err(|_| SemanticMatchUndetermined::InvalidImageEvidence)?;
+            Ok(Some(RuntimeLiteralRef::String(text)))
+        },
+        (2, TheoryLiteralCarrierV1::Integer) if payload.len() == 16 => {
+            let mut bytes = [0u8; 16];
+            bytes.copy_from_slice(payload);
+            Ok(Some(RuntimeLiteralRef::Integer(i128::from_le_bytes(bytes))))
+        },
+        #[cfg(test)]
+        (4, TheoryLiteralCarrierV1::Boolean) if matches!(payload, [0] | [1]) => {
+            Ok(Some(RuntimeLiteralRef::Boolean(payload[0] == 1)))
+        },
+        _ => Ok(None),
+    }
+}
+
+fn add_intrinsic_literal(
+    image: &TheorySemanticImageV1,
+    egraph: &mut EGraph<FramedSemanticOperator>,
+    sort: TheorySortId,
+    value: TheoryLiteralV1,
+) -> Result<EClassId, SemanticMatchUndetermined> {
+    let operator = TheoryImageOperatorV1::Literal { sort, value };
+    let signature = runtime_operator_signature(image, &operator, None)?;
+    if signature.result != sort {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    }
+    egraph
+        .try_add_with_budget(ENode::leaf(theory_operator_to_machine(&operator)))
+        .map(|value| egraph.find(value))
+        .ok_or(SemanticMatchUndetermined::EGraphNodeBudgetExhausted)
+}
+
+fn intrinsic_variables(
+    intrinsic: &TheoryImageIntrinsicV1,
+) -> Result<(Vec<TheoryVariableId>, Vec<TheoryVariableId>), SemanticMatchUndetermined> {
+    let (input_capacity, output_capacity) = match intrinsic {
+        TheoryImageIntrinsicV1::ExactTermEq { .. }
+        | TheoryImageIntrinsicV1::Utf8AtEnd { .. }
+        | TheoryImageIntrinsicV1::CheckedNatAdd { .. } => (2, 1),
+        TheoryImageIntrinsicV1::Utf8ScalarAt { .. } => (2, 2),
+        TheoryImageIntrinsicV1::Utf8Slice { .. } => (3, 1),
+        TheoryImageIntrinsicV1::Utf8ConcatMany { .. } => (1, 1),
+    };
+    let mut inputs = Vec::new();
+    let mut outputs = Vec::new();
+    inputs
+        .try_reserve_exact(input_capacity)
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    outputs
+        .try_reserve_exact(output_capacity)
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    match intrinsic {
+        TheoryImageIntrinsicV1::ExactTermEq { left, right, output }
+        | TheoryImageIntrinsicV1::CheckedNatAdd { left, right, output } => {
+            inputs.extend([*left, *right]);
+            outputs.push(*output);
+        },
+        TheoryImageIntrinsicV1::Utf8AtEnd { text, cursor, output } => {
+            inputs.extend([*text, *cursor]);
+            outputs.push(*output);
+        },
+        TheoryImageIntrinsicV1::Utf8ScalarAt { text, cursor, scalar, next_cursor } => {
+            inputs.extend([*text, *cursor]);
+            outputs.extend([*scalar, *next_cursor]);
+        },
+        TheoryImageIntrinsicV1::Utf8Slice { text, start, end, output } => {
+            inputs.extend([*text, *start, *end]);
+            outputs.push(*output);
+        },
+        TheoryImageIntrinsicV1::Utf8ConcatMany { pieces, output } => {
+            inputs.push(*pieces);
+            outputs.push(*output);
+        },
+    }
+    Ok((inputs, outputs))
+}
+
+fn intrinsic_opcode(intrinsic: &TheoryImageIntrinsicV1) -> SemanticIntrinsicOpcodeV1 {
+    match intrinsic {
+        TheoryImageIntrinsicV1::ExactTermEq { .. } => SemanticIntrinsicOpcodeV1::ExactTermEq,
+        TheoryImageIntrinsicV1::Utf8AtEnd { .. } => SemanticIntrinsicOpcodeV1::Utf8AtEnd,
+        TheoryImageIntrinsicV1::Utf8ScalarAt { .. } => SemanticIntrinsicOpcodeV1::Utf8ScalarAt,
+        TheoryImageIntrinsicV1::Utf8Slice { .. } => SemanticIntrinsicOpcodeV1::Utf8Slice,
+        TheoryImageIntrinsicV1::CheckedNatAdd { .. } => SemanticIntrinsicOpcodeV1::CheckedNatAdd,
+        TheoryImageIntrinsicV1::Utf8ConcatMany { .. } => SemanticIntrinsicOpcodeV1::Utf8ConcatMany,
+    }
+}
+
+fn exact_intrinsic_keys<C>(
+    egraph: &EGraph<FramedSemanticOperator>,
+    values: &[EClassId],
+    work: &mut u64,
+    limits: GroundKeyLimits,
+    is_cancelled: &mut C,
+) -> Result<Vec<Vec<u8>>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    let mut keys = Vec::new();
+    keys.try_reserve_exact(values.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for value in values {
+        let key = exact_ground_key(egraph, *value, work, limits, is_cancelled)?;
+        keys.push(clone_copy_slice(key.as_bytes())?);
+    }
+    Ok(keys)
+}
+
+fn execute_intrinsic<C>(
+    image: &TheorySemanticImageV1,
+    rule: &TheoryRuleProgramV1,
+    intrinsic: &TheoryImageIntrinsicV1,
+    substitution: &ActionSubstitution,
+    egraph: &mut EGraph<FramedSemanticOperator>,
+    work: &mut u64,
+    limits: SemanticTransitionLimits,
+    is_cancelled: &mut C,
+) -> Result<Option<ProvenIntrinsic>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    let intrinsic_work_start = *work;
+    charge_work(work, limits.work, is_cancelled)?;
+    let (input_variables, output_variables) = intrinsic_variables(intrinsic)?;
+    let mut inputs = Vec::new();
+    inputs
+        .try_reserve_exact(input_variables.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for variable in &input_variables {
+        let declaration = rule_variable(rule, *variable)?;
+        let value = action_lookup(substitution, *variable)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        inputs.push(IntrinsicInput {
+            variable: *variable,
+            sort: declaration.sort,
+            value: egraph.find(value),
+        });
+    }
+    for variable in &output_variables {
+        let declaration = rule_variable(rule, *variable)?;
+        if declaration.role != mettail_grammar_core::TheoryVariableRoleV1::Derived
+            || action_lookup(substitution, *variable).is_some()
+        {
+            return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+        }
+    }
+    if inputs
+        .iter()
+        .zip(&input_variables)
+        .any(|(input, variable)| input.variable != *variable)
+    {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    }
+    let mut input_classes = Vec::new();
+    input_classes
+        .try_reserve_exact(inputs.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    input_classes.extend(inputs.iter().map(|input| input.value));
+    let input_keys = exact_intrinsic_keys(
+        egraph,
+        &input_classes,
+        work,
+        GroundKeyLimits {
+            work: limits.work,
+            nodes: limits.term_nodes,
+            bytes: limits.term_bytes,
+            limit_reason: SemanticMatchUndetermined::InputLimitExceeded,
+        },
+        is_cancelled,
+    )?;
+
+    let mut bindings = Vec::new();
+    bindings
+        .try_reserve_exact(output_variables.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    match intrinsic {
+        TheoryImageIntrinsicV1::ExactTermEq { output, .. } => {
+            if inputs.len() != 2 || inputs[0].sort != inputs[1].sort {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            let sort = rule_variable(rule, *output)?.sort;
+            let value = add_intrinsic_literal(
+                image,
+                egraph,
+                sort,
+                TheoryLiteralV1::Boolean(input_keys[0] == input_keys[1]),
+            )?;
+            bindings.push((*output, value));
+        },
+        TheoryImageIntrinsicV1::Utf8AtEnd { output, .. } => {
+            let [text_input, cursor_input] = inputs.as_slice() else {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            };
+            let Some(RuntimeLiteralRef::String(text)) = runtime_literal_ref(
+                image,
+                egraph,
+                text_input.value,
+                text_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(RuntimeLiteralRef::Integer(cursor)) = runtime_literal_ref(
+                image,
+                egraph,
+                cursor_input.value,
+                cursor_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let at_end = usize::try_from(cursor).ok() == Some(text.len());
+            let sort = rule_variable(rule, *output)?.sort;
+            let value =
+                add_intrinsic_literal(image, egraph, sort, TheoryLiteralV1::Boolean(at_end))?;
+            bindings.push((*output, value));
+        },
+        TheoryImageIntrinsicV1::Utf8ScalarAt { scalar, next_cursor, .. } => {
+            let [text_input, cursor_input] = inputs.as_slice() else {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            };
+            let Some(RuntimeLiteralRef::String(text)) = runtime_literal_ref(
+                image,
+                egraph,
+                text_input.value,
+                text_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(RuntimeLiteralRef::Integer(cursor)) = runtime_literal_ref(
+                image,
+                egraph,
+                cursor_input.value,
+                cursor_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Ok(cursor) = usize::try_from(cursor) else {
+                return Ok(None);
+            };
+            if cursor >= text.len() || !text.is_char_boundary(cursor) {
+                return Ok(None);
+            }
+            let Some(character) = text[cursor..].chars().next() else {
+                return Ok(None);
+            };
+            let next = cursor
+                .checked_add(character.len_utf8())
+                .ok_or(SemanticMatchUndetermined::OutputLimitExceeded)?;
+            charge_work_units(work, limits.work, character.len_utf8(), is_cancelled)?;
+            let mut scalar_text = String::new();
+            scalar_text
+                .try_reserve_exact(character.len_utf8())
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            scalar_text.push(character);
+            let scalar_sort = rule_variable(rule, *scalar)?.sort;
+            let scalar_value = add_intrinsic_literal(
+                image,
+                egraph,
+                scalar_sort,
+                TheoryLiteralV1::String(scalar_text),
+            )?;
+            let cursor_sort = rule_variable(rule, *next_cursor)?.sort;
+            let next =
+                i128::try_from(next).map_err(|_| SemanticMatchUndetermined::OutputLimitExceeded)?;
+            let cursor_value =
+                add_intrinsic_literal(image, egraph, cursor_sort, TheoryLiteralV1::Integer(next))?;
+            bindings.extend([(*scalar, scalar_value), (*next_cursor, cursor_value)]);
+        },
+        TheoryImageIntrinsicV1::Utf8Slice { output, .. } => {
+            let [text_input, start_input, end_input] = inputs.as_slice() else {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            };
+            let Some(RuntimeLiteralRef::String(text)) = runtime_literal_ref(
+                image,
+                egraph,
+                text_input.value,
+                text_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(RuntimeLiteralRef::Integer(start)) = runtime_literal_ref(
+                image,
+                egraph,
+                start_input.value,
+                start_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(RuntimeLiteralRef::Integer(end)) = runtime_literal_ref(
+                image,
+                egraph,
+                end_input.value,
+                end_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
+                return Ok(None);
+            };
+            if start > end
+                || end > text.len()
+                || !text.is_char_boundary(start)
+                || !text.is_char_boundary(end)
+            {
+                return Ok(None);
+            }
+            let output_length = end - start;
+            if output_length > limits.output_bytes {
+                return Err(SemanticMatchUndetermined::OutputLimitExceeded);
+            }
+            charge_work_units(work, limits.work, output_length, is_cancelled)?;
+            let mut sliced = String::new();
+            sliced
+                .try_reserve_exact(output_length)
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            sliced.push_str(&text[start..end]);
+            let sort = rule_variable(rule, *output)?.sort;
+            let value =
+                add_intrinsic_literal(image, egraph, sort, TheoryLiteralV1::String(sliced))?;
+            bindings.push((*output, value));
+        },
+        TheoryImageIntrinsicV1::CheckedNatAdd { output, .. } => {
+            let [left_input, right_input] = inputs.as_slice() else {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            };
+            let Some(RuntimeLiteralRef::Integer(left)) = runtime_literal_ref(
+                image,
+                egraph,
+                left_input.value,
+                left_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(RuntimeLiteralRef::Integer(right)) = runtime_literal_ref(
+                image,
+                egraph,
+                right_input.value,
+                right_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            if left < 0 || right < 0 {
+                return Ok(None);
+            }
+            let Some(sum) = left.checked_add(right) else {
+                return Ok(None);
+            };
+            let sort = rule_variable(rule, *output)?.sort;
+            let value = add_intrinsic_literal(image, egraph, sort, TheoryLiteralV1::Integer(sum))?;
+            bindings.push((*output, value));
+        },
+        TheoryImageIntrinsicV1::Utf8ConcatMany { output, .. } => {
+            let [pieces_input] = inputs.as_slice() else {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            };
+            let TheorySortKindImageV1::Collection {
+                kind: CollectionKind::List,
+                key: None,
+                element,
+            } = runtime_sort_kind(image, pieces_input.sort)?
+            else {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            };
+            let (element_sort, elements) = match concrete_collection_elements(
+                image,
+                egraph,
+                pieces_input.value,
+                pieces_input.sort,
+                work,
+                limits.work,
+                is_cancelled,
+            ) {
+                Ok(elements) => elements,
+                Err(SemanticMatchUndetermined::PremiseEvaluationUnavailable) => return Ok(None),
+                Err(reason) => return Err(reason),
+            };
+            if element_sort != *element {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            let mut pieces = Vec::new();
+            pieces
+                .try_reserve_exact(elements.len())
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            let mut total = 0usize;
+            for element in elements {
+                let Some(RuntimeLiteralRef::String(piece)) = runtime_literal_ref(
+                    image,
+                    egraph,
+                    element,
+                    element_sort,
+                    work,
+                    limits.work,
+                    is_cancelled,
+                )?
+                else {
+                    return Ok(None);
+                };
+                total = total
+                    .checked_add(piece.len())
+                    .filter(|total| *total <= limits.output_bytes)
+                    .ok_or(SemanticMatchUndetermined::OutputLimitExceeded)?;
+                pieces.push(piece);
+            }
+            charge_work_units(work, limits.work, total, is_cancelled)?;
+            let mut concatenated = String::new();
+            concatenated
+                .try_reserve_exact(total)
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            for piece in pieces {
+                concatenated.push_str(piece);
+            }
+            let sort = rule_variable(rule, *output)?.sort;
+            let value =
+                add_intrinsic_literal(image, egraph, sort, TheoryLiteralV1::String(concatenated))?;
+            bindings.push((*output, value));
+        },
+    }
+
+    if bindings.len() != output_variables.len()
+        || bindings
+            .iter()
+            .zip(&output_variables)
+            .any(|((variable, _), expected)| variable != expected)
+    {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    }
+    let mut output_classes = Vec::new();
+    output_classes
+        .try_reserve_exact(bindings.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    output_classes.extend(bindings.iter().map(|(_, value)| *value));
+    let output_keys = exact_intrinsic_keys(
+        egraph,
+        &output_classes,
+        work,
+        GroundKeyLimits {
+            work: limits.work,
+            nodes: limits.output_nodes,
+            bytes: limits.output_bytes,
+            limit_reason: SemanticMatchUndetermined::OutputLimitExceeded,
+        },
+        is_cancelled,
+    )?;
+    let intrinsic_work = work
+        .checked_sub(intrinsic_work_start)
+        .filter(|work| *work > 0)
+        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+    Ok(Some(ProvenIntrinsic {
+        bindings,
+        receipt: SemanticIntrinsicReceiptV1 {
+            opcode: intrinsic_opcode(intrinsic),
+            inputs: input_keys,
+            outputs: output_keys,
+            work: intrinsic_work,
+        },
+    }))
 }
 
 fn freshness_holds<C>(
@@ -7762,6 +9275,20 @@ mod tests {
                         element: TheorySortId(4),
                     },
                 ),
+                sort(
+                    14,
+                    TheorySortKindImageV1::Syntax {
+                        literal: Some(TheoryLiteralCarrierV1::Boolean),
+                    },
+                ),
+                sort(
+                    15,
+                    TheorySortKindImageV1::Collection {
+                        kind: CollectionKind::List,
+                        key: None,
+                        element: TheorySortId(0),
+                    },
+                ),
             ],
             constructors: vec![
                 TheoryConstructorImageV1 {
@@ -7935,6 +9462,7 @@ mod tests {
                 effect_class: SemanticEffectClassV1::Pure,
                 required_rights: LanguageRights::from_rights([LanguageRight::Reduce]),
                 grade: TheorySortId(2),
+                execution: mettail_grammar_core::TheoryActionExecutionImageV1::OneStep,
             });
         image
     }
@@ -7997,6 +9525,7 @@ mod tests {
     fn semantic_limits() -> SemanticTransitionLimits {
         SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 8,
             frontier: 64,
             proofs: 16,
@@ -8006,6 +9535,345 @@ mod tests {
             output_nodes: 1_000,
             output_bytes: 64 * 1024,
         }
+    }
+
+    fn intrinsic_rule() -> TheoryRuleProgramV1 {
+        use mettail_grammar_core::TheoryVariableRoleV1::{Derived, Input};
+        let declarations = [
+            (0, 0, Input),
+            (1, 1, Input),
+            (2, 1, Input),
+            (3, 0, Input),
+            (4, 15, Input),
+            (5, 0, Derived),
+            (6, 1, Derived),
+            (7, 14, Derived),
+            (8, 0, Derived),
+            (9, 1, Derived),
+            (10, 0, Derived),
+            (11, 14, Derived),
+            (12, 1, Input),
+            (13, 1, Input),
+        ];
+        let variable_slots = declarations.len() as u32;
+        TheoryRuleProgramV1 {
+            id: TheoryRuleProgramId(0),
+            origin: TheoryRuleOriginV1::Rewrite { source: 0 },
+            disposition: TheoryRuleDispositionV1::Executable,
+            name: "intrinsic-contract".into(),
+            variables: declarations
+                .into_iter()
+                .map(|(id, sort, role)| mettail_grammar_core::TheoryImageVariableV1 {
+                    id: TheoryVariableId(id),
+                    sort: TheorySortId(sort),
+                    role,
+                })
+                .collect(),
+            terms: Vec::new(),
+            premises: Vec::new(),
+            premise_roots: Vec::new(),
+            left: mettail_grammar_core::TheoryTermId(0),
+            right: mettail_grammar_core::TheoryTermId(0),
+            charge: mettail_grammar_core::TheoryWorkChargeV1 {
+                pattern_nodes: 0,
+                template_nodes: 0,
+                premise_nodes: 1,
+                variable_slots,
+            },
+        }
+    }
+
+    fn test_literal(
+        egraph: &mut EGraph<FramedSemanticOperator>,
+        sort: u32,
+        value: TheoryLiteralV1,
+    ) -> EClassId {
+        add(
+            egraph,
+            TheoryImageOperatorV1::Literal { sort: TheorySortId(sort), value },
+            Vec::new(),
+        )
+    }
+
+    fn assert_intrinsic_receipt(
+        receipt: &SemanticIntrinsicReceiptV1,
+        opcode: SemanticIntrinsicOpcodeV1,
+        inputs: usize,
+        outputs: usize,
+    ) {
+        assert_eq!(receipt.opcode, opcode);
+        assert_eq!(receipt.inputs.len(), inputs);
+        assert_eq!(receipt.outputs.len(), outputs);
+        assert!(receipt.inputs.iter().all(|key| !key.is_empty()));
+        assert!(receipt.outputs.iter().all(|key| !key.is_empty()));
+        assert!(receipt.work > 0);
+    }
+
+    fn intrinsic_output<'a>(proven: &'a ProvenIntrinsic, variable: u32) -> EClassId {
+        proven
+            .bindings
+            .iter()
+            .find(|(candidate, _)| *candidate == TheoryVariableId(variable))
+            .map(|(_, value)| *value)
+            .expect("declared intrinsic output")
+    }
+
+    #[test]
+    fn closed_intrinsics_execute_unicode_and_exact_term_contracts() {
+        let image = signature_image();
+        let rule = intrinsic_rule();
+        let mut egraph = EGraph::new();
+        let text = test_literal(&mut egraph, 0, TheoryLiteralV1::String("a💡z".into()));
+        let same_text = test_literal(&mut egraph, 0, TheoryLiteralV1::String("a💡z".into()));
+        let one = test_literal(&mut egraph, 1, TheoryLiteralV1::Integer(1));
+        let five = test_literal(&mut egraph, 1, TheoryLiteralV1::Integer(5));
+        let six = test_literal(&mut egraph, 1, TheoryLiteralV1::Integer(6));
+        let piece_a = test_literal(&mut egraph, 0, TheoryLiteralV1::String("a".into()));
+        let piece_lamp = test_literal(&mut egraph, 0, TheoryLiteralV1::String("💡".into()));
+        let piece_z = test_literal(&mut egraph, 0, TheoryLiteralV1::String("z".into()));
+        let pieces = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Collection {
+                sort: TheorySortId(15),
+                element: TheorySortId(0),
+                kind: CollectionKind::List,
+            },
+            vec![piece_a, piece_lamp, piece_z],
+        );
+        let substitution = vec![
+            (TheoryVariableId(0), text),
+            (TheoryVariableId(1), one),
+            (TheoryVariableId(2), five),
+            (TheoryVariableId(3), same_text),
+            (TheoryVariableId(4), pieces),
+            (TheoryVariableId(12), six),
+            (TheoryVariableId(13), five),
+        ];
+        let mut work = 0;
+        let mut run = |intrinsic: TheoryImageIntrinsicV1| {
+            execute_intrinsic(
+                &image,
+                &rule,
+                &intrinsic,
+                &substitution,
+                &mut egraph,
+                &mut work,
+                semantic_limits(),
+                &mut || false,
+            )
+            .expect("well-typed intrinsic execution")
+            .expect("intrinsic premise must hold")
+        };
+
+        let at_end = run(TheoryImageIntrinsicV1::Utf8AtEnd {
+            text: TheoryVariableId(0),
+            cursor: TheoryVariableId(12),
+            output: TheoryVariableId(7),
+        });
+        assert_intrinsic_receipt(&at_end.receipt, SemanticIntrinsicOpcodeV1::Utf8AtEnd, 2, 1);
+        let scalar = run(TheoryImageIntrinsicV1::Utf8ScalarAt {
+            text: TheoryVariableId(0),
+            cursor: TheoryVariableId(1),
+            scalar: TheoryVariableId(5),
+            next_cursor: TheoryVariableId(6),
+        });
+        assert_intrinsic_receipt(&scalar.receipt, SemanticIntrinsicOpcodeV1::Utf8ScalarAt, 2, 2);
+        let slice = run(TheoryImageIntrinsicV1::Utf8Slice {
+            text: TheoryVariableId(0),
+            start: TheoryVariableId(1),
+            end: TheoryVariableId(2),
+            output: TheoryVariableId(8),
+        });
+        assert_intrinsic_receipt(&slice.receipt, SemanticIntrinsicOpcodeV1::Utf8Slice, 3, 1);
+        let sum = run(TheoryImageIntrinsicV1::CheckedNatAdd {
+            left: TheoryVariableId(1),
+            right: TheoryVariableId(13),
+            output: TheoryVariableId(9),
+        });
+        assert_intrinsic_receipt(&sum.receipt, SemanticIntrinsicOpcodeV1::CheckedNatAdd, 2, 1);
+        let concatenated = run(TheoryImageIntrinsicV1::Utf8ConcatMany {
+            pieces: TheoryVariableId(4),
+            output: TheoryVariableId(10),
+        });
+        assert_intrinsic_receipt(
+            &concatenated.receipt,
+            SemanticIntrinsicOpcodeV1::Utf8ConcatMany,
+            1,
+            1,
+        );
+        let equal = run(TheoryImageIntrinsicV1::ExactTermEq {
+            left: TheoryVariableId(0),
+            right: TheoryVariableId(3),
+            output: TheoryVariableId(11),
+        });
+        assert_intrinsic_receipt(&equal.receipt, SemanticIntrinsicOpcodeV1::ExactTermEq, 2, 1);
+
+        let mut decode_work = 0;
+        let decode = |value, sort, decode_work: &mut u64| {
+            runtime_literal_ref(
+                &image,
+                &egraph,
+                value,
+                TheorySortId(sort),
+                decode_work,
+                100_000,
+                &mut || false,
+            )
+            .expect("canonical output literal")
+            .expect("literal output")
+        };
+        assert!(matches!(
+            decode(intrinsic_output(&at_end, 7), 14, &mut decode_work),
+            RuntimeLiteralRef::Boolean(true)
+        ));
+        assert!(matches!(
+            decode(intrinsic_output(&scalar, 5), 0, &mut decode_work),
+            RuntimeLiteralRef::String("💡")
+        ));
+        assert!(matches!(
+            decode(intrinsic_output(&scalar, 6), 1, &mut decode_work),
+            RuntimeLiteralRef::Integer(5)
+        ));
+        assert!(matches!(
+            decode(intrinsic_output(&slice, 8), 0, &mut decode_work),
+            RuntimeLiteralRef::String("💡")
+        ));
+        assert!(matches!(
+            decode(intrinsic_output(&sum, 9), 1, &mut decode_work),
+            RuntimeLiteralRef::Integer(6)
+        ));
+        assert!(matches!(
+            decode(intrinsic_output(&concatenated, 10), 0, &mut decode_work),
+            RuntimeLiteralRef::String("a💡z")
+        ));
+        assert!(matches!(
+            decode(intrinsic_output(&equal, 11), 14, &mut decode_work),
+            RuntimeLiteralRef::Boolean(true)
+        ));
+    }
+
+    #[test]
+    fn closed_intrinsics_refute_invalid_naturals_and_boundaries_and_fail_closed_on_limits() {
+        let image = signature_image();
+        let rule = intrinsic_rule();
+        let mut egraph = EGraph::new();
+        let text = test_literal(&mut egraph, 0, TheoryLiteralV1::String("a💡z".into()));
+        let inside_scalar = test_literal(&mut egraph, 1, TheoryLiteralV1::Integer(2));
+        let negative = test_literal(&mut egraph, 1, TheoryLiteralV1::Integer(-1));
+        let one = test_literal(&mut egraph, 1, TheoryLiteralV1::Integer(1));
+        let piece_a = test_literal(&mut egraph, 0, TheoryLiteralV1::String("ab".into()));
+        let piece_b = test_literal(&mut egraph, 0, TheoryLiteralV1::String("cd".into()));
+        let pieces = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Collection {
+                sort: TheorySortId(15),
+                element: TheorySortId(0),
+                kind: CollectionKind::List,
+            },
+            vec![piece_a, piece_b],
+        );
+
+        let scalar_substitution =
+            vec![(TheoryVariableId(0), text), (TheoryVariableId(1), inside_scalar)];
+        let mut work = 0;
+        assert!(execute_intrinsic(
+            &image,
+            &rule,
+            &TheoryImageIntrinsicV1::Utf8ScalarAt {
+                text: TheoryVariableId(0),
+                cursor: TheoryVariableId(1),
+                scalar: TheoryVariableId(5),
+                next_cursor: TheoryVariableId(6),
+            },
+            &scalar_substitution,
+            &mut egraph,
+            &mut work,
+            semantic_limits(),
+            &mut || false,
+        )
+        .expect("an interior byte is a complete semantic refutation")
+        .is_none());
+
+        let addition_substitution =
+            vec![(TheoryVariableId(1), negative), (TheoryVariableId(13), one)];
+        let mut work = 0;
+        assert!(execute_intrinsic(
+            &image,
+            &rule,
+            &TheoryImageIntrinsicV1::CheckedNatAdd {
+                left: TheoryVariableId(1),
+                right: TheoryVariableId(13),
+                output: TheoryVariableId(9),
+            },
+            &addition_substitution,
+            &mut egraph,
+            &mut work,
+            semantic_limits(),
+            &mut || false,
+        )
+        .expect("negative integers are outside the natural-number relation")
+        .is_none());
+
+        let pieces_substitution = vec![(TheoryVariableId(4), pieces)];
+        let mut bounded = semantic_limits();
+        bounded.output_bytes = 3;
+        let mut work = 0;
+        assert!(matches!(
+            execute_intrinsic(
+                &image,
+                &rule,
+                &TheoryImageIntrinsicV1::Utf8ConcatMany {
+                    pieces: TheoryVariableId(4),
+                    output: TheoryVariableId(10),
+                },
+                &pieces_substitution,
+                &mut egraph,
+                &mut work,
+                bounded,
+                &mut || false,
+            ),
+            Err(SemanticMatchUndetermined::OutputLimitExceeded)
+        ));
+
+        let mut work = 0;
+        assert!(matches!(
+            execute_intrinsic(
+                &image,
+                &rule,
+                &TheoryImageIntrinsicV1::ExactTermEq {
+                    left: TheoryVariableId(0),
+                    right: TheoryVariableId(0),
+                    output: TheoryVariableId(11),
+                },
+                &vec![(TheoryVariableId(0), text)],
+                &mut egraph,
+                &mut work,
+                semantic_limits(),
+                &mut || true,
+            ),
+            Err(SemanticMatchUndetermined::Cancelled)
+        ));
+
+        let mut exhausted = semantic_limits();
+        exhausted.work = 0;
+        let mut work = 0;
+        assert!(matches!(
+            execute_intrinsic(
+                &image,
+                &rule,
+                &TheoryImageIntrinsicV1::ExactTermEq {
+                    left: TheoryVariableId(0),
+                    right: TheoryVariableId(0),
+                    output: TheoryVariableId(11),
+                },
+                &vec![(TheoryVariableId(0), text)],
+                &mut egraph,
+                &mut work,
+                exhausted,
+                &mut || false,
+            ),
+            Err(SemanticMatchUndetermined::WorkBudgetExhausted)
+        ));
     }
 
     fn comprehension_input(

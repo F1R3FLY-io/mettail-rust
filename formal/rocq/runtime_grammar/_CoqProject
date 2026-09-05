@@ -63,6 +63,8 @@ theories/ExecutableTheoryCore.v
 theories/ExecutableTheoryImage.v
 theories/CollectionComprehension.v
 theories/SemanticTransitionKernel.v
+theories/SemanticIntrinsics.v
+theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v
 theories/RegexGsltMatch.v
 theories/RegexGsltSearch.v

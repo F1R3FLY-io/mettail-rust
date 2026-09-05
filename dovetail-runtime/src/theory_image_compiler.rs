@@ -10,20 +10,22 @@ use dovetail::set_automaton::{
 };
 use mettail_grammar_core::{
     theory_guard_commitment_v1, CollectionKind, JudgmentAtomV1, JudgmentDeclV1, JudgmentRuleV1,
-    LanguageCoreV1, SemanticActionV1, TheoryActionId, TheoryActionImageV1, TheoryConstructorId,
-    TheoryConstructorImageV1, TheoryEffectId, TheoryGrammarConstructorV1,
-    TheoryImageAdmissionLimits, TheoryImageError, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
+    LanguageCoreV1, SemanticActionExecutionV1, SemanticActionV1, TheoryActionExecutionImageV1,
+    TheoryActionId, TheoryActionImageV1, TheoryConstructorId, TheoryConstructorImageV1,
+    TheoryEffectId, TheoryGrammarConstructorV1, TheoryImageAdmissionLimits, TheoryImageError,
+    TheoryImageIntrinsicV1, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
     TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1, TheoryImageTermFormV1,
-    TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryJudgmentId, TheoryJudgmentImageV1,
-    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentPatternEntryV1, TheoryJudgmentRuleProgramId,
-    TheoryJudgmentRuleProgramV1, TheoryPatternAutomatonV1, TheoryPatternEntryId,
-    TheoryPatternEntryV1, TheoryPatternInvocationV1, TheoryPatternStateFormV1,
-    TheoryPatternStateId, TheoryPatternStateV1, TheoryPremiseFormV1, TheoryResourceProfileV1,
-    TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1,
-    TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleReferenceV1, TheoryRuleSuppressionV1,
-    TheorySemanticImageV1, TheorySortId, TheorySortImageV1, TheorySortKindImageV1,
-    TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1, TheoryVariableId,
-    TheoryWorkChargeV1, THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+    TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryIntrinsicV1, TheoryJudgmentId,
+    TheoryJudgmentImageV1, TheoryJudgmentPatternAutomatonV1, TheoryJudgmentPatternEntryV1,
+    TheoryJudgmentRuleProgramId, TheoryJudgmentRuleProgramV1, TheoryPatternAutomatonV1,
+    TheoryPatternEntryId, TheoryPatternEntryV1, TheoryPatternInvocationV1,
+    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryPremiseFormV1,
+    TheoryResourceProfileV1, TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1,
+    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleReferenceV1,
+    TheoryRuleSuppressionV1, TheorySemanticImageV1, TheorySortId, TheorySortImageV1,
+    TheorySortKindImageV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1,
+    TheoryVariableId, TheoryWorkChargeV1, THEORY_IMAGE_COMPILER_ABI_CURRENT,
+    THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -574,10 +576,58 @@ fn compile_premise(
                 body: body.0,
             }
         },
+        TheoryPremiseFormV1::Intrinsic(intrinsic) => {
+            TheoryImagePremiseFormV1::Intrinsic(compile_intrinsic(intrinsic))
+        },
         TheoryPremiseFormV1::Guard(value) => TheoryImagePremiseFormV1::Guard {
             commitment: theory_guard_commitment_v1(value)?,
         },
     })
+}
+
+fn compile_intrinsic(intrinsic: &TheoryIntrinsicV1) -> TheoryImageIntrinsicV1 {
+    match intrinsic {
+        TheoryIntrinsicV1::ExactTermEq { left, right, output } => {
+            TheoryImageIntrinsicV1::ExactTermEq {
+                left: *left,
+                right: *right,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::Utf8AtEnd { text, cursor, output } => {
+            TheoryImageIntrinsicV1::Utf8AtEnd {
+                text: *text,
+                cursor: *cursor,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::Utf8ScalarAt { text, cursor, scalar, next_cursor } => {
+            TheoryImageIntrinsicV1::Utf8ScalarAt {
+                text: *text,
+                cursor: *cursor,
+                scalar: *scalar,
+                next_cursor: *next_cursor,
+            }
+        },
+        TheoryIntrinsicV1::Utf8Slice { text, start, end, output } => {
+            TheoryImageIntrinsicV1::Utf8Slice {
+                text: *text,
+                start: *start,
+                end: *end,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::CheckedNatAdd { left, right, output } => {
+            TheoryImageIntrinsicV1::CheckedNatAdd {
+                left: *left,
+                right: *right,
+                output: *output,
+            }
+        },
+        TheoryIntrinsicV1::Utf8ConcatMany { pieces, output } => {
+            TheoryImageIntrinsicV1::Utf8ConcatMany { pieces: *pieces, output: *output }
+        },
+    }
 }
 
 fn reject_non_progressing_rules(language: &LanguageCoreV1) -> Result<(), TheoryImageCompileError> {
@@ -927,6 +977,22 @@ fn first_unavailable_premise(
                     }
                     scope.insert(*parameter);
                     pending.push((body.0, scope, false));
+                },
+                TheoryPremiseFormV1::Intrinsic(intrinsic) => {
+                    let mut unavailable = None;
+                    intrinsic.for_each_input(|variable| {
+                        if unavailable.is_none() {
+                            unavailable = missing(variable, &scope);
+                        }
+                    });
+                    if unavailable.is_some() {
+                        return Ok(unavailable);
+                    }
+                    if is_root {
+                        intrinsic.for_each_output(|variable| {
+                            available.insert(variable);
+                        });
+                    }
                 },
                 TheoryPremiseFormV1::Guard(_) => {},
             }
@@ -1429,9 +1495,34 @@ fn compile_actions(
             effect_class: action.effect_class,
             required_rights: action.required_rights.clone(),
             grade: context.sort(&action.grade)?,
+            execution: compile_action_execution(&action.execution, context)?,
         });
     }
     Ok(output)
+}
+
+fn compile_action_execution(
+    execution: &SemanticActionExecutionV1,
+    context: &CompileContext<'_>,
+) -> Result<TheoryActionExecutionImageV1, TheoryImageCompileError> {
+    Ok(match execution {
+        SemanticActionExecutionV1::OneStep => TheoryActionExecutionImageV1::OneStep,
+        SemanticActionExecutionV1::Normalize {
+            relation_sort,
+            terminal_constructors,
+            branching,
+        } => {
+            let mut terminals = empty_vec(terminal_constructors.len())?;
+            for constructor in terminal_constructors {
+                terminals.push(context.constructor(constructor)?);
+            }
+            TheoryActionExecutionImageV1::Normalize {
+                relation_sort: context.sort(relation_sort)?,
+                terminal_constructors: terminals,
+                branching: *branching,
+            }
+        },
+    })
 }
 
 fn action_names_rule(reference: &TheoryRuleReferenceV1, rule: &TheoryRuleProgramV1) -> bool {
@@ -1486,9 +1577,10 @@ mod tests {
         FieldSource, GrammarCoreV1, JudgmentAtomV1, JudgmentDecisionV1, JudgmentDeclV1,
         JudgmentRuleV1, LanguageCoreValidationError, LanguageRight, LanguageRights, Precedence,
         Production, ProductionClass, ProductionId, ReductionPlan, SemanticEffectClassV1,
-        SyntaxItem, TheoryConstructorV1, TheoryEquationV1, TheoryLiteralV1, TheoryPremiseId,
-        TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1, TheorySortV1, TheoryTermNodeV1,
-        TheoryValidationError, TheoryVariableRoleV1, TheoryVariableV1, LANGUAGE_CORE_ABI_CURRENT,
+        SemanticNormalizationBranchingV1, SyntaxItem, TheoryConstructorV1, TheoryEquationV1,
+        TheoryLiteralV1, TheoryPremiseId, TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1,
+        TheoryRuleOriginV1, TheorySortV1, TheoryTermNodeV1, TheoryValidationError,
+        TheoryVariableRoleV1, TheoryVariableV1, LANGUAGE_CORE_ABI_CURRENT,
     };
 
     fn production(
@@ -1662,11 +1754,133 @@ mod tests {
             effect_class: SemanticEffectClassV1::Pure,
             required_rights: LanguageRights::from_rights([LanguageRight::Reduce]),
             grade: "Expr".into(),
+            execution: mettail_grammar_core::SemanticActionExecutionV1::OneStep,
         });
         LanguageCoreV1 {
             abi: LANGUAGE_CORE_ABI_CURRENT,
             grammar,
             theory,
+        }
+    }
+
+    fn normalization_fixture(
+        branching: SemanticNormalizationBranchingV1,
+        terminal_constructors: &[&str],
+    ) -> LanguageCoreV1 {
+        let mut language = fixture();
+        language.theory.actions[0].execution = SemanticActionExecutionV1::Normalize {
+            relation_sort: "Expr".into(),
+            terminal_constructors: terminal_constructors
+                .iter()
+                .map(|constructor| (*constructor).to_string())
+                .collect(),
+            branching,
+        };
+        language
+    }
+
+    fn divergent_add_zero_rule(name: &str) -> TheoryRewriteV1 {
+        TheoryRewriteV1 {
+            name: name.into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![variable(0, "x")],
+                terms: vec![
+                    term_variable(0),
+                    term_constructor("Zero", Vec::new()),
+                    term_constructor("Add", vec![TheoryTermId(1), TheoryTermId(0)]),
+                    term_constructor("Wrap", vec![TheoryTermId(0)]),
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(2),
+            right: TheoryTermId(3),
+        }
+    }
+
+    fn normalization_input(
+        inner_constructor: TheoryConstructorId,
+        add_layers: usize,
+    ) -> SemanticTransitionInput {
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let mut root = if inner_constructor == TheoryConstructorId(0) {
+            zero
+        } else {
+            graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(inner_constructor)),
+                vec![zero],
+            ))
+        };
+        for _ in 0..add_layers {
+            root = graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    TheoryConstructorId(2),
+                )),
+                vec![zero, root],
+            ));
+        }
+        match SemanticTransitionInput::admit(
+            graph,
+            root,
+            SemanticInputLimits {
+                work: 10_000,
+                nodes: 64,
+                bytes: 64 * 1024,
+            },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit normalization input"),
+        }
+    }
+
+    fn execute_normalization(
+        image: &TheorySemanticImageV1,
+        input: SemanticTransitionInput,
+        limits: SemanticTransitionLimits,
+    ) -> SemanticTransitionDecision {
+        execute_normalization_with_cancellation(image, input, limits, || false)
+    }
+
+    fn execute_normalization_with_cancellation<C>(
+        image: &TheorySemanticImageV1,
+        input: SemanticTransitionInput,
+        limits: SemanticTransitionLimits,
+        is_cancelled: C,
+    ) -> SemanticTransitionDecision
+    where
+        C: FnMut() -> bool,
+    {
+        let matcher =
+            SemanticTransitionMatcher::restore(image).expect("restore normalization matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image,
+                action: TheoryActionId(0),
+                granted_rights: &rights,
+                input,
+                limits,
+            },
+            is_cancelled,
+        )
+    }
+
+    fn normalization_limits() -> SemanticTransitionLimits {
+        SemanticTransitionLimits {
+            work: 100_000,
+            normalization_steps: 1_000,
+            outputs: 8,
+            frontier: 1_000,
+            proofs: 16,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
+            output_nodes: 1_000,
+            output_bytes: 64 * 1024,
         }
     }
 
@@ -1906,6 +2120,7 @@ mod tests {
         let granted = LanguageRights::from_rights([LanguageRight::Reduce]);
         let match_limits = SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 64,
             frontier: 100_000,
             proofs: 64,
@@ -2009,6 +2224,7 @@ mod tests {
                 input,
                 limits: SemanticTransitionLimits {
                     work: 10_000,
+                    normalization_steps: 1_000,
                     outputs: 4,
                     frontier: 1_000,
                     proofs: 64,
@@ -2141,7 +2357,8 @@ mod tests {
 
     #[test]
     fn bounded_wire_codec_round_trips_and_rejects_untrusted_lengths() {
-        let language = fixture();
+        let language =
+            normalization_fixture(SemanticNormalizationBranchingV1::Deterministic, &["Zero"]);
         let limits = TheoryImageAdmissionLimits::default();
         let image = compile_theory_semantic_image(&language, limits).expect("compile image");
         let bytes = image.encode(&language, limits).expect("encode image");
@@ -2150,6 +2367,21 @@ mod tests {
         assert_eq!(decoded, image);
         assert_eq!(decoded.fingerprint().unwrap(), image.fingerprint().unwrap());
         assert_eq!(decoded.resource_profile, TheoryResourceProfileV1::Uncosted);
+        assert!(matches!(
+            decoded.actions[0].execution,
+            TheoryActionExecutionImageV1::Normalize {
+                relation_sort: TheorySortId(0),
+                ref terminal_constructors,
+                branching: SemanticNormalizationBranchingV1::Deterministic,
+            } if terminal_constructors == &[TheoryConstructorId(0)]
+        ));
+
+        let mut obsolete_abi = bytes.clone();
+        obsolete_abi[8..10].copy_from_slice(&(image.abi - 1).to_le_bytes());
+        assert_eq!(
+            TheorySemanticImageV1::decode(&obsolete_abi, &language, limits),
+            Err(TheoryImageError::UnsupportedAbi(image.abi - 1))
+        );
 
         let mut forged_profile = image.clone();
         forged_profile.resource_profile =
@@ -2532,6 +2764,7 @@ mod tests {
         ]);
         let limits = SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 8,
             frontier: 1_000,
             proofs: 16,
@@ -2769,6 +3002,7 @@ mod tests {
                 input,
                 limits: SemanticTransitionLimits {
                     work: 100_000,
+                    normalization_steps: 1_000,
                     outputs: 8,
                     frontier: 1_000,
                     proofs: 16,
@@ -2844,6 +3078,7 @@ mod tests {
                 input,
                 limits: SemanticTransitionLimits {
                     work: 100_000,
+                    normalization_steps: 1_000,
                     outputs: 8,
                     frontier: 1_000,
                     proofs: 16,
@@ -2901,6 +3136,7 @@ mod tests {
                 input,
                 limits: SemanticTransitionLimits {
                     work: 100_000,
+                    normalization_steps: 1_000,
                     outputs: 8,
                     frontier: 1_000,
                     proofs: 16,
@@ -2953,6 +3189,7 @@ mod tests {
         let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
         let limits = SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 8,
             frontier: 1_000,
             proofs: 16,
@@ -3128,6 +3365,7 @@ mod tests {
         ]);
         let limits = SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 8,
             frontier: 1_000,
             proofs: 16,
@@ -3277,6 +3515,7 @@ mod tests {
         let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
         let limits = SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 8,
             frontier: 1_000,
             proofs: 16,
@@ -3584,6 +3823,7 @@ mod tests {
         let granted = LanguageRights::from_rights([LanguageRight::Reduce]);
         let limits = SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 8,
             frontier: 100_000,
             proofs: 64,
@@ -3773,6 +4013,7 @@ mod tests {
         };
         let limits = SemanticTransitionLimits {
             work: 100_000,
+            normalization_steps: 1_000,
             outputs: 8,
             frontier: 1_000,
             proofs: 16,
@@ -3834,6 +4075,292 @@ mod tests {
                     limits: SemanticTransitionLimits { output_nodes: 4, ..limits },
                 },
                 || false,
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn normalization_requires_explicit_reduce_authority() {
+        let mut language =
+            normalization_fixture(SemanticNormalizationBranchingV1::Deterministic, &["Zero"]);
+        language.theory.actions[0].required_rights = LanguageRights::none();
+        let errors = language
+            .validate()
+            .expect_err("normalization must not acquire implicit rewrite authority");
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            LanguageCoreValidationError::Theory(
+                TheoryValidationError::InvalidActionExecution { action, reason }
+            ) if action == "reduce-add-zero"
+                && *reason == "normalization actions must require the reduce right"
+        )));
+    }
+
+    #[test]
+    fn deterministic_normalization_publishes_only_explicit_terminal_states() {
+        let language =
+            normalization_fixture(SemanticNormalizationBranchingV1::Deterministic, &["Zero"]);
+        language
+            .validate()
+            .expect("valid deterministic normalization theory");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile deterministic normalization image");
+
+        let decision = execute_normalization(
+            &image,
+            normalization_input(TheoryConstructorId(0), 2),
+            normalization_limits(),
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("the two-step action must normalize to Zero");
+        };
+        assert_eq!(proven.transitions.len(), 1);
+        let transition = &proven.transitions[0];
+        let [node] = proven.egraph().nodes(transition.output) else {
+            panic!("published normal form must have one canonical representative");
+        };
+        assert_eq!(
+            node.op,
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)))
+        );
+        assert_eq!(transition.receipt.normalization_hops.len(), 1);
+        let hop = &transition.receipt.normalization_hops[0];
+        assert_ne!(hop.before, hop.after);
+        assert_eq!(hop.exhaustive_proofs.len(), 1);
+        assert!(matches!(
+            image.rules[hop.exhaustive_proofs[0].rule.0 as usize].origin,
+            TheoryRuleOriginV1::Rewrite { .. }
+        ));
+        assert_eq!(hop.exhaustive_proofs[0].before, hop.before);
+        assert_eq!(hop.exhaustive_proofs[0].after, hop.after);
+        assert!(hop.charged_work > 0);
+
+        let decision = execute_normalization(
+            &image,
+            normalization_input(TheoryConstructorId(0), 1),
+            normalization_limits(),
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("an entry step that reaches Zero is already normalized");
+        };
+        assert!(proven.transitions[0].receipt.normalization_hops.is_empty());
+    }
+
+    #[test]
+    fn normalization_stuck_step_cycle_and_work_limits_fail_closed() {
+        let language =
+            normalization_fixture(SemanticNormalizationBranchingV1::Deterministic, &["Zero"]);
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile normalization failure image");
+
+        assert!(matches!(
+            execute_normalization(
+                &image,
+                normalization_input(TheoryConstructorId(1), 1),
+                normalization_limits(),
+            ),
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::StuckNonterminal)
+        ));
+        assert!(matches!(
+            execute_normalization(
+                &image,
+                normalization_input(TheoryConstructorId(0), 2),
+                SemanticTransitionLimits {
+                    normalization_steps: 0,
+                    ..normalization_limits()
+                },
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::NormalizationStepLimitExceeded,
+                ..
+            }
+        ));
+        assert!(matches!(
+            execute_normalization(
+                &image,
+                normalization_input(TheoryConstructorId(0), 2),
+                SemanticTransitionLimits { work: 0, ..normalization_limits() },
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                ..
+            }
+        ));
+
+        let mut cyclic = image;
+        let entry_rule = cyclic.actions[0].transitions[0];
+        let rule = cyclic
+            .rules
+            .get_mut(entry_rule.0 as usize)
+            .expect("dense entry rule");
+        rule.right = rule.left;
+        assert!(matches!(
+            execute_normalization(
+                &cyclic,
+                normalization_input(TheoryConstructorId(0), 1),
+                normalization_limits(),
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::NormalizationCycleDetected,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn deterministic_normalization_coalesces_equal_successors_with_all_proofs() {
+        let mut language =
+            normalization_fixture(SemanticNormalizationBranchingV1::Deterministic, &["Zero"]);
+        let mut duplicate = language.theory.rewrites[0].clone();
+        duplicate.name = "add-zero-alternative-proof".into();
+        language.theory.rewrites.push(duplicate);
+        language
+            .validate()
+            .expect("equal-successor normalization theory");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile equal-successor normalization image");
+
+        let decision = execute_normalization(
+            &image,
+            normalization_input(TheoryConstructorId(0), 2),
+            normalization_limits(),
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("equal exact successors must coalesce");
+        };
+        assert_eq!(proven.transitions.len(), 1);
+        let proofs = &proven.transitions[0].receipt.normalization_hops[0].exhaustive_proofs;
+        assert_eq!(proofs.len(), 2);
+        assert_ne!(proofs[0].rule, proofs[1].rule);
+        assert_eq!(proofs[0].after, proofs[1].after);
+    }
+
+    #[test]
+    fn branching_policy_distinguishes_deterministic_claims_from_fair_normal_forms() {
+        let mut deterministic = normalization_fixture(
+            SemanticNormalizationBranchingV1::Deterministic,
+            &["Zero", "Wrap"],
+        );
+        deterministic
+            .theory
+            .rewrites
+            .push(divergent_add_zero_rule("wrap-add-zero"));
+        deterministic.validate().expect("valid divergent relation");
+        let image =
+            compile_theory_semantic_image(&deterministic, TheoryImageAdmissionLimits::default())
+                .expect("compile deterministic-claim image");
+        assert!(matches!(
+            execute_normalization(
+                &image,
+                normalization_input(TheoryConstructorId(0), 2),
+                normalization_limits(),
+            ),
+            SemanticTransitionDecision::Refuted(
+                SemanticMatchRefutation::NormalizationDeterminismClaimViolated
+            )
+        ));
+
+        let mut fair = deterministic;
+        fair.theory.actions[0].execution = SemanticActionExecutionV1::Normalize {
+            relation_sort: "Expr".into(),
+            terminal_constructors: vec!["Zero".into(), "Wrap".into()],
+            branching: SemanticNormalizationBranchingV1::FairAllNormalForms,
+        };
+        fair.validate().expect("valid fair normalization theory");
+        let image = compile_theory_semantic_image(&fair, TheoryImageAdmissionLimits::default())
+            .expect("compile fair normalization image");
+        let decision = execute_normalization(
+            &image,
+            normalization_input(TheoryConstructorId(0), 2),
+            normalization_limits(),
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("fair normalization must enumerate both terminal normal forms");
+        };
+        assert_eq!(proven.transitions.len(), 2);
+        assert!(proven.transitions.iter().all(|transition| transition
+            .receipt
+            .normalization_hops
+            .len()
+            == 1));
+        let terminal_ops = proven
+            .transitions
+            .iter()
+            .map(|transition| {
+                let [node] = proven.egraph().nodes(transition.output) else {
+                    panic!("published terminal must be canonical");
+                };
+                node.op.clone()
+            })
+            .collect::<Vec<_>>();
+        let zero =
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)));
+        let wrap =
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)));
+        assert!(terminal_ops.contains(&zero));
+        assert!(terminal_ops.contains(&wrap));
+    }
+
+    #[test]
+    fn normalization_cancellation_and_fair_bounds_fail_closed() {
+        let mut fair = normalization_fixture(
+            SemanticNormalizationBranchingV1::FairAllNormalForms,
+            &["Zero", "Wrap"],
+        );
+        fair.theory
+            .rewrites
+            .push(divergent_add_zero_rule("wrap-add-zero"));
+        fair.validate()
+            .expect("valid bounded fair normalization theory");
+        let image = compile_theory_semantic_image(&fair, TheoryImageAdmissionLimits::default())
+            .expect("compile bounded fair normalization image");
+
+        assert!(matches!(
+            execute_normalization_with_cancellation(
+                &image,
+                normalization_input(TheoryConstructorId(0), 2),
+                normalization_limits(),
+                || true,
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled,
+                ..
+            }
+        ));
+        assert!(matches!(
+            execute_normalization(
+                &image,
+                normalization_input(TheoryConstructorId(0), 2),
+                SemanticTransitionLimits {
+                    normalization_steps: 1,
+                    ..normalization_limits()
+                },
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::NormalizationStepLimitExceeded,
+                ..
+            }
+        ));
+        assert!(matches!(
+            execute_normalization(
+                &image,
+                normalization_input(TheoryConstructorId(0), 2),
+                SemanticTransitionLimits { frontier: 1, ..normalization_limits() },
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                ..
+            }
+        ));
+        assert!(matches!(
+            execute_normalization(
+                &image,
+                normalization_input(TheoryConstructorId(0), 2),
+                SemanticTransitionLimits { outputs: 1, ..normalization_limits() },
             ),
             SemanticTransitionDecision::Undetermined {
                 reason: SemanticMatchUndetermined::OutputLimitExceeded,

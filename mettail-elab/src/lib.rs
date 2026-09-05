@@ -361,7 +361,8 @@ mod tests {
                       "id":"step", "domain":["Datum"], "codomain":"Datum",
                       "transition":["rewrite","Unwrap"],
                       "effect":"Pure", "effect_class":"pure",
-                      "required_rights":["Reduce"], "grade":"Grade"
+                      "required_rights":["Reduce"], "grade":"Grade",
+                      "execution":"one_step"
                     }]
                   }
                 })

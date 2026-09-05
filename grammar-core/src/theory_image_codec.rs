@@ -8,19 +8,21 @@
 
 use crate::{
     CollectionKind, JudgmentDecisionV1, JudgmentRuleV1, LanguageCoreV1, LanguageRight,
-    LanguageRights, PathMapModeV1, SemanticEffectClassV1, TheoryActionId, TheoryActionImageV1,
-    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryGrammarConstructorV1,
-    TheoryImageAdmissionLimits, TheoryImageError, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
-    TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1, TheoryImageTermFormV1,
-    TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryJudgmentId, TheoryJudgmentImageV1,
-    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentPatternEntryV1, TheoryJudgmentRuleProgramId,
-    TheoryJudgmentRuleProgramV1, TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1,
-    TheoryPatternEntryId, TheoryPatternEntryV1, TheoryPatternInvocationV1,
-    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1,
-    TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1,
-    TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleSuppressionV1, TheorySemanticImageV1,
-    TheorySortId, TheorySortImageV1, TheorySortKindImageV1, TheoryTermId, TheoryVariableId,
-    TheoryVariableRoleV1, TheoryWorkChargeV1, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+    LanguageRights, PathMapModeV1, SemanticEffectClassV1, SemanticNormalizationBranchingV1,
+    TheoryActionExecutionImageV1, TheoryActionId, TheoryActionImageV1, TheoryConstructorId,
+    TheoryConstructorImageV1, TheoryEffectId, TheoryGrammarConstructorV1,
+    TheoryImageAdmissionLimits, TheoryImageError, TheoryImageIntrinsicV1,
+    TheoryImageJudgmentAtomV1, TheoryImageOperatorV1, TheoryImagePremiseFormV1,
+    TheoryImagePremiseNodeV1, TheoryImageTermFormV1, TheoryImageTermNodeV1, TheoryImageVariableV1,
+    TheoryJudgmentId, TheoryJudgmentImageV1, TheoryJudgmentPatternAutomatonV1,
+    TheoryJudgmentPatternEntryV1, TheoryJudgmentRuleProgramId, TheoryJudgmentRuleProgramV1,
+    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternEntryId,
+    TheoryPatternEntryV1, TheoryPatternInvocationV1, TheoryPatternStateFormV1,
+    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleArenaV1,
+    TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId,
+    TheoryRuleProgramV1, TheoryRuleSuppressionV1, TheorySemanticImageV1, TheorySortId,
+    TheorySortImageV1, TheorySortKindImageV1, TheoryTermId, TheoryVariableId, TheoryVariableRoleV1,
+    TheoryWorkChargeV1, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
 };
 
 const THEORY_IMAGE_MAGIC: &[u8; 8] = b"MTTHIMG1";
@@ -65,7 +67,7 @@ impl TheorySemanticImageV1 {
     /// copy of the image.
     pub fn fingerprint(&self) -> Result<[u8; 32], TheoryImageError> {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-theory-semantic-image/1\0");
+        hasher.update(b"mettail-theory-semantic-image/2\0");
         encode_image(self, &mut HashSink(&mut hasher))?;
         Ok(*hasher.finalize().as_bytes())
     }
@@ -346,8 +348,65 @@ fn encode_image<S: ImageSink>(
         write_u8(sink, encode_effect_class(action.effect_class))?;
         write_u16(sink, encode_rights(&action.required_rights))?;
         write_u32(sink, action.grade.0)?;
+        encode_action_execution(sink, &action.execution)?;
     }
     Ok(())
+}
+
+fn encode_action_execution<S: ImageSink>(
+    sink: &mut S,
+    execution: &TheoryActionExecutionImageV1,
+) -> Result<(), TheoryImageError> {
+    match execution {
+        TheoryActionExecutionImageV1::OneStep => write_u8(sink, 0),
+        TheoryActionExecutionImageV1::Normalize {
+            relation_sort,
+            terminal_constructors,
+            branching,
+        } => {
+            write_u8(sink, 1)?;
+            write_u32(sink, relation_sort.0)?;
+            write_ids(sink, terminal_constructors, |id| id.0)?;
+            write_u8(
+                sink,
+                match branching {
+                    SemanticNormalizationBranchingV1::Deterministic => 0,
+                    SemanticNormalizationBranchingV1::FairAllNormalForms => 1,
+                },
+            )
+        },
+    }
+}
+
+fn decode_action_execution(
+    reader: &mut ImageReader<'_>,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut DecodeTotals,
+) -> Result<TheoryActionExecutionImageV1, TheoryImageError> {
+    Ok(match reader.read_u8()? {
+        0 => TheoryActionExecutionImageV1::OneStep,
+        1 => {
+            let relation_sort = TheorySortId(reader.read_u32()?);
+            let terminal_constructors = read_ids_charged(
+                reader,
+                &mut totals.action_terminal_constructors,
+                limits.max_total_action_terminal_constructors,
+                TheoryConstructorId,
+                "action terminal constructors",
+            )?;
+            let branching = match reader.read_u8()? {
+                0 => SemanticNormalizationBranchingV1::Deterministic,
+                1 => SemanticNormalizationBranchingV1::FairAllNormalForms,
+                tag => return Err(TheoryImageError::InvalidTag(tag)),
+            };
+            TheoryActionExecutionImageV1::Normalize {
+                relation_sort,
+                terminal_constructors,
+                branching,
+            }
+        },
+        tag => return Err(TheoryImageError::InvalidTag(tag)),
+    })
 }
 
 fn encode_resource_profile<S: ImageSink>(
@@ -808,11 +867,99 @@ fn encode_premise<S: ImageSink>(
             write_u32(sink, parameter.0)?;
             write_u32(sink, *body)
         },
+        TheoryImagePremiseFormV1::Intrinsic(intrinsic) => {
+            write_u8(sink, 5)?;
+            encode_intrinsic(sink, intrinsic)
+        },
         TheoryImagePremiseFormV1::Guard { commitment } => {
             write_u8(sink, 4)?;
             sink.write(commitment)
         },
     }
+}
+
+fn encode_intrinsic<S: ImageSink>(
+    sink: &mut S,
+    intrinsic: &TheoryImageIntrinsicV1,
+) -> Result<(), TheoryImageError> {
+    match intrinsic {
+        TheoryImageIntrinsicV1::ExactTermEq { left, right, output } => {
+            write_u8(sink, 0)?;
+            write_u32(sink, left.0)?;
+            write_u32(sink, right.0)?;
+            write_u32(sink, output.0)
+        },
+        TheoryImageIntrinsicV1::Utf8AtEnd { text, cursor, output } => {
+            write_u8(sink, 1)?;
+            write_u32(sink, text.0)?;
+            write_u32(sink, cursor.0)?;
+            write_u32(sink, output.0)
+        },
+        TheoryImageIntrinsicV1::Utf8ScalarAt { text, cursor, scalar, next_cursor } => {
+            write_u8(sink, 2)?;
+            write_u32(sink, text.0)?;
+            write_u32(sink, cursor.0)?;
+            write_u32(sink, scalar.0)?;
+            write_u32(sink, next_cursor.0)
+        },
+        TheoryImageIntrinsicV1::Utf8Slice { text, start, end, output } => {
+            write_u8(sink, 3)?;
+            write_u32(sink, text.0)?;
+            write_u32(sink, start.0)?;
+            write_u32(sink, end.0)?;
+            write_u32(sink, output.0)
+        },
+        TheoryImageIntrinsicV1::CheckedNatAdd { left, right, output } => {
+            write_u8(sink, 4)?;
+            write_u32(sink, left.0)?;
+            write_u32(sink, right.0)?;
+            write_u32(sink, output.0)
+        },
+        TheoryImageIntrinsicV1::Utf8ConcatMany { pieces, output } => {
+            write_u8(sink, 5)?;
+            write_u32(sink, pieces.0)?;
+            write_u32(sink, output.0)
+        },
+    }
+}
+
+fn decode_intrinsic(
+    reader: &mut ImageReader<'_>,
+) -> Result<TheoryImageIntrinsicV1, TheoryImageError> {
+    Ok(match reader.read_u8()? {
+        0 => TheoryImageIntrinsicV1::ExactTermEq {
+            left: TheoryVariableId(reader.read_u32()?),
+            right: TheoryVariableId(reader.read_u32()?),
+            output: TheoryVariableId(reader.read_u32()?),
+        },
+        1 => TheoryImageIntrinsicV1::Utf8AtEnd {
+            text: TheoryVariableId(reader.read_u32()?),
+            cursor: TheoryVariableId(reader.read_u32()?),
+            output: TheoryVariableId(reader.read_u32()?),
+        },
+        2 => TheoryImageIntrinsicV1::Utf8ScalarAt {
+            text: TheoryVariableId(reader.read_u32()?),
+            cursor: TheoryVariableId(reader.read_u32()?),
+            scalar: TheoryVariableId(reader.read_u32()?),
+            next_cursor: TheoryVariableId(reader.read_u32()?),
+        },
+        3 => TheoryImageIntrinsicV1::Utf8Slice {
+            text: TheoryVariableId(reader.read_u32()?),
+            start: TheoryVariableId(reader.read_u32()?),
+            end: TheoryVariableId(reader.read_u32()?),
+            output: TheoryVariableId(reader.read_u32()?),
+        },
+        4 => TheoryImageIntrinsicV1::CheckedNatAdd {
+            left: TheoryVariableId(reader.read_u32()?),
+            right: TheoryVariableId(reader.read_u32()?),
+            output: TheoryVariableId(reader.read_u32()?),
+        },
+        5 => TheoryImageIntrinsicV1::Utf8ConcatMany {
+            pieces: TheoryVariableId(reader.read_u32()?),
+            output: TheoryVariableId(reader.read_u32()?),
+        },
+        tag => return Err(TheoryImageError::InvalidTag(tag)),
+    })
 }
 
 fn source_arena(
@@ -854,6 +1001,7 @@ struct DecodeTotals {
     names: usize,
     literals: usize,
     transitions: usize,
+    action_terminal_constructors: usize,
     automaton_states: usize,
     automaton_entries: usize,
     automaton_edges: usize,
@@ -1168,6 +1316,7 @@ fn decode_premise(
             body: reader.read_u32()?,
         },
         4 => TheoryImagePremiseFormV1::Guard { commitment: reader.read_array()? },
+        5 => TheoryImagePremiseFormV1::Intrinsic(decode_intrinsic(reader)?),
         tag => return Err(TheoryImageError::InvalidTag(tag)),
     })
 }
@@ -1404,15 +1553,21 @@ fn decode_action(
         TheoryRuleProgramId,
         "action transitions",
     )?;
+    let effect = TheoryEffectId(reader.read_u32()?);
+    let effect_class = decode_effect_class(reader.read_u8()?)?;
+    let required_rights = decode_rights(reader.read_u16()?)?;
+    let grade = TheorySortId(reader.read_u32()?);
+    let execution = decode_action_execution(reader, limits, totals)?;
     Ok(TheoryActionImageV1 {
         id,
         domain,
         codomain,
         transitions,
-        effect: TheoryEffectId(reader.read_u32()?),
-        effect_class: decode_effect_class(reader.read_u8()?)?,
-        required_rights: decode_rights(reader.read_u16()?)?,
-        grade: TheorySortId(reader.read_u32()?),
+        effect,
+        effect_class,
+        required_rights,
+        grade,
+        execution,
     })
 }
 

@@ -1674,6 +1674,7 @@ fn decode_action(value: &RhoValue, path: &str) -> Result<core::SemanticActionV1,
             "effect_class",
             "required_rights",
             "grade",
+            "execution",
         ],
         path,
     )?;
@@ -1696,6 +1697,47 @@ fn decode_action(value: &RhoValue, path: &str) -> Result<core::SemanticActionV1,
             &format!("{path}.required_rights"),
         )?,
         grade: required_nonempty_string(values, "grade", path)?,
+        execution: decode_action_execution(
+            required(values, "execution", path)?,
+            &format!("{path}.execution"),
+        )?,
+    })
+}
+
+fn decode_action_execution(
+    value: &RhoValue,
+    path: &str,
+) -> Result<core::SemanticActionExecutionV1, ValueDecodeError> {
+    if let RhoValue::String(tag) = value {
+        return match tag.as_str() {
+            "one_step" => Ok(core::SemanticActionExecutionV1::OneStep),
+            _ => error(path, format!("unknown action execution policy `{tag}`")),
+        };
+    }
+    let values = expect_map(value, path)?;
+    reject_unknown_keys(
+        values,
+        &["kind", "relation_sort", "terminal_constructors", "branching"],
+        path,
+    )?;
+    let kind = expect_enum_string(
+        required(values, "kind", path)?,
+        &["normalize"],
+        &format!("{path}.kind"),
+    )?;
+    debug_assert_eq!(kind, "normalize");
+    let branching = match expect_enum_string(
+        required(values, "branching", path)?,
+        &["deterministic", "fair_all_normal_forms"],
+        &format!("{path}.branching"),
+    )? {
+        "deterministic" => core::SemanticNormalizationBranchingV1::Deterministic,
+        _ => core::SemanticNormalizationBranchingV1::FairAllNormalForms,
+    };
+    Ok(core::SemanticActionExecutionV1::Normalize {
+        relation_sort: required_nonempty_string(values, "relation_sort", path)?,
+        terminal_constructors: decode_required_string_list(values, "terminal_constructors", path)?,
+        branching,
     })
 }
 
@@ -6216,6 +6258,7 @@ mod tests {
                     ("transition", l([s("handler"), s("mtl:handler:step/1")])),
                     ("effect", s("Pure")),
                     ("grade", s("Sig")),
+                    ("execution", s("one_step")),
                 ])]),
             ),
             (
@@ -6664,6 +6707,7 @@ mod tests {
                                 ("transition", l([s("handler"), s("mtl:step/1")])),
                                 ("effect", s("Pure")),
                                 ("grade", s("Grade")),
+                                ("execution", s("one_step")),
                             ])]),
                         ),
                         ("limits", m([("max_steps", RhoValue::Integer(100))])),

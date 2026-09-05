@@ -9,20 +9,22 @@
 
 use crate::{
     BuiltinCarrier, Carrier, CollectionKind, GrammarCoreV1, JudgmentAtomV1, JudgmentRuleV1,
-    LanguageRights, PathMapModeV1, TheoryEquationV1, TheoryLiteralCarrierV1, TheoryLiteralV1,
-    TheoryPremiseFormV1, TheoryRewriteV1, TheoryRuleArenaV1, TheorySortKindV1, TheoryTermFormV1,
-    TheoryTermId, TheoryTermNodeV1, TheoryVariableId, TheoryVariableRoleV1, TheoryVariableV1,
-    ValidationError,
+    LanguageRight, LanguageRights, PathMapModeV1, TheoryEquationV1, TheoryIntrinsicV1,
+    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPremiseFormV1, TheoryRewriteV1,
+    TheoryRuleArenaV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1,
+    TheoryVariableId, TheoryVariableRoleV1, TheoryVariableV1, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const LANGUAGE_CORE_ABI_V1: u16 = 1;
 pub const LANGUAGE_CORE_ABI_V2: u16 = 2;
-pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V2;
+pub const LANGUAGE_CORE_ABI_V3: u16 = 3;
+pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V3;
 pub const THEORY_CORE_ABI_V1: u16 = 1;
 pub const THEORY_CORE_ABI_V2: u16 = 2;
-pub const THEORY_CORE_ABI_CURRENT: u16 = THEORY_CORE_ABI_V2;
+pub const THEORY_CORE_ABI_V3: u16 = 3;
+pub const THEORY_CORE_ABI_CURRENT: u16 = THEORY_CORE_ABI_V3;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LanguageCoreV1 {
@@ -52,7 +54,7 @@ impl LanguageCoreV1 {
         let grammar = self.grammar_fingerprint()?;
         let theory = self.theory_fingerprint()?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-language-core/2\0");
+        hasher.update(b"mettail-language-core/3\0");
         hasher.update(&self.abi.to_be_bytes());
         hasher.update(&grammar);
         hasher.update(&theory);
@@ -136,7 +138,7 @@ impl TheoryCoreV1 {
     pub fn fingerprint(&self) -> Result<[u8; 32], postcard::Error> {
         let bytes = postcard::to_allocvec(self)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-theory-core/2\0");
+        hasher.update(b"mettail-theory-core/3\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
@@ -329,6 +331,7 @@ impl TheoryCoreV1 {
                 | TheoryRuleReferenceV1::Handler(_) => {},
             }
             validate_rule_backed_action_signature(action, self, &mut errors);
+            validate_action_execution(action, self, &sort_declarations, &constructors, &mut errors);
         }
         for judgment in &self.judgments {
             require_sorts(judgment.arguments.iter().map(String::as_str), &sorts, &mut errors);
@@ -455,6 +458,27 @@ pub struct SemanticActionV1 {
     pub effect_class: SemanticEffectClassV1,
     pub required_rights: LanguageRights,
     pub grade: String,
+    pub execution: SemanticActionExecutionV1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SemanticNormalizationBranchingV1 {
+    Deterministic,
+    FairAllNormalForms,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SemanticActionExecutionV1 {
+    /// Publish the complete successor set produced by the named transition.
+    OneStep,
+    /// Use the named transition only as the entry step, then normalize the
+    /// resulting private state through all directed rewrites of
+    /// `relation_sort`. Equations remain canonical equality and never execute.
+    Normalize {
+        relation_sort: String,
+        terminal_constructors: Vec<String>,
+        branching: SemanticNormalizationBranchingV1,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -704,6 +728,10 @@ pub enum TheoryValidationError {
         variable: String,
         expected: &'static str,
     },
+    InvalidIntrinsic {
+        rule: String,
+        reason: &'static str,
+    },
     PremiseDependency {
         rule: String,
         variable: String,
@@ -733,6 +761,15 @@ pub enum TheoryValidationError {
         target: String,
         domain: Vec<String>,
         codomain: String,
+    },
+    InvalidActionExecution {
+        action: String,
+        reason: &'static str,
+    },
+    TerminalConstructorHasOutgoingRewrite {
+        action: String,
+        constructor: String,
+        rewrite: String,
     },
 }
 
@@ -791,6 +828,108 @@ fn validate_rule_backed_action_signature(
                 target: target.sort.clone(),
                 domain: action.domain.clone(),
                 codomain: action.codomain.clone(),
+            });
+        }
+    }
+}
+
+fn validate_action_execution(
+    action: &SemanticActionV1,
+    theory: &TheoryCoreV1,
+    sorts: &BTreeMap<&str, &TheorySortV1>,
+    constructors: &BTreeMap<&str, &TheoryConstructorV1>,
+    errors: &mut Vec<TheoryValidationError>,
+) {
+    let SemanticActionExecutionV1::Normalize {
+        relation_sort,
+        terminal_constructors,
+        branching,
+    } = &action.execution
+    else {
+        return;
+    };
+    if !matches!(action.transition, TheoryRuleReferenceV1::Rewrite(_)) {
+        errors.push(TheoryValidationError::InvalidActionExecution {
+            action: action.id.clone(),
+            reason: "normalization entry must be a directed rewrite",
+        });
+    }
+    if !sorts.contains_key(relation_sort.as_str()) {
+        errors.push(TheoryValidationError::UnknownReference {
+            kind: "normalization relation sort",
+            name: relation_sort.clone(),
+        });
+    }
+    if action.domain.as_slice() != [relation_sort.as_str()] || action.codomain != *relation_sort {
+        errors.push(TheoryValidationError::InvalidActionExecution {
+            action: action.id.clone(),
+            reason: "normalization actions must be endomorphic on the relation sort",
+        });
+    }
+    if !action.required_rights.contains(LanguageRight::Reduce) {
+        errors.push(TheoryValidationError::InvalidActionExecution {
+            action: action.id.clone(),
+            reason: "normalization actions must require the reduce right",
+        });
+    }
+    if terminal_constructors.is_empty() {
+        errors.push(TheoryValidationError::InvalidActionExecution {
+            action: action.id.clone(),
+            reason: "normalization requires at least one terminal constructor",
+        });
+    }
+    let mut terminals = BTreeSet::new();
+    for terminal in terminal_constructors {
+        if !terminals.insert(terminal.as_str()) {
+            errors.push(TheoryValidationError::DuplicateName {
+                kind: "normalization terminal constructor",
+                name: terminal.clone(),
+            });
+            continue;
+        }
+        let Some(constructor) = constructors.get(terminal.as_str()) else {
+            errors.push(TheoryValidationError::UnknownReference {
+                kind: "normalization terminal constructor",
+                name: terminal.clone(),
+            });
+            continue;
+        };
+        require_equal_sort(
+            &format!("action `{}` terminal `{terminal}`", action.id),
+            relation_sort,
+            &constructor.codomain,
+            errors,
+        );
+    }
+    for rewrite in &theory.rewrites {
+        let Some(left) = rewrite.arena.terms.get(rewrite.left.0 as usize) else {
+            continue;
+        };
+        if left.sort != *relation_sort {
+            continue;
+        }
+        let TheoryTermFormV1::Constructor { constructor, .. } = &left.form else {
+            continue;
+        };
+        if terminals.contains(constructor.as_str()) {
+            errors.push(TheoryValidationError::TerminalConstructorHasOutgoingRewrite {
+                action: action.id.clone(),
+                constructor: constructor.clone(),
+                rewrite: rewrite.name.clone(),
+            });
+        }
+    }
+    if *branching == SemanticNormalizationBranchingV1::FairAllNormalForms {
+        let effect_is_pure = action.effect_class == SemanticEffectClassV1::Pure
+            && theory
+                .effects
+                .iter()
+                .find(|effect| effect.name == action.effect)
+                .is_some_and(|effect| effect.emits.is_empty());
+        if !effect_is_pure {
+            errors.push(TheoryValidationError::InvalidActionExecution {
+                action: action.id.clone(),
+                reason: "fair normalization must be effect-free",
             });
         }
     }
@@ -2091,8 +2230,158 @@ fn validate_premise_dependencies(
                     work.push((body.0 as usize, scope, false));
                 }
             },
+            TheoryPremiseFormV1::Intrinsic(intrinsic) => {
+                intrinsic.for_each_input(|variable| {
+                    require_available(variable, &scope, errors);
+                });
+                let mut outputs = BTreeSet::new();
+                intrinsic.for_each_output(|output| {
+                    if !outputs.insert(output) {
+                        errors.push(TheoryValidationError::InvalidIntrinsic {
+                            rule: validation.rule.to_string(),
+                            reason: "intrinsic outputs must be distinct",
+                        });
+                    }
+                    if scope.contains(&output) {
+                        let name = validation
+                            .arena
+                            .variables
+                            .get(output.0 as usize)
+                            .map(|value| value.name.clone())
+                            .unwrap_or_else(|| format!("#{}", output.0));
+                        errors.push(TheoryValidationError::PremiseDependency {
+                            rule: validation.rule.to_string(),
+                            variable: name,
+                        });
+                    }
+                    match validation.arena.variables.get(output.0 as usize) {
+                        Some(variable) if variable.role != TheoryVariableRoleV1::Derived => {
+                            errors.push(TheoryValidationError::InvalidVariableRole {
+                                rule: validation.rule.to_string(),
+                                variable: variable.name.clone(),
+                                expected: "Derived",
+                            });
+                        },
+                        Some(_) => {},
+                        None => errors.push(TheoryValidationError::UnknownVariable(output.0)),
+                    }
+                    if is_root {
+                        available.insert(output);
+                    }
+                });
+                validate_intrinsic_sorts(validation, intrinsic, errors);
+            },
             TheoryPremiseFormV1::Guard(_) => {},
         }
+    }
+}
+
+fn validate_intrinsic_sorts(
+    validation: &PremiseValidationContext<'_>,
+    intrinsic: &TheoryIntrinsicV1,
+    errors: &mut Vec<TheoryValidationError>,
+) {
+    let sort_of = |variable: TheoryVariableId| {
+        validation
+            .arena
+            .variables
+            .get(variable.0 as usize)
+            .map(|declaration| declaration.sort.clone())
+    };
+    let require_same = |left: TheoryVariableId,
+                        right: TheoryVariableId,
+                        errors: &mut Vec<TheoryValidationError>| {
+        if let (Some(left), Some(right)) = (sort_of(left), sort_of(right)) {
+            require_equal_sort(validation.rule, &left, &right, errors);
+        }
+    };
+    let require_carrier = |variable: TheoryVariableId,
+                           expected: TheoryLiteralCarrierV1,
+                           errors: &mut Vec<TheoryValidationError>| {
+        let Some(sort) = sort_of(variable) else {
+            return;
+        };
+        let actual = validation
+            .sorts
+            .get(sort.as_str())
+            .and_then(|declaration| match &declaration.kind {
+                TheorySortKindV1::Syntax { literal } => literal.clone(),
+                _ => None,
+            });
+        if actual.as_ref() != Some(&expected) {
+            errors.push(TheoryValidationError::SortMismatch {
+                owner: format!("{} intrinsic variable #{}", validation.rule, variable.0),
+                expected: format!("{expected:?} literal sort"),
+                actual: format!("{actual:?}"),
+            });
+        }
+    };
+    let string = TheoryLiteralCarrierV1::String;
+    let integer = TheoryLiteralCarrierV1::Integer;
+    let boolean = TheoryLiteralCarrierV1::Boolean;
+    match intrinsic {
+        TheoryIntrinsicV1::ExactTermEq { left, right, output } => {
+            require_same(*left, *right, errors);
+            require_carrier(*output, boolean, errors);
+        },
+        TheoryIntrinsicV1::Utf8AtEnd { text, cursor, output } => {
+            require_carrier(*text, string, errors);
+            require_carrier(*cursor, integer, errors);
+            require_carrier(*output, boolean, errors);
+        },
+        TheoryIntrinsicV1::Utf8ScalarAt { text, cursor, scalar, next_cursor } => {
+            require_carrier(*text, string.clone(), errors);
+            require_carrier(*cursor, integer.clone(), errors);
+            require_carrier(*scalar, string, errors);
+            require_carrier(*next_cursor, integer, errors);
+        },
+        TheoryIntrinsicV1::Utf8Slice { text, start, end, output } => {
+            require_carrier(*text, string.clone(), errors);
+            require_carrier(*start, integer.clone(), errors);
+            require_carrier(*end, integer, errors);
+            require_carrier(*output, string, errors);
+        },
+        TheoryIntrinsicV1::CheckedNatAdd { left, right, output } => {
+            require_carrier(*left, integer.clone(), errors);
+            require_carrier(*right, integer.clone(), errors);
+            require_carrier(*output, integer, errors);
+        },
+        TheoryIntrinsicV1::Utf8ConcatMany { pieces, output } => {
+            require_carrier(*output, string.clone(), errors);
+            let Some(pieces_sort) = sort_of(*pieces) else {
+                return;
+            };
+            match validation
+                .sorts
+                .get(pieces_sort.as_str())
+                .map(|sort| &sort.kind)
+            {
+                Some(TheorySortKindV1::Collection {
+                    kind: CollectionKind::List,
+                    key: None,
+                    element,
+                }) => {
+                    let element_carrier =
+                        validation
+                            .sorts
+                            .get(element.as_str())
+                            .and_then(|declaration| match &declaration.kind {
+                                TheorySortKindV1::Syntax { literal } => literal.as_ref(),
+                                _ => None,
+                            });
+                    if element_carrier != Some(&string) {
+                        errors.push(TheoryValidationError::InvalidIntrinsic {
+                            rule: validation.rule.to_string(),
+                            reason: "Utf8ConcatMany requires a list of UTF-8 string literals",
+                        });
+                    }
+                },
+                _ => errors.push(TheoryValidationError::InvalidIntrinsic {
+                    rule: validation.rule.to_string(),
+                    reason: "Utf8ConcatMany requires an ordered list sort",
+                }),
+            }
+        },
     }
 }
 
@@ -2367,6 +2656,7 @@ mod tests {
             effect_class: SemanticEffectClassV1::Pure,
             required_rights: LanguageRights::none(),
             grade: "Sig".into(),
+            execution: SemanticActionExecutionV1::OneStep,
         });
         theory.interactive = Some(InteractiveDeclV1 {
             cut: "cut".into(),

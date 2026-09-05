@@ -37,6 +37,8 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \
 	RuntimeGrammar.SemanticTransitionKernel \
+	RuntimeGrammar.SemanticIntrinsics \
+	RuntimeGrammar.SemanticNormalization \
 	RuntimeGrammar.RegexGsltSyntax \
 	RuntimeGrammar.RegexGsltMatch \
 	RuntimeGrammar.RegexGsltSearch \
