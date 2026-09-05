@@ -505,7 +505,7 @@ pub enum SemanticCollectionEntryV1 {
     KeyValue { key: u32, value: u32 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum PathMapModeV1 {
     NeutralEmpty,
     Set,

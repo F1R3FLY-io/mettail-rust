@@ -29,7 +29,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: prattail-wpda rocq-support
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail tla-prattail-wpda-binder-broadcast-expected-fail tla-runtime-grammar rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
-.PHONY: rocq-prattail-wpda rocq-runtime-grammar rocq-runtime-regex-gslt rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-slot rocq-advanced-automata-inrho-indexed-channels rocq-advanced-automata-inrho-ac-rest
+.PHONY: rocq-prattail-wpda rocq-runtime-grammar rocq-runtime-grammar-dovetail-deps rocq-runtime-collection-comprehension rocq-runtime-regex-gslt rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho rocq-advanced-automata-inrho-b rocq-advanced-automata-inrho-c rocq-advanced-automata-inrho-slot rocq-advanced-automata-inrho-indexed-channels rocq-advanced-automata-inrho-ac-rest
 .PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail-exact-keys rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
 .PHONY: rocq-rho-bridge rocq-rho-bridge-artifact-boundary rocq-rho-bridge-rejected-coverage rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family rocq-rho-bridge-cbn-budget rocq-rho-bridge-escrow-settlement rocq-rho-bridge-purse-determinism rocq-rho-bridge-inrho-ix rocq-rho-bridge-inrho-iv rocq-rho-bridge-inrho-vi rocq-rho-bridge-persistent-root
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
@@ -104,8 +104,18 @@ rocq-support: rocq-sft rocq-unification rocq-symbolic-algebra rocq-critical-zero
 rocq-prattail-wpda: require-capped
 	$(MAKE) -C rocq/prattail_wpda_runtime
 
-rocq-runtime-grammar: require-capped rocq-dovetail-exact-keys
+rocq-runtime-grammar: require-capped rocq-runtime-grammar-dovetail-deps
 	$(MAKE) -C rocq/runtime_grammar
+
+rocq-runtime-grammar-dovetail-deps: require-capped
+	$(MAKE) -C ../dovetail/formal/rocq theories/ExactKeys/ExactKeyDedup.vo
+	$(MAKE) -C ../dovetail/formal/rocq theories/Lowering/CollectionAcLowering.vo
+
+# Focused, memory-efficient development target for exact collection
+# comprehensions. The full runtime-grammar target remains the trusted release
+# gate and runs rocqchk over the complete module closure.
+rocq-runtime-collection-comprehension: require-capped
+	$(MAKE) -C rocq/runtime_grammar theories/CollectionComprehension.vo
 
 # Focused, memory-efficient development target for the executable Regex GSLT
 # reference semantics.  The full runtime-grammar target remains the release

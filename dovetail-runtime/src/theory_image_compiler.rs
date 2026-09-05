@@ -23,7 +23,7 @@ use mettail_grammar_core::{
     TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleReferenceV1, TheoryRuleSuppressionV1,
     TheorySemanticImageV1, TheorySortId, TheorySortImageV1, TheorySortKindImageV1,
     TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1, TheoryVariableId,
-    TheoryWorkChargeV1, THEORY_IMAGE_COMPILER_ABI_V1, THEORY_SEMANTIC_IMAGE_ABI_V1,
+    TheoryWorkChargeV1, THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -105,8 +105,8 @@ pub fn compile_theory_semantic_image(
         },
     };
     let image = TheorySemanticImageV1 {
-        abi: THEORY_SEMANTIC_IMAGE_ABI_V1,
-        compiler_abi: THEORY_IMAGE_COMPILER_ABI_V1,
+        abi: THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+        compiler_abi: THEORY_IMAGE_COMPILER_ABI_CURRENT,
         language_fingerprint: language
             .fingerprint()
             .map_err(|error| TheoryImageError::Fingerprint(error.to_string()))?,
@@ -465,6 +465,7 @@ fn compile_term_nodes(
                     arguments: clone_vec(arguments)?,
                     slots: Vec::new(),
                     remainder: None,
+                    pathmap_mode: None,
                 }
             },
             TheoryTermFormV1::Abstraction { binder, body } => TheoryImageTermFormV1::Apply {
@@ -472,6 +473,7 @@ fn compile_term_nodes(
                 arguments: vec![*body],
                 slots: vec![*binder],
                 remainder: None,
+                pathmap_mode: None,
             },
             TheoryTermFormV1::Substitution { abstraction, argument } => {
                 let function = source.get(abstraction.0 as usize).ok_or_else(|| {
@@ -488,25 +490,29 @@ fn compile_term_nodes(
                     arguments: vec![*abstraction, *argument],
                     slots: Vec::new(),
                     remainder: None,
+                    pathmap_mode: None,
                 }
             },
-            TheoryTermFormV1::Collection { elements, remainder } => {
+            TheoryTermFormV1::Collection { elements, remainder, pathmap_mode } => {
                 let (element, kind) = context.collection(sort)?;
                 TheoryImageTermFormV1::Apply {
                     operator: TheoryImageOperatorV1::Collection { sort, element, kind },
                     arguments: clone_vec(elements)?,
                     slots: Vec::new(),
                     remainder: *remainder,
+                    pathmap_mode: *pathmap_mode,
                 }
             },
-            TheoryTermFormV1::Map { collection, parameters, body } => {
-                let source_sort = source.get(collection.0 as usize).ok_or_else(|| {
-                    TheoryImageCompileError::UnknownReference {
-                        kind: "term",
-                        name: collection.0.to_string(),
-                    }
-                })?;
-                let mut parameter_sorts = empty_vec(parameters.len())?;
+            TheoryTermFormV1::Map { sources, parameters, body } => {
+                for source_id in sources {
+                    let source_term = source.get(source_id.0 as usize).ok_or_else(|| {
+                        TheoryImageCompileError::UnknownReference {
+                            kind: "term",
+                            name: source_id.0.to_string(),
+                        }
+                    })?;
+                    context.sort(&source_term.sort)?;
+                }
                 for parameter in parameters {
                     let declaration = variables.get(parameter.0 as usize).ok_or_else(|| {
                         TheoryImageCompileError::UnknownReference {
@@ -514,30 +520,27 @@ fn compile_term_nodes(
                             name: parameter.0.to_string(),
                         }
                     })?;
-                    parameter_sorts.push(context.sort(&declaration.sort)?);
+                    context.sort(&declaration.sort)?;
                 }
-                TheoryImageTermFormV1::Apply {
-                    operator: TheoryImageOperatorV1::Map {
-                        sort,
-                        source: context.sort(&source_sort.sort)?,
-                        parameters: parameter_sorts,
-                    },
-                    arguments: vec![*collection, *body],
-                    slots: clone_vec(parameters)?,
-                    remainder: None,
+                TheoryImageTermFormV1::Map {
+                    sources: clone_vec(sources)?,
+                    parameters: clone_vec(parameters)?,
+                    body: *body,
                 }
             },
-            TheoryTermFormV1::Zip { left, right } => TheoryImageTermFormV1::Apply {
-                operator: TheoryImageOperatorV1::Zip { sort },
-                arguments: vec![*left, *right],
+            TheoryTermFormV1::Product { factors } => TheoryImageTermFormV1::Apply {
+                operator: TheoryImageOperatorV1::Product { sort },
+                arguments: clone_vec(factors)?,
                 slots: Vec::new(),
                 remainder: None,
+                pathmap_mode: None,
             },
             TheoryTermFormV1::Literal(value) => TheoryImageTermFormV1::Apply {
                 operator: TheoryImageOperatorV1::Literal { sort, value: value.clone() },
                 arguments: Vec::new(),
                 slots: Vec::new(),
                 remainder: None,
+                pathmap_mode: None,
             },
         };
         terms.push(TheoryImageTermNodeV1 { sort, form });
@@ -660,12 +663,15 @@ fn terms_equal(
                 TheoryTermFormV1::Collection {
                     elements: left_elements,
                     remainder: left_remainder,
+                    pathmap_mode: left_pathmap_mode,
                 },
                 TheoryTermFormV1::Collection {
                     elements: right_elements,
                     remainder: right_remainder,
+                    pathmap_mode: right_pathmap_mode,
                 },
             ) if left_remainder == right_remainder
+                && left_pathmap_mode == right_pathmap_mode
                 && left_elements.len() == right_elements.len() =>
             {
                 pending.extend(
@@ -677,25 +683,36 @@ fn terms_equal(
             },
             (
                 TheoryTermFormV1::Map {
-                    collection: left_collection,
+                    sources: left_sources,
                     parameters: left_parameters,
                     body: left_body,
                 },
                 TheoryTermFormV1::Map {
-                    collection: right_collection,
+                    sources: right_sources,
                     parameters: right_parameters,
                     body: right_body,
                 },
-            ) if left_parameters == right_parameters => {
-                pending.push((*left_collection, *right_collection));
+            ) if left_parameters == right_parameters
+                && left_sources.len() == right_sources.len() =>
+            {
+                pending.extend(
+                    left_sources
+                        .iter()
+                        .copied()
+                        .zip(right_sources.iter().copied()),
+                );
                 pending.push((*left_body, *right_body));
             },
             (
-                TheoryTermFormV1::Zip { left: left_first, right: left_second },
-                TheoryTermFormV1::Zip { left: right_first, right: right_second },
-            ) => {
-                pending.push((*left_first, *right_first));
-                pending.push((*left_second, *right_second));
+                TheoryTermFormV1::Product { factors: left_factors },
+                TheoryTermFormV1::Product { factors: right_factors },
+            ) if left_factors.len() == right_factors.len() => {
+                pending.extend(
+                    left_factors
+                        .iter()
+                        .copied()
+                        .zip(right_factors.iter().copied()),
+                );
             },
             (TheoryTermFormV1::Literal(left), TheoryTermFormV1::Literal(right))
                 if left == right => {},
@@ -741,11 +758,10 @@ fn source_term_variables(
     arena: &TheoryRuleArenaV1,
     root: TheoryTermId,
 ) -> Result<BTreeSet<TheoryVariableId>, TheoryImageCompileError> {
-    let mut variables = BTreeSet::new();
-    let mut visited = BTreeSet::new();
+    let mut reachable = BTreeSet::new();
     let mut pending = vec![root];
     while let Some(term) = pending.pop() {
-        if !visited.insert(term) {
+        if !reachable.insert(term) {
             continue;
         }
         let node = arena.terms.get(term.0 as usize).ok_or_else(|| {
@@ -755,37 +771,109 @@ fn source_term_variables(
             }
         })?;
         match &node.form {
-            TheoryTermFormV1::Variable(variable) => {
-                variables.insert(*variable);
-            },
+            TheoryTermFormV1::Variable(_) | TheoryTermFormV1::Literal(_) => {},
             TheoryTermFormV1::Constructor { arguments, .. } => {
                 pending.extend(arguments.iter().copied());
             },
-            TheoryTermFormV1::Abstraction { binder, body } => {
-                variables.insert(*binder);
+            TheoryTermFormV1::Abstraction { body, .. } => {
                 pending.push(*body);
             },
             TheoryTermFormV1::Substitution { abstraction, argument } => {
                 pending.push(*abstraction);
                 pending.push(*argument);
             },
-            TheoryTermFormV1::Collection { elements, remainder } => {
+            TheoryTermFormV1::Collection { elements, .. } => {
                 pending.extend(elements.iter().copied());
+            },
+            TheoryTermFormV1::Map { sources, body, .. } => {
+                pending.extend(sources.iter().copied());
+                pending.push(*body);
+            },
+            TheoryTermFormV1::Product { factors } => {
+                pending.extend(factors.iter().copied());
+            },
+        }
+    }
+
+    // Rule arenas are canonical topological DAGs. Compute each reachable
+    // node's free-variable set bottom-up so a map binder is removed from its
+    // body before an enclosing use can observe it; a traversal-global set is
+    // unsound because the same DAG node may occur under distinct binders.
+    let mut free = vec![BTreeSet::new(); arena.terms.len()];
+    for (index, node) in arena.terms.iter().enumerate() {
+        let term = TheoryTermId(index as u32);
+        if !reachable.contains(&term) {
+            continue;
+        }
+        let mut variables = BTreeSet::new();
+        macro_rules! inherit {
+            ($child:expr) => {{
+                let child = $child;
+                let child_index = child.0 as usize;
+                if child_index >= index {
+                    return Err(TheoryImageCompileError::UnknownReference {
+                        kind: "non-prior term",
+                        name: format!("#{}", child.0),
+                    });
+                }
+                variables.extend(free[child_index].iter().copied());
+            }};
+        }
+        match &node.form {
+            TheoryTermFormV1::Variable(variable) => {
+                variables.insert(*variable);
+            },
+            TheoryTermFormV1::Constructor { arguments, .. } => {
+                for child in arguments {
+                    inherit!(*child);
+                }
+            },
+            TheoryTermFormV1::Abstraction { binder, body } => {
+                variables.insert(*binder);
+                inherit!(*body);
+            },
+            TheoryTermFormV1::Substitution { abstraction, argument } => {
+                inherit!(*abstraction);
+                inherit!(*argument);
+            },
+            TheoryTermFormV1::Collection { elements, remainder, .. } => {
+                for child in elements {
+                    inherit!(*child);
+                }
                 variables.extend(remainder.iter().copied());
             },
-            TheoryTermFormV1::Map { collection, parameters, body } => {
-                pending.push(*collection);
-                pending.push(*body);
-                variables.extend(parameters.iter().copied());
+            TheoryTermFormV1::Map { sources, parameters, body } => {
+                for source in sources {
+                    inherit!(*source);
+                }
+                let mut body_variables = free
+                    .get(body.0 as usize)
+                    .filter(|_| (body.0 as usize) < index)
+                    .cloned()
+                    .ok_or_else(|| TheoryImageCompileError::UnknownReference {
+                        kind: "non-prior term",
+                        name: format!("#{}", body.0),
+                    })?;
+                for parameter in parameters {
+                    body_variables.remove(parameter);
+                }
+                variables.extend(body_variables);
             },
-            TheoryTermFormV1::Zip { left, right } => {
-                pending.push(*left);
-                pending.push(*right);
+            TheoryTermFormV1::Product { factors } => {
+                for child in factors {
+                    inherit!(*child);
+                }
             },
             TheoryTermFormV1::Literal(_) => {},
         }
+        free[index] = variables;
     }
-    Ok(variables)
+    free.get(root.0 as usize)
+        .cloned()
+        .ok_or_else(|| TheoryImageCompileError::UnknownReference {
+            kind: "term",
+            name: format!("#{}", root.0),
+        })
 }
 
 fn first_unavailable_premise(
@@ -1050,26 +1138,31 @@ fn term_roots_are_positional(
                 name: format!("rule#{owner}:term#{}", term.0),
             }
         })?;
-        if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } = &node.form {
-            if remainder.is_some()
-                || !slots.is_empty()
-                || matches!(
-                    operator,
-                    TheoryImageOperatorV1::Abstraction { .. }
-                        | TheoryImageOperatorV1::Map { .. }
-                        | TheoryImageOperatorV1::Judgment { .. }
-                        | TheoryImageOperatorV1::Collection {
-                            kind: CollectionKind::Bag
-                                | CollectionKind::Set
-                                | CollectionKind::Map
-                                | CollectionKind::PathMap,
-                            ..
-                        }
-                )
-            {
-                return Ok(false);
-            }
-            pending.extend(arguments.iter().copied());
+        match &node.form {
+            TheoryImageTermFormV1::Map { .. } => return Ok(false),
+            TheoryImageTermFormV1::Apply {
+                operator, arguments, slots, remainder, ..
+            } => {
+                if remainder.is_some()
+                    || !slots.is_empty()
+                    || matches!(
+                        operator,
+                        TheoryImageOperatorV1::Abstraction { .. }
+                            | TheoryImageOperatorV1::Judgment { .. }
+                            | TheoryImageOperatorV1::Collection {
+                                kind: CollectionKind::Bag
+                                    | CollectionKind::Set
+                                    | CollectionKind::Map
+                                    | CollectionKind::PathMap,
+                                ..
+                            }
+                    )
+                {
+                    return Ok(false);
+                }
+                pending.extend(arguments.iter().copied());
+            },
+            TheoryImageTermFormV1::Slot(_) => {},
         }
     }
     Ok(true)
@@ -1099,8 +1192,17 @@ pub(crate) fn flat_pattern_from_roots(
         if std::mem::replace(&mut reachable[term.0 as usize], true) {
             continue;
         }
-        if let TheoryImageTermFormV1::Apply { arguments, .. } = &node.form {
-            pending.extend(arguments.iter().copied());
+        match &node.form {
+            TheoryImageTermFormV1::Apply { arguments, .. } => {
+                pending.extend(arguments.iter().copied());
+            },
+            TheoryImageTermFormV1::Map { .. } => {
+                return Err(TheoryImageCompileError::UnknownReference {
+                    kind: "collection comprehension in flat pattern",
+                    name: format!("rule#{owner}:term#{}", term.0),
+                });
+            },
+            TheoryImageTermFormV1::Slot(_) => {},
         }
     }
 
@@ -1115,14 +1217,24 @@ pub(crate) fn flat_pattern_from_roots(
                 TheoryImageTermFormV1::Apply { slots, remainder, .. } => {
                     slots.len() + usize::from(remainder.is_some())
                 },
+                TheoryImageTermFormV1::Map { .. } => 0,
             };
             total
                 .checked_add(slots)
                 .ok_or(TheoryImageCompileError::LengthOverflow)
         })?;
+    let mode_count = terms
+        .iter()
+        .zip(&reachable)
+        .filter(|(term, reachable)| {
+            **reachable
+                && matches!(&term.form, TheoryImageTermFormV1::Apply { pathmap_mode: Some(_), .. })
+        })
+        .count();
     let mut nodes = empty_vec(
         reachable_count
             .checked_add(slot_count)
+            .and_then(|count| count.checked_add(mode_count))
             .ok_or(TheoryImageCompileError::LengthOverflow)?,
     )?;
     let mut translated = vec![None; terms.len()];
@@ -1135,8 +1247,46 @@ pub(crate) fn flat_pattern_from_roots(
                 TheoryImageTermFormV1::Slot(variable) => {
                     FlatPatternNode::Var(automaton_variable(*variable))
                 },
-                TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } => {
-                    let mut children = empty_vec(slots.len() + arguments.len())?;
+                TheoryImageTermFormV1::Apply {
+                    operator,
+                    arguments,
+                    slots,
+                    remainder,
+                    pathmap_mode,
+                } => {
+                    let marker = match (operator, pathmap_mode) {
+                        (
+                            TheoryImageOperatorV1::Collection {
+                                sort,
+                                kind: CollectionKind::PathMap,
+                                ..
+                            },
+                            Some(mode),
+                        ) => {
+                            let marker = nodes.len();
+                            nodes.push(FlatPatternNode::App {
+                                op: TheoryImageOperatorV1::PathMapMode { sort: *sort, mode: *mode },
+                                args: Vec::new(),
+                            });
+                            Some(marker)
+                        },
+                        (_, None) => None,
+                        (_, Some(_)) => {
+                            return Err(TheoryImageCompileError::UnknownReference {
+                                kind: "PathMap mode on non-PathMap term",
+                                name: format!("rule#{owner}:term#{index}"),
+                            });
+                        },
+                    };
+                    let child_count = slots
+                        .len()
+                        .checked_add(arguments.len())
+                        .and_then(|count| count.checked_add(usize::from(marker.is_some())))
+                        .ok_or(TheoryImageCompileError::LengthOverflow)?;
+                    let mut children = empty_vec(child_count)?;
+                    if let Some(marker) = marker {
+                        children.push(marker);
+                    }
                     for variable in slots {
                         let child = nodes.len();
                         nodes.push(FlatPatternNode::Var(automaton_variable(*variable)));
@@ -1169,6 +1319,7 @@ pub(crate) fn flat_pattern_from_roots(
                             op: operator.clone(),
                             fixed: children,
                             rest: remainder.map(automaton_variable),
+                            retained: usize::from(marker.is_some()),
                         },
                         TheoryImageOperatorV1::Collection { .. } => {
                             FlatPatternNode::App { op: operator.clone(), args: children }
@@ -1181,6 +1332,12 @@ pub(crate) fn flat_pattern_from_roots(
                         },
                         _ => FlatPatternNode::App { op: operator.clone(), args: children },
                     }
+                },
+                TheoryImageTermFormV1::Map { .. } => {
+                    return Err(TheoryImageCompileError::UnknownReference {
+                        kind: "collection comprehension in flat pattern",
+                        name: format!("rule#{owner}:term#{index}"),
+                    });
                 },
             };
         let target = nodes.len();
@@ -1314,21 +1471,24 @@ fn clone_vec<T: Clone>(source: &[T]) -> Result<Vec<T>, TheoryImageCompileError> 
 mod tests {
     use super::*;
     use crate::{
-        restore_theory_pattern_automaton, theory_operator_to_machine, SemanticInputDecision,
-        SemanticInputLimits, SemanticJudgmentDecision, SemanticJudgmentHeadDecision,
-        SemanticJudgmentLimits, SemanticMatchDecision, SemanticMatchRefutation,
-        SemanticMatchUndetermined, SemanticResourceReceipt, SemanticTransitionDecision,
-        SemanticTransitionInput, SemanticTransitionLimits, SemanticTransitionMatcher,
+        restore_theory_pattern_automaton, theory_operator_to_machine,
+        SemanticActionExecutionRequest, SemanticActionMatchRequest, SemanticGuardDecision,
+        SemanticGuardEvaluator, SemanticGuardRequest, SemanticInputDecision, SemanticInputLimits,
+        SemanticJudgmentDecision, SemanticJudgmentHeadDecision, SemanticJudgmentHeadRequest,
+        SemanticJudgmentLimits, SemanticJudgmentProofRequest, SemanticMatchDecision,
+        SemanticMatchRefutation, SemanticMatchUndetermined, SemanticResourceReceipt,
+        SemanticTransitionDecision, SemanticTransitionInput, SemanticTransitionLimits,
+        SemanticTransitionMatcher,
     };
-    use dovetail::egraph::{EGraph, ENode};
+    use dovetail::egraph::{EClassId, EGraph, ENode};
     use mettail_grammar_core::{
-        Associativity, Carrier, Category, CategoryId, ConstructorId, EffectDeclV1, FieldSource,
-        GrammarCoreV1, JudgmentAtomV1, JudgmentDecisionV1, JudgmentDeclV1, JudgmentRuleV1,
-        LanguageCoreValidationError, LanguageRight, LanguageRights, Precedence, Production,
-        ProductionClass, ProductionId, ReductionPlan, SemanticEffectClassV1, SyntaxItem,
-        TheoryConstructorV1, TheoryEquationV1, TheoryLiteralV1, TheoryPremiseId,
+        Associativity, CanonicalValue, Carrier, Category, CategoryId, ConstructorId, EffectDeclV1,
+        FieldSource, GrammarCoreV1, JudgmentAtomV1, JudgmentDecisionV1, JudgmentDeclV1,
+        JudgmentRuleV1, LanguageCoreValidationError, LanguageRight, LanguageRights, Precedence,
+        Production, ProductionClass, ProductionId, ReductionPlan, SemanticEffectClassV1,
+        SyntaxItem, TheoryConstructorV1, TheoryEquationV1, TheoryLiteralV1, TheoryPremiseId,
         TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1, TheorySortV1, TheoryTermNodeV1,
-        TheoryValidationError, TheoryVariableRoleV1, TheoryVariableV1, LANGUAGE_CORE_ABI_V1,
+        TheoryValidationError, TheoryVariableRoleV1, TheoryVariableV1, LANGUAGE_CORE_ABI_CURRENT,
     };
 
     fn production(
@@ -1504,7 +1664,7 @@ mod tests {
             grade: "Expr".into(),
         });
         LanguageCoreV1 {
-            abi: LANGUAGE_CORE_ABI_V1,
+            abi: LANGUAGE_CORE_ABI_CURRENT,
             grammar,
             theory,
         }
@@ -1565,6 +1725,74 @@ mod tests {
             },
         ];
         language
+    }
+
+    fn nested_transition_fixture() -> LanguageCoreV1 {
+        let mut language = fixture();
+        language.theory.rewrites[0] = TheoryRewriteV1 {
+            name: "base-step".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: Vec::new(),
+                terms: vec![
+                    term_constructor("Zero", Vec::new()),
+                    term_constructor("Wrap", vec![TheoryTermId(0)]),
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(0),
+        };
+        language.theory.rewrites.push(TheoryRewriteV1 {
+            name: "congruence-step".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![
+                    variable(0, "source"),
+                    TheoryVariableV1 {
+                        id: TheoryVariableId(1),
+                        name: "target".into(),
+                        sort: "Expr".into(),
+                        role: TheoryVariableRoleV1::Derived,
+                    },
+                ],
+                terms: vec![
+                    term_variable(0),
+                    term_variable(1),
+                    term_constructor("Wrap", vec![TheoryTermId(0)]),
+                    term_constructor("Wrap", vec![TheoryTermId(1)]),
+                ],
+                premises: vec![TheoryPremiseNodeV1 {
+                    form: TheoryPremiseFormV1::Transition {
+                        source: TheoryVariableId(0),
+                        target: TheoryVariableId(1),
+                    },
+                }],
+                premise_roots: vec![TheoryPremiseId(0)],
+            },
+            left: TheoryTermId(2),
+            right: TheoryTermId(3),
+        });
+        language.theory.actions[0].transition =
+            TheoryRuleReferenceV1::Rewrite("congruence-step".into());
+        language
+    }
+
+    struct FixedGuardEvaluator {
+        expected_guard: [u8; 32],
+        decision: SemanticGuardDecision,
+        calls: usize,
+    }
+
+    impl SemanticGuardEvaluator for FixedGuardEvaluator {
+        fn evaluate_guard(&mut self, request: SemanticGuardRequest<'_>) -> SemanticGuardDecision {
+            assert_eq!(request.guard_commitment, self.expected_guard);
+            assert_eq!(request.rule, TheoryRuleProgramId(2));
+            assert_eq!(request.premise, 0);
+            assert!(request.work_limit > 0);
+            assert_eq!(request.substitution.len(), 1);
+            self.calls += 1;
+            self.decision
+        }
     }
 
     #[test]
@@ -1680,16 +1908,22 @@ mod tests {
             work: 100_000,
             outputs: 64,
             frontier: 100_000,
+            proofs: 64,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
             output_nodes: 64,
             output_bytes: 64 * 1024,
         };
         let decision = matcher.match_action(
-            &image,
             TheoryActionId(0),
-            &granted,
-            &mut egraph,
-            root,
-            match_limits,
+            SemanticActionMatchRequest {
+                image: &image,
+                granted_rights: &granted,
+                egraph: &mut egraph,
+                root,
+                limits: match_limits,
+            },
             || false,
         );
         let SemanticMatchDecision::Proven(proven) = decision else {
@@ -1712,12 +1946,14 @@ mod tests {
         ));
         assert_eq!(
             matcher.match_action(
-                &image,
                 TheoryActionId(0),
-                &granted,
-                &mut egraph,
-                forged_root,
-                match_limits,
+                SemanticActionMatchRequest {
+                    image: &image,
+                    granted_rights: &granted,
+                    egraph: &mut egraph,
+                    root: forged_root,
+                    limits: match_limits,
+                },
                 || false,
             ),
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
@@ -1726,24 +1962,28 @@ mod tests {
 
         assert_eq!(
             matcher.match_action(
-                &image,
                 TheoryActionId(0),
-                &LanguageRights::none(),
-                &mut egraph,
-                root,
-                match_limits,
+                SemanticActionMatchRequest {
+                    image: &image,
+                    granted_rights: &LanguageRights::none(),
+                    egraph: &mut egraph,
+                    root,
+                    limits: match_limits,
+                },
                 || false,
             ),
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
         );
         assert!(matches!(
             matcher.match_action(
-                &image,
                 TheoryActionId(0),
-                &granted,
-                &mut egraph,
-                root,
-                match_limits,
+                SemanticActionMatchRequest {
+                    image: &image,
+                    granted_rights: &granted,
+                    egraph: &mut egraph,
+                    root,
+                    limits: match_limits,
+                },
                 || true,
             ),
             SemanticMatchDecision::Undetermined {
@@ -1762,16 +2002,22 @@ mod tests {
             _ => panic!("the canonical input must be admitted"),
         };
         let decision = matcher.execute_action(
-            &image,
-            TheoryActionId(0),
-            &granted,
-            input,
-            SemanticTransitionLimits {
-                work: 10_000,
-                outputs: 4,
-                frontier: 1_000,
-                output_nodes: 16,
-                output_bytes: 64 * 1024,
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &granted,
+                input,
+                limits: SemanticTransitionLimits {
+                    work: 10_000,
+                    outputs: 4,
+                    frontier: 1_000,
+                    proofs: 64,
+                    proof_nodes: 1_000,
+                    term_nodes: 1_000,
+                    term_bytes: 64 * 1024,
+                    output_nodes: 16,
+                    output_bytes: 64 * 1024,
+                },
             },
             || false,
         );
@@ -1786,6 +2032,20 @@ mod tests {
         assert!(transition.receipt.work > 0);
         assert_ne!(transition.receipt.input, transition.receipt.output);
         assert!(proven.egraph().equiv(transition.output, wrapped));
+    }
+
+    #[test]
+    fn semantic_input_rejects_an_out_of_arena_root_without_work() {
+        let graph = EGraph::new();
+        assert!(matches!(
+            SemanticTransitionInput::admit(
+                graph,
+                EClassId(u32::MAX),
+                SemanticInputLimits { work: 1, nodes: 1, bytes: 1 },
+                || false,
+            ),
+            SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        ));
     }
 
     #[test]
@@ -1988,12 +2248,14 @@ mod tests {
             LanguageRights::from_rights([LanguageRight::Check, LanguageRight::SearchProof]);
 
         let decision = matcher.match_judgment_heads(
-            &image,
-            TheoryJudgmentId(1),
-            &proof_rights,
-            &egraph,
-            &[wrapped, wrapped],
-            u64::MAX,
+            SemanticJudgmentHeadRequest {
+                image: &image,
+                judgment: TheoryJudgmentId(1),
+                granted_rights: &proof_rights,
+                egraph: &egraph,
+                arguments: &[wrapped, wrapped],
+                work_limit: u64::MAX,
+            },
             || false,
         );
         let SemanticJudgmentHeadDecision::Proven(proven) = decision else {
@@ -2016,24 +2278,28 @@ mod tests {
 
         assert_eq!(
             matcher.match_judgment_heads(
-                &image,
-                TheoryJudgmentId(1),
-                &LanguageRights::from_rights([LanguageRight::Check]),
-                &egraph,
-                &[wrapped, wrapped],
-                u64::MAX,
+                SemanticJudgmentHeadRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(1),
+                    granted_rights: &LanguageRights::from_rights([LanguageRight::Check]),
+                    egraph: &egraph,
+                    arguments: &[wrapped, wrapped],
+                    work_limit: u64::MAX,
+                },
                 || false,
             ),
             SemanticJudgmentHeadDecision::Refuted(SemanticMatchRefutation::RequestRejected)
         );
         assert!(matches!(
             matcher.match_judgment_heads(
-                &image,
-                TheoryJudgmentId(1),
-                &proof_rights,
-                &egraph,
-                &[wrapped, wrapped],
-                u64::MAX,
+                SemanticJudgmentHeadRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(1),
+                    granted_rights: &proof_rights,
+                    egraph: &egraph,
+                    arguments: &[wrapped, wrapped],
+                    work_limit: u64::MAX,
+                },
                 || true,
             ),
             SemanticJudgmentHeadDecision::Undetermined {
@@ -2076,12 +2342,14 @@ mod tests {
         };
 
         let decision = matcher.prove_ground_judgment(
-            &image,
-            TheoryJudgmentId(1),
-            &proof_rights,
-            &egraph,
-            &[wrapped, wrapped],
-            ample,
+            SemanticJudgmentProofRequest {
+                image: &image,
+                judgment: TheoryJudgmentId(1),
+                granted_rights: &proof_rights,
+                egraph: &egraph,
+                arguments: &[wrapped, wrapped],
+                limits: ample,
+            },
             || false,
         );
         let SemanticJudgmentDecision::Proven(proven) = decision else {
@@ -2105,22 +2373,26 @@ mod tests {
 
         let exact_work = proven.work;
         let exact = matcher.prove_ground_judgment(
-            &image,
-            TheoryJudgmentId(1),
-            &proof_rights,
-            &egraph,
-            &[wrapped, wrapped],
-            SemanticJudgmentLimits { work: exact_work, ..ample },
+            SemanticJudgmentProofRequest {
+                image: &image,
+                judgment: TheoryJudgmentId(1),
+                granted_rights: &proof_rights,
+                egraph: &egraph,
+                arguments: &[wrapped, wrapped],
+                limits: SemanticJudgmentLimits { work: exact_work, ..ample },
+            },
             || false,
         );
         assert!(matches!(exact, SemanticJudgmentDecision::Proven(_)));
         let exhausted = matcher.prove_ground_judgment(
-            &image,
-            TheoryJudgmentId(1),
-            &proof_rights,
-            &egraph,
-            &[wrapped, wrapped],
-            SemanticJudgmentLimits { work: exact_work - 1, ..ample },
+            SemanticJudgmentProofRequest {
+                image: &image,
+                judgment: TheoryJudgmentId(1),
+                granted_rights: &proof_rights,
+                egraph: &egraph,
+                arguments: &[wrapped, wrapped],
+                limits: SemanticJudgmentLimits { work: exact_work - 1, ..ample },
+            },
             || false,
         );
         assert!(matches!(
@@ -2133,48 +2405,56 @@ mod tests {
 
         assert_eq!(
             matcher.prove_ground_judgment(
-                &image,
-                TheoryJudgmentId(0),
-                &proof_rights,
-                &egraph,
-                &[wrapped],
-                ample,
+                SemanticJudgmentProofRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(0),
+                    granted_rights: &proof_rights,
+                    egraph: &egraph,
+                    arguments: &[wrapped],
+                    limits: ample,
+                },
                 || false,
             ),
             SemanticJudgmentDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
         );
         assert_eq!(
             matcher.prove_ground_judgment(
-                &image,
-                TheoryJudgmentId(1),
-                &LanguageRights::from_rights([LanguageRight::Check]),
-                &egraph,
-                &[wrapped, wrapped],
-                ample,
+                SemanticJudgmentProofRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(1),
+                    granted_rights: &LanguageRights::from_rights([LanguageRight::Check]),
+                    egraph: &egraph,
+                    arguments: &[wrapped, wrapped],
+                    limits: ample,
+                },
                 || false,
             ),
             SemanticJudgmentDecision::Refuted(SemanticMatchRefutation::RequestRejected)
         );
         assert_eq!(
             matcher.prove_ground_judgment(
-                &image,
-                TheoryJudgmentId(0),
-                &proof_rights,
-                &egraph,
-                &[forged],
-                ample,
+                SemanticJudgmentProofRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(0),
+                    granted_rights: &proof_rights,
+                    egraph: &egraph,
+                    arguments: &[forged],
+                    limits: ample,
+                },
                 || false,
             ),
             SemanticJudgmentDecision::Refuted(SemanticMatchRefutation::RequestRejected)
         );
         assert!(matches!(
             matcher.prove_ground_judgment(
-                &image,
-                TheoryJudgmentId(1),
-                &proof_rights,
-                &egraph,
-                &[wrapped, wrapped],
-                ample,
+                SemanticJudgmentProofRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(1),
+                    granted_rights: &proof_rights,
+                    egraph: &egraph,
+                    arguments: &[wrapped, wrapped],
+                    limits: ample,
+                },
                 || true,
             ),
             SemanticJudgmentDecision::Undetermined {
@@ -2185,12 +2465,14 @@ mod tests {
         ));
         assert!(matches!(
             matcher.prove_ground_judgment(
-                &image,
-                TheoryJudgmentId(1),
-                &proof_rights,
-                &egraph,
-                &[wrapped, wrapped],
-                SemanticJudgmentLimits { frontier: 1, ..ample },
+                SemanticJudgmentProofRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(1),
+                    granted_rights: &proof_rights,
+                    egraph: &egraph,
+                    arguments: &[wrapped, wrapped],
+                    limits: SemanticJudgmentLimits { frontier: 1, ..ample },
+                },
                 || false,
             ),
             SemanticJudgmentDecision::Undetermined {
@@ -2200,18 +2482,173 @@ mod tests {
         ));
         assert!(matches!(
             matcher.prove_ground_judgment(
-                &image,
-                TheoryJudgmentId(1),
-                &proof_rights,
-                &egraph,
-                &[wrapped, wrapped],
-                SemanticJudgmentLimits { proofs: 1, ..ample },
+                SemanticJudgmentProofRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(1),
+                    granted_rights: &proof_rights,
+                    egraph: &egraph,
+                    arguments: &[wrapped, wrapped],
+                    limits: SemanticJudgmentLimits { proofs: 1, ..ample },
+                },
                 || false,
             ),
             SemanticJudgmentDecision::Undetermined {
                 reason: SemanticMatchUndetermined::ProofLimitExceeded,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn action_judgment_premises_share_the_checked_horn_prover_and_authority() {
+        let mut language = judgment_fixture();
+        language.theory.rewrites[0] = TheoryRewriteV1 {
+            name: "unwrap-if-zero".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![variable(0, "value")],
+                terms: vec![term_variable(0), term_constructor("Wrap", vec![TheoryTermId(0)])],
+                premises: vec![TheoryPremiseNodeV1 {
+                    form: TheoryPremiseFormV1::Judgment(JudgmentAtomV1 {
+                        judgment: "IsZero".into(),
+                        terms: vec![TheoryTermId(0)],
+                    }),
+                }],
+                premise_roots: vec![TheoryPremiseId(0)],
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(0),
+        };
+        language.theory.actions[0].transition =
+            TheoryRuleReferenceV1::Rewrite("unwrap-if-zero".into());
+        language.validate().expect("judgment-premise fixture");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile judgment-premise image");
+        let matcher = SemanticTransitionMatcher::restore(&image)
+            .expect("restore action and judgment automata");
+        let rights = LanguageRights::from_rights([
+            LanguageRight::Reduce,
+            LanguageRight::Check,
+            LanguageRight::SearchProof,
+        ]);
+        let limits = SemanticTransitionLimits {
+            work: 100_000,
+            outputs: 8,
+            frontier: 1_000,
+            proofs: 16,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
+            output_nodes: 64,
+            output_bytes: 64 * 1024,
+        };
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped_zero = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            wrapped_zero,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit judgment-premise input"),
+        };
+        let decision = matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &rights,
+                input,
+                limits,
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("a proved judgment premise must enable its rewrite");
+        };
+        assert_eq!(proven.transitions.len(), 1);
+        assert!(proven.egraph().equiv(proven.transitions[0].output, zero));
+        assert_eq!(
+            proven.transitions[0].receipt.premises,
+            vec![crate::SemanticPremiseReceipt::Judgment {
+                rule: TheoryRuleProgramId(2),
+                premise: 0,
+                judgment: TheoryJudgmentId(0),
+                proofs: 1,
+                proof_steps: 1,
+            }]
+        );
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped_zero = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let double_wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![wrapped_zero],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            double_wrapped,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit refuted judgment-premise input"),
+        };
+        assert!(matches!(
+            matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                || false,
+            ),
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+        ));
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped_zero = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            wrapped_zero,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit authority test input"),
+        };
+        assert!(matches!(
+            matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &LanguageRights::from_rights([LanguageRight::Reduce]),
+                    input,
+                    limits,
+                },
+                || false,
+            ),
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::RequestRejected)
         ));
     }
 
@@ -2275,6 +2712,7 @@ mod tests {
                     arguments: vec![TheoryTermId(0)],
                     slots: vec![TheoryVariableId(1)],
                     remainder: None,
+                    pathmap_mode: None,
                 },
             },
         ];
@@ -2284,39 +2722,11 @@ mod tests {
 
     #[test]
     fn rewrite_transition_premises_compile_as_ordered_continuations() {
-        let mut language = fixture();
-        language.theory.rewrites[0] = TheoryRewriteV1 {
-            name: "step".into(),
-            arena: TheoryRuleArenaV1 {
-                variables: vec![
-                    variable(0, "source"),
-                    TheoryVariableV1 {
-                        id: TheoryVariableId(1),
-                        name: "target".into(),
-                        sort: "Expr".into(),
-                        role: TheoryVariableRoleV1::Derived,
-                    },
-                ],
-                terms: vec![
-                    term_variable(0),
-                    term_variable(1),
-                    term_constructor("Wrap", vec![TheoryTermId(0)]),
-                ],
-                premises: vec![TheoryPremiseNodeV1 {
-                    form: TheoryPremiseFormV1::Transition {
-                        source: TheoryVariableId(0),
-                        target: TheoryVariableId(1),
-                    },
-                }],
-                premise_roots: vec![TheoryPremiseId(0)],
-            },
-            left: TheoryTermId(2),
-            right: TheoryTermId(1),
-        };
-        language.theory.actions[0].transition = TheoryRuleReferenceV1::Rewrite("step".into());
+        let language = nested_transition_fixture();
         let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
             .expect("compile transition rule");
-        let rule = &image.rules[2];
+        assert_eq!(image.actions[0].transitions, vec![TheoryRuleProgramId(3)]);
+        let rule = &image.rules[3];
         assert_eq!(rule.premise_roots, vec![0]);
         assert_eq!(
             rule.premises[0].form,
@@ -2326,6 +2736,710 @@ mod tests {
             }
         );
         assert_eq!(rule.disposition, TheoryRuleDispositionV1::Executable);
+
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore premise matcher");
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(0))),
+            Vec::new(),
+        ));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let double_wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![wrapped],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            double_wrapped,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit nested transition input"),
+        };
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let decision = matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &rights,
+                input,
+                limits: SemanticTransitionLimits {
+                    work: 100_000,
+                    outputs: 8,
+                    frontier: 1_000,
+                    proofs: 16,
+                    proof_nodes: 1_000,
+                    term_nodes: 1_000,
+                    term_bytes: 64 * 1024,
+                    output_nodes: 64,
+                    output_bytes: 64 * 1024,
+                },
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("nested transition premise must execute");
+        };
+        assert_eq!(proven.transitions.len(), 1);
+        assert!(proven.egraph().equiv(proven.transitions[0].output, wrapped));
+        assert_eq!(
+            proven.transitions[0].receipt.premises,
+            vec![crate::SemanticPremiseReceipt::Transition {
+                rule: TheoryRuleProgramId(3),
+                premise: 0,
+                child_rule: TheoryRuleProgramId(2),
+            }]
+        );
+    }
+
+    #[test]
+    fn nested_transition_relation_excludes_equations() {
+        let mut language = nested_transition_fixture();
+        language.theory.rewrites[0] = fixture()
+            .theory
+            .rewrites
+            .into_iter()
+            .next()
+            .expect("base fixture rewrite");
+        language.validate().expect("equation-exclusion fixture");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile equation-exclusion image");
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("restore equation-exclusion matcher");
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let equation_only_source = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(2))),
+            vec![wrapped, zero],
+        ));
+        let root = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![equation_only_source],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            root,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit equation-exclusion input"),
+        };
+        let decision = matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &LanguageRights::from_rights([LanguageRight::Reduce]),
+                input,
+                limits: SemanticTransitionLimits {
+                    work: 100_000,
+                    outputs: 8,
+                    frontier: 1_000,
+                    proofs: 16,
+                    proof_nodes: 1_000,
+                    term_nodes: 1_000,
+                    term_bytes: 64 * 1024,
+                    output_nodes: 64,
+                    output_bytes: 64 * 1024,
+                },
+            },
+            || false,
+        );
+        assert!(matches!(
+            decision,
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+        ));
+    }
+
+    #[test]
+    fn nested_transition_requires_its_own_reduce_authority() {
+        let mut language = nested_transition_fixture();
+        language.theory.actions[0].required_rights = LanguageRights::none();
+        language.validate().expect("nested-authority fixture");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile nested-authority image");
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("restore nested-authority matcher");
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let double_wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![wrapped],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            double_wrapped,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit nested-authority input"),
+        };
+        let decision = matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &LanguageRights::none(),
+                input,
+                limits: SemanticTransitionLimits {
+                    work: 100_000,
+                    outputs: 8,
+                    frontier: 1_000,
+                    proofs: 16,
+                    proof_nodes: 1_000,
+                    term_nodes: 1_000,
+                    term_bytes: 64 * 1024,
+                    output_nodes: 64,
+                    output_bytes: 64 * 1024,
+                },
+            },
+            || false,
+        );
+        assert!(matches!(
+            decision,
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        ));
+    }
+
+    #[test]
+    fn action_freshness_premise_accepts_only_free_occurrence_absence() {
+        let mut language = fixture();
+        language.theory.rewrites[0] = TheoryRewriteV1 {
+            name: "select-fresh-target".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![variable(0, "needle"), variable(1, "target")],
+                terms: vec![
+                    term_variable(0),
+                    term_variable(1),
+                    term_constructor("Add", vec![TheoryTermId(0), TheoryTermId(1)]),
+                ],
+                premises: vec![TheoryPremiseNodeV1 {
+                    form: TheoryPremiseFormV1::Freshness {
+                        variable: TheoryVariableId(0),
+                        target: TheoryVariableId(1),
+                        remainder: false,
+                    },
+                }],
+                premise_roots: vec![TheoryPremiseId(0)],
+            },
+            left: TheoryTermId(2),
+            right: TheoryTermId(1),
+        };
+        language.theory.actions[0].transition =
+            TheoryRuleReferenceV1::Rewrite("select-fresh-target".into());
+        language.validate().expect("freshness-premise fixture");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile freshness-premise image");
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("restore freshness-premise matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let limits = SemanticTransitionLimits {
+            work: 100_000,
+            outputs: 8,
+            frontier: 1_000,
+            proofs: 16,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
+            output_nodes: 64,
+            output_bytes: 64 * 1024,
+        };
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let root = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(2))),
+            vec![wrapped, zero],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            root,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit fresh input"),
+        };
+        let decision = matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &rights,
+                input,
+                limits,
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("absence of a free occurrence must satisfy freshness");
+        };
+        assert!(proven.egraph().equiv(proven.transitions[0].output, zero));
+        assert_eq!(
+            proven.transitions[0].receipt.premises,
+            vec![crate::SemanticPremiseReceipt::Freshness {
+                rule: TheoryRuleProgramId(2),
+                premise: 0,
+            }]
+        );
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let root = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(2))),
+            vec![zero, wrapped],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            root,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit non-fresh input"),
+        };
+        assert!(matches!(
+            matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                || false,
+            ),
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+        ));
+    }
+
+    #[test]
+    fn action_forall_premise_is_vacuous_iterative_and_scope_exact() {
+        let mut language = judgment_fixture();
+        language.theory.sorts.push(TheorySortV1 {
+            name: "ListExpr".into(),
+            kind: TheorySortKindV1::Collection {
+                kind: CollectionKind::List,
+                key: None,
+                element: "Expr".into(),
+            },
+        });
+        language.theory.rewrites[0] = TheoryRewriteV1 {
+            name: "all-zero".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![
+                    variable(0, "head"),
+                    TheoryVariableV1 {
+                        id: TheoryVariableId(1),
+                        name: "tail".into(),
+                        sort: "ListExpr".into(),
+                        role: TheoryVariableRoleV1::Remainder,
+                    },
+                    TheoryVariableV1 {
+                        id: TheoryVariableId(2),
+                        name: "value".into(),
+                        sort: "Expr".into(),
+                        role: TheoryVariableRoleV1::Quantified,
+                    },
+                ],
+                terms: vec![
+                    term_variable(0),
+                    TheoryTermNodeV1 {
+                        sort: "ListExpr".into(),
+                        form: TheoryTermFormV1::Collection {
+                            elements: vec![TheoryTermId(0)],
+                            remainder: Some(TheoryVariableId(1)),
+                            pathmap_mode: None,
+                        },
+                    },
+                    term_variable(2),
+                    TheoryTermNodeV1 {
+                        sort: "ListExpr".into(),
+                        form: TheoryTermFormV1::Collection {
+                            elements: vec![TheoryTermId(0)],
+                            remainder: None,
+                            pathmap_mode: None,
+                        },
+                    },
+                ],
+                premises: vec![
+                    TheoryPremiseNodeV1 {
+                        form: TheoryPremiseFormV1::Judgment(JudgmentAtomV1 {
+                            judgment: "IsZero".into(),
+                            terms: vec![TheoryTermId(2)],
+                        }),
+                    },
+                    TheoryPremiseNodeV1 {
+                        form: TheoryPremiseFormV1::ForAll {
+                            collection: TheoryVariableId(1),
+                            parameter: TheoryVariableId(2),
+                            body: TheoryPremiseId(0),
+                        },
+                    },
+                ],
+                premise_roots: vec![TheoryPremiseId(1)],
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(3),
+        };
+        let action = &mut language.theory.actions[0];
+        action.domain = vec!["ListExpr".into()];
+        action.codomain = "ListExpr".into();
+        action.grade = "ListExpr".into();
+        action.transition = TheoryRuleReferenceV1::Rewrite("all-zero".into());
+        language.validate().expect("forall-premise fixture");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile forall-premise image");
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("restore forall-premise matcher");
+        let rights = LanguageRights::from_rights([
+            LanguageRight::Reduce,
+            LanguageRight::Check,
+            LanguageRight::SearchProof,
+        ]);
+        let limits = SemanticTransitionLimits {
+            work: 100_000,
+            outputs: 8,
+            frontier: 1_000,
+            proofs: 16,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
+            output_nodes: 64,
+            output_bytes: 64 * 1024,
+        };
+        let collection_operator = theory_operator_to_machine(&TheoryImageOperatorV1::Collection {
+            sort: TheorySortId(1),
+            element: TheorySortId(0),
+            kind: CollectionKind::List,
+        });
+
+        for (tail_elements, expected_receipts) in [
+            (
+                0usize,
+                vec![crate::SemanticPremiseReceipt::ForAll {
+                    rule: TheoryRuleProgramId(2),
+                    premise: 1,
+                    elements: 0,
+                }],
+            ),
+            (
+                2,
+                vec![
+                    crate::SemanticPremiseReceipt::Judgment {
+                        rule: TheoryRuleProgramId(2),
+                        premise: 0,
+                        judgment: TheoryJudgmentId(0),
+                        proofs: 1,
+                        proof_steps: 1,
+                    },
+                    crate::SemanticPremiseReceipt::Judgment {
+                        rule: TheoryRuleProgramId(2),
+                        premise: 0,
+                        judgment: TheoryJudgmentId(0),
+                        proofs: 1,
+                        proof_steps: 1,
+                    },
+                    crate::SemanticPremiseReceipt::ForAll {
+                        rule: TheoryRuleProgramId(2),
+                        premise: 1,
+                        elements: 2,
+                    },
+                ],
+            ),
+        ] {
+            let mut graph = EGraph::new();
+            let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+                &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            )));
+            let root =
+                graph.add(ENode::new(collection_operator.clone(), vec![zero; tail_elements + 1]));
+            let input = match SemanticTransitionInput::admit(
+                graph,
+                root,
+                SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+                || false,
+            ) {
+                SemanticInputDecision::Proven(input) => input,
+                _ => panic!("admit forall input"),
+            };
+            let decision = matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                || false,
+            );
+            let SemanticTransitionDecision::Proven(proven) = decision else {
+                panic!("forall over only proved elements must succeed");
+            };
+            assert!(proven
+                .egraph()
+                .nodes(proven.transitions[0].output)
+                .iter()
+                .any(|node| node.op == collection_operator && node.children == [zero]));
+            assert_eq!(proven.transitions[0].receipt.premises, expected_receipts);
+            assert!(proven.transitions[0]
+                .substitution
+                .get(TheoryVariableId(0))
+                .is_some());
+            assert!(proven.transitions[0]
+                .substitution
+                .get(TheoryVariableId(1))
+                .is_some());
+            assert_eq!(
+                proven.transitions[0].substitution.get(TheoryVariableId(2)),
+                None,
+                "the quantified binding must not escape its body"
+            );
+        }
+
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let root = graph.add(ENode::new(collection_operator, vec![zero, zero, wrapped]));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            root,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit refuted forall input"),
+        };
+        assert!(matches!(
+            matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                || false,
+            ),
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+        ));
+    }
+
+    #[test]
+    fn action_guards_are_commitment_bound_three_valued_and_work_checked() {
+        let guard = CanonicalValue::String("fixture/guard/allow".into());
+        let guard_commitment =
+            theory_guard_commitment_v1(&guard).expect("canonical guard commitment");
+        let evidence_commitment = [0x5au8; 32];
+        let mut language = fixture();
+        language.theory.rewrites[0].arena.premises =
+            vec![TheoryPremiseNodeV1 { form: TheoryPremiseFormV1::Guard(guard) }];
+        language.theory.rewrites[0].arena.premise_roots = vec![TheoryPremiseId(0)];
+        language.validate().expect("guard-premise fixture");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile guard-premise image");
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("restore guard-premise matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let limits = SemanticTransitionLimits {
+            work: 100_000,
+            outputs: 8,
+            frontier: 1_000,
+            proofs: 16,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
+            output_nodes: 64,
+            output_bytes: 64 * 1024,
+        };
+        let make_input = || {
+            let mut graph = EGraph::new();
+            let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+                &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            )));
+            let wrapped = graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    TheoryConstructorId(1),
+                )),
+                vec![zero],
+            ));
+            let root = graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    TheoryConstructorId(2),
+                )),
+                vec![zero, wrapped],
+            ));
+            let input = match SemanticTransitionInput::admit(
+                graph,
+                root,
+                SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+                || false,
+            ) {
+                SemanticInputDecision::Proven(input) => input,
+                _ => panic!("admit guard input"),
+            };
+            (input, wrapped)
+        };
+
+        let (input, expected_output) = make_input();
+        let mut proven_guard = FixedGuardEvaluator {
+            expected_guard: guard_commitment,
+            decision: SemanticGuardDecision::Proven { evidence_commitment, work: 3 },
+            calls: 0,
+        };
+        let decision = matcher.execute_action_with_guards(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &rights,
+                input,
+                limits,
+            },
+            &mut proven_guard,
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("proved guard must enable the transition");
+        };
+        assert_eq!(proven_guard.calls, 1);
+        assert!(proven
+            .egraph()
+            .equiv(proven.transitions[0].output, expected_output));
+        assert_eq!(
+            proven.transitions[0].receipt.premises,
+            vec![crate::SemanticPremiseReceipt::Guard {
+                rule: TheoryRuleProgramId(2),
+                premise: 0,
+                guard_commitment,
+                evidence_commitment,
+            }]
+        );
+
+        let (input, _) = make_input();
+        let mut refuted_guard = FixedGuardEvaluator {
+            expected_guard: guard_commitment,
+            decision: SemanticGuardDecision::Refuted { work: 2 },
+            calls: 0,
+        };
+        assert!(matches!(
+            matcher.execute_action_with_guards(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                &mut refuted_guard,
+                || false,
+            ),
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+        ));
+        assert_eq!(refuted_guard.calls, 1);
+
+        let (input, _) = make_input();
+        let mut undetermined_guard = FixedGuardEvaluator {
+            expected_guard: guard_commitment,
+            decision: SemanticGuardDecision::Undetermined {
+                reason: SemanticMatchUndetermined::PremiseEvaluationUnavailable,
+                work: 2,
+            },
+            calls: 0,
+        };
+        assert!(matches!(
+            matcher.execute_action_with_guards(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                &mut undetermined_guard,
+                || false,
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::PremiseEvaluationUnavailable,
+                ..
+            }
+        ));
+        assert_eq!(undetermined_guard.calls, 1);
+
+        let (input, _) = make_input();
+        let mut dishonest_guard = FixedGuardEvaluator {
+            expected_guard: guard_commitment,
+            decision: SemanticGuardDecision::Proven { evidence_commitment, work: u64::MAX },
+            calls: 0,
+        };
+        assert!(matches!(
+            matcher.execute_action_with_guards(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                &mut dishonest_guard,
+                || false,
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                ..
+            }
+        ));
+
+        let (input, _) = make_input();
+        assert!(matches!(
+            matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input,
+                    limits,
+                },
+                || false,
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::PremiseEvaluationUnavailable,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2351,6 +3465,7 @@ mod tests {
                         form: TheoryTermFormV1::Collection {
                             elements: vec![TheoryTermId(0), TheoryTermId(1)],
                             remainder: None,
+                            pathmap_mode: None,
                         },
                     },
                     TheoryTermNodeV1 {
@@ -2358,6 +3473,7 @@ mod tests {
                         form: TheoryTermFormV1::Collection {
                             elements: vec![TheoryTermId(0)],
                             remainder: None,
+                            pathmap_mode: None,
                         },
                     },
                 ],
@@ -2411,6 +3527,7 @@ mod tests {
                         form: TheoryTermFormV1::Collection {
                             elements: vec![TheoryTermId(0)],
                             remainder: Some(TheoryVariableId(1)),
+                            pathmap_mode: None,
                         },
                     },
                     TheoryTermNodeV1 {
@@ -2418,6 +3535,7 @@ mod tests {
                         form: TheoryTermFormV1::Collection {
                             elements: vec![TheoryTermId(0)],
                             remainder: None,
+                            pathmap_mode: None,
                         },
                     },
                 ],
@@ -2468,16 +3586,22 @@ mod tests {
             work: 100_000,
             outputs: 8,
             frontier: 100_000,
+            proofs: 64,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
             output_nodes: 64,
             output_bytes: 64 * 1024,
         };
         let decision = matcher.match_action(
-            &image,
             TheoryActionId(0),
-            &granted,
-            &mut graph,
-            root,
-            limits,
+            SemanticActionMatchRequest {
+                image: &image,
+                granted_rights: &granted,
+                egraph: &mut graph,
+                root,
+                limits,
+            },
             || false,
         );
         let SemanticMatchDecision::Proven(proven) = decision else {
@@ -2507,8 +3631,16 @@ mod tests {
             SemanticInputDecision::Proven(input) => input,
             _ => panic!("generalized input must be admitted"),
         };
-        let decision =
-            matcher.execute_action(&image, TheoryActionId(0), &granted, input, limits, || false);
+        let decision = matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &granted,
+                input,
+                limits,
+            },
+            || false,
+        );
         let SemanticTransitionDecision::Proven(proven) = decision else {
             panic!("generalized action must execute");
         };
@@ -2520,6 +3652,194 @@ mod tests {
                 .iter()
                 .any(|node| node.op == collection_operator && node.children.len() == 1)
         }));
+    }
+
+    #[test]
+    fn successful_publication_omits_refuted_branch_and_unreachable_nodes() {
+        let mut language = fixture();
+        language.theory.sorts.push(TheorySortV1 {
+            name: "SetExpr".into(),
+            kind: TheorySortKindV1::Collection {
+                kind: CollectionKind::Set,
+                key: None,
+                element: "Expr".into(),
+            },
+        });
+        language.theory.rewrites.push(TheoryRewriteV1 {
+            name: "choose-fresh".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![
+                    variable(0, "selected"),
+                    TheoryVariableV1 {
+                        id: TheoryVariableId(1),
+                        name: "rest".into(),
+                        sort: "SetExpr".into(),
+                        role: TheoryVariableRoleV1::Remainder,
+                    },
+                ],
+                terms: vec![
+                    term_variable(0),
+                    TheoryTermNodeV1 {
+                        sort: "SetExpr".into(),
+                        form: TheoryTermFormV1::Collection {
+                            elements: vec![TheoryTermId(0)],
+                            remainder: Some(TheoryVariableId(1)),
+                            pathmap_mode: None,
+                        },
+                    },
+                    TheoryTermNodeV1 {
+                        sort: "SetExpr".into(),
+                        form: TheoryTermFormV1::Collection {
+                            elements: vec![TheoryTermId(0)],
+                            remainder: None,
+                            pathmap_mode: None,
+                        },
+                    },
+                ],
+                premises: vec![TheoryPremiseNodeV1 {
+                    form: TheoryPremiseFormV1::Freshness {
+                        variable: TheoryVariableId(0),
+                        target: TheoryVariableId(1),
+                        remainder: true,
+                    },
+                }],
+                premise_roots: vec![TheoryPremiseId(0)],
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(2),
+        });
+        let action = &mut language.theory.actions[0];
+        action.domain = vec!["SetExpr".into()];
+        action.codomain = "SetExpr".into();
+        action.grade = "SetExpr".into();
+        action.transition = TheoryRuleReferenceV1::Rewrite("choose-fresh".into());
+        language.validate().expect("reachable-publication fixture");
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile reachable-publication image");
+        let matcher = SemanticTransitionMatcher::restore(&image)
+            .expect("restore reachable-publication matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let collection_operator = theory_operator_to_machine(&TheoryImageOperatorV1::Collection {
+            sort: TheorySortId(1),
+            element: TheorySortId(0),
+            kind: CollectionKind::Set,
+        });
+        let make_input = || {
+            let mut graph = EGraph::new();
+            let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+                &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            )));
+            let wrapped = graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    TheoryConstructorId(1),
+                )),
+                vec![zero],
+            ));
+            let sum = graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    TheoryConstructorId(2),
+                )),
+                vec![zero, wrapped],
+            ));
+            let _unreachable = graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    TheoryConstructorId(1),
+                )),
+                vec![sum],
+            ));
+            for id in 100..228 {
+                graph.add(ENode::leaf(theory_operator_to_machine(
+                    &TheoryImageOperatorV1::Constructor(TheoryConstructorId(id)),
+                )));
+            }
+            let mut elements = vec![zero, wrapped, sum];
+            elements.sort_by_cached_key(|&element| graph.canonical_class_key(element));
+            let root = graph.add(ENode::new(collection_operator.clone(), elements));
+            let input = match SemanticTransitionInput::admit(
+                graph,
+                root,
+                SemanticInputLimits { work: 10_000, nodes: 4, bytes: 64 * 1024 },
+                || false,
+            ) {
+                SemanticInputDecision::Proven(input) => input,
+                _ => panic!("admit reachable-publication input"),
+            };
+            assert_eq!(
+                input.egraph().node_count(),
+                4,
+                "input admission must discard the unrelated private class"
+            );
+            input
+        };
+        let limits = SemanticTransitionLimits {
+            work: 100_000,
+            outputs: 8,
+            frontier: 1_000,
+            proofs: 16,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
+            output_nodes: 5,
+            output_bytes: 64 * 1024,
+        };
+        let decision = matcher.execute_action(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: TheoryActionId(0),
+                granted_rights: &rights,
+                input: make_input(),
+                limits,
+            },
+            || false,
+        );
+        let proven = match decision {
+            SemanticTransitionDecision::Proven(proven) => proven,
+            SemanticTransitionDecision::Refuted(reason) => {
+                panic!("the unique fresh selection was refuted: {reason:?}")
+            },
+            SemanticTransitionDecision::Undetermined { reason, work, .. } => {
+                panic!("the unique fresh selection was undetermined after {work} work: {reason:?}")
+            },
+        };
+        assert_eq!(proven.transitions.len(), 1);
+        assert_eq!(proven.egraph().node_count(), 5);
+        let transition = &proven.transitions[0];
+        let selected = transition
+            .substitution
+            .get(TheoryVariableId(0))
+            .expect("selected binding");
+        assert!(proven.egraph().nodes(selected).iter().any(|node| {
+            node.op
+                == theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    TheoryConstructorId(2),
+                ))
+        }));
+        let mut published_collection_arities = proven
+            .egraph()
+            .classes()
+            .flat_map(|class| proven.egraph().nodes(class))
+            .filter(|node| node.op == collection_operator)
+            .map(|node| node.children.len())
+            .collect::<Vec<_>>();
+        published_collection_arities.sort_unstable();
+        assert_eq!(published_collection_arities, vec![1, 2]);
+
+        assert!(matches!(
+            matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input: make_input(),
+                    limits: SemanticTransitionLimits { output_nodes: 4, ..limits },
+                },
+                || false,
+            ),
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                ..
+            }
+        ));
     }
 
     #[test]

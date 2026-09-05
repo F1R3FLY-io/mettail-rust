@@ -35,6 +35,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.GeneratedSemanticAdapter \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
+	RuntimeGrammar.CollectionComprehension \
 	RuntimeGrammar.SemanticTransitionKernel \
 	RuntimeGrammar.RegexGsltSyntax \
 	RuntimeGrammar.RegexGsltMatch \
@@ -46,7 +47,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 all: check-security-kernel
 
 check-security-kernel: $(patsubst RuntimeGrammar.%,theories/%.vo,$(RUNTIME_GRAMMAR_SECURITY_MODULES))
-	rocqchk -silent -Q theories RuntimeGrammar $(RUNTIME_GRAMMAR_SECURITY_MODULES)
+	$(COQCHK) -silent $(COQLIBS_NOML) $(RUNTIME_GRAMMAR_SECURITY_MODULES)
 
 clean::
 	@if [ -f CoqMakefile ]; then $(MAKE) -f CoqMakefile clean; fi

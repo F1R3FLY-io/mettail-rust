@@ -21,6 +21,7 @@
 From Stdlib Require Import List Bool PeanoNat Permutation.
 From Stdlib Require Import Lia.
 From Dovetail.Lowering Require Import CollectionAcLowering.
+From RuntimeGrammar Require Import CollectionComprehension.
 
 Import ListNotations.
 
@@ -88,6 +89,81 @@ Theorem same_sort_rule_backed_action_is_endomorphic :
 Proof.
   intros action rule [Hdomain Hcodomain] Hsame.
   rewrite Hdomain, Hcodomain, Hsame. reflexivity.
+Qed.
+
+(** An action label selects only its declared rule identifiers.  A transition
+    premise has different semantics: it queries the theory-wide rewrite
+    relation at the premise's source sort.  Equations remain structural
+    congruence and therefore cannot become nested transition steps. *)
+Inductive RuleOrigin :=
+| EquationOrigin
+| RewriteOrigin.
+
+Record TransitionRuleManifest := {
+  transition_rule_id : RuleId;
+  transition_rule_origin : RuleOrigin;
+  transition_rule_source_sort : SortId;
+  transition_rule_target_sort : SortId;
+  transition_rule_executable : bool
+}.
+
+Definition action_rule_selected
+    (rule_ids : list RuleId) (rule : TransitionRuleManifest) : bool :=
+  transition_rule_executable rule &&
+  existsb (Nat.eqb (transition_rule_id rule)) rule_ids.
+
+Definition rewrite_relation_rule_selected
+    (sort : SortId) (rule : TransitionRuleManifest) : bool :=
+  transition_rule_executable rule &&
+  match transition_rule_origin rule with
+  | EquationOrigin => false
+  | RewriteOrigin => Nat.eqb (transition_rule_source_sort rule) sort
+  end.
+
+Theorem rewrite_relation_selects_exactly_executable_same_sort_rewrites :
+  forall sort rule,
+    rewrite_relation_rule_selected sort rule = true <->
+    transition_rule_executable rule = true /\
+    transition_rule_origin rule = RewriteOrigin /\
+    transition_rule_source_sort rule = sort.
+Proof.
+  intros sort [rule_id origin source_sort target_sort executable].
+  unfold rewrite_relation_rule_selected.
+  destruct origin; simpl.
+  - split.
+    + intro Hselected. destruct executable; discriminate Hselected.
+    + intros [_ [Horigin _]]. discriminate Horigin.
+  - destruct executable; simpl.
+    + split.
+      * intro Hselected. apply Nat.eqb_eq in Hselected.
+        repeat split; try reflexivity; exact Hselected.
+      * intros [_ [_ Hsort]]. apply Nat.eqb_eq. exact Hsort.
+    + split.
+      * intro Himpossible. discriminate Himpossible.
+      * intros [Hfalse _]. discriminate Hfalse.
+Qed.
+
+Theorem rewrite_relation_never_selects_an_equation :
+  forall sort rule,
+    transition_rule_origin rule = EquationOrigin ->
+    rewrite_relation_rule_selected sort rule = false.
+Proof.
+  intros sort [rule_id origin source_sort target_sort executable] Horigin.
+  unfold rewrite_relation_rule_selected.
+  destruct origin; simpl; [destruct executable; reflexivity|discriminate].
+Qed.
+
+Theorem action_selection_does_not_confine_the_rewrite_relation :
+  forall action_rules nested_rule sort,
+    transition_rule_executable nested_rule = true ->
+    transition_rule_origin nested_rule = RewriteOrigin ->
+    transition_rule_source_sort nested_rule = sort ->
+    action_rule_selected action_rules nested_rule = false ->
+    rewrite_relation_rule_selected sort nested_rule = true.
+Proof.
+  intros action_rules nested_rule sort Hexecutable Horigin Hsort _.
+  apply rewrite_relation_selects_exactly_executable_same_sort_rewrites.
+  repeat split; assumption.
 Qed.
 
 Fixpoint nat_list_eqb (left right : list nat) : bool :=
@@ -1241,9 +1317,7 @@ Inductive RuntimeOperator :=
 | RuntimeSubstitution (function_sort : SortId)
 | RuntimeCollectionLiteral
     (collection_sort element_sort : SortId) (kind : nat)
-| RuntimeMap
-    (source_sort target_sort : SortId) (parameter_sorts : list SortId)
-| RuntimeZip (product_sort : SortId)
+| RuntimeProductNode (product_sort : SortId)
 | RuntimeLiteral (sort : SortId) (carrier : nat).
 
 Inductive RuntimeChildContract :=
@@ -1315,20 +1389,7 @@ Definition runtime_operator_signature
           else None
       | _ => None
       end
-  | RuntimeMap source_sort target_sort parameter_sorts =>
-      match nth_error sorts source_sort, nth_error sorts target_sort with
-      | Some (RuntimeCollection source_kind _ source_element),
-        Some (RuntimeCollection target_kind _ target_element) =>
-          if Nat.eqb source_kind target_kind &&
-             nat_list_eqb parameter_sorts
-               (map_parameter_sorts sorts source_element)
-          then Some {| runtime_result_sort := target_sort;
-                       runtime_child_contract := FixedChildren
-                         (parameter_sorts ++ [source_sort; target_element]) |}
-          else None
-      | _, _ => None
-      end
-  | RuntimeZip product_sort =>
+  | RuntimeProductNode product_sort =>
       match nth_error sorts product_sort with
       | Some (RuntimeProduct [left_sort; right_sort]) =>
           Some {| runtime_result_sort := product_sort;
@@ -1380,24 +1441,17 @@ Example result_only_substitution_signature_is_ambiguous :
             runtime_child_contract := FixedChildren [1; 1] |}.
 Proof. split; reflexivity. Qed.
 
-Theorem map_signature_preserves_the_complete_binding_telescope :
-  forall sorts source target source_kind source_element target_element
-         parameters,
-    nth_error sorts source =
-      Some (RuntimeCollection source_kind None source_element) ->
-    nth_error sorts target =
-      Some (RuntimeCollection source_kind None target_element) ->
-    map_parameter_sorts sorts source_element = parameters ->
-    runtime_operator_signature sorts (RuntimeMap source target parameters) =
-      Some {| runtime_result_sort := target;
-              runtime_child_contract := FixedChildren
-                (parameters ++ [source; target_element]) |}.
+Theorem product_signature_preserves_binary_product_factors :
+  forall sorts product_sort left_sort right_sort,
+    nth_error sorts product_sort =
+      Some (RuntimeProduct [left_sort; right_sort]) ->
+    runtime_operator_signature sorts (RuntimeProductNode product_sort) =
+      Some {| runtime_result_sort := product_sort;
+              runtime_child_contract :=
+                FixedChildren [left_sort; right_sort] |}.
 Proof.
-  intros sorts source target source_kind source_element target_element
-    parameters Hsource Htarget Hparameters.
-  simpl. rewrite Hsource, Htarget, Nat.eqb_refl, Hparameters.
-  rewrite (proj2 (nat_list_eqb_spec parameters parameters) eq_refl).
-  reflexivity.
+  intros sorts product_sort left_sort right_sort Hproduct.
+  simpl. now rewrite Hproduct.
 Qed.
 
 (** A judgment conclusion has a synthetic operator and ground argument
@@ -1428,6 +1482,548 @@ Theorem virtual_application_matches_singleton_physical_root :
     evaluate_virtual_application evaluate view =
     evaluate_singleton_physical_root evaluate [view].
 Proof. reflexivity. Qed.
+
+(** Freshness is absence of a free occurrence, not absence of a syntactic
+    occurrence.  The runtime graph stores an abstraction binder and body as
+    two child e-classes, but a freshness traversal never descends into the
+    binder position.  A binder equal to the sought term also shields the
+    complete body.  These rules are independent of the concrete arena and
+    therefore apply equally to trees, shared DAGs, and cyclic e-graphs; the
+    implementation's visited set is solely a bounded termination mechanism. *)
+Inductive RuntimeFreshnessNode :=
+| RuntimePlainNode (children : list nat)
+| RuntimeAbstractionNode (binder body : nat).
+
+Definition RuntimeFreshnessGraph := nat -> option RuntimeFreshnessNode.
+
+Inductive FreeOccurrence
+    (graph : RuntimeFreshnessGraph) (needle : nat) : nat -> Prop :=
+| FreeOccurrenceHere : FreeOccurrence graph needle needle
+| FreeOccurrencePlain : forall root children child,
+    graph root = Some (RuntimePlainNode children) ->
+    In child children ->
+    FreeOccurrence graph needle child ->
+    FreeOccurrence graph needle root
+| FreeOccurrenceAbstraction : forall root binder body,
+    graph root = Some (RuntimeAbstractionNode binder body) ->
+    binder <> needle ->
+    FreeOccurrence graph needle body ->
+    FreeOccurrence graph needle root.
+
+Definition freshness_holds
+    (graph : RuntimeFreshnessGraph) (needle target : nat) : Prop :=
+  ~ FreeOccurrence graph needle target.
+
+Inductive FreshnessStep :=
+| FreshnessFound
+| FreshnessContinue (children : list nat)
+| FreshnessMalformed.
+
+(** The equality check precedes graph inspection, exactly as in the runtime
+    worklist.  Consequently the root itself is observable even if it is also
+    an abstraction, while the binder child is never scheduled. *)
+Definition freshness_step
+    (graph : RuntimeFreshnessGraph) (needle root : nat) : FreshnessStep :=
+  if Nat.eqb root needle then FreshnessFound
+  else
+    match graph root with
+    | None => FreshnessMalformed
+    | Some (RuntimePlainNode children) => FreshnessContinue children
+    | Some (RuntimeAbstractionNode binder body) =>
+        if Nat.eqb binder needle
+        then FreshnessContinue []
+        else FreshnessContinue [body]
+    end.
+
+Theorem matching_abstraction_binder_schedules_no_body :
+  forall graph root needle body,
+    root <> needle ->
+    graph root = Some (RuntimeAbstractionNode needle body) ->
+    freshness_step graph needle root = FreshnessContinue [].
+Proof.
+  intros graph root needle body Hroot Hgraph.
+  unfold freshness_step.
+  destruct (Nat.eqb root needle) eqn:Hsame.
+  - apply Nat.eqb_eq in Hsame. contradiction.
+  - rewrite Hgraph, Nat.eqb_refl. reflexivity.
+Qed.
+
+Theorem different_abstraction_binder_schedules_exactly_the_body :
+  forall graph root needle binder body,
+    root <> needle ->
+    binder <> needle ->
+    graph root = Some (RuntimeAbstractionNode binder body) ->
+    freshness_step graph needle root = FreshnessContinue [body].
+Proof.
+  intros graph root needle binder body Hroot Hbinder Hgraph.
+  unfold freshness_step.
+  destruct (Nat.eqb root needle) eqn:Hsame.
+  - apply Nat.eqb_eq in Hsame. contradiction.
+  - rewrite Hgraph.
+    destruct (Nat.eqb binder needle) eqn:Hsame_binder.
+    + apply Nat.eqb_eq in Hsame_binder. contradiction.
+    + reflexivity.
+Qed.
+
+Theorem matching_abstraction_binder_shields_every_body_occurrence :
+  forall graph root needle body,
+    root <> needle ->
+    graph root = Some (RuntimeAbstractionNode needle body) ->
+    freshness_holds graph needle root.
+Proof.
+  intros graph root needle body Hroot Hgraph Hoccurs.
+  inversion Hoccurs as
+    [|root' children child Hplain Hin Hchild
+     |root' binder' body' Habstraction Hbinder Hbody]; subst.
+  - contradiction.
+  - rewrite Hgraph in Hplain. discriminate.
+  - rewrite Hgraph in Habstraction. inversion Habstraction; subst.
+    apply Hbinder. reflexivity.
+Qed.
+
+Theorem different_abstraction_binder_preserves_body_freedom :
+  forall graph root needle binder body,
+    root <> needle ->
+    binder <> needle ->
+    graph root = Some (RuntimeAbstractionNode binder body) ->
+    (FreeOccurrence graph needle body <->
+     FreeOccurrence graph needle root).
+Proof.
+  intros graph root needle binder body Hroot Hbinder Hgraph.
+  split.
+  - intro Hbody. eapply FreeOccurrenceAbstraction; eauto.
+  - intro Hroot_occurs.
+    inversion Hroot_occurs as
+      [|root' children child Hplain Hin Hchild
+       |root' binder' body' Habstraction Hbinder' Hbody]; subst.
+    + contradiction.
+    + rewrite Hgraph in Hplain. discriminate.
+    + rewrite Hgraph in Habstraction. inversion Habstraction; subst.
+      exact Hbody.
+Qed.
+
+(** Successful execution may allocate nodes for branches that are ultimately
+    refuted.  Publication therefore copies a closed reachable subgraph into a
+    fresh arena.  Outputs and exported substitution values are the roots; no
+    other private node is an observable root. *)
+Record PublicationNode := {
+  publication_label : nat;
+  publication_children : list nat
+}.
+
+Definition PublicationGraph := nat -> option PublicationNode.
+
+Inductive ReachableFrom
+    (graph : PublicationGraph) (roots : list nat) : nat -> Prop :=
+| ReachableRoot : forall root,
+    In root roots -> ReachableFrom graph roots root
+| ReachableChild : forall parent node children,
+    ReachableFrom graph roots parent ->
+    graph parent = Some node ->
+    In children (publication_children node) ->
+    ReachableFrom graph roots children.
+
+Definition all_reachable
+    (graph : PublicationGraph) (roots nodes : list nat) : Prop :=
+  Forall (ReachableFrom graph roots) nodes.
+
+Lemma reachable_children_of_a_reachable_parent :
+  forall graph roots parent node,
+    ReachableFrom graph roots parent ->
+    graph parent = Some node ->
+    all_reachable graph roots (publication_children node).
+Proof.
+  intros graph roots parent node Hparent Hnode.
+  unfold all_reachable. apply Forall_forall.
+  intros child Hchild.
+  eapply ReachableChild; eauto.
+Qed.
+
+Theorem iterative_projection_pushes_only_reachable_nodes :
+  forall graph roots parent node pending discovered,
+    all_reachable graph roots (parent :: pending) ->
+    all_reachable graph roots discovered ->
+    graph parent = Some node ->
+    all_reachable graph roots
+      (publication_children node ++ pending) /\
+    all_reachable graph roots (parent :: discovered).
+Proof.
+  intros graph roots parent node pending discovered
+    Hpending Hdiscovered Hnode.
+  inversion Hpending as [|parent' pending' Hparent Hrest]; subst.
+  split.
+  - unfold all_reachable in *.
+    apply Forall_app. split.
+    + now apply reachable_children_of_a_reachable_parent with (parent := parent).
+    + exact Hrest.
+  - constructor; assumption.
+Qed.
+
+Inductive ChildrenRemapped (remap : nat -> option nat)
+    : list nat -> list nat -> Prop :=
+| ChildrenRemappedNil : ChildrenRemapped remap [] []
+| ChildrenRemappedCons : forall source target sources targets,
+    remap source = Some target ->
+    ChildrenRemapped remap sources targets ->
+    ChildrenRemapped remap (source :: sources) (target :: targets).
+
+Record ReachabilityProjection
+    (source : PublicationGraph) (roots : list nat) := {
+  projection_remap : nat -> option nat;
+  projection_graph : PublicationGraph;
+  projection_roots_valid : forall source_id,
+    In source_id roots -> exists source_node, source source_id = Some source_node;
+  projection_domain_exact : forall source_id,
+    ReachableFrom source roots source_id <->
+    exists target_id, projection_remap source_id = Some target_id;
+  projection_nodes_exact : forall source_id target_id source_node,
+    projection_remap source_id = Some target_id ->
+    source source_id = Some source_node ->
+    exists target_children,
+      ChildrenRemapped projection_remap
+        (publication_children source_node) target_children /\
+      projection_graph target_id =
+        Some {| publication_label := publication_label source_node;
+                publication_children := target_children |}
+}.
+
+Theorem invalid_publication_root_has_no_projection :
+  forall source roots root,
+    In root roots ->
+    source root = None ->
+    ReachabilityProjection source roots -> False.
+Proof.
+  intros source roots root Hroot Hmissing projection.
+  destruct (projection_roots_valid source roots projection root Hroot)
+    as [source_node Hsource].
+  rewrite Hmissing in Hsource. discriminate.
+Qed.
+
+Theorem unreachable_private_node_has_no_published_identifier :
+  forall source roots (projection : ReachabilityProjection source roots) private,
+    ~ ReachableFrom source roots private ->
+    projection_remap source roots projection private = None.
+Proof.
+  intros source roots projection private Hunreachable.
+  destruct (projection_remap source roots projection private) as [target|] eqn:Hmap;
+    [|reflexivity].
+  exfalso. apply Hunreachable.
+  apply (proj2 (projection_domain_exact source roots projection private)).
+  now exists target.
+Qed.
+
+Theorem every_publication_root_receives_an_identifier :
+  forall source roots (projection : ReachabilityProjection source roots) root,
+    In root roots ->
+    exists target, projection_remap source roots projection root = Some target.
+Proof.
+  intros source roots projection root Hroot.
+  apply (proj1 (projection_domain_exact source roots projection root)).
+  now apply ReachableRoot.
+Qed.
+
+Theorem projected_children_preserve_order_and_arity :
+  forall remap sources targets,
+    ChildrenRemapped remap sources targets ->
+    length sources = length targets.
+Proof.
+  intros remap sources targets Hmapped.
+  induction Hmapped; simpl; congruence.
+Qed.
+
+(** Canonical collection admission is part of the transition boundary, not a
+    convenience performed by callers.  [ExactKey] abstracts the complete
+    framed structural key computed by the Rust implementation; naturals give
+    us a decidable total order without assuming a finite digest is identity.
+
+    A PathMap carries an explicit mode independently of its entry count.  Its
+    three empty values are therefore distinct, and its physical encoding has
+    one leading mode marker.  Set-mode payloads contain keys, whereas map-mode
+    payloads contain key/value pairs. *)
+Definition ExactKey := nat.
+
+Inductive RuntimeCollectionKind :=
+| AdmissionList
+| AdmissionBag
+| AdmissionSet
+| AdmissionMap
+| AdmissionPathMap.
+
+Inductive RuntimePathMapMode :=
+| RuntimePathMapNeutral
+| RuntimePathMapSet
+| RuntimePathMapMap.
+
+Inductive RuntimeCollectionEntry :=
+| RuntimeValueEntry (value : ExactKey)
+| RuntimePairEntry (key value : ExactKey).
+
+Fixpoint value_entries_only (entries : list RuntimeCollectionEntry) : Prop :=
+  match entries with
+  | [] => True
+  | RuntimeValueEntry _ :: rest => value_entries_only rest
+  | RuntimePairEntry _ _ :: _ => False
+  end.
+
+Fixpoint pair_entries_only (entries : list RuntimeCollectionEntry) : Prop :=
+  match entries with
+  | [] => True
+  | RuntimePairEntry _ _ :: rest => pair_entries_only rest
+  | RuntimeValueEntry _ :: _ => False
+  end.
+
+Fixpoint entry_keys (entries : list RuntimeCollectionEntry) : list ExactKey :=
+  match entries with
+  | [] => []
+  | RuntimeValueEntry value :: rest => value :: entry_keys rest
+  | RuntimePairEntry key _ :: rest => key :: entry_keys rest
+  end.
+
+Fixpoint keys_nondecreasing (keys : list ExactKey) : Prop :=
+  match keys with
+  | [] => True
+  | key :: rest =>
+      (forall later, In later rest -> key <= later) /\
+      keys_nondecreasing rest
+  end.
+
+Fixpoint keys_strictly_increasing (keys : list ExactKey) : Prop :=
+  match keys with
+  | [] => True
+  | key :: rest =>
+      (forall later, In later rest -> key < later) /\
+      keys_strictly_increasing rest
+  end.
+
+Definition canonical_runtime_collection
+    (kind : RuntimeCollectionKind)
+    (mode : option RuntimePathMapMode)
+  (entries : list RuntimeCollectionEntry) : Prop :=
+  match kind with
+  | AdmissionList => mode = None /\ value_entries_only entries
+  | AdmissionBag =>
+      mode = None /\ value_entries_only entries /\
+      keys_nondecreasing (entry_keys entries)
+  | AdmissionSet =>
+      mode = None /\ value_entries_only entries /\
+      keys_strictly_increasing (entry_keys entries)
+  | AdmissionMap =>
+      mode = None /\ pair_entries_only entries /\
+      keys_strictly_increasing (entry_keys entries)
+  | AdmissionPathMap =>
+      match mode with
+      | None => False
+      | Some RuntimePathMapNeutral => entries = []
+      | Some RuntimePathMapSet =>
+          value_entries_only entries /\
+          keys_strictly_increasing (entry_keys entries)
+      | Some RuntimePathMapMap =>
+          pair_entries_only entries /\
+          keys_strictly_increasing (entry_keys entries)
+      end
+  end.
+
+Lemma strictly_increasing_keys_are_unique :
+  forall keys,
+    keys_strictly_increasing keys -> NoDup keys.
+Proof.
+  induction keys as [|key rest IH]; simpl.
+  - constructor.
+  - intros [Hless Hrest]. constructor.
+    + intro Hin. specialize (Hless key Hin). lia.
+    + now apply IH.
+Qed.
+
+Theorem canonical_set_has_no_duplicate_values :
+  forall entries,
+    canonical_runtime_collection AdmissionSet None entries ->
+    NoDup (entry_keys entries).
+Proof.
+  intros entries [_ [_ Hstrict]].
+  now apply strictly_increasing_keys_are_unique.
+Qed.
+
+Theorem canonical_map_has_no_duplicate_keys :
+  forall entries,
+    canonical_runtime_collection AdmissionMap None entries ->
+    NoDup (entry_keys entries).
+Proof.
+  intros entries [_ [_ Hstrict]].
+  now apply strictly_increasing_keys_are_unique.
+Qed.
+
+Theorem canonical_pathmap_has_explicit_mode :
+  forall mode entries,
+    canonical_runtime_collection AdmissionPathMap mode entries ->
+    exists exact_mode, mode = Some exact_mode.
+Proof.
+  intros [exact_mode|] entries Hcanonical.
+  - now exists exact_mode.
+  - exact (False_rect _ Hcanonical).
+Qed.
+
+Theorem canonical_pathmap_set_has_no_duplicate_keys :
+  forall entries,
+    canonical_runtime_collection
+      AdmissionPathMap (Some RuntimePathMapSet) entries ->
+    NoDup (entry_keys entries).
+Proof.
+  intros entries [_ Hstrict].
+  now apply strictly_increasing_keys_are_unique.
+Qed.
+
+Theorem canonical_pathmap_map_has_no_duplicate_keys :
+  forall entries,
+    canonical_runtime_collection
+      AdmissionPathMap (Some RuntimePathMapMap) entries ->
+    NoDup (entry_keys entries).
+Proof.
+  intros entries [_ Hstrict].
+  now apply strictly_increasing_keys_are_unique.
+Qed.
+
+Inductive PhysicalPathMapChild :=
+| RuntimeModeMarker (mode : RuntimePathMapMode)
+| RuntimePayloadEntry (entry : RuntimeCollectionEntry).
+
+Definition encode_runtime_pathmap
+    (mode : RuntimePathMapMode)
+    (entries : list RuntimeCollectionEntry) : list PhysicalPathMapChild :=
+  RuntimeModeMarker mode :: map RuntimePayloadEntry entries.
+
+Theorem encoded_pathmap_has_one_leading_mode_marker :
+  forall mode entries,
+    exists payload,
+      encode_runtime_pathmap mode entries =
+        RuntimeModeMarker mode :: payload /\
+      Forall
+        (fun child =>
+          match child with
+          | RuntimeModeMarker _ => False
+          | RuntimePayloadEntry _ => True
+          end)
+        payload.
+Proof.
+  intros mode entries. exists (map RuntimePayloadEntry entries).
+  split; [reflexivity|].
+  apply Forall_forall. intros child Hchild.
+  apply in_map_iff in Hchild.
+  destruct Hchild as [entry [<- _]]. exact I.
+Qed.
+
+Theorem empty_pathmap_modes_remain_distinct :
+  encode_runtime_pathmap RuntimePathMapNeutral [] <>
+    encode_runtime_pathmap RuntimePathMapSet [] /\
+  encode_runtime_pathmap RuntimePathMapNeutral [] <>
+    encode_runtime_pathmap RuntimePathMapMap [] /\
+  encode_runtime_pathmap RuntimePathMapSet [] <>
+    encode_runtime_pathmap RuntimePathMapMap [].
+Proof.
+  repeat split; discriminate.
+Qed.
+
+(** Rule terms carry PathMap mode evidence separately from their payload
+    entries.  Construction may copy a canonical remainder's marker or use an
+    explicit annotation, but it must never infer a mode from entry shape or
+    cardinality. *)
+Inductive RuntimeModeResolution :=
+| RuntimeModeResolved (mode : RuntimePathMapMode)
+| RuntimeModeRejected.
+
+Definition resolve_runtime_pathmap_mode
+    (declared remainder : option RuntimePathMapMode)
+    : RuntimeModeResolution :=
+  match declared, remainder with
+  | Some expected, Some actual =>
+      match expected, actual with
+      | RuntimePathMapNeutral, RuntimePathMapNeutral
+      | RuntimePathMapSet, RuntimePathMapSet
+      | RuntimePathMapMap, RuntimePathMapMap => RuntimeModeResolved expected
+      | _, _ => RuntimeModeRejected
+      end
+  | Some mode, None | None, Some mode => RuntimeModeResolved mode
+  | None, None => RuntimeModeRejected
+  end.
+
+Theorem resolved_pathmap_mode_has_explicit_evidence :
+  forall declared remainder mode,
+    resolve_runtime_pathmap_mode declared remainder =
+      RuntimeModeResolved mode ->
+    declared = Some mode \/ remainder = Some mode.
+Proof.
+  intros [declared|] [remainder|] mode Hresolved.
+  - destruct declared, remainder; simpl in Hresolved;
+      try discriminate; inversion Hresolved; subst; auto.
+  - simpl in Hresolved. inversion Hresolved. auto.
+  - simpl in Hresolved. inversion Hresolved. auto.
+  - discriminate.
+Qed.
+
+Theorem pathmap_mode_is_not_inferred_without_evidence :
+  resolve_runtime_pathmap_mode None None = RuntimeModeRejected.
+Proof.
+  reflexivity.
+Qed.
+
+(** The application-level PathMap mode determines the payload sort and the
+    admissible remainder shape.  This contract is separate from the operator
+    tag because a PathMap collection operator has one declared pair element
+    sort while set-mode entries have the declared key sort. *)
+Inductive RuntimePathMapChildContract :=
+| RuntimePathMapFixed (sorts : list SortId)
+| RuntimePathMapHomogeneous (sort : SortId)
+| RuntimePathMapRemainderOnly.
+
+Definition runtime_pathmap_child_contract
+    (mode : option RuntimePathMapMode)
+    (key_sort pair_sort : SortId) : RuntimePathMapChildContract :=
+  match mode with
+  | Some RuntimePathMapNeutral => RuntimePathMapFixed []
+  | Some RuntimePathMapSet => RuntimePathMapHomogeneous key_sort
+  | Some RuntimePathMapMap => RuntimePathMapHomogeneous pair_sort
+  | None => RuntimePathMapRemainderOnly
+  end.
+
+Theorem neutral_pathmap_accepts_no_payload_children :
+  forall key_sort pair_sort,
+    runtime_pathmap_child_contract
+      (Some RuntimePathMapNeutral) key_sort pair_sort =
+      RuntimePathMapFixed [].
+Proof. reflexivity. Qed.
+
+Theorem set_pathmap_uses_the_declared_key_sort :
+  forall key_sort pair_sort,
+    runtime_pathmap_child_contract
+      (Some RuntimePathMapSet) key_sort pair_sort =
+      RuntimePathMapHomogeneous key_sort.
+Proof. reflexivity. Qed.
+
+Theorem map_pathmap_uses_the_declared_pair_sort :
+  forall key_sort pair_sort,
+    runtime_pathmap_child_contract
+      (Some RuntimePathMapMap) key_sort pair_sort =
+      RuntimePathMapHomogeneous pair_sort.
+Proof. reflexivity. Qed.
+
+Theorem mode_polymorphic_pathmap_is_remainder_only :
+  forall key_sort pair_sort,
+    runtime_pathmap_child_contract None key_sort pair_sort =
+      RuntimePathMapRemainderOnly.
+Proof. reflexivity. Qed.
+
+Definition retain_runtime_pathmap_marker
+    (mode : RuntimePathMapMode)
+    (residual_entries : list RuntimeCollectionEntry)
+    : list PhysicalPathMapChild :=
+  RuntimeModeMarker mode :: map RuntimePayloadEntry residual_entries.
+
+Theorem pathmap_remainder_retains_exact_mode_marker :
+  forall mode residual_entries,
+    retain_runtime_pathmap_marker mode residual_entries =
+      encode_runtime_pathmap mode residual_entries.
+Proof.
+  reflexivity.
+Qed.
 
 Print Assumptions cancellation_never_publishes.
 Print Assumptions rejected_request_never_publishes.
@@ -1469,8 +2065,32 @@ Print Assumptions substitution_signature_recovers_the_function_domain_and_codoma
 Print Assumptions abstraction_signature_places_the_binder_before_the_body.
 Print Assumptions result_only_substitution_signature_is_ambiguous.
 Print Assumptions admitted_map_parameters_are_the_exact_source_telescope.
-Print Assumptions map_signature_preserves_the_complete_binding_telescope.
+Print Assumptions product_signature_preserves_binary_product_factors.
 Print Assumptions virtual_application_matches_singleton_physical_root.
+Print Assumptions matching_abstraction_binder_schedules_no_body.
+Print Assumptions different_abstraction_binder_schedules_exactly_the_body.
+Print Assumptions matching_abstraction_binder_shields_every_body_occurrence.
+Print Assumptions different_abstraction_binder_preserves_body_freedom.
+Print Assumptions iterative_projection_pushes_only_reachable_nodes.
+Print Assumptions invalid_publication_root_has_no_projection.
+Print Assumptions unreachable_private_node_has_no_published_identifier.
+Print Assumptions every_publication_root_receives_an_identifier.
+Print Assumptions projected_children_preserve_order_and_arity.
+Print Assumptions strictly_increasing_keys_are_unique.
+Print Assumptions canonical_set_has_no_duplicate_values.
+Print Assumptions canonical_map_has_no_duplicate_keys.
+Print Assumptions canonical_pathmap_has_explicit_mode.
+Print Assumptions canonical_pathmap_set_has_no_duplicate_keys.
+Print Assumptions canonical_pathmap_map_has_no_duplicate_keys.
+Print Assumptions encoded_pathmap_has_one_leading_mode_marker.
+Print Assumptions empty_pathmap_modes_remain_distinct.
+Print Assumptions resolved_pathmap_mode_has_explicit_evidence.
+Print Assumptions pathmap_mode_is_not_inferred_without_evidence.
+Print Assumptions neutral_pathmap_accepts_no_payload_children.
+Print Assumptions set_pathmap_uses_the_declared_key_sort.
+Print Assumptions map_pathmap_uses_the_declared_pair_sort.
+Print Assumptions mode_polymorphic_pathmap_is_remainder_only.
+Print Assumptions pathmap_remainder_retains_exact_mode_marker.
 Print Assumptions compatible_rule_backed_action_has_exact_source_and_target.
 Print Assumptions same_sort_rule_backed_action_is_endomorphic.
 Print Assumptions uncosted_evidence_cannot_fabricate_a_grade.

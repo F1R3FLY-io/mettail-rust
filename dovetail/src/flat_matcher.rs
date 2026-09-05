@@ -77,6 +77,7 @@ enum Goal {
         selection: Vec<EClassId>,
         complement: Vec<EClassId>,
         used: Vec<bool>,
+        retained_children: Vec<EClassId>,
         depth: usize,
     },
 }
@@ -104,6 +105,7 @@ enum Work {
         selection: Vec<EClassId>,
         complement: Vec<EClassId>,
         used: Vec<bool>,
+        retained_children: Vec<EClassId>,
         depth: usize,
         next_index: usize,
         goals: Vec<Goal>,
@@ -236,6 +238,7 @@ where
                             op,
                             rest.as_deref(),
                             complement,
+                            Vec::new(),
                             false,
                         ) {
                             Ok(true) => {
@@ -256,9 +259,10 @@ where
                         selection,
                         complement,
                         used,
+                        retained_children,
                         depth,
                     } => {
-                        let FlatPatternNode::UnorderedCollection { op, fixed, rest } =
+                        let FlatPatternNode::UnorderedCollection { op, fixed, rest, .. } =
                             &pattern.nodes[pattern_index]
                         else {
                             return failure(
@@ -276,6 +280,7 @@ where
                                 op,
                                 rest.as_deref(),
                                 complement,
+                                retained_children,
                                 true,
                             ) {
                                 Ok(true) => {
@@ -297,6 +302,7 @@ where
                                 selection,
                                 complement,
                                 used,
+                                retained_children,
                                 depth,
                                 next_index: 0,
                                 goals,
@@ -416,7 +422,7 @@ where
                             return failure(reason, work_count, stats);
                         }
                     },
-                    FlatPatternNode::UnorderedCollection { op, fixed, rest }
+                    FlatPatternNode::UnorderedCollection { op, fixed, rest, .. }
                         if node.op == *op
                             && collection_arity_matches(
                                 node.children.len(),
@@ -500,6 +506,7 @@ where
                     selection,
                     complement,
                     used,
+                    retained_children: Vec::new(),
                     depth: 0,
                 });
                 if let Err(reason) = push_work(
@@ -515,6 +522,7 @@ where
                 selection,
                 complement,
                 used,
+                retained_children,
                 depth,
                 mut next_index,
                 goals,
@@ -539,6 +547,10 @@ where
                     Ok(value) => value,
                     Err(reason) => return failure(reason, work_count, stats),
                 };
+                let continuation_retained = match try_clone_copy_slice(&retained_children) {
+                    Ok(value) => value,
+                    Err(reason) => return failure(reason, work_count, stats),
+                };
                 let continuation_goals = match try_clone_goals(&goals) {
                     Ok(value) => value,
                     Err(reason) => return failure(reason, work_count, stats),
@@ -554,6 +566,7 @@ where
                         selection: continuation_selection,
                         complement: continuation_complement,
                         used: continuation_used,
+                        retained_children: continuation_retained,
                         depth,
                         next_index: selected_index + 1,
                         goals: continuation_goals,
@@ -564,7 +577,7 @@ where
                     return failure(reason, work_count, stats);
                 }
 
-                let FlatPatternNode::UnorderedCollection { fixed, .. } =
+                let FlatPatternNode::UnorderedCollection { fixed, retained, .. } =
                     &pattern.nodes[pattern_index]
                 else {
                     return failure(
@@ -578,6 +591,13 @@ where
                 let mut branch_used = used;
                 branch_used[selected_index] = true;
                 let selected_class = egraph.find(selection[selected_index]);
+                let mut branch_retained = retained_children;
+                if depth < *retained {
+                    if branch_retained.try_reserve(1).is_err() {
+                        return failure(FlatMatchStop::AllocationFailed, work_count, stats);
+                    }
+                    branch_retained.push(selected_class);
+                }
                 let mut branch_goals = goals;
                 if let Err(reason) = reserve_goals(&mut branch_goals, 2) {
                     return failure(reason, work_count, stats);
@@ -587,6 +607,7 @@ where
                     selection,
                     complement,
                     used: branch_used,
+                    retained_children: branch_retained,
                     depth: depth + 1,
                 });
                 branch_goals.push(Goal::Match {
@@ -640,6 +661,7 @@ fn bind_remainder<L>(
     op: &L,
     rest: Option<&str>,
     complement: Vec<EClassId>,
+    retained_prefix: Vec<EClassId>,
     unordered: bool,
 ) -> Result<bool, FlatMatchStop>
 where
@@ -667,7 +689,12 @@ where
             .map_err(|_| FlatMatchStop::AllocationFailed)?;
         children.extend(keyed.into_iter().map(|(_, child)| child));
     }
-    let Some(class) = egraph.try_add_with_budget(ENode::new(op.clone(), children)) else {
+    let mut complete = retained_prefix;
+    complete
+        .try_reserve(children.len())
+        .map_err(|_| FlatMatchStop::AllocationFailed)?;
+    complete.extend(children);
+    let Some(class) = egraph.try_add_with_budget(ENode::new(op.clone(), complete)) else {
         return Err(FlatMatchStop::EGraphNodeBudgetExhausted);
     };
     bind_class(egraph, subst, name, class)
@@ -749,12 +776,14 @@ fn try_clone_goals(source: &[Goal]) -> Result<Vec<Goal>, FlatMatchStop> {
                 selection,
                 complement,
                 used,
+                retained_children,
                 depth,
             } => Goal::ContinueUnorderedPairing {
                 pattern: *pattern,
                 selection: try_clone_copy_slice(selection)?,
                 complement: try_clone_copy_slice(complement)?,
                 used: try_clone_copy_slice(used)?,
+                retained_children: try_clone_copy_slice(retained_children)?,
                 depth: *depth,
             },
         });
@@ -849,6 +878,7 @@ mod tests {
                     op: "bag".to_string(),
                     fixed: vec![0, 1],
                     rest: Some("rest".to_string()),
+                    retained: 0,
                 },
             ],
             root: 2,
@@ -892,6 +922,71 @@ mod tests {
         let run = match_flat_eclass_bounded(&mut graph, &pattern, pair, limits(), || false)
             .expect("bounded nonlinear match");
         assert!(run.matches.is_empty());
+    }
+
+    #[test]
+    fn unordered_remainder_retains_the_matched_metadata_prefix() {
+        let mut graph = EGraph::new();
+        let marker = graph.add(ENode::leaf("mode:set".to_string()));
+        let selected = graph.add(ENode::leaf("a".to_string()));
+        let residual = graph.add(ENode::leaf("b".to_string()));
+        let pathmap =
+            graph.add(ENode::new("pathmap".to_string(), vec![residual, marker, selected]));
+        let pattern = FlatPattern {
+            nodes: vec![
+                FlatPatternNode::App {
+                    op: "mode:set".to_string(),
+                    args: Vec::new(),
+                },
+                FlatPatternNode::App { op: "a".to_string(), args: Vec::new() },
+                FlatPatternNode::UnorderedCollection {
+                    op: "pathmap".to_string(),
+                    fixed: vec![0, 1],
+                    rest: Some("rest".to_string()),
+                    retained: 1,
+                },
+            ],
+            root: 2,
+        };
+
+        let run = match_flat_eclass_bounded(&mut graph, &pattern, pathmap, limits(), || false)
+            .expect("bounded retained-prefix match");
+        assert_eq!(run.matches.len(), 1);
+        let rest = run.matches[0].subst["rest"];
+        assert!(graph.nodes(rest).iter().any(|node| {
+            node.op == "pathmap"
+                && node.children.len() == 2
+                && graph.equiv(node.children[0], marker)
+                && graph.equiv(node.children[1], residual)
+        }));
+    }
+
+    #[test]
+    fn malformed_retained_prefix_is_rejected_before_matching() {
+        let mut graph = EGraph::new();
+        let subject = graph.add(ENode::leaf("a".to_string()));
+        let pattern = FlatPattern {
+            nodes: vec![
+                FlatPatternNode::App { op: "a".to_string(), args: Vec::new() },
+                FlatPatternNode::UnorderedCollection {
+                    op: "bag".to_string(),
+                    fixed: vec![0],
+                    rest: Some("rest".to_string()),
+                    retained: 2,
+                },
+            ],
+            root: 1,
+        };
+        let failure = match_flat_eclass_bounded(&mut graph, &pattern, subject, limits(), || false)
+            .expect_err("retained metadata must be a prefix of fixed children");
+        assert_eq!(
+            failure.reason,
+            FlatMatchStop::InvalidPattern(FlatPatternError::InvalidRetainedPrefix {
+                node: 1,
+                retained: 2,
+                fixed: 1,
+            }),
+        );
     }
 
     #[test]

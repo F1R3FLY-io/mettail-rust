@@ -15,16 +15,23 @@
 
 use crate::{
     CategoryId, CollectionKind, ConstructorId, JudgmentAtomV1, JudgmentDecisionV1, JudgmentRuleV1,
-    LanguageCoreV1, LanguageRights, SemanticEffectClassV1, TheoryCoreV1, TheoryLiteralCarrierV1,
-    TheoryLiteralV1, TheoryPremiseFormV1, TheoryRuleArenaV1, TheoryRuleReferenceV1,
-    TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryVariableId, TheoryVariableRoleV1,
+    LanguageCoreV1, LanguageRights, PathMapModeV1, SemanticEffectClassV1, TheoryCoreV1,
+    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPremiseFormV1, TheoryRuleArenaV1,
+    TheoryRuleReferenceV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryVariableId,
+    TheoryVariableRoleV1,
 };
 use mettail_semantic_key::{write_framed, SemanticHash};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const THEORY_SEMANTIC_IMAGE_ABI_V1: u16 = 1;
+pub const THEORY_SEMANTIC_IMAGE_ABI_V2: u16 = 2;
+pub const THEORY_SEMANTIC_IMAGE_ABI_V3: u16 = 3;
+pub const THEORY_SEMANTIC_IMAGE_ABI_CURRENT: u16 = THEORY_SEMANTIC_IMAGE_ABI_V3;
 pub const THEORY_IMAGE_COMPILER_ABI_V1: u16 = 1;
+pub const THEORY_IMAGE_COMPILER_ABI_V2: u16 = 2;
+pub const THEORY_IMAGE_COMPILER_ABI_V3: u16 = 3;
+pub const THEORY_IMAGE_COMPILER_ABI_CURRENT: u16 = THEORY_IMAGE_COMPILER_ABI_V3;
 
 macro_rules! image_id {
     ($name:ident) => {
@@ -116,12 +123,7 @@ pub enum TheoryImageOperatorV1 {
         element: TheorySortId,
         kind: CollectionKind,
     },
-    Map {
-        sort: TheorySortId,
-        source: TheorySortId,
-        parameters: Vec<TheorySortId>,
-    },
-    Zip {
+    Product {
         sort: TheorySortId,
     },
     Literal {
@@ -133,6 +135,12 @@ pub enum TheoryImageOperatorV1 {
     /// callback; the exact child arity is checked against the declaration.
     Judgment {
         judgment: TheoryJudgmentId,
+    },
+    /// Derived structural marker used by the generalized collection matcher
+    /// to preserve a PathMap's explicit mode in residual rows.
+    PathMapMode {
+        sort: TheorySortId,
+        mode: PathMapModeV1,
     },
 }
 
@@ -168,21 +176,12 @@ unsafe impl SemanticHash for TheoryImageOperatorV1 {
                     CollectionKind::PathMap => 4,
                 });
             },
-            Self::Map { sort, source, parameters } => {
+            Self::Product { sort } => {
                 output.push(4);
-                output.extend_from_slice(&sort.0.to_le_bytes());
-                output.extend_from_slice(&source.0.to_le_bytes());
-                output.extend_from_slice(&(parameters.len() as u64).to_le_bytes());
-                for parameter in parameters {
-                    output.extend_from_slice(&parameter.0.to_le_bytes());
-                }
-            },
-            Self::Zip { sort } => {
-                output.push(5);
                 output.extend_from_slice(&sort.0.to_le_bytes());
             },
             Self::Literal { sort, value } => {
-                output.push(6);
+                output.push(5);
                 output.extend_from_slice(&sort.0.to_le_bytes());
                 match value {
                     TheoryLiteralV1::String(value) => {
@@ -209,8 +208,17 @@ unsafe impl SemanticHash for TheoryImageOperatorV1 {
                 }
             },
             Self::Judgment { judgment } => {
-                output.push(7);
+                output.push(6);
                 output.extend_from_slice(&judgment.0.to_le_bytes());
+            },
+            Self::PathMapMode { sort, mode } => {
+                output.push(7);
+                output.extend_from_slice(&sort.0.to_le_bytes());
+                output.push(match mode {
+                    PathMapModeV1::NeutralEmpty => 0,
+                    PathMapModeV1::Set => 1,
+                    PathMapModeV1::Map => 2,
+                });
             },
         }
     }
@@ -241,6 +249,18 @@ pub enum TheoryImageTermFormV1 {
         /// A collection-tail binding.  Its matching law depends on the
         /// collection kind, so it is not disguised as a positional child.
         remainder: Option<TheoryVariableId>,
+        /// Exact PathMap mode evidence. `None` is mode-polymorphic and must
+        /// acquire a canonical marker from a remainder during construction.
+        #[serde(default)]
+        pathmap_mode: Option<PathMapModeV1>,
+    },
+    /// Rule-only collection comprehension. `sources.len() == 1` is map;
+    /// `sources.len() >= 2` is exact zip followed by map. It never has a
+    /// runtime operator encoding and cannot enter the semantic e-graph.
+    Map {
+        sources: Vec<TheoryTermId>,
+        parameters: Vec<TheoryVariableId>,
+        body: TheoryTermId,
     },
 }
 
@@ -747,11 +767,13 @@ fn account_source_arena(
             TheoryTermFormV1::Constructor { arguments, .. } => (arguments.len(), 0),
             TheoryTermFormV1::Abstraction { .. } => (1, 1),
             TheoryTermFormV1::Substitution { .. } => (2, 0),
-            TheoryTermFormV1::Collection { elements, remainder } => {
+            TheoryTermFormV1::Collection { elements, remainder, .. } => {
                 (elements.len(), usize::from(remainder.is_some()))
             },
-            TheoryTermFormV1::Map { parameters, .. } => (2, parameters.len()),
-            TheoryTermFormV1::Zip { .. } => (2, 0),
+            TheoryTermFormV1::Map { sources, parameters, .. } => {
+                (sources.len().saturating_add(1), parameters.len())
+            },
+            TheoryTermFormV1::Product { factors } => (factors.len(), 0),
             TheoryTermFormV1::Literal(value) => {
                 totals.literals = checked_total(
                     totals.literals,
@@ -869,11 +891,13 @@ fn account_source_judgment_rule(
             TheoryTermFormV1::Constructor { arguments, .. } => (arguments.len(), 0),
             TheoryTermFormV1::Abstraction { .. } => (1, 1),
             TheoryTermFormV1::Substitution { .. } => (2, 0),
-            TheoryTermFormV1::Collection { elements, remainder } => {
+            TheoryTermFormV1::Collection { elements, remainder, .. } => {
                 (elements.len(), usize::from(remainder.is_some()))
             },
-            TheoryTermFormV1::Map { parameters, .. } => (2, parameters.len()),
-            TheoryTermFormV1::Zip { .. } => (2, 0),
+            TheoryTermFormV1::Map { sources, parameters, .. } => {
+                (sources.len().saturating_add(1), parameters.len())
+            },
+            TheoryTermFormV1::Product { factors } => (factors.len(), 0),
             TheoryTermFormV1::Literal(value) => {
                 totals.literals = checked_total(
                     totals.literals,
@@ -998,10 +1022,10 @@ impl TheorySemanticImageV1 {
         limits: TheoryImageAdmissionLimits,
     ) -> Result<(), TheoryImageError> {
         limits.validate_source(language)?;
-        if self.abi != THEORY_SEMANTIC_IMAGE_ABI_V1 {
+        if self.abi != THEORY_SEMANTIC_IMAGE_ABI_CURRENT {
             return Err(TheoryImageError::UnsupportedAbi(self.abi));
         }
-        if self.compiler_abi != THEORY_IMAGE_COMPILER_ABI_V1 {
+        if self.compiler_abi != THEORY_IMAGE_COMPILER_ABI_CURRENT {
             return Err(TheoryImageError::UnsupportedCompilerAbi(self.compiler_abi));
         }
         check_fingerprint(
@@ -1385,25 +1409,40 @@ fn validate_image_totals(
         )?;
         names = checked_total(names, rule.name.len(), limits.max_total_name_bytes, "name bytes")?;
         for term in &rule.terms {
-            if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } =
-                &term.form
-            {
-                term_references = checked_total(
-                    term_references,
-                    arguments
-                        .len()
-                        .checked_add(slots.len())
-                        .and_then(|count| count.checked_add(usize::from(remainder.is_some())))
-                        .ok_or(TheoryImageError::LengthOverflow)?,
-                    limits.max_total_term_references,
-                    "term references",
-                )?;
-                sort_references = checked_total(
-                    sort_references,
-                    operator_sort_reference_count(operator)?,
-                    limits.max_total_sort_references,
-                    "sort references",
-                )?;
+            match &term.form {
+                TheoryImageTermFormV1::Apply {
+                    operator, arguments, slots, remainder, ..
+                } => {
+                    term_references = checked_total(
+                        term_references,
+                        arguments
+                            .len()
+                            .checked_add(slots.len())
+                            .and_then(|count| count.checked_add(usize::from(remainder.is_some())))
+                            .ok_or(TheoryImageError::LengthOverflow)?,
+                        limits.max_total_term_references,
+                        "term references",
+                    )?;
+                    sort_references = checked_total(
+                        sort_references,
+                        operator_sort_reference_count(operator)?,
+                        limits.max_total_sort_references,
+                        "sort references",
+                    )?;
+                },
+                TheoryImageTermFormV1::Map { sources, parameters, .. } => {
+                    term_references = checked_total(
+                        term_references,
+                        sources
+                            .len()
+                            .checked_add(parameters.len())
+                            .and_then(|count| count.checked_add(1))
+                            .ok_or(TheoryImageError::LengthOverflow)?,
+                        limits.max_total_term_references,
+                        "term references",
+                    )?;
+                },
+                TheoryImageTermFormV1::Slot(_) => {},
             }
             if let TheoryImageTermFormV1::Apply {
                 operator: TheoryImageOperatorV1::Literal { value, .. },
@@ -1451,25 +1490,40 @@ fn validate_image_totals(
         )?;
         names = checked_total(names, rule.name.len(), limits.max_total_name_bytes, "name bytes")?;
         for term in &rule.terms {
-            if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } =
-                &term.form
-            {
-                term_references = checked_total(
-                    term_references,
-                    arguments
-                        .len()
-                        .checked_add(slots.len())
-                        .and_then(|count| count.checked_add(usize::from(remainder.is_some())))
-                        .ok_or(TheoryImageError::LengthOverflow)?,
-                    limits.max_total_term_references,
-                    "term references",
-                )?;
-                sort_references = checked_total(
-                    sort_references,
-                    operator_sort_reference_count(operator)?,
-                    limits.max_total_sort_references,
-                    "sort references",
-                )?;
+            match &term.form {
+                TheoryImageTermFormV1::Apply {
+                    operator, arguments, slots, remainder, ..
+                } => {
+                    term_references = checked_total(
+                        term_references,
+                        arguments
+                            .len()
+                            .checked_add(slots.len())
+                            .and_then(|count| count.checked_add(usize::from(remainder.is_some())))
+                            .ok_or(TheoryImageError::LengthOverflow)?,
+                        limits.max_total_term_references,
+                        "term references",
+                    )?;
+                    sort_references = checked_total(
+                        sort_references,
+                        operator_sort_reference_count(operator)?,
+                        limits.max_total_sort_references,
+                        "sort references",
+                    )?;
+                },
+                TheoryImageTermFormV1::Map { sources, parameters, .. } => {
+                    term_references = checked_total(
+                        term_references,
+                        sources
+                            .len()
+                            .checked_add(parameters.len())
+                            .and_then(|count| count.checked_add(1))
+                            .ok_or(TheoryImageError::LengthOverflow)?,
+                        limits.max_total_term_references,
+                        "term references",
+                    )?;
+                },
+                TheoryImageTermFormV1::Slot(_) => {},
             }
             if let TheoryImageTermFormV1::Apply {
                 operator: TheoryImageOperatorV1::Literal { value, .. },
@@ -1535,15 +1589,12 @@ fn operator_sort_reference_count(
     match operator {
         TheoryImageOperatorV1::Constructor(_) | TheoryImageOperatorV1::Judgment { .. } => Ok(0),
         TheoryImageOperatorV1::Abstraction { .. }
-        | TheoryImageOperatorV1::Zip { .. }
-        | TheoryImageOperatorV1::Literal { .. } => Ok(1),
+        | TheoryImageOperatorV1::Product { .. }
+        | TheoryImageOperatorV1::Literal { .. }
+        | TheoryImageOperatorV1::PathMapMode { .. } => Ok(1),
         TheoryImageOperatorV1::Substitution { .. } | TheoryImageOperatorV1::Collection { .. } => {
             Ok(2)
         },
-        TheoryImageOperatorV1::Map { parameters, .. } => parameters
-            .len()
-            .checked_add(2)
-            .ok_or(TheoryImageError::LengthOverflow),
     }
 }
 
@@ -1940,12 +1991,14 @@ fn expected_term_form(
             arguments: arguments.clone(),
             slots: Vec::new(),
             remainder: None,
+            pathmap_mode: None,
         },
         TheoryTermFormV1::Abstraction { binder, body } => TheoryImageTermFormV1::Apply {
             operator: TheoryImageOperatorV1::Abstraction { sort },
             arguments: vec![*body],
             slots: vec![*binder],
             remainder: None,
+            pathmap_mode: None,
         },
         TheoryTermFormV1::Substitution { abstraction, argument } => TheoryImageTermFormV1::Apply {
             operator: TheoryImageOperatorV1::Substitution {
@@ -1964,15 +2017,15 @@ fn expected_term_form(
             arguments: vec![*abstraction, *argument],
             slots: Vec::new(),
             remainder: None,
+            pathmap_mode: None,
         },
-        TheoryTermFormV1::Collection { elements, remainder } => {
-            return expected_collection_form(sort, elements, *remainder, context);
+        TheoryTermFormV1::Collection { elements, remainder, pathmap_mode } => {
+            return expected_collection_form(sort, elements, *remainder, *pathmap_mode, context);
         },
-        TheoryTermFormV1::Map { collection, parameters, body } => {
-            let mut parameter_sorts = Vec::new();
-            parameter_sorts
-                .try_reserve_exact(parameters.len())
-                .map_err(|_| TheoryImageError::Allocation)?;
+        TheoryTermFormV1::Map { sources, parameters, body } => {
+            // Resolve every binder and source sort here as part of the
+            // source/image correspondence check, even though the compact
+            // metainstruction stores stable dense term/variable identifiers.
             for parameter in parameters {
                 let variable = variables.get(parameter.0 as usize).ok_or(
                     TheoryImageError::UnknownReference {
@@ -1981,39 +2034,38 @@ fn expected_term_form(
                         target: parameter.0,
                     },
                 )?;
-                parameter_sorts.push(context.sort(&variable.sort)?);
+                context.sort(&variable.sort)?;
             }
-            TheoryImageTermFormV1::Apply {
-                operator: TheoryImageOperatorV1::Map {
-                    sort,
-                    source: context.sort(
-                        &terms
-                            .get(collection.0 as usize)
-                            .ok_or(TheoryImageError::UnknownReference {
-                                kind: "map collection",
-                                owner: u32::MAX,
-                                target: collection.0,
-                            })?
-                            .sort,
-                    )?,
-                    parameters: parameter_sorts,
-                },
-                arguments: vec![*collection, *body],
-                slots: parameters.clone(),
-                remainder: None,
+            for source in sources {
+                let source =
+                    terms
+                        .get(source.0 as usize)
+                        .ok_or(TheoryImageError::UnknownReference {
+                            kind: "map source",
+                            owner: u32::MAX,
+                            target: source.0,
+                        })?;
+                context.sort(&source.sort)?;
+            }
+            TheoryImageTermFormV1::Map {
+                sources: sources.clone(),
+                parameters: parameters.clone(),
+                body: *body,
             }
         },
-        TheoryTermFormV1::Zip { left, right } => TheoryImageTermFormV1::Apply {
-            operator: TheoryImageOperatorV1::Zip { sort },
-            arguments: vec![*left, *right],
+        TheoryTermFormV1::Product { factors } => TheoryImageTermFormV1::Apply {
+            operator: TheoryImageOperatorV1::Product { sort },
+            arguments: factors.clone(),
             slots: Vec::new(),
             remainder: None,
+            pathmap_mode: None,
         },
         TheoryTermFormV1::Literal(value) => TheoryImageTermFormV1::Apply {
             operator: TheoryImageOperatorV1::Literal { sort, value: value.clone() },
             arguments: Vec::new(),
             slots: Vec::new(),
             remainder: None,
+            pathmap_mode: None,
         },
     })
 }
@@ -2022,6 +2074,7 @@ fn expected_collection_form(
     sort: TheorySortId,
     elements: &[TheoryTermId],
     remainder: Option<TheoryVariableId>,
+    pathmap_mode: Option<PathMapModeV1>,
     context: &ImageSourceContext<'_>,
 ) -> Result<TheoryImageTermFormV1, TheoryImageError> {
     let declaration = context
@@ -2044,6 +2097,7 @@ fn expected_collection_form(
         arguments: elements.to_vec(),
         slots: Vec::new(),
         remainder,
+        pathmap_mode,
     })
 }
 
@@ -2182,6 +2236,27 @@ fn validate_term_references(
             }
             Ok(())
         },
+        TheoryImageTermFormV1::Map { sources, parameters, body } => {
+            if sources.is_empty() {
+                return Err(TheoryImageError::SourceMismatch {
+                    kind: "empty map sources",
+                    index: owner,
+                });
+            }
+            for target in sources.iter().chain(std::iter::once(body)) {
+                if target.0 >= owner {
+                    return Err(TheoryImageError::ForwardReference {
+                        kind: "term",
+                        owner,
+                        target: target.0,
+                    });
+                }
+            }
+            for variable in parameters {
+                variable_reference(*variable, owner, variable_count)?;
+            }
+            Ok(())
+        },
     }
 }
 
@@ -2284,17 +2359,20 @@ fn structurally_equal(
                     arguments: left_arguments,
                     slots: left_slots,
                     remainder: left_remainder,
+                    pathmap_mode: left_pathmap_mode,
                 },
                 TheoryImageTermFormV1::Apply {
                     operator: right_operator,
                     arguments: right_arguments,
                     slots: right_slots,
                     remainder: right_remainder,
+                    pathmap_mode: right_pathmap_mode,
                 },
             ) => {
                 if left_operator != right_operator
                     || left_slots != right_slots
                     || left_remainder != right_remainder
+                    || left_pathmap_mode != right_pathmap_mode
                     || left_arguments.len() != right_arguments.len()
                 {
                     return Ok(false);
@@ -2305,6 +2383,30 @@ fn structurally_equal(
                         .copied()
                         .zip(right_arguments.iter().copied()),
                 );
+            },
+            (
+                TheoryImageTermFormV1::Map {
+                    sources: left_sources,
+                    parameters: left_parameters,
+                    body: left_body,
+                },
+                TheoryImageTermFormV1::Map {
+                    sources: right_sources,
+                    parameters: right_parameters,
+                    body: right_body,
+                },
+            ) => {
+                if left_parameters != right_parameters || left_sources.len() != right_sources.len()
+                {
+                    return Ok(false);
+                }
+                pending.extend(
+                    left_sources
+                        .iter()
+                        .copied()
+                        .zip(right_sources.iter().copied()),
+                );
+                pending.push((*left_body, *right_body));
             },
             _ => return Ok(false),
         }
@@ -2351,11 +2453,10 @@ fn term_variables(
     arena: &TheoryRuleArenaV1,
     root: TheoryTermId,
 ) -> Result<BTreeSet<TheoryVariableId>, TheoryImageError> {
-    let mut variables = BTreeSet::new();
+    let mut reachable = BTreeSet::new();
     let mut pending = vec![root];
-    let mut visited = BTreeSet::new();
     while let Some(term) = pending.pop() {
-        if !visited.insert(term) {
+        if !reachable.insert(term) {
             continue;
         }
         let node = arena
@@ -2367,37 +2468,108 @@ fn term_variables(
                 target: term.0,
             })?;
         match &node.form {
-            TheoryTermFormV1::Variable(variable) => {
-                variables.insert(*variable);
-            },
+            TheoryTermFormV1::Variable(_) | TheoryTermFormV1::Literal(_) => {},
             TheoryTermFormV1::Constructor { arguments, .. } => {
                 pending.extend(arguments.iter().copied());
             },
-            TheoryTermFormV1::Abstraction { binder, body } => {
-                variables.insert(*binder);
+            TheoryTermFormV1::Abstraction { body, .. } => {
                 pending.push(*body);
             },
             TheoryTermFormV1::Substitution { abstraction, argument } => {
                 pending.push(*abstraction);
                 pending.push(*argument);
             },
-            TheoryTermFormV1::Collection { elements, remainder } => {
+            TheoryTermFormV1::Collection { elements, .. } => {
                 pending.extend(elements.iter().copied());
+            },
+            TheoryTermFormV1::Map { sources, body, .. } => {
+                pending.extend(sources.iter().copied());
+                pending.push(*body);
+            },
+            TheoryTermFormV1::Product { factors } => {
+                pending.extend(factors.iter().copied());
+            },
+        }
+    }
+
+    let mut free = vec![BTreeSet::new(); arena.terms.len()];
+    for (index, node) in arena.terms.iter().enumerate() {
+        let term = TheoryTermId(index as u32);
+        if !reachable.contains(&term) {
+            continue;
+        }
+        let mut variables = BTreeSet::new();
+        macro_rules! inherit {
+            ($child:expr) => {{
+                let child = $child;
+                let child_index = child.0 as usize;
+                if child_index >= index {
+                    return Err(TheoryImageError::UnknownReference {
+                        kind: "non-prior term",
+                        owner: term.0,
+                        target: child.0,
+                    });
+                }
+                variables.extend(free[child_index].iter().copied());
+            }};
+        }
+        match &node.form {
+            TheoryTermFormV1::Variable(variable) => {
+                variables.insert(*variable);
+            },
+            TheoryTermFormV1::Constructor { arguments, .. } => {
+                for child in arguments {
+                    inherit!(*child);
+                }
+            },
+            TheoryTermFormV1::Abstraction { binder, body } => {
+                variables.insert(*binder);
+                inherit!(*body);
+            },
+            TheoryTermFormV1::Substitution { abstraction, argument } => {
+                inherit!(*abstraction);
+                inherit!(*argument);
+            },
+            TheoryTermFormV1::Collection { elements, remainder, .. } => {
+                for child in elements {
+                    inherit!(*child);
+                }
                 variables.extend(remainder.iter().copied());
             },
-            TheoryTermFormV1::Map { collection, parameters, body } => {
-                pending.push(*collection);
-                pending.push(*body);
-                variables.extend(parameters.iter().copied());
+            TheoryTermFormV1::Map { sources, parameters, body } => {
+                for source in sources {
+                    inherit!(*source);
+                }
+                let mut body_variables = free
+                    .get(body.0 as usize)
+                    .filter(|_| (body.0 as usize) < index)
+                    .cloned()
+                    .ok_or(TheoryImageError::UnknownReference {
+                        kind: "non-prior term",
+                        owner: term.0,
+                        target: body.0,
+                    })?;
+                for parameter in parameters {
+                    body_variables.remove(parameter);
+                }
+                variables.extend(body_variables);
             },
-            TheoryTermFormV1::Zip { left, right } => {
-                pending.push(*left);
-                pending.push(*right);
+            TheoryTermFormV1::Product { factors } => {
+                for child in factors {
+                    inherit!(*child);
+                }
             },
             TheoryTermFormV1::Literal(_) => {},
         }
+        free[index] = variables;
     }
-    Ok(variables)
+    free.get(root.0 as usize)
+        .cloned()
+        .ok_or(TheoryImageError::UnknownReference {
+            kind: "term",
+            owner: root.0,
+            target: root.0,
+        })
 }
 
 fn unavailable_premise_variable(
@@ -2937,11 +3109,16 @@ fn check_pattern_subjects(
                     arguments: term_arguments,
                     slots,
                     remainder,
+                    pathmap_mode,
                 } = &node.form
                 else {
                     return Err(TheoryImageError::AutomatonShape { entry });
                 };
-                if expected_operator != operator || remainder.is_some() || !slots.is_empty() {
+                if expected_operator != operator
+                    || remainder.is_some()
+                    || !slots.is_empty()
+                    || pathmap_mode.is_some()
+                {
                     return Err(TheoryImageError::AutomatonShape { entry });
                 }
                 let subjects = slots
@@ -3007,26 +3184,31 @@ fn term_roots_are_positional_image(
                 owner,
                 target: term.0,
             })?;
-        if let TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } = &node.form {
-            if remainder.is_some() || !slots.is_empty() {
-                return Ok(false);
-            }
-            if matches!(
-                operator,
-                TheoryImageOperatorV1::Abstraction { .. }
-                    | TheoryImageOperatorV1::Map { .. }
-                    | TheoryImageOperatorV1::Judgment { .. }
-                    | TheoryImageOperatorV1::Collection {
-                        kind: CollectionKind::Bag
-                            | CollectionKind::Set
-                            | CollectionKind::Map
-                            | CollectionKind::PathMap,
-                        ..
-                    }
-            ) {
-                return Ok(false);
-            }
-            pending.extend(arguments.iter().copied());
+        match &node.form {
+            TheoryImageTermFormV1::Map { .. } => return Ok(false),
+            TheoryImageTermFormV1::Apply {
+                operator, arguments, slots, remainder, ..
+            } => {
+                if remainder.is_some() || !slots.is_empty() {
+                    return Ok(false);
+                }
+                if matches!(
+                    operator,
+                    TheoryImageOperatorV1::Abstraction { .. }
+                        | TheoryImageOperatorV1::Judgment { .. }
+                        | TheoryImageOperatorV1::Collection {
+                            kind: CollectionKind::Bag
+                                | CollectionKind::Set
+                                | CollectionKind::Map
+                                | CollectionKind::PathMap,
+                            ..
+                        }
+                ) {
+                    return Ok(false);
+                }
+                pending.extend(arguments.iter().copied());
+            },
+            TheoryImageTermFormV1::Slot(_) => {},
         }
     }
     Ok(true)
@@ -3066,7 +3248,7 @@ mod tests {
     fn image_fingerprint_domain_is_not_the_language_domain() {
         let language_bytes = b"same bytes";
         let mut language = blake3::Hasher::new();
-        language.update(b"mettail-language-core/1\0");
+        language.update(b"mettail-language-core/2\0");
         language.update(language_bytes);
         let mut image = blake3::Hasher::new();
         image.update(b"mettail-theory-semantic-image/1\0");
@@ -3100,17 +3282,8 @@ mod tests {
                 element: TheorySortId(1),
                 kind: CollectionKind::List,
             },
-            TheoryImageOperatorV1::Map {
-                sort: TheorySortId(0),
-                source: TheorySortId(1),
-                parameters: vec![TheorySortId(2)],
-            },
-            TheoryImageOperatorV1::Map {
-                sort: TheorySortId(0),
-                source: TheorySortId(1),
-                parameters: vec![TheorySortId(3)],
-            },
-            TheoryImageOperatorV1::Zip { sort: TheorySortId(0) },
+            TheoryImageOperatorV1::Product { sort: TheorySortId(0) },
+            TheoryImageOperatorV1::Product { sort: TheorySortId(1) },
             TheoryImageOperatorV1::Literal {
                 sort: TheorySortId(0),
                 value: TheoryLiteralV1::String("a".into()),
@@ -3139,8 +3312,11 @@ mod tests {
         let keys = operators
             .iter()
             .map(SemanticHash::content_key)
-            .collect::<BTreeSet<_>>();
-        assert_eq!(keys.len(), operators.len());
+            .collect::<Vec<_>>();
+        assert!(keys
+            .iter()
+            .enumerate()
+            .all(|(index, key)| keys[..index].iter().all(|prior| prior != key)));
         assert_eq!(operators[0].content_key(), operators[0].clone().content_key());
     }
 }

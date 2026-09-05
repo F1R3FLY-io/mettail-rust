@@ -8,6 +8,22 @@ use crate::canonical::{RhoValue, ValueDecodeError};
 use mettail_grammar_core as core;
 use std::collections::{BTreeMap, BTreeSet};
 
+fn decode_pathmap_mode(
+    value: &RhoValue,
+    path: &str,
+) -> Result<Option<core::PathMapModeV1>, ValueDecodeError> {
+    match value {
+        RhoValue::Nil => Ok(None),
+        RhoValue::String(value) => match value.as_str() {
+            "neutral-empty" => Ok(Some(core::PathMapModeV1::NeutralEmpty)),
+            "set" => Ok(Some(core::PathMapModeV1::Set)),
+            "map" => Ok(Some(core::PathMapModeV1::Map)),
+            _ => error(path, "expected neutral-empty, set, map, or Nil"),
+        },
+        _ => error(path, "expected neutral-empty, set, map, or Nil"),
+    }
+}
+
 #[derive(Clone)]
 struct Signature {
     sorts: Vec<core::TheorySortV1>,
@@ -261,6 +277,35 @@ fn constrain_term_arena(
     Ok(())
 }
 
+fn pattern_tag_is(value: &RhoValue, expected: &str) -> bool {
+    matches!(
+        value,
+        RhoValue::List(values)
+            if matches!(values.first(), Some(RhoValue::String(tag)) if tag == expected)
+    )
+}
+
+fn pmap_sources<'a>(
+    source: &'a RhoValue,
+    map_path: &str,
+) -> Result<(Vec<&'a RhoValue>, Vec<String>), ValueDecodeError> {
+    let mut pending = vec![(source, format!("{map_path}[1]"))];
+    let mut sources = Vec::new();
+    let mut paths = Vec::new();
+    while let Some((value, path)) = pending.pop() {
+        if pattern_tag_is(value, "pzip") {
+            let values = expect_list(value, &path)?;
+            require_len(values, 3, &path)?;
+            pending.push((&values[2], format!("{path}[2]")));
+            pending.push((&values[1], format!("{path}[1]")));
+        } else {
+            sources.push(value);
+            paths.push(path);
+        }
+    }
+    Ok((sources, paths))
+}
+
 fn compile_equation(
     value: &RhoValue,
     path: &str,
@@ -343,6 +388,11 @@ struct RuleCompiler<'a> {
     premise_roots: Vec<core::TheoryPremiseId>,
 }
 
+struct EnteredMapBinders {
+    parameters: Vec<core::TheoryVariableId>,
+    previous_bindings: Vec<(String, Option<core::TheoryVariableId>)>,
+}
+
 impl<'a> RuleCompiler<'a> {
     fn new(signature: &'a Signature, limits: core::TheoryLimitsV1, rule: &str) -> Self {
         Self {
@@ -412,6 +462,7 @@ impl<'a> RuleCompiler<'a> {
                 value: &'a RhoValue,
                 expected: Option<String>,
                 side: Side,
+                allow_map_splice: bool,
                 path: String,
             },
             FinishConstructor {
@@ -426,10 +477,35 @@ impl<'a> RuleCompiler<'a> {
             FinishSubstitution {
                 sort: String,
             },
+            FinishProduct {
+                sort: String,
+                arity: usize,
+            },
+            PrepareMapSources {
+                sources: Vec<(&'a RhoValue, String)>,
+                parameters: Vec<core::TheoryVariableId>,
+                side: Side,
+                path: String,
+            },
+            VisitMapSource {
+                value: &'a RhoValue,
+                expected: String,
+                side: Side,
+                extraction: bool,
+                path: String,
+            },
+            FinishMap {
+                sort: String,
+                source_count: usize,
+                parameters: Vec<core::TheoryVariableId>,
+                value_base: usize,
+                bindings: Vec<(String, Option<core::TheoryVariableId>)>,
+            },
             FinishCollection {
                 sort: String,
                 count: usize,
                 remainder: Option<core::TheoryVariableId>,
+                pathmap_mode: Option<core::PathMapModeV1>,
             },
         }
 
@@ -437,6 +513,7 @@ impl<'a> RuleCompiler<'a> {
             value,
             expected,
             side,
+            allow_map_splice: false,
             path: path.to_string(),
         }];
         let mut values = Vec::<core::TheoryTermId>::new();
@@ -446,6 +523,7 @@ impl<'a> RuleCompiler<'a> {
                     value: RhoValue::String(name),
                     expected,
                     side,
+                    allow_map_splice: _,
                     path,
                 } => {
                     let sort = match expected {
@@ -477,7 +555,13 @@ impl<'a> RuleCompiler<'a> {
                         &path,
                     )?);
                 },
-                Task::Visit { value, expected, side, path } => {
+                Task::Visit {
+                    value,
+                    expected,
+                    side,
+                    allow_map_splice,
+                    path,
+                } => {
                     let tagged = expect_list(value, &path)?;
                     let tag = tagged
                         .first()
@@ -509,12 +593,14 @@ impl<'a> RuleCompiler<'a> {
                                 value: &tagged[2],
                                 expected: Some(domain),
                                 side,
+                                allow_map_splice: false,
                                 path: format!("{path}[2]"),
                             });
                             tasks.push(Task::Visit {
                                 value: &tagged[1],
                                 expected: Some(function),
                                 side,
+                                allow_map_splice: false,
                                 path: format!("{path}[1]"),
                             });
                         },
@@ -556,19 +642,31 @@ impl<'a> RuleCompiler<'a> {
                                 value: &tagged[2],
                                 expected: Some(codomain),
                                 side,
+                                allow_map_splice: false,
                                 path: format!("{path}[2]"),
                             });
                         },
                         "coll" | "coll_typed" => {
-                            let (elements_index, remainder_index, explicit_element) =
+                            let (elements_index, remainder_index, mode_index, explicit_element) =
                                 if tag == "coll" {
-                                    require_len(tagged, 3, &path)?;
-                                    (1, 2, None)
+                                    if !matches!(tagged.len(), 3 | 4) {
+                                        return error(
+                                            &path,
+                                            "coll expects elements, remainder, and an optional PathMap mode",
+                                        );
+                                    }
+                                    (1, 2, (tagged.len() == 4).then_some(3), None)
                                 } else {
-                                    require_len(tagged, 4, &path)?;
+                                    if !matches!(tagged.len(), 4 | 5) {
+                                        return error(
+                                            &path,
+                                            "coll_typed expects an element sort, elements, remainder, and an optional PathMap mode",
+                                        );
+                                    }
                                     (
                                         2,
                                         3,
+                                        (tagged.len() == 5).then_some(4),
                                         Some(expect_nonempty_string(
                                             &tagged[1],
                                             &format!("{path}[1]"),
@@ -579,12 +677,39 @@ impl<'a> RuleCompiler<'a> {
                                 Some(sort) => sort,
                                 None => self.unique_collection_sort(explicit_element, &path)?,
                             };
-                            let element_sort = match self.signature.sort(&sort) {
+                            let pathmap_mode = mode_index
+                                .map(|index| {
+                                    decode_pathmap_mode(
+                                        &tagged[index],
+                                        &format!("{path}[{index}]"),
+                                    )
+                                })
+                                .transpose()?
+                                .flatten();
+                            let (kind, key_sort, declared_element_sort) = match self.signature.sort(&sort) {
                                 Some(core::TheorySortV1 {
-                                    kind: core::TheorySortKindV1::Collection { element, .. },
+                                    kind: core::TheorySortKindV1::Collection { kind, key, element },
                                     ..
-                                }) => element.clone(),
+                                }) => (*kind, key.clone(), element.clone()),
                                 _ => return error(&path, format!("`{sort}` is not a collection sort")),
+                            };
+                            if kind != core::CollectionKind::PathMap && pathmap_mode.is_some() {
+                                return error(
+                                    &path,
+                                    "only a PathMap collection may carry PathMap mode evidence",
+                                );
+                            }
+                            let element_sort = match (kind, pathmap_mode) {
+                                (
+                                    core::CollectionKind::PathMap,
+                                    Some(core::PathMapModeV1::Set),
+                                ) => key_sort.ok_or_else(|| {
+                                    ValueDecodeError::new(
+                                        &path,
+                                        "set-mode PathMap sort has no declared key sort",
+                                    )
+                                })?,
+                                _ => declared_element_sort,
                             };
                             if explicit_element.is_some_and(|explicit| explicit != element_sort) {
                                 return error(
@@ -614,15 +739,24 @@ impl<'a> RuleCompiler<'a> {
                                 ),
                             };
                             tasks.push(Task::FinishCollection {
-                                sort,
+                                sort: sort.clone(),
                                 count: elements.len(),
                                 remainder,
+                                pathmap_mode,
                             });
                             for (index, element) in elements.iter().enumerate().rev() {
+                                let expected = if pattern_tag_is(element, "pmap") {
+                                    // A comprehension is a splice, not one
+                                    // element of the enclosing collection.
+                                    sort.clone()
+                                } else {
+                                    element_sort.clone()
+                                };
                                 tasks.push(Task::Visit {
                                     value: element,
-                                    expected: Some(element_sort.clone()),
+                                    expected: Some(expected),
                                     side,
+                                    allow_map_splice: pattern_tag_is(element, "pmap"),
                                     path: format!("{path}[{elements_index}][{index}]"),
                                 });
                             }
@@ -678,7 +812,134 @@ impl<'a> RuleCompiler<'a> {
                                 &path,
                             )?);
                         },
-                        "pmap" | "pzip" | "^*" => {
+                        "product" => {
+                            let sort = expected.ok_or_else(|| {
+                                ValueDecodeError::new(
+                                    &path,
+                                    "product needs an expected product sort",
+                                )
+                            })?;
+                            let factors = match self.signature.sort(&sort) {
+                                Some(core::TheorySortV1 {
+                                    kind: core::TheorySortKindV1::Product { factors },
+                                    ..
+                                }) => factors.clone(),
+                                _ => {
+                                    return error(
+                                        &path,
+                                        format!("`{sort}` is not a product sort"),
+                                    );
+                                },
+                            };
+                            if tagged.len().saturating_sub(1) != factors.len() {
+                                return error(
+                                    &path,
+                                    format!(
+                                        "product sort `{sort}` expects {} factors, found {}",
+                                        factors.len(),
+                                        tagged.len().saturating_sub(1)
+                                    ),
+                                );
+                            }
+                            tasks.push(Task::FinishProduct {
+                                sort,
+                                arity: factors.len(),
+                            });
+                            for (index, (factor, factor_sort)) in
+                                tagged[1..].iter().zip(factors).enumerate().rev()
+                            {
+                                tasks.push(Task::Visit {
+                                    value: factor,
+                                    expected: Some(factor_sort),
+                                    side,
+                                    allow_map_splice: false,
+                                    path: format!("{path}[{}]", index + 1),
+                                });
+                            }
+                        },
+                        "pzip" => {
+                            return error(
+                                &path,
+                                "pzip is collection-comprehension metasyntax and is valid only as the source of pmap",
+                            );
+                        },
+                        "pmap" => {
+                            if !allow_map_splice {
+                                return error(
+                                    &path,
+                                    "pmap is collection-splice metasyntax and is valid only as an element of coll or coll_typed",
+                                );
+                            }
+                            require_len(tagged, 4, &path)?;
+                            let sort = expected.ok_or_else(|| {
+                                ValueDecodeError::new(
+                                    &path,
+                                    "pmap needs an expected target collection sort",
+                                )
+                            })?;
+                            let target_element = match self.signature.sort(&sort) {
+                                Some(core::TheorySortV1 {
+                                    kind: core::TheorySortKindV1::Collection {
+                                        element, ..
+                                    },
+                                    ..
+                                }) => element.clone(),
+                                _ => {
+                                    return error(
+                                        &path,
+                                        format!("`{sort}` is not a collection sort"),
+                                    );
+                                },
+                            };
+                            let parameter_values =
+                                expect_list(&tagged[2], &format!("{path}[2]"))?;
+                            if parameter_values.is_empty() {
+                                return error(&path, "pmap requires at least one parameter");
+                            }
+                            let mut parameter_names = Vec::with_capacity(parameter_values.len());
+                            let mut local_names = BTreeSet::new();
+                            for (index, parameter) in parameter_values.iter().enumerate() {
+                                let parameter_path = format!("{path}[2][{index}]");
+                                let name = expect_nonempty_string(parameter, &parameter_path)?;
+                                if !local_names.insert(name.to_string()) {
+                                    return error(
+                                        parameter_path,
+                                        format!("duplicate pmap parameter `{name}`"),
+                                    );
+                                }
+                                parameter_names.push(name.to_string());
+                            }
+                            let (sources, source_paths) = pmap_sources(&tagged[1], &path)?;
+                            let EnteredMapBinders {
+                                parameters,
+                                previous_bindings: bindings,
+                            } = self.enter_map_binders(&parameter_names, &path)?;
+                            let source_tasks = sources
+                                .into_iter()
+                                .zip(source_paths)
+                                .collect::<Vec<_>>();
+                            tasks.push(Task::FinishMap {
+                                sort,
+                                source_count: source_tasks.len(),
+                                parameters: parameters.clone(),
+                                value_base: values.len(),
+                                bindings,
+                            });
+                            tasks.push(Task::PrepareMapSources {
+                                sources: source_tasks,
+                                parameters,
+                                side,
+                                path: path.clone(),
+                            });
+                            tasks.push(Task::Visit {
+                                value: &tagged[3],
+                                expected: Some(target_element),
+                                side,
+                                allow_map_splice: false,
+                                path: format!("{path}[3]"),
+                            });
+                        },
+                        "^*" => {
                             return error(
                                 &path,
                                 format!(
@@ -728,6 +989,7 @@ impl<'a> RuleCompiler<'a> {
                                     value: argument,
                                     expected: Some(sort.clone()),
                                     side,
+                                    allow_map_splice: false,
                                     path: format!("{path}[{}]", index + 1),
                                 });
                             }
@@ -768,14 +1030,223 @@ impl<'a> RuleCompiler<'a> {
                         path,
                     )?);
                 },
-                Task::FinishCollection { sort, count, remainder } => {
+                Task::FinishProduct { sort, arity } => {
+                    let start = values.len().checked_sub(arity).ok_or_else(|| {
+                        ValueDecodeError::new(path, "product result stack underflow")
+                    })?;
+                    let factors = values.drain(start..).collect();
+                    values.push(self.push_term(
+                        sort,
+                        core::TheoryTermFormV1::Product { factors },
+                        path,
+                    )?);
+                },
+                Task::PrepareMapSources { sources, parameters, side, path } => {
+                    if sources.len() > 1 && parameters.len() != sources.len() {
+                        return error(
+                            &path,
+                            format!(
+                                "pzip has {} sources but pmap declares {} parameters",
+                                sources.len(),
+                                parameters.len()
+                            ),
+                        );
+                    }
+                    let mut source_sorts = Vec::with_capacity(sources.len());
+                    for (index, (value, source_path)) in sources.iter().enumerate() {
+                        let known = match value {
+                            RhoValue::String(name) => self
+                                .variable_ids
+                                .get(name)
+                                .and_then(|id| self.variables.get(id.0 as usize))
+                                .filter(|variable| !variable.sort.is_empty())
+                                .map(|variable| variable.sort.clone()),
+                            _ => Some(self.infer_root_sort(value, source_path)?),
+                        };
+                        if known.is_none() && !(side == Side::Left && index > 0) {
+                            return error(
+                                source_path,
+                                "the pmap driver must be bound before the comprehension",
+                            );
+                        }
+                        if let Some(source_sort) = &known {
+                            let (kind, element) = match self.signature.sort(source_sort) {
+                                Some(core::TheorySortV1 {
+                                    kind: core::TheorySortKindV1::Collection { kind, element, .. },
+                                    ..
+                                }) => (*kind, element.clone()),
+                                _ => {
+                                    return error(
+                                        source_path,
+                                        format!("`{source_sort}` is not a collection sort"),
+                                    );
+                                },
+                            };
+                            if sources.len() > 1 && kind != core::CollectionKind::List {
+                                return error(
+                                    source_path,
+                                    "every exact-pzip source must be an ordered List",
+                                );
+                            }
+                            if sources.len() == 1 {
+                                let expected = match self.signature.sort(&element) {
+                                    Some(core::TheorySortV1 {
+                                        kind: core::TheorySortKindV1::Product { factors },
+                                        ..
+                                    }) => factors.clone(),
+                                    _ => vec![element],
+                                };
+                                if expected.len() != parameters.len() {
+                                    return error(
+                                        source_path,
+                                        format!(
+                                            "pmap source supplies {} fields but {} parameters were declared",
+                                            expected.len(),
+                                            parameters.len()
+                                        ),
+                                    );
+                                }
+                                for (parameter, expected) in parameters.iter().zip(expected) {
+                                    self.constrain_variable(*parameter, &expected, source_path)?;
+                                }
+                            } else {
+                                self.constrain_variable(parameters[index], &element, source_path)?;
+                            }
+                        }
+                        source_sorts.push(known);
+                    }
+
+                    let mut parameter_sorts = Vec::with_capacity(parameters.len());
+                    for parameter in &parameters {
+                        let variable =
+                            self.variables.get(parameter.0 as usize).ok_or_else(|| {
+                                ValueDecodeError::new(
+                                    &path,
+                                    format!("unknown pmap parameter #{}", parameter.0),
+                                )
+                            })?;
+                        if variable.sort.is_empty() {
+                            return error(
+                                &path,
+                                format!(
+                                    "cannot infer sort of pmap parameter #{} from its body or source",
+                                    parameter.0
+                                ),
+                            );
+                        }
+                        parameter_sorts.push(variable.sort.clone());
+                    }
+                    for (index, source_sort) in source_sorts.iter_mut().enumerate() {
+                        if source_sort.is_none() {
+                            *source_sort = Some(self.unique_collection_sort_with_kind(
+                                core::CollectionKind::List,
+                                &parameter_sorts[index],
+                                &path,
+                            )?);
+                        }
+                    }
+                    let source_sorts = source_sorts
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, sort)| {
+                            sort.ok_or_else(|| {
+                                ValueDecodeError::new(
+                                    &path,
+                                    format!("could not resolve pmap source sort #{index}"),
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    for (index, ((value, source_path), expected)) in
+                        sources.into_iter().zip(source_sorts).enumerate().rev()
+                    {
+                        tasks.push(Task::VisitMapSource {
+                            value,
+                            expected,
+                            side,
+                            extraction: index > 0,
+                            path: source_path,
+                        });
+                    }
+                },
+                Task::VisitMapSource { value, expected, side, extraction, path } => {
+                    let unbound_extraction = match value {
+                        RhoValue::String(name) => {
+                            side == Side::Left
+                                && extraction
+                                && !self.variable_ids.contains_key(name)
+                        },
+                        _ => false,
+                    };
+                    if unbound_extraction {
+                        let RhoValue::String(name) = value else {
+                            return error(&path, "invalid pmap extraction source");
+                        };
+                        let variable = self.add_variable(
+                            name,
+                            &expected,
+                            core::TheoryVariableRoleV1::Derived,
+                            &path,
+                        )?;
+                        values.push(self.push_term(
+                            expected,
+                            core::TheoryTermFormV1::Variable(variable),
+                            &path,
+                        )?);
+                    } else {
+                        // Every driver and every non-variable correlated
+                        // source must already be available.  Compiling it as
+                        // a right-side reference enforces that dataflow while
+                        // retaining the enclosing rule side on the Map node.
+                        tasks.push(Task::Visit {
+                            value,
+                            expected: Some(expected),
+                            side: Side::Right,
+                            allow_map_splice: false,
+                            path,
+                        });
+                    }
+                },
+                Task::FinishMap {
+                    sort,
+                    source_count,
+                    parameters,
+                    value_base,
+                    bindings,
+                } => {
+                    let expected = value_base
+                        .checked_add(source_count)
+                        .and_then(|count| count.checked_add(1))
+                        .ok_or_else(|| ValueDecodeError::new(path, "pmap value count overflow"))?;
+                    if values.len() != expected {
+                        return error(path, "pmap result stack shape mismatch");
+                    }
+                    let mut compiled = values.drain(value_base..);
+                    let body = compiled.next().ok_or_else(|| {
+                        ValueDecodeError::new(path, "pmap body result stack underflow")
+                    })?;
+                    let sources = compiled.collect::<Vec<_>>();
+                    for (name, previous) in bindings.into_iter().rev() {
+                        if let Some(previous) = previous {
+                            self.variable_ids.insert(name, previous);
+                        } else {
+                            self.variable_ids.remove(&name);
+                        }
+                    }
+                    values.push(self.push_term(
+                        sort,
+                        core::TheoryTermFormV1::Map { sources, parameters, body },
+                        path,
+                    )?);
+                },
+                Task::FinishCollection { sort, count, remainder, pathmap_mode } => {
                     let start = values.len().checked_sub(count).ok_or_else(|| {
                         ValueDecodeError::new(path, "collection result stack underflow")
                     })?;
                     let elements = values.drain(start..).collect();
                     values.push(self.push_term(
                         sort,
-                        core::TheoryTermFormV1::Collection { elements, remainder },
+                        core::TheoryTermFormV1::Collection { elements, remainder, pathmap_mode },
                         path,
                     )?);
                 },
@@ -1065,6 +1536,91 @@ impl<'a> RuleCompiler<'a> {
         Ok(first.name.clone())
     }
 
+    fn unique_collection_sort_with_kind(
+        &self,
+        kind: core::CollectionKind,
+        element: &str,
+        path: &str,
+    ) -> Result<String, ValueDecodeError> {
+        let mut matches = self.signature.sorts.iter().filter(|sort| {
+            matches!(
+                &sort.kind,
+                core::TheorySortKindV1::Collection {
+                    kind: candidate_kind,
+                    element: candidate_element,
+                    ..
+                } if *candidate_kind == kind && candidate_element == element
+            )
+        });
+        let Some(first) = matches.next() else {
+            return error(
+                path,
+                format!("no declared {kind:?} collection has element sort `{element}`"),
+            );
+        };
+        if matches.next().is_some() {
+            return error(
+                path,
+                format!("{kind:?} collection sort for element `{element}` is ambiguous"),
+            );
+        }
+        Ok(first.name.clone())
+    }
+
+    fn enter_map_binders(
+        &mut self,
+        names: &[String],
+        path: &str,
+    ) -> Result<EnteredMapBinders, ValueDecodeError> {
+        if self.variables.len().saturating_add(names.len())
+            > self.limits.max_rule_variables as usize
+        {
+            return error(path, "rule-variable limit exceeded");
+        }
+        let mut parameters = Vec::with_capacity(names.len());
+        let mut bindings = Vec::with_capacity(names.len());
+        for name in names {
+            let id = core::TheoryVariableId(self.variables.len() as u32);
+            let canonical_name = format!("$map#{}", id.0);
+            if !self.variable_names.insert(canonical_name.clone()) {
+                return error(path, "canonical pmap binder identity collision");
+            }
+            let previous = self.variable_ids.insert(name.clone(), id);
+            self.variables.push(core::TheoryVariableV1 {
+                id,
+                name: canonical_name,
+                sort: String::new(),
+                role: core::TheoryVariableRoleV1::Binder,
+            });
+            parameters.push(id);
+            bindings.push((name.clone(), previous));
+        }
+        Ok(EnteredMapBinders { parameters, previous_bindings: bindings })
+    }
+
+    fn constrain_variable(
+        &mut self,
+        id: core::TheoryVariableId,
+        sort: &str,
+        path: &str,
+    ) -> Result<(), ValueDecodeError> {
+        if self.signature.sort(sort).is_none() {
+            return error(path, format!("unknown theory sort `{sort}`"));
+        }
+        let variable = self.variables.get_mut(id.0 as usize).ok_or_else(|| {
+            ValueDecodeError::new(path, format!("unknown theory variable #{}", id.0))
+        })?;
+        if variable.sort.is_empty() {
+            variable.sort = sort.to_string();
+        } else if variable.sort != sort {
+            return error(
+                path,
+                format!("variable #{} has sort `{}`, expected `{sort}`", id.0, variable.sort),
+            );
+        }
+        Ok(())
+    }
+
     fn add_or_constrain_input(
         &mut self,
         name: &str,
@@ -1074,7 +1630,12 @@ impl<'a> RuleCompiler<'a> {
     ) -> Result<core::TheoryVariableId, ValueDecodeError> {
         if let Some(id) = self.variable_ids.get(name).copied() {
             let variable = &mut self.variables[id.0 as usize];
-            if variable.sort != sort {
+            if variable.sort.is_empty() {
+                if self.signature.sort(sort).is_none() {
+                    return error(path, format!("unknown theory sort `{sort}`"));
+                }
+                variable.sort = sort.to_string();
+            } else if variable.sort != sort {
                 return error(
                     path,
                     format!("variable `{name}` has sort `{}`, expected `{sort}`", variable.sort),
@@ -1082,6 +1643,11 @@ impl<'a> RuleCompiler<'a> {
             }
             if variable.role == core::TheoryVariableRoleV1::Input {
                 variable.role = role;
+            } else if variable.role == core::TheoryVariableRoleV1::Binder
+                && role == core::TheoryVariableRoleV1::Input
+            {
+                // A syntactic occurrence in a map body constrains the
+                // lexically introduced binder; it does not change its role.
             } else if variable.role != role {
                 return error(path, format!("variable `{name}` has incompatible rule roles"));
             }
@@ -1119,7 +1685,7 @@ impl<'a> RuleCompiler<'a> {
     }
 
     fn require_variable(
-        &self,
+        &mut self,
         name: &str,
         sort: &str,
         path: &str,
@@ -1127,8 +1693,13 @@ impl<'a> RuleCompiler<'a> {
         let id = self.variable_ids.get(name).copied().ok_or_else(|| {
             ValueDecodeError::new(path, format!("unbound right-side variable `{name}`"))
         })?;
-        let variable = &self.variables[id.0 as usize];
-        if variable.sort != sort {
+        let variable = &mut self.variables[id.0 as usize];
+        if variable.sort.is_empty() {
+            if self.signature.sort(sort).is_none() {
+                return error(path, format!("unknown theory sort `{sort}`"));
+            }
+            variable.sort = sort.to_string();
+        } else if variable.sort != sort {
             return error(
                 path,
                 format!("variable `{name}` has sort `{}`, expected `{sort}`", variable.sort),
@@ -1402,10 +1973,29 @@ mod tests {
                     element: "Expr".into(),
                 },
             },
+            core::TheorySortV1 {
+                name: "Pair(Expr,Int)".into(),
+                kind: core::TheorySortKindV1::Product {
+                    factors: vec!["Expr".into(), "Int".into()],
+                },
+            },
+            core::TheorySortV1 {
+                name: "Map(Expr,Int)".into(),
+                kind: core::TheorySortKindV1::Collection {
+                    kind: core::CollectionKind::Map,
+                    key: Some("Expr".into()),
+                    element: "Pair(Expr,Int)".into(),
+                },
+            },
         ];
         theory.constructors.push(core::TheoryConstructorV1 {
             name: "Wrap".into(),
             domain: vec!["Expr".into()],
+            codomain: "Expr".into(),
+        });
+        theory.constructors.push(core::TheoryConstructorV1 {
+            name: "Environment".into(),
+            domain: vec!["Map(Expr,Int)".into()],
             codomain: "Expr".into(),
         });
         theory.judgments.push(core::JudgmentDeclV1 {
@@ -1543,5 +2133,141 @@ mod tests {
         let error = compile_surface_rules(&[valid.clone(), valid], &[], &mut theory())
             .expect_err("rule names must be unique within their namespace");
         assert!(error.message.contains("duplicate equation name"), "{error:?}");
+    }
+
+    #[test]
+    fn product_compiles_only_against_its_exact_structural_sort() {
+        let pair = list([
+            string("product"),
+            string("key"),
+            list([string("lit"), string("i64"), RhoValue::Integer(7)]),
+        ]);
+        let environment =
+            list([string("Environment"), list([string("coll"), list([pair]), RhoValue::Nil])]);
+        let rule = map([
+            ("name", string("EnvironmentIdentity")),
+            ("left", environment.clone()),
+            ("right", environment),
+        ]);
+        let mut compiled = theory();
+        compile_surface_rules(&[rule], &[], &mut compiled).expect("typed product compiles");
+
+        let arena = &compiled.equations[0].arena;
+        let product = arena
+            .terms
+            .iter()
+            .find(|term| matches!(term.form, core::TheoryTermFormV1::Product { .. }))
+            .expect("the product entry must remain structural");
+        assert_eq!(product.sort, "Pair(Expr,Int)");
+        let core::TheoryTermFormV1::Product { factors } = &product.form else {
+            unreachable!("selected a product term")
+        };
+        assert_eq!(arena.terms[factors[0].0 as usize].sort, "Expr");
+        assert_eq!(arena.terms[factors[1].0 as usize].sort, "Int");
+
+        let invalid = map([
+            ("name", string("NotAProduct")),
+            (
+                "left",
+                list([string("Wrap"), list([string("product"), string("x"), string("y")])]),
+            ),
+            ("right", list([string("Wrap"), string("x")])),
+        ]);
+        let error = compile_surface_rules(&[invalid], &[], &mut theory())
+            .expect_err("product must reject a non-product expected sort");
+        assert!(error.message.contains("not a product sort"), "{error:?}");
+
+        let stray_zip = map([
+            ("name", string("StrayZip")),
+            ("left", list([string("Wrap"), list([string("pzip"), string("x"), string("y")])])),
+            ("right", list([string("Wrap"), string("x")])),
+        ]);
+        let error = compile_surface_rules(&[stray_zip], &[], &mut theory())
+            .expect_err("pzip outside pmap must remain non-publishable metasyntax");
+        assert!(error.message.contains("valid only as the source of pmap"), "{error:?}");
+    }
+
+    #[test]
+    fn collection_comprehension_binders_are_lexical_in_canonical_theory() {
+        let mut compiled = core::TheoryCoreV1::structural();
+        compiled.profile = core::TheoryProfileV1::Oslf;
+        compiled.sorts = vec![
+            core::TheorySortV1 {
+                name: "Key".into(),
+                kind: core::TheorySortKindV1::Opaque { abi: "test/key/1".into() },
+            },
+            core::TheorySortV1 {
+                name: "Value".into(),
+                kind: core::TheorySortKindV1::Opaque { abi: "test/value/1".into() },
+            },
+            core::TheorySortV1 {
+                name: "Entry".into(),
+                kind: core::TheorySortKindV1::Product {
+                    factors: vec!["Key".into(), "Value".into()],
+                },
+            },
+            core::TheorySortV1 {
+                name: "Map(Key,Value)".into(),
+                kind: core::TheorySortKindV1::Collection {
+                    kind: core::CollectionKind::Map,
+                    key: Some("Key".into()),
+                    element: "Entry".into(),
+                },
+            },
+        ];
+        let context = list([list([
+            string("typed"),
+            string("environment"),
+            list([string("map"), string("Key"), string("Value")]),
+        ])]);
+        let comprehension = list([
+            string("pmap"),
+            string("environment"),
+            list([string("key"), string("value")]),
+            list([string("product"), string("key"), string("value")]),
+        ]);
+        let left = list([string("coll"), list([comprehension]), RhoValue::Nil]);
+        let right = string("environment");
+        let rule = map([
+            ("name", string("EliminateEnvironmentComprehension")),
+            ("context", context),
+            ("left", left),
+            ("right", right),
+        ]);
+        compile_surface_rules(&[], &[rule], &mut compiled)
+            .expect("Greg/Mike pmap syntax elaborates to canonical rule metasyntax");
+        core::LanguageCoreV1 {
+            abi: core::LANGUAGE_CORE_ABI_CURRENT,
+            grammar: core::GrammarCoreV1::new("ComprehensionFixture"),
+            theory: compiled,
+        }
+        .validate()
+        .expect("map parameters are lexical row binders, not non-linear rule variables");
+
+        let context = list([list([
+            string("typed"),
+            string("environment"),
+            list([string("map"), string("Expr"), string("Int")]),
+        ])]);
+        let misplaced = map([
+            ("name", string("MisplacedComprehension")),
+            ("context", context),
+            (
+                "left",
+                list([
+                    string("Environment"),
+                    list([
+                        string("pmap"),
+                        string("environment"),
+                        list([string("key"), string("value")]),
+                        list([string("product"), string("key"), string("value")]),
+                    ]),
+                ]),
+            ),
+            ("right", list([string("Environment"), string("environment")])),
+        ]);
+        let error = compile_surface_rules(&[], &[misplaced], &mut theory())
+            .expect_err("pmap cannot become an ordinary object-language constructor child");
+        assert!(error.message.contains("collection-splice metasyntax"), "{error:?}");
     }
 }

@@ -5,7 +5,7 @@
 //! use explicit worklists without consuming the native call stack.  Names are
 //! diagnostic and stable; dense numeric identifiers are the executable links.
 
-use crate::{CanonicalValue, CollectionKind};
+use crate::{CanonicalValue, CollectionKind, PathMapModeV1};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -55,15 +55,24 @@ pub enum TheoryTermFormV1 {
     Collection {
         elements: Vec<TheoryTermId>,
         remainder: Option<TheoryVariableId>,
+        /// Exact structural mode for a PathMap pattern or construction.
+        /// `None` is mode-polymorphic and is valid only when a canonical
+        /// remainder supplies the mode; mode is never inferred from entries.
+        #[serde(default)]
+        pathmap_mode: Option<PathMapModeV1>,
     },
+    /// A collection comprehension. One source is ordinary map; two or more
+    /// sources are exact zip. The construct is rule metasyntax and is
+    /// eliminated by matching/construction, never published as an object term.
     Map {
-        collection: TheoryTermId,
+        sources: Vec<TheoryTermId>,
         parameters: Vec<TheoryVariableId>,
         body: TheoryTermId,
     },
-    Zip {
-        left: TheoryTermId,
-        right: TheoryTermId,
+    /// A structural product value. This is deliberately distinct from the
+    /// `pzip` source syntax consumed by `Map`.
+    Product {
+        factors: Vec<TheoryTermId>,
     },
     Literal(TheoryLiteralV1),
 }

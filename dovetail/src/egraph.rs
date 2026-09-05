@@ -129,6 +129,20 @@ impl UnionFind {
         EClassId(root)
     }
 
+    /// Representative of `id`, or `None` when the identifier is outside this
+    /// union-find arena.  Public admission boundaries use this checked form so
+    /// an untrusted stale/forged identifier cannot index the parent vector.
+    fn try_find(&self, id: EClassId) -> Option<EClassId> {
+        let mut root = usize::try_from(id.0).ok()?;
+        loop {
+            let parent = usize::try_from(*self.parent.get(root)?).ok()?;
+            if parent == root {
+                return u32::try_from(root).ok().map(EClassId);
+            }
+            root = parent;
+        }
+    }
+
     /// Representative of `id`, compressing the path.
     fn find_mut(&mut self, id: EClassId) -> EClassId {
         let root = self.find(id).0;
@@ -222,6 +236,12 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
         self.union_find.find(id)
     }
 
+    /// Checked canonical representative lookup for identifiers received at a
+    /// trust boundary.
+    pub fn try_find(&self, id: EClassId) -> Option<EClassId> {
+        self.union_find.try_find(id)
+    }
+
     /// Whether two e-class ids are equivalent.
     pub fn equiv(&self, a: EClassId, b: EClassId) -> bool {
         self.find(a) == self.find(b)
@@ -242,6 +262,18 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
         self.node_limit_hit
     }
 
+    /// Start a fresh bounded construction phase whose allowance is measured
+    /// relative to the graph's current live-node count. Returns `false`
+    /// without changing the graph when the absolute limit would overflow.
+    pub fn set_additional_node_budget(&mut self, additional: usize) -> bool {
+        let Some(max_nodes) = self.node_count.checked_add(additional) else {
+            return false;
+        };
+        self.config.max_nodes = max_nodes;
+        self.node_limit_hit = false;
+        true
+    }
+
     /// Iterate the live canonical e-class ids (the WTA states).
     pub fn classes(&self) -> impl Iterator<Item = EClassId> + '_ {
         self.classes.keys().copied()
@@ -250,8 +282,11 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
     /// The exact (canonical, deduplicated) e-nodes of a class — the WTA
     /// transitions into it. Empty if `id` names no live class.
     pub fn nodes(&self, id: EClassId) -> &[ENode<L>] {
+        let Some(canonical) = self.try_find(id) else {
+            return &[];
+        };
         self.classes
-            .get(&self.find(id))
+            .get(&canonical)
             .map(|c| c.nodes.as_slice())
             .unwrap_or(&[])
     }
@@ -579,6 +614,27 @@ mod tests {
         let a_again = eg.try_add_with_budget(ENode::leaf("a".into()));
         assert!(a_again.is_some());
         assert_eq!(eg.node_count(), 2);
+    }
+
+    #[test]
+    fn checked_lookup_rejects_foreign_class_identifier_without_panicking() {
+        let mut eg = EGraph::<String>::new();
+        let valid = leaf(&mut eg, "valid");
+        assert_eq!(eg.try_find(valid), Some(valid));
+        assert_eq!(eg.try_find(EClassId(u32::MAX)), None);
+        assert!(eg.nodes(EClassId(u32::MAX)).is_empty());
+    }
+
+    #[test]
+    fn additional_node_budget_is_relative_exact_and_overflow_safe() {
+        let mut eg = EGraph::<String>::with_config(EGraphConfig { max_nodes: 1 });
+        assert!(eg.try_add_with_budget(ENode::leaf("a".into())).is_some());
+        assert!(eg.set_additional_node_budget(1));
+        assert!(eg.try_add_with_budget(ENode::leaf("b".into())).is_some());
+        assert!(eg.try_add_with_budget(ENode::leaf("c".into())).is_none());
+        assert!(eg.node_limit_reached());
+        assert!(!eg.set_additional_node_budget(usize::MAX));
+        assert!(eg.node_limit_reached(), "overflow must not mutate budget state");
     }
 
     #[test]

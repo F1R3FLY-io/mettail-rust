@@ -8,16 +8,21 @@
 //! binds both projections for authority, FLTs, theorem channels, and replay.
 
 use crate::{
-    BuiltinCarrier, Carrier, GrammarCoreV1, JudgmentAtomV1, JudgmentRuleV1, LanguageRights,
-    TheoryEquationV1, TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPremiseFormV1,
-    TheoryRewriteV1, TheoryRuleArenaV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId,
-    TheoryTermNodeV1, TheoryVariableId, TheoryVariableRoleV1, TheoryVariableV1, ValidationError,
+    BuiltinCarrier, Carrier, CollectionKind, GrammarCoreV1, JudgmentAtomV1, JudgmentRuleV1,
+    LanguageRights, PathMapModeV1, TheoryEquationV1, TheoryLiteralCarrierV1, TheoryLiteralV1,
+    TheoryPremiseFormV1, TheoryRewriteV1, TheoryRuleArenaV1, TheorySortKindV1, TheoryTermFormV1,
+    TheoryTermId, TheoryTermNodeV1, TheoryVariableId, TheoryVariableRoleV1, TheoryVariableV1,
+    ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const LANGUAGE_CORE_ABI_V1: u16 = 1;
+pub const LANGUAGE_CORE_ABI_V2: u16 = 2;
+pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V2;
 pub const THEORY_CORE_ABI_V1: u16 = 1;
+pub const THEORY_CORE_ABI_V2: u16 = 2;
+pub const THEORY_CORE_ABI_CURRENT: u16 = THEORY_CORE_ABI_V2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LanguageCoreV1 {
@@ -29,7 +34,7 @@ pub struct LanguageCoreV1 {
 impl LanguageCoreV1 {
     pub fn structural(grammar: GrammarCoreV1) -> Self {
         Self {
-            abi: LANGUAGE_CORE_ABI_V1,
+            abi: LANGUAGE_CORE_ABI_CURRENT,
             theory: TheoryCoreV1::structural(),
             grammar,
         }
@@ -47,7 +52,7 @@ impl LanguageCoreV1 {
         let grammar = self.grammar_fingerprint()?;
         let theory = self.theory_fingerprint()?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-language-core/1\0");
+        hasher.update(b"mettail-language-core/2\0");
         hasher.update(&self.abi.to_be_bytes());
         hasher.update(&grammar);
         hasher.update(&theory);
@@ -56,7 +61,7 @@ impl LanguageCoreV1 {
 
     pub fn validate(&self) -> Result<(), Vec<LanguageCoreValidationError>> {
         let mut errors = Vec::new();
-        if self.abi != LANGUAGE_CORE_ABI_V1 {
+        if self.abi != LANGUAGE_CORE_ABI_CURRENT {
             errors.push(LanguageCoreValidationError::UnsupportedLanguageAbi(self.abi));
         }
         if let Err(grammar) = self.grammar.validate() {
@@ -107,7 +112,7 @@ pub struct TheoryCoreV1 {
 impl TheoryCoreV1 {
     pub fn structural() -> Self {
         Self {
-            abi: THEORY_CORE_ABI_V1,
+            abi: THEORY_CORE_ABI_CURRENT,
             profile: TheoryProfileV1::StructuralOnly,
             sorts: Vec::new(),
             constructors: Vec::new(),
@@ -131,14 +136,14 @@ impl TheoryCoreV1 {
     pub fn fingerprint(&self) -> Result<[u8; 32], postcard::Error> {
         let bytes = postcard::to_allocvec(self)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-theory-core/1\0");
+        hasher.update(b"mettail-theory-core/2\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
 
     fn validation_errors(&self, grammar: &GrammarCoreV1) -> Vec<TheoryValidationError> {
         let mut errors = Vec::new();
-        if self.abi != THEORY_CORE_ABI_V1 {
+        if self.abi != THEORY_CORE_ABI_CURRENT {
             errors.push(TheoryValidationError::UnsupportedTheoryAbi(self.abi));
         }
         if self.limits.has_zero_bound() {
@@ -260,6 +265,15 @@ impl TheoryCoreV1 {
                     });
                 }
             }
+            if let Some(projection) = &self.resource_projection {
+                if action.grade != projection.grade_sort {
+                    errors.push(TheoryValidationError::SortMismatch {
+                        owner: format!("action `{}` projected resource grade", action.id),
+                        expected: projection.grade_sort.clone(),
+                        actual: action.grade.clone(),
+                    });
+                }
+            }
             if !effects.contains(action.effect.as_str()) {
                 errors.push(TheoryValidationError::UnknownReference {
                     kind: "effect",
@@ -368,6 +382,15 @@ impl TheoryCoreV1 {
                 &sorts,
                 &mut errors,
             );
+            if let Some(cost) = &self.cost {
+                if projection.grade_sort != cost.signature_sort {
+                    errors.push(TheoryValidationError::SortMismatch {
+                        owner: "Cost(G) resource projection".into(),
+                        expected: cost.signature_sort.clone(),
+                        actual: projection.grade_sort.clone(),
+                    });
+                }
+            }
         }
         unique_names(
             self.checker_requirements
@@ -650,6 +673,28 @@ pub enum TheoryValidationError {
         expected: usize,
         actual: usize,
     },
+    InvalidCollectionSignature {
+        sort: String,
+        reason: &'static str,
+    },
+    InvalidPathMapMode {
+        owner: String,
+        reason: &'static str,
+    },
+    InvalidComprehensionPlacement {
+        rule: String,
+        term: u32,
+    },
+    InvalidComprehensionBinder {
+        rule: String,
+        variable: String,
+        term: u32,
+        reason: &'static str,
+    },
+    UnreachableTerm {
+        rule: String,
+        term: u32,
+    },
     UnboundVariable {
         rule: String,
         variable: String,
@@ -787,6 +832,11 @@ fn validate_signature(
     sorts: &BTreeSet<&str>,
     errors: &mut Vec<TheoryValidationError>,
 ) {
+    let theory_sorts: BTreeMap<_, _> = theory
+        .sorts
+        .iter()
+        .map(|sort| (sort.name.as_str(), sort))
+        .collect();
     let grammar_categories: BTreeMap<_, _> = grammar
         .categories
         .iter()
@@ -810,11 +860,40 @@ fn validate_signature(
                     });
                 }
             },
-            TheorySortKindV1::Collection { key, element, .. } => {
+            TheorySortKindV1::Collection { kind, key, element } => {
                 if let Some(key) = key {
                     require_sort(key, sorts, errors);
                 }
                 require_sort(element, sorts, errors);
+                match kind {
+                    CollectionKind::List | CollectionKind::Bag | CollectionKind::Set => {
+                        if key.is_some() {
+                            errors.push(TheoryValidationError::InvalidCollectionSignature {
+                                sort: sort.name.clone(),
+                                reason: "list, bag, and set sorts cannot declare a key sort",
+                            });
+                        }
+                    },
+                    CollectionKind::Map | CollectionKind::PathMap => {
+                        let Some(key) = key else {
+                            errors.push(TheoryValidationError::InvalidCollectionSignature {
+                                sort: sort.name.clone(),
+                                reason: "map and PathMap sorts require a key sort",
+                            });
+                            continue;
+                        };
+                        match theory_sorts.get(element.as_str()).map(|sort| &sort.kind) {
+                            Some(TheorySortKindV1::Product { factors })
+                                if factors.len() == 2 && factors[0] == *key => {},
+                            _ => errors.push(
+                                TheoryValidationError::InvalidCollectionSignature {
+                                    sort: sort.name.clone(),
+                                    reason: "map and PathMap elements must be key/value products whose first factor is the declared key sort",
+                                },
+                            ),
+                        }
+                    },
+                }
             },
             TheorySortKindV1::Function { domain, codomain, .. } => {
                 require_sort(domain, sorts, errors);
@@ -976,6 +1055,7 @@ struct PremiseValidationContext<'a> {
     arena: &'a TheoryRuleArenaV1,
     sorts: &'a BTreeMap<&'a str, &'a TheorySortV1>,
     judgments: &'a BTreeMap<&'a str, &'a JudgmentDeclV1>,
+    comprehension_bound_occurrences: &'a [bool],
 }
 
 fn validate_rule_arena(
@@ -1016,8 +1096,25 @@ fn validate_rule_arena(
             right: right_node.sort.clone(),
         });
     }
-    let left_occurrences = variable_occurrences(left, &arena.terms);
-    let right_occurrences = variable_occurrences(right, &arena.terms);
+    let mut term_roots = vec![left, right];
+    for premise in &arena.premises {
+        if let TheoryPremiseFormV1::Judgment(atom) = &premise.form {
+            term_roots.extend(atom.terms.iter().copied());
+        }
+    }
+    validate_comprehension_placement(rule, &arena.terms, &term_roots, errors);
+    let comprehension_bound_occurrences = validate_comprehension_scope(
+        rule,
+        &arena.variables,
+        &arena.terms,
+        &term_roots,
+        validation.limits,
+        errors,
+    );
+    let left_occurrences =
+        variable_occurrences(left, &arena.terms, &comprehension_bound_occurrences);
+    let right_occurrences =
+        variable_occurrences(right, &arena.terms, &comprehension_bound_occurrences);
     let mut available: BTreeSet<_> = left_occurrences.keys().copied().collect();
     for (variable, count) in &left_occurrences {
         let Some(declaration) = arena.variables.get(variable.0 as usize) else {
@@ -1049,6 +1146,7 @@ fn validate_rule_arena(
         arena,
         sorts: validation.sorts,
         judgments: validation.judgments,
+        comprehension_bound_occurrences: &comprehension_bound_occurrences,
     };
     for premise_root in &arena.premise_roots {
         if previous_root.is_some_and(|previous| previous >= premise_root.0) {
@@ -1201,24 +1299,85 @@ fn validate_term_arena(
                     }
                 }
             },
-            TheoryTermFormV1::Collection { elements, remainder } => {
-                let (element_sort, collection_sort) =
-                    match sorts.get(node.sort.as_str()).map(|sort| &sort.kind) {
-                        Some(kind @ TheorySortKindV1::Collection { element, .. }) => {
-                            (Some(element.as_str()), Some(kind))
+            TheoryTermFormV1::Collection { elements, remainder, pathmap_mode } => {
+                let collection_sort =
+                    sorts
+                        .get(node.sort.as_str())
+                        .and_then(|sort| match &sort.kind {
+                            TheorySortKindV1::Collection { kind, key, element } => {
+                                Some((kind, key, element))
+                            },
+                            _ => None,
+                        });
+                let element_sort = match collection_sort {
+                    Some((kind, key, element)) => match kind {
+                        CollectionKind::List
+                        | CollectionKind::Bag
+                        | CollectionKind::Set
+                        | CollectionKind::Map => {
+                            if pathmap_mode.is_some() {
+                                errors.push(TheoryValidationError::InvalidPathMapMode {
+                                    owner: owner.to_string(),
+                                    reason:
+                                        "only a PathMap collection may carry PathMap mode evidence",
+                                });
+                            }
+                            Some(element.as_str())
                         },
-                        _ => (None, None),
-                    };
-                if collection_sort.is_none() {
-                    errors.push(TheoryValidationError::UnknownReference {
-                        kind: "collection sort",
-                        name: node.sort.clone(),
-                    });
-                }
+                        CollectionKind::PathMap => match pathmap_mode {
+                            Some(PathMapModeV1::NeutralEmpty) => {
+                                if !elements.is_empty() || remainder.is_some() {
+                                    errors.push(TheoryValidationError::InvalidPathMapMode {
+                                        owner: owner.to_string(),
+                                        reason: "neutral-empty PathMap terms cannot contain entries or a remainder",
+                                    });
+                                }
+                                None
+                            },
+                            Some(PathMapModeV1::Set) => match key.as_deref() {
+                                Some(key) => Some(key),
+                                None => {
+                                    errors.push(
+                                        TheoryValidationError::InvalidCollectionSignature {
+                                            sort: node.sort.clone(),
+                                            reason: "set-mode PathMap terms require a declared key sort",
+                                        },
+                                    );
+                                    None
+                                },
+                            },
+                            Some(PathMapModeV1::Map) => Some(element.as_str()),
+                            None => {
+                                if !elements.is_empty() || remainder.is_none() {
+                                    errors.push(TheoryValidationError::InvalidPathMapMode {
+                                        owner: owner.to_string(),
+                                        reason: "a mode-polymorphic PathMap term must consist solely of one canonical remainder",
+                                    });
+                                }
+                                None
+                            },
+                        },
+                    },
+                    None => {
+                        errors.push(TheoryValidationError::UnknownReference {
+                            kind: "collection sort",
+                            name: node.sort.clone(),
+                        });
+                        None
+                    },
+                };
                 if let Some(element_sort) = element_sort {
                     for element in elements {
                         if let Some(child) = prior_term(owner, terms, index, *element, errors) {
-                            require_equal_sort(owner, element_sort, &child.sort, errors);
+                            // A rule-only comprehension is spliced at this
+                            // collection boundary, so its result has the
+                            // enclosing collection sort. Ordinary children
+                            // retain the declared element sort.
+                            if matches!(child.form, TheoryTermFormV1::Map { .. }) {
+                                require_equal_sort(owner, &node.sort, &child.sort, errors);
+                            } else {
+                                require_equal_sort(owner, element_sort, &child.sort, errors);
+                            }
                         }
                     }
                 }
@@ -1237,9 +1396,19 @@ fn validate_term_arena(
                     }
                 }
             },
-            TheoryTermFormV1::Map { collection, parameters, body } => {
-                let collection = prior_term(owner, terms, index, *collection, errors);
+            TheoryTermFormV1::Map { sources, parameters, body } => {
+                let resolved_sources = sources
+                    .iter()
+                    .filter_map(|source| prior_term(owner, terms, index, *source, errors))
+                    .collect::<Vec<_>>();
                 let body = prior_term(owner, terms, index, *body, errors);
+                if sources.is_empty() {
+                    errors.push(TheoryValidationError::BindingArityMismatch {
+                        owner: owner.to_string(),
+                        expected: 1,
+                        actual: 0,
+                    });
+                }
                 for parameter in parameters {
                     match variables.get(parameter.0 as usize) {
                         None => errors.push(TheoryValidationError::UnknownVariable(parameter.0)),
@@ -1253,62 +1422,90 @@ fn validate_term_arena(
                         Some(_) => {},
                     }
                 }
-                if let (Some(collection), Some(body)) = (collection, body) {
-                    let source_kind = sorts.get(collection.sort.as_str()).map(|sort| &sort.kind);
-                    let target_kind = sorts.get(node.sort.as_str()).map(|sort| &sort.kind);
-                    match (source_kind, target_kind) {
-                        (
-                            Some(TheorySortKindV1::Collection {
-                                kind: source,
-                                element: source_element,
-                                ..
-                            }),
-                            Some(TheorySortKindV1::Collection { kind: target, element, .. }),
-                        ) if source == target => {
-                            require_equal_sort(owner, element, &body.sort, errors);
-                            let expected_parameters = match sorts
-                                .get(source_element.as_str())
-                                .map(|sort| &sort.kind)
-                            {
-                                Some(TheorySortKindV1::Product { factors }) => factors.as_slice(),
-                                _ => std::slice::from_ref(source_element),
-                            };
-                            if parameters.len() != expected_parameters.len() {
-                                errors.push(TheoryValidationError::BindingArityMismatch {
+                if resolved_sources.len() != sources.len() {
+                    continue;
+                }
+                let Some(body) = body else {
+                    continue;
+                };
+                let Some(TheorySortKindV1::Collection {
+                    kind: _target_kind,
+                    element: target_element,
+                    ..
+                }) = sorts.get(node.sort.as_str()).map(|sort| &sort.kind)
+                else {
+                    errors.push(TheoryValidationError::UnknownReference {
+                        kind: "collection sort",
+                        name: node.sort.clone(),
+                    });
+                    continue;
+                };
+                require_equal_sort(owner, target_element, &body.sort, errors);
+
+                let mut source_elements = Vec::with_capacity(resolved_sources.len());
+                for source in &resolved_sources {
+                    match sorts.get(source.sort.as_str()).map(|sort| &sort.kind) {
+                        Some(TheorySortKindV1::Collection { kind, element, .. }) => {
+                            if resolved_sources.len() > 1 && *kind != CollectionKind::List {
+                                errors.push(TheoryValidationError::SortMismatch {
                                     owner: owner.to_string(),
-                                    expected: expected_parameters.len(),
-                                    actual: parameters.len(),
+                                    expected: "ordered List source for exact zip".to_string(),
+                                    actual: format!("{kind:?} source"),
                                 });
                             }
-                            for (parameter, expected) in parameters.iter().zip(expected_parameters)
-                            {
-                                if let Some(variable) = variables.get(parameter.0 as usize) {
-                                    require_equal_sort(owner, expected, &variable.sort, errors);
-                                }
-                            }
+                            source_elements.push(element.as_str());
                         },
-                        _ => errors.push(TheoryValidationError::SortMismatch {
-                            owner: owner.to_string(),
-                            expected: format!("collection shaped like `{}`", collection.sort),
-                            actual: node.sort.clone(),
+                        _ => errors.push(TheoryValidationError::UnknownReference {
+                            kind: "collection sort",
+                            name: source.sort.clone(),
                         }),
                     }
                 }
-            },
-            TheoryTermFormV1::Zip { left, right } => {
-                let left = prior_term(owner, terms, index, *left, errors);
-                let right = prior_term(owner, terms, index, *right, errors);
-                if let (Some(left), Some(right)) = (left, right) {
-                    match sorts.get(node.sort.as_str()).map(|sort| &sort.kind) {
-                        Some(TheorySortKindV1::Product { factors }) if factors.len() == 2 => {
-                            require_equal_sort(owner, &factors[0], &left.sort, errors);
-                            require_equal_sort(owner, &factors[1], &right.sort, errors);
+                let expected_parameters = if source_elements.len() == 1 {
+                    match sorts.get(source_elements[0]).map(|sort| &sort.kind) {
+                        Some(TheorySortKindV1::Product { factors }) => {
+                            factors.iter().map(String::as_str).collect::<Vec<_>>()
                         },
-                        _ => errors.push(TheoryValidationError::UnknownReference {
-                            kind: "binary product sort",
-                            name: node.sort.clone(),
-                        }),
+                        _ => source_elements,
                     }
+                } else {
+                    source_elements
+                };
+                if parameters.len() != expected_parameters.len() {
+                    errors.push(TheoryValidationError::BindingArityMismatch {
+                        owner: owner.to_string(),
+                        expected: expected_parameters.len(),
+                        actual: parameters.len(),
+                    });
+                }
+                for (parameter, expected) in parameters.iter().zip(expected_parameters) {
+                    if let Some(variable) = variables.get(parameter.0 as usize) {
+                        require_equal_sort(owner, expected, &variable.sort, errors);
+                    }
+                }
+            },
+            TheoryTermFormV1::Product { factors } => {
+                let resolved_factors = factors
+                    .iter()
+                    .filter_map(|factor| prior_term(owner, terms, index, *factor, errors))
+                    .collect::<Vec<_>>();
+                match sorts.get(node.sort.as_str()).map(|sort| &sort.kind) {
+                    Some(TheorySortKindV1::Product { factors: expected }) => {
+                        if factors.len() != expected.len() {
+                            errors.push(TheoryValidationError::BindingArityMismatch {
+                                owner: owner.to_string(),
+                                expected: expected.len(),
+                                actual: factors.len(),
+                            });
+                        }
+                        for (factor, expected) in resolved_factors.iter().zip(expected) {
+                            require_equal_sort(owner, expected, &factor.sort, errors);
+                        }
+                    },
+                    _ => errors.push(TheoryValidationError::UnknownReference {
+                        kind: "product sort",
+                        name: node.sort.clone(),
+                    }),
                 }
             },
             TheoryTermFormV1::Literal(literal) => {
@@ -1350,6 +1547,14 @@ fn validate_judgment_rule(
     }
     validate_variables(&name, &rule.variables, sorts, limits, errors);
     validate_term_arena(&name, &rule.variables, &rule.terms, sorts, constructors, limits, errors);
+    let term_roots = rule
+        .premises
+        .iter()
+        .chain(std::iter::once(&rule.conclusion))
+        .flat_map(|atom| atom.terms.iter().copied())
+        .collect::<Vec<_>>();
+    validate_comprehension_placement(&name, &rule.terms, &term_roots, errors);
+    validate_comprehension_scope(&name, &rule.variables, &rule.terms, &term_roots, limits, errors);
     for atom in rule
         .premises
         .iter()
@@ -1357,6 +1562,361 @@ fn validate_judgment_rule(
     {
         validate_judgment_atom(&name, atom, &rule.terms, judgments, errors);
     }
+}
+
+fn validate_comprehension_placement(
+    rule: &str,
+    terms: &[TheoryTermNodeV1],
+    roots: &[TheoryTermId],
+    errors: &mut Vec<TheoryValidationError>,
+) {
+    let mut invalid = BTreeSet::new();
+    let mut reject_map = |term: TheoryTermId| {
+        if terms
+            .get(term.0 as usize)
+            .is_some_and(|node| matches!(node.form, TheoryTermFormV1::Map { .. }))
+        {
+            invalid.insert(term.0);
+        }
+    };
+    for root in roots {
+        reject_map(*root);
+    }
+    for node in terms {
+        match &node.form {
+            TheoryTermFormV1::Variable(_)
+            | TheoryTermFormV1::Collection { .. }
+            | TheoryTermFormV1::Literal(_) => {},
+            TheoryTermFormV1::Constructor { arguments, .. } => {
+                for argument in arguments {
+                    reject_map(*argument);
+                }
+            },
+            TheoryTermFormV1::Abstraction { body, .. } => reject_map(*body),
+            TheoryTermFormV1::Substitution { abstraction, argument } => {
+                reject_map(*abstraction);
+                reject_map(*argument);
+            },
+            TheoryTermFormV1::Map { sources, body, .. } => {
+                for source in sources {
+                    reject_map(*source);
+                }
+                reject_map(*body);
+            },
+            TheoryTermFormV1::Product { factors } => {
+                for factor in factors {
+                    reject_map(*factor);
+                }
+            },
+        }
+    }
+    errors.extend(invalid.into_iter().map(|term| {
+        TheoryValidationError::InvalidComprehensionPlacement { rule: rule.to_string(), term }
+    }));
+}
+
+/// Persistent lexical frames for the sparse quotient of body-edge
+/// dominance. Frame zero is the empty context. Every non-empty
+/// comprehension binder group contributes one frame, so the table is bounded
+/// by the already checked rule-variable count rather than the term count.
+struct ComprehensionScopeFrames {
+    depth: Vec<usize>,
+    ancestors: Vec<Vec<usize>>,
+}
+
+impl ComprehensionScopeFrames {
+    fn new(max_frames: usize) -> Self {
+        let levels = (usize::BITS - max_frames.max(1).leading_zeros()).max(1) as usize;
+        Self {
+            depth: vec![0],
+            ancestors: (0..levels).map(|_| vec![0]).collect(),
+        }
+    }
+
+    fn push(&mut self, parent: usize) -> usize {
+        let frame = self.depth.len();
+        self.depth.push(self.depth[parent].saturating_add(1));
+        self.ancestors[0].push(parent);
+        for level in 1..self.ancestors.len() {
+            let half = self.ancestors[level - 1][frame];
+            let ancestor = self.ancestors[level - 1][half];
+            self.ancestors[level].push(ancestor);
+        }
+        frame
+    }
+
+    fn lift(&self, mut frame: usize, distance: usize) -> usize {
+        for (level, ancestors) in self.ancestors.iter().enumerate() {
+            if distance & (1usize << level) != 0 {
+                frame = ancestors[frame];
+            }
+        }
+        frame
+    }
+
+    /// Greatest common lexical prefix, represented by lowest common ancestor
+    /// in the persistent frame tree.
+    fn meet(&self, mut left: usize, mut right: usize) -> usize {
+        if self.depth[left] > self.depth[right] {
+            left = self.lift(left, self.depth[left] - self.depth[right]);
+        } else if self.depth[right] > self.depth[left] {
+            right = self.lift(right, self.depth[right] - self.depth[left]);
+        }
+        if left == right {
+            return left;
+        }
+        for level in (0..self.ancestors.len()).rev() {
+            let left_ancestor = self.ancestors[level][left];
+            let right_ancestor = self.ancestors[level][right];
+            if left_ancestor != right_ancestor {
+                left = left_ancestor;
+                right = right_ancestor;
+            }
+        }
+        self.ancestors[0][left]
+    }
+
+    fn contains(&self, ancestor: usize, context: usize) -> bool {
+        self.depth[ancestor] <= self.depth[context]
+            && self.lift(context, self.depth[context] - self.depth[ancestor]) == ancestor
+    }
+}
+
+fn merge_comprehension_context(
+    contexts: &mut [Option<usize>],
+    term: TheoryTermId,
+    incoming: usize,
+    frames: &ComprehensionScopeFrames,
+) {
+    let Some(context) = contexts.get_mut(term.0 as usize) else {
+        return;
+    };
+    *context = Some(match *context {
+        Some(existing) => frames.meet(existing, incoming),
+        None => incoming,
+    });
+}
+
+fn inherit_comprehension_context(
+    contexts: &mut [Option<usize>],
+    child: TheoryTermId,
+    incoming: usize,
+    parent_index: usize,
+    frames: &ComprehensionScopeFrames,
+) {
+    if (child.0 as usize) < parent_index {
+        merge_comprehension_context(contexts, child, incoming, frames);
+    }
+}
+
+/// Validate lexical pmap/pzip binders by computing the meet of every context
+/// reaching each term in the canonical backward-reference DAG. Sources retain
+/// their parent's context; only the body edge creates the simultaneous binder
+/// frame. A variable occurrence is bound exactly when its owner's frame
+/// dominates every path to that occurrence.
+fn validate_comprehension_scope(
+    rule: &str,
+    variables: &[TheoryVariableV1],
+    terms: &[TheoryTermNodeV1],
+    roots: &[TheoryTermId],
+    limits: TheoryLimitsV1,
+    errors: &mut Vec<TheoryValidationError>,
+) -> Vec<bool> {
+    const INVALID_OWNER: usize = usize::MAX;
+
+    let mut reference_count = roots.len();
+    let mut abstraction_binders = BTreeSet::new();
+    for node in terms {
+        reference_count = reference_count.saturating_add(match &node.form {
+            TheoryTermFormV1::Variable(_) | TheoryTermFormV1::Literal(_) => 0,
+            TheoryTermFormV1::Constructor { arguments, .. } => arguments.len(),
+            TheoryTermFormV1::Abstraction { binder, .. } => {
+                abstraction_binders.insert(*binder);
+                1
+            },
+            TheoryTermFormV1::Substitution { .. } => 2,
+            TheoryTermFormV1::Collection { elements, .. } => elements.len(),
+            TheoryTermFormV1::Map { sources, .. } => sources.len().saturating_add(1),
+            TheoryTermFormV1::Product { factors } => factors.len(),
+        });
+    }
+    if reference_count > limits.max_steps as usize {
+        errors.push(TheoryValidationError::LimitExceeded {
+            kind: "comprehension-scope term references",
+            actual: reference_count,
+            limit: limits.max_steps,
+        });
+        return vec![false; terms.len()];
+    }
+
+    // A canonical variable ID has at most one map owner. Keeping invalid
+    // ownership unassigned ensures later occurrence accounting fails closed.
+    let mut parameter_owner = vec![None; variables.len()];
+    for (term_index, node) in terms.iter().enumerate() {
+        let TheoryTermFormV1::Map { parameters, .. } = &node.form else {
+            continue;
+        };
+        for parameter in parameters {
+            let Some(owner) = parameter_owner.get_mut(parameter.0 as usize) else {
+                continue;
+            };
+            let variable_name = variables
+                .get(parameter.0 as usize)
+                .map(|variable| variable.name.clone())
+                .unwrap_or_else(|| format!("#{}", parameter.0));
+            if abstraction_binders.contains(parameter) {
+                errors.push(TheoryValidationError::InvalidComprehensionBinder {
+                    rule: rule.to_string(),
+                    variable: variable_name,
+                    term: term_index as u32,
+                    reason: "a map parameter cannot also bind an abstraction",
+                });
+                *owner = Some(INVALID_OWNER);
+            } else if owner.is_some() {
+                errors.push(TheoryValidationError::InvalidComprehensionBinder {
+                    rule: rule.to_string(),
+                    variable: variable_name,
+                    term: term_index as u32,
+                    reason: "a map parameter must have exactly one lexical owner",
+                });
+                *owner = Some(INVALID_OWNER);
+            } else {
+                *owner = Some(term_index);
+            }
+        }
+    }
+
+    let mut contexts = vec![None; terms.len()];
+    let mut frames = ComprehensionScopeFrames::new(variables.len().saturating_add(1));
+    let mut owner_frames = vec![None; variables.len()];
+    for root in roots {
+        merge_comprehension_context(&mut contexts, *root, 0, &frames);
+    }
+
+    for index in (0..terms.len()).rev() {
+        let Some(parent_context) = contexts[index] else {
+            errors.push(TheoryValidationError::UnreachableTerm {
+                rule: rule.to_string(),
+                term: index as u32,
+            });
+            continue;
+        };
+        match &terms[index].form {
+            TheoryTermFormV1::Variable(_) | TheoryTermFormV1::Literal(_) => {},
+            TheoryTermFormV1::Constructor { arguments, .. } => {
+                for child in arguments {
+                    inherit_comprehension_context(
+                        &mut contexts,
+                        *child,
+                        parent_context,
+                        index,
+                        &frames,
+                    );
+                }
+            },
+            TheoryTermFormV1::Abstraction { body, .. } => {
+                inherit_comprehension_context(&mut contexts, *body, parent_context, index, &frames)
+            },
+            TheoryTermFormV1::Substitution { abstraction, argument } => {
+                inherit_comprehension_context(
+                    &mut contexts,
+                    *abstraction,
+                    parent_context,
+                    index,
+                    &frames,
+                );
+                inherit_comprehension_context(
+                    &mut contexts,
+                    *argument,
+                    parent_context,
+                    index,
+                    &frames,
+                );
+            },
+            TheoryTermFormV1::Collection { elements, .. } => {
+                for child in elements {
+                    inherit_comprehension_context(
+                        &mut contexts,
+                        *child,
+                        parent_context,
+                        index,
+                        &frames,
+                    );
+                }
+            },
+            TheoryTermFormV1::Map { sources, parameters, body } => {
+                for source in sources {
+                    inherit_comprehension_context(
+                        &mut contexts,
+                        *source,
+                        parent_context,
+                        index,
+                        &frames,
+                    );
+                }
+                let owns_parameter = parameters.iter().any(|parameter| {
+                    parameter_owner.get(parameter.0 as usize).copied().flatten() == Some(index)
+                });
+                let body_context = if owns_parameter {
+                    let frame = frames.push(parent_context);
+                    for parameter in parameters {
+                        if parameter_owner.get(parameter.0 as usize).copied().flatten()
+                            == Some(index)
+                        {
+                            owner_frames[parameter.0 as usize] = Some(frame);
+                        }
+                    }
+                    frame
+                } else {
+                    parent_context
+                };
+                inherit_comprehension_context(&mut contexts, *body, body_context, index, &frames);
+            },
+            TheoryTermFormV1::Product { factors } => {
+                for child in factors {
+                    inherit_comprehension_context(
+                        &mut contexts,
+                        *child,
+                        parent_context,
+                        index,
+                        &frames,
+                    );
+                }
+            },
+        }
+    }
+
+    let mut bound_occurrences = vec![false; terms.len()];
+    for (index, node) in terms.iter().enumerate() {
+        let TheoryTermFormV1::Variable(variable) = node.form else {
+            continue;
+        };
+        let Some(owner) = parameter_owner.get(variable.0 as usize).copied().flatten() else {
+            continue;
+        };
+        if owner == INVALID_OWNER {
+            continue;
+        }
+        let Some(owner_frame) = owner_frames.get(variable.0 as usize).copied().flatten() else {
+            continue;
+        };
+        let in_scope = contexts[index].is_some_and(|context| frames.contains(owner_frame, context));
+        if in_scope {
+            bound_occurrences[index] = true;
+        } else {
+            let variable_name = variables
+                .get(variable.0 as usize)
+                .map(|value| value.name.clone())
+                .unwrap_or_else(|| format!("#{}", variable.0));
+            errors.push(TheoryValidationError::InvalidComprehensionBinder {
+                rule: rule.to_string(),
+                variable: variable_name,
+                term: index as u32,
+                reason: "the occurrence is reachable without traversing its owning map body edge",
+            });
+        }
+    }
+    bound_occurrences
 }
 
 fn validate_judgment_atom(
@@ -1473,7 +2033,12 @@ fn validate_premise_dependencies(
                     errors,
                 );
                 for variable in atom.terms.iter().flat_map(|term| {
-                    variable_occurrences(*term, &validation.arena.terms).into_keys()
+                    variable_occurrences(
+                        *term,
+                        &validation.arena.terms,
+                        validation.comprehension_bound_occurrences,
+                    )
+                    .into_keys()
                 }) {
                     require_available(variable, &scope, errors);
                 }
@@ -1534,6 +2099,7 @@ fn validate_premise_dependencies(
 fn variable_occurrences(
     root: TheoryTermId,
     terms: &[TheoryTermNodeV1],
+    comprehension_bound_occurrences: &[bool],
 ) -> BTreeMap<TheoryVariableId, u8> {
     let mut node_counts = vec![0u8; terms.len()];
     if let Some(count) = node_counts.get_mut(root.0 as usize) {
@@ -1555,7 +2121,15 @@ fn variable_occurrences(
             }
         };
         match &terms[index].form {
-            TheoryTermFormV1::Variable(variable) => add_variable(*variable),
+            TheoryTermFormV1::Variable(variable) => {
+                if !comprehension_bound_occurrences
+                    .get(index)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    add_variable(*variable);
+                }
+            },
             TheoryTermFormV1::Constructor { arguments, .. } => {
                 for child in arguments {
                     add_child(*child);
@@ -1569,7 +2143,7 @@ fn variable_occurrences(
                 add_child(*abstraction);
                 add_child(*argument);
             },
-            TheoryTermFormV1::Collection { elements, remainder } => {
+            TheoryTermFormV1::Collection { elements, remainder, .. } => {
                 for child in elements {
                     add_child(*child);
                 }
@@ -1577,16 +2151,17 @@ fn variable_occurrences(
                     add_variable(*remainder);
                 }
             },
-            TheoryTermFormV1::Map { collection, parameters, body } => {
-                add_child(*collection);
-                for parameter in parameters {
-                    add_variable(*parameter);
+            TheoryTermFormV1::Map { sources, parameters, body } => {
+                for source in sources {
+                    add_child(*source);
                 }
+                let _ = parameters;
                 add_child(*body);
             },
-            TheoryTermFormV1::Zip { left, right } => {
-                add_child(*left);
-                add_child(*right);
+            TheoryTermFormV1::Product { factors } => {
+                for factor in factors {
+                    add_child(*factor);
+                }
             },
             TheoryTermFormV1::Literal(_) => {},
         }
@@ -1737,7 +2312,7 @@ mod tests {
             right: TheoryTermId(0),
         });
         let errors = LanguageCoreV1 {
-            abi: LANGUAGE_CORE_ABI_V1,
+            abi: LANGUAGE_CORE_ABI_CURRENT,
             grammar: GrammarCoreV1::new("Guest"),
             theory,
         }
@@ -1752,6 +2327,417 @@ mod tests {
             LanguageCoreValidationError::Theory(
                 TheoryValidationError::NonTopologicalTermReference { owner: 0, target: 0 }
             )
+        )));
+    }
+
+    fn costed_action_theory() -> TheoryCoreV1 {
+        let opaque_sort = |name: &str| TheorySortV1 {
+            name: name.into(),
+            kind: TheorySortKindV1::Opaque { abi: format!("test/{name}/1") },
+        };
+        let mut theory = TheoryCoreV1::structural();
+        theory.profile = TheoryProfileV1::Oslf;
+        theory.sorts = [
+            "Expr",
+            "Sig",
+            "AltSig",
+            "Stack",
+            "Wrapped",
+            "Located",
+            "Demand",
+            "Channel",
+            "Datum",
+            "Continuation",
+        ]
+        .into_iter()
+        .map(opaque_sort)
+        .collect();
+        theory.effects.push(EffectDeclV1 {
+            name: "pure".into(),
+            class: SemanticEffectClassV1::Pure,
+            requires: Vec::new(),
+            emits: Vec::new(),
+        });
+        theory.actions.push(SemanticActionV1 {
+            id: "step".into(),
+            domain: vec!["Expr".into()],
+            codomain: "Expr".into(),
+            transition: TheoryRuleReferenceV1::Handler("test/step/1".into()),
+            effect: "pure".into(),
+            effect_class: SemanticEffectClassV1::Pure,
+            required_rights: LanguageRights::none(),
+            grade: "Sig".into(),
+        });
+        theory.interactive = Some(InteractiveDeclV1 {
+            cut: "cut".into(),
+            channel_sort: "Channel".into(),
+            datum_sort: "Datum".into(),
+            continuation_sort: "Continuation".into(),
+        });
+        theory.continued = Some(ContinuedDeclV1 {
+            k: "k".into(),
+            kp: "kp".into(),
+            ke: "ke".into(),
+            k_prime: "k_prime".into(),
+            near: "near".into(),
+            compute: "compute".into(),
+            section: "section".into(),
+            wrappability: "wrappability".into(),
+            quote_faithfulness: "quote_faithfulness".into(),
+        });
+        theory.cost = Some(CostDeclV1 {
+            base: "G".into(),
+            signature_sort: "Sig".into(),
+            stack_sort: "Stack".into(),
+            wrapped_sort: "Wrapped".into(),
+            located_sort: "Located".into(),
+            product: "product".into(),
+            unit: "unit".into(),
+            rules: Vec::new(),
+            eta: "eta".into(),
+            mu: "mu".into(),
+            map: "map".into(),
+            laws: Vec::new(),
+        });
+        theory.resource_projection = Some(ResourceProjectionV1 {
+            abi: "test/resource-projection/1".into(),
+            grade_sort: "Sig".into(),
+            demand_sort: "Demand".into(),
+            project: "project".into(),
+            proof: "projection_is_exact".into(),
+        });
+        theory
+    }
+
+    #[test]
+    fn action_grade_must_equal_cost_signature_sort() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_action_theory();
+        theory.resource_projection = None;
+        theory.actions[0].grade = "AltSig".into();
+        assert_eq!(
+            theory.validation_errors(&grammar),
+            vec![TheoryValidationError::SortMismatch {
+                owner: "action `step` resource grade".into(),
+                expected: "Sig".into(),
+                actual: "AltSig".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn action_grade_must_equal_projection_grade_sort() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_action_theory();
+        theory.cost = None;
+        theory.resource_projection.as_mut().unwrap().grade_sort = "AltSig".into();
+        assert_eq!(
+            theory.validation_errors(&grammar),
+            vec![TheoryValidationError::SortMismatch {
+                owner: "action `step` projected resource grade".into(),
+                expected: "AltSig".into(),
+                actual: "Sig".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn projection_grade_sort_must_equal_cost_signature_sort_without_actions() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_action_theory();
+        theory.actions.clear();
+        theory.resource_projection.as_mut().unwrap().grade_sort = "AltSig".into();
+        assert_eq!(
+            theory.validation_errors(&grammar),
+            vec![TheoryValidationError::SortMismatch {
+                owner: "Cost(G) resource projection".into(),
+                expected: "Sig".into(),
+                actual: "AltSig".into(),
+            }]
+        );
+    }
+
+    fn binder(id: u32, name: &str) -> TheoryVariableV1 {
+        TheoryVariableV1 {
+            id: TheoryVariableId(id),
+            name: name.into(),
+            sort: "Expr".into(),
+            role: TheoryVariableRoleV1::Binder,
+        }
+    }
+
+    fn variable_term(variable: u32) -> TheoryTermNodeV1 {
+        TheoryTermNodeV1 {
+            sort: "Expr".into(),
+            form: TheoryTermFormV1::Variable(TheoryVariableId(variable)),
+        }
+    }
+
+    fn unit_term() -> TheoryTermNodeV1 {
+        TheoryTermNodeV1 {
+            sort: "Expr".into(),
+            form: TheoryTermFormV1::Literal(TheoryLiteralV1::Unit),
+        }
+    }
+
+    fn collection_term(elements: Vec<u32>) -> TheoryTermNodeV1 {
+        TheoryTermNodeV1 {
+            sort: "List(Expr)".into(),
+            form: TheoryTermFormV1::Collection {
+                elements: elements.into_iter().map(TheoryTermId).collect(),
+                remainder: None,
+                pathmap_mode: None,
+            },
+        }
+    }
+
+    fn map_term(sources: Vec<u32>, parameters: Vec<u32>, body: u32) -> TheoryTermNodeV1 {
+        TheoryTermNodeV1 {
+            sort: "List(Expr)".into(),
+            form: TheoryTermFormV1::Map {
+                sources: sources.into_iter().map(TheoryTermId).collect(),
+                parameters: parameters.into_iter().map(TheoryVariableId).collect(),
+                body: TheoryTermId(body),
+            },
+        }
+    }
+
+    fn scope_analysis(
+        variables: &[TheoryVariableV1],
+        terms: &[TheoryTermNodeV1],
+        roots: &[u32],
+    ) -> (Vec<bool>, Vec<TheoryValidationError>) {
+        let mut errors = Vec::new();
+        let bound = validate_comprehension_scope(
+            "ScopeFixture",
+            variables,
+            terms,
+            &roots.iter().copied().map(TheoryTermId).collect::<Vec<_>>(),
+            TheoryLimitsV1::default(),
+            &mut errors,
+        );
+        (bound, errors)
+    }
+
+    #[test]
+    fn comprehension_scope_is_exact_for_body_source_escape_and_shared_roots() {
+        let variables = vec![binder(0, "p")];
+        let valid = vec![
+            variable_term(0),
+            unit_term(),
+            collection_term(vec![1]),
+            map_term(vec![2], vec![0], 0),
+            collection_term(vec![3]),
+        ];
+        let (bound, errors) = scope_analysis(&variables, &valid, &[4]);
+        assert!(errors.is_empty(), "body-only binder must be valid: {errors:?}");
+        assert!(bound[0]);
+        let occurrences = variable_occurrences(TheoryTermId(4), &valid, &bound);
+        assert!(!occurrences.contains_key(&TheoryVariableId(0)));
+
+        let own_source = vec![
+            variable_term(0),
+            collection_term(vec![0]),
+            map_term(vec![1], vec![0], 0),
+            collection_term(vec![2]),
+        ];
+        let (bound, errors) = scope_analysis(&variables, &own_source, &[3]);
+        assert!(!bound[0]);
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::InvalidComprehensionBinder { term: 0, .. }
+        )));
+        assert_eq!(
+            variable_occurrences(TheoryTermId(3), &own_source, &bound).get(&TheoryVariableId(0)),
+            Some(&2)
+        );
+
+        let sibling_escape = vec![
+            variable_term(0),
+            unit_term(),
+            collection_term(vec![1]),
+            map_term(vec![2], vec![0], 0),
+            collection_term(vec![3, 0]),
+        ];
+        let (bound, errors) = scope_analysis(&variables, &sibling_escape, &[4]);
+        assert!(!bound[0]);
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::InvalidComprehensionBinder { term: 0, .. }
+        )));
+
+        let (bound, errors) = scope_analysis(&variables, &valid, &[4, 0]);
+        assert!(!bound[0]);
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::InvalidComprehensionBinder { term: 0, .. }
+        )));
+    }
+
+    #[test]
+    fn comprehension_scope_rejects_duplicate_owners_and_unreachable_terms() {
+        let variables = vec![binder(0, "p")];
+        let duplicate_parameter = vec![
+            variable_term(0),
+            unit_term(),
+            collection_term(vec![1]),
+            map_term(vec![2, 2], vec![0, 0], 0),
+            collection_term(vec![3]),
+        ];
+        let (_, errors) = scope_analysis(&variables, &duplicate_parameter, &[4]);
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::InvalidComprehensionBinder { reason, .. }
+                if *reason == "a map parameter must have exactly one lexical owner"
+        )));
+
+        let duplicate_owner = vec![
+            variable_term(0),
+            unit_term(),
+            collection_term(vec![1]),
+            map_term(vec![2], vec![0], 0),
+            map_term(vec![2], vec![0], 0),
+            collection_term(vec![3, 4]),
+        ];
+        let (_, errors) = scope_analysis(&variables, &duplicate_owner, &[5]);
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::InvalidComprehensionBinder { reason, .. }
+                if *reason == "a map parameter must have exactly one lexical owner"
+        )));
+
+        let unreachable = vec![unit_term(), unit_term()];
+        let (_, errors) = scope_analysis(&[], &unreachable, &[1]);
+        assert!(errors
+            .iter()
+            .any(|error| matches!(error, TheoryValidationError::UnreachableTerm { term: 0, .. })));
+    }
+
+    #[test]
+    fn nested_comprehension_scopes_preserve_outer_binders_in_inner_sources() {
+        let variables = vec![binder(0, "outer"), binder(1, "inner")];
+        let terms = vec![
+            variable_term(0),
+            variable_term(1),
+            unit_term(),
+            collection_term(vec![0]),
+            map_term(vec![3], vec![1], 1),
+            collection_term(vec![4]),
+            collection_term(vec![2]),
+            map_term(vec![6], vec![0], 5),
+            collection_term(vec![7]),
+        ];
+        let (bound, errors) = scope_analysis(&variables, &terms, &[8]);
+        assert!(errors.is_empty(), "nested lexical scopes must compose: {errors:?}");
+        assert!(bound[0]);
+        assert!(bound[1]);
+
+        let invalid_inner_source = vec![
+            variable_term(0),
+            variable_term(1),
+            unit_term(),
+            collection_term(vec![0, 1]),
+            map_term(vec![3], vec![1], 1),
+            collection_term(vec![4]),
+            collection_term(vec![2]),
+            map_term(vec![6], vec![0], 5),
+            collection_term(vec![7]),
+        ];
+        let (bound, errors) = scope_analysis(&variables, &invalid_inner_source, &[8]);
+        assert!(bound[0]);
+        assert!(!bound[1]);
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::InvalidComprehensionBinder { variable, term: 1, .. }
+                if variable == "inner"
+        )));
+    }
+
+    #[test]
+    fn comprehension_scope_machine_is_stack_safe_for_twenty_thousand_frames() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                const DEPTH: usize = 20_000;
+                let variables = (0..DEPTH)
+                    .map(|index| binder(index as u32, &format!("p{index}")))
+                    .collect::<Vec<_>>();
+                let mut terms = Vec::with_capacity(DEPTH + 2);
+                terms.push(unit_term());
+                terms.push(collection_term(vec![0]));
+                let mut body = 0u32;
+                for parameter in 0..DEPTH as u32 {
+                    let term = terms.len() as u32;
+                    terms.push(map_term(vec![1], vec![parameter], body));
+                    body = term;
+                }
+                let (_, errors) = scope_analysis(&variables, &terms, &[body]);
+                assert!(errors.is_empty(), "deep frame analysis failed: {errors:?}");
+            })
+            .expect("small-stack scope thread starts")
+            .join()
+            .expect("scope analysis must not consume native recursion");
+    }
+
+    #[test]
+    fn sparse_frame_meet_matches_exhaustive_ancestor_intersection() {
+        fn enumerate(
+            next: usize,
+            count: usize,
+            parents: &mut Vec<usize>,
+            check: &mut impl FnMut(&[usize]),
+        ) {
+            if next == count {
+                check(parents);
+                return;
+            }
+            for parent in 0..next {
+                parents.push(parent);
+                enumerate(next + 1, count, parents, check);
+                parents.pop();
+            }
+        }
+
+        for count in 1..=7 {
+            enumerate(1, count, &mut Vec::new(), &mut |parents| {
+                let mut frames = ComprehensionScopeFrames::new(count);
+                for parent in parents {
+                    frames.push(*parent);
+                }
+                for left in 0..count {
+                    for right in 0..count {
+                        let meet = frames.meet(left, right);
+                        for candidate in 0..count {
+                            assert_eq!(
+                                frames.contains(candidate, meet),
+                                frames.contains(candidate, left)
+                                    && frames.contains(candidate, right),
+                                "tree={parents:?}, left={left}, right={right}, candidate={candidate}",
+                            );
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn comprehension_placement_accepts_only_direct_collection_splices() {
+        let terms = vec![
+            unit_term(),
+            collection_term(vec![0]),
+            map_term(vec![1], vec![], 0),
+            collection_term(vec![2]),
+        ];
+        let mut valid = Vec::new();
+        validate_comprehension_placement("Valid", &terms, &[TheoryTermId(3)], &mut valid);
+        assert!(valid.is_empty());
+
+        let mut root = Vec::new();
+        validate_comprehension_placement("Root", &terms, &[TheoryTermId(2)], &mut root);
+        assert!(root.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::InvalidComprehensionPlacement { term: 2, .. }
         )));
     }
 

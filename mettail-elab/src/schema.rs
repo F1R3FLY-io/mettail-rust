@@ -3398,20 +3398,36 @@ fn validate_pattern(value: &RhoValue, path: &str) -> Result<(), ValueDecodeError
                 work.push((&values[2], format!("{path}[2]")));
             },
             "coll" => {
-                require_len(values, 3, &path)?;
+                if !matches!(values.len(), 3 | 4) {
+                    return error(
+                        &path,
+                        "coll expects elements, remainder, and an optional PathMap mode",
+                    );
+                }
                 expect_nil_or_identifier(&values[2], &format!("{path}[2]"))?;
+                if values.len() == 4 {
+                    validate_pathmap_mode(&values[3], &format!("{path}[3]"))?;
+                }
                 let children = expect_list(&values[1], &format!("{path}[1]"))?;
                 for (index, child) in children.iter().enumerate().rev() {
                     work.push((child, format!("{path}[1][{index}]")));
                 }
             },
             "coll_typed" => {
-                require_len(values, 4, &path)?;
+                if !matches!(values.len(), 4 | 5) {
+                    return error(
+                        &path,
+                        "coll_typed expects an element sort, elements, remainder, and an optional PathMap mode",
+                    );
+                }
                 identifier(
                     expect_string(&values[1], &format!("{path}[1]"))?,
                     &format!("{path}[1]"),
                 )?;
                 expect_nil_or_identifier(&values[3], &format!("{path}[3]"))?;
+                if values.len() == 5 {
+                    validate_pathmap_mode(&values[4], &format!("{path}[4]"))?;
+                }
                 let children = expect_list(&values[2], &format!("{path}[2]"))?;
                 for (index, child) in children.iter().enumerate().rev() {
                     work.push((child, format!("{path}[2][{index}]")));
@@ -4078,6 +4094,16 @@ fn expect_nil_or_string(value: &RhoValue, path: &str) -> Result<Option<String>, 
         RhoValue::Nil => Ok(None),
         RhoValue::String(value) => Ok(Some(value.clone())),
         _ => error(path, "expected string or Nil"),
+    }
+}
+
+fn validate_pathmap_mode(value: &RhoValue, path: &str) -> Result<(), ValueDecodeError> {
+    match value {
+        RhoValue::Nil => Ok(()),
+        RhoValue::String(value) if matches!(value.as_str(), "neutral-empty" | "set" | "map") => {
+            Ok(())
+        },
+        _ => error(path, "expected neutral-empty, set, map, or Nil"),
     }
 }
 
@@ -4817,7 +4843,7 @@ impl LanguageSchema {
             crate::theory_compile::infer_judgment_types(&mut theory)?;
         }
         let language = core::LanguageCoreV1 {
-            abi: core::LANGUAGE_CORE_ABI_V1,
+            abi: core::LANGUAGE_CORE_ABI_CURRENT,
             grammar,
             theory,
         };
@@ -4990,14 +5016,47 @@ fn ensure_theory_sort(
                 let value =
                     has_value.then(|| values.pop().expect("collection value sort is scheduled"));
                 let key = values.pop().expect("collection key sort is scheduled");
-                let element = value.clone().unwrap_or_else(|| key.clone());
+                match (kind, value.is_some()) {
+                    (core::CollectionKind::Map | core::CollectionKind::PathMap, true)
+                    | (
+                        core::CollectionKind::List
+                        | core::CollectionKind::Bag
+                        | core::CollectionKind::Set,
+                        false,
+                    ) => {},
+                    (core::CollectionKind::Map | core::CollectionKind::PathMap, false) => {
+                        return error(
+                            "$.types",
+                            "map and PathMap type expressions require key and value sorts",
+                        );
+                    },
+                    _ => {
+                        return error(
+                            "$.types",
+                            "list, bag, and set type expressions accept exactly one element sort",
+                        );
+                    },
+                }
                 let name = match &value {
                     Some(value) => format!("{}({key},{value})", collection_sort_name(kind)),
                     None => format!("{}({key})", collection_sort_name(kind)),
                 };
+                let (declared_key, element) = match value {
+                    Some(value) => {
+                        let product = derived_product_sort_name(&key, &value);
+                        insert_theory_sort(
+                            product.clone(),
+                            core::TheorySortKindV1::Product { factors: vec![key.clone(), value] },
+                            theory,
+                            indices,
+                        )?;
+                        (Some(key), product)
+                    },
+                    None => (None, key),
+                };
                 insert_theory_sort(
                     name.clone(),
-                    core::TheorySortKindV1::Collection { kind, key: value.map(|_| key), element },
+                    core::TheorySortKindV1::Collection { kind, key: declared_key, element },
                     theory,
                     indices,
                 )?;
@@ -5021,6 +5080,10 @@ fn ensure_theory_sort(
         return error("$.types", "theory sort compiler produced an invalid value stack");
     }
     Ok(values.pop().expect("checked one theory sort"))
+}
+
+fn derived_product_sort_name(key: &str, value: &str) -> String {
+    format!("@product:{}:{key}:{}:{value}", key.len(), value.len(),)
 }
 
 fn insert_theory_sort(
@@ -6152,7 +6215,7 @@ mod tests {
                     ("codomain", s("Datum")),
                     ("transition", l([s("handler"), s("mtl:handler:step/1")])),
                     ("effect", s("Pure")),
-                    ("grade", s("Grade")),
+                    ("grade", s("Sig")),
                 ])]),
             ),
             (
@@ -6193,7 +6256,7 @@ mod tests {
                     ("categories", l([l([s("Datum"), s("Datum")])])),
                     ("constructors", l([])),
                     ("actions", l([l([s("step"), s("step")])])),
-                    ("grades", l([l([s("Grade"), s("Grade")])])),
+                    ("grades", l([l([s("Sig"), s("Sig")])])),
                 ])]),
             ),
             (
@@ -6240,7 +6303,7 @@ mod tests {
                 "resource_projection",
                 m([
                     ("abi", s("mtl:projection/1")),
-                    ("grade_sort", s("Grade")),
+                    ("grade_sort", s("Sig")),
                     ("demand_sort", s("Demand")),
                     ("project", s("mtl:project:grade-demand/1")),
                     ("proof", s("mtl:proof:conservative/1")),
@@ -6273,7 +6336,6 @@ mod tests {
                         s("Channel"),
                         s("Datum"),
                         s("Kont"),
-                        s("Grade"),
                         s("Demand"),
                         s("Sig"),
                         s("Stack"),

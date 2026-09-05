@@ -8,7 +8,7 @@
 
 use crate::{
     CollectionKind, JudgmentDecisionV1, JudgmentRuleV1, LanguageCoreV1, LanguageRight,
-    LanguageRights, SemanticEffectClassV1, TheoryActionId, TheoryActionImageV1,
+    LanguageRights, PathMapModeV1, SemanticEffectClassV1, TheoryActionId, TheoryActionImageV1,
     TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryGrammarConstructorV1,
     TheoryImageAdmissionLimits, TheoryImageError, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
     TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1, TheoryImageTermFormV1,
@@ -20,7 +20,7 @@ use crate::{
     TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1,
     TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleSuppressionV1, TheorySemanticImageV1,
     TheorySortId, TheorySortImageV1, TheorySortKindImageV1, TheoryTermId, TheoryVariableId,
-    TheoryVariableRoleV1, TheoryWorkChargeV1, THEORY_SEMANTIC_IMAGE_ABI_V1,
+    TheoryVariableRoleV1, TheoryWorkChargeV1, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
 };
 
 const THEORY_IMAGE_MAGIC: &[u8; 8] = b"MTTHIMG1";
@@ -99,7 +99,7 @@ impl TheorySemanticImageV1 {
             return Err(TheoryImageError::InvalidMagic);
         }
         let abi = reader.read_u16()?;
-        if abi != THEORY_SEMANTIC_IMAGE_ABI_V1 {
+        if abi != THEORY_SEMANTIC_IMAGE_ABI_CURRENT {
             return Err(TheoryImageError::UnsupportedAbi(abi));
         }
         let compiler_abi = reader.read_u16()?;
@@ -677,12 +677,25 @@ fn encode_term_form<S: ImageSink>(
             write_u8(sink, 0)?;
             write_u32(sink, variable.0)
         },
-        TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder } => {
+        TheoryImageTermFormV1::Apply {
+            operator,
+            arguments,
+            slots,
+            remainder,
+            pathmap_mode,
+        } => {
             write_u8(sink, 1)?;
             encode_operator(sink, operator)?;
             write_ids(sink, arguments, |id| id.0)?;
             write_ids(sink, slots, |id| id.0)?;
-            write_optional_u32(sink, remainder.map(|id| id.0))
+            write_optional_u32(sink, remainder.map(|id| id.0))?;
+            write_pathmap_mode(sink, *pathmap_mode)
+        },
+        TheoryImageTermFormV1::Map { sources, parameters, body } => {
+            write_u8(sink, 2)?;
+            write_ids(sink, sources, |id| id.0)?;
+            write_ids(sink, parameters, |id| id.0)?;
+            write_u32(sink, body.0)
         },
     }
 }
@@ -711,24 +724,30 @@ fn encode_operator<S: ImageSink>(
             write_u32(sink, element.0)?;
             write_u8(sink, encode_collection_kind(*kind))
         },
-        TheoryImageOperatorV1::Map { sort, source, parameters } => {
+        TheoryImageOperatorV1::Product { sort } => {
             write_u8(sink, 4)?;
-            write_u32(sink, sort.0)?;
-            write_u32(sink, source.0)?;
-            write_ids(sink, parameters, |id| id.0)
-        },
-        TheoryImageOperatorV1::Zip { sort } => {
-            write_u8(sink, 5)?;
             write_u32(sink, sort.0)
         },
         TheoryImageOperatorV1::Literal { sort, value } => {
-            write_u8(sink, 6)?;
+            write_u8(sink, 5)?;
             write_u32(sink, sort.0)?;
             encode_literal(sink, value)
         },
         TheoryImageOperatorV1::Judgment { judgment } => {
-            write_u8(sink, 7)?;
+            write_u8(sink, 6)?;
             write_u32(sink, judgment.0)
+        },
+        TheoryImageOperatorV1::PathMapMode { sort, mode } => {
+            write_u8(sink, 7)?;
+            write_u32(sink, sort.0)?;
+            write_u8(
+                sink,
+                match mode {
+                    PathMapModeV1::NeutralEmpty => 0,
+                    PathMapModeV1::Set => 1,
+                    PathMapModeV1::Map => 2,
+                },
+            )
         },
     }
 }
@@ -992,7 +1011,38 @@ fn decode_term_form(
                 "term references",
             )?;
             let remainder = read_optional_u32(reader)?.map(TheoryVariableId);
-            Ok(TheoryImageTermFormV1::Apply { operator, arguments, slots, remainder })
+            let pathmap_mode = read_pathmap_mode(reader)?;
+            Ok(TheoryImageTermFormV1::Apply {
+                operator,
+                arguments,
+                slots,
+                remainder,
+                pathmap_mode,
+            })
+        },
+        2 => {
+            let sources = read_ids_charged(
+                reader,
+                &mut totals.term_references,
+                limits.max_total_term_references,
+                TheoryTermId,
+                "term references",
+            )?;
+            let parameters = read_ids_charged(
+                reader,
+                &mut totals.term_references,
+                limits.max_total_term_references,
+                TheoryVariableId,
+                "term references",
+            )?;
+            add_limit(
+                &mut totals.term_references,
+                1,
+                limits.max_total_term_references,
+                "term references",
+            )?;
+            let body = TheoryTermId(reader.read_u32()?);
+            Ok(TheoryImageTermFormV1::Map { sources, parameters, body })
         },
         tag => Err(TheoryImageError::InvalidTag(tag)),
     }
@@ -1025,31 +1075,29 @@ fn decode_operator(
             }
         },
         4 => {
-            charge_sort_references(totals, limits, 2)?;
-            let sort = TheorySortId(reader.read_u32()?);
-            let source = TheorySortId(reader.read_u32()?);
-            let parameters = read_ids_charged(
-                reader,
-                &mut totals.sort_references,
-                limits.max_total_sort_references,
-                TheorySortId,
-                "sort references",
-            )?;
-            TheoryImageOperatorV1::Map { sort, source, parameters }
+            charge_sort_references(totals, limits, 1)?;
+            TheoryImageOperatorV1::Product { sort: TheorySortId(reader.read_u32()?) }
         },
         5 => {
-            charge_sort_references(totals, limits, 1)?;
-            TheoryImageOperatorV1::Zip { sort: TheorySortId(reader.read_u32()?) }
-        },
-        6 => {
             charge_sort_references(totals, limits, 1)?;
             TheoryImageOperatorV1::Literal {
                 sort: TheorySortId(reader.read_u32()?),
                 value: decode_literal(reader, limits, totals)?,
             }
         },
-        7 => TheoryImageOperatorV1::Judgment {
+        6 => TheoryImageOperatorV1::Judgment {
             judgment: TheoryJudgmentId(reader.read_u32()?),
+        },
+        7 => {
+            charge_sort_references(totals, limits, 1)?;
+            let sort = TheorySortId(reader.read_u32()?);
+            let mode = match reader.read_u8()? {
+                0 => PathMapModeV1::NeutralEmpty,
+                1 => PathMapModeV1::Set,
+                2 => PathMapModeV1::Map,
+                tag => return Err(TheoryImageError::InvalidTag(tag)),
+            };
+            TheoryImageOperatorV1::PathMapMode { sort, mode }
         },
         tag => return Err(TheoryImageError::InvalidTag(tag)),
     })
@@ -1407,6 +1455,33 @@ fn decode_collection_kind(tag: u8) -> Result<CollectionKind, TheoryImageError> {
         3 => CollectionKind::Map,
         4 => CollectionKind::PathMap,
         _ => return Err(TheoryImageError::InvalidTag(tag)),
+    })
+}
+
+fn write_pathmap_mode<S: ImageSink>(
+    sink: &mut S,
+    mode: Option<PathMapModeV1>,
+) -> Result<(), TheoryImageError> {
+    write_u8(
+        sink,
+        match mode {
+            None => 0,
+            Some(PathMapModeV1::NeutralEmpty) => 1,
+            Some(PathMapModeV1::Set) => 2,
+            Some(PathMapModeV1::Map) => 3,
+        },
+    )
+}
+
+fn read_pathmap_mode(
+    reader: &mut ImageReader<'_>,
+) -> Result<Option<PathMapModeV1>, TheoryImageError> {
+    Ok(match reader.read_u8()? {
+        0 => None,
+        1 => Some(PathMapModeV1::NeutralEmpty),
+        2 => Some(PathMapModeV1::Set),
+        3 => Some(PathMapModeV1::Map),
+        tag => return Err(TheoryImageError::InvalidTag(tag)),
     })
 }
 

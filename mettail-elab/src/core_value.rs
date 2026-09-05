@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 
 /// ABI of the structural payload stored under `language/3`'s `core` key.
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V1: &str = "mettail-language-core-value/1";
+pub const LANGUAGE_CORE_VALUE_SCHEMA_V2: &str = "mettail-language-core-value/2";
+pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V2;
 
 /// Serde's tagged structural encoding introduces a small fixed amount of
 /// framing around each semantic node. Four times the admitted DDL depth is a
@@ -30,7 +32,10 @@ pub fn language_core_to_value(
     let encoded = encode_core(language)?;
     let value = RhoValue::Map(BTreeMap::from([
         ("core".into(), encoded),
-        ("core_schema".into(), RhoValue::String(LANGUAGE_CORE_VALUE_SCHEMA_V1.into())),
+        (
+            "core_schema".into(),
+            RhoValue::String(LANGUAGE_CORE_VALUE_SCHEMA_CURRENT.into()),
+        ),
         ("mettail".into(), RhoValue::String("language/3".into())),
         ("name".into(), RhoValue::String(language.grammar.name.clone())),
     ]));
@@ -46,7 +51,10 @@ pub fn language_core_to_data_fragment(
 ) -> Result<RhoValue, ValueDecodeError> {
     let fragment = RhoValue::Map(BTreeMap::from([
         ("core".into(), encode_core(language)?),
-        ("core_schema".into(), RhoValue::String(LANGUAGE_CORE_VALUE_SCHEMA_V1.into())),
+        (
+            "core_schema".into(),
+            RhoValue::String(LANGUAGE_CORE_VALUE_SCHEMA_CURRENT.into()),
+        ),
     ]));
     let decoded = decode_language_core_data_fragment(&fragment)?.ok_or_else(|| {
         ValueDecodeError::new("Data", "exact LanguageCore fragment was not recognized")
@@ -102,7 +110,7 @@ pub(crate) fn decode_language_core_value(
         }
     }
     require_string(envelope, "mettail", "language/3")?;
-    require_string(envelope, "core_schema", LANGUAGE_CORE_VALUE_SCHEMA_V1)?;
+    require_string(envelope, "core_schema", LANGUAGE_CORE_VALUE_SCHEMA_CURRENT)?;
     let name = match &envelope["name"] {
         RhoValue::String(name) if !name.is_empty() => name,
         _ => return Err(ValueDecodeError::new("$.name", "expected a non-empty string")),
@@ -167,7 +175,7 @@ pub fn decode_language_core_data_fragment(
             return Err(ValueDecodeError::new(format!("Data.{key}"), "missing required key"));
         }
     }
-    require_string(fragment, "core_schema", LANGUAGE_CORE_VALUE_SCHEMA_V1)?;
+    require_string(fragment, "core_schema", LANGUAGE_CORE_VALUE_SCHEMA_CURRENT)?;
     let json = rho_to_json(&fragment["core"])?;
     let language: core::LanguageCoreV1 = serde_json::from_value(json).map_err(|error| {
         ValueDecodeError::new("Data.core", format!("invalid structural LanguageCore: {error}"))
@@ -622,5 +630,42 @@ mod tests {
         core.insert("uncommitted".into(), RhoValue::Boolean(true));
         let error = decode_language_core_value(&value).unwrap_err();
         assert!(error.message.contains("closed canonical form"));
+    }
+
+    #[test]
+    fn structural_arm_rejects_every_v1_identity_before_reinterpretation() {
+        let mut old_schema = language_core_to_value(&comprehensive_language()).unwrap();
+        let RhoValue::Map(envelope) = &mut old_schema else {
+            unreachable!()
+        };
+        envelope
+            .insert("core_schema".into(), RhoValue::String(LANGUAGE_CORE_VALUE_SCHEMA_V1.into()));
+        let error = decode_language_core_value(&old_schema).unwrap_err();
+        assert!(error.message.contains(LANGUAGE_CORE_VALUE_SCHEMA_CURRENT));
+
+        let mut old_language = language_core_to_value(&comprehensive_language()).unwrap();
+        let RhoValue::Map(envelope) = &mut old_language else {
+            unreachable!()
+        };
+        let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
+            unreachable!()
+        };
+        language.insert("abi".into(), RhoValue::Integer(core::LANGUAGE_CORE_ABI_V1.into()));
+        let error = decode_language_core_value(&old_language).unwrap_err();
+        assert!(error.message.contains("UnsupportedLanguageAbi"));
+
+        let mut old_theory = language_core_to_value(&comprehensive_language()).unwrap();
+        let RhoValue::Map(envelope) = &mut old_theory else {
+            unreachable!()
+        };
+        let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
+            unreachable!()
+        };
+        let RhoValue::Map(theory) = language.get_mut("theory").unwrap() else {
+            unreachable!()
+        };
+        theory.insert("abi".into(), RhoValue::Integer(core::THEORY_CORE_ABI_V1.into()));
+        let error = decode_language_core_value(&old_theory).unwrap_err();
+        assert!(error.message.contains("UnsupportedTheoryAbi"));
     }
 }

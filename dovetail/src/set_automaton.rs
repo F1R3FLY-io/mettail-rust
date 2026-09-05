@@ -26,7 +26,10 @@ pub struct PatternId(pub usize);
 ///
 /// `OrderedCollection` matches its fixed children against an exact prefix.
 /// `UnorderedCollection` matches them injectively against distinct subject
-/// positions. In both forms, `rest = Some(name)` binds the exact complement;
+/// positions. `retained` marks a prefix of matched unordered metadata children
+/// that is copied into the remainder as well as checked by the pattern. This
+/// preserves structural headers such as an explicit PathMap mode marker.
+/// In both forms, `rest = Some(name)` binds the exact complement;
 /// `rest = None` requires the complement to be empty. These exact collection
 /// semantics intentionally differ from [`Pattern::AcApp`]'s sub-multiset
 /// selection semantics when that legacy form has no `rest` binding.
@@ -46,6 +49,7 @@ pub enum FlatPatternNode<L> {
         op: L,
         fixed: Vec<usize>,
         rest: Option<String>,
+        retained: usize,
     },
 }
 
@@ -72,6 +76,11 @@ pub enum FlatPatternError {
     },
     UnreachableNode {
         node: usize,
+    },
+    InvalidRetainedPrefix {
+        node: usize,
+        retained: usize,
+        fixed: usize,
     },
     /// A well-formed generalized node was passed to the positional compiler.
     NonPositionalNode {
@@ -121,6 +130,16 @@ pub fn validate_flat_pattern<L>(pattern: &FlatPattern<L>) -> Result<(), FlatPatt
             FlatPatternNode::OrderedCollection { fixed, .. }
             | FlatPatternNode::UnorderedCollection { fixed, .. } => fixed.as_slice(),
         };
+        if let FlatPatternNode::UnorderedCollection { fixed, retained, .. } = &pattern.nodes[index]
+        {
+            if *retained > fixed.len() {
+                return Err(FlatPatternError::InvalidRetainedPrefix {
+                    node: index,
+                    retained: *retained,
+                    fixed: fixed.len(),
+                });
+            }
+        }
         for target in children {
             if *target >= index {
                 return Err(FlatPatternError::ForwardReference { owner: index, target: *target });
@@ -1941,7 +1960,6 @@ mod tests {
             .search_egraph_bounded(&eg, generous.work - 1, || false)
             .expect_err("one unit below the exact work must fail closed");
         assert_eq!(failure.reason, SetAutomatonSearchStop::WorkBudgetExhausted);
-        assert!(failure.work <= generous.work - 1);
         assert!(failure.work < generous.work);
     }
 
