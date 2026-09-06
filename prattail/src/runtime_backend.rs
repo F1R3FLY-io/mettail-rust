@@ -6,7 +6,7 @@ use crate::automata::subset::subset_construction;
 use crate::automata::{CharClass, Nfa, NfaState, TokenKind, DEAD_STATE};
 use mettail_grammar_core as core;
 
-pub const RUNTIME_COMPILER_ABI: &str = "mettail-rtn/1";
+pub const RUNTIME_COMPILER_ABI: &str = "mettail-rtn/3";
 pub const RUNTIME_UNICODE_ABI: &str = "unicode-regex-syntax-0.8";
 
 #[derive(Debug)]
@@ -479,6 +479,11 @@ mod tests {
     #[test]
     fn compiler_emits_verified_lexer_and_recursive_network() {
         let mut grammar = core::GrammarCoreV1::new("Tiny");
+        let declared_cost = core::ExactParseCost::from_ticks(7).expect("finite cost");
+        grammar.weight_profile = core::WeightProfile::Exact {
+            default: declared_cost,
+            retain_all_alternatives: true,
+        };
         grammar.categories.push(core::Category {
             id: core::CategoryId(0),
             name: "Expr".into(),
@@ -525,8 +530,46 @@ mod tests {
         });
         let image = compile_parser_image(&grammar).expect("compile");
         assert_eq!(image.kind, core::ParserImageKind::Executable);
-        assert_eq!(image.engine.runtime_rules.len(), 1);
+        assert_eq!(image.engine.runtime_rules.len(), 2);
         assert!(!image.lexer.states.is_empty());
+        assert_eq!(image.engine.runtime_rules[0].production, Some(core::ProductionId(0)));
+        assert_eq!(image.engine.runtime_rules[0].cost, declared_cost);
+        assert_eq!(image.engine.runtime_rules[1].semantic, core::RuntimeRuleSemantic::TokenValue);
+        assert_eq!(image.engine.runtime_rules[1].cost, core::ExactParseCost::default());
+
+        // A category-tagged token and an explicit Int constructor are two
+        // declared readings. Binding the former must not erase the latter.
+        let parsed = parse(&grammar, "123").expect("both readings parse");
+        assert_eq!(parsed.len(), 2);
+        let scalar = parsed
+            .iter()
+            .find(|parse| parse.production.is_none())
+            .expect("literal");
+        assert_eq!(scalar.value, core::DynamicValue::Integer(123));
+        assert_eq!(scalar.syntax, scalar.value);
+        assert_eq!(scalar.cost, core::ExactParseCost::default());
+        assert!(scalar
+            .rank
+            .positions()
+            .iter()
+            .all(|position| position.productions.is_empty()));
+        let constructor = parsed
+            .iter()
+            .find(|parse| parse.production.is_some())
+            .expect("Int");
+        let core::DynamicValue::Term(term) = &constructor.value else {
+            panic!("Int term")
+        };
+        assert_eq!(term.fields, vec![core::DynamicValue::Integer(123)]);
+        assert_eq!(constructor.cost, declared_cost);
+        assert_eq!(scalar.rank.positions()[0].lexical, constructor.rank.positions()[0].lexical);
+
+        // The same token must also work in a category with no explicit terms.
+        grammar.productions.clear();
+        grammar.reductions.clear();
+        assert_eq!(parse(&grammar, "123").expect("literal-only category").len(), 1);
+        grammar.tokens[0].category = None;
+        assert!(matches!(parse(&grammar, "123"), Err(core::RuntimeError::NoParse)));
     }
 
     #[test]
@@ -564,6 +607,68 @@ mod tests {
     }
 
     #[test]
+    fn typed_token_binding_preserves_each_category_and_logical_eof() {
+        let mut grammar = core::GrammarCoreV1::new("LiteralCategories");
+        grammar.categories = ["Number", "Word", "End"]
+            .into_iter()
+            .enumerate()
+            .map(|(id, name)| core::Category {
+                id: core::CategoryId(id as u32),
+                name: name.into(),
+                carrier: core::Carrier::Dynamic,
+                primary: id == 0,
+                admits_variables: false,
+            })
+            .collect();
+        grammar.tokens = vec![
+            token(
+                0,
+                "number",
+                core::TokenPattern::Builtin(core::BuiltinToken::Integer),
+                core::TokenDecoder::Integer { radix: None },
+            ),
+            token(1, "word", core::TokenPattern::Regex("[a-z]+".into()), core::TokenDecoder::Text),
+            token(
+                2,
+                "end",
+                core::TokenPattern::Builtin(core::BuiltinToken::EndOfInput),
+                core::TokenDecoder::Unit,
+            ),
+        ];
+        for token in &mut grammar.tokens {
+            token.category = Some(core::CategoryId(token.id.0));
+        }
+        grammar.modes[0].token_ids = grammar.tokens.iter().map(|token| token.id).collect();
+        let image = compile_parser_image(&grammar).expect("compile literal categories");
+        assert_eq!(image.engine.runtime_rules.len(), 3);
+        let host = core::DefaultRuntimeHost;
+        let parser = core::RuntimeParser::new(
+            &grammar,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            &host,
+        )
+        .expect("admit");
+        for (category, source, value) in [
+            (0, "123", core::DynamicValue::Integer(123)),
+            (1, "abc", core::DynamicValue::Text("abc".into())),
+            (2, "", core::DynamicValue::Unit),
+        ] {
+            let parsed = parser
+                .parse_category(source, core::CategoryId(category))
+                .expect("matching literal category");
+            assert_eq!(parsed.len(), 1);
+            assert_eq!(parsed[0].value, value);
+            assert_eq!(parsed[0].syntax, value);
+        }
+        assert!(matches!(
+            parser.parse_category("123", core::CategoryId(1)),
+            Err(core::RuntimeError::NoParse)
+        ));
+    }
+
+    #[test]
     fn map_finalization_sorts_semantic_keys_and_rejects_duplicates() {
         let grammar = integer_map_grammar();
         let parsed = parse(&grammar, "2:3,1:4").expect("parse");
@@ -584,6 +689,393 @@ mod tests {
             .collect();
         assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(matches!(parse(&grammar, "1:2,1:3"), Err(core::RuntimeError::Reduction(_))));
+    }
+
+    fn scalar_pair_grammar() -> core::GrammarCoreV1 {
+        let mut grammar = core::GrammarCoreV1::new("ScalarPair");
+        grammar.categories = vec![
+            category(0, "Pair", true),
+            category(1, "Scalar", false),
+            category(2, "Word", false),
+        ];
+        grammar.categories[1].admits_variables = true;
+        grammar.tokens = vec![
+            token(0, "word", core::TokenPattern::Regex("[a-z]+".into()), core::TokenDecoder::Text),
+            token(1, "scalar", core::TokenPattern::Regex("[a-z]".into()), core::TokenDecoder::Text),
+            token(2, "space", core::TokenPattern::Regex(" +".into()), core::TokenDecoder::Unit),
+        ];
+        grammar.tokens[0].category = Some(core::CategoryId(2));
+        grammar.tokens[1].category = Some(core::CategoryId(1));
+        grammar.tokens[2].channel = "trivia".into();
+        grammar.modes[0].token_ids = vec![core::TokenId(0), core::TokenId(1), core::TokenId(2)];
+        grammar.reductions.push(reduction(0, 0, 2));
+        grammar.productions.push(core::Production {
+            id: core::ProductionId(0),
+            constructor: core::ConstructorId(0),
+            label: "Pair".into(),
+            result: core::CategoryId(0),
+            syntax: ["left", "right"]
+                .into_iter()
+                .map(|slot| core::SyntaxItem::Category {
+                    category: core::CategoryId(1),
+                    slot: slot.into(),
+                })
+                .collect(),
+            precedence: core::Precedence::default(),
+            classification: core::ProductionClass::default(),
+            reduction: 0,
+            provenance: None,
+        });
+        grammar
+    }
+
+    #[test]
+    fn lexical_lattice_preserves_shorter_kinds_and_template_boundaries() {
+        let grammar = scalar_pair_grammar();
+        let image = compile_parser_image(&grammar).expect("compile");
+        let host = core::DefaultRuntimeHost;
+        let parser = core::RuntimeParser::new(
+            &grammar,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            &host,
+        )
+        .expect("admit");
+        let parsed = parser
+            .parse("ab")
+            .expect("two scalar edges survive the longer word");
+        assert_eq!(parsed.len(), 1);
+        let core::DynamicValue::Term(pair) = &parsed[0].syntax else {
+            panic!("pair")
+        };
+        assert_eq!(
+            pair.fields,
+            vec![core::DynamicValue::Text("a".into()), core::DynamicValue::Text("b".into())]
+        );
+        for pieces in [
+            vec![core::RuntimeTemplatePiece::Text("ab".into())],
+            vec![
+                core::RuntimeTemplatePiece::Text("a".into()),
+                core::RuntimeTemplatePiece::Text("b".into()),
+            ],
+        ] {
+            assert_eq!(
+                parser
+                    .parse_template(&pieces, &[], Some(core::CategoryId(0)))
+                    .expect("pair template"),
+                parsed
+            );
+        }
+        let words = parser
+            .parse_category("ab", core::CategoryId(2))
+            .expect("longest word");
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].value, core::DynamicValue::Text("ab".into()));
+        assert!(
+            matches!(
+                parser.parse_template(
+                    &[
+                        core::RuntimeTemplatePiece::Text("a".into()),
+                        core::RuntimeTemplatePiece::Text("b".into())
+                    ],
+                    &[],
+                    Some(core::CategoryId(2)),
+                ),
+                Err(core::RuntimeError::NoParse)
+            ),
+            "one token cannot cross text fragments"
+        );
+        let hole = parser
+            .parse_template(
+                &[
+                    core::RuntimeTemplatePiece::Hole(0),
+                    core::RuntimeTemplatePiece::Text(" b".into()),
+                ],
+                &[core::RuntimeTemplateHole {
+                    id: 0,
+                    category: Some(core::CategoryId(1)),
+                }],
+                Some(core::CategoryId(0)),
+            )
+            .expect("opaque scalar hole then trivia then scalar");
+        assert_eq!(hole.len(), 1);
+        let core::DynamicValue::Term(pair) = &hole[0].syntax else {
+            panic!("pair")
+        };
+        assert_eq!(
+            pair.fields,
+            vec![
+                core::DynamicValue::TemplateHole { id: 0, category: core::CategoryId(1) },
+                core::DynamicValue::Text("b".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn lexical_lattice_retains_distinct_token_kinds_in_the_same_category() {
+        let mut grammar = scalar_pair_grammar();
+        grammar.tokens[0].category = Some(core::CategoryId(1));
+        let image = compile_parser_image(&grammar).expect("compile");
+        let host = core::DefaultRuntimeHost;
+        let parser = core::RuntimeParser::new(
+            &grammar,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            &host,
+        )
+        .expect("admit");
+        let results = parser
+            .parse_category("a", core::CategoryId(1))
+            .expect("two token witnesses");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].value, results[1].value);
+        assert_ne!(results[0].rank, results[1].rank);
+    }
+
+    #[test]
+    fn juxtaposition_reuses_declared_binary_precedence_without_a_token_trigger() {
+        let mut grammar = scalar_pair_grammar();
+        grammar.tokens[1].category = Some(core::CategoryId(0));
+        for item in &mut grammar.productions[0].syntax {
+            let core::SyntaxItem::Category { category, .. } = item else {
+                panic!("operand")
+            };
+            *category = core::CategoryId(0);
+        }
+        assert!(grammar.productions[0].is_binary_juxtaposition());
+        assert!(
+            !grammar.productions[0].classification.infix,
+            "no generated token-trigger flag is fabricated"
+        );
+        assert_eq!(
+            parse(&grammar, "abc")
+                .expect("undeclared associativity remains ambiguous")
+                .len(),
+            2
+        );
+        for power in [0, 20, u16::MAX] {
+            for associativity in [
+                core::Associativity::Left,
+                core::Associativity::Right,
+                core::Associativity::NonAssociative,
+            ] {
+                grammar.productions[0].precedence = core::Precedence {
+                    binding_power: Some(power),
+                    associativity,
+                    shares_previous_level: false,
+                };
+                let result = parse(&grammar, "abc");
+                if associativity == core::Associativity::NonAssociative {
+                    assert!(matches!(result, Err(core::RuntimeError::NoParse)));
+                    continue;
+                }
+                let result = result.expect("declared association");
+                assert_eq!(result.len(), 1);
+                let core::DynamicValue::Term(root) = &result[0].syntax else {
+                    panic!("root")
+                };
+                let (nested, atom, expected_pair, expected_atom) = match associativity {
+                    core::Associativity::Left => {
+                        (&root.fields[0], &root.fields[1], ["a", "b"], "c")
+                    },
+                    core::Associativity::Right => {
+                        (&root.fields[1], &root.fields[0], ["b", "c"], "a")
+                    },
+                    core::Associativity::NonAssociative => unreachable!("handled above"),
+                };
+                assert_eq!(atom, &core::DynamicValue::Text(expected_atom.into()));
+                let core::DynamicValue::Term(pair) = nested else {
+                    panic!("nested pair")
+                };
+                assert_eq!(
+                    pair.fields,
+                    expected_pair
+                        .into_iter()
+                        .map(|s| core::DynamicValue::Text(s.into()))
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+        grammar.productions[0].syntax[0] = core::SyntaxItem::Category {
+            category: core::CategoryId(1),
+            slot: "left".into(),
+        };
+        assert!(
+            !grammar.productions[0].is_binary_juxtaposition(),
+            "heterogeneous application is not inferred"
+        );
+        grammar.productions[0].syntax[0] = core::SyntaxItem::Category {
+            category: core::CategoryId(0),
+            slot: "left".into(),
+        };
+        grammar.productions[0]
+            .syntax
+            .push(core::SyntaxItem::Token(core::TokenId(0)));
+        assert!(
+            !grammar.productions[0].is_binary_juxtaposition(),
+            "delimited forms keep their own classification"
+        );
+    }
+
+    fn context_fork_grammar() -> core::GrammarCoreV1 {
+        let mut grammar = core::GrammarCoreV1::new("ContextFork");
+        grammar.categories.push(category(0, "Root", true));
+        // At byte 2 both paths have top mode 1, but stacks [0,1] and
+        // [0,2,1]. Popping c must expose different d tokens, not merge them.
+        grammar.tokens = [
+            ("ab", 0, Some(1), false),
+            ("a", 0, Some(2), false),
+            ("b", 2, Some(1), false),
+            ("c", 1, None, true),
+            ("d", 0, None, false),
+            ("d", 2, None, true),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(id, (text, mode, push, pop))| {
+            let mut result = token(
+                id as u32,
+                &format!("token{id}"),
+                core::TokenPattern::Literal(text.into()),
+                core::TokenDecoder::Text,
+            );
+            result.mode = core::ModeId(mode);
+            result.transition = core::ModeTransition { push: push.map(core::ModeId), pop };
+            result
+        })
+        .collect();
+        grammar.modes = (0..3)
+            .map(|mode| core::LexerMode {
+                id: core::ModeId(mode),
+                name: format!("mode{mode}"),
+                raw: false,
+                token_ids: grammar
+                    .tokens
+                    .iter()
+                    .filter(|token| token.mode.0 == mode)
+                    .map(|token| token.id)
+                    .collect(),
+            })
+            .collect();
+        for (id, path) in [vec![0, 3, 4], vec![1, 2, 3, 5]].into_iter().enumerate() {
+            grammar
+                .reductions
+                .push(reduction(0, id as u32, path.len() as u16));
+            grammar.productions.push(core::Production {
+                id: core::ProductionId(id as u32),
+                constructor: core::ConstructorId(id as u32),
+                label: format!("Path{id}"),
+                result: core::CategoryId(0),
+                syntax: path
+                    .into_iter()
+                    .enumerate()
+                    .map(|(slot, token)| core::SyntaxItem::CaptureToken {
+                        token: core::TokenId(token),
+                        slot: format!("part{slot}"),
+                    })
+                    .collect(),
+                precedence: core::Precedence::default(),
+                classification: core::ProductionClass::default(),
+                reduction: id as u32,
+                provenance: None,
+            });
+        }
+        grammar
+    }
+
+    #[test]
+    fn lexical_lattice_chart_keeps_equal_offsets_and_top_modes_with_different_parents() {
+        let grammar = context_fork_grammar();
+        let image = compile_parser_image(&grammar).expect("compile");
+        let host = core::DefaultRuntimeHost;
+        let parser = core::RuntimeParser::new(
+            &grammar,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            &host,
+        )
+        .expect("admit");
+        let results = parser.parse("abcd").expect("both balanced context paths");
+        assert_eq!(results.len(), 2);
+        for (result, expected) in results
+            .iter()
+            .zip([vec!["ab", "c", "d"], vec!["a", "b", "c", "d"]])
+        {
+            let core::DynamicValue::Term(term) = &result.syntax else {
+                panic!("path term")
+            };
+            assert_eq!(
+                term.fields,
+                expected
+                    .into_iter()
+                    .map(|text| core::DynamicValue::Text(text.into()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(
+            parser
+                .parse_template(&[core::RuntimeTemplatePiece::Text("abcd".into())], &[], None)
+                .expect("template context paths"),
+            results
+        );
+        let limited = core::RuntimeParser::new_with_policy(
+            &grammar,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            &host,
+            core::RuntimePolicy {
+                max_lexer_mode_depth: 2,
+                ..Default::default()
+            },
+        )
+        .expect("admit bounded");
+        assert!(
+            matches!(limited.parse("abcd"), Err(core::RuntimeError::LexerModeDepthLimit { .. })),
+            "secondary path resource exhaustion must not become a successful singleton"
+        );
+    }
+
+    #[test]
+    fn lexical_lattice_resource_exhaustion_is_explicit_for_source_and_templates() {
+        let grammar = scalar_pair_grammar();
+        let image = compile_parser_image(&grammar).expect("compile");
+        let host = core::DefaultRuntimeHost;
+        for (policy, expected) in [
+            (
+                core::RuntimePolicy {
+                    max_lexer_states: 0,
+                    ..Default::default()
+                },
+                core::RuntimeError::LexerStateLimit,
+            ),
+            (
+                core::RuntimePolicy { max_lexer_edges: 0, ..Default::default() },
+                core::RuntimeError::LexerEdgeLimit,
+            ),
+            (
+                core::RuntimePolicy { max_lexer_work: 0, ..Default::default() },
+                core::RuntimeError::LexerWorkLimit,
+            ),
+        ] {
+            let parser = core::RuntimeParser::new_with_policy(
+                &grammar,
+                &image,
+                RUNTIME_COMPILER_ABI,
+                RUNTIME_UNICODE_ABI,
+                &host,
+                policy,
+            )
+            .expect("admit bounded");
+            assert_eq!(parser.parse("ab"), Err(expected.clone()));
+            assert_eq!(
+                parser.parse_template(&[core::RuntimeTemplatePiece::Text("ab".into())], &[], None),
+                Err(expected)
+            );
+        }
     }
 
     #[test]

@@ -637,6 +637,19 @@ impl EngineTables {
                 (None, RuntimeRuleSemantic::Reduce) | (Some(_), _) => {
                     return Err(ImageError::BadRuntimeSemantic(index as u32));
                 },
+                (None, RuntimeRuleSemantic::TokenValue) => {
+                    let [RuntimeSymbol::Token { token, capture: true }] = symbols else {
+                        return Err(ImageError::BadRuntimeSemantic(index as u32));
+                    };
+                    if core.tokens[token.0 as usize]
+                        .category
+                        .map(|category| category.0)
+                        != Some(rule.lhs)
+                        || rule.cost != ExactParseCost::default()
+                    {
+                        return Err(ImageError::BadRuntimeSemantic(index as u32));
+                    }
+                },
                 (None, _) => {},
             }
             let expected_auxiliary = match rule.semantic {
@@ -653,6 +666,7 @@ impl EngineTables {
                 },
                 RuntimeRuleSemantic::FinalizeCollection { layout } => Some(layout.slots() as usize),
                 RuntimeRuleSemantic::Tuple { slots } => Some(slots as usize),
+                RuntimeRuleSemantic::TokenValue => Some(1),
             };
             if let Some(expected) = expected_auxiliary {
                 if captures != expected {
@@ -742,20 +756,39 @@ pub enum RuntimeSymbol {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeRuleSemantic {
     Reduce,
-    EmptyOptional { slots: u16 },
-    PresentOptional { slots: u16 },
-    EmptyCollection { layout: RuntimeCollectionLayout },
-    SingletonCollection { layout: RuntimeCollectionLayout },
-    AppendCollection { layout: RuntimeCollectionLayout },
-    FinalizeCollection { layout: RuntimeCollectionLayout },
-    Tuple { slots: u16 },
-    Unit { slots: u16 },
+    EmptyOptional {
+        slots: u16,
+    },
+    PresentOptional {
+        slots: u16,
+    },
+    EmptyCollection {
+        layout: RuntimeCollectionLayout,
+    },
+    SingletonCollection {
+        layout: RuntimeCollectionLayout,
+    },
+    AppendCollection {
+        layout: RuntimeCollectionLayout,
+    },
+    FinalizeCollection {
+        layout: RuntimeCollectionLayout,
+    },
+    Tuple {
+        slots: u16,
+    },
+    Unit {
+        slots: u16,
+    },
+    /// Bind one already-decoded token to its declared category without
+    /// constructing a term or evaluating again. Kept last for wire stability.
+    TokenValue,
 }
 
 impl RuntimeRuleSemantic {
     pub fn output_arity(self) -> u16 {
         match self {
-            Self::Reduce | Self::Tuple { .. } => 1,
+            Self::Reduce | Self::Tuple { .. } | Self::TokenValue => 1,
             Self::EmptyOptional { slots }
             | Self::PresentOptional { slots }
             | Self::Unit { slots } => slots,

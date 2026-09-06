@@ -8,6 +8,9 @@ use crate::{
 use rigail::Semiring;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
+mod lexical;
+use lexical::{LexPosition, LexicalEdge, LexicalLattice};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeightedParse {
     /// Recognition witness before native evaluation. Constructor and hole
@@ -49,6 +52,9 @@ pub enum RuntimeError {
     LexerModeUnderflow { byte: usize },
     LexerModeUnclosed { byte: usize, depth: usize },
     LexerModeDepthLimit { byte: usize },
+    LexerStateLimit,
+    LexerEdgeLimit,
+    LexerWorkLimit,
     ForeignNestingLimit { byte: usize },
     InvalidCategory(CategoryId),
     InvalidTokenValue { token: TokenId, text: String },
@@ -88,6 +94,13 @@ pub struct RuntimePolicy {
     pub max_symbolic_template_cache_weight: u64,
     pub max_lexer_mode_depth: u16,
     pub max_foreign_nesting: u16,
+    /// Combined retained lexical-position and persistent mode-context nodes.
+    pub max_lexer_states: u32,
+    /// Retained lexical edges and the per-node acceptance scratch ceiling.
+    pub max_lexer_edges: u32,
+    /// DFA byte transitions, inspected acceptances, and scheduled node visits.
+    /// This is separate from semantic cost and from foreign-decoder work.
+    pub max_lexer_work: u64,
 }
 
 impl Default for RuntimePolicy {
@@ -102,6 +115,9 @@ impl Default for RuntimePolicy {
             max_symbolic_template_cache_weight: 64 * 1024 * 1024,
             max_lexer_mode_depth: 1_024,
             max_foreign_nesting: 1_024,
+            max_lexer_states: 1_000_000,
+            max_lexer_edges: 4_000_000,
+            max_lexer_work: 64_000_000,
         }
     }
 }
@@ -115,6 +131,9 @@ struct EffectiveRuntimeLimits {
     capture_bindings: usize,
     lexer_mode_depth: usize,
     foreign_nesting: u32,
+    lexer_states: usize,
+    lexer_edges: usize,
+    lexer_work: u64,
 }
 
 /// Explicit host capabilities available to one runtime parser. Implementations
@@ -265,6 +284,9 @@ impl<'a> RuntimeParser<'a> {
                 capture_bindings: policy.max_capture_bindings as usize,
                 lexer_mode_depth: policy.max_lexer_mode_depth as usize,
                 foreign_nesting: u32::from(policy.max_foreign_nesting),
+                lexer_states: policy.max_lexer_states as usize,
+                lexer_edges: policy.max_lexer_edges as usize,
+                lexer_work: policy.max_lexer_work,
             },
         })
     }
@@ -346,9 +368,6 @@ impl<'a> RuntimeParser<'a> {
         pieces: &'template [RuntimeTemplatePiece],
         holes: &[RuntimeTemplateHole],
     ) -> Result<TemplateLexing<'template>, RuntimeError> {
-        // Each canonical piece consumes at least one byte or one structural
-        // lattice position. Bound the work before allocating occurrence state;
-        // callers of this neutral API need not originate from an FltNode.
         if pieces.len() > self.limits.input_bytes {
             return Err(RuntimeError::InputTooLarge);
         }
@@ -372,15 +391,10 @@ impl<'a> RuntimeParser<'a> {
                 }
             }
         }
-
-        let mut mode_stack = vec![ModeId(0)];
-        let mut output = BTreeMap::new();
         let mut fragments = BTreeMap::new();
         let mut occurrences = vec![0usize; holes.len()];
         let mut lattice_holes = BTreeMap::new();
         let mut position = 0usize;
-        let foreign_delimiters = self.foreign_delimiters();
-
         for piece in pieces {
             match piece {
                 RuntimeTemplatePiece::Hole(id) => {
@@ -388,170 +402,48 @@ impl<'a> RuntimeParser<'a> {
                         .get(*id as usize)
                         .filter(|hole| hole.id == *id)
                         .ok_or(RuntimeError::InvalidTemplateHole { id: *id })?;
+                    let end = position.checked_add(1).ok_or(RuntimeError::InputTooLarge)?;
+                    if end > self.limits.input_bytes {
+                        return Err(RuntimeError::InputTooLarge);
+                    }
                     occurrences[*id as usize] += 1;
                     lattice_holes.insert(
                         position,
                         TemplateHoleOccurrence {
                             id: *id,
                             category: declaration.category,
-                            end: position.checked_add(1).ok_or(RuntimeError::InputTooLarge)?,
+                            end,
                         },
                     );
-                    position = position.checked_add(1).ok_or(RuntimeError::InputTooLarge)?;
+                    position = end;
                 },
                 RuntimeTemplatePiece::Text(fragment) => {
                     if fragment.is_empty() {
                         return Err(RuntimeError::InvalidTemplate("text pieces must be nonempty"));
                     }
-                    let fragment_start = position;
-                    fragments.insert(fragment_start, fragment.as_str());
-                    let bytes = fragment.as_bytes();
-                    let mut local = 0usize;
-                    while local < bytes.len() {
-                        if let Some((open, close)) = foreign_delimiters
-                            .iter()
-                            .copied()
-                            .find(|(open, _)| fragment[local..].starts_with(open))
-                        {
-                            let end = match delimited_span(
-                                fragment,
-                                local,
-                                open,
-                                close,
-                                self.limits.foreign_nesting,
-                            ) {
-                                Ok(Some((_, _, end))) => end,
-                                Ok(None) | Err(DelimitedSpanError::Unterminated) => {
-                                    return Err(RuntimeError::ForeignLanguage {
-                                        byte: fragment_start + local,
-                                        message: format!(
-                                            "unterminated foreign-language region `{open}` ... `{close}`"
-                                        ),
-                                    });
-                                },
-                                Err(DelimitedSpanError::NestingLimit) => {
-                                    return Err(RuntimeError::ForeignNestingLimit {
-                                        byte: fragment_start + local,
-                                    });
-                                },
-                            };
-                            local = end;
-                            continue;
-                        }
-
-                        let mode = *mode_stack.last().expect("mode stack starts nonempty");
-                        let mut state = *self
-                            .image
-                            .lexer
-                            .mode_starts
-                            .get(mode.0 as usize)
-                            .ok_or(RuntimeError::Lex { byte: fragment_start + local })?;
-                        let token_start = local;
-                        let mut cursor = local;
-                        let mut accepted: Option<(usize, Vec<TokenId>)> = None;
-                        while cursor < bytes.len() {
-                            let Some(next) =
-                                lexer_transition(&self.image.lexer, state, bytes[cursor])
-                            else {
-                                break;
-                            };
-                            state = next;
-                            cursor += 1;
-                            let candidates = &self.image.lexer.states[state as usize].accept;
-                            if !candidates.is_empty() {
-                                accepted = Some((cursor, candidates.clone()));
-                            }
-                        }
-                        let Some((end, mut candidates)) = accepted else {
-                            return Err(RuntimeError::Lex { byte: fragment_start + token_start });
-                        };
-                        let primary = self.grammar.tokens[candidates[0].0 as usize].clone();
-                        candidates.retain(|candidate| {
-                            let token = &self.grammar.tokens[candidate.0 as usize];
-                            token.transition == primary.transition
-                                && token.channel == primary.channel
-                        });
-                        if primary.transition.pop {
-                            if mode_stack.len() == 1 {
-                                return Err(RuntimeError::LexerModeUnderflow {
-                                    byte: fragment_start + token_start,
-                                });
-                            }
-                            mode_stack.pop();
-                        }
-                        if let Some(push) = primary.transition.push {
-                            if mode_stack.len() >= self.limits.lexer_mode_depth {
-                                return Err(RuntimeError::LexerModeDepthLimit {
-                                    byte: fragment_start + token_start,
-                                });
-                            }
-                            mode_stack.push(push);
-                        }
-                        output.insert(
-                            fragment_start + token_start,
-                            Lexeme {
-                                start: fragment_start + token_start,
-                                end: fragment_start + end,
-                                candidates,
-                                hidden: primary.channel != "main",
-                            },
-                        );
-                        local = end;
-                    }
-                    position = position
+                    let end = position
                         .checked_add(fragment.len())
                         .ok_or(RuntimeError::InputTooLarge)?;
+                    if end > self.limits.input_bytes {
+                        return Err(RuntimeError::InputTooLarge);
+                    }
+                    fragments.insert(position, fragment.as_str());
+                    position = end;
                 },
             }
-            if position > self.limits.input_bytes {
-                return Err(RuntimeError::InputTooLarge);
-            }
         }
-
         if occurrences.contains(&0) {
             return Err(RuntimeError::InvalidTemplate("every declared hole must occur"));
         }
-        if mode_stack.len() != 1 {
-            return Err(RuntimeError::LexerModeUnclosed {
-                byte: position,
-                depth: mode_stack.len(),
-            });
-        }
-        let mode = *mode_stack.last().expect("mode stack remains nonempty");
-        let mut eof = self.grammar.modes[mode.0 as usize]
-            .token_ids
-            .iter()
-            .copied()
-            .filter(|token| {
-                matches!(
-                    self.grammar.tokens[token.0 as usize].pattern,
-                    TokenPattern::Builtin(crate::BuiltinToken::EndOfInput)
-                )
-            })
-            .collect::<Vec<_>>();
-        eof.sort_by_key(|id| {
-            let token = &self.grammar.tokens[id.0 as usize];
-            (std::cmp::Reverse(token.priority), token.id)
-        });
-        if !eof.is_empty() {
-            output.insert(
-                position,
-                Lexeme {
-                    start: position,
-                    end: position + 1,
-                    candidates: eof,
-                    hidden: false,
-                },
-            );
-        }
+        let input = InputText { fragments, end: position };
+        let lexemes = LexicalLattice::build(self, &input, &lattice_holes)?;
         Ok(TemplateLexing {
-            lexemes: output,
-            fragments,
+            lexemes,
+            fragments: input.fragments,
             holes: lattice_holes,
             end: position,
         })
     }
-
     fn foreign_delimiters(&self) -> Vec<(&str, &str)> {
         let mut delimiters = self
             .image
@@ -574,128 +466,9 @@ impl<'a> RuntimeParser<'a> {
         delimiters
     }
 
-    fn lex(&self, source: &str) -> Result<BTreeMap<usize, Lexeme>, RuntimeError> {
-        let bytes = source.as_bytes();
-        let mut position = 0usize;
-        let mut mode_stack = vec![ModeId(0)];
-        let mut output = BTreeMap::new();
-        let foreign_delimiters = self.foreign_delimiters();
-        while position < bytes.len() {
-            if let Some((open, close)) = foreign_delimiters
-                .iter()
-                .copied()
-                .find(|(open, _)| source[position..].starts_with(open))
-            {
-                let end = match delimited_span(
-                    source,
-                    position,
-                    open,
-                    close,
-                    self.limits.foreign_nesting,
-                ) {
-                    Ok(Some((_, _, end))) => end,
-                    Ok(None) | Err(DelimitedSpanError::Unterminated) => {
-                        return Err(RuntimeError::ForeignLanguage {
-                            byte: position,
-                            message: format!(
-                                "unterminated foreign-language region `{open}` ... `{close}`"
-                            ),
-                        });
-                    },
-                    Err(DelimitedSpanError::NestingLimit) => {
-                        return Err(RuntimeError::ForeignNestingLimit { byte: position });
-                    },
-                };
-                position = end;
-                continue;
-            }
-            let mode = *mode_stack.last().expect("mode stack starts nonempty");
-            let mut state = *self
-                .image
-                .lexer
-                .mode_starts
-                .get(mode.0 as usize)
-                .ok_or(RuntimeError::Lex { byte: position })?;
-            let mut cursor = position;
-            let mut accepted: Option<(usize, Vec<TokenId>)> = None;
-            while cursor < bytes.len() {
-                let Some(next) = lexer_transition(&self.image.lexer, state, bytes[cursor]) else {
-                    break;
-                };
-                state = next;
-                cursor += 1;
-                let candidates = &self.image.lexer.states[state as usize].accept;
-                if !candidates.is_empty() {
-                    accepted = Some((cursor, candidates.clone()));
-                }
-            }
-            let Some((end, mut candidates)) = accepted else {
-                return Err(RuntimeError::Lex { byte: position });
-            };
-            let primary = self.grammar.tokens[candidates[0].0 as usize].clone();
-            candidates.retain(|candidate| {
-                let token = &self.grammar.tokens[candidate.0 as usize];
-                token.transition == primary.transition && token.channel == primary.channel
-            });
-            if primary.transition.pop {
-                if mode_stack.len() == 1 {
-                    return Err(RuntimeError::LexerModeUnderflow { byte: position });
-                }
-                mode_stack.pop();
-            }
-            if let Some(push) = primary.transition.push {
-                if mode_stack.len() >= self.limits.lexer_mode_depth {
-                    return Err(RuntimeError::LexerModeDepthLimit { byte: position });
-                }
-                mode_stack.push(push);
-            }
-            output.insert(
-                position,
-                Lexeme {
-                    start: position,
-                    end,
-                    candidates,
-                    hidden: primary.channel != "main",
-                },
-            );
-            position = end;
-        }
-        if mode_stack.len() != 1 {
-            return Err(RuntimeError::LexerModeUnclosed {
-                byte: position,
-                depth: mode_stack.len(),
-            });
-        }
-        let mode = *mode_stack.last().expect("mode stack remains nonempty");
-        let mut eof = self.grammar.modes[mode.0 as usize]
-            .token_ids
-            .iter()
-            .copied()
-            .filter(|token| {
-                matches!(
-                    self.grammar.tokens[token.0 as usize].pattern,
-                    TokenPattern::Builtin(crate::BuiltinToken::EndOfInput)
-                )
-            })
-            .collect::<Vec<_>>();
-        eof.sort_by_key(|id| {
-            let token = &self.grammar.tokens[id.0 as usize];
-            (std::cmp::Reverse(token.priority), token.id)
-        });
-        if !eof.is_empty() {
-            output.insert(
-                position,
-                Lexeme {
-                    start: position,
-                    end: position + 1,
-                    candidates: eof,
-                    hidden: false,
-                },
-            );
-        }
-        Ok(output)
+    fn lex(&self, source: &str) -> Result<LexicalLattice, RuntimeError> {
+        LexicalLattice::build(self, &InputText::source(source), &BTreeMap::new())
     }
-
     fn decode_token(&self, token: TokenId, text: &str) -> Result<DynamicValue, RuntimeError> {
         let definition = &self.grammar.tokens[token.0 as usize];
         let decoded = match &definition.decoder {
@@ -923,14 +696,6 @@ fn lexer_transition(lexer: &crate::LexerImage, state: u32, byte: u8) -> Option<u
         .map(|index| transitions[index].target)
 }
 
-#[derive(Clone)]
-struct Lexeme {
-    start: usize,
-    end: usize,
-    candidates: Vec<TokenId>,
-    hidden: bool,
-}
-
 #[derive(Clone, Copy)]
 struct TemplateHoleOccurrence {
     id: u32,
@@ -939,7 +704,7 @@ struct TemplateHoleOccurrence {
 }
 
 struct TemplateLexing<'a> {
-    lexemes: BTreeMap<usize, Lexeme>,
+    lexemes: LexicalLattice,
     fragments: BTreeMap<usize, &'a str>,
     holes: BTreeMap<usize, TemplateHoleOccurrence>,
     end: usize,
@@ -993,8 +758,8 @@ impl<'a> InputText<'a> {
 struct ItemKey {
     rule: u32,
     dot: u16,
-    origin: usize,
-    end: usize,
+    origin: LexPosition,
+    end: LexPosition,
 }
 
 type NodeId = u32;
@@ -1020,8 +785,8 @@ enum ForestNode {
         alternatives: Vec<PackedPair>,
     },
     Nonterminal {
-        start: usize,
-        end: usize,
+        start: LexPosition,
+        end: LexPosition,
         alternatives: Vec<CompletedRule>,
         template_hole: Option<(u32, CategoryId)>,
     },
@@ -1043,17 +808,17 @@ struct ForestBuilder<'a, 'b> {
     parser: &'a RuntimeParser<'b>,
     input: InputText<'a>,
     holes: BTreeMap<usize, TemplateHoleOccurrence>,
-    lexemes: BTreeMap<usize, Lexeme>,
+    lexemes: LexicalLattice,
     items: HashSet<ItemKey>,
     queue: VecDeque<ItemKey>,
-    waiting: HashMap<(usize, u32), Vec<ItemKey>>,
-    completed: HashMap<(u32, usize), Vec<NodeId>>,
+    waiting: HashMap<(LexPosition, u32), Vec<ItemKey>>,
+    completed: HashMap<(u32, LexPosition), Vec<NodeId>>,
     nodes: Vec<ForestNode>,
     intermediate: HashMap<ItemKey, NodeId>,
-    nonterminals: HashMap<(u32, usize, usize), NodeId>,
-    hole_nonterminals: HashSet<(u32, usize, usize)>,
-    terminals: HashMap<(TokenId, usize, usize), NodeId>,
-    foreign: HashMap<(String, String, usize, usize), NodeId>,
+    nonterminals: HashMap<(u32, LexPosition, LexPosition), NodeId>,
+    hole_nonterminals: HashSet<(u32, LexPosition, LexPosition)>,
+    terminals: HashMap<(TokenId, LexPosition, LexPosition, u32), NodeId>,
+    foreign: HashMap<(String, String, LexPosition, LexPosition), NodeId>,
 }
 
 struct RealizationContext {
@@ -1073,11 +838,7 @@ impl RealizationContext {
 }
 
 impl<'a, 'b> ForestBuilder<'a, 'b> {
-    fn new(
-        parser: &'a RuntimeParser<'b>,
-        source: &'a str,
-        lexemes: BTreeMap<usize, Lexeme>,
-    ) -> Self {
+    fn new(parser: &'a RuntimeParser<'b>, source: &'a str, lexemes: LexicalLattice) -> Self {
         Self {
             parser,
             input: InputText::source(source),
@@ -1119,7 +880,7 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
     }
 
     fn recognize(&mut self, categories: &[u32]) -> Result<Vec<NodeId>, RuntimeError> {
-        let start = self.canonical_position(0);
+        let start = self.canonical_position(LexPosition::START);
         for category in categories {
             self.complete_template_hole(*category, start)?;
             self.predict(*category, start)?;
@@ -1165,8 +926,6 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                 },
             }
         }
-        let end = self.canonical_position(self.input.end);
-        let eof_end = self.lexemes.get(&self.input.end).map(|lexeme| lexeme.end);
         let mut roots = Vec::new();
         for category in categories {
             for node in self
@@ -1179,7 +938,10 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                     ForestNode::Nonterminal { end, .. } => *end,
                     _ => unreachable!(),
                 };
-                if node_end == end || Some(node_end) == eof_end {
+                let at_end = node_end.offset == self.input.end;
+                let after_eof = Some(node_end.offset) == self.input.end.checked_add(1)
+                    && self.lexemes.node(node_end).is_some();
+                if node_end.is_balanced() && (at_end || after_eof) {
                     roots.push(*node);
                 }
             }
@@ -1193,7 +955,7 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
         }
     }
 
-    fn predict(&mut self, nonterminal: u32, position: usize) -> Result<(), RuntimeError> {
+    fn predict(&mut self, nonterminal: u32, position: LexPosition) -> Result<(), RuntimeError> {
         let start = self.parser.image.engine.nonterminal_rule_starts[nonterminal as usize];
         let end = self.parser.image.engine.nonterminal_rule_starts[nonterminal as usize + 1];
         for rule in start..end {
@@ -1212,41 +974,50 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
 
     fn scan_token(&mut self, item: ItemKey, token: TokenId) -> Result<(), RuntimeError> {
         let position = self.canonical_position(item.end);
-        let Some(lexeme) = self.lexemes.get(&position).cloned() else {
+        let Some(edge) = self.lexemes.node(position).and_then(|node| {
+            node.edges
+                .iter()
+                .find(|edge| match edge {
+                    LexicalEdge::Accepted { token: candidate, .. }
+                    | LexicalEdge::Refuted { token: candidate, .. } => *candidate == token,
+                })
+                .cloned()
+        }) else {
             return Ok(());
         };
-        if !lexeme.candidates.contains(&token) {
-            return Ok(());
-        }
-        let alternative = u32::try_from(
-            lexeme
-                .candidates
-                .iter()
-                .position(|candidate| *candidate == token)
-                .expect("candidate membership checked above"),
-        )
-        .map_err(|_| RuntimeError::Image("lexer alternative ordinal exceeds u32".into()))?;
-        let key = (token, lexeme.start, lexeme.end);
+        let (target, alternative) = match edge {
+            LexicalEdge::Accepted { target, alternative, .. } => (target, alternative),
+            LexicalEdge::Refuted { end, reason, .. } => {
+                // Only a proved invalid mode transition excludes this edge.
+                // Resource failure must never become a negative recognition.
+                debug_assert!(end > position.offset);
+                return match reason {
+                    RuntimeError::LexerModeUnderflow { .. } => Ok(()),
+                    other => Err(other),
+                };
+            },
+        };
+        let key = (token, position, target, alternative);
         let terminal = if let Some(node) = self.terminals.get(&key) {
             *node
         } else {
             let node = self.push_node(ForestNode::Terminal {
                 token,
-                start: lexeme.start,
-                end: lexeme.end,
+                start: position.offset,
+                end: target.offset,
                 alternative,
             })?;
             self.terminals.insert(key, node);
             node
         };
-        let end = self.canonical_position(lexeme.end);
+        let end = self.canonical_position(target);
         self.advance(item, terminal, end)
     }
 
     fn scan_foreign(&mut self, item: ItemKey, open: &str, close: &str) -> Result<(), RuntimeError> {
         let position = self.canonical_position(item.end);
         let (content_start, content_end, end) = match self.input.delimited_span(
-            position,
+            position.offset,
             open,
             close,
             self.parser.limits.foreign_nesting,
@@ -1254,23 +1025,24 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
             Ok(Some(span)) => span,
             Ok(None) => return Ok(()),
             Err(DelimitedSpanError::NestingLimit) => {
-                return Err(RuntimeError::ForeignNestingLimit { byte: position });
+                return Err(RuntimeError::ForeignNestingLimit { byte: position.offset });
             },
             Err(DelimitedSpanError::Unterminated) => {
                 return Err(RuntimeError::ForeignLanguage {
-                    byte: position,
+                    byte: position.offset,
                     message: format!("unterminated foreign-language region `{open}` ... `{close}`"),
                 });
             },
         };
-        let key = (open.to_string(), close.to_string(), position, end);
+        let target = position.at(end);
+        let key = (open.to_string(), close.to_string(), position, target);
         let node = if let Some(node) = self.foreign.get(&key) {
             *node
         } else {
             let node = self.push_node(ForestNode::Foreign {
                 open: open.into(),
                 close: close.into(),
-                start: position,
+                start: position.offset,
                 content_start,
                 content_end,
                 end,
@@ -1278,10 +1050,15 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
             self.foreign.insert(key, node);
             node
         };
-        self.advance(item, node, self.canonical_position(end))
+        self.advance(item, node, self.canonical_position(target))
     }
 
-    fn advance(&mut self, item: ItemKey, child: NodeId, end: usize) -> Result<(), RuntimeError> {
+    fn advance(
+        &mut self,
+        item: ItemKey,
+        child: NodeId,
+        end: LexPosition,
+    ) -> Result<(), RuntimeError> {
         let next = ItemKey {
             rule: item.rule,
             dot: item.dot + 1,
@@ -1322,8 +1099,8 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
     fn complete(
         &mut self,
         nonterminal: u32,
-        start: usize,
-        end: usize,
+        start: LexPosition,
+        end: LexPosition,
         rule: u32,
         prefix: Option<NodeId>,
     ) -> Result<(), RuntimeError> {
@@ -1368,10 +1145,10 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
     fn complete_template_hole(
         &mut self,
         nonterminal: u32,
-        position: usize,
+        position: LexPosition,
     ) -> Result<(), RuntimeError> {
         let position = self.canonical_position(position);
-        let Some(hole) = self.holes.get(&position).copied() else {
+        let Some(hole) = self.holes.get(&position.offset).copied() else {
             return Ok(());
         };
         let Some(category) = self.parser.grammar.categories.get(nonterminal as usize) else {
@@ -1384,7 +1161,8 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
         {
             return Ok(());
         }
-        let key = (nonterminal, position, hole.end);
+        let end = self.canonical_position(position.at(hole.end));
+        let key = (nonterminal, position, end);
         if !self.hole_nonterminals.insert(key) {
             return Ok(());
         }
@@ -1396,7 +1174,7 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
             new_node = true;
             let node = self.push_node(ForestNode::Nonterminal {
                 start: position,
-                end: hole.end,
+                end,
                 alternatives: Vec::new(),
                 template_hole: Some((hole.id, CategoryId(nonterminal))),
             })?;
@@ -1417,18 +1195,15 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                 .cloned()
                 .unwrap_or_default()
             {
-                self.advance(waiting, node, hole.end)?;
+                self.advance(waiting, node, end)?;
             }
         }
         Ok(())
     }
 
-    fn canonical_position(&self, mut position: usize) -> usize {
-        while let Some(lexeme) = self.lexemes.get(&position) {
-            if !lexeme.hidden {
-                break;
-            }
-            position = lexeme.end;
+    fn canonical_position(&self, mut position: LexPosition) -> LexPosition {
+        while let Some(target) = self.lexemes.node(position).and_then(|node| node.trivia) {
+            position = target;
         }
         position
     }
@@ -1604,6 +1379,7 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                             paths
                         },
                         ForestNode::Nonterminal { start, end, alternatives, template_hole } => {
+                            let (start, end) = (start.offset, end.offset);
                             let mut paths = Vec::new();
                             let mut unique = HashSet::new();
                             if let Some((id, category)) = template_hole {
@@ -1690,6 +1466,16 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
             end: end.min(self.input.end) as u32,
         };
         Ok(match rule.semantic {
+            RuntimeRuleSemantic::TokenValue => {
+                let [value] = values else {
+                    return Err(RuntimeError::Reduction(
+                        "token category binding requires exactly one decoded value".into(),
+                    ));
+                };
+                // Preserve both projections. Terminal realization already
+                // performed decoding, evaluation, and capability checks.
+                vec![value.clone()]
+            },
             RuntimeRuleSemantic::Reduce => {
                 let production = rule
                     .production
@@ -1901,7 +1687,9 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                     binding_power > parent_bp || (allow_equal && binding_power == parent_bp)
                 })
         };
-        if parent.classification.infix && category_children.len() >= 2 {
+        if (parent.classification.infix || parent.is_binary_juxtaposition())
+            && category_children.len() >= 2
+        {
             let left = child_tops.get(category_children[0]).copied().flatten();
             let right = child_tops
                 .get(*category_children.last().expect("two children"))
@@ -2218,7 +2006,9 @@ mod tests {
             id: TokenId(0),
             name: "integer".into(),
             pattern: TokenPattern::Builtin(BuiltinToken::Integer),
-            category: Some(CategoryId(0)),
+            // This fixture declares only the explicit Int constructor.
+            // Tagged-token plus constructor ambiguity is tested separately.
+            category: None,
             evaluation: None,
             priority: 1,
             mode: ModeId(0),
@@ -2305,6 +2095,136 @@ mod tests {
             limits: grammar.limits,
         };
         (grammar, image)
+    }
+
+    fn tagged_integer_grammar() -> (GrammarCoreV1, ParserImageV1) {
+        let (mut grammar, mut image) = integer_grammar();
+        grammar.tokens[0].category = Some(CategoryId(0));
+        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        image.engine = crate::normalize_runtime_engine(&grammar).expect("normalize");
+        (grammar, image)
+    }
+
+    #[test]
+    fn token_value_preserves_distinct_syntax_and_value_and_rejects_wrong_arity() {
+        let (grammar, image) = tagged_integer_grammar();
+        let host = DefaultRuntimeHost;
+        let parser = RuntimeParser::new(&grammar, &image, "test", "test", &host).expect("parser");
+        let builder = ForestBuilder::new(&parser, "1", LexicalLattice::default());
+        let bridge = image
+            .engine
+            .runtime_rules
+            .iter()
+            .find(|rule| rule.semantic == RuntimeRuleSemantic::TokenValue)
+            .expect("bridge");
+        let value = SemanticValue {
+            syntax: DynamicValue::Text("source syntax".into()),
+            value: DynamicValue::Integer(9),
+        };
+        assert_eq!(
+            builder
+                .apply_rule(bridge, std::slice::from_ref(&value), 0, 1)
+                .expect("identity"),
+            vec![value.clone()]
+        );
+        assert!(builder.apply_rule(bridge, &[], 0, 1).is_err());
+        assert!(builder
+            .apply_rule(bridge, &[value.clone(), value], 0, 1)
+            .is_err());
+    }
+
+    #[test]
+    fn token_value_image_rejects_changed_binding_shape_cost_and_coverage() {
+        let (grammar, image) = tagged_integer_grammar();
+        let bridge_index = image
+            .engine
+            .runtime_rules
+            .iter()
+            .position(|rule| rule.semantic == RuntimeRuleSemantic::TokenValue)
+            .expect("bridge");
+        let symbol_index = image.engine.runtime_rules[bridge_index].symbol_start as usize;
+        for variant in 0..9 {
+            let mut changed = image.clone();
+            match variant {
+                0 => {
+                    changed.engine.runtime_symbols[symbol_index] =
+                        RuntimeSymbol::Token { token: TokenId(0), capture: false }
+                },
+                1 => {
+                    changed.engine.runtime_symbols[symbol_index] =
+                        RuntimeSymbol::Nonterminal { nonterminal: 0, capture: true }
+                },
+                2 => changed.engine.runtime_rules[bridge_index].production = Some(ProductionId(0)),
+                3 => {
+                    changed.engine.runtime_rules[bridge_index].cost =
+                        ExactParseCost::from_ticks(1).expect("cost")
+                },
+                4 => changed.engine.runtime_rules[bridge_index].lhs = 1,
+                5 => {
+                    changed.engine.runtime_rules.remove(bridge_index);
+                    *changed
+                        .engine
+                        .nonterminal_rule_starts
+                        .last_mut()
+                        .expect("index") -= 1;
+                },
+                6 => {
+                    changed
+                        .engine
+                        .runtime_rules
+                        .push(changed.engine.runtime_rules[bridge_index].clone());
+                    *changed
+                        .engine
+                        .nonterminal_rule_starts
+                        .last_mut()
+                        .expect("index") += 1;
+                },
+                7 => {
+                    changed.engine.runtime_symbols[symbol_index] = RuntimeSymbol::Foreign {
+                        open: "<".into(),
+                        close: ">".into(),
+                        capture: true,
+                    }
+                },
+                8 => {
+                    changed
+                        .engine
+                        .runtime_symbols
+                        .push(RuntimeSymbol::Token { token: TokenId(0), capture: false });
+                    changed.engine.runtime_rules[bridge_index].symbol_len = 2;
+                },
+                _ => unreachable!("fixed mutation range"),
+            }
+            assert!(
+                changed.verify_executable(&grammar, "test", "test").is_err(),
+                "mutation {variant}"
+            );
+        }
+        let mut wrong_category = grammar.clone();
+        wrong_category.tokens[0].category = None;
+        let mut changed = image;
+        changed.core_fingerprint = wrong_category.fingerprint().expect("fingerprint");
+        assert!(changed
+            .verify_executable(&wrong_category, "test", "test")
+            .is_err());
+    }
+
+    #[test]
+    fn token_value_image_roundtrip_is_deterministic_and_rejects_stale_compiler_abi() {
+        let (grammar, mut image) = tagged_integer_grammar();
+        image.compiler_abi = "mettail-rtn/3".into();
+        let bytes = image.encode().expect("encode");
+        let decoded =
+            ParserImageV1::decode_executable_verified(&bytes, &grammar, "mettail-rtn/3", "test")
+                .expect("decode");
+        assert_eq!(decoded.encode().expect("encode again"), bytes);
+        for stale in ["mettail-rtn/1", "mettail-rtn/2"] {
+            image.compiler_abi = stale.into();
+            assert!(matches!(
+                image.verify_executable(&grammar, "mettail-rtn/3", "test"),
+                Err(crate::ImageError::CompilerAbiMismatch)
+            ));
+        }
     }
 
     #[test]
@@ -2416,6 +2336,77 @@ mod tests {
 
     struct RevokingDecoderHost {
         changed: std::sync::atomic::AtomicBool,
+    }
+
+    struct CountingLiteralDecoder {
+        calls: std::sync::atomic::AtomicUsize,
+        fail: bool,
+    }
+
+    impl RuntimeHost for CountingLiteralDecoder {
+        fn capability_manifest(
+            &self,
+            key: &RuntimeCapabilityKey,
+        ) -> Option<RuntimeCapabilityManifest> {
+            Some(RuntimeCapabilityManifest {
+                key: key.clone(),
+                code_commitment: [3; 32],
+                abi: "counting-literal/1".into(),
+                effects: [crate::RuntimeEffect::Reduce].into_iter().collect(),
+                cost: crate::RuntimeLogicalCost {
+                    base: 1,
+                    per_input_byte: 1,
+                    per_value: 0,
+                    maximum: 1_024,
+                },
+            })
+        }
+
+        fn decode_token(&self, _capability: &str, text: &str) -> Result<DynamicValue, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail {
+                Err("declared decoder failure".into())
+            } else {
+                text.parse::<i128>()
+                    .map(DynamicValue::Integer)
+                    .map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    #[test]
+    fn token_value_reuses_one_authorized_decode_and_propagates_failure() {
+        let (mut grammar, mut image) = tagged_integer_grammar();
+        grammar.tokens[0].decoder = TokenDecoder::Capability("test/literal".into());
+        grammar
+            .capabilities
+            .insert(crate::Capability::TokenDecoder("test/literal".into()));
+        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        assert!(RuntimeParser::new(&grammar, &image, "test", "test", &DefaultRuntimeHost).is_err());
+        for fail in [false, true] {
+            let host = CountingLiteralDecoder {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                fail,
+            };
+            let parser = RuntimeParser::new(&grammar, &image, "test", "test", &host)
+                .expect("authorized decoder");
+            let parsed = parser.parse("123");
+            if fail {
+                assert!(matches!(parsed, Err(RuntimeError::MissingCapability(_))));
+            } else {
+                assert_eq!(parsed.expect("literal and constructor").len(), 2);
+            }
+            assert_eq!(host.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+        let revoking = RevokingDecoderHost {
+            changed: std::sync::atomic::AtomicBool::new(false),
+        };
+        let parser =
+            RuntimeParser::new(&grammar, &image, "test", "test", &revoking).expect("initial grant");
+        assert!(matches!(
+            parser.parse("123"),
+            Err(RuntimeError::Capability(RuntimeCapabilityError::Changed(_)))
+        ));
     }
 
     impl RuntimeHost for RevokingDecoderHost {

@@ -1,0 +1,177 @@
+Module RegexExtension {
+  Theory RegexSignature() {
+    Data({
+      "types": [
+        "Pattern",
+        {"name":"Scalar", "carrier":"String", "admits_variables":false},
+        {"name":"Text", "carrier":"String", "admits_variables":false},
+        {"name":"Bool", "carrier":"bool", "admits_variables":false},
+        {"name":"Nat", "carrier":"BigInt", "admits_variables":false},
+        {"name":"Grade", "carrier":"BigInt", "admits_variables":false}
+      ],
+      "literals": [
+        {
+          "category":"Scalar",
+          "pattern":"[A-Za-z0-9]",
+          "eval":["carrier", "str", Map()]
+        }
+      ]
+    })
+  }
+
+  Theory RegexSyntax(signature: RegexSignature) {
+    signature
+    Types { MatchResult; ReplacementTemplate; Output; }
+    Terms {
+      PFail . |- "(?!)" : Pattern;
+      PEpsilon . |- "eps" : Pattern;
+      PAny . |- "." : Pattern;
+      PLiteral . scalar:Scalar |- scalar : Pattern;
+      PGroup . body:Pattern |- "(" body ")" : Pattern;
+      BFalse . |- "false" : Bool;
+      BTrue . |- "true" : Bool;
+    }
+    Data({
+      "terms": [
+        {
+          "label":"PAlt",
+          "category":"Pattern",
+          "context":[["param", "left", "Pattern"], ["param", "right", "Pattern"]],
+          "syntax":["left", ["lit", "|"], "right"],
+          "assoc":"left",
+          "prefix_bp":10
+        },
+        {
+          "label":"PConcat",
+          "category":"Pattern",
+          "context":[["param", "left", "Pattern"], ["param", "right", "Pattern"]],
+          "syntax":["left", "right"],
+          "assoc":"left",
+          "prefix_bp":20
+        },
+        {
+          "label":"PStar",
+          "category":"Pattern",
+          "context":[["param", "body", "Pattern"]],
+          "syntax":["body", ["lit", "*"]],
+          "prefix_bp":30
+        },
+        {
+          "label":"PPlus",
+          "category":"Pattern",
+          "context":[["param", "body", "Pattern"]],
+          "syntax":["body", ["lit", "+"]],
+          "prefix_bp":30
+        },
+        {
+          "label":"POptional",
+          "category":"Pattern",
+          "context":[["param", "body", "Pattern"]],
+          "syntax":["body", ["lit", "?"]],
+          "prefix_bp":30
+        }
+      ]
+    })
+    Equations {
+      (PAlt (PFail) P) == P;
+      (PAlt P (PFail)) == P;
+      (PAlt P P) == P;
+      (PConcat (PFail) P) == (PFail);
+      (PConcat P (PFail)) == (PFail);
+      (PConcat (PEpsilon) P) == P;
+      (PConcat P (PEpsilon)) == P;
+      (PStar (PFail)) == (PEpsilon);
+      (PStar (PEpsilon)) == (PEpsilon);
+    }
+    Rewrites {
+      ExpandPlus : (PPlus P) ~> (PConcat P (PStar P));
+      ExpandOptional : (POptional P) ~> (PAlt (PEpsilon) P);
+      RemoveGroup : (PGroup P) ~> P;
+    }
+  }
+
+  Theory Regex(syntax: RegexSyntax) {
+    syntax
+    Data({
+      "rights": ["Parse", "Construct", "Match", "Reduce", "Observe", "ReflectAst"],
+      "oslf": {
+        "effects": [
+          {"name":"Pure", "class":"pure", "requires":[], "emits":[]}
+        ],
+        "actions": [
+          {
+            "id":"expand-plus",
+            "domain":["Pattern"],
+            "codomain":"Pattern",
+            "transition":["rewrite", "ExpandPlus"],
+            "effect":"Pure",
+            "effect_class":"pure",
+            "required_rights":["Reduce"],
+            "grade":"Grade",
+            "execution":"one_step"
+          },
+          {
+            "id":"expand-optional",
+            "domain":["Pattern"],
+            "codomain":"Pattern",
+            "transition":["rewrite", "ExpandOptional"],
+            "effect":"Pure",
+            "effect_class":"pure",
+            "required_rights":["Reduce"],
+            "grade":"Grade",
+            "execution":"one_step"
+          },
+          {
+            "id":"remove-group",
+            "domain":["Pattern"],
+            "codomain":"Pattern",
+            "transition":["rewrite", "RemoveGroup"],
+            "effect":"Pure",
+            "effect_class":"pure",
+            "required_rights":["Reduce"],
+            "grade":"Grade",
+            "execution":"one_step"
+          }
+        ],
+        "judgments": [
+          {
+            "name":"Nullable",
+            "arguments":["Pattern", "Bool"],
+            "decision":"bounded",
+            "rules":[
+              {
+                "name":"NullableFail",
+                "premises":[],
+                "conclusion":{
+                  "judgment":"Nullable",
+                  "terms":[["ctor", "PFail", []], ["ctor", "BFalse", []]]
+                }
+              },
+              {
+                "name":"NullableEpsilon",
+                "premises":[],
+                "conclusion":{
+                  "judgment":"Nullable",
+                  "terms":[["ctor", "PEpsilon", []], ["ctor", "BTrue", []]]
+                }
+              }
+            ]
+          }
+        ],
+        "observations": [
+          {"name":"ExpandedPlus", "action":"expand-plus", "result":"Pattern"},
+          {"name":"ExpandedOptional", "action":"expand-optional", "result":"Pattern"}
+        ],
+        "limits": {
+          "max_term_nodes":4096,
+          "max_proof_nodes":4096,
+          "max_frontier":256,
+          "max_steps":4096,
+          "max_grade_bits":128
+        }
+      }
+    })
+  }
+
+  theory Regex(RegexSyntax(RegexSignature()))
+}

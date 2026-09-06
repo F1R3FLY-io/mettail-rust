@@ -938,6 +938,21 @@ pub struct Production {
     pub provenance: Option<SourceProvenance>,
 }
 
+impl Production {
+    /// A homogeneous binary application whose operator is juxtaposition.
+    /// This is a binding shape, not a generated lexer/Pratt dispatch flag:
+    /// no terminal trigger is invented and heterogeneous or delimited forms
+    /// keep their separately declared binding contracts.
+    pub fn is_binary_juxtaposition(&self) -> bool {
+        matches!(
+            self.syntax.as_slice(),
+            [SyntaxItem::Category { category: left, .. },
+             SyntaxItem::Category { category: right, .. }]
+                if *left == self.result && *right == self.result
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SyntaxItem {
     Token(TokenId),

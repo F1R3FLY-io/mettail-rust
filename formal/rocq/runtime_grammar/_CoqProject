@@ -10,7 +10,9 @@ theories/RtnChart.v
 theories/PackedForest.v
 theories/RegistryIsolation.v
 theories/LexerMaximalMunch.v
+theories/LexicalSurvivorAdapter.v
 theories/ReductionSemantics.v
+theories/TokenCategoryNormalization.v
 theories/WorklistSaturation.v
 theories/ForestTermination.v
 theories/ZeroSpanCertificate.v
@@ -26,6 +28,7 @@ theories/RholangTheoremService.v
 theories/RegistryModuleClosure.v
 theories/WpdaDispatchPartition.v
 theories/CategoricalPrattFloor.v
+theories/JuxtapositionPrecedence.v
 theories/StructuralTemplate.v
 theories/StructuralConstructMatch.v
 theories/WireAdmission.v

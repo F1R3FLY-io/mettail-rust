@@ -759,6 +759,9 @@ impl InstalledLanguage {
         hash_cache_field(&mut hasher, &policy.max_symbolic_template_cache_weight.to_be_bytes());
         hash_cache_field(&mut hasher, &policy.max_lexer_mode_depth.to_be_bytes());
         hash_cache_field(&mut hasher, &policy.max_foreign_nesting.to_be_bytes());
+        hash_cache_field(&mut hasher, &policy.max_lexer_states.to_be_bytes());
+        hash_cache_field(&mut hasher, &policy.max_lexer_edges.to_be_bytes());
+        hash_cache_field(&mut hasher, &policy.max_lexer_work.to_be_bytes());
         match category {
             Some(category) => {
                 hash_cache_field(&mut hasher, b"category");
@@ -2407,6 +2410,31 @@ mod tests {
             .expect("cached template parse");
 
         assert_eq!(adapter.calls(), 1);
+    }
+
+    #[test]
+    fn symbolic_template_cache_commits_each_lexical_resource_limit() {
+        let table = InstalledLanguageTable::new();
+        let adapter = Arc::new(CountingTemplateAdapter::committed());
+        let grant = install_template_adapter(&table, adapter.clone());
+        let baseline = RuntimePolicy::default();
+        let mut policies = [baseline; 4];
+        policies[1].max_lexer_states -= 1;
+        policies[2].max_lexer_edges -= 1;
+        policies[3].max_lexer_work -= 1;
+        for policy in policies {
+            for _ in 0..2 {
+                parse_static_template(
+                    &table,
+                    &grant.handle,
+                    "x",
+                    &crate::DefaultRuntimeHost,
+                    policy,
+                )
+                .expect("template parse under exact policy");
+            }
+        }
+        assert_eq!(adapter.calls(), 4, "different limits cannot reuse an earlier policy's result");
     }
 
     #[test]

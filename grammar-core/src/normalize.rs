@@ -103,6 +103,23 @@ impl<'a> EngineNormalizer<'a> {
                 cost: self.default_cost,
             });
         }
+        // TokenDefinition already declares literal decoding and category
+        // membership. Only bind that decoded token to its category here;
+        // this administrative rule adds no constructor or parse cost.
+        // Append after production lowering to preserve auxiliary IDs and
+        // existing rule order. Stable grouping retains TokenId order.
+        // FV: TokenCategoryNormalization::tagged_token_has_rtn_derivation.
+        for token in &self.grammar.tokens {
+            if let Some(category) = token.category {
+                self.rules.push(PendingRule {
+                    lhs: category.0,
+                    symbols: vec![RuntimeSymbol::Token { token: token.id, capture: true }],
+                    production: None,
+                    semantic: RuntimeRuleSemantic::TokenValue,
+                    cost: ExactParseCost::default(),
+                });
+            }
+        }
         self.rules.sort_by_key(|rule| rule.lhs);
         let nonterminal_count = self.next_nonterminal;
         let mut runtime_rules = Vec::with_capacity(self.rules.len());

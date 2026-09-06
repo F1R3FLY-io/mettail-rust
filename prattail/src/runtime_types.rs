@@ -1175,49 +1175,38 @@ fn expand_lex_node_impl<'a, T: Clone>(
     // (during edge collection) so node ids stay dense and aligned with token
     // positions. Without this, the DAG gets ORPHAN intermediate nodes for
     // same-kind prefix accepts (e.g. `merge` accepting Ident at end=1..5).
-    let mut seen_kinds_this_node: std::collections::HashSet<crate::automata::TokenKind> =
-        std::collections::HashSet::new();
-    // M6c.7.1: the longest end_byte is the primary maximal-munch target.
-    let primary_end_byte = accepts.first().map(|a| a.1);
     let mut edges: Vec<RawLexEdge> = Vec::new();
     let mut successors: Vec<LexSuccessor> = Vec::new();
-    let mut enqueued_bytes: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    let mut alt_idx_counter: u16 = 0;
-    for (accept_state, end_byte) in accepts.iter() {
-        let text = &input[pos..*end_byte];
-        let alt_tokens = accept_alternatives(mode, *accept_state, text);
-        let mut emitted_any_for_this_accept = false;
-        for (token, weight) in alt_tokens {
-            let kind = token_to_kind(&token);
-            if !seen_kinds_this_node.insert(kind.clone()) {
-                // Already have a longer-or-equal edge for this kind at this
-                // node — drop the redundant shorter accept.
-                continue;
-            }
+    mettail_grammar_core::visit_lexical_survivors(
+        accepts,
+        |accept_state, end_byte| {
+            accept_alternatives(mode, accept_state, &input[pos..end_byte])
+                .into_iter()
+                .map(|(token, weight)| (token_to_kind(&token), weight))
+        },
+        |kind, weight, end_byte, ordinal| {
+            let alt_idx = u16::try_from(ordinal)
+                .map_err(|_| "lexer alternative ordinal exceeds u16".to_string())?;
             edges.push(RawLexEdge {
                 kind,
-                text: text.to_string(),
-                end_byte: *end_byte,
+                text: input[pos..end_byte].to_string(),
+                end_byte,
                 weight: TropicalWeight(weight),
-                alt_idx: alt_idx_counter,
+                alt_idx,
             });
-            alt_idx_counter += 1;
-            emitted_any_for_this_accept = true;
-        }
-        // Emit the successor ONLY if at least one edge survived the
-        // longest-per-kind filter for this accept (mirrors the eager
-        // worklist's `emitted_any_for_this_accept` gate), and only once per
-        // distinct end_byte (the eager worklist dedups via `byte_to_node`;
-        // here we dedup the WITHIN-node successor list — the caller does the
-        // global `byte_to_node` dedup so a position already allocated by a
-        // sibling node is not re-enqueued).
-        if emitted_any_for_this_accept && enqueued_bytes.insert(*end_byte) {
-            successors.push(LexSuccessor {
-                byte: *end_byte,
-                is_primary: Some(*end_byte) == primary_end_byte,
-            });
-        }
-    }
+            Ok(())
+        },
+        |byte, is_primary| {
+            successors.push(LexSuccessor { byte, is_primary });
+            Ok(())
+        },
+    )
+    .map_err(|error| match error {
+        mettail_grammar_core::LexicalSelectionError::Visitor(message) => message,
+        mettail_grammar_core::LexicalSelectionError::OrdinalOverflow => {
+            "lexer alternative ordinal exceeds usize".to_string()
+        },
+    })?;
 
     Ok(ExpandedLexNode {
         byte_start: pos,

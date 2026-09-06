@@ -237,7 +237,7 @@ fn fingerprint_policy(
     capability_abi: &str,
 ) -> [u8; 32] {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"mettail-install-policy/4\0");
+    bytes.extend_from_slice(b"mettail-install-policy/5\0");
     for right in grants.iter() {
         bytes.extend_from_slice(right.name().as_bytes());
         bytes.push(0);
@@ -251,6 +251,9 @@ fn fingerprint_policy(
     bytes.extend_from_slice(&runtime.max_symbolic_template_cache_weight.to_be_bytes());
     bytes.extend_from_slice(&runtime.max_lexer_mode_depth.to_be_bytes());
     bytes.extend_from_slice(&runtime.max_foreign_nesting.to_be_bytes());
+    bytes.extend_from_slice(&runtime.max_lexer_states.to_be_bytes());
+    bytes.extend_from_slice(&runtime.max_lexer_edges.to_be_bytes());
+    bytes.extend_from_slice(&runtime.max_lexer_work.to_be_bytes());
     bytes.extend_from_slice(&parser_image.fingerprint());
     bytes.extend_from_slice(&semantic_image.fingerprint());
     bytes.extend_from_slice(&max_installed_languages.to_be_bytes());
@@ -1463,6 +1466,9 @@ pub enum LanguageParseRejection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LanguageParseExhaustion {
     InputBytes,
+    LexerStates,
+    LexerEdges,
+    LexerWork,
     LexerModeDepth { byte: u32 },
     ForeignNesting { byte: u32 },
     ParseItems,
@@ -1506,6 +1512,9 @@ impl LanguageParseExhaustion {
     fn code(&self) -> &'static str {
         match self {
             Self::InputBytes => "InputBytes",
+            Self::LexerStates => "LexerStates",
+            Self::LexerEdges => "LexerEdges",
+            Self::LexerWork => "LexerWork",
             Self::LexerModeDepth { .. } => "LexerModeDepth",
             Self::ForeignNesting { .. } => "ForeignNesting",
             Self::ParseItems => "ParseItems",
@@ -2210,6 +2219,15 @@ fn classify_parse_error(error: RuntimeError) -> Result<LanguageParseOutcome, Lan
         },
         RuntimeError::InputTooLarge => {
             LanguageParseOutcome::Exhausted(LanguageParseExhaustion::InputBytes)
+        },
+        RuntimeError::LexerStateLimit => {
+            LanguageParseOutcome::Exhausted(LanguageParseExhaustion::LexerStates)
+        },
+        RuntimeError::LexerEdgeLimit => {
+            LanguageParseOutcome::Exhausted(LanguageParseExhaustion::LexerEdges)
+        },
+        RuntimeError::LexerWorkLimit => {
+            LanguageParseOutcome::Exhausted(LanguageParseExhaustion::LexerWork)
         },
         RuntimeError::LexerModeDepthLimit { byte } => {
             LanguageParseOutcome::Exhausted(LanguageParseExhaustion::LexerModeDepth {
@@ -3916,6 +3934,9 @@ mod tests {
         theory Right()
     }"#;
 
+    const REGEX_EXTENSION_MODULE_SOURCE: &str =
+        include_str!("../tests/fixtures/regex_extension.rho");
+
     #[test]
     fn canonical_install_intersects_requests_with_host_authority() {
         let policy = LanguageInstallPolicy::new(
@@ -4216,6 +4237,175 @@ mod tests {
             Err(InstallServiceError::MultipleExports { count: 2 })
         ));
         assert_eq!(rejecting.installed_count().expect("count"), 0);
+    }
+
+    #[test]
+    fn regex_gslt_module_compiles_and_installs_both_runtime_images_atomically() {
+        let service = LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        );
+
+        let candidate = rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE);
+        let canonical = service
+            .canonical_records(candidate)
+            .expect("the generated Rholang entrypoint elaborates the composed Regex module");
+        assert_eq!(canonical.module_name.as_deref(), Some("RegexExtension"));
+        assert_eq!(canonical.records.len(), 1);
+        let language =
+            mettail_elab::canonical::value_to_language_core(&canonical.records[0].1.spec)
+                .expect("the Regex export lowers to one complete LanguageCore");
+        assert_eq!(language.grammar.name, "Regex");
+        assert_eq!(language.theory.profile, mettail_grammar_core::TheoryProfileV1::Oslf);
+        assert_eq!(language.theory.equations.len(), 9);
+        assert_eq!(language.theory.rewrites.len(), 3);
+        assert_eq!(language.theory.actions.len(), 3);
+        assert_eq!(language.theory.judgments.len(), 1);
+        assert!(language.grammar.semantic_program.equations.is_empty());
+        assert!(language.grammar.semantic_program.rewrites.is_empty());
+
+        let binding_power = |label: &str| {
+            language
+                .grammar
+                .productions
+                .iter()
+                .find(|production| production.label == label)
+                .and_then(|production| production.precedence.binding_power)
+        };
+        assert_eq!(binding_power("PAlt"), Some(10));
+        assert_eq!(binding_power("PConcat"), Some(20));
+        assert_eq!(binding_power("PStar"), Some(30));
+        assert_eq!(binding_power("PPlus"), Some(30));
+        assert_eq!(binding_power("POptional"), Some(30));
+
+        let batch = service
+            .install_all(rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE))
+            .expect("Regex parser and semantic images compile, verify, and commit together");
+        assert_eq!(batch.module_name.as_deref(), Some("RegexExtension"));
+        assert_eq!(batch.exports.len(), 1);
+        let receipt = &batch.exports[0].receipt;
+        assert_eq!(batch.exports[0].name, "Regex");
+        assert_eq!(receipt.cache_disposition, ParserCacheDisposition::CompiledMissing);
+        assert_eq!(receipt.semantic_cache_disposition, SemanticCacheDisposition::CompiledMissing);
+        assert_eq!(service.table().installed_count().expect("table readable"), 1);
+        assert_eq!(service.installed_count().expect("revocations readable"), 1);
+
+        let installed = service
+            .table()
+            .authorize(&receipt.handle, LanguageRight::Parse)
+            .expect("the opaque Regex handle authorizes parsing");
+        assert_eq!(installed.language_core(), &language);
+        let parser_image = installed
+            .parser_image()
+            .expect("runtime parser image is installed");
+        let semantic_image = installed
+            .semantic_image()
+            .expect("semantic image is installed");
+        assert_eq!(parser_image.core_fingerprint, language.grammar_fingerprint().unwrap());
+        assert_eq!(semantic_image.language_fingerprint, language.fingerprint().unwrap());
+        assert_eq!(semantic_image.grammar_fingerprint, language.grammar_fingerprint().unwrap());
+        assert_eq!(semantic_image.theory_fingerprint, language.theory_fingerprint().unwrap());
+        assert_eq!(semantic_image.actions.len(), 3);
+        assert_eq!(semantic_image.judgments.len(), 1);
+        assert_eq!(
+            installed.commitment().parser_limits_fingerprint,
+            Some(service.policy().parser_image.fingerprint())
+        );
+        assert_eq!(
+            installed.commitment().semantic_limits_fingerprint,
+            Some(service.policy().semantic_image.fingerprint())
+        );
+
+        let pattern_category = installed
+            .core()
+            .categories
+            .iter()
+            .find(|category| category.name == "Pattern")
+            .expect("Regex declares its Pattern entrypoint")
+            .id;
+        let scalar_category = installed
+            .core()
+            .categories
+            .iter()
+            .find(|category| category.name == "Scalar")
+            .expect("Regex declares its Scalar literal category")
+            .id;
+        let scalar_rules = parser_image.engine.rules_for(scalar_category.0);
+        assert_eq!(scalar_rules.len(), 1);
+        assert_eq!(scalar_rules[0].semantic, mettail_grammar_core::RuntimeRuleSemantic::TokenValue);
+        assert_eq!(scalar_rules[0].production, None);
+        let scalar = service
+            .parse(&receipt.handle, "a", Some(scalar_category), &DefaultRuntimeHost)
+            .expect("declared literal inhabits Scalar without an invented constructor");
+        assert_eq!(scalar.len(), 1);
+        assert_eq!(scalar[0].value, mettail_grammar_core::DynamicValue::Text("a".into()));
+        assert_eq!(scalar[0].syntax, scalar[0].value);
+        let epsilon = service
+            .parse(&receipt.handle, "eps", Some(pattern_category), &DefaultRuntimeHost)
+            .expect("the explicit epsilon constructor still parses");
+        let pattern_parses: Vec<_> = ["a", "a*", "a+", "a?", "ab", "a|b", "(a|b)*"]
+            .into_iter()
+            .map(|source| {
+                (
+                    source,
+                    service.parse(
+                        &receipt.handle,
+                        source,
+                        Some(pattern_category),
+                        &DefaultRuntimeHost,
+                    ),
+                )
+            })
+            .collect();
+        // The declared literal `eps` overlaps three Scalar literals. Both
+        // meanings survive; only the association forbidden by Left/20 is
+        // rejected. Token priority is ranking, not authority to erase either.
+        let term = |label: &str, start, end, fields| {
+            let production = language
+                .grammar
+                .productions
+                .iter()
+                .find(|production| production.label == label)
+                .expect("declared constructor");
+            mettail_grammar_core::DynamicValue::Term(Box::new(mettail_grammar_core::DynamicTerm {
+                category: production.result,
+                constructor: production.constructor,
+                fields,
+                span: mettail_grammar_core::SourceSpan { start, end },
+            }))
+        };
+        let literal = |text: &str, start| {
+            term(
+                "PLiteral",
+                start,
+                start + 1,
+                vec![mettail_grammar_core::DynamicValue::Text(text.into())],
+            )
+        };
+        let left_associated = |a: &str, b: &str, c: &str| {
+            term(
+                "PConcat",
+                0,
+                3,
+                vec![term("PConcat", 0, 2, vec![literal(a, 0), literal(b, 1)]), literal(c, 2)],
+            )
+        };
+        assert_eq!(epsilon.len(), 2, "epsilon candidates: {epsilon:#?}");
+        assert_eq!(epsilon[0].syntax, term("PEpsilon", 0, 3, vec![]));
+        assert_eq!(epsilon[1].syntax, left_associated("e", "p", "s"));
+        for candidate in &epsilon {
+            assert_eq!(candidate.syntax, candidate.value);
+        }
+        let abc = service
+            .parse(&receipt.handle, "abc", Some(pattern_category), &DefaultRuntimeHost)
+            .expect("three literals obey declared concatenation associativity");
+        assert_eq!(abc.len(), 1);
+        assert_eq!(abc[0].syntax, left_associated("a", "b", "c"));
+        for (source, result) in pattern_parses {
+            let parses =
+                result.unwrap_or_else(|error| panic!("Regex `{source}` parses: {error:?}"));
+            assert_eq!(parses.len(), 1, "Regex `{source}` has one precedence-resolved parse");
+        }
     }
 
     #[test]
@@ -5606,6 +5796,30 @@ mod tests {
         let cases = [
             (LanguageParseOutcome::Accepted, "accepted", "Accepted", 1, None, None),
             (
+                LanguageParseOutcome::Exhausted(LanguageParseExhaustion::LexerStates),
+                "exhausted",
+                "LexerStates",
+                0,
+                None,
+                None,
+            ),
+            (
+                LanguageParseOutcome::Exhausted(LanguageParseExhaustion::LexerEdges),
+                "exhausted",
+                "LexerEdges",
+                0,
+                None,
+                None,
+            ),
+            (
+                LanguageParseOutcome::Exhausted(LanguageParseExhaustion::LexerWork),
+                "exhausted",
+                "LexerWork",
+                0,
+                None,
+                None,
+            ),
+            (
                 LanguageParseOutcome::Rejected(LanguageParseRejection::NoParse),
                 "rejected",
                 "NoParse",
@@ -5670,6 +5884,36 @@ mod tests {
                     None => assert!(exact_nil(value), "{field} must be Nil when absent"),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn lexical_limits_have_distinct_install_commitments_and_exhaustion_outcomes() {
+        let mut fingerprints = std::collections::BTreeSet::new();
+        for mask in 0..8 {
+            let mut runtime = RuntimePolicy::default();
+            runtime.max_lexer_states -= mask & 1;
+            runtime.max_lexer_edges -= (mask >> 1) & 1;
+            runtime.max_lexer_work -= u64::from((mask >> 2) & 1);
+            let policy = LanguageInstallPolicy::new(
+                LanguageRights::from_rights([LanguageRight::Parse]),
+                runtime,
+                LANGUAGE_CAPABILITY_ABI_V1,
+            );
+            assert!(
+                fingerprints.insert(policy.fingerprint),
+                "mask {mask} commits a distinct policy"
+            );
+        }
+        for (error, exhaustion) in [
+            (RuntimeError::LexerStateLimit, LanguageParseExhaustion::LexerStates),
+            (RuntimeError::LexerEdgeLimit, LanguageParseExhaustion::LexerEdges),
+            (RuntimeError::LexerWorkLimit, LanguageParseExhaustion::LexerWork),
+        ] {
+            assert_eq!(
+                classify_parse_error(error).expect("total bounded outcome"),
+                LanguageParseOutcome::Exhausted(exhaustion)
+            );
         }
     }
 
