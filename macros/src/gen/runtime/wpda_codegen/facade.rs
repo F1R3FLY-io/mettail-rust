@@ -5297,7 +5297,7 @@ pub(crate) fn emit_parse_fns(
                         std::sync::Arc<dyn std::any::Any + Send + Sync>,
                         mettail_prattail::automata::lex_weight::LexicographicWeight,
                     )>,
-                    mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+                    mettail_prattail::wpda_runtime::RealizationError,
                 > {
                     type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
                     // The facade's historical single-result raw-probe cap. The
@@ -6544,7 +6544,7 @@ pub(crate) fn emit_parse_fns(
             /// SPPF realization failed before any candidate term was
             /// published. This is distinct from invalid source syntax.
             RealizationFailed {
-                error: mettail_runtime::exact_semantic_key::ContentKeyCacheError,
+                error: mettail_prattail::wpda_runtime::RealizationError,
                 position: usize,
             },
             /// M11.7 (2026-05-14): walker was configured with

@@ -4,6 +4,82 @@ use mettail_languages::rholang::{
 };
 use mettail_prattail::automata::TokenKind;
 
+fn run_ddl_sexp_action(
+    items: Vec<mettail_prattail::wpda_runtime::ActionArg>,
+) -> Result<Option<DdlRuleAst>, mettail_prattail::wpda_runtime::ActionInvocationError> {
+    use mettail_languages::rholang::{RholangWpdaEngine, WPDA_CATEGORIES, WPDA_RULES};
+    use mettail_prattail::wpda_runtime::{ActionArg, SelectedCollection, SemanticBuilder};
+    use mettail_prattail::wpda_walker::WpdaEngine;
+
+    let category = WPDA_CATEGORIES
+        .iter()
+        .position(|name| *name == "DdlRuleAst")
+        .expect("DDL AST category is emitted");
+    let rule = WPDA_RULES[category]
+        .iter()
+        .find_map(|(name, index)| (*name == "DdlRuleAstSExp").then_some(*index))
+        .expect("DDL S-expression rule is emitted");
+    let engine = RholangWpdaEngine;
+    let action = engine
+        .action_for(u16::try_from(category).expect("category fits the engine ABI"), rule)
+        .expect("DDL S-expression construction action exists");
+    let result = SemanticBuilder::invoke_selected_action(
+        *action,
+        vec![
+            ActionArg::Token {
+                kind: TokenKind::Ident,
+                text: "PNode".into(),
+                pos: 0,
+            },
+            ActionArg::SelectedCollection(
+                SelectedCollection::new(items).expect("test inputs are terms"),
+            ),
+        ],
+    )?;
+    Ok(result.map(|term| {
+        term.try_into_term::<DdlRuleAst>()
+            .expect("generated action returns its declared category")
+    }))
+}
+
+#[test]
+fn generated_ddl_collection_action_rejects_mismatched_items_without_shortening() {
+    use mettail_prattail::wpda_runtime::ActionArg;
+    use std::sync::Arc;
+
+    let child = DdlRuleAst::DdlRuleAstSExp("PFail".into(), Vec::new());
+    let argument = || ActionArg::Term {
+        value: Arc::new(child.clone()),
+        type_name: std::any::type_name::<DdlRuleAst>(),
+    };
+    assert_eq!(
+        run_ddl_sexp_action(vec![argument(), argument()]),
+        Ok(Some(DdlRuleAst::DdlRuleAstSExp(
+            "PNode".into(),
+            vec![child.clone(), child.clone()]
+        ))),
+    );
+    assert_eq!(
+        run_ddl_sexp_action(Vec::new()),
+        Ok(Some(DdlRuleAst::DdlRuleAstSExp("PNode".into(), Vec::new()))),
+    );
+    for position in 0..=2 {
+        let mut items = vec![argument(), argument()];
+        items.insert(
+            position,
+            ActionArg::Term {
+                value: Arc::new(Proc::PZero),
+                type_name: std::any::type_name::<Proc>(),
+            },
+        );
+        assert_eq!(
+            run_ddl_sexp_action(items),
+            Ok(None),
+            "wrong-category item at {position} must reject the entire constructor",
+        );
+    }
+}
+
 fn parse(source: &str) -> Proc {
     mettail_runtime::clear_var_cache();
     Proc::parse(source).unwrap_or_else(|error| panic!("`{source}` must parse: {error:?}"))
@@ -106,6 +182,213 @@ fn judgement_term_and_builder_chain_parse_structurally() {
     )
     .expect("all judgement-style theory builder blocks must compose structurally");
     assert_eq!(DdlTheoryExpr::parse(&complete_builder.to_string()).unwrap(), complete_builder,);
+}
+
+#[test]
+fn wpda_preserves_nullary_rule_constructors_in_recursive_positions() {
+    use mettail_languages::rholang::{
+        parse_DdlRuleAst_via_wpda_all_with_source, parse_DdlRuleAst_via_wpda_with_source,
+    };
+    use mettail_prattail::wpda_runtime::{LatticeTokenSource, WpdaTokenSource};
+
+    let variable = DdlRuleAst::DdlRuleAstVar("PFail".to_string());
+    let nullary = DdlRuleAst::DdlRuleAstSExp("PFail".to_string(), Vec::new());
+    let variable_child = DdlRuleAst::DdlRuleAstSExp("PStar".to_string(), vec![variable.clone()]);
+    let constructor_child = DdlRuleAst::DdlRuleAstSExp("PStar".to_string(), vec![nullary.clone()]);
+    for (input, expected, alternatives) in [
+        ("PFail", variable.clone(), vec![variable.clone()]),
+        ("(PFail)", nullary.clone(), vec![nullary, variable]),
+        ("(PStar PFail)", variable_child.clone(), vec![variable_child.clone()]),
+        (
+            "(PStar (PFail))",
+            constructor_child.clone(),
+            vec![variable_child, constructor_child],
+        ),
+    ] {
+        let source = LatticeTokenSource::new(lex_dag(input).expect("DDL input lexes"));
+        let mut position = 0;
+        let (direct, _) = parse_DdlRuleAst_via_wpda_with_source(&source, &mut position, 0)
+            .expect("direct generated WPDA parse");
+        assert_eq!(direct, expected, "direct constructor shape for {input}");
+        assert_eq!(position, source.eof_node());
+        // Do not use parse()/Display round trips: their surface-selection
+        // wrapper would hide a defect in the actual generated WPDA route.
+        assert_eq!(DdlRuleAst::parse_via_wpda(input).expect("public WPDA parse"), expected);
+
+        position = 0;
+        let (all, _) = parse_DdlRuleAst_via_wpda_all_with_source(&source, &mut position, 0)
+            .expect("bounded enumeration");
+        assert_eq!(position, source.eof_node());
+        for alternative in alternatives {
+            assert!(
+                all.contains(&alternative),
+                "lost admissible reading {alternative:?} of {input}"
+            );
+        }
+    }
+}
+
+#[test]
+fn saturated_ddl_root_elects_constructor_without_pruning_grouping() {
+    use mettail_languages::rholang::{RholangWpdaEngine, WPDA_CATEGORIES};
+    use mettail_prattail::automata::lex_weight::LexicographicWeight;
+    use mettail_prattail::wpda_runtime::{
+        CursorBoundingMode, LatticeTokenSource, WpdaResolveResult,
+    };
+    use mettail_prattail::wpda_walker::{RealizeRequestMode, WpdaWalker};
+
+    let source = LatticeTokenSource::new(lex_dag("(PStar (PFail))").expect("DDL input lexes"));
+    let category = WPDA_CATEGORIES
+        .iter()
+        .position(|name| *name == "DdlRuleAst")
+        .expect("DDL category");
+    let mut walker = WpdaWalker::<LexicographicWeight, _>::new_for_category(
+        RholangWpdaEngine,
+        u16::try_from(category).expect("category fits"),
+        0,
+    );
+    let mut recovery = mettail_prattail::recovery::RecoveryConfig::default();
+    recovery.max_recovery_depth = 0;
+    walker.set_recovery_config(recovery);
+    walker.set_bounding_mode(CursorBoundingMode::Unbounded);
+    walker
+        .run_to_end_of_input(1_000_000, &source)
+        .expect("small forest saturates");
+    let WpdaResolveResult::Accepted { roots, .. } = walker.resolve_at_end_of_input(&source) else {
+        panic!("saturated input must accept");
+    };
+    assert_eq!(roots.len(), 1, "this witness compares alternatives within the same root");
+    let root = roots[0];
+    let nullary = DdlRuleAst::DdlRuleAstSExp("PFail".to_string(), Vec::new());
+    let expected = DdlRuleAst::DdlRuleAstSExp("PStar".to_string(), vec![nullary]);
+    let grouped = DdlRuleAst::DdlRuleAstSExp(
+        "PStar".to_string(),
+        vec![DdlRuleAst::DdlRuleAstVar("PFail".to_string())],
+    );
+    let elected = walker
+        .realize_root_to_terms_with_weights(root, Some(1), RealizeRequestMode::SingleResultElection)
+        .expect("election");
+    assert_eq!(elected.len(), 1);
+    assert_eq!(elected[0].0.downcast_ref::<DdlRuleAst>(), Some(&expected));
+    let alternatives = walker
+        .realize_root_to_terms_with_weights(root, Some(8), RealizeRequestMode::BoundedEnumeration)
+        .expect("enumeration");
+    for reading in [&expected, &grouped] {
+        assert!(
+            alternatives
+                .iter()
+                .any(|(value, _)| value.downcast_ref::<DdlRuleAst>() == Some(reading)),
+            "election must not delete the distinct reading {reading:?}"
+        );
+    }
+}
+
+#[test]
+fn wpda_preserves_rule_constructors_in_complete_module() {
+    let source = r#"Module M {
+        Theory T() {
+            Types { Pattern; }
+            Terms {
+                PFail . |- "f" : Pattern;
+                PEpsilon . |- "e" : Pattern;
+                PStar . p:Pattern |- p "*" : Pattern;
+            }
+            Equations { (PStar (PFail)) == (PEpsilon); }
+        }
+        theory T()
+    }"#;
+    let process = Proc::parse_via_wpda(source).expect("complete inline module parses");
+    let Proc::DdlModule(name, items) = &process else {
+        panic!("expected structural module, got {process:?}");
+    };
+    assert_eq!(name, "M");
+    assert_eq!(items.len(), 2);
+    let DdlModuleItem::DdlModuleProcItem(declaration) = &items[0] else {
+        panic!("first item must remain the theory declaration");
+    };
+    let Proc::DdlTheory(name, parameters, body) = declaration.as_ref() else {
+        panic!("expected a structural theory");
+    };
+    assert_eq!(name, "T");
+    assert!(parameters.is_empty());
+    let DdlTheoryExpr::DdlTheoryEquations(_, equations) = body.as_ref() else {
+        panic!("equations must remain the outer builder, got {body:?}");
+    };
+    let expected = DdlEquation::DdlEquationDirect(
+        std::sync::Arc::new(DdlRuleAst::DdlRuleAstSExp(
+            "PStar".to_string(),
+            vec![DdlRuleAst::DdlRuleAstSExp("PFail".to_string(), vec![])],
+        )),
+        std::sync::Arc::new(DdlRuleAst::DdlRuleAstSExp("PEpsilon".to_string(), vec![])),
+    );
+    assert_eq!(
+        equations.as_slice(),
+        &[expected],
+        "module/theory/equation embedding must not erase nullary constructors"
+    );
+}
+
+#[test]
+fn wpda_preserves_nullary_constructor_on_equation_right_side() {
+    assert_eq!(
+        DdlRuleAst::parse_via_wpda("(PFail)").expect("standalone nullary constructor parses"),
+        DdlRuleAst::DdlRuleAstSExp("PFail".to_string(), Vec::new()),
+    );
+    for source in [
+        "P == (PFail);",
+        "(PConcat (PFail) P) == (PFail);",
+        "(PConcat P (PFail)) == (PFail);",
+    ] {
+        let equation = DdlEquation::parse_via_wpda(source).expect("equation parses");
+        let DdlEquation::DdlEquationDirect(_, right) = &equation else {
+            panic!("expected a direct equation");
+        };
+        assert_eq!(
+            right.as_ref(),
+            &DdlRuleAst::DdlRuleAstSExp("PFail".to_string(), Vec::new()),
+            "right-side constructor in {source}",
+        );
+    }
+}
+
+#[test]
+fn wpda_preserves_regex_fixture_equation_right_side() {
+    let source = include_str!("../../rholang-runtime/tests/fixtures/regex_extension.rho");
+    let process = Proc::parse_via_wpda(source).expect("the complete Regex fixture parses");
+    let Proc::DdlModule(_, items) = &process else {
+        panic!("expected the Regex module");
+    };
+    let body = items
+        .iter()
+        .find_map(|item| match item {
+            DdlModuleItem::DdlModuleProcItem(process) => match process.as_ref() {
+                Proc::DdlTheory(name, _, body) if name == "RegexSyntax" => Some(body.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("the RegexSyntax theory exists");
+    let DdlTheoryExpr::DdlTheoryRewrites(base, _) = body else {
+        panic!("the syntax theory ends with its rewrites");
+    };
+    let DdlTheoryExpr::DdlTheoryEquations(_, equations) = base.as_ref() else {
+        panic!("the rewrites extend the equations");
+    };
+    assert_eq!(equations.len(), 9);
+    for index in [3, 4] {
+        let DdlEquation::DdlEquationDirect(_, right) = &equations[index] else {
+            panic!("expected a direct equation");
+        };
+        assert_eq!(
+            right.as_ref(),
+            &DdlRuleAst::DdlRuleAstSExp("PFail".to_string(), Vec::new()),
+            "Regex equation {index} retains its right-side constructor before lowering",
+        );
+    }
+    let DdlEquation::DdlEquationDirect(_, right) = &equations[5] else {
+        panic!("expected a direct equation");
+    };
+    assert_eq!(right.as_ref(), &DdlRuleAst::DdlRuleAstVar("P".to_string()));
 }
 
 #[test]

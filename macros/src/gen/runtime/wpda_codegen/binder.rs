@@ -4182,25 +4182,25 @@ pub(crate) fn emit_binder_action_entry(
         let elem_id = &site.elem_id;
         let var = &site.value_var;
         let id_var = &site.id_var;
+        let exact_elements = quote! {
+            match mettail_prattail::wpda_runtime::ActionArg::try_into_terms::<#elem_id>(drained) {
+                Ok(elements) => elements,
+                Err(_) => {
+                    mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                    return;
+                },
+            }
+        };
         let materialize_expr = match site.coll_kind {
-            CollectionType::Vec => quote! {
-                drained
-                    .into_iter()
-                    .filter_map(|a| a.into_term::<#elem_id>())
-                    .collect::<std::vec::Vec<#elem_id>>()
-            },
+            CollectionType::Vec => exact_elements.clone(),
             CollectionType::HashBag => quote! {
                 mettail_runtime::HashBag::<#elem_id>::from_iter(
-                    drained
-                        .into_iter()
-                        .filter_map(|a| a.into_term::<#elem_id>())
+                    #exact_elements
                 )
             },
             CollectionType::HashSet => quote! {
                 std::collections::HashSet::<#elem_id>::from_iter(
-                    drained
-                        .into_iter()
-                        .filter_map(|a| a.into_term::<#elem_id>())
+                    #exact_elements
                 )
             },
             CollectionType::HashMap | CollectionType::PathMap => quote! {

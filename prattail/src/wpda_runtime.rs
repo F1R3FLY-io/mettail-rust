@@ -961,13 +961,10 @@ pub enum WpdaResolveResult<W: SemiringRef> {
     MaxStepsExceeded { position: usize },
     /// SPPF realization failed before any term was published.
     ///
-    /// In particular, semantic-key cache exhaustion is distinct from invalid
-    /// syntax and from ambiguity exhaustion. The realization boundary
+    /// Reconstruction faults and semantic-key cache exhaustion are distinct
+    /// from invalid syntax and from ambiguity exhaustion. The realization boundary
     /// discards every candidate accumulated by the failed call.
-    RealizationFailed {
-        error: mettail_semantic_key::ContentKeyCacheError,
-        position: usize,
-    },
+    RealizationFailed { error: RealizationError, position: usize },
     /// The walker was configured with a cursor-count bound and the live
     /// frontier exceeded that bound during a `step_fanout` iteration.
     ///
@@ -2820,6 +2817,9 @@ pub enum ActionArg {
     /// the walker when a `CollectionMarker` symbol is pushed onto the GSS;
     /// consumed by the collection-finalize action via `as_collection_id`.
     CollectionId(u8),
+    /// A reconstructed collection occurrence with all selected items intact.
+    /// Remapped to a fresh action-local slot immediately before invocation.
+    SelectedCollection(SelectedCollection),
     /// Phase 6: a parsed behavioral predicate. Pushed by the walker after
     /// invoking `parse_predicate_from_tokens`; consumed by the rule's action
     /// to wire the predicate into the constructed AST.
@@ -2873,6 +2873,18 @@ pub enum ActionArg {
 
 #[path = "wpda_runtime/action_arg_lifecycle.rs"]
 mod action_arg_lifecycle;
+
+#[path = "wpda_runtime/action_collection_frame.rs"]
+mod action_collection_frame;
+pub use action_collection_frame::{ActionInvocationError, SelectedCollection};
+
+#[path = "wpda_runtime/realization_error.rs"]
+mod realization_error;
+pub use realization_error::{RealizationError, ReconstructionFailure};
+
+#[path = "wpda_runtime/cartesian_cursor.rs"]
+mod cartesian_cursor;
+pub(crate) use cartesian_cursor::CartesianCursor;
 
 /// #151 (2026-07-29): why a collection flat was refused at the close.
 ///
@@ -3087,6 +3099,10 @@ impl fmt::Debug for ActionArg {
                 .field("type_name", type_name)
                 .finish(),
             ActionArg::CollectionId(id) => f.debug_tuple("CollectionId").field(id).finish(),
+            ActionArg::SelectedCollection(selected) => f
+                .debug_struct("SelectedCollection")
+                .field("len", &selected.items().len())
+                .finish(),
             ActionArg::Predicate(_) => f.debug_struct("Predicate").finish(),
             ActionArg::Optional(Some(args)) => f
                 .debug_struct("Optional")
@@ -3167,6 +3183,21 @@ impl ActionArg {
         }
     }
 
+    /// Convert an ordered collection without dropping a mismatched element.
+    ///
+    /// Success preserves every occurrence and its position. Failure returns
+    /// the first mismatch and publishes no partially converted collection.
+    /// The loop refines `convert_all` in `OccurrenceCollectionAssembly.v`.
+    pub fn try_into_terms<T: 'static + Send + Sync + Clone>(
+        args: Vec<Self>,
+    ) -> Result<Vec<T>, ActionArgMismatch> {
+        let mut terms = Vec::with_capacity(args.len());
+        for arg in args {
+            terms.push(arg.try_into_term::<T>()?);
+        }
+        Ok(terms)
+    }
+
     /// The arg's variant name, for [`ActionArgMismatch::found`] on non-`Term`
     /// args (whose `type_name` tag does not exist).
     pub fn variant_name(&self) -> &'static str {
@@ -3177,6 +3208,7 @@ impl ActionArg {
             ActionArg::BinderScope(_) => "ActionArg::BinderScope",
             ActionArg::Collection { .. } => "ActionArg::Collection",
             ActionArg::CollectionId(_) => "ActionArg::CollectionId",
+            ActionArg::SelectedCollection(_) => "ActionArg::SelectedCollection",
             ActionArg::Predicate(_) => "ActionArg::Predicate",
             ActionArg::Optional(_) => "ActionArg::Optional",
             ActionArg::GuestBody(_) => "ActionArg::GuestBody",
@@ -3368,6 +3400,9 @@ pub struct SemanticBuilder {
     /// `im::Vector<ActionArg>` so a cursor-clone shares the slot's
     /// internal HAMT nodes until a write triggers copy-on-write.
     collection_stack: im::Vector<im::Vector<ActionArg>>,
+    /// Reconstruction-only indexed slots. Absent during ordinary parsing;
+    /// its collection stack and cursor sharing remain unchanged.
+    action_collections: Option<Box<action_collection_frame::ActionCollectionFrame>>,
     /// Opt-Group (2026-04-29): in-flight inner-arg accumulators for
     /// taken optional groups. When `start_optional_scope()` is called
     /// (auto-triggered when the walker pushes an
@@ -3395,6 +3430,7 @@ impl SemanticBuilder {
             stack: im::Vector::new(),
             binder_scopes: im::Vector::new(),
             collection_stack: im::Vector::new(),
+            action_collections: None,
             optional_stack: im::Vector::new(),
         }
     }
@@ -3801,6 +3837,9 @@ impl SemanticBuilder {
     /// in-place. Collection elements are typically small (1–50 items),
     /// so the `into_iter().collect()` walk is cheap.
     pub fn drain_collection(&mut self, id: u8) -> Vec<ActionArg> {
+        if let Some(frame) = self.action_collections.as_mut() {
+            return frame.drain(id);
+        }
         let id_usize = id as usize;
         debug_assert!(
             id_usize < self.collection_stack.len(),
@@ -4012,6 +4051,47 @@ mod tests {
     use super::*;
     use crate::automata::semiring::{Semiring, TropicalWeight};
     use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
+
+    fn collection_test_term<T: 'static + Send + Sync>(value: T) -> ActionArg {
+        ActionArg::Term {
+            value: Arc::new(value),
+            type_name: std::any::type_name::<T>(),
+        }
+    }
+
+    #[test]
+    fn exact_collection_conversion_preserves_order_and_repeated_occurrences() {
+        let shared = collection_test_term(7_i32);
+        let args = vec![shared.clone(), collection_test_term(3_i32), shared];
+        assert_eq!(ActionArg::try_into_terms::<i32>(args), Ok(vec![7, 3, 7]));
+        assert_eq!(ActionArg::try_into_terms::<i32>(Vec::new()), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn exact_collection_conversion_rejects_a_mismatch_at_every_position() {
+        for position in 0..=2 {
+            let mut args = vec![collection_test_term(1_i32), collection_test_term(2_i32)];
+            args.insert(position, collection_test_term(String::from("wrong category")));
+            assert_eq!(
+                ActionArg::try_into_terms::<i32>(args),
+                Err(ActionArgMismatch {
+                    requested: std::any::type_name::<i32>(),
+                    found: std::any::type_name::<String>(),
+                }),
+            );
+        }
+    }
+
+    #[test]
+    fn exact_collection_conversion_rejects_nonterms_and_forged_type_tags() {
+        let unset = vec![collection_test_term(1_i32), ActionArg::UnsetCollectionValue];
+        assert!(ActionArg::try_into_terms::<i32>(unset).is_err());
+        let forged = vec![ActionArg::Term {
+            value: Arc::new(String::from("not an integer")),
+            type_name: std::any::type_name::<i32>(),
+        }];
+        assert!(ActionArg::try_into_terms::<i32>(forged).is_err());
+    }
 
     #[test]
     fn explicit_separator_collection_arity_requires_one_witness_between_entries() {

@@ -216,12 +216,12 @@ pub enum ParseError {
         range: Range,
         hint: Option<Cow<'static, str>>,
     },
-    /// The source was recognized, but SPPF realization failed before any
-    /// candidate term could be published.
+    /// Forest reconstruction failed before any candidate term could be
+    /// published by that realization request.
     ///
     /// This is deliberately separate from syntax and ambiguity errors.
     RealizationFailed {
-        error: mettail_semantic_key::ContentKeyCacheError,
+        error: crate::wpda_runtime::RealizationError,
         range: Range,
     },
 }

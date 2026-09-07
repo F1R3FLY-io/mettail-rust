@@ -74,13 +74,14 @@ pub type RealizedTerm = Arc<dyn Any + Send + Sync>;
 /// One realized term paired with its exact semiring weight.
 pub type WeightedRealizedTerm<W> = (RealizedTerm, W);
 
-/// Complete weighted result set published by one realization request.
+/// Weighted candidates published by one realization request. A bounded
+/// request's vector alone is not evidence of family completeness.
 pub type WeightedRealization<W> = Vec<WeightedRealizedTerm<W>>;
 
 /// Atomic weighted realization result. Resource exhaustion returns an error
 /// instead of exposing a partial prefix.
 pub type WeightedRealizationResult<W> =
-    Result<WeightedRealization<W>, mettail_semantic_key::ContentKeyCacheError>;
+    Result<WeightedRealization<W>, crate::wpda_runtime::RealizationError>;
 
 const SEMANTIC_FINGERPRINT_DIGEST_CONTEXT: &str =
     "MeTTaIL PraTTaIL semantic-fingerprint accelerator v1";
@@ -404,6 +405,7 @@ enum CgllRealizeFrame<W> {
 
 /// S2-F3: the packing-in-progress sub-state of a Bin frame.
 struct CgllBinPacking<W> {
+    packing: crate::sppf::SppfId,
     rule_idx: u32,
     weight: W,
     flats: Vec<(Vec<crate::sppf::SppfId>, W)>,
@@ -625,8 +627,16 @@ enum KbestOrderKey {
 /// the Intermediate packing weights directly, so no Election consumer
 /// exists and none is fabricated.
 enum KbestVal<W> {
-    Realized { arg: ActionArg, w: W },
-    Fragment { pair: Option<(W, W)> },
+    Realized {
+        arg: ActionArg,
+        w: W,
+    },
+    Fragment {
+        pair: Option<(W, W)>,
+        /// Membership in this entry's selected flat, not a descendant's
+        /// semantic payload or another packing/coordinate of the same node.
+        flat_has_collection: bool,
+    },
 }
 
 /// S1 k-best (plan §2.2): one extracted entry of a node's list.
@@ -834,7 +844,6 @@ struct KbestNode<W> {
     raw: Option<Box<KbestNodeSub<W>>>,
     truncated: bool,
     infeasible_pops: u32,
-    dup_flat_occurrence: u32,
 }
 
 /// S1 k-best: session receipts counters (plan §5.2; printed by
@@ -848,7 +857,6 @@ struct KbestStats {
     infeasible_pops: u64,
     truncations: u64,
     root_empty: u64,
-    dup_flat_occurrence: u64,
 }
 
 /// S1 k-best: one extraction session's state (call-local, exactly like
@@ -924,75 +932,124 @@ enum KbestDemandOutcome {
     NoMore,
 }
 
-/// S1 k-best: one OR-slot of a candidate's `j` vector (see
-/// `cgll_kbest_slot_layout`).
+/// One coordinate of a packing's lazy k-best product.
+///
+/// `role` is part of the executable layout contract: direct Intermediate
+/// coordinates contribute both the flattened combo and flat weights, while
+/// direct and container-nested Symbol coordinates contribute realized terms.
+/// Keeping the role in the shared layout prevents the seed, key, walk, and
+/// successor phases from independently re-deriving container shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KbestSlotRole {
+    DirectIntermediate,
+    DirectSymbol,
+    ContainerSymbol,
+}
+
+/// One OR-slot of a candidate's `j` vector (see
+/// `cgll_kbest_slot_layout`). Slots are emitted in semantic source order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct KbestSlot {
     node: crate::sppf::SppfId,
-    /// Direct packing child index; `inner` = `Some(inner_child_idx)` when
-    /// the slot is an A10 j-extension over an `OPTIONAL_PRESENT`
-    /// packing-leaf's inner Symbol child (Weight/FirstRaw kinds only).
-    // dead_code (NOT stale — verified by the S2 allows sweep): the slot's
-    // provenance identity. Every routed consumer keys on `node` (SeedCands
-    // availability, Succ growth, the walk re-derives positions by
-    // iterating children), so these two fields are unread; they state the
-    // layout contract the fold/walk/key must agree on and are kept as its
-    // self-description.
-    #[allow(dead_code)]
-    child_idx: u32,
-    #[allow(dead_code)]
-    inner: Option<u32>,
+    role: KbestSlotRole,
 }
+
+/// Exact closure of one semantic container child. Collection markers and
+/// synthetic optional-present packings are structural; their nested Symbol
+/// occurrences are the actual lazy-product coordinates. The postorder program
+/// is shared by ranking and selected semantic construction.
+struct KbestContainerClosure {
+    slots: Vec<KbestSlot>,
+    program: Vec<KbestContainerInstruction>,
+}
+
+/// A structural container may contribute events without a weight factor.
+/// Absence must not be encoded as a synthetic `W::one_ref()`: the legacy
+/// election carrier can distinguish multiplying by that value from doing
+/// nothing. Actual selected and packing factors are always `Some`, including
+/// exact-one factors. FV: SelectedOccurrencePlan::ElectionFactorPresence.
+struct KbestContainerRank<W> {
+    factor: Option<W>,
+    lateness: u32,
+    decisions: im::Vector<(u32, u32, u16)>,
+}
+
+impl<W: StarSemiringRef> KbestContainerRank<W> {
+    fn empty() -> Self {
+        Self {
+            factor: None,
+            lateness: 0,
+            decisions: im::Vector::new(),
+        }
+    }
+
+    fn selected(rank: CgllKTuple<W>) -> Self {
+        Self {
+            factor: Some(rank.weight),
+            lateness: rank.lateness,
+            decisions: rank.decisions,
+        }
+    }
+
+    fn absorb(&mut self, child: Self) {
+        if let Some(weight) = child.factor {
+            self.factor = Some(match self.factor.take() {
+                Some(prior) => prior.times_ref(&weight),
+                None => weight,
+            });
+        }
+        self.lateness += child.lateness;
+        self.decisions.append(child.decisions);
+    }
+
+    fn absorb_into(self, parent: &mut CgllKTuple<W>) {
+        if let Some(weight) = self.factor {
+            parent.weight = parent.weight.times_ref(&weight);
+        }
+        parent.lateness += self.lateness;
+        parent.decisions.append(self.decisions);
+    }
+}
+
+/// A postorder interpretation of the same occurrence traversal that assigns
+/// candidate coordinates. The arity counts forest-child operands; a trigger
+/// leaf contributes a neutral operand, not a semantic-action argument.
+enum KbestContainerInstruction {
+    Selected(usize),
+    Leaf(crate::sppf::SppfId),
+    Assemble { node: crate::sppf::SppfId, arity: usize },
+}
+
+enum KbestRealizationInstruction<W> {
+    Selected { arg: ActionArg, weight: W },
+    Leaf(crate::sppf::SppfId),
+    Assemble { node: crate::sppf::SppfId, arity: usize },
+}
+
+const KBEST_OCCURRENCE_WORK_LIMIT: usize = 100_000;
 
 /// S1 k-best: the products of one Symbol candidate's provenance flat walk
 /// (`cgll_kbest_candidate_walk`), consumed by
-/// `cgll_kbest_realize_candidate` after the FirstRaw demands in
-/// `raw_needed` are satisfied. The pair jointly generalizes
+/// `cgll_kbest_realize_candidate`. The plan generalizes
 /// `cgll_make_chosen_frame`'s prologue walk from a global choices-map to
 /// per-candidate provenance.
 ///
-/// S3 revision (the class3opt suite-under-ON receipt): non-Symbol flat
-/// elements carry their FULL dependency closure — Predep's P3.c contract
-/// ("collections nested inside optional groups realize too", recursively)
-/// — not just one level. The walk's iterative dep collector fills:
-/// level-1 `OPTIONAL_PRESENT` inner Symbols per-mode (`inner_sym_sel`
-/// slot selections under Weight/FirstRaw, `raw_needed` under Election —
-/// the A10 j-extension/key-byte split, unchanged); every DEEPER Symbol
-/// dependency (collection items anywhere, Symbols under nested
-/// containers) joins `raw_needed` in ALL kinds (the items rule of plan
-/// §2.7 — today's `.first()`-of-the-raw-family bytes; safe at any depth:
-/// the kt Scan absorbs level-1 inners only, so a deeper inner's kt never
-/// reaches the Election key — S3 review attack 2); non-OR leaves join
-/// `leaf_nodes`; container Packings (optional groups, nested or not, and
-/// defensive non-OPT packing leaves) join `containers_postorder`
-/// CHILDREN-FIRST so their `realize_node_leave` reads fully-built memos.
-/// DELIBERATE DELTA vs the family Predep (S3 review, disclosed): nested
-/// container Packings get their memos built here, where Predep leaves
-/// them memo-less — toward-complete on OPT-in-OPT-class shapes (a
-/// nested-optional inner that Predep would starve realizes here); and
-/// Intermediate deps are skipped (Predep never memoizes Intermediates —
-/// dead-work elimination, value-exact).
+/// Every Symbol reachable below a semantic container is selected by the
+/// enclosing candidate's ordinary `j` coordinate. This is the essential
+/// completeness invariant: collection/optional embedding is a traversal of
+/// the child family, never a projection to `.first()` or FirstRaw. The same
+/// explicit-worklist closure supplies realization order, so nested containers
+/// cannot drift from coordinate layout.
 struct KbestWalkPlan<W> {
+    packing: crate::sppf::SppfId,
     rule_idx: u32,
     pk_weight: W,
     flat: Vec<crate::sppf::SppfId>,
     /// DFS pre-order ⊗-fold of every traversed Intermediate packing weight
     /// (the chosen walk's `flat_weight ⊗= ipk.weight` order).
     flat_weight: W,
-    /// Symbol flat elements: the candidate's selected `(arg, w)` per node.
-    sym_sel: Vec<(crate::sppf::SppfId, ActionArg, W)>,
-    /// Level-1 optional-inner Symbols selected by the candidate's j-slots
-    /// (Weight/FirstRaw kinds — the A10 j-extension).
-    inner_sym_sel: Vec<(crate::sppf::SppfId, ActionArg, W)>,
-    /// Non-OR dependency leaves (any depth) needing `realize_node_leave`
-    /// memos, including `CollectionId` markers.
-    leaf_nodes: Vec<crate::sppf::SppfId>,
-    /// Container Packings in CHILDREN-FIRST order (a container's
-    /// `realize_node_leave` consumes its children's memos).
-    containers_postorder: Vec<crate::sppf::SppfId>,
-    /// FirstRaw demands this candidate needs before firing: collection
-    /// items (all kinds), Election-mode level-1 optional inners, and every
-    /// deeper Symbol dependency — walk-encounter order (deterministic).
-    raw_needed: Vec<crate::sppf::SppfId>,
+    /// Fully selected occurrences; repeated forest IDs never alias a slot.
+    program: Vec<KbestRealizationInstruction<W>>,
 }
 
 /// S1 k-best: one suspended demand activation of the iterative
@@ -1016,17 +1073,13 @@ struct KbestFrame<W> {
 
 enum KbestFrameStage<W> {
     Entry,
-    /// A1 pins (ii)/(iii): the seed demand sequence — packings in slice
-    /// order × children left-to-right (pass 1) × Scan-inner children
-    /// left-to-right (pass 2), all at fdepth+1; EVERY packing's EVERY
-    /// OR-child is demanded even when an earlier child came back empty or
-    /// unavailable (the candidate is not seeded, the demand still runs —
-    /// fdepth parity on tabu-class inputs at zero cost).
+    /// Seed demands in packing order, then semantic source order over the
+    /// shared explicit-worklist slot layout. Every coordinate is demanded
+    /// even when a prior one is unavailable.
     Seed {
         pk_idx: usize,
-        scan_pass: bool,
-        child_idx: usize,
-        inner_idx: usize,
+        slot_idx: usize,
+        slots: Vec<KbestSlot>,
     },
     /// Post-seed candidate construction (reads child lists; no suspension).
     SeedCands {
@@ -1045,12 +1098,10 @@ enum KbestFrameStage<W> {
         demanded: bool,
         finishing: bool,
     },
-    /// Satisfy the popped candidate's FirstRaw needs (one child demand per
-    /// step), then fire `cgll_kbest_realize_candidate`.
-    EvalRaw {
+    /// Fire one fully selected candidate.
+    RealizeCandidate {
         cand: KbestCand<W>,
         plan: Box<KbestWalkPlan<W>>,
-        dem_idx: usize,
     },
 }
 
@@ -1059,9 +1110,9 @@ use crate::automata::{token_kind_matches_capture_name, TokenKind};
 use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpda_runtime::{
-    ActionArg, ActionEntry, CollectionSpec, SemanticBuilder, StackSymbolV2, SymbolKind,
-    WpdaConfiguration, WpdaMaxStepsExceeded, WpdaMutableTokenSource, WpdaResolveResult, WpdaState,
-    WpdaTokenSource,
+    ActionArg, ActionEntry, CollectionSpec, RealizationError, ReconstructionFailure,
+    SemanticBuilder, StackSymbolV2, SymbolKind, WpdaConfiguration, WpdaMaxStepsExceeded,
+    WpdaMutableTokenSource, WpdaResolveResult, WpdaState, WpdaTokenSource,
 };
 
 /// Token-level atom producer available to stack-safe chain synthesis.
@@ -2126,7 +2177,7 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// alternatives must be compared. The cache is empty on the static
     /// recognition path and is reset with the parse.
     semantic_key_cache: std::cell::RefCell<mettail_semantic_key::ContentKeyCache>,
-    semantic_key_error: std::cell::RefCell<Option<mettail_semantic_key::ContentKeyCacheError>>,
+    realization_error: std::cell::RefCell<Option<crate::wpda_runtime::RealizationError>>,
     /// Trace-only proof diagnostics for semantic deduplication. These counters
     /// are deliberately absent from production builds and never influence
     /// parser control flow, ordering, charging, or exhaustion.
@@ -6040,7 +6091,7 @@ where
                     DEFAULT_SEMANTIC_KEY_LOGICAL_BYTES,
                 ),
             ),
-            semantic_key_error: std::cell::RefCell::new(None),
+            realization_error: std::cell::RefCell::new(None),
             #[cfg(feature = "walker-trace")]
             dedup_structural_equal: std::cell::Cell::new(0),
             #[cfg(feature = "walker-trace")]
@@ -6167,7 +6218,7 @@ where
                     DEFAULT_SEMANTIC_KEY_LOGICAL_BYTES,
                 ),
             ),
-            semantic_key_error: std::cell::RefCell::new(None),
+            realization_error: std::cell::RefCell::new(None),
             #[cfg(feature = "walker-trace")]
             dedup_structural_equal: std::cell::Cell::new(0),
             #[cfg(feature = "walker-trace")]
@@ -6273,7 +6324,7 @@ where
             semantic_key_entries,
             semantic_key_bytes,
         );
-        *self.semantic_key_error.get_mut() = None;
+        *self.realization_error.get_mut() = None;
         self.top_node = None;
         // Phase F.3c.5 (2026-05-20): `self.builder = SemanticBuilder::new();`
         // DELETED. Walker no longer owns a live builder — per-cursor
@@ -7286,16 +7337,16 @@ where
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
-        *self.semantic_key_error.get_mut() = None;
+        *self.realization_error.get_mut() = None;
         let result = self.resolve_at_end_of_input_unchecked(tokens);
-        match self.semantic_key_error.get_mut().take() {
-            Some(error) => WpdaResolveResult::RealizationFailed { error, position: self.pos },
-            None => result,
+        match self.finish_realization_request(result) {
+            Err(error) => WpdaResolveResult::RealizationFailed { error, position: self.pos },
+            Ok(result) => result,
         }
     }
 
-    /// Internal resolve body. Semantic-key failures accumulate in
-    /// `semantic_key_error`; the public wrapper above converts the complete
+    /// Internal resolve body. Failures accumulate in
+    /// `realization_error`; the public wrapper above converts the complete
     /// call into a sum and never publishes its provisional result on failure.
     fn resolve_at_end_of_input_unchecked(
         &mut self,
@@ -7912,8 +7963,8 @@ where
     /// Walks the SPPF from `root`, invoking each `Packing`'s
     /// `action_fn` via a fresh `SemanticBuilder` to materialize the
     /// user-AST. Returns `Ok(Vec<_>)` with one term per derivation
-    /// alternative (cartesian product over ambiguous packings). A semantic-key
-    /// construction or resource failure returns `Err` and publishes none of
+    /// alternative (cartesian product over ambiguous packings). A reconstruction,
+    /// semantic-key construction, or resource failure returns `Err` and publishes none of
     /// the candidates accumulated by that call.
     ///
     /// `limit` bounds the realization size: realization halts once
@@ -7952,7 +8003,7 @@ where
         root: crate::sppf::SppfId,
         limit: Option<usize>,
         mode: RealizeRequestMode,
-    ) -> Result<Vec<RealizedTerm>, mettail_semantic_key::ContentKeyCacheError>
+    ) -> Result<Vec<RealizedTerm>, crate::wpda_runtime::RealizationError>
     where
         W: StarSemiringRef,
     {
@@ -7983,7 +8034,7 @@ where
     /// wanting the unweighted shape can call
     /// `realize_root_to_terms` (which drops the weight) for backward
     /// compatibility; Phase D's facade switch will adopt the weighted
-    /// shape directly. Semantic-key failure returns `Err` without a partial
+    /// shape directly. Reconstruction or semantic-key failure returns `Err` without a partial
     /// vector.
     ///
     /// Phase C-bis (2026-05-17): bound relaxed to `W: StarSemiringRef`
@@ -7997,12 +8048,9 @@ where
     where
         W: StarSemiringRef,
     {
-        self.semantic_key_error.replace(None);
+        self.realization_error.replace(None);
         let result = self.realize_root_to_terms_with_weights_unchecked(root, limit, mode);
-        match self.semantic_key_error.borrow_mut().take() {
-            Some(error) => Err(error),
-            None => Ok(result),
-        }
+        self.finish_realization_request(result)
     }
 
     fn realize_root_to_terms_with_weights_unchecked(
@@ -8261,7 +8309,7 @@ where
         }
         let mut stack: Vec<(crate::sppf::SppfId, Phase)> = vec![(root, Phase::Enter)];
         while let Some((id, phase)) = stack.pop() {
-            if self.semantic_key_failed() {
+            if self.realization_failed() {
                 return Vec::new();
             }
             match phase {
@@ -8535,7 +8583,7 @@ where
 
     #[inline]
     fn exact_semantic_key(&self, term: &Arc<dyn Any + Send + Sync>) -> Option<Vec<u8>> {
-        if self.semantic_key_failed() {
+        if self.realization_failed() {
             return None;
         }
         let key = self.engine.semantic_fingerprint(term);
@@ -8560,18 +8608,34 @@ where
         match result {
             Ok(key) => key,
             Err(error) => {
-                let mut slot = self.semantic_key_error.borrow_mut();
-                if slot.is_none() {
-                    *slot = Some(error);
-                }
+                self.record_realization_error(error.into());
                 None
             },
         }
     }
 
     #[inline]
-    fn semantic_key_failed(&self) -> bool {
-        self.semantic_key_error.borrow().is_some()
+    fn realization_failed(&self) -> bool {
+        self.realization_error.borrow().is_some()
+    }
+
+    /// Keep the first exact failure even if later reconstruction work also
+    /// fails. Provisional candidates cannot clear this request-local latch.
+    fn record_realization_error(&self, error: crate::wpda_runtime::RealizationError) {
+        self.realization_error.borrow_mut().get_or_insert(error);
+    }
+
+    /// Atomic publication barrier shared by EOI resolution and realization.
+    /// Refines `publish` in `RealizationFailureBoundary.v`; success here does
+    /// not assert that a bounded candidate enumeration is complete.
+    fn finish_realization_request<T>(
+        &self,
+        provisional: T,
+    ) -> Result<T, crate::wpda_runtime::RealizationError> {
+        match self.realization_error.borrow_mut().take() {
+            Some(error) => Err(error),
+            None => Ok(provisional),
+        }
     }
 
     #[inline]
@@ -8579,7 +8643,7 @@ where
         &self,
         term: &Arc<dyn Any + Send + Sync>,
     ) -> Option<SemanticFingerprintDigest> {
-        if self.semantic_key_failed() {
+        if self.realization_failed() {
             return None;
         }
         #[cfg(feature = "walker-trace")]
@@ -8603,7 +8667,7 @@ where
         seen: &mut SemanticDedupBuckets,
         entry: (ActionArg, W),
     ) -> bool {
-        if self.semantic_key_failed() {
+        if self.realization_failed() {
             return false;
         }
         if let ActionArg::Term { value, .. } = &entry.0 {
@@ -8639,7 +8703,7 @@ where
                         if let ActionArg::Term { value: prior, .. } = &out[first_idx].0 {
                             if let Some(key) = self.persistent_semantic_key(prior) {
                                 seen.push(SemanticDedupKey::Persistent(key), first_idx);
-                            } else if self.semantic_key_failed() {
+                            } else if self.realization_failed() {
                                 return false;
                             } else if let Some(bucket) = self.semantic_fingerprint_digest(prior) {
                                 seen.push(SemanticDedupKey::LegacyDigest(bucket), first_idx);
@@ -8666,7 +8730,7 @@ where
                 out.push(entry);
                 return true;
             }
-            if self.semantic_key_failed() {
+            if self.realization_failed() {
                 return false;
             }
             if let Some(bucket) = self.semantic_fingerprint_digest(value) {
@@ -8765,7 +8829,7 @@ where
 
         let mut stack = vec![LazyFrame::Enter { id, cap }];
         while let Some(frame) = stack.pop() {
-            if self.semantic_key_failed() {
+            if self.realization_failed() {
                 return Ok(Vec::new());
             }
             match frame {
@@ -9302,6 +9366,7 @@ where
                             }) = self.sppf.node(p)
                             {
                                 recomputed_storage = self.realize_packing_call(
+                                    p,
                                     *prule,
                                     pchildren,
                                     pweight.clone(),
@@ -9330,7 +9395,7 @@ where
                 out
             },
             Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight, .. }) => {
-                self.realize_packing_call(*rule_idx, children, weight.clone(), memo, limit)
+                self.realize_packing_call(id, *rule_idx, children, weight.clone(), memo, limit)
             },
             // Phase F.8 (2026-05-18): TriggerTerminal contributes no
             // ActionArg. `realize_packing_call` filters TriggerTerminal
@@ -9411,6 +9476,88 @@ where
         crate::automata::semiring::solve_scc_weights_newton(scc.len(), &packings, 64)
     }
 
+    /// Materialize the source-ordered family of a present optional group.
+    ///
+    /// Every child occurrence has its own coordinate; shared memo rows do not
+    /// couple choices. Only one coordinate is assembled at a time. Bounds are
+    /// checked before allocation and work is charged before cloning arguments.
+    /// A work/allocation/memo fault discards the provisional family. Successful
+    /// capped results are prefixes, not proof that all alternatives were read.
+    fn realize_optional_family(
+        &self,
+        packing: crate::sppf::SppfId,
+        children: &[crate::sppf::SppfId],
+        packing_weight: W,
+        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        limit: Option<usize>,
+    ) -> Vec<(ActionArg, W)> {
+        use crate::wpda_runtime::{CartesianCursor, ReconstructionFailure};
+
+        let result = (|| -> Result<Vec<(ActionArg, W)>, ReconstructionFailure> {
+            if limit == Some(0) {
+                return Ok(Vec::new());
+            }
+            let width = children.len();
+            if width > KBEST_OCCURRENCE_WORK_LIMIT {
+                return Err(ReconstructionFailure::TraversalLimit {
+                    limit: KBEST_OCCURRENCE_WORK_LIMIT,
+                });
+            }
+            let mut rows = Vec::new();
+            rows.try_reserve_exact(width)
+                .map_err(|_| ReconstructionFailure::AllocationFailed { requested: width })?;
+            for &dependency in children {
+                rows.push(
+                    memo.get(&dependency)
+                        .ok_or(ReconstructionFailure::DependencyUnavailable { dependency })?,
+                );
+            }
+            let mut cursor = CartesianCursor::try_new(
+                rows.iter().map(|row| row.len()),
+                KBEST_OCCURRENCE_WORK_LIMIT,
+            )?;
+            let mut output = Vec::new();
+            let mut remaining_work = KBEST_OCCURRENCE_WORK_LIMIT;
+            loop {
+                let Some(indices) = cursor.current() else {
+                    break;
+                };
+                if limit.is_some_and(|cap| output.len() >= cap) {
+                    break;
+                }
+                // This concrete allocation/work bound is separate from output
+                // quota. The formal driver counts attempted coordinates; each
+                // attempt here additionally pays for every materialized field.
+                remaining_work = remaining_work.checked_sub(width.max(1)).ok_or(
+                    ReconstructionFailure::TraversalLimit { limit: KBEST_OCCURRENCE_WORK_LIMIT },
+                )?;
+                let mut args = Vec::new();
+                args.try_reserve_exact(width)
+                    .map_err(|_| ReconstructionFailure::AllocationFailed { requested: width })?;
+                let mut weight = W::one_ref();
+                for (row, index) in rows.iter().zip(indices) {
+                    let (arg, child_weight) = &row[index];
+                    args.push(arg.clone());
+                    weight = weight.times_ref(child_weight);
+                }
+                cursor.advance();
+                output
+                    .try_reserve(1)
+                    .map_err(|_| ReconstructionFailure::AllocationFailed {
+                        requested: output.len().saturating_add(1),
+                    })?;
+                output.push((ActionArg::Optional(Some(args)), weight.times_ref(&packing_weight)));
+            }
+            Ok(output)
+        })();
+        match result {
+            Ok(output) => output,
+            Err(cause) => self
+                .cgll_reconstruction_failed(packing, cause)
+                .unwrap_or_default(),
+        }
+    }
+
     /// Cartesian-product the children's realized ActionArgs, then call
     /// the rule's `action_fn` per combo to produce a Vec of realized
     /// Term args.
@@ -9422,6 +9569,7 @@ where
     /// the per-derivation weight at this Packing.
     fn realize_packing_call(
         &self,
+        packing: crate::sppf::SppfId,
         rule_idx: u32,
         children: &[crate::sppf::SppfId],
         packing_weight: W,
@@ -9431,7 +9579,7 @@ where
     where
         W: StarSemiringRef,
     {
-        if self.semantic_key_failed() {
+        if self.realization_failed() {
             return Vec::new();
         }
         // P3 Pocket-A diag (env-gated): entry/exit trace of every packing
@@ -9455,53 +9603,7 @@ where
         // by emit_finalize_optional_scope_present. Wrap children's args
         // into ActionArg::Optional(Some(...)).
         if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
-            // Cartesian product over children; each combo becomes one
-            // Optional(Some(args)). Phase C.6: combo_weight threads ⊗
-            // across child weights. OPTIONAL_PRESENT's packing weight
-            // is W::one_ref() by §2.5, so the result weight equals
-            // combo_weight directly.
-            let mut combos: Vec<(Vec<ActionArg>, W)> =
-                vec![(Vec::with_capacity(children.len()), W::one_ref())];
-            for &c in children {
-                let child_results = match memo.get(&c) {
-                    Some(v) => v,
-                    None => return Vec::new(),
-                };
-                // C7b memory-safety fix (Phase 3.1.6, 2026-05-15):
-                // pre-allocating combos×child_results ignored the `limit`
-                // cap and produced O(N^K) RAM even though the inner loop
-                // bounded the result. Cap pre-allocation at `limit` so
-                // wide-fanout productions don't OOM during realization.
-                let unbounded_capacity = combos.len().saturating_mul(child_results.len().max(1));
-                let pre_alloc = match limit {
-                    Some(cap) => cap.min(unbounded_capacity),
-                    None => unbounded_capacity,
-                };
-                let mut next: Vec<(Vec<ActionArg>, W)> = Vec::with_capacity(pre_alloc);
-                for (combo, combo_w) in &combos {
-                    for (arg, child_w) in child_results {
-                        let mut ext_args = combo.clone();
-                        ext_args.push(arg.clone());
-                        let ext_w = combo_w.times_ref(child_w);
-                        next.push((ext_args, ext_w));
-                        if let Some(cap) = limit {
-                            if next.len() >= cap {
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(cap) = limit {
-                        if next.len() >= cap {
-                            break;
-                        }
-                    }
-                }
-                combos = next;
-            }
-            return combos
-                .into_iter()
-                .map(|(args, w)| (ActionArg::Optional(Some(args)), w))
-                .collect();
+            return self.realize_optional_family(packing, children, packing_weight, memo, limit);
         }
         // Phase F.8 (2026-05-18): TriggerTerminal children carry only span
         // metadata (used by `span_lo` in emit_fire_action to give the
@@ -9633,7 +9735,7 @@ where
         // No-op + byte-identical when the switch is off / fingerprint is None.
         let mut seen = SemanticDedupBuckets::default();
         for (args, combo_w) in combos {
-            if self.semantic_key_failed() {
+            if self.realization_failed() {
                 break;
             }
             let mut sb = SemanticBuilder::new();
@@ -9723,6 +9825,7 @@ where
                         sb.push_predicate_arc(Arc::clone(p));
                     },
                     ActionArg::Optional(_)
+                    | ActionArg::SelectedCollection(_)
                     | ActionArg::Collection { .. }
                     | ActionArg::BinderScope(_)
                     | ActionArg::GuestBody(_)
@@ -9764,6 +9867,7 @@ where
                     ActionArg::BinderScope(_) => "BinderScope",
                     ActionArg::Collection { type_name, .. } => *type_name,
                     ActionArg::CollectionId(_) => "CollectionId",
+                    ActionArg::SelectedCollection(_) => "SelectedCollection",
                     ActionArg::Predicate(_) => "Predicate",
                     ActionArg::Optional(_) => "Optional",
                     ActionArg::GuestBody(_) => "GuestBody",
@@ -10909,7 +11013,8 @@ where
     fn cgll_flatten_ids_weighted(
         &self,
         id: crate::sppf::SppfId,
-    ) -> Vec<(Vec<crate::sppf::SppfId>, W)> {
+    ) -> Result<Vec<(Vec<crate::sppf::SppfId>, W)>, RealizationError> {
+        use crate::wpda_runtime::ReconstructionFailure;
         // ── S2-F3 (2026-07-11): ITERATIVE rewrite — the exact mirror of
         // [`Self::cgll_flatten_ids`]'s machine with the weight thread
         // (`acc` seeded `(Vec::new(), pack_weight)`; fold weight
@@ -10917,8 +11022,15 @@ where
         // `with_capacity(acc.len() * max(cf,1))` preallocation kept).
         // Leaf children fold inline: `cf = [([c], one)]` ⇒ extend each
         // flat by `c`, weight `aw ⊗ one = aw` (identity — unchanged).
-        if !matches!(self.sppf.node(id), Some(crate::sppf::SppfNode::Intermediate { .. })) {
-            return vec![(vec![id], W::one_ref())];
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Intermediate { .. }) => {},
+            Some(_) => return Ok(vec![(vec![id], W::one_ref())]),
+            None => {
+                return Err(RealizationError::Reconstruction {
+                    node: id,
+                    cause: ReconstructionFailure::MissingNode,
+                });
+            },
         }
         struct FrameW<W> {
             id: crate::sppf::SppfId,
@@ -10938,7 +11050,6 @@ where
         };
         let mut on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
             rustc_hash::FxHashSet::default();
-        let mut guard_hits: u32 = 0;
         let mut results: Vec<Vec<(Vec<crate::sppf::SppfId>, W)>> = Vec::with_capacity(8);
         let mut stack: Vec<FrameW<W>> = Vec::with_capacity(8);
         on_path.insert(id);
@@ -10977,7 +11088,15 @@ where
                                 top.cur =
                                     Some((children.clone(), 0, vec![(Vec::new(), weight.clone())]));
                             },
-                            _ => continue,
+                            invalid => {
+                                return Err(RealizationError::Reconstruction {
+                                    node: p,
+                                    cause: match invalid {
+                                        None => ReconstructionFailure::MissingNode,
+                                        Some(_) => ReconstructionFailure::UnexpectedNodeKind,
+                                    },
+                                });
+                            },
                         }
                     },
                     Some((children, ci, acc)) => {
@@ -10987,24 +11106,22 @@ where
                             continue;
                         }
                         let c = children[*ci];
-                        if matches!(
-                            self.sppf.node(c),
-                            Some(crate::sppf::SppfNode::Intermediate { .. })
-                        ) {
+                        let child_is_intermediate = match self.sppf.node(c) {
+                            Some(crate::sppf::SppfNode::Intermediate { .. }) => true,
+                            Some(_) => false,
+                            None => {
+                                return Err(RealizationError::Reconstruction {
+                                    node: c,
+                                    cause: ReconstructionFailure::MissingNode,
+                                });
+                            },
+                        };
+                        if child_is_intermediate {
                             if !on_path.insert(c) {
-                                guard_hits += 1;
-                                debug_assert!(
-                                    false,
-                                    "cgll_flatten_ids_weighted: Intermediate-only cycle at {c}                                      (publish fence should have refused this forest)"
-                                );
-                                if guard_hits <= 4 {
-                                    eprintln!(
-                                        "CGLL-FLATTEN-CYCLE-GUARD id={c} (contribution: empty)"
-                                    );
-                                }
-                                acc.clear();
-                                *ci += 1;
-                                continue;
+                                return Err(RealizationError::Reconstruction {
+                                    node: c,
+                                    cause: ReconstructionFailure::CyclicContainer,
+                                });
                             }
                             top.awaiting = true;
                             stack.push(new_frame(self, c));
@@ -11019,7 +11136,7 @@ where
                 }
             }
         }
-        results.pop().expect("flatten_w root result")
+        Ok(results.pop().expect("flatten_w root result"))
     }
 
     /// Recursively realize a BINARIZED Symbol to its `(Term, W)` readings by
@@ -11088,7 +11205,7 @@ where
         let mut top_dedup: Vec<(ActionArg, W)> = Vec::new();
         let mut top_seen = SemanticDedupBuckets::default();
         'drive: while let Some(top) = stack.last_mut() {
-            if self.semantic_key_failed() {
+            if self.realization_failed() {
                 break 'drive;
             }
             match top {
@@ -11246,7 +11363,17 @@ where
                                 let mut flats: Vec<(Vec<crate::sppf::SppfId>, W)> =
                                     vec![(Vec::new(), W::one_ref())];
                                 for &c in &pack_children {
-                                    let cf = self.cgll_flatten_ids_weighted(c);
+                                    let cf = match self.cgll_flatten_ids_weighted(c) {
+                                        Ok(flats) => flats,
+                                        Err(error) => {
+                                            // Preparation failure is not an exhausted
+                                            // family. Stop before dependency demand or
+                                            // semantic callbacks; the request barrier
+                                            // discards every provisional candidate.
+                                            self.record_realization_error(error);
+                                            return;
+                                        },
+                                    };
                                     let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> = Vec::new();
                                     for (a, aw) in &flats {
                                         for (b, bw) in &cf {
@@ -11258,6 +11385,7 @@ where
                                     flats = next;
                                 }
                                 *cur = Some(CgllBinPacking {
+                                    packing: p,
                                     rule_idx,
                                     weight,
                                     flats,
@@ -11297,6 +11425,7 @@ where
                                     // input (no false NON-fire).
                                     let pk_limit = if top { limit } else { None };
                                     let terms = self.realize_packing_call(
+                                        bp.packing,
                                         bp.rule_idx,
                                         flat,
                                         bp.weight.times_ref(flat_weight),
@@ -12900,6 +13029,7 @@ where
                                 fnode_span,
                                 goal_cat,
                                 false,
+                                false,
                             );
                             kp.stage = CgllKtStage::Scan { scan_idx: 0, inner: None };
                         },
@@ -13017,12 +13147,11 @@ where
     pub(crate) const CGLL_KBEST_EXTRACTION_ENABLED: bool = true;
 
     // ═════════════════════════════════════════════════════════════════════
-    // ROOT-P Phase-2 S1: the k-best extractor (dormant — see
-    // `CGLL_KBEST_EXTRACTION_ENABLED`). Design of record:
+    // ROOT-P Phase-2: the enabled k-best extractor (see
+    // `CGLL_KBEST_EXTRACTION_ENABLED`). Historical design of record:
     // `scratchpad/zz_probes/kbest_extraction_plan.md` §2 (algorithm),
-    // §3 (exactness), §5.2 (this inventory). Every fn below except
-    // `cgll_kbest_decisions_block` (live: the OFF path calls it) is
-    // `dead_code`-allowed until the S2/S3 call sites route through it.
+    // §3 (exactness), §5.2 (the original S1 inventory). The shared
+    // decisions block also serves the retained OFF-path implementation.
     // ═════════════════════════════════════════════════════════════════════
 
     /// Amendment-A8 factoring (plan §5.2): the K-tuple DECISIONS block —
@@ -13034,9 +13163,10 @@ where
     /// extractor's Election key computation (`lazy_first_flat = true`: the
     /// plan-§2.6 `cgll_first_flat_of` greedy walk — value-equal by the
     /// first-flat ≡ greedy-walk construction proof, without materializing
-    /// the cartesian flat set). The probes are PACKING-level and
-    /// j-INDEPENDENT for ALL candidates including successors (the §2.4
-    /// pin: today's kt never sees a candidate's j-selected fragment).
+    /// the cartesian flat set). Those historical first-flat probes remain
+    /// packing-level and independent of a candidate's selected coordinate.
+    /// The constructor extension separately consumes candidate-local
+    /// `selected_flat_has_collection` from that exact selected fragment.
     ///
     /// SCAN factoring choice (amendment A9 — pick ONE, recorded here and
     /// in the S1 report): OPTION B — the OFF path's Scan stage (the
@@ -13062,6 +13192,7 @@ where
         fnode_span: (Option<u32>, Option<u32>),
         goal_cat: Option<u16>,
         lazy_first_flat: bool,
+        selected_flat_has_collection: bool,
     ) where
         W: StarSemiringRef,
     {
@@ -13149,7 +13280,16 @@ where
                 content.retain(|&el| {
                     matches!(self.sppf.node(el), Some(crate::sppf::SppfNode::Symbol { .. }))
                 });
-                if content.len() == 1 {
+                // Explicit collection-bearing constructors retain a wrapper
+                // even when no direct Symbol operand exists (including an
+                // empty collection). The flag comes from the selected flat;
+                // a raw-first packing or a Symbol's descendants are not
+                // evidence for the current candidate. Keep one emission when
+                // both the historical and collection cases apply.
+                // FV: ConstructorElectionEvidence::new_evidence_requires_exact_inputs.
+                let declared_collection_wrapper = selected_flat_has_collection
+                    && self.engine.rule_has_leading_structural_trigger(cat, local);
+                if content.len() == 1 || declared_collection_wrapper {
                     let declared_coercion = body_cat
                         .map(|bc| {
                             self.engine
@@ -13278,93 +13418,359 @@ where
         Some(flat)
     }
 
-    /// S1 k-best: the OR-slot layout of one packing's candidate `j` vector
-    /// (plan §2.2/§2.7). Direct Symbol/Intermediate children each take one
-    /// slot; under Weight and FirstRaw kinds the vector EXTENDS over each
-    /// `OPTIONAL_PRESENT` packing-leaf's inner SYMBOL children (the A10
-    /// j-extension — Election kind takes NO inner slots: inners are
-    /// FirstRaw-realized at eval, today's raw-first bytes). `None` = the
-    /// packing has an `OPTIONAL_PRESENT` leaf with an INTERMEDIATE inner
-    /// child: Intermediates carry no realize value, so the leaf's family is
-    /// empty on every path today (the missing-memo class) — the packing is
-    /// value-dead and seeds no candidate (the empty-child rule), matching
-    /// today's zero readings without a pointless per-combo hunt.
-    ///
-    /// Review note S1-D: ANY `Symbol` child gets a slot — no
-    /// `CGLL_BIN_TAG` check. A hypothetical CLASSIC-Symbol element inside a
-    /// BIN flat would therefore be extracted through the extractor's own
-    /// machinery (without the classic concat's Gray-skip handling) where
-    /// today's drive routes it through `realize_node_leave`'s fenced Symbol
-    /// arm. Unreachable on pure-path forests: the BIN namespace separation
-    /// interns only BIN-tagged constituents into BIN flats.
-    fn cgll_kbest_slot_layout(
+    /// Traverse one structural container with an explicit enter/leave
+    /// worklist. The resulting Symbol coordinates are in source order and
+    /// the program is in children-first order. Shared forest IDs are visited
+    /// once per occurrence; only re-entry on the active structural path is a
+    /// cycle. Unsupported shapes and exhausted work are explicit failures,
+    /// never evidence of an empty semantic family.
+    fn cgll_kbest_container_closure(
         &self,
-        children: &[crate::sppf::SppfId],
+        root: crate::sppf::SppfId,
+    ) -> Option<KbestContainerClosure> {
+        enum Visit {
+            Enter(crate::sppf::SppfId),
+            Leave(crate::sppf::SppfId),
+        }
+
+        use crate::wpda_runtime::ReconstructionFailure;
+        let mut closure = KbestContainerClosure { slots: Vec::new(), program: Vec::new() };
+        let mut work = vec![Visit::Enter(root)];
+        let mut on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+            rustc_hash::FxHashSet::default();
+        let mut steps = 0;
+        while let Some(visit) = work.pop() {
+            steps += 1;
+            if steps > KBEST_OCCURRENCE_WORK_LIMIT {
+                return self.cgll_reconstruction_failed(
+                    root,
+                    ReconstructionFailure::TraversalLimit { limit: KBEST_OCCURRENCE_WORK_LIMIT },
+                );
+            }
+            match visit {
+                Visit::Leave(id) => {
+                    on_path.remove(&id);
+                    let arity = match self.sppf.node(id) {
+                        Some(crate::sppf::SppfNode::Packing { children, .. }) => children.len(),
+                        Some(crate::sppf::SppfNode::CollectionId { items, .. }) => items.len(),
+                        _ => {
+                            return self.cgll_reconstruction_failed(
+                                id,
+                                ReconstructionFailure::UnexpectedNodeKind,
+                            )
+                        },
+                    };
+                    closure
+                        .program
+                        .push(KbestContainerInstruction::Assemble { node: id, arity });
+                },
+                Visit::Enter(id) => match self.sppf.node(id) {
+                    Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                        closure
+                            .program
+                            .push(KbestContainerInstruction::Selected(closure.slots.len()));
+                        closure.slots.push(KbestSlot {
+                            node: id,
+                            role: KbestSlotRole::ContainerSymbol,
+                        });
+                    },
+                    Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                        return self.cgll_reconstruction_failed(
+                            id,
+                            ReconstructionFailure::UnexpectedNodeKind,
+                        );
+                    },
+                    Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                        if !on_path.insert(id) {
+                            return self.cgll_reconstruction_failed(
+                                id,
+                                ReconstructionFailure::CyclicContainer,
+                            );
+                        }
+                        work.push(Visit::Leave(id));
+                        for &child in children.iter().rev() {
+                            work.push(Visit::Enter(child));
+                        }
+                    },
+                    Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                        if !on_path.insert(id) {
+                            return self.cgll_reconstruction_failed(
+                                id,
+                                ReconstructionFailure::CyclicContainer,
+                            );
+                        }
+                        work.push(Visit::Leave(id));
+                        for &item in items.iter().rev() {
+                            work.push(Visit::Enter(item));
+                        }
+                    },
+                    Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => {
+                        closure.program.push(KbestContainerInstruction::Leaf(id));
+                    },
+                    Some(_) => {
+                        closure.program.push(KbestContainerInstruction::Leaf(id));
+                    },
+                    None => {
+                        return self
+                            .cgll_reconstruction_failed(id, ReconstructionFailure::MissingNode)
+                    },
+                },
+            }
+        }
+        Some(closure)
+    }
+
+    fn cgll_reconstruction_failed<T>(
+        &self,
+        node: crate::sppf::SppfId,
+        cause: crate::wpda_runtime::ReconstructionFailure,
+    ) -> Option<T> {
+        self.record_realization_error(RealizationError::Reconstruction { node, cause });
+        None
+    }
+
+    /// Interpret one selected container without firing semantic actions.
+    /// Weight uses the postorder action product; Election retains its separate
+    /// packing-first product and decision events. Both use the same slot/j.
+    /// The explicit stack is the machine modeled by SelectedOccurrencePlan.
+    fn cgll_kbest_container_summary(
+        &self,
+        state: &KbestState<W>,
         kind: KbestOrderKey,
-    ) -> Option<Vec<KbestSlot>> {
+        closure: &KbestContainerClosure,
+        j: &[u32],
+        owner_depth: u32,
+    ) -> Option<(W, Option<KbestContainerRank<W>>)>
+    where
+        W: StarSemiringRef,
+    {
+        if closure.slots.len() != j.len() {
+            return None;
+        }
+        let election = kind == KbestOrderKey::Election;
+        let mut values: Vec<(W, Option<KbestContainerRank<W>>)> =
+            Vec::with_capacity(closure.program.len());
+        for op in &closure.program {
+            match *op {
+                KbestContainerInstruction::Selected(coordinate) => {
+                    let slot = closure.slots.get(coordinate)?;
+                    let selection = (*j.get(coordinate)? as usize).checked_sub(1)?;
+                    let entry = state.entry(slot.node, kind, selection)?;
+                    let KbestVal::Realized { w, .. } = &entry.val else {
+                        return None;
+                    };
+                    let rank = if election {
+                        Some(KbestContainerRank::selected(entry.kt.clone()?))
+                    } else {
+                        None
+                    };
+                    values.push((w.clone(), rank));
+                },
+                KbestContainerInstruction::Leaf(node) => {
+                    let rank = if election {
+                        let mut rank = KbestContainerRank::empty();
+                        if let Some(crate::sppf::SppfNode::OptAbsent { pos }) = self.sppf.node(node)
+                        {
+                            rank.decisions.push_back((
+                                self.cgll_pk(*pos),
+                                owner_depth,
+                                self.engine.fork_emission_ordinal(1, 0, 0),
+                            ));
+                        }
+                        Some(rank)
+                    } else {
+                        None
+                    };
+                    values.push((W::one_ref(), rank));
+                },
+                KbestContainerInstruction::Assemble { node, arity } => {
+                    let start = values.len().checked_sub(arity)?;
+                    let (packing_weight, packing) = match self.sppf.node(node) {
+                        Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) => {
+                            (Some(weight.clone()), Some((*rule_idx, children.as_slice())))
+                        },
+                        Some(crate::sppf::SppfNode::CollectionId { .. }) => (None, None),
+                        _ => return None,
+                    };
+                    let mut rank = election.then(KbestContainerRank::empty);
+                    if let Some(rank) = rank.as_mut() {
+                        rank.factor = packing_weight.clone();
+                        if let Some((Self::OPTIONAL_PRESENT_RULE_IDX, children)) = packing {
+                            // TAKE precedes inner events, including ties at
+                            // the same position and owning semantic depth.
+                            let pos = children
+                                .first()
+                                .and_then(|&id| self.sppf.span_lo(id))
+                                .unwrap_or(0);
+                            rank.decisions.push_back((
+                                self.cgll_pk(pos),
+                                owner_depth,
+                                self.engine.fork_emission_ordinal(0, 0, 0),
+                            ));
+                        }
+                    }
+                    let mut weight = W::one_ref();
+                    for (child_weight, child_rank) in values.drain(start..) {
+                        weight = weight.times_ref(&child_weight);
+                        if let Some(rank) = rank.as_mut() {
+                            rank.absorb(child_rank?);
+                        }
+                    }
+                    if let (Some(rank), Some((rule_idx, children))) = (rank.as_mut(), packing) {
+                        if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
+                            // TAKE was emitted before child absorption above.
+                            if !Self::CGLL_KA_HOP_PLACEMENT_ONLY {
+                                rank.lateness += 1;
+                            }
+                        } else {
+                            // This is an actual Packing, so a factor exists.
+                            // The decision helper may amend its weight for a
+                            // goal wrapper; no synthetic Collection factor is
+                            // passed through that protocol.
+                            let mut packing_rank = CgllKTuple {
+                                weight: rank.factor.take()?,
+                                lateness: rank.lateness,
+                                decisions: std::mem::take(&mut rank.decisions),
+                            };
+                            self.cgll_kbest_decisions_block(
+                                rule_idx,
+                                children,
+                                &mut packing_rank,
+                                owner_depth,
+                                false,
+                                false,
+                                (self.sppf.span_lo(node), self.sppf.span_hi(node)),
+                                None,
+                                true,
+                                false,
+                            );
+                            *rank = KbestContainerRank::selected(packing_rank);
+                        }
+                    }
+                    // Match selected realization exactly: CollectionId has
+                    // no own factor; a real Packing retains its tail factor.
+                    let weight = match packing_weight {
+                        Some(packing_weight) => weight.times_ref(&packing_weight),
+                        None => weight,
+                    };
+                    values.push((weight, rank));
+                },
+            }
+        }
+        if values.len() != 1 {
+            return None;
+        }
+        values.pop()
+    }
+
+    /// Exact OR-slot layout of one packing candidate. Direct
+    /// Symbol/Intermediate children each take one slot; every Symbol below a
+    /// Packing or CollectionId child is lifted into the same lazy Cartesian
+    /// product. This function is the sole layout provider for seeding,
+    /// ranking, walking, and successor generation.
+    fn cgll_kbest_slot_layout(&self, children: &[crate::sppf::SppfId]) -> Option<Vec<KbestSlot>> {
         let mut slots: Vec<KbestSlot> = Vec::with_capacity(children.len());
-        // FirstRaw raw-order note (S3 fix): today's raw family order is
-        // packings-outer, then FLATS (Intermediate expansions), then combos
-        // rightmost-fastest — REGARDLESS of where the Intermediate children
-        // sit (real forests carry trailing weight-carrier Intermediates
-        // after combo children; the former child-order-lex premise assert
-        // fired on rholang's optional/collection shapes in the S3
-        // suite-under-ON window). The raw comparator therefore orders by
-        // the flats-major PERMUTATION of `j` built in
-        // `cgll_kbest_candidate_key`'s FirstRaw arm — slot ORDER here stays
-        // child order (the walk/fold contract); only the raw COMPARATOR
-        // permutes. Plain leaves are singleton families (they vary
-        // nothing) and take no slot.
-        for (ci, &c) in children.iter().enumerate() {
+        let mut work = children.len();
+        for &c in children {
             match self.sppf.node(c) {
                 Some(crate::sppf::SppfNode::Intermediate { .. }) => {
                     slots.push(KbestSlot {
                         node: c,
-                        child_idx: ci as u32,
-                        inner: None,
+                        role: KbestSlotRole::DirectIntermediate,
                     });
                 },
                 Some(crate::sppf::SppfNode::Symbol { .. }) => {
                     slots.push(KbestSlot {
                         node: c,
-                        child_idx: ci as u32,
-                        inner: None,
+                        role: KbestSlotRole::DirectSymbol,
                     });
                 },
-                Some(crate::sppf::SppfNode::Packing { rule_idx: pr, children: pch, .. })
-                    if *pr == Self::OPTIONAL_PRESENT_RULE_IDX =>
-                {
-                    for (ii, &ic) in pch.iter().enumerate() {
-                        match self.sppf.node(ic) {
-                            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                                return None;
-                            },
-                            Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                                if kind != KbestOrderKey::Election {
-                                    slots.push(KbestSlot {
-                                        node: ic,
-                                        child_idx: ci as u32,
-                                        inner: Some(ii as u32),
-                                    });
-                                }
-                            },
-                            _ => {},
-                        }
-                    }
+                Some(crate::sppf::SppfNode::Packing { .. })
+                | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
+                    let closure = self.cgll_kbest_container_closure(c)?;
+                    work = work.saturating_add(closure.program.len());
+                    slots.extend(closure.slots);
                 },
                 _ => {},
+            }
+            if work > KBEST_OCCURRENCE_WORK_LIMIT {
+                return self.cgll_reconstruction_failed(
+                    c,
+                    crate::wpda_runtime::ReconstructionFailure::TraversalLimit {
+                        limit: KBEST_OCCURRENCE_WORK_LIMIT,
+                    },
+                );
             }
         }
         Some(slots)
     }
 
-    /// S1 k-best (plan §2.4): the Weight-mode `(combo, flat_children)` fold
-    /// over one packing's direct children under the candidate's `j`.
-    /// `combo` = ⊗ over element contributions in flat order (Symbol entry
-    /// ⇒ its realized `w`; Intermediate ⇒ its `combo_part`;
-    /// `OPTIONAL_PRESENT` leaf ⇒ its inner combo weight; TriggerTerminal ⇒
-    /// nothing, it is filtered before the action's cartesian; other leaves
-    /// ⇒ `one()`, skipped bit-exactly via the `is_one` short-circuit).
+    /// Constant-size projection of the exact selected flat. Only a direct
+    /// CollectionId or a selected Intermediate fragment contributes presence;
+    /// Symbol and Packing contents remain opaque, as in candidate_walk.flat.
+    /// Validate every coordinate even after presence becomes true.
+    /// FV: ConstructorElectionEvidence::selected_presence_matches_flat.
+    fn cgll_kbest_flat_has_collection(
+        &self,
+        state: &KbestState<W>,
+        kind: KbestOrderKey,
+        packing: crate::sppf::SppfId,
+        children: &[crate::sppf::SppfId],
+        slots: &[KbestSlot],
+        j: &[u32],
+    ) -> Option<bool> {
+        if slots.len() != j.len() {
+            return self.cgll_reconstruction_failed(
+                packing,
+                ReconstructionFailure::InvalidPlanArity { expected: slots.len(), actual: j.len() },
+            );
+        }
+        let mut present = false;
+        for &child in children {
+            match self.sppf.node(child) {
+                Some(crate::sppf::SppfNode::CollectionId { .. }) => present = true,
+                Some(_) => {},
+                None => {
+                    return self
+                        .cgll_reconstruction_failed(child, ReconstructionFailure::MissingNode)
+                },
+            }
+        }
+        for (coordinate, (slot, selected)) in slots.iter().zip(j).enumerate() {
+            let Some(entry) = (*selected as usize)
+                .checked_sub(1)
+                .and_then(|index| state.entry(slot.node, kind, index))
+            else {
+                return self.cgll_reconstruction_failed(
+                    slot.node,
+                    ReconstructionFailure::CoordinateUnavailable { coordinate },
+                );
+            };
+            match (slot.role, &entry.val) {
+                (
+                    KbestSlotRole::DirectIntermediate,
+                    KbestVal::Fragment { flat_has_collection, .. },
+                ) => present |= *flat_has_collection,
+                (
+                    KbestSlotRole::DirectSymbol | KbestSlotRole::ContainerSymbol,
+                    KbestVal::Realized { .. },
+                ) => {},
+                _ => {
+                    return self.cgll_reconstruction_failed(
+                        slot.node,
+                        ReconstructionFailure::UnexpectedNodeKind,
+                    )
+                },
+            }
+        }
+        Some(present)
+    }
+
+    /// Weight-mode `(combo, flat_children)` fold over the shared slot layout.
+    /// `combo` is the source-order product of every selected semantic value,
+    /// including values nested below collections and optionals. A direct
+    /// Intermediate contributes its `combo_part`; its structural
+    /// `flat_part` is accumulated separately exactly as before.
     /// `flat_children` = ⊗ of the Intermediate children's `flat_part`s in
     /// child order. The caller composes `pk_w` per node type: Symbol heap
     /// key = `combo ⊗ (pk_w ⊗ flat_children)` (the normative
@@ -13388,52 +13794,46 @@ where
         debug_assert!(kind != KbestOrderKey::Election, "kbest pair fold has no Election consumer");
         let mut combo = W::one_ref();
         let mut flat_children = W::one_ref();
-        let mut cur = 0usize;
-        for &c in children {
-            match self.sppf.node(c) {
+        let slots = self.cgll_kbest_slot_layout(children)?;
+        if slots.len() != j.len() {
+            return None;
+        }
+        let mut coordinate = 0;
+        for &child in children {
+            match self.sppf.node(child) {
                 Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                    let sel = *j.get(cur)? as usize;
-                    cur += 1;
-                    let e = state.entry(c, kind, sel.checked_sub(1)?)?;
-                    let KbestVal::Fragment { pair: Some((cp, fp)) } = &e.val else {
+                    let selected = (*j.get(coordinate)? as usize).checked_sub(1)?;
+                    coordinate += 1;
+                    let entry = state.entry(child, kind, selected)?;
+                    let KbestVal::Fragment { pair: Some((cp, fp)), .. } = &entry.val else {
                         return None;
                     };
                     combo = combo.times_ref(cp);
                     flat_children = flat_children.times_ref(fp);
                 },
                 Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                    let sel = *j.get(cur)? as usize;
-                    cur += 1;
-                    let e = state.entry(c, kind, sel.checked_sub(1)?)?;
-                    let KbestVal::Realized { w, .. } = &e.val else {
+                    let selected = (*j.get(coordinate)? as usize).checked_sub(1)?;
+                    coordinate += 1;
+                    let entry = state.entry(child, kind, selected)?;
+                    let KbestVal::Realized { w, .. } = &entry.val else {
                         return None;
                     };
                     combo = combo.times_ref(w);
                 },
-                Some(crate::sppf::SppfNode::Packing { rule_idx: pr, children: pch, .. })
-                    if *pr == Self::OPTIONAL_PRESENT_RULE_IDX =>
-                {
-                    // ONE combo element: the leaf's memo weight = the
-                    // OPTIONAL_PRESENT arm's inner combo fold (inner leaf
-                    // weights are one() — skip is bit-exact).
-                    let mut leaf_w = W::one_ref();
-                    for &ic in pch {
-                        if matches!(self.sppf.node(ic), Some(crate::sppf::SppfNode::Symbol { .. }))
-                        {
-                            let sel = *j.get(cur)? as usize;
-                            cur += 1;
-                            let e = state.entry(ic, kind, sel.checked_sub(1)?)?;
-                            let KbestVal::Realized { w, .. } = &e.val else {
-                                return None;
-                            };
-                            leaf_w = leaf_w.times_ref(w);
-                        }
-                        // Intermediate inners: layout-dead, never seeded.
-                    }
-                    combo = combo.times_ref(&leaf_w);
+                Some(crate::sppf::SppfNode::Packing { .. })
+                | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
+                    let closure = self.cgll_kbest_container_closure(child)?;
+                    let end = coordinate.checked_add(closure.slots.len())?;
+                    let (weight, _) = self.cgll_kbest_container_summary(
+                        state,
+                        kind,
+                        &closure,
+                        j.get(coordinate..end)?,
+                        0,
+                    )?;
+                    coordinate = end;
+                    combo = combo.times_ref(&weight);
                 },
-                // TriggerTerminal: filtered by realize_packing_call — no
-                // combo contribution. Other leaves: memo weight one().
                 _ => {},
             }
         }
@@ -13443,17 +13843,15 @@ where
     /// S1 k-best (plan §2.2/§2.4): the pre-evaluated order key of
     /// `cand(node, pk, j)` under `kind` — computable from child entries
     /// without firing the action (keys at PUSH; the realize fires at POP).
-    /// Election reproduces today's per-packing kt computation exactly:
-    /// K-B seed = the packing weight, Children absorb in child order
-    /// (leaves absorb neutral — today's non-sym-inter arm), the shared
-    /// Decisions block (lazy first-flat probes, j-independent per the
-    /// §2.4 pin), then the extractor-side Scan absorb (amendment-A9
-    /// option B; TAKE pushed BEFORE the inner absorb; inner kt = the
-    /// inner's ELECTED entry — "key sees elected/best, bytes take
-    /// first-raw", plan §2.7; on-stack inners absorb neutral — today's
-    /// on_path-fail arm; an entry-less inner absorbs neutral, an
-    /// R-4-class divergence by design since today's DP is
-    /// feasibility-blind). `None` = a required child entry is unavailable.
+    /// Weight includes every selected container's ordered packing factors.
+    /// Election keeps its separate packing-first product and the established
+    /// Children -> owner Decisions -> Scan event phases. Container metrics
+    /// contribute at their source position, but their event words are delayed
+    /// until Scan; TAKE precedes its selected inner events. Both projections
+    /// use the candidate's exact child coordinates, not a raw-first substitute.
+    /// `None` means a required layout or selected entry is unavailable, not
+    /// evidence of exhaustive semantic absence. These local key operations
+    /// do not by themselves establish heap monotonicity or family completeness.
     #[allow(clippy::too_many_arguments)]
     fn cgll_kbest_candidate_key(
         &self,
@@ -13481,7 +13879,7 @@ where
                 else {
                     return None;
                 };
-                let slots = self.cgll_kbest_slot_layout(children, kind)?;
+                let slots = self.cgll_kbest_slot_layout(children)?;
                 debug_assert_eq!(
                     slots.len(),
                     j.len(),
@@ -13489,18 +13887,12 @@ where
                 );
                 let mut perm: Vec<u32> = Vec::with_capacity(j.len());
                 for (s, &jv) in slots.iter().zip(j.iter()) {
-                    if matches!(
-                        self.sppf.node(s.node),
-                        Some(crate::sppf::SppfNode::Intermediate { .. })
-                    ) {
+                    if s.role == KbestSlotRole::DirectIntermediate {
                         perm.push(jv);
                     }
                 }
                 for (s, &jv) in slots.iter().zip(j.iter()) {
-                    if !matches!(
-                        self.sppf.node(s.node),
-                        Some(crate::sppf::SppfNode::Intermediate { .. })
-                    ) {
+                    if s.role != KbestSlotRole::DirectIntermediate {
                         perm.push(jv);
                     }
                 }
@@ -13534,70 +13926,90 @@ where
                 let fnode_span = (self.sppf.span_lo(node), self.sppf.span_hi(node));
                 let mut t = CgllKTuple::neutral();
                 t.weight = weight.clone();
-                // Children absorb (child order; ⊗ order preserved).
-                let mut cur = 0usize;
-                for &c in children {
-                    match self.sppf.node(c) {
+                // Every semantic coordinate, including collection and
+                // optional contents, contributes in source order. Structural
+                // leaves are neutral and therefore need no explicit absorb.
+                let slots = self.cgll_kbest_slot_layout(children)?;
+                if slots.len() != j.len() {
+                    return None;
+                }
+                let mut coordinate = 0;
+                // Event phases remain Children -> owner Decisions -> Scan.
+                // Weights and lateness are absorbed exactly once in source
+                // order; only the structural event word is delayed.
+                // FV: staged_election_keeps_owner_and_scan_order.
+                let mut scan_decisions = im::Vector::new();
+                for &child in children {
+                    match self.sppf.node(child) {
                         Some(crate::sppf::SppfNode::Symbol { .. })
                         | Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                            let sel = *j.get(cur)? as usize;
-                            cur += 1;
-                            let e = state.entry(c, kind, sel.checked_sub(1)?)?;
-                            t.absorb_child(e.kt.clone()?);
+                            let selected = (*j.get(coordinate)? as usize).checked_sub(1)?;
+                            coordinate += 1;
+                            let entry = state.entry(child, kind, selected)?;
+                            t.absorb_child(entry.kt.clone()?);
                         },
-                        _ => t.absorb_child(CgllKTuple::neutral()),
-                    }
-                }
-                self.cgll_kbest_decisions_block(
-                    *rule_idx, children, &mut t, fdepth, at_root, fis_symbol, fnode_span, goal_cat,
-                    true,
-                );
-                // Scan absorb (see fn doc): decision push order preserved.
-                for &c in children {
-                    match self.sppf.node(c) {
+                        Some(crate::sppf::SppfNode::Packing { .. })
+                        | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
+                            let closure = self.cgll_kbest_container_closure(child)?;
+                            let end = coordinate.checked_add(closure.slots.len())?;
+                            let (_, rank) = self.cgll_kbest_container_summary(
+                                state,
+                                kind,
+                                &closure,
+                                j.get(coordinate..end)?,
+                                fdepth,
+                            )?;
+                            coordinate = end;
+                            let mut rank = rank?;
+                            scan_decisions.append(std::mem::take(&mut rank.decisions));
+                            rank.absorb_into(&mut t);
+                        },
                         Some(crate::sppf::SppfNode::OptAbsent { pos }) => {
-                            t.decisions.push_back((
+                            scan_decisions.push_back((
                                 self.cgll_pk(*pos),
                                 fdepth,
                                 self.engine.fork_emission_ordinal(1, 0, 0),
                             ));
                         },
-                        Some(crate::sppf::SppfNode::Packing {
-                            rule_idx: pr,
-                            children: pch,
-                            ..
-                        }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => {
-                            let pos = pch
-                                .first()
-                                .and_then(|&ic| self.sppf.span_lo(ic))
-                                .unwrap_or(0);
-                            t.decisions.push_back((
-                                self.cgll_pk(pos),
-                                fdepth,
-                                self.engine.fork_emission_ordinal(0, 0, 0),
-                            ));
-                            for &ic in pch {
-                                match self.sppf.node(ic) {
-                                    Some(crate::sppf::SppfNode::Symbol { .. })
-                                    | Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                                        let kt = if state.on_stack.contains(&ic) {
-                                            CgllKTuple::neutral()
-                                        } else {
-                                            match state
-                                                .entry(ic, KbestOrderKey::Election, 0)
-                                                .and_then(|e| e.kt.clone())
-                                            {
-                                                Some(k) => k,
-                                                None => CgllKTuple::neutral(),
-                                            }
-                                        };
-                                        t.absorb_child(kt);
-                                    },
-                                    _ => t.absorb_child(CgllKTuple::neutral()),
-                                }
-                            }
-                        },
                         _ => {},
+                    }
+                }
+                self.cgll_kbest_decisions_block(
+                    *rule_idx,
+                    children,
+                    &mut t,
+                    fdepth,
+                    at_root,
+                    fis_symbol,
+                    fnode_span,
+                    goal_cat,
+                    true,
+                    self.cgll_kbest_flat_has_collection(state, kind, pk, children, &slots, j)?,
+                );
+                t.decisions.append(scan_decisions);
+                // Include successor coordinates, not just all-ones seeds:
+                // final action weights alone cannot explain election order.
+                // This observational trace is absent from production builds.
+                #[cfg(feature = "walker-trace")]
+                if std::env::var_os("PRATTAIL_KBEST_CAND_DIAG").is_some() {
+                    eprintln!(
+                        "  [k-key] node={node} span={fnode_span:?} depth={fdepth} \
+                         root={at_root} pk={pk} rule={rule_idx} j={j:?} \
+                         packing_weight={weight:?} key={t:?} ords={:?} children={children:?}",
+                        t.sorted_ordinals(),
+                    );
+                    for (coordinate, (slot, selected)) in slots.iter().zip(j).enumerate() {
+                        if let Some(entry) = state.entry(slot.node, kind, *selected as usize - 1) {
+                            eprintln!(
+                                "    [k-coordinate] owner={node} coordinate={coordinate} \
+                                 child={} span={:?} selection={selected} pk={} j={:?} key={:?}",
+                                slot.node,
+                                (self.sppf.span_lo(slot.node), self.sppf.span_hi(slot.node)),
+                                entry.pk,
+                                entry.j,
+                                entry.kt,
+                            );
+                        }
                     }
                 }
                 Some(KbestCandKey::Election(t))
@@ -13611,15 +14023,11 @@ where
     /// (each Intermediate on the spine contributes its j-SELECTED entry's
     /// packing; `flat_weight` folds the traversed Intermediate packing
     /// weights in the same DFS pre-order; shares the chosen walk's 100k
-    /// guard). Returns the walk plan for
-    /// [`Self::cgll_kbest_realize_candidate`], or `None` = the candidate
-    /// is structurally infeasible (guard trip / unavailable entry — the
-    /// caller counts it as an infeasible pop). Carries the A6.2
-    /// duplicate-occurrence tripwire: the same memo-keyed OR-node at two
-    /// flat positions (possible only for zero-width lo==hi nodes — no
-    /// committed grammar shape) is counted + debug-asserted; release keeps
-    /// the last selection (today's CHOSEN path has the same SppfId-keyed
-    /// collapse).
+    /// guard). Each occurrence owns its selected argument and weight, even
+    /// when several occurrences share one forest node. Returns the plan for
+    /// [`Self::cgll_kbest_realize_candidate`]. A span-refuted candidate returns
+    /// `None`; malformed coordinates and exhausted work bounds additionally
+    /// latch a reconstruction error so the request cannot publish a prefix.
     fn cgll_kbest_candidate_walk(
         &self,
         state: &mut KbestState<W>,
@@ -13631,215 +14039,166 @@ where
     where
         W: StarSemiringRef,
     {
-        let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight, .. }) =
+        use crate::wpda_runtime::ReconstructionFailure;
+        let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
             self.sppf.node(pk)
         else {
-            return None;
+            return self.cgll_reconstruction_failed(pk, ReconstructionFailure::UnexpectedNodeKind);
         };
         let mut plan = KbestWalkPlan {
+            packing: pk,
             rule_idx: *rule_idx,
             pk_weight: weight.clone(),
             flat: Vec::with_capacity(children.len()),
             flat_weight: W::one_ref(),
-            sym_sel: Vec::new(),
-            inner_sym_sel: Vec::new(),
-            leaf_nodes: Vec::new(),
-            containers_postorder: Vec::new(),
-            raw_needed: Vec::new(),
+            program: Vec::new(),
         };
-        let mut seen_elems: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-            rustc_hash::FxHashSet::default();
-        let mut raw_seen: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-            rustc_hash::FxHashSet::default();
-        let mut guard = 0usize;
-        // level = (packing children, j, child_idx, slot_cur).  SPPF storage is
-        // immutable during extraction, so levels borrow its child slices
-        // instead of allocating copies at every visited Intermediate.
+        // Each suspended Intermediate owns its own coordinate vector.
+        // Reusing a family entry never shares the parent's selected operand.
         let mut levels: Vec<(&[crate::sppf::SppfId], Vec<u32>, usize, usize)> =
-            Vec::with_capacity(8);
-        levels.push((children, j.to_vec(), 0, 0));
-        loop {
-            let step = {
-                let Some((lc, _, ci, _)) = levels.last_mut() else {
-                    break;
-                };
-                if *ci >= lc.len() {
-                    None
-                } else {
-                    let c = lc[*ci];
-                    *ci += 1;
-                    Some(c)
+            vec![(children, j.to_vec(), 0, 0)];
+        let mut steps = 0;
+        while let Some((children, coordinates, child_index, coordinate)) = levels.last_mut() {
+            if *child_index == children.len() {
+                if *coordinate != coordinates.len() {
+                    return self.cgll_reconstruction_failed(
+                        pk,
+                        ReconstructionFailure::InvalidPlanArity {
+                            expected: coordinates.len(),
+                            actual: *coordinate,
+                        },
+                    );
                 }
-            };
-            let Some(c) = step else {
                 levels.pop();
                 continue;
-            };
-            guard += 1;
-            if guard > 100_000 {
-                // The chosen walk's guard, shared constant (plan §5.2).
-                return None;
             }
-            // A6.2 tripwire for memo-keyed elements (count BEFORE the
-            // debug_assert so the u5 unit can read the counter post-catch).
-            let mut tripwire = |st: &mut KbestState<W>, id: crate::sppf::SppfId| {
-                if !seen_elems.insert(id) {
-                    if let Some(n) = st.nodes.get_mut(&node) {
-                        n.dup_flat_occurrence = n.dup_flat_occurrence.saturating_add(1);
-                    }
-                    st.stats.dup_flat_occurrence += 1;
-                    debug_assert!(
-                        false,
-                        "kbest: duplicate OR-node occurrence in one flat (SppfId {id})"
-                    );
-                }
-            };
-            match self.sppf.node(c) {
-                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                    let (ipk, ij) = {
-                        let (_, lj, _, cur) = levels.last_mut().expect("kbest walk level present");
-                        let sel = *lj.get(*cur)? as usize;
-                        *cur += 1;
-                        let e = state.entry(c, kind, sel.checked_sub(1)?)?;
-                        (e.pk, e.j.clone())
-                    };
-                    let Some(crate::sppf::SppfNode::Packing { children: ich, weight: iw, .. }) =
-                        self.sppf.node(ipk)
+            let child = children[*child_index];
+            *child_index += 1;
+            steps += 1;
+            if steps > KBEST_OCCURRENCE_WORK_LIMIT {
+                return self.cgll_reconstruction_failed(
+                    pk,
+                    ReconstructionFailure::TraversalLimit { limit: KBEST_OCCURRENCE_WORK_LIMIT },
+                );
+            }
+            match self.sppf.node(child) {
+                Some(crate::sppf::SppfNode::Intermediate { .. })
+                | Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                    let selected = coordinates
+                        .get(*coordinate)
+                        .and_then(|selection| (*selection as usize).checked_sub(1));
+                    let Some(entry) = selected.and_then(|index| state.entry(child, kind, index))
                     else {
-                        return None;
+                        return self.cgll_reconstruction_failed(
+                            child,
+                            ReconstructionFailure::CoordinateUnavailable {
+                                coordinate: *coordinate,
+                            },
+                        );
                     };
-                    plan.flat_weight = plan.flat_weight.times_ref(iw);
-                    levels.push((ich, ij, 0, 0));
+                    *coordinate += 1;
+                    match &entry.val {
+                        KbestVal::Fragment { .. } => {
+                            let Some(crate::sppf::SppfNode::Packing {
+                                children: inner,
+                                weight,
+                                ..
+                            }) = self.sppf.node(entry.pk)
+                            else {
+                                return self.cgll_reconstruction_failed(
+                                    entry.pk,
+                                    ReconstructionFailure::UnexpectedNodeKind,
+                                );
+                            };
+                            // Structural factors retain the established DFS
+                            // pre-order, outside the semantic-child product.
+                            plan.flat_weight = plan.flat_weight.times_ref(weight);
+                            levels.push((inner, entry.j.clone(), 0, 0));
+                        },
+                        KbestVal::Realized { arg, w } => {
+                            plan.flat.push(child);
+                            plan.program.push(KbestRealizationInstruction::Selected {
+                                arg: arg.clone(),
+                                weight: w.clone(),
+                            });
+                        },
+                    }
                 },
-                Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                    tripwire(state, c);
-                    let (arg, w) = {
-                        let (_, lj, _, cur) = levels.last_mut().expect("kbest walk level present");
-                        let sel = *lj.get(*cur)? as usize;
-                        *cur += 1;
-                        let e = state.entry(c, kind, sel.checked_sub(1)?)?;
-                        let KbestVal::Realized { arg, w } = &e.val else {
-                            return None;
-                        };
-                        (arg.clone(), w.clone())
-                    };
-                    plan.flat.push(c);
-                    plan.sym_sel.push((c, arg, w));
-                },
-                // S3 (the class3opt receipt): container flat elements —
-                // OPTIONAL_PRESENT packing leaves, defensive non-OPT
-                // packing leaves, and CollectionId markers — carry their
-                // FULL dependency closure (Predep's recursive P3.c
-                // contract: collections nested inside optional groups
-                // realize too). Level-1 OPT inner Symbols keep the A10
-                // per-mode discipline (j-slots under Weight/FirstRaw,
-                // FirstRaw under Election); every DEEPER Symbol dependency
-                // takes FirstRaw in ALL kinds (the plan-§2.7 items rule —
-                // today's raw-first bytes; a direct nested-optional Symbol
-                // beyond level 1 therefore keeps raw-first bytes in
-                // enumeration mode too — no committed grammar carries that
-                // shape, and the S3 ordered/multiset A/B would surface it).
                 Some(crate::sppf::SppfNode::Packing { .. })
                 | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
-                    tripwire(state, c);
-                    plan.flat.push(c);
-                    let is_opt_top = matches!(
-                        self.sppf.node(c),
-                        Some(crate::sppf::SppfNode::Packing { rule_idx: pr, .. })
-                            if *pr == Self::OPTIONAL_PRESENT_RULE_IDX
-                    );
-                    // (node, level1) — level1 = a DIRECT child of a
-                    // top-level OPTIONAL_PRESENT leaf (slot-selected under
-                    // Weight/FirstRaw).
-                    let mut dep_stack: Vec<(crate::sppf::SppfId, bool)> = Vec::with_capacity(8);
-                    match self.sppf.node(c) {
-                        Some(crate::sppf::SppfNode::Packing { children: pch, .. }) => {
-                            for &ic in pch.iter().rev() {
-                                dep_stack.push((ic, is_opt_top));
-                            }
-                        },
-                        Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
-                            for &it in items.iter().rev() {
-                                dep_stack.push((it, false));
-                            }
-                        },
-                        _ => {},
+                    let closure = self.cgll_kbest_container_closure(child)?;
+                    let Some(end) = coordinate.checked_add(closure.slots.len()) else {
+                        return self.cgll_reconstruction_failed(
+                            child,
+                            ReconstructionFailure::CoordinateUnavailable {
+                                coordinate: *coordinate,
+                            },
+                        );
+                    };
+                    let Some(selected_coordinates) = coordinates.get(*coordinate..end) else {
+                        return self.cgll_reconstruction_failed(
+                            child,
+                            ReconstructionFailure::CoordinateUnavailable {
+                                coordinate: *coordinate,
+                            },
+                        );
+                    };
+                    if plan.program.len().saturating_add(closure.program.len())
+                        > KBEST_OCCURRENCE_WORK_LIMIT
+                    {
+                        return self.cgll_reconstruction_failed(
+                            child,
+                            ReconstructionFailure::TraversalLimit {
+                                limit: KBEST_OCCURRENCE_WORK_LIMIT,
+                            },
+                        );
                     }
-                    let mut containers_pre: Vec<crate::sppf::SppfId> = Vec::new();
-                    while let Some((d, lvl1)) = dep_stack.pop() {
-                        guard += 1;
-                        if guard > 100_000 {
-                            return None;
-                        }
-                        match self.sppf.node(d) {
-                            Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                                if lvl1 && kind != KbestOrderKey::Election {
-                                    let (arg, w) = {
-                                        let (_, lj, _, cur) =
-                                            levels.last_mut().expect("kbest walk level present");
-                                        let sel = *lj.get(*cur)? as usize;
-                                        *cur += 1;
-                                        let e = state.entry(d, kind, sel.checked_sub(1)?)?;
-                                        let KbestVal::Realized { arg, w } = &e.val else {
-                                            return None;
-                                        };
-                                        (arg.clone(), w.clone())
-                                    };
-                                    plan.inner_sym_sel.push((d, arg, w));
-                                } else if raw_seen.insert(d) {
-                                    plan.raw_needed.push(d);
+                    for instruction in closure.program {
+                        let op = match instruction {
+                            KbestContainerInstruction::Selected(index) => {
+                                let slot = &closure.slots[index];
+                                let selected =
+                                    (selected_coordinates[index] as usize).checked_sub(1);
+                                let Some(entry) =
+                                    selected.and_then(|index| state.entry(slot.node, kind, index))
+                                else {
+                                    return self.cgll_reconstruction_failed(
+                                        slot.node,
+                                        ReconstructionFailure::CoordinateUnavailable {
+                                            coordinate: index,
+                                        },
+                                    );
+                                };
+                                let KbestVal::Realized { arg, w } = &entry.val else {
+                                    return self.cgll_reconstruction_failed(
+                                        slot.node,
+                                        ReconstructionFailure::UnexpectedNodeKind,
+                                    );
+                                };
+                                KbestRealizationInstruction::Selected {
+                                    arg: arg.clone(),
+                                    weight: w.clone(),
                                 }
                             },
-                            Some(crate::sppf::SppfNode::Packing { children: pch2, .. }) => {
-                                // Nested container: children first (pre-order
-                                // here, reversed below into children-first).
-                                containers_pre.push(d);
-                                for &ic in pch2.iter().rev() {
-                                    dep_stack.push((ic, false));
-                                }
+                            KbestContainerInstruction::Leaf(id) => {
+                                KbestRealizationInstruction::Leaf(id)
                             },
-                            Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
-                                plan.leaf_nodes.push(d);
-                                for &it in items.iter().rev() {
-                                    dep_stack.push((it, false));
-                                }
+                            KbestContainerInstruction::Assemble { node, arity } => {
+                                KbestRealizationInstruction::Assemble { node, arity }
                             },
-                            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                                // Value-less on every today-path (Predep's `_`
-                                // arm never memoizes an Intermediate): no memo
-                                // ⇒ the owning container's realize refutes ⇒
-                                // eval-observed infeasibility, today-parity.
-                                // The level-1 case is layout-dead (the packing
-                                // is never seeded).
-                                debug_assert!(
-                                    !lvl1,
-                                    "kbest: layout-dead OPTIONAL_PRESENT Intermediate inner \
-                                     reached a walk"
-                                );
-                            },
-                            // TriggerTerminal deps carry no memo (filtered by
-                            // realize_packing_call).
-                            Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => {},
-                            _ => plan.leaf_nodes.push(d),
-                        }
+                        };
+                        plan.program.push(op);
                     }
-                    // Children-first realize order for nested containers.
-                    containers_pre.reverse();
-                    plan.containers_postorder.extend(containers_pre);
-                    // The top-level element realizes LAST of its closure.
-                    if matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::Packing { .. })) {
-                        plan.containers_postorder.push(c);
-                    } else {
-                        plan.leaf_nodes.push(c);
-                    }
+                    *coordinate = end;
+                    plan.flat.push(child);
                 },
-                // TriggerTerminal: a flat element `realize_packing_call`
-                // filters before the action's cartesian — no memo needed.
-                Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => plan.flat.push(c),
-                // Terminal/Epsilon/OptAbsent/Predicate/BinderScope.
-                _ => {
-                    plan.flat.push(c);
-                    plan.leaf_nodes.push(c);
+                Some(_) => {
+                    plan.flat.push(child);
+                    plan.program.push(KbestRealizationInstruction::Leaf(child));
+                },
+                None => {
+                    return self
+                        .cgll_reconstruction_failed(child, ReconstructionFailure::MissingNode)
                 },
             }
         }
@@ -13876,74 +14235,184 @@ where
         Some(plan)
     }
 
-    /// S1 k-best (plan §2.3/§5.2): fire ONE candidate — build the
-    /// per-candidate singleton memo from the walk plan (Symbol elements =
-    /// the candidate's selected entries; leaves via `realize_node_leave`;
-    /// collection items and Election-mode optional inners = their FirstRaw
-    /// entries; Weight/FirstRaw optional inners = the candidate's
-    /// j-selected entries), then run the EXISTING
-    /// `realize_packing_call(rule, flat, pk_w ⊗ flat_w, memo, Some(1))`
-    /// action tail — identical term, identical
-    /// `result_w = combo_w ⊗ (pk_w ⊗ flat_w)`. `None` = the candidate is
-    /// INFEASIBLE, observed exactly as today observes it (no action /
-    /// arity refute / F-2 collection refute / action elision — all inside
-    /// the shared call; a missing item or inner FirstRaw entry surfaces
-    /// through the same refutes).
-    fn cgll_kbest_realize_candidate(
-        &self,
-        state: &KbestState<W>,
-        plan: &KbestWalkPlan<W>,
-    ) -> Option<(ActionArg, W)>
+    /// Fire one selected occurrence program. Only explicit trigger leaves
+    /// omit action arguments. Collection operands are closed values, so no
+    /// forest-ID memo or parser accumulator ID can change a selected reading.
+    /// A trusted partial action may reject this candidate; a protocol/resource
+    /// failure is latched separately and forbids publishing the request.
+    fn cgll_kbest_realize_candidate(&self, plan: &KbestWalkPlan<W>) -> Option<(ActionArg, W)>
     where
         W: StarSemiringRef,
     {
-        let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
-            std::collections::HashMap::new();
-        let cap = plan.sym_sel.len()
-            + plan.inner_sym_sel.len()
-            + plan.raw_needed.len()
-            + plan.leaf_nodes.len()
-            + plan.containers_postorder.len();
-        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
-            std::collections::HashMap::with_capacity(cap);
-        for (sid, arg, w) in &plan.sym_sel {
-            memo.insert(*sid, vec![(arg.clone(), w.clone())]);
-        }
-        for (sid, arg, w) in &plan.inner_sym_sel {
-            memo.insert(*sid, vec![(arg.clone(), w.clone())]);
-        }
-        // FirstRaw singletons (items anywhere + Election level-1 inners +
-        // deeper Symbol deps — plan §2.7's raw-first bytes). A missing
-        // entry (family empty after exhaustion) leaves the memo absent:
-        // the shared call's missing-memo/F-2 arms then refute the combo
-        // exactly as today.
-        for &n in &plan.raw_needed {
-            if let Some(e) = state.entry(n, KbestOrderKey::FirstRaw, 0) {
-                if let KbestVal::Realized { arg, w } = &e.val {
-                    memo.insert(n, vec![(arg.clone(), w.clone())]);
-                }
+        use crate::wpda_runtime::{ReconstructionFailure, SelectedCollection};
+        let mut values: Vec<(Option<ActionArg>, W)> = Vec::with_capacity(plan.program.len());
+        let empty_memo = std::collections::HashMap::new();
+        let empty_colors = std::collections::HashMap::new();
+        for instruction in &plan.program {
+            if self.realization_failed() {
+                return None;
+            }
+            match instruction {
+                KbestRealizationInstruction::Selected { arg, weight } => {
+                    values.push((Some(arg.clone()), weight.clone()));
+                },
+                KbestRealizationInstruction::Leaf(node) => {
+                    // The absent map-value marker is a TriggerTerminal with
+                    // semantic meaning; test it before ordinary omission.
+                    if self.cgll_pure_is_unset_marker(*node) {
+                        values.push((Some(ActionArg::UnsetCollectionValue), W::one_ref()));
+                        continue;
+                    }
+                    match self.sppf.node(*node) {
+                        Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => {
+                            values.push((None, W::one_ref()));
+                        },
+                        Some(crate::sppf::SppfNode::Terminal { .. })
+                        | Some(crate::sppf::SppfNode::Epsilon { .. })
+                        | Some(crate::sppf::SppfNode::OptAbsent { .. })
+                        | Some(crate::sppf::SppfNode::Predicate { .. })
+                        | Some(crate::sppf::SppfNode::GuestBody { .. })
+                        | Some(crate::sppf::SppfNode::BinderScope { .. }) => {
+                            let mut leaf =
+                                self.realize_node_leave(*node, &empty_memo, &empty_colors, None);
+                            if leaf.len() != 1 {
+                                return self.cgll_reconstruction_failed(
+                                    *node,
+                                    ReconstructionFailure::MissingLeafValue,
+                                );
+                            }
+                            let (arg, weight) = leaf.pop().expect("checked single leaf");
+                            values.push((Some(arg), weight));
+                        },
+                        Some(_) => {
+                            return self.cgll_reconstruction_failed(
+                                *node,
+                                ReconstructionFailure::UnexpectedNodeKind,
+                            )
+                        },
+                        None => {
+                            return self.cgll_reconstruction_failed(
+                                *node,
+                                ReconstructionFailure::MissingNode,
+                            )
+                        },
+                    }
+                },
+                KbestRealizationInstruction::Assemble { node, arity } => {
+                    let Some(start) = values.len().checked_sub(*arity) else {
+                        return self.cgll_reconstruction_failed(
+                            *node,
+                            ReconstructionFailure::InvalidPlanArity {
+                                expected: *arity,
+                                actual: values.len(),
+                            },
+                        );
+                    };
+                    let collection = matches!(
+                        self.sppf.node(*node),
+                        Some(crate::sppf::SppfNode::CollectionId { .. })
+                    );
+                    let mut args = Vec::with_capacity(*arity);
+                    let mut weight = W::one_ref();
+                    for (arg, child_weight) in values.drain(start..) {
+                        weight = weight.times_ref(&child_weight);
+                        match arg {
+                            Some(arg) => args.push(arg),
+                            // A collection item must denote a term or unset
+                            // value; an omitted trigger refutes this candidate.
+                            None if collection => return None,
+                            None => {},
+                        }
+                    }
+                    let (arg, weight) = match self.sppf.node(*node) {
+                        Some(crate::sppf::SppfNode::CollectionId { .. }) => {
+                            // Actual non-Term items are candidate-local F-2
+                            // refutations, not evidence of a corrupt protocol.
+                            let selected = match SelectedCollection::new(args) {
+                                Ok(selected) => selected,
+                                Err(_) => return None,
+                            };
+                            (ActionArg::SelectedCollection(selected), weight)
+                        },
+                        Some(crate::sppf::SppfNode::Packing {
+                            rule_idx,
+                            weight: local_weight,
+                            ..
+                        }) => self.cgll_apply_selected_action(
+                            *node,
+                            *rule_idx,
+                            args,
+                            weight.times_ref(local_weight),
+                        )?,
+                        _ => {
+                            return self.cgll_reconstruction_failed(
+                                *node,
+                                ReconstructionFailure::UnexpectedNodeKind,
+                            )
+                        },
+                    };
+                    values.push((Some(arg), weight));
+                },
             }
         }
-        for &c in &plan.leaf_nodes {
-            let v = self.realize_node_leave(c, &memo, &empty_colors, None);
-            memo.insert(c, v);
+        if values.len() != plan.flat.len() {
+            return self.cgll_reconstruction_failed(
+                plan.packing,
+                ReconstructionFailure::InvalidPlanArity {
+                    expected: plan.flat.len(),
+                    actual: values.len(),
+                },
+            );
         }
-        // Containers realize CHILDREN-FIRST (the walk's post-order): each
-        // `realize_node_leave` Packing arm consumes its children's memos
-        // built above/before it — Predep's bottom-up P3.c parity.
-        for &c in &plan.containers_postorder {
-            let v = self.realize_node_leave(c, &memo, &empty_colors, None);
-            memo.insert(c, v);
+        let mut args = Vec::with_capacity(values.len());
+        let mut combo = W::one_ref();
+        for (arg, weight) in values {
+            combo = combo.times_ref(&weight);
+            if let Some(arg) = arg {
+                args.push(arg);
+            }
         }
-        self.realize_packing_call(
+        self.cgll_apply_selected_action(
+            plan.packing,
             plan.rule_idx,
-            &plan.flat,
-            plan.pk_weight.times_ref(&plan.flat_weight),
-            &memo,
-            Some(1),
+            args,
+            combo.times_ref(&plan.pk_weight.times_ref(&plan.flat_weight)),
         )
-        .into_iter()
-        .next()
+    }
+
+    fn cgll_apply_selected_action(
+        &self,
+        node: crate::sppf::SppfId,
+        rule_idx: u32,
+        args: Vec<ActionArg>,
+        weight: W,
+    ) -> Option<(ActionArg, W)> {
+        if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
+            return Some((ActionArg::Optional(Some(args)), weight));
+        }
+        let Some(entry) = self
+            .engine
+            .action_for((rule_idx >> 16) as u16, (rule_idx & 0xffff) as u16)
+        else {
+            return self.cgll_reconstruction_failed(
+                node,
+                crate::wpda_runtime::ReconstructionFailure::MissingAction { rule_idx },
+            );
+        };
+        // A forest candidate outside the declared arity is a refutable
+        // derivation. Once the invocation starts, actual protocol failures
+        // must never be mistaken for a partial constructor's rejection.
+        if usize::from(entry.arity) != args.len() {
+            return None;
+        }
+        match SemanticBuilder::invoke_selected_action(*entry, args) {
+            Ok(Some(arg)) => Some((arg, weight)),
+            Ok(None) => None,
+            Err(cause) => {
+                self.record_realization_error(RealizationError::Action { rule_idx, cause });
+                None
+            },
+        }
     }
 
     /// S1 k-best: fold one realized entry into a main-mode list — the
@@ -13962,7 +14431,7 @@ where
         seen: &mut SemanticDedupBuckets,
         entry: KbestEntry<W>,
     ) -> bool {
-        if self.semantic_key_failed() {
+        if self.realization_failed() {
             return false;
         }
         if let KbestVal::Realized { arg: ActionArg::Term { value, .. }, .. } = &entry.val {
@@ -13986,7 +14455,7 @@ where
                         {
                             if let Some(key) = self.persistent_semantic_key(prior) {
                                 seen.push(SemanticDedupKey::Persistent(key), first_idx);
-                            } else if self.semantic_key_failed() {
+                            } else if self.realization_failed() {
                                 return false;
                             } else if let Some(bucket) = self.semantic_fingerprint_digest(prior) {
                                 seen.push(SemanticDedupKey::LegacyDigest(bucket), first_idx);
@@ -14018,7 +14487,7 @@ where
                 list.push(entry);
                 return true;
             }
-            if self.semantic_key_failed() {
+            if self.realization_failed() {
                 return false;
             }
             if let Some(bucket) = self.semantic_fingerprint_digest(value) {
@@ -14140,7 +14609,7 @@ where
             stage: KbestFrameStage::Entry,
         });
         'drive: while !frames.is_empty() {
-            if self.semantic_key_failed() {
+            if self.realization_failed() {
                 return KbestDemandOutcome::NoMore;
             }
             let fi = frames.len() - 1;
@@ -14176,7 +14645,6 @@ where
                             raw: None,
                             truncated: false,
                             infeasible_pops: 0,
-                            dup_flat_occurrence: 0,
                         });
                         let sub = n.sub_mut(kind);
                         (sub.list.len(), sub.seeded)
@@ -14204,121 +14672,43 @@ where
                     } else {
                         KbestFrameStage::Seed {
                             pk_idx: 0,
-                            scan_pass: false,
-                            child_idx: 0,
-                            inner_idx: 0,
+                            slot_idx: 0,
+                            slots: Vec::new(),
                         }
                     };
                 },
-                KbestFrameStage::Seed {
-                    mut pk_idx,
-                    mut scan_pass,
-                    mut child_idx,
-                    mut inner_idx,
-                } => {
+                KbestFrameStage::Seed { mut pk_idx, mut slot_idx, mut slots } => {
                     let child_depth = fdepths.get(&node).copied().unwrap_or(assign_depth) + 1;
                     loop {
+                        if slot_idx < slots.len() {
+                            let slot_node = slots[slot_idx].node;
+                            slot_idx += 1;
+                            frames[fi].stage = KbestFrameStage::Seed { pk_idx, slot_idx, slots };
+                            frames.push(KbestFrame {
+                                node: slot_node,
+                                kind,
+                                target_len: 1,
+                                at_root: false,
+                                assign_depth: child_depth,
+                                on_stack_inserted: false,
+                                stage: KbestFrameStage::Entry,
+                            });
+                            continue 'drive;
+                        }
                         let pk = match self.sppf.packings_of(node).get(pk_idx) {
                             Some(&p) => p,
                             None => break,
                         };
+                        pk_idx += 1;
                         let children: &[crate::sppf::SppfId] = match self.sppf.node(pk) {
                             Some(crate::sppf::SppfNode::Packing { children, .. }) => children,
-                            _ => {
-                                pk_idx += 1;
-                                scan_pass = false;
-                                child_idx = 0;
-                                inner_idx = 0;
-                                continue;
-                            },
+                            _ => continue,
                         };
-                        if !scan_pass {
-                            if child_idx < children.len() {
-                                let c = children[child_idx];
-                                child_idx += 1;
-                                if matches!(
-                                    self.sppf.node(c),
-                                    Some(crate::sppf::SppfNode::Symbol { .. })
-                                        | Some(crate::sppf::SppfNode::Intermediate { .. })
-                                ) {
-                                    frames[fi].stage = KbestFrameStage::Seed {
-                                        pk_idx,
-                                        scan_pass,
-                                        child_idx,
-                                        inner_idx,
-                                    };
-                                    frames.push(KbestFrame {
-                                        node: c,
-                                        kind,
-                                        target_len: 1,
-                                        at_root: false,
-                                        assign_depth: child_depth,
-                                        on_stack_inserted: false,
-                                        stage: KbestFrameStage::Entry,
-                                    });
-                                    continue 'drive;
-                                }
-                                continue;
-                            }
-                            scan_pass = true;
-                            child_idx = 0;
-                            inner_idx = 0;
-                            continue;
-                        }
-                        if child_idx < children.len() {
-                            let c = children[child_idx];
-                            let inners: Option<&[crate::sppf::SppfId]> = match self.sppf.node(c) {
-                                Some(crate::sppf::SppfNode::Packing {
-                                    rule_idx: pr,
-                                    children: pch,
-                                    ..
-                                }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => Some(pch),
-                                _ => None,
-                            };
-                            match inners {
-                                None => {
-                                    child_idx += 1;
-                                    inner_idx = 0;
-                                    continue;
-                                },
-                                Some(pch) => {
-                                    if inner_idx < pch.len() {
-                                        let ic = pch[inner_idx];
-                                        inner_idx += 1;
-                                        if matches!(
-                                            self.sppf.node(ic),
-                                            Some(crate::sppf::SppfNode::Symbol { .. })
-                                                | Some(crate::sppf::SppfNode::Intermediate { .. })
-                                        ) {
-                                            frames[fi].stage = KbestFrameStage::Seed {
-                                                pk_idx,
-                                                scan_pass,
-                                                child_idx,
-                                                inner_idx,
-                                            };
-                                            frames.push(KbestFrame {
-                                                node: ic,
-                                                kind,
-                                                target_len: 1,
-                                                at_root: false,
-                                                assign_depth: child_depth,
-                                                on_stack_inserted: false,
-                                                stage: KbestFrameStage::Entry,
-                                            });
-                                            continue 'drive;
-                                        }
-                                        continue;
-                                    }
-                                    child_idx += 1;
-                                    inner_idx = 0;
-                                    continue;
-                                },
-                            }
-                        }
-                        pk_idx += 1;
-                        scan_pass = false;
-                        child_idx = 0;
-                        inner_idx = 0;
+                        slots = match self.cgll_kbest_slot_layout(children) {
+                            Some(layout) => layout,
+                            None => continue,
+                        };
+                        slot_idx = 0;
                     }
                     frames[fi].stage = KbestFrameStage::SeedCands { pk_idx: 0 };
                 },
@@ -14334,7 +14724,7 @@ where
                             Some(crate::sppf::SppfNode::Packing { children, .. }) => children,
                             _ => continue,
                         };
-                        let Some(slots) = self.cgll_kbest_slot_layout(&children, kind) else {
+                        let Some(slots) = self.cgll_kbest_slot_layout(children) else {
                             continue;
                         };
                         // A2: an on-stack (unavailable-now) or entry-less
@@ -14474,8 +14864,25 @@ where
                             KbestCandKey::Election(t) => Some(t.clone()),
                             _ => None,
                         };
+                        let Some(crate::sppf::SppfNode::Packing { children, .. }) =
+                            self.sppf.node(cand.pk)
+                        else {
+                            self.cgll_reconstruction_failed::<()>(
+                                cand.pk,
+                                ReconstructionFailure::UnexpectedNodeKind,
+                            );
+                            return KbestDemandOutcome::NoMore;
+                        };
+                        let Some(slots) = self.cgll_kbest_slot_layout(children) else {
+                            return KbestDemandOutcome::NoMore;
+                        };
+                        let Some(flat_has_collection) = self.cgll_kbest_flat_has_collection(
+                            state, kind, cand.pk, children, &slots, &cand.j,
+                        ) else {
+                            return KbestDemandOutcome::NoMore;
+                        };
                         let entry = KbestEntry {
-                            val: KbestVal::Fragment { pair },
+                            val: KbestVal::Fragment { pair, flat_has_collection },
                             kt,
                             pk: cand.pk,
                             j: cand.j.clone(),
@@ -14505,8 +14912,8 @@ where
                             KbestFrameStage::Succ { d: 0, demanded: false, finishing: false };
                         continue 'drive;
                     }
-                    // Symbol candidate: provenance walk, then FirstRaw
-                    // needs, then fire.
+                    // Symbol candidate: provenance walk, then fire the exact
+                    // coordinate-selected container realization.
                     match self.cgll_kbest_candidate_walk(state, node, kind, cand.pk, &cand.j) {
                         None => {
                             let n = state.nodes.get_mut(&node).expect("kbest node state exists");
@@ -14518,26 +14925,12 @@ where
                         },
                         Some(plan) => {
                             frames[fi].stage =
-                                KbestFrameStage::EvalRaw { cand, plan: Box::new(plan), dem_idx: 0 };
+                                KbestFrameStage::RealizeCandidate { cand, plan: Box::new(plan) };
                         },
                     }
                 },
-                KbestFrameStage::EvalRaw { cand, plan, dem_idx } => {
-                    if let Some(&rn) = plan.raw_needed.get(dem_idx) {
-                        frames[fi].stage =
-                            KbestFrameStage::EvalRaw { cand, plan, dem_idx: dem_idx + 1 };
-                        frames.push(KbestFrame {
-                            node: rn,
-                            kind: KbestOrderKey::FirstRaw,
-                            target_len: 1,
-                            at_root: false,
-                            assign_depth: 0,
-                            on_stack_inserted: false,
-                            stage: KbestFrameStage::Entry,
-                        });
-                        continue 'drive;
-                    }
-                    match self.cgll_kbest_realize_candidate(state, &plan) {
+                KbestFrameStage::RealizeCandidate { cand, plan } => {
+                    match self.cgll_kbest_realize_candidate(&plan) {
                         None => {
                             let n = state.nodes.get_mut(&node).expect("kbest node state exists");
                             n.infeasible_pops = n.infeasible_pops.saturating_add(1);
@@ -14625,9 +15018,7 @@ where
                         Some(crate::sppf::SppfNode::Packing { children, .. }) => children,
                         _ => &[],
                     };
-                    let slots = self
-                        .cgll_kbest_slot_layout(&children, kind)
-                        .unwrap_or_default();
+                    let slots = self.cgll_kbest_slot_layout(children).unwrap_or_default();
                     loop {
                         if d >= slots.len() {
                             let frontier_nonempty = {
@@ -14841,7 +15232,6 @@ where
             retry.stats.infeasible_pops += state.stats.infeasible_pops;
             retry.stats.truncations += state.stats.truncations;
             retry.stats.root_empty += state.stats.root_empty;
-            retry.stats.dup_flat_occurrence += state.stats.dup_flat_occurrence;
             *state = retry;
             *fdepths = retry_fdepths;
         }
@@ -14865,13 +15255,11 @@ where
         #[cfg(feature = "walker-trace")]
         if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
             eprintln!(
-                "  [kbest] pops={} infeasible_pops={} truncations={} root_empty={} \
-                 dup_flat_occurrence={}",
+                "  [kbest] pops={} infeasible_pops={} truncations={} root_empty={}",
                 state.stats.pops,
                 state.stats.infeasible_pops,
                 state.stats.truncations,
                 state.stats.root_empty,
-                state.stats.dup_flat_occurrence,
             );
         }
         #[cfg(feature = "walker-trace")]
@@ -22611,6 +22999,7 @@ where
                     builder.push_predicate_arc(Arc::clone(predicate));
                 },
                 ActionArg::Optional(_)
+                | ActionArg::SelectedCollection(_)
                 | ActionArg::Collection { .. }
                 | ActionArg::BinderScope(_)
                 | ActionArg::GuestBody(_)
@@ -22809,6 +23198,7 @@ where
                     sb.push_predicate_arc(Arc::clone(p));
                 },
                 ActionArg::Optional(_)
+                | ActionArg::SelectedCollection(_)
                 | ActionArg::Collection { .. }
                 | ActionArg::BinderScope(_)
                 | ActionArg::GuestBody(_)
@@ -23201,6 +23591,320 @@ mod tests {
 
     fn lex(c: f64, s: u16, r: u16) -> LexicographicWeight {
         LexicographicWeight::from_cost(c, s, r)
+    }
+
+    fn selected_i64(value: i64) -> ActionArg {
+        ActionArg::Term { value: Arc::new(value), type_name: "i64" }
+    }
+
+    #[test]
+    fn optional_assembly_preserves_nonunit_empty_packing_weight() {
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let weight = lex(0.5, 7, 3);
+        let packing = walker.sppf.intern_packing(
+            WpdaWalker::<LexicographicWeight, IdleEngine>::OPTIONAL_PRESENT_RULE_IDX,
+            vec![],
+            weight,
+        );
+        let results = walker.realize_packing_call(
+            packing,
+            WpdaWalker::<LexicographicWeight, IdleEngine>::OPTIONAL_PRESENT_RULE_IDX,
+            &[],
+            weight,
+            &std::collections::HashMap::new(),
+            None,
+        );
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0].0, ActionArg::Optional(Some(args)) if args.is_empty()));
+        assert_eq!(results[0].1, weight);
+    }
+
+    #[test]
+    fn optional_assembly_shared_child_keeps_four_weighted_occurrences() {
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let shared = walker.sppf.intern_symbol(0, 0, 0);
+        let child_weights = [lex(0.125, 1, 1), lex(0.25, 2, 2)];
+        let packing_weight = lex(0.5, 3, 3);
+        let memo = std::collections::HashMap::from([(
+            shared,
+            vec![(selected_i64(1), child_weights[0]), (selected_i64(2), child_weights[1])],
+        )]);
+        let packing = walker.sppf.intern_packing(
+            WpdaWalker::<LexicographicWeight, IdleEngine>::OPTIONAL_PRESENT_RULE_IDX,
+            vec![shared, shared],
+            packing_weight,
+        );
+        let results = walker.realize_packing_call(
+            packing,
+            WpdaWalker::<LexicographicWeight, IdleEngine>::OPTIONAL_PRESENT_RULE_IDX,
+            &[shared, shared],
+            packing_weight,
+            &memo,
+            None,
+        );
+        assert_eq!(results.len(), 4, "forest sharing must not couple occurrence choices");
+        for (index, (arg, actual_weight)) in results.iter().enumerate() {
+            let ActionArg::Optional(Some(children)) = arg else {
+                panic!("present optional must retain its argument vector");
+            };
+            let left = index / 2;
+            let right = index % 2;
+            assert_eq!(children.len(), 2);
+            assert_eq!(
+                children[0]
+                    .clone()
+                    .try_into_term::<i64>()
+                    .expect("left term"),
+                left as i64 + 1
+            );
+            assert_eq!(
+                children[1]
+                    .clone()
+                    .try_into_term::<i64>()
+                    .expect("right term"),
+                right as i64 + 1
+            );
+            assert_eq!(
+                *actual_weight,
+                child_weights[left]
+                    .times_ref(&child_weights[right])
+                    .times_ref(&packing_weight)
+            );
+        }
+        assert_ne!(
+            results[1].1, results[2].1,
+            "equal primary costs retain different ordered provenance for (1,2) and (2,1)"
+        );
+    }
+
+    #[test]
+    fn optional_assembly_nested_group_charges_each_packing_once() {
+        type Walker = WpdaWalker<LexicographicWeight, IdleEngine>;
+        let mut walker = Walker::new(IdleEngine, 0);
+        let left = walker.sppf.intern_symbol(0, 0, 1);
+        let inner_child = walker.sppf.intern_symbol(0, 1, 2);
+        let right = walker.sppf.intern_symbol(0, 2, 3);
+        let child_weight = lex(0.125, 11, 1);
+        let inner_weight = lex(0.25, 12, 2);
+        let outer_weight = lex(0.5, 13, 3);
+        let right_weight = lex(1.0, 14, 4);
+        let inner = walker.sppf.intern_packing(
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![inner_child],
+            inner_weight,
+        );
+        let mut memo = std::collections::HashMap::from([
+            (left, vec![(selected_i64(1), LexicographicWeight::one())]),
+            (inner_child, vec![(selected_i64(2), child_weight)]),
+            (right, vec![(selected_i64(3), right_weight)]),
+        ]);
+        let nested =
+            walker.realize_node_leave(inner, &memo, &std::collections::HashMap::new(), None);
+        assert_eq!(nested.len(), 1);
+        memo.insert(inner, nested);
+        let packing = walker.sppf.intern_packing(
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![left, inner, right],
+            outer_weight,
+        );
+        let results = walker.realize_packing_call(
+            packing,
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            &[left, inner, right],
+            outer_weight,
+            &memo,
+            None,
+        );
+        assert_eq!(results.len(), 1);
+        let ActionArg::Optional(Some(args)) = &results[0].0 else {
+            panic!("outer optional must remain present");
+        };
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].clone().try_into_term::<i64>().expect("left"), 1);
+        let ActionArg::Optional(Some(inner_args)) = &args[1] else {
+            panic!("inner optional must not be flattened into outer arguments");
+        };
+        assert_eq!(inner_args.len(), 1);
+        assert_eq!(inner_args[0].clone().try_into_term::<i64>().expect("inner"), 2);
+        assert_eq!(args[2].clone().try_into_term::<i64>().expect("right"), 3);
+        assert_eq!(results[0].1, lex(1.875, 11, 1));
+        assert_eq!(
+            results[0].1,
+            child_weight
+                .times_ref(&inner_weight)
+                .times_ref(&right_weight)
+                .times_ref(&outer_weight)
+        );
+    }
+
+    #[test]
+    fn optional_assembly_streams_only_the_requested_ordered_prefix() {
+        type Walker = WpdaWalker<LexicographicWeight, IdleEngine>;
+        let mut walker = Walker::new(IdleEngine, 0);
+        let child = walker.sppf.intern_symbol(0, 0, 0);
+        let children = vec![child; 17];
+        let weight = lex(0.25, 3, 4);
+        let packing =
+            walker
+                .sppf
+                .intern_packing(Walker::OPTIONAL_PRESENT_RULE_IDX, children.clone(), weight);
+        let memo = std::collections::HashMap::from([(
+            child,
+            vec![(selected_i64(1), lex(0.125, 1, 1)), (selected_i64(2), lex(0.5, 2, 2))],
+        )]);
+        // The full family exceeds the work bound, but a two-result demand
+        // needs only two coordinates. No exponential temporary is required.
+        let results = walker.realize_packing_call(
+            packing,
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            &children,
+            weight,
+            &memo,
+            Some(2),
+        );
+        assert!(!walker.realization_failed());
+        assert_eq!(results.len(), 2);
+        for (position, (arg, _)) in results.iter().enumerate() {
+            let ActionArg::Optional(Some(args)) = arg else {
+                panic!("present group");
+            };
+            let values: Vec<_> = args
+                .iter()
+                .cloned()
+                .map(|arg| arg.try_into_term::<i64>().expect("selected child"))
+                .collect();
+            assert_eq!(&values[..16], &[1; 16]);
+            assert_eq!(values[16], 1 + position as i64);
+        }
+    }
+
+    #[test]
+    fn optional_assembly_distinguishes_empty_dependency_from_missing_memo() {
+        type Walker = WpdaWalker<LexicographicWeight, IdleEngine>;
+        let mut walker = Walker::new(IdleEngine, 0);
+        let child = walker.sppf.intern_symbol(0, 0, 0);
+        let weight = lex(0.25, 1, 2);
+        let packing =
+            walker
+                .sppf
+                .intern_packing(Walker::OPTIONAL_PRESENT_RULE_IDX, vec![child], weight);
+        let empty = std::collections::HashMap::from([(child, Vec::new())]);
+        let results = walker.realize_packing_call(
+            packing,
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            &[child],
+            weight,
+            &empty,
+            None,
+        );
+        assert!(results.is_empty());
+        assert!(!walker.realization_failed(), "a completed empty row annihilates the product");
+
+        let results = walker.realize_packing_call(
+            packing,
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            &[child],
+            weight,
+            &std::collections::HashMap::new(),
+            None,
+        );
+        assert!(results.is_empty());
+        assert_eq!(
+            walker.finish_realization_request(results).err(),
+            Some(RealizationError::Reconstruction {
+                node: packing,
+                cause: crate::wpda_runtime::ReconstructionFailure::DependencyUnavailable {
+                    dependency: child,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn optional_assembly_zero_quota_does_not_consume_the_empty_coordinate() {
+        type Walker = WpdaWalker<LexicographicWeight, IdleEngine>;
+        let mut walker = Walker::new(IdleEngine, 0);
+        let weight = lex(0.25, 1, 2);
+        let packing = walker
+            .sppf
+            .intern_packing(Walker::OPTIONAL_PRESENT_RULE_IDX, vec![], weight);
+        for (limit, expected) in [(Some(0), 0), (Some(1), 1), (None, 1)] {
+            let results = walker.realize_packing_call(
+                packing,
+                Walker::OPTIONAL_PRESENT_RULE_IDX,
+                &[],
+                weight,
+                &std::collections::HashMap::new(),
+                limit,
+            );
+            assert_eq!(results.len(), expected);
+            assert!(!walker.realization_failed());
+        }
+    }
+
+    #[test]
+    fn optional_assembly_work_failure_discards_the_successful_prefix() {
+        type Walker = WpdaWalker<LexicographicWeight, IdleEngine>;
+        let mut walker = Walker::new(IdleEngine, 0);
+        let child = walker.sppf.intern_symbol(0, 0, 0);
+        let children = vec![child; 17];
+        let weight = lex(0.25, 1, 2);
+        let packing =
+            walker
+                .sppf
+                .intern_packing(Walker::OPTIONAL_PRESENT_RULE_IDX, children.clone(), weight);
+        let memo = std::collections::HashMap::from([(
+            child,
+            vec![(selected_i64(1), weight), (selected_i64(2), weight)],
+        )]);
+        let results = walker.realize_packing_call(
+            packing,
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            &children,
+            weight,
+            &memo,
+            None,
+        );
+        assert!(results.is_empty(), "a failed request must not expose its provisional prefix");
+        assert_eq!(
+            walker.finish_realization_request(results).err(),
+            Some(RealizationError::Reconstruction {
+                node: packing,
+                cause: crate::wpda_runtime::ReconstructionFailure::TraversalLimit {
+                    limit: KBEST_OCCURRENCE_WORK_LIMIT,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn optional_assembly_width_failure_precedes_dependency_materialization() {
+        type Walker = WpdaWalker<LexicographicWeight, IdleEngine>;
+        let mut walker = Walker::new(IdleEngine, 0);
+        let child = walker.sppf.intern_symbol(0, 0, 0);
+        let children = vec![child; KBEST_OCCURRENCE_WORK_LIMIT + 1];
+        let weight = lex(0.25, 1, 2);
+        let packing =
+            walker
+                .sppf
+                .intern_packing(Walker::OPTIONAL_PRESENT_RULE_IDX, children.clone(), weight);
+        let results = walker.realize_packing_call(
+            packing,
+            Walker::OPTIONAL_PRESENT_RULE_IDX,
+            &children,
+            weight,
+            &std::collections::HashMap::new(),
+            Some(1),
+        );
+        assert_eq!(
+            walker.finish_realization_request(results).err(),
+            Some(RealizationError::Reconstruction {
+                node: packing,
+                cause: crate::wpda_runtime::ReconstructionFailure::TraversalLimit {
+                    limit: KBEST_OCCURRENCE_WORK_LIMIT,
+                },
+            })
+        );
     }
 
     #[test]
@@ -24039,10 +24743,13 @@ mod tests {
 
         assert_eq!(
             result.err(),
-            Some(mettail_semantic_key::ContentKeyCacheError::ResourceExhausted {
-                limit: 0,
-                requested: 1,
-            }),
+            Some(
+                mettail_semantic_key::ContentKeyCacheError::ResourceExhausted {
+                    limit: 0,
+                    requested: 1,
+                }
+                .into()
+            ),
         );
     }
 
@@ -24065,11 +24772,62 @@ mod tests {
 
         assert_eq!(
             result.err(),
-            Some(mettail_semantic_key::ContentKeyCacheError::KeyBytesExhausted {
-                limit: 1,
-                requested: std::mem::size_of::<i64>(),
-            }),
+            Some(
+                mettail_semantic_key::ContentKeyCacheError::KeyBytesExhausted {
+                    limit: 1,
+                    requested: std::mem::size_of::<i64>(),
+                }
+                .into()
+            ),
         );
+    }
+
+    #[test]
+    fn realization_failure_boundary_keeps_first_cause_without_publishing_a_prefix() {
+        use crate::wpda_runtime::{ActionInvocationError, RealizationError, ReconstructionFailure};
+        let causes = [
+            RealizationError::SemanticKey(
+                mettail_semantic_key::ContentKeyCacheError::IdentityConflict,
+            ),
+            RealizationError::Reconstruction {
+                node: 7,
+                cause: ReconstructionFailure::TraversalLimit { limit: 32 },
+            },
+            RealizationError::Action {
+                rule_idx: 3,
+                cause: ActionInvocationError::RepeatedCollectionDrain { id: 0 },
+            },
+        ];
+        let walker: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(CachedCountingRealizeEngine, 0);
+        for first in &causes {
+            for later in &causes {
+                let value: RealizedTerm = Arc::new(7_i64);
+                walker.record_realization_error(first.clone());
+                walker.record_realization_error(later.clone());
+                assert!(walker.realization_failed());
+                let result = walker.finish_realization_request(vec![Arc::clone(&value)]);
+                assert_eq!(result.err(), Some(first.clone()));
+                assert_eq!(
+                    Arc::strong_count(&value),
+                    1,
+                    "failed request leaked its provisional term"
+                );
+                assert!(!walker.realization_failed(), "publication consumes the request's failure");
+
+                walker.record_realization_error(first.clone());
+                let empty = walker.finish_realization_request(Vec::<RealizedTerm>::new());
+                assert_eq!(
+                    empty.err(),
+                    Some(first.clone()),
+                    "a failure cannot become successful absence"
+                );
+            }
+        }
+        assert!(walker
+            .finish_realization_request(Vec::<RealizedTerm>::new())
+            .unwrap()
+            .is_empty());
     }
 
     // ── R-D A1 over-accept EXACT fix — REALIZE-LEVEL witness (task #18b) ──────
@@ -24338,6 +25096,49 @@ mod tests {
             b.push_term::<i64>(500 + sum);
         }
     }
+    fn kbest_act_coll_pair(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::CollectionId(id)] = &args[..] {
+            let Ok(items) = ActionArg::try_into_terms::<i64>(b.drain_collection(*id)) else {
+                return;
+            };
+            if let [left, right] = items.as_slice() {
+                b.push_term(*left * 100 + *right);
+            }
+        }
+    }
+    fn kbest_act_two_collections_pair(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::CollectionId(first), ActionArg::CollectionId(second)] = &args[..] {
+            let Ok(left) = ActionArg::try_into_terms::<i64>(b.drain_collection(*first)) else {
+                return;
+            };
+            let Ok(right) = ActionArg::try_into_terms::<i64>(b.drain_collection(*second)) else {
+                return;
+            };
+            if let ([left], [right]) = (left.as_slice(), right.as_slice()) {
+                b.push_term(*left * 100 + *right);
+            }
+        }
+    }
+
+    fn kbest_act_unset_pair(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::CollectionId(id)] = args.as_slice() {
+            let items = b.drain_collection(*id);
+            if let [ActionArg::Term { value, .. }, ActionArg::UnsetCollectionValue] =
+                items.as_slice()
+            {
+                if let Some(key) = value.downcast_ref::<i64>() {
+                    b.push_term(700 + key);
+                }
+            }
+        }
+    }
+
+    fn kbest_act_duplicate_drain_without_result(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::CollectionId(id)] = args.as_slice() {
+            drop(b.drain_collection(*id));
+            drop(b.drain_collection(*id));
+        }
+    }
 
     static KBEST_ACT_PUSH_1: ActionEntry = ActionEntry {
         action_fn: kbest_act_push_1,
@@ -24441,6 +25242,30 @@ mod tests {
         expected_input_cats: &[],
         output_cat: 1,
     };
+    static KBEST_ACT_COLL_PAIR: ActionEntry = ActionEntry {
+        action_fn: kbest_act_coll_pair,
+        arity: 1,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
+    static KBEST_ACT_TWO_COLLECTIONS_PAIR: ActionEntry = ActionEntry {
+        action_fn: kbest_act_two_collections_pair,
+        arity: 2,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
+    static KBEST_ACT_UNSET_PAIR: ActionEntry = ActionEntry {
+        action_fn: kbest_act_unset_pair,
+        arity: 1,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
+    static KBEST_ACT_DUPLICATE_DRAIN: ActionEntry = ActionEntry {
+        action_fn: kbest_act_duplicate_drain_without_result,
+        arity: 1,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
     static KBEST_HOP_3_TO_5: [(u16, u16); 1] = [(5, 9)];
 
     /// The S1 extractor probe engine: Idle stepper + a small rule table;
@@ -24450,6 +25275,7 @@ mod tests {
     /// K-A lateness pin.
     struct KbestProbeEngine {
         fingerprint: bool,
+        leading_structural_trigger: bool,
         force_digest_collision: bool,
         structural_witness: bool,
         exact_fingerprint_calls: std::cell::Cell<usize>,
@@ -24489,6 +25315,10 @@ mod tests {
                 (1, 9) => Some(&KBEST_ACT_REFUSE_PAIR_1_3),
                 (1, 10) => Some(&KBEST_ACT_DOUBLE),
                 (1, 11) => Some(&KBEST_ACT_DOUBLE_PLUS),
+                (1, 12) => Some(&KBEST_ACT_COLL_PAIR),
+                (1, 13) => Some(&KBEST_ACT_TWO_COLLECTIONS_PAIR),
+                (1, 14) => Some(&KBEST_ACT_UNSET_PAIR),
+                (1, 15) => Some(&KBEST_ACT_DUPLICATE_DRAIN),
                 (3, 0) => Some(&KBEST_ACT_PUSH_7),
                 (5, 8) => Some(&KBEST_ACT_PUSH_20),
                 (5, 9) => Some(&KBEST_ACT_WRAP),
@@ -24539,6 +25369,9 @@ mod tests {
                 _ => &[],
             }
         }
+        fn rule_has_leading_structural_trigger(&self, _cat: u16, _rule: u16) -> bool {
+            self.leading_structural_trigger
+        }
         /// The S1-B span-fence unit's declaration: rule (1, 6) requires 1
         /// unit of slack beyond its children's spans (the Pass-2c
         /// `min_terminal_span` shape).
@@ -24556,6 +25389,7 @@ mod tests {
         WpdaWalker::new(
             KbestProbeEngine {
                 fingerprint,
+                leading_structural_trigger: false,
                 force_digest_collision: false,
                 structural_witness: true,
                 exact_fingerprint_calls: std::cell::Cell::new(0),
@@ -24569,6 +25403,7 @@ mod tests {
             KbestProbeEngine {
                 fingerprint: true,
                 force_digest_collision: true,
+                leading_structural_trigger: false,
                 structural_witness: true,
                 exact_fingerprint_calls: std::cell::Cell::new(0),
             },
@@ -24576,11 +25411,185 @@ mod tests {
         )
     }
 
+    #[test]
+    fn weighted_preparation_missing_nodes_are_errors_not_leaf_values() {
+        use crate::wpda_runtime::ReconstructionFailure;
+        let mut walker = kbest_walker(true);
+        let missing = u32::MAX;
+        let expected = RealizationError::Reconstruction {
+            node: missing,
+            cause: ReconstructionFailure::MissingNode,
+        };
+        assert_eq!(walker.cgll_flatten_ids_weighted(missing), Err(expected.clone()));
+        let intermediate = walker.sppf.intern_intermediate(0, 0, 0);
+        let packing = walker
+            .sppf
+            .intern_packing(0, vec![missing], LexicographicWeight::one());
+        walker.sppf.link_packing_to_symbol(intermediate, packing);
+        assert_eq!(walker.cgll_flatten_ids_weighted(intermediate), Err(expected));
+    }
+
+    #[test]
+    fn weighted_preparation_cycles_discard_earlier_flats() {
+        use crate::wpda_runtime::ReconstructionFailure;
+        for mutual in [false, true] {
+            let mut walker = kbest_walker(true);
+            let root = walker.sppf.intern_intermediate(0, 0, 0);
+            let good = walker
+                .sppf
+                .intern_packing(0, vec![], LexicographicWeight::one());
+            walker.sppf.link_packing_to_symbol(root, good);
+            assert_eq!(
+                walker
+                    .cgll_flatten_ids_weighted(root)
+                    .expect("one empty flat"),
+                vec![(vec![], LexicographicWeight::one())]
+            );
+            let child = if mutual {
+                let child = walker.sppf.intern_intermediate(1, 0, 0);
+                let back = walker
+                    .sppf
+                    .intern_packing(1, vec![root], LexicographicWeight::one());
+                walker.sppf.link_packing_to_symbol(child, back);
+                child
+            } else {
+                root
+            };
+            let cyclic = walker
+                .sppf
+                .intern_packing(2, vec![child], LexicographicWeight::one());
+            walker.sppf.link_packing_to_symbol(root, cyclic);
+            assert_eq!(
+                walker.cgll_flatten_ids_weighted(root),
+                Err(RealizationError::Reconstruction {
+                    node: root,
+                    cause: ReconstructionFailure::CyclicContainer,
+                }),
+                "a cycle is a failed preparation, not an empty contribution"
+            );
+        }
+    }
+
+    #[test]
+    fn weighted_preparation_sharing_preserves_ordered_products_and_weights() {
+        let mut walker = kbest_walker(true);
+        let first = walker.sppf.intern_epsilon(1);
+        let second = walker.sppf.intern_epsilon(2);
+        let shared = walker.sppf.intern_intermediate(0, 0, 0);
+        for (leaf, cost) in [(first, 0.125), (second, 0.25)] {
+            let packing = walker.sppf.intern_packing(0, vec![leaf], lex(cost, 0, 0));
+            walker.sppf.link_packing_to_symbol(shared, packing);
+        }
+        let root = walker.sppf.intern_intermediate(1, 0, 0);
+        let packing = walker
+            .sppf
+            .intern_packing(0, vec![shared, shared], lex(0.5, 0, 0));
+        walker.sppf.link_packing_to_symbol(root, packing);
+        assert_eq!(
+            walker
+                .cgll_flatten_ids_weighted(root)
+                .expect("sharing is not a cycle"),
+            vec![
+                (vec![first, first], lex(0.75, 0, 0)),
+                (vec![first, second], lex(0.875, 0, 0)),
+                (vec![second, first], lex(0.875, 0, 0)),
+                (vec![second, second], lex(1.0, 0, 0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn weighted_preparation_empty_family_differs_from_one_empty_flat() {
+        let mut walker = kbest_walker(true);
+        let root = walker.sppf.intern_intermediate(0, 0, 0);
+        assert_eq!(
+            walker
+                .cgll_flatten_ids_weighted(root)
+                .expect("empty family"),
+            vec![]
+        );
+        let packing = walker.sppf.intern_packing(0, vec![], lex(0.125, 0, 0));
+        walker.sppf.link_packing_to_symbol(root, packing);
+        assert_eq!(
+            walker
+                .cgll_flatten_ids_weighted(root)
+                .expect("one empty flat"),
+            vec![(vec![], lex(0.125, 0, 0))]
+        );
+    }
+
+    #[test]
+    fn weighted_preparation_failure_reaches_the_request_publication_barrier() {
+        use crate::wpda_runtime::ReconstructionFailure;
+        let mut walker = kbest_walker(true);
+        let root = walker.sppf.intern_symbol(CGLL_BIN_TAG | 1, 0, 0);
+        let good = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 7), vec![], lex(0.125, 1, 7));
+        walker.sppf.link_packing_to_symbol(root, good);
+        let mut baseline_memo = std::collections::HashMap::new();
+        let baseline = walker.cgll_realize_bin_symbol(root, &mut baseline_memo, None, false);
+        assert_eq!(baseline.len(), 1, "the earlier packing really has a successful value");
+        assert_eq!(
+            *baseline[0]
+                .0
+                .clone()
+                .into_term_arc::<i64>()
+                .expect("probe term"),
+            3
+        );
+        let missing = u32::MAX;
+        let bad = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 0), vec![missing], lex(0.25, 1, 0));
+        walker.sppf.link_packing_to_symbol(root, bad);
+        let mut memo = std::collections::HashMap::new();
+        let provisional = walker.cgll_realize_bin_symbol(root, &mut memo, None, false);
+        let result = walker.finish_realization_request(provisional);
+        assert!(matches!(
+            result,
+            Err(RealizationError::Reconstruction {
+                node,
+                cause: ReconstructionFailure::MissingNode,
+            }) if node == missing
+        ));
+    }
+
+    #[test]
+    fn weighted_preparation_deep_chain_uses_the_explicit_stack() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let mut walker = kbest_walker(true);
+                let leaf = walker.sppf.intern_epsilon(0);
+                let mut root = leaf;
+                for slot in 0..10_000 {
+                    let parent = walker.sppf.intern_intermediate(slot, 0, 0);
+                    let packing =
+                        walker
+                            .sppf
+                            .intern_packing(0, vec![root], LexicographicWeight::one());
+                    walker.sppf.link_packing_to_symbol(parent, packing);
+                    root = parent;
+                }
+                assert_eq!(
+                    walker
+                        .cgll_flatten_ids_weighted(root)
+                        .expect("finite deep chain"),
+                    vec![(vec![leaf], LexicographicWeight::one())]
+                );
+            })
+            .expect("small-stack worker starts")
+            .join()
+            .expect("weighted preparation remains stack-safe");
+    }
+
     fn kbest_exact_fallback_walker() -> KbestWalker {
         WpdaWalker::new(
             KbestProbeEngine {
                 fingerprint: true,
                 force_digest_collision: false,
+                leading_structural_trigger: false,
                 structural_witness: false,
                 exact_fingerprint_calls: std::cell::Cell::new(0),
             },
@@ -24727,7 +25736,7 @@ mod tests {
         );
         assert_eq!(st_e.stats.truncations, 0);
         assert_eq!(st_e.stats.root_empty, 0);
-        assert_eq!(st_e.stats.dup_flat_occurrence, 0);
+        assert!(!walker.realization_failed());
         // ── Deterministic layer: Weight k=3 (the enumeration shape). ──
         let (all3, st_w) = kbest_extract_i64(&walker, root, KbestOrderKey::Weight, 3);
         assert_eq!(all3.len(), 3);
@@ -24878,10 +25887,11 @@ mod tests {
         );
     }
 
-    /// u2b (A10): an Election-session parent embeds the optional inner's
-    /// RAW-FIRST bytes (key sees elected, bytes take first-raw).
+    /// An optional's selected coordinate must determine both the parent
+    /// value and its rank contribution. Raw insertion order is intentionally
+    /// different, so this fails if reconstruction substitutes raw-first bytes.
     #[test]
-    fn kbest_u2b_optional_inner_first_raw_in_election_bytes() {
+    fn kbest_optional_election_uses_selected_child_for_key_and_value() {
         let mut walker = kbest_walker(true);
         let i = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
         let p_first = walker
@@ -24906,21 +25916,398 @@ mod tests {
         assert_eq!(
             family.first().map(|(v, _)| *v),
             Some(1002),
-            "today's k=1 bytes embed the RAW-FIRST inner (2 ⇒ 1002)"
+            "the raw-family order differs from Election order in this witness"
         );
-        let (elected, _) = kbest_extract_i64(&walker, p, KbestOrderKey::Election, 1);
+        let (elected, state) = kbest_extract_i64(&walker, p, KbestOrderKey::Election, 2);
         assert_eq!(
-            elected.first().copied(),
-            family.first().copied(),
-            "Election bytes = family raw-first inner bytes (NOT the elected inner 1001)"
+            elected,
+            vec![(1001, lex(0.25, 0, 0)), (1002, lex(0.625, 0, 1))],
+            "both admissible children remain available in their elected order"
+        );
+        let parent = state
+            .sub(p, KbestOrderKey::Election)
+            .expect("parent entries");
+        for entry in &parent.list {
+            assert_eq!(entry.j.len(), 1, "one coordinate for the optional child occurrence");
+            let selected = state
+                .entry(i, KbestOrderKey::Election, entry.j[0] as usize - 1)
+                .expect("selected child exists");
+            let (child_value, child_weight) = kbest_entry_i64(selected);
+            let (parent_value, parent_weight) = kbest_entry_i64(entry);
+            assert_eq!(parent_value, 1000 + child_value);
+            assert_eq!(parent_weight, child_weight.times_ref(&lex(0.125, 1, 2)));
+            assert_eq!(
+                entry.kt.as_ref().expect("parent rank").weight,
+                lex(0.125, 1, 2).times_ref(&selected.kt.as_ref().expect("child rank").weight),
+                "ranking and construction use the same coordinate, with their respective orders"
+            );
+        }
+    }
+
+    #[test]
+    fn kbest_optional_packing_weight_changes_the_selected_parent() {
+        let mut walker = kbest_walker(true);
+        let first_child = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
+        let second_child = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 2);
+        let first_value =
+            walker
+                .sppf
+                .intern_packing(kbest_rule(0, 0), Vec::new(), lex(0.125, 0, 0));
+        let second_value = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 1), Vec::new(), lex(0.5, 0, 1));
+        walker.sppf.link_packing_to_symbol(first_child, first_value);
+        walker
+            .sppf
+            .link_packing_to_symbol(second_child, second_value);
+        let first_optional = walker.sppf.intern_packing(
+            KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![first_child],
+            lex(2.0, 7, 1),
+        );
+        let second_optional = walker.sppf.intern_packing(
+            KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![second_child],
+            lex(0.25, 7, 2),
+        );
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 2);
+        let first_parent =
+            walker
+                .sppf
+                .intern_packing(kbest_rule(1, 2), vec![first_optional], lex(0.125, 1, 2));
+        let second_parent =
+            walker
+                .sppf
+                .intern_packing(kbest_rule(1, 2), vec![second_optional], lex(0.125, 1, 2));
+        walker.sppf.link_packing_to_symbol(root, first_parent);
+        walker.sppf.link_packing_to_symbol(root, second_parent);
+
+        // Without container factors, the first parent's .125 child beats
+        // the second's .5 child. Including them reverses that order:
+        // .5 + .25 + .125 = .875 < .125 + 2 + .125 = 2.25.
+        for kind in [KbestOrderKey::Weight, KbestOrderKey::Election] {
+            let (terms, state) = kbest_extract_i64(&walker, root, kind, 2);
+            assert_eq!(terms, vec![(1002, lex(0.875, 0, 1)), (1001, lex(2.25, 0, 0))]);
+            let entries = &state.sub(root, kind).expect("both parent entries").list;
+            assert_eq!(entries[0].pk, second_parent);
+            assert_eq!(entries[1].pk, first_parent);
+            if kind == KbestOrderKey::Election {
+                assert_eq!(entries[0].kt.as_ref().expect("first rank").weight, lex(0.875, 1, 2));
+                assert_eq!(entries[1].kt.as_ref().expect("second rank").weight, lex(2.25, 1, 2));
+            }
+        }
+    }
+
+    #[test]
+    fn kbest_optional_scan_preserves_equal_position_owner_and_sibling_events() {
+        let mut walker = kbest_walker(true);
+        let child = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 0);
+        let value = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0), Vec::new(), lex(0.125, 0, 0));
+        walker.sppf.link_packing_to_symbol(child, value);
+        let (_, state) = kbest_extract_i64(&walker, child, KbestOrderKey::Election, 1);
+        let skip = walker.sppf.intern_opt_absent(0);
+        let take = walker.sppf.intern_packing(
+            KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+            Vec::new(),
+            LexicographicWeight::one(),
+        );
+        let nested = walker.sppf.intern_packing(
+            KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![skip, take],
+            LexicographicWeight::one(),
+        );
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 0);
+        let depth = 9;
+        let depths = rustc_hash::FxHashMap::from_iter([(root, depth)]);
+        let position = walker.cgll_pk(0);
+        let take_event = (position, depth, walker.engine.fork_emission_ordinal(0, 0, 0));
+        let skip_event = (position, depth, walker.engine.fork_emission_ordinal(1, 0, 0));
+        let owner_event = (position, depth, walker.engine.fork_emission_ordinal(2, 1, 0));
+        // This isolates ranking metadata: the arbitrary-arity probe packing
+        // is never sent to the probe engine's unary reconstruction callback.
+        for (structural, expected_scan) in [
+            (vec![skip, take], vec![skip_event, take_event]),
+            (vec![take, skip], vec![take_event, skip_event]),
+            (vec![nested], vec![take_event, skip_event, take_event]),
+        ] {
+            for has_owner_event in [false, true] {
+                let mut children = Vec::new();
+                let mut coordinates = Vec::new();
+                let mut expected = Vec::new();
+                if has_owner_event {
+                    children.push(child);
+                    coordinates.push(1);
+                    expected.push(owner_event);
+                }
+                children.extend(structural.iter().copied());
+                expected.extend(expected_scan.iter().copied());
+                let packing = walker.sppf.intern_packing(
+                    kbest_rule(1, 0),
+                    children,
+                    LexicographicWeight::one(),
+                );
+                let key = walker
+                    .cgll_kbest_candidate_key(
+                        &state,
+                        &depths,
+                        root,
+                        KbestOrderKey::Election,
+                        true,
+                        None,
+                        packing,
+                        &coordinates,
+                    )
+                    .expect("selected container key");
+                let KbestCandKey::Election(rank) = key else {
+                    panic!("Election request must return an Election key");
+                };
+                assert_eq!(rank.decisions.iter().copied().collect::<Vec<_>>(), expected);
+                assert_eq!(
+                    rank.sorted_ordinals(),
+                    expected.iter().map(|event| event.2).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn kbest_constructor_evidence_elects_independently_of_packing_order() {
+        for reverse in [false, true] {
+            for nonempty in [false, true] {
+                let mut walker = kbest_walker(true);
+                let child = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
+                let leaf = walker.sppf.intern_packing(
+                    kbest_rule(0, 0),
+                    Vec::new(),
+                    LexicographicWeight::one(),
+                );
+                walker.sppf.link_packing_to_symbol(child, leaf);
+                let collection = walker
+                    .sppf
+                    .intern_collection_id(0, if nonempty { vec![child] } else { Vec::new() });
+                let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 2);
+                let weight = lex(1.0, 8, 8);
+                let constructor =
+                    walker
+                        .sppf
+                        .intern_packing(kbest_rule(1, 5), vec![collection], weight);
+                let other = walker
+                    .sppf
+                    .intern_packing(kbest_rule(1, 7), Vec::new(), weight);
+                for packing in if reverse {
+                    [constructor, other]
+                } else {
+                    [other, constructor]
+                } {
+                    walker.sppf.link_packing_to_symbol(root, packing);
+                }
+                let before_weight = kbest_extract_i64(&walker, root, KbestOrderKey::Weight, 2).0;
+                let before_raw = kbest_extract_i64(&walker, root, KbestOrderKey::FirstRaw, 2).0;
+                walker.engine.leading_structural_trigger = true;
+                let expected = 500 + i64::from(nonempty);
+                let (elected, _) = kbest_extract_i64(&walker, root, KbestOrderKey::Election, 1);
+                assert_eq!(elected, vec![(expected, weight)]);
+                assert_eq!(
+                    kbest_extract_i64(&walker, root, KbestOrderKey::Weight, 2).0,
+                    before_weight,
+                    "ranking evidence must not change enumerated values or semantic weights",
+                );
+                assert_eq!(
+                    kbest_extract_i64(&walker, root, KbestOrderKey::FirstRaw, 2).0,
+                    before_raw,
+                );
+                assert!(before_weight.contains(&(3, weight)));
+                assert!(before_weight.contains(&(expected, weight)));
+            }
+        }
+    }
+
+    #[test]
+    fn kbest_constructor_evidence_tracks_selected_fragment_not_raw_first() {
+        let mut walker = kbest_walker(true);
+        walker.engine.leading_structural_trigger = true;
+        let collection = walker.sppf.intern_collection_id(0, Vec::new());
+        let fragment = walker.sppf.intern_intermediate(99, 0, 1);
+        for children in [Vec::new(), vec![collection]] {
+            let packing = walker
+                .sppf
+                .intern_packing(99, children, LexicographicWeight::one());
+            walker.sppf.link_packing_to_symbol(fragment, packing);
+        }
+        let mut state = KbestState::new();
+        let mut depths = rustc_hash::FxHashMap::default();
+        assert_eq!(
+            walker.cgll_kbest_next(
+                &mut state,
+                &mut depths,
+                fragment,
+                KbestOrderKey::Election,
+                2,
+                false,
+                None,
+            ),
+            KbestDemandOutcome::Available,
+        );
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 1);
+        let parent = walker.sppf.intern_packing(
+            kbest_rule(1, 5),
+            vec![fragment],
+            LexicographicWeight::one(),
+        );
+        let slots = walker
+            .cgll_kbest_slot_layout(&[fragment])
+            .expect("parent layout");
+        for (selection, expected) in [(1, false), (2, true)] {
+            assert_eq!(
+                walker.cgll_kbest_flat_has_collection(
+                    &state,
+                    KbestOrderKey::Election,
+                    parent,
+                    &[fragment],
+                    &slots,
+                    &[selection],
+                ),
+                Some(expected),
+            );
+            let plan = walker
+                .cgll_kbest_candidate_walk(
+                    &mut state,
+                    root,
+                    KbestOrderKey::Election,
+                    parent,
+                    &[selection],
+                )
+                .expect("the exact selected flat exists");
+            assert_eq!(plan.flat.contains(&collection), expected);
+            let key = walker
+                .cgll_kbest_candidate_key(
+                    &state,
+                    &depths,
+                    root,
+                    KbestOrderKey::Election,
+                    true,
+                    None,
+                    parent,
+                    &[selection],
+                )
+                .expect("each selected coordinate has its own composed key");
+            let KbestCandKey::Election(rank) = key else {
+                panic!("Election key")
+            };
+            assert_eq!(rank.sorted_ordinals(), if expected { vec![0] } else { Vec::new() });
+        }
+        // This checks each candidate's exact key. It does not claim the lazy
+        // heap has already visited every successor of a tied child entry.
+        let slots = walker
+            .cgll_kbest_slot_layout(&[collection, fragment])
+            .expect("layout");
+        assert_eq!(
+            walker.cgll_kbest_flat_has_collection(
+                &state,
+                KbestOrderKey::Election,
+                parent,
+                &[collection, fragment],
+                &slots,
+                &[3],
+            ),
+            None
+        );
+        assert!(
+            walker.realization_failed(),
+            "true presence cannot hide a missing later coordinate"
         );
     }
 
-    /// u2c (A10): collection items take FIRST-RAW in BOTH sessions,
-    /// end-to-end through the F-2 item machinery, with NO item
-    /// j-enumeration (anti-parity guard).
     #[test]
-    fn kbest_u2c_collection_item_first_raw_end_to_end() {
+    fn kbest_constructor_evidence_does_not_inspect_symbol_or_packing_payloads() {
+        let mut walker = kbest_walker(true);
+        let collection = walker.sppf.intern_collection_id(0, Vec::new());
+        let symbol = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 1);
+        let constructor = walker.sppf.intern_packing(
+            kbest_rule(1, 5),
+            vec![collection],
+            LexicographicWeight::one(),
+        );
+        walker.sppf.link_packing_to_symbol(symbol, constructor);
+        let (_, state) = kbest_extract_i64(&walker, symbol, KbestOrderKey::Election, 1);
+        let optional = walker.sppf.intern_packing(
+            KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![collection],
+            LexicographicWeight::one(),
+        );
+        let ordinary = walker.sppf.intern_packing(
+            kbest_rule(1, 2),
+            vec![collection],
+            LexicographicWeight::one(),
+        );
+        for child in [symbol, optional, ordinary] {
+            let slots = walker
+                .cgll_kbest_slot_layout(&[child])
+                .expect("child layout");
+            let j = vec![1; slots.len()];
+            assert_eq!(
+                walker.cgll_kbest_flat_has_collection(
+                    &state,
+                    KbestOrderKey::Election,
+                    constructor,
+                    &[child],
+                    &slots,
+                    &j,
+                ),
+                Some(false)
+            );
+        }
+        assert_eq!(
+            walker.cgll_kbest_flat_has_collection(
+                &state,
+                KbestOrderKey::Election,
+                constructor,
+                &[collection],
+                &[],
+                &[1],
+            ),
+            None
+        );
+        assert!(walker.realization_failed(), "invalid coordinate arity must fail closed");
+    }
+
+    #[test]
+    fn kbest_constructor_evidence_respects_existing_eligibility_and_single_emission() {
+        let mut walker = kbest_walker(true);
+        let symbol = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
+        let coercion_body = walker.sppf.intern_symbol(3 | CGLL_BIN_TAG, 0, 1);
+        let collection = walker.sppf.intern_collection_id(0, Vec::new());
+        for (leading, rule, children, present, expected_events) in [
+            (false, kbest_rule(1, 5), vec![collection], true, 0),
+            (true, kbest_rule(1, 5), vec![collection], true, 1),
+            (true, kbest_rule(1, 0), vec![symbol, collection], true, 1),
+            (false, kbest_rule(1, 0), vec![symbol], false, 1),
+            (true, kbest_rule(5, 9), vec![coercion_body, collection], true, 0),
+        ] {
+            walker.engine.leading_structural_trigger = leading;
+            let mut rank = CgllKTuple::neutral();
+            walker.cgll_kbest_decisions_block(
+                rule,
+                &children,
+                &mut rank,
+                2,
+                false,
+                true,
+                (Some(0), Some(1)),
+                None,
+                true,
+                present,
+            );
+            assert_eq!(rank.decisions.len(), expected_events);
+        }
+    }
+
+    /// A collection's selected child contributes both its value and weight;
+    /// raw insertion order must not override Election or Weight coordinates.
+    #[test]
+    fn kbest_collection_item_selection_preserves_value_and_weight() {
         let mut walker = kbest_walker(true);
         let i = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
         let p_first = walker
@@ -24937,20 +26324,162 @@ mod tests {
             .sppf
             .intern_packing(kbest_rule(1, 5), vec![cid], lex(0.125, 1, 5));
         walker.sppf.link_packing_to_symbol(c, cpk);
-        let family = kbest_family_i64(&walker, c);
-        assert_eq!(
-            family.iter().map(|(v, _)| *v).collect::<Vec<_>>(),
-            vec![502],
-            "family: item consumed via .first() of the raw family (2 ⇒ 500+2)"
-        );
         let (elected, _) = kbest_extract_i64(&walker, c, KbestOrderKey::Election, 1);
-        assert_eq!(elected.first().copied(), family.first().copied());
+        assert_eq!(elected, vec![(501, lex(0.25, 0, 0))]);
         let (all, _) = kbest_extract_i64(&walker, c, KbestOrderKey::Weight, 4);
+        assert_eq!(all, vec![(501, lex(0.25, 0, 0)), (502, lex(0.625, 0, 1))]);
+        let (raw, _) = kbest_extract_i64(&walker, c, KbestOrderKey::FirstRaw, 2);
+        assert_eq!(raw, vec![(502, lex(0.625, 0, 1)), (501, lex(0.25, 0, 0))]);
+    }
+
+    #[test]
+    fn kbest_empty_collection_does_not_erase_zero_primary_rank() {
+        let mut walker = kbest_walker(true);
+        let decorated = lex(0.0, 25, 1).with_open_len(5);
+        assert_ne!(decorated.times_ref(&LexicographicWeight::one()), decorated);
+        let empty = walker.sppf.intern_collection_id(17, Vec::new());
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 0);
+        let packing = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 5), vec![empty], decorated);
+        walker.sppf.link_packing_to_symbol(root, packing);
+        let (terms, state) = kbest_extract_i64(&walker, root, KbestOrderKey::Election, 1);
+        assert_eq!(terms.first().map(|(value, _)| *value), Some(500));
         assert_eq!(
-            all.iter().map(|(v, _)| *v).collect::<Vec<_>>(),
-            vec![502],
-            "NO j-enumeration over items in Weight mode (would enumerate MORE than today)"
+            state
+                .entry(root, KbestOrderKey::Election, 0)
+                .expect("empty collection is feasible")
+                .kt
+                .as_ref()
+                .expect("election key")
+                .weight,
+            decorated,
         );
+    }
+
+    #[test]
+    fn kbest_zero_primary_collection_summary_matches_selected_assembly() {
+        let mut walker = kbest_walker(true);
+        let decorated = lex(0.0, 25, 1).with_open_len(5);
+        // A real weighted Intermediate, as emitted by generated parsers,
+        // supplies the child's decorated zero-cost weight without changing
+        // the nullary action's argument arity.
+        let carrier = walker.sppf.intern_intermediate(7, 0, 1);
+        let carrier_packing = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0xf800), vec![], decorated);
+        walker.sppf.link_packing_to_symbol(carrier, carrier_packing);
+        let child = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
+        let child_packing =
+            walker
+                .sppf
+                .intern_packing(kbest_rule(0, 0), vec![carrier], LexicographicWeight::one());
+        walker.sppf.link_packing_to_symbol(child, child_packing);
+        let collection = walker.sppf.intern_collection_id(17, vec![child]);
+        let local = lex(0.5, 8, 2);
+        let optional = walker.sppf.intern_packing(
+            KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![collection],
+            local,
+        );
+        for kind in [KbestOrderKey::Weight, KbestOrderKey::Election, KbestOrderKey::FirstRaw] {
+            let (values, state) = kbest_extract_i64(&walker, child, kind, 1);
+            assert_eq!(values, vec![(1, decorated)]);
+            let closure = walker
+                .cgll_kbest_container_closure(collection)
+                .expect("collection closure");
+            let (weight, _) = walker
+                .cgll_kbest_container_summary(&state, kind, &closure, &[1], 0)
+                .expect("selected collection summary");
+            assert_eq!(weight, decorated, "a collection has no synthetic trailing factor");
+
+            let nested = walker
+                .cgll_kbest_container_closure(optional)
+                .expect("nested closure");
+            let (summary_weight, _) = walker
+                .cgll_kbest_container_summary(&state, kind, &nested, &[1], 0)
+                .expect("nested selected summary");
+            let plan = KbestWalkPlan {
+                packing: optional,
+                rule_idx: KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+                pk_weight: LexicographicWeight::one(),
+                flat: vec![optional],
+                flat_weight: LexicographicWeight::one(),
+                program: vec![
+                    KbestRealizationInstruction::Selected {
+                        arg: selected_i64(1),
+                        weight: decorated,
+                    },
+                    KbestRealizationInstruction::Assemble { node: collection, arity: 1 },
+                    KbestRealizationInstruction::Assemble { node: optional, arity: 1 },
+                ],
+            };
+            let (_, realized_weight) = walker
+                .cgll_kbest_realize_candidate(&plan)
+                .expect("selected nested collection assembly");
+            assert_eq!(summary_weight, decorated.times_ref(&local));
+            assert_eq!(summary_weight, realized_weight);
+        }
+    }
+
+    #[test]
+    fn kbest_event_only_skip_preserves_rank_without_dropping_its_event() {
+        let mut walker = kbest_walker(true);
+        let skip = walker.sppf.intern_opt_absent(3);
+        let closure = walker
+            .cgll_kbest_container_closure(skip)
+            .expect("event-only closure");
+        let (_, rank) = walker
+            .cgll_kbest_container_summary(
+                &KbestState::new(),
+                KbestOrderKey::Election,
+                &closure,
+                &[],
+                9,
+            )
+            .expect("event-only summary");
+        let rank = rank.expect("election contribution");
+        assert!(rank.factor.is_none());
+        let decorated = lex(0.0, 25, 1).with_open_len(5);
+        let mut parent = CgllKTuple::neutral();
+        parent.weight = decorated;
+        rank.absorb_into(&mut parent);
+        assert_eq!(parent.weight, decorated);
+        assert_eq!(
+            parent.decisions.iter().copied().collect::<Vec<_>>(),
+            vec![(walker.cgll_pk(3), 9, walker.engine.fork_emission_ordinal(1, 0, 0))]
+        );
+    }
+
+    #[test]
+    fn kbest_actual_one_packing_is_not_an_absent_factor() {
+        let mut walker = kbest_walker(true);
+        let packing = walker.sppf.intern_packing(
+            KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+            vec![],
+            LexicographicWeight::one(),
+        );
+        let closure = walker
+            .cgll_kbest_container_closure(packing)
+            .expect("actual packing");
+        let (_, rank) = walker
+            .cgll_kbest_container_summary(
+                &KbestState::new(),
+                KbestOrderKey::Election,
+                &closure,
+                &[],
+                9,
+            )
+            .expect("packing summary");
+        let rank = rank.expect("election contribution");
+        assert_eq!(rank.factor, Some(LexicographicWeight::one()));
+        let decorated = lex(0.0, 25, 1).with_open_len(5);
+        let mut parent = CgllKTuple::neutral();
+        parent.weight = decorated;
+        rank.absorb_into(&mut parent);
+        assert_eq!(parent.weight, decorated.times_ref(&LexicographicWeight::one()));
+        assert_ne!(parent.weight, decorated, "an actual factor must still be multiplied");
+        assert_eq!(parent.decisions.len(), 1, "TAKE must also survive");
     }
 
     /// u3 (A10): the Weight-mode j-extension over OPTIONAL_PRESENT inner
@@ -25562,151 +27091,256 @@ mod tests {
         assert_eq!(all, fam_sorted);
     }
 
-    /// The env var that puts a re-executed test binary into u5 child mode.
-    const KBEST_U5_CHILD: &str = "PRATTAIL_KBEST_U5_DUP_FLAT_CHILD";
-
-    /// The u5 SUBJECT, factored out so the in-process (release) reading and the
-    /// child-process (debug) reading drive a byte-identical construction. A synthetic
-    /// zero-width flat carrying the SAME OR-node twice, demanded through the full
-    /// `cgll_kbest_next` path.
-    fn kbest_u5_drive() -> (KbestDemandOutcome, KbestState<LexicographicWeight>, crate::sppf::SppfId)
-    {
-        let mut walker = kbest_walker(true);
-        let z = walker.sppf.intern_symbol(CGLL_BIN_TAG, 5, 5);
-        let z1 = walker
-            .sppf
-            .intern_packing(kbest_rule(0, 0), Vec::new(), lex(0.125, 0, 0));
-        walker.sppf.link_packing_to_symbol(z, z1);
-        let p = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 5, 5);
-        let pk_zz =
-            walker
+    /// Shared nullable forest nodes are not cycles. The same two-choice
+    /// family used twice must produce all four ordered occurrence selections.
+    #[test]
+    fn kbest_shared_nullable_occurrences_keep_the_complete_cartesian_square() {
+        for shape in 0..4 {
+            let mut walker = kbest_walker(true);
+            let shared = walker.sppf.intern_symbol(CGLL_BIN_TAG, 5, 5);
+            let first = walker
                 .sppf
-                .intern_packing(kbest_rule(1, 1), vec![z, z], LexicographicWeight::one());
-        walker.sppf.link_packing_to_symbol(p, pk_zz);
-        let mut state: KbestState<LexicographicWeight> = KbestState::new();
-        let mut fdepths = rustc_hash::FxHashMap::default();
-        // ⚠ DEBUG: the tripwire's `debug_assert!` fires INSIDE this call.
-        let outcome = walker.cgll_kbest_next(
-            &mut state,
-            &mut fdepths,
-            p,
-            KbestOrderKey::Election,
-            1,
-            true,
-            None,
-        );
-        (outcome, state, p)
+                .intern_packing(kbest_rule(0, 0), Vec::new(), lex(0.125, 0, 0));
+            let second = walker
+                .sppf
+                .intern_packing(kbest_rule(0, 1), Vec::new(), lex(0.25, 0, 1));
+            walker.sppf.link_packing_to_symbol(shared, first);
+            walker.sppf.link_packing_to_symbol(shared, second);
+            let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 5, 5);
+            let (rule, children, extra, offset) = match shape {
+                0 => (1, vec![shared, shared], 0.0, 0),
+                1 => {
+                    let collection = walker.sppf.intern_collection_id(17, vec![shared, shared]);
+                    (12, vec![collection], 0.0, 0)
+                },
+                2 => {
+                    let collection = walker.sppf.intern_collection_id(17, vec![shared]);
+                    (13, vec![collection, collection], 0.0, 0)
+                },
+                _ => {
+                    let collection = walker.sppf.intern_collection_id(17, vec![shared, shared]);
+                    let pair = walker.sppf.intern_packing(
+                        kbest_rule(1, 12),
+                        vec![collection],
+                        lex(0.25, 1, 12),
+                    );
+                    let optional = walker.sppf.intern_packing(
+                        KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
+                        vec![pair],
+                        lex(0.5, 1, 2),
+                    );
+                    (2, vec![optional], 0.75, 1000)
+                },
+            };
+            let parent =
+                walker
+                    .sppf
+                    .intern_packing(kbest_rule(1, rule), children, lex(0.125, 1, rule));
+            walker.sppf.link_packing_to_symbol(root, parent);
+            for kind in [KbestOrderKey::Election, KbestOrderKey::Weight, KbestOrderKey::FirstRaw] {
+                let (terms, state) = kbest_extract_i64(&walker, root, kind, 4);
+                assert_eq!(
+                    terms,
+                    vec![
+                        (offset + 101, lex(0.375 + extra, 0, 0)),
+                        (offset + 102, lex(0.5 + extra, 0, 0)),
+                        (offset + 201, lex(0.5 + extra, 0, 1)),
+                        (offset + 202, lex(0.625 + extra, 0, 1)),
+                    ],
+                    "shape {shape} loses or aliases an occurrence"
+                );
+                let entries = &state.sub(root, kind).expect("root family").list;
+                assert_eq!(
+                    entries
+                        .iter()
+                        .map(|entry| entry.j.clone())
+                        .collect::<Vec<_>>(),
+                    vec![vec![1, 1], vec![1, 2], vec![2, 1], vec![2, 2]]
+                );
+                assert!(!walker.realization_failed(), "sharing is not a reconstruction fault");
+            }
+        }
     }
 
-    /// u5 (A6.2): the duplicate-occurrence tripwire on a synthetic zero-width flat
-    /// carrying the same OR-node twice, exercised through the full demand path.
-    ///
-    /// The tripwire has TWO halves and this test pins both, one per build profile:
-    ///
-    /// | profile | half pinned | how |
-    /// |---|---|---|
-    /// | `debug_assertions` | the tripwire is **LOUD** | a CHILD PROCESS runs the subject and must die naming the tripwire |
-    /// | release | the tripwire is **COUNTED** | in-process; the `debug_assert` is compiled out, so the counters (incremented BEFORE it) and the last-selection collapse are readable |
-    ///
-    /// ⚠ Formerly `#[cfg_attr(debug_assertions, should_panic(expected = "…"))]`.
-    /// A deliberate panic cannot be expected here: `prattail` is compiled under
-    /// cranelift for `dev`/`test`, which emits no catch pads — the unwind does not
-    /// reach libtest's LLVM-compiled interceptor, and the process aborts instead of
-    /// the test passing. (The old doc comment recorded exactly this for the in-test
-    /// `catch_unwind` case; the harness-level attribute is the same mechanism one
-    /// frame further out.) A subprocess is the only in-band way to observe an abort,
-    /// which is why the FFI-boundary probe in the sibling f1r3node tree
-    /// (`rspace++/libs/rspace_rhotypes/tests/ffi_absent_required_child.rs`) is built
-    /// the same way.
-    ///
-    /// What it distinguishes, before and after: STRICTLY MORE. Before, debug builds
-    /// checked only that *a* panic carrying that substring escaped, and never reached
-    /// a single one of the counter assertions. Now the debug reading additionally
-    /// requires the child to have got as far as the demand (so a child that died on
-    /// startup, or on an unrelated earlier panic, fails loudly instead of counting as
-    /// a pass), and requires it NOT to survive; and the counter half still runs
-    /// verbatim under release.
     #[test]
-    fn kbest_u5_dup_flat_occurrence_tripwire() {
-        if cfg!(debug_assertions) {
-            if std::env::var(KBEST_U5_CHILD).is_ok() {
-                // ── child: reach the demand, then die inside it ──────────────
-                println!("U5_CHILD_REACHED_DEMAND=true");
-                let (outcome, state, _) = kbest_u5_drive();
-                // Only reachable if the tripwire went silent. Say so in the
-                // child's own words rather than exiting quietly.
-                println!(
-                    "U5_CHILD_SURVIVED=true outcome={outcome:?} dup={}",
-                    state.stats.dup_flat_occurrence
-                );
-                return;
-            }
-
-            // ── parent ───────────────────────────────────────────────────────
-            // `module_path!()` is `<crate>::…::tests`; libtest's `--exact` filter
-            // wants the path WITHOUT the crate name.
-            let module = module_path!();
-            let test_path = format!(
-                "{}::kbest_u5_dup_flat_occurrence_tripwire",
-                module.split_once("::").map_or(module, |(_, rest)| rest)
-            );
-            let exe = std::env::current_exe().expect("the test binary knows its own path");
-            let output = std::process::Command::new(exe)
-                .env(KBEST_U5_CHILD, "1")
-                .args([&test_path, "--exact", "--nocapture", "--test-threads=1"])
-                .output()
-                .expect("the child test process spawns");
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-
-            // ★ ANTI-VACUITY: the child must have reached the subject. Without this
-            // a child that failed to start — wrong filter, missing binary, panic in
-            // `kbest_walker` — would satisfy "it died" for the wrong reason.
-            assert!(
-                stdout.contains("U5_CHILD_REACHED_DEMAND=true"),
-                "the child never reached the demand, so it measured nothing.\n\
-                 --- child stdout ---\n{stdout}\n--- child stderr ---\n{stderr}"
-            );
-            assert!(
-                !stdout.contains("U5_CHILD_SURVIVED=true"),
-                "★ the duplicate-occurrence tripwire did NOT fire under \
-                 `debug_assertions`. A duplicate OR-node occurrence in one flat is \
-                 now silent in debug builds, and this guard no longer measures \
-                 anything — re-derive it.\n--- child stdout ---\n{stdout}"
-            );
-            assert!(
-                !output.status.success(),
-                "the child exited successfully; the tripwire is not fatal in debug.\n\
-                 --- child stdout ---\n{stdout}\n--- child stderr ---\n{stderr}"
-            );
-            // The panic hook runs before the unwind is initiated, so the message is
-            // on stderr even when cranelift then aborts the process.
-            assert!(
-                stderr.contains("duplicate OR-node occurrence in one flat"),
-                "the child died, but not at the tripwire.\n--- child stderr ---\n{stderr}"
-            );
-        } else {
-            // ── release: the `debug_assert` is compiled out, so the walk runs past
-            // the tripwire and both counter halves plus the collapse are readable.
-            let (outcome, state, p) = kbest_u5_drive();
-            assert_eq!(outcome, KbestDemandOutcome::Available);
-            assert!(
-                state.stats.dup_flat_occurrence >= 1,
-                "the tripwire counter must fire in every build profile"
-            );
-            assert!(
-                state
-                    .nodes
-                    .get(&p)
-                    .is_some_and(|n| n.dup_flat_occurrence >= 1),
-                "per-node attribution of the tripwire"
-            );
-            let vals = state
-                .sub(p, KbestOrderKey::Election)
-                .map(|s| s.list.iter().map(kbest_entry_i64).collect::<Vec<_>>())
-                .unwrap_or_default();
-            assert_eq!(vals.first().map(|(v, _)| *v), Some(101), "PAIR over the collapsed [1, 1]");
+    fn kbest_nested_partial_action_rejects_without_shortening_collection() {
+        let mut walker = kbest_walker(true);
+        let item = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 0);
+        for (rule, weight) in [(0, 0.125), (1, 0.25)] {
+            let packing =
+                walker
+                    .sppf
+                    .intern_packing(kbest_rule(0, rule), vec![], lex(weight, 0, rule));
+            walker.sppf.link_packing_to_symbol(item, packing);
         }
+        let partial = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 4), vec![item], lex(0.125, 1, 4));
+        let collection = walker.sppf.intern_collection_id(17, vec![partial]);
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 0);
+        let parent =
+            walker
+                .sppf
+                .intern_packing(kbest_rule(1, 5), vec![collection], lex(0.125, 1, 5));
+        walker.sppf.link_packing_to_symbol(root, parent);
+        for kind in [KbestOrderKey::Election, KbestOrderKey::Weight, KbestOrderKey::FirstRaw] {
+            let (terms, state) = kbest_extract_i64(&walker, root, kind, 2);
+            assert_eq!(terms, vec![(602, lex(0.5, 0, 1))]);
+            assert!(state.stats.infeasible_pops > 0, "the first nested action must reject");
+            assert!(!walker.realization_failed(), "partial-action rejection is not corruption");
+        }
+    }
+
+    #[test]
+    fn kbest_wrong_collection_item_refutes_only_its_candidate() {
+        let mut walker = kbest_walker(true);
+        let absent = walker.sppf.intern_opt_absent(0);
+        let bad = walker.sppf.intern_collection_id(17, vec![absent]);
+        let item = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 0);
+        let value = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0), vec![], lex(0.125, 0, 0));
+        walker.sppf.link_packing_to_symbol(item, value);
+        let good = walker.sppf.intern_collection_id(17, vec![item]);
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 0);
+        for collection in [bad, good] {
+            let parent =
+                walker
+                    .sppf
+                    .intern_packing(kbest_rule(1, 5), vec![collection], lex(0.125, 1, 5));
+            walker.sppf.link_packing_to_symbol(root, parent);
+        }
+        for kind in [KbestOrderKey::Election, KbestOrderKey::Weight, KbestOrderKey::FirstRaw] {
+            let (terms, _) = kbest_extract_i64(&walker, root, kind, 2);
+            assert_eq!(terms, vec![(501, lex(0.25, 0, 0))]);
+            assert!(!walker.realization_failed());
+        }
+    }
+
+    #[test]
+    fn kbest_unset_value_is_not_an_omitted_trigger() {
+        let mut walker = kbest_walker(true);
+        let item = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 0);
+        let value = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0), vec![], lex(0.125, 0, 0));
+        walker.sppf.link_packing_to_symbol(item, value);
+        let unset = walker.sppf.intern_trigger_terminal(
+            TokenKind::Ident,
+            crate::sppf::PosOrSynth::Real(0),
+            None,
+            u16::MAX,
+            KbestWalker::CGLL_UNSET_MARKER_RULE,
+        );
+        let collection = walker.sppf.intern_collection_id(17, vec![item, unset]);
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 0);
+        let parent =
+            walker
+                .sppf
+                .intern_packing(kbest_rule(1, 14), vec![collection], lex(0.125, 1, 14));
+        walker.sppf.link_packing_to_symbol(root, parent);
+        for kind in [KbestOrderKey::Election, KbestOrderKey::Weight, KbestOrderKey::FirstRaw] {
+            assert_eq!(kbest_extract_i64(&walker, root, kind, 1).0, vec![(701, lex(0.25, 0, 0))]);
+            assert!(!walker.realization_failed());
+        }
+    }
+
+    #[test]
+    fn kbest_trigger_omission_keeps_epsilon_and_absent_arguments() {
+        let mut walker = kbest_walker(true);
+        let trigger = walker.sppf.intern_trigger_terminal(
+            TokenKind::Ident,
+            crate::sppf::PosOrSynth::Real(0),
+            None,
+            1,
+            2,
+        );
+        let epsilon = walker.sppf.intern_epsilon(0);
+        let absent = walker.sppf.intern_opt_absent(0);
+        for marker in [epsilon, absent] {
+            let packing = walker.sppf.intern_packing(
+                kbest_rule(1, 2),
+                vec![trigger, marker],
+                lex(0.125, 1, 2),
+            );
+            let plan = KbestWalkPlan {
+                packing,
+                rule_idx: kbest_rule(1, 2),
+                pk_weight: lex(0.125, 1, 2),
+                flat: vec![trigger, marker],
+                flat_weight: LexicographicWeight::one(),
+                program: vec![
+                    KbestRealizationInstruction::Leaf(trigger),
+                    KbestRealizationInstruction::Leaf(marker),
+                ],
+            };
+            let (arg, weight) = walker
+                .cgll_kbest_realize_candidate(&plan)
+                .expect("one marker argument remains");
+            assert_eq!(*arg.into_term_arc::<i64>().expect("probe result"), 999);
+            assert_eq!(weight, lex(0.125, 1, 2));
+            assert!(!walker.realization_failed());
+        }
+    }
+
+    #[test]
+    fn kbest_invalid_leaf_handle_cannot_publish_provisional_results() {
+        use crate::wpda_runtime::ReconstructionFailure;
+        for guest in [false, true] {
+            let mut walker = kbest_walker(true);
+            let leaf = if guest {
+                walker.sppf.intern_guest_body(999)
+            } else {
+                walker.sppf.intern_predicate(999)
+            };
+            let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 0);
+            let good = walker
+                .sppf
+                .intern_packing(kbest_rule(1, 7), vec![], lex(0.125, 1, 7));
+            let bad = walker
+                .sppf
+                .intern_packing(kbest_rule(1, 0), vec![leaf], lex(0.25, 1, 0));
+            walker.sppf.link_packing_to_symbol(root, good);
+            walker.sppf.link_packing_to_symbol(root, bad);
+            let (provisional, _) = kbest_extract_i64(&walker, root, KbestOrderKey::FirstRaw, 2);
+            assert_eq!(provisional.first().map(|entry| entry.0), Some(3));
+            assert_eq!(
+                walker
+                    .finish_realization_request(provisional)
+                    .expect_err("no partial publication"),
+                RealizationError::Reconstruction {
+                    node: leaf,
+                    cause: ReconstructionFailure::MissingLeafValue
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn kbest_protocol_fault_dominates_a_callback_without_result() {
+        use crate::wpda_runtime::ActionInvocationError;
+        let mut walker = kbest_walker(true);
+        let collection = walker.sppf.intern_collection_id(17, vec![]);
+        let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 0);
+        let good = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 7), vec![], lex(0.125, 1, 7));
+        let bad = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 15), vec![collection], lex(0.25, 1, 15));
+        walker.sppf.link_packing_to_symbol(root, good);
+        walker.sppf.link_packing_to_symbol(root, bad);
+        let (provisional, _) = kbest_extract_i64(&walker, root, KbestOrderKey::FirstRaw, 2);
+        assert_eq!(provisional.first().map(|entry| entry.0), Some(3));
+        assert_eq!(
+            walker
+                .finish_realization_request(provisional)
+                .expect_err("protocol error is not elision"),
+            RealizationError::Action {
+                rule_idx: kbest_rule(1, 15),
+                cause: ActionInvocationError::RepeatedCollectionDrain { id: 0 }
+            }
+        );
     }
 
     /// u6 (A8 option B): OFF-Scan vs ON-Scan kt diff-test on shared
@@ -26216,7 +27850,7 @@ mod tests {
         assert!(isub
             .list
             .iter()
-            .all(|e| matches!(&e.val, KbestVal::Fragment { pair: Some(_) })));
+            .all(|e| matches!(&e.val, KbestVal::Fragment { pair: Some(_), .. })));
         let (elected, _) = kbest_extract_i64(&walker, root, KbestOrderKey::Election, 1);
         assert_eq!(elected.first().copied(), family.first().copied());
     }

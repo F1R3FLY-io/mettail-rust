@@ -1899,10 +1899,15 @@ fn emit_infix_action_entry(
                                     Some(__id) => __id,
                                     None => return,
                                 };
-                                b.drain_collection(__id)
-                                    .into_iter()
-                                    .filter_map(|a| a.into_term::<#elem>())
-                                    .collect()
+                                match mettail_prattail::wpda_runtime::ActionArg::try_into_terms::<#elem>(
+                                    b.drain_collection(__id),
+                                ) {
+                                    Ok(elements) => elements,
+                                    Err(_) => {
+                                        mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                                        return;
+                                    },
+                                }
                             };
                         };
                     }

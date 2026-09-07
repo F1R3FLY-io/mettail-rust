@@ -82,6 +82,18 @@ theories/ReplayIdentityIntegrity.v
 theories/MixfixTriggerVacuity.v
 
 theories/KBestExtractionSound.v
+theories/CollectionItemKBestLifting.v
+theories/OccurrenceCollectionAssembly.v
+theories/SelectedOccurrencePlan.v
+theories/RealizationFailureBoundary.v
+theories/CandidateContinuation.v
+theories/CartesianSuccessorReachability.v
+theories/CartesianCursor.v
+theories/RetainedFamilyScheduler.v
+theories/RetainedFamilySchedulerExamples.v
+theories/LazyPackingCursor.v
+theories/ReconstructionWorkBudget.v
+theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.
 theories/LiteralCarrierContextIndependence.v

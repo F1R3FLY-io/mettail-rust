@@ -38,6 +38,9 @@ impl Clone for ActionArg {
                 Task::Visit(ActionArg::CollectionId(id)) => {
                     values.push(ActionArg::CollectionId(*id));
                 },
+                Task::Visit(ActionArg::SelectedCollection(selected)) => {
+                    values.push(ActionArg::SelectedCollection(selected.clone()));
+                },
                 Task::Visit(ActionArg::Predicate(value)) => {
                     values.push(ActionArg::Predicate(Arc::clone(value)));
                 },
@@ -155,6 +158,11 @@ impl Drop for ActionArg {
                     | ActionArg::Predicate(value) => std::mem::drop(ptr::read(value)),
                     ActionArg::BinderScope(handle) => std::mem::drop(ptr::read(handle)),
                     ActionArg::CollectionId(_) | ActionArg::UnsetCollectionValue => {},
+                    ActionArg::SelectedCollection(selected) => {
+                        // The payload is closed: its items are only Term or
+                        // UnsetCollectionValue, never nested containers or optionals.
+                        std::mem::drop(ptr::read(selected));
+                    },
                     ActionArg::Optional(value) => {
                         if let Some(args) = ptr::read(value) {
                             work.extend(args);
