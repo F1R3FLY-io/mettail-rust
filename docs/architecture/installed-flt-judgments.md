@@ -58,6 +58,71 @@ blocker, not grounds for silently narrowing the application. Round-trip laws
 must cover admitted constructors, literals, ordering, multiplicity and scope.
 Their proofs precede the corresponding adapter implementation.
 
+### Installed constructor and sort bindings
+
+The private [installed binding index](../../rholang-runtime/src/installed_flt.rs)
+borrows `language_core()` and `semantic_image()` from the same
+`InstalledLanguage`. Installation has already checked that pair's fingerprints,
+source correspondence and dense semantic identifiers. Building this index does
+not repeat image compilation or validation and does not confer operation rights.
+
+Grammar categories and theory sorts have separate coordinate spaces. Join a
+Syntax sort to its category by its canonical source name, retain both coordinates,
+and retain the exact optional literal carrier from the image. A Syntax sort with
+no literal carrier, an unsupported non-Syntax sort and an invalid coordinate are
+distinct observations. In particular, lexical token output is not used to infer
+a semantic literal carrier. The installed Regex fixture declares String carriers
+for Scalar and Text, Integer carriers for Nat and Grade, and a Boolean carrier
+for Bool. Native Boolean values coexist with ordinary Boolean constructors.
+
+The immutable index is assembled in declaration order:
+
+```text
+reserve private category, sort, constructor and lookup tables
+join each admitted Syntax sort to its same-named category
+for each grammar production:
+    record its constructor ID and label
+    accept an identical repeat; reject a different label for that ID
+for each semantic constructor, exactly once:
+    retain its exact image signature and canonical source label
+    check its grammar pair against the recorded production and joined result sort
+    reject a reserved label or an occupied (result sort, label) key
+    insert that same entry into forward and reverse lookup
+publish the complete private index only after every check succeeds
+```
+
+Forward lookup uses `(expected theory sort, reflected label)`; reverse lookup
+uses the image's dense semantic constructor coordinate. Both retain the same
+borrowed signature, including its grammar pair and ordered domain. Repeated
+grammar productions do not duplicate semantic entries. Hash iteration does not
+assign identifiers or order results, and hash collisions are resolved by exact
+key equality rather than treated as identity. Lookup allocates no label String
+and does not scan productions for every term occurrence.
+
+Index materialization uses fixed-width logical coordinate-slot reservations,
+not Rust pointer sizes. Optional coordinates cost five bytes; coordinate pairs
+cost eight; a forward binding costs twelve. Empty optional slots and temporary
+maps count too. If $`C`$, $`S`$, $`P`$ and $`K`$ are the category, sort, production
+and semantic-constructor counts, the complete logical payload charge is:
+
+```math
+13C + 5S + 8P + 20K.
+```
+
+This schedule is not another wire encoding. Checked multiplication and paired
+work/byte reservations precede allocation; successful temporary reservations
+are not refunded. Hash-table overhead, allocator capacity and resident memory
+are excluded. Equal admitted rosters have equal logical charges, but this does
+not establish identical allocation success on different machines; common
+resource profiles and representable limits remain required.
+
+The [binding enrollment model](../../formal/rocq/runtime_grammar/theories/InstalledFltBindingEnrollment.v)
+connects named sort joins, exact signature/label assembly and incremental
+collision checks to the existing head codec's inverse law. It proves retention
+of every constructor entry, not just successful lookup of a subset. Source/image
+admission remains the installer's responsibility. These laws do not prove a
+worst-case hash-probe count, allocator behavior or elapsed-time bound.
+
 ### Borrowed positional and native kernel view
 
 `theory_positional_native_view` exposes the existing theory-machine decoder
@@ -130,8 +195,9 @@ original allowance without replenishing it.
 | Format a native integer | At most 40 decimal bytes, conservatively reserved before formatting |
 | Visit constructor slots | Every child slot, including repeated occurrences |
 
-These are logical work and payload reservations, not a claim about allocator
-capacity or resident memory. Only a flat scalar's `encoded_len()` is used;
+These and the index-slot charges are logical work and payload reservations, not
+a claim about allocator capacity or resident memory. Only a flat scalar's
+`encoded_len()` is used;
 recursive `Par` encoding is not used to estimate traversal cost. The existing
 iterative `Par` and `GroundTerm` ownership paths remain responsible for cleanup.
 
@@ -309,6 +375,7 @@ The proof layers have distinct responsibilities:
 | [Reachable graph projection](../../formal/rocq/runtime_grammar/theories/InstalledFltGraphProjection.v) | The kernel's existing remapping contract transports every published root's complete finite occurrence, including native payloads and ordered child slots |
 | [Reflected Par envelopes](../../formal/rocq/runtime_grammar/theories/ReflectedParEnvelope.v) | All nine executable component families are checked; an accepted expression, private-tag or send envelope cannot hide another executable component, including a conditional |
 | [Strict reflected-head enrollment](../../formal/rocq/runtime_grammar/theories/ReflectedHeadEnrollment.v) | Canonical reenrollment preserves nominal bytes and exact owner/label, true ground markers round-trip, and paired work/payload reservations precede modeled allocation events |
+| [Installed binding enrollment](../../formal/rocq/runtime_grammar/theories/InstalledFltBindingEnrollment.v) | Named joins retain distinct coordinates and exact optional carriers; complete signature assembly and collision-rejecting roster construction establish the existing constructor inverse premise without dropping entries |
 
 For example, the term model distinguishes a native Boolean from an ordinary
 constructor returning the Boolean sort. Its mixed-literal witness also uses

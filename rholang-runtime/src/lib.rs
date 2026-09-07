@@ -74,6 +74,8 @@ pub mod guard_discharge;
 /// vocabulary the surface encoder (`mettail_languages::rholang::guard_substrate`) does, so both
 /// legs of a guard's life ask the same procedures.
 pub mod guard_par_substrate;
+#[cfg(feature = "rholang-runtime")]
+mod installed_flt;
 /// Atomic installation of Rholang-authored MeTTaIL specifications. Both Greg/Mike
 /// DDL nodes and ordinary `language/2` values cross the same canonical boundary.
 #[cfg(feature = "rholang-runtime")]

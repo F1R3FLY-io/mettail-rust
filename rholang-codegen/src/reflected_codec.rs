@@ -19,9 +19,10 @@ use prost::Message;
 
 /// A scoped borrow of cumulative caller work and a decreasing payload allowance.
 ///
-/// Payload bytes are conservative reservations for materialized scalar buffers,
-/// not allocator capacity or RSS. Successful reservations are never refunded by
-/// a later malformed input or allocation failure. All results of one operation
+/// Payload bytes reserve materialized scalar buffers and fixed-width logical
+/// index slots, not allocator capacity, hash-table overhead or RSS. Successful
+/// reservations are never refunded by a later malformed input or allocation
+/// failure. All results of one operation
 /// must share the allowance. Use [`Self::finish`] to carry unused bytes across a
 /// kernel call that needs to borrow the same work counter and cancellation hook.
 pub struct ReflectedCodecBudget<'a, C> {

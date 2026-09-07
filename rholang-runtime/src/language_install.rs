@@ -3937,6 +3937,439 @@ mod tests {
     const REGEX_EXTENSION_MODULE_SOURCE: &str =
         include_str!("../tests/fixtures/regex_extension.rho");
 
+    fn installed_regex_binding_fixture() -> Arc<mettail_grammar_core::InstalledLanguage> {
+        let service = LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        );
+        let batch = service
+            .install_all(rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE))
+            .expect("the actual inline Regex module installs");
+        service
+            .table()
+            .authorize(&batch.exports[0].receipt.handle, LanguageRight::Construct)
+            .expect("the fixture has an admitted immutable pair")
+    }
+
+    fn install_binding_core(
+        language: &mettail_grammar_core::LanguageCoreV1,
+    ) -> Arc<mettail_grammar_core::InstalledLanguage> {
+        let service = LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        );
+        let value = mettail_elab::core_value::language_core_to_value(language)
+            .expect("fixture edit retains a valid canonical language value");
+        let receipt = service
+            .install(InstallCandidate::Canonical(value))
+            .expect("installation must succeed before the adapter representability test");
+        service
+            .table()
+            .authorize(&receipt.handle, LanguageRight::Construct)
+            .expect("the modified fixture supplies an admitted pair")
+    }
+
+    fn assert_installed_binding_correspondence(
+        installed: &mettail_grammar_core::InstalledLanguage,
+    ) {
+        use crate::installed_flt::{InstalledFltBindings, InstalledFltSort};
+        use mettail_grammar_core::{TheoryConstructorId, TheoryLiteralCarrierV1, TheorySortId};
+        use mettail_rholang_codegen::ReflectedCodecBudget;
+
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancelled);
+        let bindings = InstalledFltBindings::new(installed, &mut budget).expect("binding roster");
+        let image = installed.semantic_image().expect("admitted semantic image");
+        assert!(std::ptr::eq(bindings.image(), image));
+        for (signature, source) in image
+            .constructors
+            .iter()
+            .zip(&installed.language_core().theory.constructors)
+        {
+            let reverse = bindings
+                .constructor_by_id(signature.id, &mut budget)
+                .expect("bounded reverse lookup")
+                .expect("every image constructor is retained");
+            assert!(std::ptr::eq(reverse.signature, signature));
+            assert_eq!(reverse.label, source.name);
+            assert_eq!(reverse.label.as_ptr(), source.name.as_ptr());
+            let forward = bindings
+                .constructor(signature.codomain, &source.name, &mut budget)
+                .expect("bounded forward lookup")
+                .expect("the same complete binding is present");
+            assert!(std::ptr::eq(forward.signature, reverse.signature));
+            assert_eq!(forward.label, reverse.label);
+            assert_eq!(
+                bindings
+                    .sort_for_category(
+                        signature.grammar.expect("exact grammar pair").category,
+                        &mut budget
+                    )
+                    .expect("category mapping"),
+                Some(signature.codomain)
+            );
+        }
+        let sort_named = |name: &str| {
+            let index = installed
+                .language_core()
+                .theory
+                .sorts
+                .iter()
+                .position(|sort| sort.name == name)
+                .expect("fixture declares requested sort");
+            image.sorts[index].id
+        };
+        for category in &installed.core().categories {
+            let sort = bindings
+                .sort_for_category(category.id, &mut budget)
+                .expect("bounded category lookup")
+                .expect("every Regex grammar category has a syntax sort");
+            assert_eq!(sort, sort_named(&category.name));
+            let Some(InstalledFltSort::Syntax { category: reverse, literal }) = bindings
+                .sort(sort, &mut budget)
+                .expect("bounded sort lookup")
+            else {
+                panic!("grammar categories map to syntax sorts");
+            };
+            assert!(std::ptr::eq(reverse, category));
+            let expected = match category.name.as_str() {
+                "Scalar" | "Text" => Some(&TheoryLiteralCarrierV1::String),
+                "Nat" | "Grade" => Some(&TheoryLiteralCarrierV1::Integer),
+                "Bool" => Some(&TheoryLiteralCarrierV1::Boolean),
+                _ => None,
+            };
+            assert_eq!(literal, expected, "exact admitted {} carrier", category.name);
+        }
+        let pattern = sort_named("Pattern");
+        let scalar = sort_named("Scalar");
+        let literal = bindings
+            .constructor(pattern, "PLiteral", &mut budget)
+            .expect("literal lookup")
+            .expect("literal constructor");
+        assert_eq!(literal.signature.domain, [scalar]);
+        let concat = bindings
+            .constructor(pattern, "PConcat", &mut budget)
+            .expect("concat lookup")
+            .expect("concat constructor");
+        assert_eq!(concat.signature.domain, [pattern, pattern]);
+        for label in ["BFalse", "BTrue"] {
+            assert!(bindings
+                .constructor(sort_named("Bool"), label, &mut budget)
+                .expect("Boolean constructors coexist with the native carrier")
+                .is_some());
+        }
+        assert!(bindings
+            .constructor(scalar, "PLiteral", &mut budget)
+            .expect("wrong sort")
+            .is_none());
+        assert!(bindings
+            .constructor(pattern, "Missing", &mut budget)
+            .expect("missing label")
+            .is_none());
+        assert!(bindings
+            .constructor_by_id(TheoryConstructorId(u32::MAX), &mut budget)
+            .expect("bad ID")
+            .is_none());
+        assert!(bindings
+            .sort(TheorySortId(u32::MAX), &mut budget)
+            .expect("bad sort")
+            .is_none());
+        assert_eq!(
+            bindings
+                .sort_for_category(CategoryId(u32::MAX), &mut budget)
+                .expect("bad category"),
+            None
+        );
+    }
+
+    #[test]
+    fn installed_flt_bindings_retain_actual_regex_signatures_and_native_sorts() {
+        let installed = installed_regex_binding_fixture();
+        assert_installed_binding_correspondence(&installed);
+    }
+
+    #[test]
+    fn installed_flt_bindings_join_names_after_sort_reordering() {
+        let original = installed_regex_binding_fixture();
+        let mut language = original.language_core().clone();
+        language.theory.sorts.reverse();
+        let installed = install_binding_core(&language);
+        assert_ne!(
+            installed.language_core().theory.sorts[0].name,
+            installed.core().categories[0].name,
+            "fixture must expose ordinal coincidence"
+        );
+        assert_installed_binding_correspondence(&installed);
+    }
+
+    #[test]
+    fn installed_flt_bindings_allow_repeated_productions_without_duplicate_entries() {
+        let original = installed_regex_binding_fixture();
+        let mut language = original.language_core().clone();
+        let mut repeated = language.grammar.productions[0].clone();
+        repeated.id = mettail_grammar_core::ProductionId(
+            u32::try_from(language.grammar.productions.len()).expect("small fixture"),
+        );
+        language.grammar.productions.push(repeated);
+        let installed = install_binding_core(&language);
+        assert_eq!(
+            installed
+                .semantic_image()
+                .expect("image")
+                .constructors
+                .len(),
+            original
+                .semantic_image()
+                .expect("original image")
+                .constructors
+                .len()
+        );
+        assert_installed_binding_correspondence(&installed);
+    }
+
+    #[test]
+    fn installed_flt_bindings_reject_global_grammar_constructor_aliases() {
+        use crate::installed_flt::{InstalledFltBindingError, InstalledFltBindings};
+        use mettail_rholang_codegen::ReflectedCodecBudget;
+
+        let original = installed_regex_binding_fixture();
+        let mut language = original.language_core().clone();
+        let shared = language.grammar.productions[0].constructor;
+        let mut production = language.grammar.productions[0].clone();
+        let mut constructor = language
+            .theory
+            .constructors
+            .iter()
+            .find(|entry| entry.name == production.label)
+            .expect("paired declaration")
+            .clone();
+        production.id = mettail_grammar_core::ProductionId(
+            u32::try_from(language.grammar.productions.len()).expect("small fixture"),
+        );
+        production.label = "ConflictingAlias".into();
+        constructor.name = production.label.clone();
+        // Keep the original dense constructor roster and matching reduction;
+        // the added label is the only new representability violation.
+        language.grammar.productions.push(production);
+        language.theory.constructors.push(constructor);
+        let installed = install_binding_core(&language);
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancelled);
+        assert!(matches!(
+            InstalledFltBindings::new(&installed, &mut budget),
+            Err(InstalledFltBindingError::ConflictingGrammarLabel(id)) if id == shared
+        ));
+    }
+
+    #[test]
+    fn installed_flt_bindings_reject_reserved_constructor_namespace() {
+        use crate::installed_flt::{InstalledFltBindingError, InstalledFltBindings};
+        use mettail_rholang_codegen::ReflectedCodecBudget;
+
+        let original = installed_regex_binding_fixture();
+        let mut language = original.language_core().clone();
+        // Add a valid ordinary theory constructor; do not corrupt a rule term
+        // or image fingerprint to manufacture a pre-installation rejection.
+        let mut production = language.grammar.productions[0].clone();
+        let mut constructor = language
+            .theory
+            .constructors
+            .iter()
+            .find(|entry| entry.name == production.label)
+            .expect("paired constructor")
+            .clone();
+        production.id = mettail_grammar_core::ProductionId(
+            u32::try_from(language.grammar.productions.len()).expect("small fixture"),
+        );
+        production.constructor = mettail_grammar_core::ConstructorId(
+            language
+                .grammar
+                .productions
+                .iter()
+                .map(|entry| entry.constructor.0)
+                .max()
+                .expect("constructors")
+                + 1,
+        );
+        production.label = "^dynamic-text:61".into();
+        constructor.name = production.label.clone();
+        let mut reduction = language.grammar.reductions[production.reduction as usize].clone();
+        reduction.constructor = production.constructor;
+        production.reduction =
+            u32::try_from(language.grammar.reductions.len()).expect("small fixture");
+        language.grammar.reductions.push(reduction);
+        language.grammar.productions.push(production);
+        language.theory.constructors.push(constructor);
+        let installed = install_binding_core(&language);
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancelled);
+        assert!(matches!(
+            InstalledFltBindings::new(&installed, &mut budget),
+            Err(InstalledFltBindingError::ReservedConstructorLabel(_))
+        ));
+    }
+
+    #[test]
+    fn installed_flt_bindings_preserve_theory_only_sort_as_unsupported() {
+        use crate::installed_flt::{InstalledFltBindings, InstalledFltSort};
+        use mettail_grammar_core::{TheorySortKindImageV1, TheorySortKindV1, TheorySortV1};
+        use mettail_rholang_codegen::ReflectedCodecBudget;
+
+        let original = installed_regex_binding_fixture();
+        let mut language = original.language_core().clone();
+        language.theory.sorts.push(TheorySortV1 {
+            name: "PrivateRuntimeState".into(),
+            kind: TheorySortKindV1::Opaque { abi: "fixture-only/1".into() },
+        });
+        let installed = install_binding_core(&language);
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancelled);
+        let bindings = InstalledFltBindings::new(&installed, &mut budget)
+            .expect("non-Syntax sort is not a blanket rejection");
+        let sort = installed
+            .semantic_image()
+            .expect("image")
+            .sorts
+            .last()
+            .expect("extra sort");
+        let Some(InstalledFltSort::Unsupported(shape)) =
+            bindings.sort(sort.id, &mut budget).expect("sort lookup")
+        else {
+            panic!("theory-only opaque sort must not be fabricated as syntax");
+        };
+        assert!(std::ptr::eq(shape, &sort.kind));
+        assert!(matches!(shape, TheorySortKindImageV1::Opaque { abi } if abi == "fixture-only/1"));
+        assert_installed_binding_correspondence(&installed);
+    }
+
+    #[test]
+    fn installed_flt_bindings_charge_setup_and_lookup_without_resetting_work() {
+        use crate::installed_flt::{InstalledFltBindingError, InstalledFltBindings};
+        use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
+
+        let installed = installed_regex_binding_fixture();
+        let mut work = 7;
+        let mut calls = 0;
+        let mut cancelled = || {
+            calls += 1;
+            false
+        };
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancelled);
+        let bindings = InstalledFltBindings::new(&installed, &mut budget).expect("bounded setup");
+        let setup_work = budget.work_used();
+        let remaining = budget.finish();
+        let setup_calls = calls;
+        let image = installed.semantic_image().expect("image");
+        let exact_payload = 13 * installed.core().categories.len()
+            + 5 * image.sorts.len()
+            + 8 * installed.core().productions.len()
+            + 20 * image.constructors.len();
+        assert_eq!(1_000_000 - remaining, exact_payload, "fixed logical coordinate-slot schedule");
+        let mut cancelled = || false;
+        let mut budget =
+            ReflectedCodecBudget::new(&mut work, setup_work, remaining, &mut cancelled);
+        assert!(matches!(
+            bindings.constructor_by_id(bindings.image().constructors[0].id, &mut budget),
+            Err(InstalledFltBindingError::Resource(DynamicReflectionError::WorkLimit))
+        ));
+        assert_eq!(budget.work_used(), setup_work);
+        budget.finish();
+        for cancel_at in 1..=setup_calls {
+            let mut calls = 0;
+            let mut cancelled = || {
+                calls += 1;
+                calls == cancel_at
+            };
+            let mut work = 7;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancelled);
+            assert!(
+                matches!(
+                    InstalledFltBindings::new(&installed, &mut budget),
+                    Err(InstalledFltBindingError::Resource(DynamicReflectionError::Cancelled))
+                ),
+                "cancel at {cancel_at}"
+            );
+            assert!(budget.work_used() >= 7);
+            assert!(budget.work_used() <= setup_work);
+        }
+        let mut work = 7;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 0, &mut cancelled);
+        assert!(matches!(
+            InstalledFltBindings::new(&installed, &mut budget),
+            Err(InstalledFltBindingError::Resource(DynamicReflectionError::PayloadByteLimit))
+        ));
+        assert_eq!(
+            budget.work_used(),
+            8,
+            "allocation fails after only the initial operation charge"
+        );
+        budget.finish();
+        for allowance in [exact_payload - 1, exact_payload] {
+            let mut work = 7;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 1_000_000, allowance, &mut cancelled);
+            match (allowance == exact_payload, InstalledFltBindings::new(&installed, &mut budget)) {
+                (true, Ok(_)) => assert_eq!(budget.remaining_bytes(), 0),
+                (
+                    false,
+                    Err(InstalledFltBindingError::Resource(
+                        DynamicReflectionError::PayloadByteLimit,
+                    )),
+                ) => {
+                    assert_eq!(
+                        budget.remaining_bytes(),
+                        12 * image.constructors.len() - 1,
+                        "failed final reservation does not consume a partial slot allowance"
+                    );
+                },
+                _ => panic!("exact index payload boundary"),
+            }
+        }
+    }
+
+    #[test]
+    fn installed_flt_bindings_do_not_invent_a_missing_semantic_image() {
+        use crate::installed_flt::{InstalledFltBindingError, InstalledFltBindings};
+        use mettail_rholang_codegen::ReflectedCodecBudget;
+
+        // The executable LanguageInstallService intentionally installs both
+        // images even for a theory without actions. Use the existing parser-only
+        // table API to exercise its genuine no-semantic-image case.
+        let core =
+            mettail_elab::canonical::value_to_core(&tiny_value("SyntaxOnly", l([s("Construct")])))
+                .expect("structural core");
+        let parser_image = compile_parser_image(&core).expect("parser image");
+        let table = InstalledLanguageTable::new();
+        let grant = table
+            .install_runtime(
+                core,
+                parser_image,
+                LanguageRights::from_rights([LanguageRight::Construct]),
+                RUNTIME_COMPILER_ABI,
+                RUNTIME_UNICODE_ABI,
+                LANGUAGE_CAPABILITY_ABI_V1,
+                [0; 32],
+            )
+            .expect("parser-only installation");
+        let installed = table
+            .authorize(&grant.handle, LanguageRight::Construct)
+            .expect("installed language");
+        assert!(installed.semantic_image().is_none());
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 100, 0, &mut cancelled);
+        assert!(matches!(
+            InstalledFltBindings::new(&installed, &mut budget),
+            Err(InstalledFltBindingError::MissingSemanticImage)
+        ));
+        assert_eq!((budget.work_used(), budget.remaining_bytes()), (1, 0));
+    }
+
     #[test]
     fn canonical_install_intersects_requests_with_host_authority() {
         let policy = LanguageInstallPolicy::new(

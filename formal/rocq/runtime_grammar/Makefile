@@ -35,6 +35,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.GeneratedSemanticAdapter \
 	RuntimeGrammar.NativeReflectionCodec \
 	RuntimeGrammar.InstalledFltHeadCodec \
+	RuntimeGrammar.InstalledFltBindingEnrollment \
 	RuntimeGrammar.InstalledFltTermCodec \
 	RuntimeGrammar.FusedOccurrenceExecution \
 	RuntimeGrammar.BorrowedOccurrenceExecution \
