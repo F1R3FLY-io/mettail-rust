@@ -4867,6 +4867,88 @@ mod tests {
         let semantic_image = compile_theory_semantic_image(&language, semantic_limits)
             .expect("semantic image compiles");
 
+        #[derive(Clone, Copy, Debug)]
+        enum StaleAbi {
+            Parser,
+            ParserCompiler,
+            Unicode,
+            Semantic,
+            SemanticCompiler,
+            PrimitiveSubstrate,
+        }
+        for stale in [
+            StaleAbi::Parser,
+            StaleAbi::ParserCompiler,
+            StaleAbi::Unicode,
+            StaleAbi::Semantic,
+            StaleAbi::SemanticCompiler,
+            StaleAbi::PrimitiveSubstrate,
+        ] {
+            let table = InstalledLanguageTable::new();
+            let valid = ExecutableLanguageInstall {
+                language: language.clone(),
+                parser_image: parser_image.clone(),
+                semantic_image: semantic_image.clone(),
+                granted_rights: LanguageRights::all(),
+            };
+            let mut invalid = ExecutableLanguageInstall {
+                language: language.clone(),
+                parser_image: parser_image.clone(),
+                semantic_image: semantic_image.clone(),
+                granted_rights: LanguageRights::all(),
+            };
+            match stale {
+                StaleAbi::Parser => invalid.parser_image.abi = 0,
+                StaleAbi::ParserCompiler => invalid.parser_image.compiler_abi = "stale".into(),
+                StaleAbi::Unicode => invalid.parser_image.unicode_version = "stale".into(),
+                StaleAbi::Semantic => invalid.semantic_image.abi = 0,
+                StaleAbi::SemanticCompiler => invalid.semantic_image.compiler_abi = 0,
+                StaleAbi::PrimitiveSubstrate => invalid.semantic_image.primitive_substrate_abi = 0,
+            }
+            let result = table.install_executable_runtime_batch(
+                vec![valid, invalid],
+                RUNTIME_COMPILER_ABI,
+                RUNTIME_UNICODE_ABI,
+                LANGUAGE_CAPABILITY_ABI_CURRENT,
+                [0; 32],
+                semantic_limits,
+            );
+            use mettail_grammar_core::{ImageError, TheoryImageError};
+            assert!(
+                matches!(
+                    (stale, &result),
+                    (
+                        StaleAbi::Parser,
+                        Err(InstallLanguageError::InvalidImage(ImageError::UnsupportedAbi(0)))
+                    ) | (
+                        StaleAbi::ParserCompiler,
+                        Err(InstallLanguageError::InvalidImage(ImageError::CompilerAbiMismatch))
+                    ) | (
+                        StaleAbi::Unicode,
+                        Err(InstallLanguageError::InvalidImage(ImageError::UnicodeVersionMismatch))
+                    ) | (
+                        StaleAbi::Semantic,
+                        Err(InstallLanguageError::InvalidTheoryImage(
+                            TheoryImageError::UnsupportedAbi(0)
+                        ))
+                    ) | (
+                        StaleAbi::SemanticCompiler,
+                        Err(InstallLanguageError::InvalidTheoryImage(
+                            TheoryImageError::UnsupportedCompilerAbi(0)
+                        ))
+                    ) | (
+                        StaleAbi::PrimitiveSubstrate,
+                        Err(InstallLanguageError::InvalidTheoryImage(
+                            TheoryImageError::UnsupportedPrimitiveSubstrateAbi(0)
+                        ))
+                    )
+                ),
+                "{stale:?} must reject the batch before publishing its valid prefix: {:?}",
+                result.as_ref().err()
+            );
+            assert_eq!(table.installed_count().expect("table readable"), 0);
+        }
+
         let table = InstalledLanguageTable::new();
         let mut bad_semantic = semantic_image.clone();
         bad_semantic.language_fingerprint = [0xff; 32];
@@ -4949,6 +5031,92 @@ mod tests {
         );
         assert!(matches!(parser_result, Err(InstallLanguageError::InvalidImage(_))));
         assert_eq!(table.installed_count().expect("table readable"), 0);
+    }
+
+    #[test]
+    fn semantic_artifact_budget_rejection_preserves_both_installation_tables() {
+        for seed_existing in [false, true] {
+            let policy = LanguageInstallPolicy::with_language_and_semantic_limits(
+                LanguageRights::all(),
+                RuntimePolicy::default(),
+                TheoryImageAdmissionLimits {
+                    max_actions: 0,
+                    ..TheoryImageAdmissionLimits::default()
+                },
+                1_024,
+                LANGUAGE_CAPABILITY_ABI_CURRENT,
+            );
+            let service = LanguageInstallService::new(Arc::new(MemoryRegistry::default()), policy);
+            let existing = seed_existing.then(|| {
+                service
+                    .install(InstallCandidate::Canonical(tiny_value("Existing", l([s("Parse")]))))
+                    .expect("a structural language fits the zero-action budget")
+            });
+            let before = usize::from(seed_existing);
+            assert_eq!(service.table().installed_count().expect("table readable"), before);
+            assert_eq!(service.installed_count().expect("revocations readable"), before);
+            let result = service.install_all(rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE));
+            assert!(
+                matches!(
+                    &result,
+                    Err(InstallServiceError::Canonical(
+                        InstallExecutableRegistryError::CompileSemantic(
+                            TheoryImageCompileError::Image(
+                                mettail_grammar_core::TheoryImageError::LimitExceeded("actions")
+                            )
+                        )
+                    ))
+                ),
+                "the real Regex action image must exceed the zero-action budget: {result:?}"
+            );
+            assert_eq!(service.table().installed_count().expect("table readable"), before);
+            assert_eq!(service.installed_count().expect("revocations readable"), before);
+            if let Some(existing) = existing {
+                assert!(service
+                    .table()
+                    .authorize(&existing.handle, LanguageRight::Parse)
+                    .is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn installed_language_limit_rejection_preserves_both_installation_tables() {
+        for limit in [0_u64, 1] {
+            let policy = LanguageInstallPolicy::with_language_limit(
+                LanguageRights::all(),
+                RuntimePolicy::default(),
+                limit,
+                LANGUAGE_CAPABILITY_ABI_CURRENT,
+            );
+            let service = LanguageInstallService::new(Arc::new(MemoryRegistry::default()), policy);
+            let existing = (limit == 1).then(|| {
+                service
+                    .install(InstallCandidate::Canonical(tiny_value("Existing", l([s("Parse")]))))
+                    .expect("the first language fits the one-language limit")
+            });
+            let before = usize::try_from(limit).expect("small test limit");
+            assert_eq!(service.table().installed_count().expect("table readable"), before);
+            assert_eq!(service.installed_count().expect("revocations readable"), before);
+            let result =
+                service.install(InstallCandidate::Canonical(tiny_value("Excess", l([s("Parse")]))));
+            assert!(
+                matches!(
+                    &result,
+                    Err(InstallServiceError::InstalledLanguageLimit { limit: actual })
+                        if *actual == limit
+                ),
+                "the language-count limit must reject before publishing: {result:?}"
+            );
+            assert_eq!(service.table().installed_count().expect("table readable"), before);
+            assert_eq!(service.installed_count().expect("revocations readable"), before);
+            if let Some(existing) = existing {
+                assert!(service
+                    .table()
+                    .authorize(&existing.handle, LanguageRight::Parse)
+                    .is_ok());
+            }
+        }
     }
 
     #[test]

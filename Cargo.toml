@@ -72,13 +72,15 @@ query = { path = "query" }
 # NEVER depends on mettail-rust (enforced by the host guard test
 # `mettail_rust_is_not_a_cargo_dependency` + proven in
 # formal/rocq/rho_bridge/theories/BridgeInertness.v). Sibling checkout at
-# ../f1r3node-rust (publish=false crates → path deps). Toolchain note: f1r3node-rust
+# ../../f1r3node-rust-f1r3lang (publish=false crates → path deps), checked
+# against .github/f1r3node-revision. The approved engine baseline is recorded
+# separately by the node's frontend admission contract. Toolchain note: f1r3node-rust
 # pins nightly-2026-02-09; mettail-rust floats `nightly` + cranelift dev backend.
-models = { path = "../f1r3node-rust-mettail/models" }
-rholang = { path = "../f1r3node-rust-mettail/rholang" }
-rho-pure-eval = { path = "../f1r3node-rust-mettail/rho-pure-eval" }
-rspace_plus_plus = { path = "../f1r3node-rust-mettail/rspace++" }
-crypto = { path = "../f1r3node-rust-mettail/crypto" }
+models = { path = "../../f1r3node-rust-f1r3lang/models" }
+rholang = { path = "../../f1r3node-rust-f1r3lang/rholang" }
+rho-pure-eval = { path = "../../f1r3node-rust-f1r3lang/rho-pure-eval" }
+rspace_plus_plus = { path = "../../f1r3node-rust-f1r3lang/rspace++" }
+crypto = { path = "../../f1r3node-rust-f1r3lang/crypto" }
 tokio = { version = "1", features = ["full"] }
 
 # ── rholang-parser override (TEMPORARY) — mirrors f1r3node-rust's root [patch] ────

@@ -6,7 +6,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 revision_file="$repo_root/.github/f1r3node-revision"
 revision="$(tr -d '[:space:]' < "$revision_file")"
-sibling_dir="${F1R3NODE_SIBLING_DIR:-$(dirname "$repo_root")/f1r3node-rust-mettail}"
+sibling_dir="${F1R3NODE_SIBLING_DIR:-$(dirname "$(dirname "$repo_root")")/f1r3node-rust-f1r3lang}"
 repository_url="${F1R3NODE_REPOSITORY_URL:-https://github.com/F1R3FLY-io/f1r3node-rust.git}"
 
 if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
