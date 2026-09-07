@@ -1,5 +1,8 @@
 -Q theories RuntimeGrammar
 -Q ../../../dovetail/formal/rocq/theories Dovetail
+-Q ../prattail_wpda_runtime/theories PrattailWpdaRuntime
+
+../prattail_wpda_runtime/theories/SelectedOccurrencePlan.v
 
 theories/CanonicalComposition.v
 theories/ExactWeight.v
@@ -63,11 +66,15 @@ theories/ExactCollectionSemanticKey.v
 theories/TerminalVariantIdentity.v
 theories/StructuralProjectionImage.v
 theories/GeneratedSemanticAdapter.v
+theories/NativeReflectionCodec.v
+theories/InstalledFltHeadCodec.v
+theories/InstalledFltTermCodec.v
 theories/ExecutableTheoryCore.v
 theories/ExecutableTheoryImage.v
 theories/CollectionComprehension.v
 theories/SemanticTransitionKernel.v
 theories/InstalledFltJudgments.v
+theories/InstalledFltTraversal.v
 theories/SemanticIntrinsics.v
 theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v

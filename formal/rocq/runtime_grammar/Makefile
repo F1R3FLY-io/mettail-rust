@@ -33,6 +33,10 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SharedTypedAssemblyKernel \
 	RuntimeGrammar.TerminalVariantIdentity \
 	RuntimeGrammar.GeneratedSemanticAdapter \
+	RuntimeGrammar.NativeReflectionCodec \
+	RuntimeGrammar.InstalledFltHeadCodec \
+	RuntimeGrammar.InstalledFltTermCodec \
+	RuntimeGrammar.InstalledFltTraversal \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \

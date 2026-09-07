@@ -201,6 +201,59 @@ The obligations are deliberately separate:
   stack safety and Rust source correspondence remain required before exposing
   the service.
 
+### Structural codec proof layers
+
+The structural adapter is a checked partial isomorphism: it may refuse an
+unsupported or malformed term, but a successful conversion must preserve that
+term exactly in its supported structural representation. Let $`P_s`$ project a
+reflected occurrence tree into semantic terms at expected sort $`s`$, and let
+$`R_s`$ restore it. For successful conversions of reflected term $`t`$ and
+semantic term $`u`$, the reference model proves:
+
+```math
+P_s(t)=u \;\Longrightarrow\; R_s(u)=t,
+\qquad
+R_s(u)=t \;\Longrightarrow\; P_s(t)=u.
+```
+
+The proof layers have distinct responsibilities:
+
+| Model | Established property |
+|---|---|
+| [Native payload codec](../../formal/rocq/runtime_grammar/theories/NativeReflectionCodec.v) | Exact lowercase hexadecimal bytes, canonical signed 128-bit decimal values, and Boolean payload round trips |
+| [Installed constructor heads](../../formal/rocq/runtime_grammar/theories/InstalledFltHeadCodec.v) | Checked unique bindings and reserved-namespace separation; the argument plan uses the same resolved constructor's ordered domain |
+| [Finite structural terms](../../formal/rocq/runtime_grammar/theories/InstalledFltTermCodec.v) | Both partial inverses over complete finite occurrence trees, with each node's owner and each child's expected sort checked |
+| [Traversal contract](../../formal/rocq/runtime_grammar/theories/InstalledFltTraversal.v) | Reuse of checked stack scheduling and assembly ownership; singleton completion and preservation of the full prior resource charge |
+
+For example, the term model distinguishes a native Boolean from an ordinary
+constructor returning the Boolean sort. Its mixed-literal witness also uses
+deliberately unrelated grammar and semantic identifiers. Replacing its text
+child with a Boolean is rejected despite preserving the constructor's arity.
+Repeated child occurrences remain repeated; a shared graph vertex is not
+permission to omit an occurrence or its conversion charge.
+
+The existing reflector reserves all labels beginning with `^` for native and
+internal forms. The adapter's binding check must reuse
+`ast::validation::is_reserved_reflect_label` and refuse an unrepresentable
+constructor explicitly. Signature validity alone does not prevent a constructor
+named `^dynamic-text:61` from colliding with the reflected text value `"a"`.
+This is a representability condition for the existing reflection ABI, not a
+change to Greg's identifier syntax or to the abstract grammar data schema.
+Only constructor metadata labels are checked; a grammar may still use `^` in
+its source syntax, for example as a regular-expression anchor.
+
+These are proofs about structural observations, not arbitrary `Par` metadata
+or protobuf byte strings. The concrete adapter must obtain its carrier map and
+constructor bindings from the admitted image, establish native/constructor
+separation in the actual reflected tags, and connect its borrowed traversal to
+the finite occurrence witness. The existing
+[occurrence assembly model](../../formal/rocq/prattail_wpda_runtime/theories/SelectedOccurrencePlan.v)
+already proves postorder execution preserves declarative partial assembly; it
+must be instantiated with the checked codec rather than an arbitrary result.
+Cycle checks, graph-coordinate realization, iterative destruction and actual
+per-operation charging remain concrete refinement obligations. A final resource
+bound on a supplied charge trace does not itself prove those charges were made.
+
 This model does not prove cryptographic collision freedom, Rust extraction,
 the full normalization algorithm, or the later asynchronous RSpace produce and
 funding transaction. The node integration must connect the service result to
