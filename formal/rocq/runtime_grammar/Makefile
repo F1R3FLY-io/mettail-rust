@@ -41,9 +41,11 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.BorrowedOccurrenceExecution \
 	RuntimeGrammar.InstalledFltArena \
 	RuntimeGrammar.KernelPositionalNativeView \
+	RuntimeGrammar.KernelOperatorMaterialization \
 	RuntimeGrammar.InstalledFltOccurrence \
 	RuntimeGrammar.ReflectedParEnvelope \
 	RuntimeGrammar.ReflectedHeadEnrollment \
+	RuntimeGrammar.ReflectedLocalAssembly \
 	RuntimeGrammar.InstalledFltTraversal \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \

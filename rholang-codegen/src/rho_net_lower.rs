@@ -3119,10 +3119,25 @@ pub(crate) fn assemble_positional_ground_node(
     children: Vec<(Par, bool)>,
     language_fingerprint: &str,
 ) -> (Par, bool) {
-    let tag =
-        GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
-    let marked = is_marked_object_label(&term.constructor);
-    let mut elements = Vec::with_capacity(term.children.len() + 2);
+    assemble_positional_node(
+        &term.constructor,
+        children,
+        language_fingerprint,
+        Vec::with_capacity(term.children.len() + 2),
+    )
+}
+
+/// Shared local body; traversal callers supply actual reflected children and an
+/// empty element buffer. The checked FLT wrapper reserves that buffer fallibly.
+pub(crate) fn assemble_positional_node(
+    label: &str,
+    children: Vec<(Par, bool)>,
+    language_fingerprint: &str,
+    mut elements: Vec<Par>,
+) -> (Par, bool) {
+    debug_assert!(elements.is_empty());
+    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, label));
+    let marked = is_marked_object_label(label);
     let mut locally_free = tag.locally_free.clone();
     elements.push(tag);
     // Reserve the marker slot (filled after the children so ground-ness is known); a GPrivate
@@ -3137,7 +3152,7 @@ pub(crate) fn assemble_positional_ground_node(
         locally_free = union(locally_free, child_par.locally_free.clone());
         elements.push(child_par);
     }
-    let is_ground = match term.constructor.as_str() {
+    let is_ground = match label {
         BOUND_VAR_REFLECT_LABEL => false,
         FREE_VAR_REFLECT_LABEL => true,
         _ => children_ground,

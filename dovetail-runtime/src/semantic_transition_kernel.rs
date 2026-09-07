@@ -47,6 +47,103 @@ pub fn theory_operator_to_machine(operator: &TheoryImageOperatorV1) -> FramedSem
     )
 }
 
+/// Allocation-free sizing for the existing positional/native machine encoding.
+///
+/// The borrowed operator cannot change between planning and encoding. A caller
+/// must reserve its operation's cumulative work/payload allowance before calling
+/// [`Self::encode`]. This plan grants no authority and does not validate a sort or
+/// constructor signature; those come from the admitted image and typed adapter.
+pub struct TheoryPositionalNativeEncoding<'a> {
+    operator: &'a TheoryImageOperatorV1,
+    inner_bytes: usize,
+    framed_bytes: usize,
+}
+
+impl<'a> TheoryPositionalNativeEncoding<'a> {
+    /// `None` denotes a form outside this adapter boundary, not an invalid theory.
+    pub fn new(
+        operator: &'a TheoryImageOperatorV1,
+    ) -> Result<Option<Self>, SemanticMatchUndetermined> {
+        let inner_bytes = match operator {
+            TheoryImageOperatorV1::Constructor(_) => 5,
+            TheoryImageOperatorV1::Literal {
+                value: TheoryLiteralV1::String(value), ..
+            } => value
+                .len()
+                .checked_add(14)
+                .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?,
+            TheoryImageOperatorV1::Literal { value: TheoryLiteralV1::Integer(_), .. } => 22,
+            TheoryImageOperatorV1::Literal { value: TheoryLiteralV1::Boolean(_), .. } => 7,
+            _ => return Ok(None),
+        };
+        // The discriminant is also length-framed: 8 + 4, plus two 8-byte
+        // payload frames. Keep the sole byte writer below unchanged.
+        let framed_bytes = inner_bytes
+            .checked_add(THEORY_OPERATOR_DOMAIN.len())
+            .and_then(|bytes| bytes.checked_add(28))
+            .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?;
+        Ok(Some(Self { operator, inner_bytes, framed_bytes }))
+    }
+
+    /// Complete exact operator-key length, including all three length frames.
+    pub fn framed_bytes(&self) -> usize {
+        self.framed_bytes
+    }
+
+    /// Conservative logical payload for one fresh `try_add_with_budget` call,
+    /// including the caller's node and discarded copies. Child occurrences are
+    /// counted separately even when they refer to the same class.
+    ///
+    /// The existing path clones twice during canonicalization, once into the
+    /// class, and once per parent record: with the caller this is `degree + 4`
+    /// node payloads. Extra coordinates cover parent IDs, union-find parent/rank,
+    /// class key and memo value. Container headers, hash control storage,
+    /// capacity growth and allocator overhead are not RSS-accounted here.
+    /// Duplicates may conservatively pay this reservation, but must still use
+    /// the existing duplicate-before-node-limit insertion decision.
+    pub fn fresh_node_payload_bytes(
+        &self,
+        degree: usize,
+    ) -> Result<usize, SemanticMatchUndetermined> {
+        let coordinates = degree
+            .checked_mul(4)
+            .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?;
+        let node = self
+            .framed_bytes
+            .checked_add(coordinates)
+            .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?;
+        degree
+            .checked_add(4)
+            .and_then(|copies| copies.checked_mul(node))
+            .and_then(|bytes| bytes.checked_add(coordinates))
+            .and_then(|bytes| bytes.checked_add(13))
+            .ok_or(SemanticMatchUndetermined::InputLimitExceeded)
+    }
+
+    /// Materialize using the original encoder after the caller's reservation.
+    /// All three Vec capacities are requested before the byte writer runs.
+    pub fn encode(self) -> Result<FramedSemanticOperator, SemanticMatchUndetermined> {
+        let mut exact = Vec::new();
+        exact
+            .try_reserve_exact(self.inner_bytes)
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        let mut domain = Vec::new();
+        domain
+            .try_reserve_exact(THEORY_OPERATOR_DOMAIN.len())
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        let mut segments = Vec::new();
+        segments
+            .try_reserve_exact(2)
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        self.operator.write_content(&mut exact);
+        debug_assert_eq!(exact.len(), self.inner_bytes);
+        domain.extend_from_slice(THEORY_OPERATOR_DOMAIN);
+        segments.push(domain);
+        segments.push(exact);
+        Ok(FramedSemanticOperator::new(THEORY_OPERATOR_DISCRIMINANT, segments))
+    }
+}
+
 fn theory_pathmap_mode_to_machine(
     sort: TheorySortId,
     mode: PathMapModeV1,
@@ -9284,6 +9381,99 @@ mod tests {
         THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
         THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
     };
+
+    #[test]
+    fn positional_native_encoding_matches_the_existing_writer_exactly() {
+        let mut operators = vec![
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(u32::MAX)),
+        ];
+        for value in [
+            TheoryLiteralV1::String(String::new()),
+            TheoryLiteralV1::String("α\0💡".into()),
+            TheoryLiteralV1::String("x".repeat(256)),
+            TheoryLiteralV1::Integer(i128::MIN),
+            TheoryLiteralV1::Integer(i128::MAX),
+            TheoryLiteralV1::Integer(0),
+            TheoryLiteralV1::Boolean(false),
+            TheoryLiteralV1::Boolean(true),
+        ] {
+            operators.push(TheoryImageOperatorV1::Literal { sort: TheorySortId(u32::MAX), value });
+        }
+        for operator in operators {
+            let plan = TheoryPositionalNativeEncoding::new(&operator)
+                .expect("representable size")
+                .expect("supported operator");
+            let mut original_inner = Vec::new();
+            operator.write_content(&mut original_inner);
+            assert_eq!(plan.inner_bytes, original_inner.len());
+            let expected = theory_operator_to_machine(&operator);
+            let mut expected_key = Vec::new();
+            expected.write_content(&mut expected_key);
+            assert_eq!(plan.framed_bytes(), expected_key.len());
+            let encoded = plan.encode().expect("reserved encoder");
+            assert_eq!(encoded, expected);
+            assert_eq!(encoded.payload_segments()[1], original_inner);
+        }
+    }
+
+    #[test]
+    fn positional_native_encoding_leaves_other_forms_explicitly_unsupported() {
+        for operator in [
+            TheoryImageOperatorV1::Abstraction { sort: TheorySortId(0) },
+            TheoryImageOperatorV1::PathMapMode {
+                sort: TheorySortId(0),
+                mode: PathMapModeV1::Map,
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Bytes(vec![0]),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::FloatBits(0),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Unit,
+            },
+        ] {
+            assert!(TheoryPositionalNativeEncoding::new(&operator)
+                .expect("unsupported is distinct from overflow")
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn positional_native_encoding_reserves_all_occurrences_and_checks_overflow() {
+        let operator = TheoryImageOperatorV1::Constructor(TheoryConstructorId(2));
+        let plan = TheoryPositionalNativeEncoding::new(&operator)
+            .expect("size")
+            .expect("constructor");
+        let framed = plan.framed_bytes();
+        for degree in [0, 1, 2, 10, 1000] {
+            assert_eq!(
+                plan.fresh_node_payload_bytes(degree).expect("small degree"),
+                (degree + 4) * (framed + 4 * degree) + 4 * degree + 13
+            );
+        }
+        for degree in [usize::MAX, usize::MAX / 4, usize::MAX / 8] {
+            assert_eq!(
+                plan.fresh_node_payload_bytes(degree),
+                Err(SemanticMatchUndetermined::InputLimitExceeded)
+            );
+        }
+        // The reservation must not replace the arena's duplicate-first rule.
+        let mut graph = EGraph::with_config(EGraphConfig { max_nodes: 1 });
+        let first = graph
+            .try_add_with_budget(ENode::leaf(plan.encode().expect("encoding")))
+            .expect("first node");
+        let duplicate = graph
+            .try_add_with_budget(ENode::leaf(theory_operator_to_machine(&operator)))
+            .expect("duplicate remains admissible at the fresh-node ceiling");
+        assert_eq!(first, duplicate);
+        assert_eq!(graph.node_count(), 1);
+    }
 
     fn sort(id: u32, kind: TheorySortKindImageV1) -> TheorySortImageV1 {
         TheorySortImageV1 { id: TheorySortId(id), kind }

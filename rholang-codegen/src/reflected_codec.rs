@@ -121,6 +121,77 @@ impl<'a> ReflectedPositionalContext<'a> {
         })
     }
 
+    /// Assemble one node with the existing reflection body, moving the actual
+    /// already-reflected children in order. This is not a typing or admission
+    /// certificate: the caller supplies checked child sorts and ground bits.
+    ///
+    /// The flat planning pass reserves scalar tag buffers, metadata copies and
+    /// four-byte logical occurrence slots before assembly. It never measures a
+    /// recursive Par encoding or clones a child subtree. The input tuple vector
+    /// is charged where the traversal creates it, not again here. On refusal,
+    /// owned children use the existing stack-safe Par destructor.
+    pub fn assemble<C: FnMut() -> bool>(
+        &self,
+        label: &str,
+        children: Vec<(Par, bool)>,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<(Par, bool), DynamicReflectionError> {
+        let planning_work = children
+            .len()
+            .checked_add(label.len())
+            .and_then(|units| units.checked_add(1))
+            .ok_or(DynamicReflectionError::WorkLimit)?;
+        budget.charge(planning_work, 0)?;
+        let marked = crate::is_marked_object_label(label);
+        let mut scalar_bytes = reflected_tag_payload_bytes(self.fingerprint.len(), label.len())?;
+        if marked {
+            // The shared body writes ^gnd or ^nog, which have equal widths.
+            // It must not substitute the context's cached true marker for false.
+            scalar_bytes = scalar_bytes
+                .checked_add(reflected_tag_payload_bytes(self.fingerprint.len(), "^gnd".len())?)
+                .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+        }
+        let mut metadata_bytes = 0usize;
+        let mut prefix_max = 0usize;
+        for (child, _) in &children {
+            let length = child.locally_free.len();
+            prefix_max = prefix_max.max(length);
+            // clone the child's bitset, then allocate the padded union result
+            metadata_bytes = metadata_bytes
+                .checked_add(length)
+                .and_then(|bytes| bytes.checked_add(prefix_max))
+                .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+        }
+        metadata_bytes = prefix_max
+            .checked_mul(2)
+            .and_then(|copies| metadata_bytes.checked_add(copies))
+            .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+        let element_slots = children
+            .len()
+            .checked_add(2)
+            .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+        // Element-buffer slots, tag/marker unforgeables, outer expression.
+        let slot_bytes = element_slots
+            .checked_add(2 + usize::from(marked))
+            .and_then(|slots| slots.checked_mul(4))
+            .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+        let bytes = scalar_bytes
+            .checked_add(metadata_bytes)
+            .and_then(|bytes| bytes.checked_add(slot_bytes))
+            .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+        budget.charge(bytes, bytes)?;
+        let mut elements = Vec::new();
+        elements
+            .try_reserve_exact(element_slots)
+            .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+        Ok(crate::rho_net_lower::assemble_positional_node(
+            label,
+            children,
+            self.fingerprint,
+            elements,
+        ))
+    }
+
     /// Observe a single closed positional head, retaining the original child
     /// slice. `None` means no strict view was established, not category membership
     /// or a complete semantic rejection. Child sorts are checked by the adapter.
@@ -182,6 +253,28 @@ impl<'a> ReflectedPositionalContext<'a> {
         let label_start = tag.len() - label.len();
         Ok(Some(ReflectedPositionalHead { tag, label_start, children }))
     }
+}
+
+/// Materialized tag String plus its existing protobuf String byte buffer.
+/// Valid context fingerprints make the full tag nonempty, so the key byte is
+/// always present. Capacity-growth and allocator headers are not payload bytes.
+fn reflected_tag_payload_bytes(
+    fingerprint_len: usize,
+    label_len: usize,
+) -> Result<usize, DynamicReflectionError> {
+    let tag_len = REFLECTED_TERM_ABI_PREFIX
+        .len()
+        .checked_add(fingerprint_len)
+        .and_then(|len| len.checked_add(1))
+        .and_then(|len| len.checked_add(label_len))
+        .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+    let wire_len = tag_len
+        .checked_add(prost::length_delimiter_len(tag_len))
+        .and_then(|len| len.checked_add(1))
+        .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+    tag_len
+        .checked_add(wire_len)
+        .ok_or(DynamicReflectionError::PayloadByteLimit)
 }
 
 /// One owned decoded tag plus borrowed ordered child occurrences. The label is
@@ -264,6 +357,168 @@ mod tests {
     use std::collections::BTreeMap;
 
     const FP: &str = "checked-reflected-test";
+
+    fn assembly_children() -> Vec<(Par, bool)> {
+        [("One", vec![1], true), ("Two", vec![0, 2, 0], false), ("One", vec![4, 0], true)]
+            .into_iter()
+            .map(|(label, free, ground)| {
+                let mut par = reflect_ground_term_par(&GroundTerm::nullary(label), FP);
+                par.locally_free = free;
+                (par, ground)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reflected_codec_assembly_preserves_markers_order_and_exact_metadata() {
+        use models::rhoapi::expr::ExprInstance::EListBody;
+
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancelled);
+        let context = ReflectedPositionalContext::new(FP, &mut budget).expect("context");
+        for (label, ground) in [("Node.A", false), ("^bound", false), ("^free", true)] {
+            let children = assembly_children();
+            let expected_children = children
+                .iter()
+                .map(|(par, _)| par.clone())
+                .collect::<Vec<_>>();
+            let term = GroundTerm::new(
+                label,
+                vec![
+                    GroundTerm::nullary("One"),
+                    GroundTerm::nullary("Two"),
+                    GroundTerm::nullary("One"),
+                ],
+            );
+            let expected =
+                crate::rho_net_lower::assemble_positional_ground_node(&term, children.clone(), FP);
+            let (par, actual_ground) = context
+                .assemble(label, children, &mut budget)
+                .expect("assembly");
+            assert_eq!((&par, actual_ground), (&expected.0, expected.1));
+            assert_eq!(actual_ground, ground, "label-specific ground policy");
+            let Some(EListBody(list)) = &par.exprs[0].expr_instance else {
+                panic!("positional list envelope");
+            };
+            assert_eq!(list.ps.len(), 5);
+            assert_eq!(list.ps[1], ground_marker_tag_par(FP, ground));
+            assert_eq!(&list.ps[2..], expected_children.as_slice());
+            // Par::eq omits these bytes; test them independently, including padding.
+            assert_eq!(par.locally_free, [5, 2, 0]);
+            assert_eq!(list.locally_free, [5, 2, 0]);
+            for (actual, expected) in list.ps[2..].iter().zip(&expected_children) {
+                assert_eq!(actual.locally_free, expected.locally_free);
+            }
+            assert_eq!(par.locally_free, expected.0.locally_free);
+            assert!(!par.connective_used);
+            assert!(!list.connective_used);
+            assert!(list.remainder.is_none());
+        }
+        for label in ["Leaf", "^dynamic-integer:7"] {
+            let expected = reflect_ground_term_par(&GroundTerm::nullary(label), FP);
+            let (actual, ground) = context.assemble(label, vec![], &mut budget).expect("leaf");
+            assert_eq!(actual, expected);
+            assert!(ground);
+            let Some(EListBody(list)) = &actual.exprs[0].expr_instance else {
+                panic!("list");
+            };
+            assert_eq!(list.ps.len(), if label == "Leaf" { 2 } else { 1 });
+            assert!(actual.locally_free.is_empty());
+            assert!(list.locally_free.is_empty());
+        }
+    }
+
+    #[test]
+    fn reflected_codec_assembly_reserves_complete_payload_before_materialization() {
+        let mut setup_work = 0;
+        let mut cancelled = || false;
+        let mut setup =
+            ReflectedCodecBudget::new(&mut setup_work, 100_000, 100_000, &mut cancelled);
+        let context = ReflectedPositionalContext::new(FP, &mut setup).expect("context");
+        setup.finish();
+        let tag = crate::rho_net_lower::reflect_tag(FP, "Node");
+        let marker = crate::rho_net_lower::reflect_tag(FP, "^gnd");
+        let scalars = tag.len() + tag.encoded_len() + marker.len() + marker.encoded_len();
+        // Child lengths 1,3,2; prefix maxima 1,3,3; two final 3-byte copies.
+        let metadata = (1 + 3 + 2) + (1 + 3 + 3) + 2 * 3;
+        let slots = 4 * ((3 + 2) + 2 + 1);
+        let exact = scalars + metadata + slots;
+        let planning = 1 + "Node".len() + 3;
+        for allowance in [exact - 1, exact] {
+            let mut work = 7;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 100_000, allowance, &mut cancelled);
+            let result = context.assemble("Node", assembly_children(), &mut budget);
+            if allowance == exact {
+                assert!(result.is_ok());
+                assert_eq!(budget.remaining_bytes(), 0);
+                assert_eq!(budget.work_used(), (7 + planning + exact) as u64);
+            } else {
+                assert!(matches!(result, Err(DynamicReflectionError::PayloadByteLimit)));
+                assert_eq!(budget.remaining_bytes(), allowance);
+                assert_eq!(budget.work_used(), (7 + planning) as u64);
+            }
+        }
+        for cancel_at in [1, 2] {
+            let mut calls = 0;
+            let mut cancelled = || {
+                calls += 1;
+                calls == cancel_at
+            };
+            let mut work = 7;
+            let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, exact, &mut cancelled);
+            assert!(matches!(
+                context.assemble("Node", assembly_children(), &mut budget),
+                Err(DynamicReflectionError::Cancelled)
+            ));
+            assert_eq!(budget.remaining_bytes(), exact);
+            assert_eq!(
+                budget.work_used(),
+                if cancel_at == 1 {
+                    7
+                } else {
+                    (7 + planning) as u64
+                }
+            );
+        }
+        assert_eq!(
+            reflected_tag_payload_bytes(usize::MAX, 0),
+            Err(DynamicReflectionError::PayloadByteLimit)
+        );
+        assert_eq!(
+            reflected_tag_payload_bytes(0, usize::MAX),
+            Err(DynamicReflectionError::PayloadByteLimit)
+        );
+    }
+
+    #[test]
+    fn reflected_codec_assembly_error_drops_deep_owned_children_on_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut term = GroundTerm::nullary("Leaf");
+                for _ in 0..20_000 {
+                    term = GroundTerm::new("Node", vec![term]);
+                }
+                let par = reflect_ground_term_par(&term, FP);
+                let mut work = 0;
+                let mut cancelled = || false;
+                let mut setup =
+                    ReflectedCodecBudget::new(&mut work, 100_000, 100_000, &mut cancelled);
+                let context = ReflectedPositionalContext::new(FP, &mut setup).expect("context");
+                setup.finish();
+                let mut exhausted =
+                    ReflectedCodecBudget::new(&mut work, 100_000, 0, &mut cancelled);
+                assert!(matches!(
+                    context.assemble("Node", vec![(par, true)], &mut exhausted),
+                    Err(DynamicReflectionError::PayloadByteLimit)
+                ));
+            })
+            .expect("small-stack worker")
+            .join()
+            .expect("stack-safe assembly refusal");
+    }
 
     #[test]
     fn reflected_codec_reservations_are_atomic_and_preserve_the_prefix() {

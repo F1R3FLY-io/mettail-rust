@@ -153,6 +153,45 @@ This local API does not authenticate an action result or its receipt. The
 inverse adapter must retain the actual published result bundle and apply the
 separate request, receipt and whole-output checks described below.
 
+### Checked operator materialization
+
+`TheoryPositionalNativeEncoding` borrows a constructor or supported native
+operator and computes its size without allocation. Its `encode()` method
+reserves the three vector capacities and invokes the existing
+`TheoryImageOperatorV1::write_content`; it does not define another encoding.
+The caller must charge its cumulative budget before materializing the plan.
+Unsupported forms return no plan, separately from arithmetic overflow.
+
+Let $`n`$ be a String's UTF-8 byte length, $`D`$ the machine domain's byte
+length, and $`I`$ the inner operator's encoded length. The existing writer gives:
+
+| Operator | $`I`$ |
+|---|---:|
+| Constructor | 5 |
+| String literal | $`14+n`$ |
+| Integer literal | 22 |
+| Boolean literal | 7 |
+
+The complete framed operator length is $`F=28+D+I`$. The 28 bytes include the
+eight-byte frame around the four-byte discriminant and two further length
+frames. They must not be mistaken for an unframed discriminant.
+
+For a node with $`d`$ ordered child occurrences, the current e-graph insertion
+path materializes the caller node, two canonicalized copies, one class copy,
+and one parent-record copy per child. Its conservative logical payload
+reservation, including temporary copies and additional coordinates, is:
+
+```math
+(d+4)(F+4d)+4d+13.
+```
+
+The [materialization model](../../formal/rocq/runtime_grammar/theories/KernelOperatorMaterialization.v)
+connects this schedule to the existing writer's exact sizes and cumulative
+preallocation. Repeated children count separately. A duplicate may pay this
+conservative reservation, but still uses the existing duplicate-before-node-limit
+decision. This is not a new e-graph implementation, an exact CPU cost, a bound on
+hash probes or an allocator/RSS certificate.
+
 ### Strict reflected-head enrollment
 
 The [reflected codec](../../rholang-codegen/src/reflected_codec.rs) shares the
@@ -200,6 +239,50 @@ a claim about allocator capacity or resident memory. Only a flat scalar's
 `encoded_len()` is used;
 recursive `Par` encoding is not used to estimate traversal cost. The existing
 iterative `Par` and `GroundTerm` ownership paths remain responsible for cleanup.
+
+### Shared local output assembly
+
+`ReflectedPositionalContext::assemble` accepts an actual vector of already
+reflected children and their ground bits. It reserves an element buffer, then
+delegates to the same local body as `assemble_positional_ground_node`. No
+placeholder source terms are created. The helper does not establish child
+typing or justify its supplied ground bits; the adapter owns those checks.
+
+The body retains the existing label-specific policy: `^bound` is nonground,
+`^free` is ground, and other nodes combine all child ground bits. Marked nodes
+receive the resulting `^gnd` or `^nog` marker. Unmarked native labels do not
+receive a marker. The cached true marker used for closed input enrollment is
+not substituted for a newly assembled nonground marker.
+
+Assembly moves children in their original order and preserves the existing
+padded `locally_free` byte union. Let $`l_i`$ be the byte length of child
+$`i`$'s bitset, $`m_i=\max_{j\leq i}l_j`$ its prefix maximum, and $`M`$ the final
+maximum (zero for no children). The existing local body materializes:
+
+```math
+L=\sum_i l_i+\sum_i m_i+2M
+```
+
+metadata bytes: each child-bitset clone, each prefix union, and two final
+bitset copies. A charged flat pass computes $`L`$ without examining descendants.
+If $`S`$ counts the tag/marker Strings and their protobuf byte buffers, and
+$`m`$ is one for a marked label or zero otherwise, local assembly reserves:
+
+```math
+S+L+4\bigl((d+2)+(1+m)+1\bigr).
+```
+
+The slot terms cover the element buffer, tag/marker unforgeables and outer
+expression. The incoming child-tuple vector is charged by the traversal where
+it is created. Checked arithmetic and the combined work/byte reservation precede
+allocation. On refusal, owned children use the existing stack-safe destructor.
+Not all underlying primitive allocations expose recoverable allocation errors;
+the logical reservation is not a promise of allocation success or an RSS bound.
+
+The [local assembly model](../../formal/rocq/runtime_grammar/theories/ReflectedLocalAssembly.v)
+proves shared-body equivalence, preservation of ordered child occurrences and
+metadata, and the iterative metadata size observer. Tests explicitly compare
+root and list metadata bytes because ordinary `Par` equality omits that metadata.
 
 ## Exact dispatch and rights
 
@@ -376,6 +459,8 @@ The proof layers have distinct responsibilities:
 | [Reflected Par envelopes](../../formal/rocq/runtime_grammar/theories/ReflectedParEnvelope.v) | All nine executable component families are checked; an accepted expression, private-tag or send envelope cannot hide another executable component, including a conditional |
 | [Strict reflected-head enrollment](../../formal/rocq/runtime_grammar/theories/ReflectedHeadEnrollment.v) | Canonical reenrollment preserves nominal bytes and exact owner/label, true ground markers round-trip, and paired work/payload reservations precede modeled allocation events |
 | [Installed binding enrollment](../../formal/rocq/runtime_grammar/theories/InstalledFltBindingEnrollment.v) | Named joins retain distinct coordinates and exact optional carriers; complete signature assembly and collision-rejecting roster construction establish the existing constructor inverse premise without dropping entries |
+| [Operator materialization](../../formal/rocq/runtime_grammar/theories/KernelOperatorMaterialization.v) | Exact inner and framed sizes agree with the existing writer; the conservative fresh-node payload schedule counts every modeled copy before allocation |
+| [Local reflected assembly](../../formal/rocq/runtime_grammar/theories/ReflectedLocalAssembly.v) | Shared-body factoring retains markers, child order and both metadata vectors; the iterative flat length observer counts metadata copies before materialization |
 
 For example, the term model distinguishes a native Boolean from an ordinary
 constructor returning the Boolean sort. Its mixed-literal witness also uses
