@@ -524,10 +524,7 @@ impl DynamicSyntaxAdmission {
                 values.push(native_leaf(par, fingerprint, valid_integer_label).into())
             },
             Shape::Boolean => values.push(
-                native_leaf(par, fingerprint, |label| {
-                    matches!(label.strip_prefix(BOOLEAN_LABEL), Some("true" | "false"))
-                })
-                .into(),
+                native_leaf(par, fingerprint, |label| decode_boolean_label(label).is_some()).into(),
             ),
             Shape::Bytes => values.push(
                 native_leaf(par, fingerprint, |label| {
@@ -580,7 +577,7 @@ impl DynamicSyntaxAdmission {
         if let Some((label, children)) = positional(par, fingerprint) {
             let leaf = (label.starts_with(TEXT_LABEL) && valid_text_label(&label))
                 || (label.starts_with(INTEGER_LABEL) && valid_integer_label(&label))
-                || matches!(label.strip_prefix(BOOLEAN_LABEL), Some("true" | "false"))
+                || decode_boolean_label(&label).is_some()
                 || label
                     .strip_prefix(BYTES_REFLECT_LABEL)
                     .is_some_and(valid_hex)
@@ -1088,7 +1085,7 @@ fn exact_expr(par: &Par) -> Option<&ExprInstance> {
     expr.expr_instance.as_ref()
 }
 
-fn private_tag(par: &Par) -> Option<String> {
+pub(crate) fn private_tag_bytes(par: &Par) -> Option<&[u8]> {
     if !par.exprs.is_empty()
         || !par.sends.is_empty()
         || !par.receives.is_empty()
@@ -1106,31 +1103,50 @@ fn private_tag(par: &Par) -> Option<String> {
     let UnfInstance::GPrivateBody(private) = unforgeable.unf_instance.as_ref()? else {
         return None;
     };
-    String::decode(private.id.as_slice()).ok()
+    Some(private.id.as_slice())
 }
 
-fn positional<'a>(par: &'a Par, fingerprint: &str) -> Option<(String, &'a [Par])> {
+fn private_tag(par: &Par) -> Option<String> {
+    decode_private_tag(private_tag_bytes(par)?)
+}
+
+pub(crate) fn decode_private_tag(bytes: &[u8]) -> Option<String> {
+    String::decode(bytes).ok()
+}
+
+pub(crate) fn positional_parts(par: &Par) -> Option<(&Par, &[Par])> {
     let ExprInstance::EListBody(list) = exact_expr(par)? else {
         return None;
     };
     if list.remainder.is_some() || list.connective_used {
         return None;
     }
-    let (head, raw_children) = list.ps.split_first()?;
+    list.ps.split_first()
+}
+
+pub(crate) fn positional_children<'a>(
+    label: &str,
+    raw_children: &'a [Par],
+    is_marker: impl FnOnce(&Par) -> bool,
+) -> Option<&'a [Par]> {
+    if is_marked_object_label(label) {
+        let (marker, children) = raw_children.split_first()?;
+        is_marker(marker).then_some(children)
+    } else {
+        Some(raw_children)
+    }
+}
+
+fn positional<'a>(par: &'a Par, fingerprint: &str) -> Option<(String, &'a [Par])> {
+    let (head, raw_children) = positional_parts(par)?;
     let tag = private_tag(head)?;
     let (actual, label) = parse_reflected_tag(&tag)?;
     if actual != fingerprint {
         return None;
     }
-    let children = if is_marked_object_label(label) {
-        let (marker, children) = raw_children.split_first()?;
-        if !is_ground_marker_par(marker, fingerprint) {
-            return None;
-        }
-        children
-    } else {
-        raw_children
-    };
+    let children = positional_children(label, raw_children, |marker| {
+        is_ground_marker_par(marker, fingerprint)
+    })?;
     Some((label.to_string(), children))
 }
 
@@ -1164,26 +1180,45 @@ fn valid_hex(value: &str) -> bool {
 }
 
 fn valid_text_label(label: &str) -> bool {
-    let Some(hex) = label.strip_prefix(TEXT_LABEL) else {
+    let Some(hex) = text_label_payload(label) else {
         return false;
     };
-    if !valid_hex(hex) {
-        return false;
-    }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
+    decode_hex_into(hex, &mut bytes);
+    String::from_utf8(bytes).is_ok()
+}
+
+pub(crate) fn text_label_payload(label: &str) -> Option<&str> {
+    label.strip_prefix(TEXT_LABEL).filter(|hex| valid_hex(hex))
+}
+
+/// Append previously validated lowercase hex pairs to the caller's buffer.
+pub(crate) fn decode_hex_into(hex: &str, bytes: &mut Vec<u8>) {
     for pair in hex.as_bytes().chunks_exact(2) {
         let high = (pair[0] as char).to_digit(16).expect("validated hex");
         let low = (pair[1] as char).to_digit(16).expect("validated hex");
         bytes.push(((high << 4) | low) as u8);
     }
-    String::from_utf8(bytes).is_ok()
 }
 
 fn valid_integer_label(label: &str) -> bool {
+    decode_integer_label(label).is_some()
+}
+
+pub(crate) fn decode_integer_label(label: &str) -> Option<i128> {
     label
         .strip_prefix(INTEGER_LABEL)
         .and_then(|value| value.parse::<i128>().ok().map(|parsed| (value, parsed)))
-        .is_some_and(|(value, parsed)| parsed.to_string() == value)
+        .filter(|(value, parsed)| parsed.to_string() == *value)
+        .map(|(_, parsed)| parsed)
+}
+
+pub(crate) fn decode_boolean_label(label: &str) -> Option<bool> {
+    match label.strip_prefix(BOOLEAN_LABEL)? {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1197,6 +1232,68 @@ mod tests {
     };
 
     const FP: &str = "dynamic-admission-test";
+
+    #[test]
+    fn strict_reflected_codec_rejects_noncanonical_private_names_without_changing_admission() {
+        let mut value = reflect_ground_term_par(&GroundTerm::nullary("Zero"), FP);
+        let ExprInstance::EListBody(list) = value.exprs[0].expr_instance.as_mut().expect("list")
+        else {
+            panic!("positional fixture");
+        };
+        let Some(UnfInstance::GPrivateBody(private)) =
+            list.ps[0].unforgeables[0].unf_instance.as_mut()
+        else {
+            panic!("private tag");
+        };
+        let canonical = private.id.clone();
+        private.id.extend_from_slice(&[0x10, 0x00]);
+        assert_ne!(private.id, canonical);
+        assert_eq!(
+            String::decode(private.id.as_slice()).expect("permissive String decoder"),
+            String::decode(canonical.as_slice()).expect("canonical String decoder")
+        );
+        assert_eq!(
+            positional(&value, FP)
+                .expect("existing permissive head policy")
+                .0,
+            "Zero"
+        );
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget =
+            crate::ReflectedCodecBudget::new(&mut work, 100_000, 100_000, &mut cancelled);
+        let context = crate::ReflectedPositionalContext::new(FP, &mut budget).expect("context");
+        assert!(context
+            .view(&value, &mut budget)
+            .expect("strict view")
+            .is_none());
+        assert_eq!(positional(&value, FP).expect("legacy policy unchanged").0, "Zero");
+    }
+
+    #[test]
+    fn strict_reflected_codec_does_not_promote_nonground_markers() {
+        let mut value = reflect_ground_term_par(&GroundTerm::nullary("Zero"), FP);
+        let ExprInstance::EListBody(list) = value.exprs[0].expr_instance.as_mut().expect("list")
+        else {
+            panic!("positional fixture");
+        };
+        list.ps[1] = crate::ground_marker_tag_par(FP, false);
+        assert_eq!(
+            positional(&value, FP)
+                .expect("existing general ground-marker policy")
+                .0,
+            "Zero"
+        );
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget =
+            crate::ReflectedCodecBudget::new(&mut work, 100_000, 100_000, &mut cancelled);
+        let context = crate::ReflectedPositionalContext::new(FP, &mut budget).expect("context");
+        assert!(context
+            .view(&value, &mut budget)
+            .expect("strict closed view")
+            .is_none());
+    }
 
     fn grammar() -> GrammarCoreV1 {
         let mut core = GrammarCoreV1::new("Admission");

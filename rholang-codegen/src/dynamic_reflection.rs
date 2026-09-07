@@ -36,6 +36,11 @@ pub enum DynamicReflectionError {
     HoleCategoryConflict(u32),
     MissingHole(u32),
     InvalidMapEntry,
+    WorkLimit,
+    PayloadByteLimit,
+    Cancelled,
+    AllocationFailed,
+    InvalidFingerprint,
 }
 
 impl std::fmt::Display for DynamicReflectionError {
@@ -63,11 +68,28 @@ impl std::fmt::Display for DynamicReflectionError {
             Self::InvalidMapEntry => {
                 formatter.write_str("dynamic map entry is not a two-element key/value sequence")
             },
+            Self::WorkLimit => formatter.write_str("reflected codec work limit exhausted"),
+            Self::PayloadByteLimit => {
+                formatter.write_str("reflected codec payload-byte limit exhausted")
+            },
+            Self::Cancelled => formatter.write_str("reflected codec operation cancelled"),
+            Self::AllocationFailed => formatter.write_str("reflected codec allocation failed"),
+            Self::InvalidFingerprint => {
+                formatter.write_str("reflected fingerprint must be nonempty and dot-free")
+            },
         }
     }
 }
 
 impl std::error::Error for DynamicReflectionError {}
+
+/// Borrow the native values supported by the existing dynamic reflection ABI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynamicNativeRef<'a> {
+    Text(&'a str),
+    Integer(i128),
+    Boolean(bool),
+}
 
 /// Recover the category inferred for every structural template-hole id.
 ///
@@ -185,10 +207,14 @@ pub fn dynamic_syntax_to_ground_term(
                     values.push(GroundTerm::nullary(atom_label(TEXT_LABEL, text.as_bytes())));
                 },
                 DynamicValue::Integer(integer) => {
-                    values.push(GroundTerm::nullary(format!("{INTEGER_LABEL}{integer}")));
+                    values.push(GroundTerm::nullary(native_label(DynamicNativeRef::Integer(
+                        *integer,
+                    ))));
                 },
                 DynamicValue::Boolean(boolean) => {
-                    values.push(GroundTerm::nullary(format!("{BOOLEAN_LABEL}{boolean}")));
+                    values.push(GroundTerm::nullary(native_label(DynamicNativeRef::Boolean(
+                        *boolean,
+                    ))));
                 },
                 DynamicValue::Bytes(bytes) => {
                     values.push(GroundTerm::bytes(bytes));
@@ -259,11 +285,35 @@ fn map_entries(entries: Vec<GroundTerm>) -> Result<Vec<GroundTerm>, DynamicRefle
 
 fn atom_label(prefix: &str, bytes: &[u8]) -> String {
     let mut label = String::with_capacity(prefix.len() + bytes.len() * 2);
+    write_atom_label(&mut label, prefix, bytes);
+    label
+}
+
+fn write_atom_label(label: &mut String, prefix: &str, bytes: &[u8]) {
     label.push_str(prefix);
     for byte in bytes {
-        write!(&mut label, "{byte:02x}").expect("String writes are infallible");
+        write!(label, "{byte:02x}").expect("String writes are infallible");
     }
+}
+
+fn native_label(value: DynamicNativeRef<'_>) -> String {
+    let mut label = String::new();
+    write_dynamic_native_label(&mut label, value);
     label
+}
+
+/// Shared scalar writer. The checked adapter reserves its buffer before this
+/// call; ordinary reflection retains its existing infallible writer contract.
+pub(crate) fn write_dynamic_native_label(label: &mut String, value: DynamicNativeRef<'_>) {
+    match value {
+        DynamicNativeRef::Text(text) => write_atom_label(label, TEXT_LABEL, text.as_bytes()),
+        DynamicNativeRef::Integer(value) => {
+            write!(label, "{INTEGER_LABEL}{value}").expect("String writes are infallible")
+        },
+        DynamicNativeRef::Boolean(value) => {
+            write!(label, "{BOOLEAN_LABEL}{value}").expect("String writes are infallible")
+        },
+    }
 }
 
 #[cfg(test)]

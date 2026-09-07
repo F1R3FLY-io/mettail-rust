@@ -113,6 +113,7 @@ pub mod need;
 /// pipeline (thread-local span stack; collection off by default). The phases re-enter
 /// each other (EM-4), so naive per-phase wall timers double-count — see the module docs.
 pub mod pipeline_spans;
+mod reflected_codec;
 pub mod rho_net;
 pub mod rho_net_automaton;
 pub mod rho_net_cache;
@@ -189,7 +190,8 @@ pub use dynamic_admission::{
     DynamicSyntaxAdmission,
 };
 pub use dynamic_reflection::{
-    dynamic_syntax_to_ground_term, dynamic_template_hole_categories, DynamicReflectionError,
+    dynamic_syntax_to_ground_term, dynamic_template_hole_categories, DynamicNativeRef,
+    DynamicReflectionError,
 };
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use guard_closure::{all_operands_ground, is_binder_closed};
@@ -224,6 +226,10 @@ pub use need::{
     CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce, CallByNeedForceAdmissionRecord,
     CallByNeedInitialState, CallByNeedThunkAst, CallByNeedThunkPlan, CallByNeedThunkPlanError,
     CallByNeedThunkSpec, CallByNeedThunkSpecError,
+};
+pub use reflected_codec::{
+    decode_dynamic_native_label, encode_dynamic_native_label, ReflectedCodecBudget,
+    ReflectedPositionalContext, ReflectedPositionalHead,
 };
 pub use rho_net::{
     rescope_channel_fingerprint, scoped_channel_name, RhoNetChannel, RhoNetChannelKind,

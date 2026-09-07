@@ -88,6 +88,53 @@ This local API does not authenticate an action result or its receipt. The
 inverse adapter must retain the actual published result bundle and apply the
 separate request, receipt and whole-output checks described below.
 
+### Strict reflected-head enrollment
+
+The [reflected codec](../../rholang-codegen/src/reflected_codec.rs) shares the
+existing positional-envelope, private-tag, native-payload and reflection
+helpers. Its `ReflectedPositionalContext` is bound to the exact owner fingerprint
+and precomputes the existing true ground marker once. This context is structural
+data, not installed-language authority.
+
+The closed adapter has two stricter enrollment conditions than general syntax
+admission. A private tag must equal its canonical encoding through the existing
+String writer. The protobuf String reader can ignore unknown fields: appending
+the bytes `[0x10, 0x00]` can preserve decoded text while changing the actual
+private name. Reject this input; do not silently normalize one nominal identity
+into another. Similarly, a marked closed constructor must carry the exact
+`^gnd` marker. Accepting `^nog` and rebuilding `^gnd` would change its marker.
+Native reserved labels remain unmarked. General admission retains its existing
+policy; these checks apply to the new closed conversion boundary.
+
+The head view owns one decoded tag and borrows the original ordered children.
+Its label is a slice of that tag, avoiding another label allocation. Native
+label decoding and encoding reuse the existing lowercase hexadecimal text,
+canonical signed integer and Boolean implementations. They do not parse guest
+source, select an installed language or validate a complete subtree.
+
+`ReflectedCodecBudget` borrows the caller's cumulative work counter and
+cancellation callback and tracks a decreasing payload-byte allowance. Each
+reservation checks both dimensions before changing either balance. Failed
+reservations spend nothing; later malformed input or allocation failure does
+not refund work already performed. Its consuming `finish()` returns unused
+bytes so a subsequent kernel call and all output conversions can share the
+original allowance without replenishing it.
+
+| Operation | Reservation before materialization |
+|---|---|
+| Decode a private tag | Its flat encoded ID length, before invoking the existing String decoder |
+| Check canonical private identity | The decoded scalar's encoded length, before reencoding with the existing writer |
+| Construct the ground-marker context | The checked tag length plus its protobuf String encoding length |
+| Decode native text | Input-label scanning, then the decoded byte-buffer length before allocation |
+| Encode native text | Prefix length plus twice the UTF-8 byte length, using checked arithmetic |
+| Format a native integer | At most 40 decimal bytes, conservatively reserved before formatting |
+| Visit constructor slots | Every child slot, including repeated occurrences |
+
+These are logical work and payload reservations, not a claim about allocator
+capacity or resident memory. Only a flat scalar's `encoded_len()` is used;
+recursive `Par` encoding is not used to estimate traversal cost. The existing
+iterative `Par` and `GroundTerm` ownership paths remain responsible for cleanup.
+
 ## Exact dispatch and rights
 
 An installed bundle keeps its authoritative language value, admitted semantic
@@ -261,6 +308,7 @@ The proof layers have distinct responsibilities:
 | [Local kernel view](../../formal/rocq/runtime_grammar/theories/KernelPositionalNativeView.v) | Exact octet-width and indexed constructor checks preserve ordered children; native payload observations retain framed text bytes, signed little-endian integer interpretation and canonical Boolean bytes; public entry charging refines the existing cumulative budget |
 | [Reachable graph projection](../../formal/rocq/runtime_grammar/theories/InstalledFltGraphProjection.v) | The kernel's existing remapping contract transports every published root's complete finite occurrence, including native payloads and ordered child slots |
 | [Reflected Par envelopes](../../formal/rocq/runtime_grammar/theories/ReflectedParEnvelope.v) | All nine executable component families are checked; an accepted expression, private-tag or send envelope cannot hide another executable component, including a conditional |
+| [Strict reflected-head enrollment](../../formal/rocq/runtime_grammar/theories/ReflectedHeadEnrollment.v) | Canonical reenrollment preserves nominal bytes and exact owner/label, true ground markers round-trip, and paired work/payload reservations precede modeled allocation events |
 
 For example, the term model distinguishes a native Boolean from an ordinary
 constructor returning the Boolean sort. Its mixed-literal witness also uses

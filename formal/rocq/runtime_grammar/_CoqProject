@@ -77,6 +77,7 @@ theories/InstalledFltArena.v
 theories/KernelPositionalNativeView.v
 theories/InstalledFltOccurrence.v
 theories/ReflectedParEnvelope.v
+theories/ReflectedHeadEnrollment.v
 theories/ExecutableTheoryCore.v
 theories/ExecutableTheoryImage.v
 theories/CollectionComprehension.v
