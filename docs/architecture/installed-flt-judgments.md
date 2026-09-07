@@ -58,6 +58,36 @@ blocker, not grounds for silently narrowing the application. Round-trip laws
 must cover admitted constructors, literals, ordering, multiplicity and scope.
 Their proofs precede the corresponding adapter implementation.
 
+### Borrowed positional and native kernel view
+
+`theory_positional_native_view` exposes the existing theory-machine decoder
+without reconstructing a tree. A constructor view borrows its exact installed
+signature and ordered child slice. A native view contains a borrowed String or
+an exact Integer or Boolean. Boolean decoding is available in ordinary library
+builds, not only in the kernel's unit-test configuration.
+
+The view checks the root coordinate, a sole representative, the expected sort,
+the existing operator framing and the supported head's signature. Constructor
+lookup is shared with the Horn evaluator, and native decoding is shared with
+the existing intrinsic evaluator. Neither uses a new encoding or evaluator.
+The complete constructor record is retained, including its optional grammar
+binding; equal numeric identifiers in unrelated tables are not substituted.
+
+The operation consumes cumulative work: one unit for the node, one for every
+constructor child slot, and one for each String byte before UTF-8 validation.
+An overdrawn incoming counter is rejected before incrementing it. Returning a
+borrowed slice makes no allocation and does not visit or validate descendants.
+The adapter must subsequently visit and charge every occurrence, including
+repeated references to the same graph vertex.
+
+`Ok(None)` means that no supported local view was established. It deliberately
+retains the existing decoder's behavior for unsupported and some malformed
+literal forms; it is not evidence of validity or a complete semantic rejection.
+Invalid evidence, cancellation and exhaustion remain distinct errors.
+This local API does not authenticate an action result or its receipt. The
+inverse adapter must retain the actual published result bundle and apply the
+separate request, receipt and whole-output checks described below.
+
 ## Exact dispatch and rights
 
 An installed bundle keeps its authoritative language value, admitted semantic
@@ -228,6 +258,7 @@ The proof layers have distinct responsibilities:
 | [Immediate instruction execution](../../formal/rocq/runtime_grammar/theories/FusedOccurrenceExecution.v) | The existing compiler emits at most one instruction per transition; executing it immediately preserves partial assembly, with exhaustion distinct from rejection |
 | [Borrowed traversal](../../formal/rocq/runtime_grammar/theories/BorrowedOccurrenceExecution.v) | Deterministic local lookup has a unique finite unfolding; reference-based steps and runs refine the occurrence machine for sources with such an unfolding |
 | [Fresh-arena realization](../../formal/rocq/runtime_grammar/theories/InstalledFltArena.v) | Exact interning preserves existing node meanings and realizes every ordered child occurrence; checked add-only construction supplies a topological arena and hence finite unfolding |
+| [Local kernel view](../../formal/rocq/runtime_grammar/theories/KernelPositionalNativeView.v) | Exact octet-width and indexed constructor checks preserve ordered children; native payload observations retain framed text bytes, signed little-endian integer interpretation and canonical Boolean bytes; public entry charging refines the existing cumulative budget |
 | [Reachable graph projection](../../formal/rocq/runtime_grammar/theories/InstalledFltGraphProjection.v) | The kernel's existing remapping contract transports every published root's complete finite occurrence, including native payloads and ordered child slots |
 | [Reflected Par envelopes](../../formal/rocq/runtime_grammar/theories/ReflectedParEnvelope.v) | All nine executable component families are checked; an accepted expression, private-tag or send envelope cannot hide another executable component, including a conditional |
 
@@ -237,6 +268,15 @@ deliberately unrelated grammar and semantic identifiers. Replacing its text
 child with a Boolean is rejected despite preserving the constructor's arity.
 Repeated child occurrences remain repeated; a shared graph vertex is not
 permission to omit an occurrence or its conversion charge.
+
+The local-view model also proves that extracting a shared decoder body preserves
+all observations for any body, including its error and work results. This is a
+refactor law, not an assumption that an arbitrary decoder is correct. Its text
+claim concerns the exact bytes submitted to the existing UTF-8 checker; it does
+not prove that Rust standard-library checker or integer primitive. Focused tests
+exercise the existing operator encoder, malformed framing, signed bounds,
+Unicode, repeated child slots, wrong sorts, non-singleton classes, work exhaustion
+and cancellation. An external library test checks production Boolean decoding.
 
 The existing reflector reserves all labels beginning with `^` for native and
 internal forms. The adapter's binding check must reuse

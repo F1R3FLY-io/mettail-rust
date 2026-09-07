@@ -39,6 +39,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.FusedOccurrenceExecution \
 	RuntimeGrammar.BorrowedOccurrenceExecution \
 	RuntimeGrammar.InstalledFltArena \
+	RuntimeGrammar.KernelPositionalNativeView \
 	RuntimeGrammar.InstalledFltOccurrence \
 	RuntimeGrammar.ReflectedParEnvelope \
 	RuntimeGrammar.InstalledFltTraversal \

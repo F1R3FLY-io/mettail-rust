@@ -17,13 +17,13 @@ use dovetail::{egraph::EClassId, egraph::EGraph, egraph::EGraphConfig, egraph::E
 use mettail_grammar_core::{
     CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, SemanticEffectClassV1,
     SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1, TheoryActionId,
-    TheoryConstructorId, TheoryEffectId, TheoryImageIntrinsicV1, TheoryImageOperatorV1,
-    TheoryImageTermFormV1, TheoryJudgmentId, TheoryJudgmentPatternAutomatonV1,
-    TheoryJudgmentRuleProgramId, TheoryLimitsV1, TheoryLiteralCarrierV1, TheoryLiteralV1,
-    TheoryPatternAutomatonV1, TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1,
-    TheoryResourceProfileV1, TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId,
-    TheoryRuleProgramV1, TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1,
-    TheoryVariableId,
+    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryImageIntrinsicV1,
+    TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
+    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId, TheoryLimitsV1,
+    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
+    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
+    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheorySemanticImageV1,
+    TheorySortId, TheorySortKindImageV1, TheoryVariableId,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -4783,21 +4783,12 @@ where
         let mut pathmap_mode = None;
         match tag {
             0 => {
-                if payload.len() != 4 {
-                    return Err(SemanticMatchUndetermined::InvalidImageEvidence);
-                }
-                let constructor = mettail_grammar_core::TheoryConstructorId(read_u32(payload));
-                let signature = self
-                    .image
-                    .constructors
-                    .get(constructor.0 as usize)
-                    .filter(|candidate| candidate.id == constructor)
-                    .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
-                if signature.codomain != expected_sort
-                    || signature.domain.len() != node.children.len()
-                {
-                    return Err(SemanticMatchUndetermined::InvalidImageEvidence);
-                }
+                let signature = runtime_constructor_signature(
+                    self.image,
+                    expected_sort,
+                    payload,
+                    node.children.len(),
+                )?;
                 arguments
                     .try_reserve_exact(node.children.len())
                     .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
@@ -6455,6 +6446,29 @@ fn runtime_sort_kind(
         .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)
 }
 
+/// Resolve the existing tag-zero payload. Callers validate the outer framing
+/// and expected sort and charge their own node/child work before this lookup.
+fn runtime_constructor_signature<'a>(
+    image: &'a TheorySemanticImageV1,
+    expected_sort: TheorySortId,
+    payload: &[u8],
+    child_count: usize,
+) -> Result<&'a TheoryConstructorImageV1, SemanticMatchUndetermined> {
+    if payload.len() != 4 {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    }
+    let constructor = TheoryConstructorId(read_u32(payload));
+    let signature = image
+        .constructors
+        .get(constructor.0 as usize)
+        .filter(|candidate| candidate.id == constructor)
+        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+    if signature.codomain != expected_sort || signature.domain.len() != child_count {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    }
+    Ok(signature)
+}
+
 #[derive(Clone, Copy)]
 struct RuntimeKeyedCollectionSorts {
     pair: TheorySortId,
@@ -7315,11 +7329,95 @@ struct ProvenIntrinsic {
     receipt: SemanticIntrinsicReceiptV1,
 }
 
-enum RuntimeLiteralRef<'a> {
+/// An exact native value borrowed from the existing theory-machine encoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeLiteralRef<'a> {
     String(&'a str),
     Integer(i128),
-    #[cfg(test)]
     Boolean(bool),
+}
+
+/// One local positional/native observation, without choosing among e-nodes or
+/// materializing a subtree. Child coordinates retain order and multiplicity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TheoryPositionalNativeView<'a> {
+    Constructor {
+        signature: &'a TheoryConstructorImageV1,
+        children: &'a [EClassId],
+    },
+    Literal {
+        sort: TheorySortId,
+        value: RuntimeLiteralRef<'a>,
+    },
+}
+
+/// Borrow a checked local view using the kernel's existing operator decoders.
+///
+/// The image must be the caller's admitted installed image. This checks root
+/// validity, a sole representative, the expected sort, exact operator framing
+/// and the supported head's signature. It does not validate descendants or
+/// certify a transition receipt. Inverse FLT reconstruction must retain a borrow
+/// of the original [`ProvenSemanticTransitions`] and validate each occurrence;
+/// an arbitrary graph passing this local check is not a published result.
+///
+/// `Ok(None)` means no supported positional/native view was established. It
+/// includes unsupported forms and some malformed literal forms; it is neither
+/// successful admission nor complete semantic refutation. Failures and resource
+/// exhaustion must not be converted into an empty successful result.
+///
+/// Work is cumulative: one node unit, every constructor child, and every String
+/// payload byte (before UTF-8 validation). No allocation or child-ID traversal
+/// occurs here. The public entry rejects overdrawn counters before invoking the
+/// private one-unit helper, whose callers otherwise maintain that invariant.
+pub fn theory_positional_native_view<'a, C>(
+    image: &'a TheorySemanticImageV1,
+    egraph: &'a EGraph<FramedSemanticOperator>,
+    class: EClassId,
+    expected_sort: TheorySortId,
+    work: &mut u64,
+    work_limit: u64,
+    is_cancelled: &mut C,
+) -> Result<Option<TheoryPositionalNativeView<'a>>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    if *work > work_limit {
+        return Err(SemanticMatchUndetermined::WorkBudgetExhausted);
+    }
+    charge_work(work, work_limit, is_cancelled)?;
+    let class = egraph
+        .try_find(class)
+        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+    let [node] = egraph.nodes(class) else {
+        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+    };
+    runtime_sort_kind(image, expected_sort)?;
+    let exact = exact_theory_operator_bytes(&node.op)
+        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+    let (&tag, payload) = exact
+        .split_first()
+        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+    match tag {
+        0 => {
+            charge_work_units(work, work_limit, node.children.len(), is_cancelled)?;
+            let signature =
+                runtime_constructor_signature(image, expected_sort, payload, node.children.len())?;
+            Ok(Some(TheoryPositionalNativeView::Constructor {
+                signature,
+                children: &node.children,
+            }))
+        },
+        5 => Ok(runtime_node_literal_ref(
+            image,
+            node,
+            expected_sort,
+            work,
+            work_limit,
+            is_cancelled,
+        )?
+        .map(|value| TheoryPositionalNativeView::Literal { sort: expected_sort, value })),
+        _ => Ok(None),
+    }
 }
 
 fn rule_variable(
@@ -7349,6 +7447,23 @@ where
     let [node] = egraph.nodes(value) else {
         return Err(SemanticMatchUndetermined::InvalidImageEvidence);
     };
+    runtime_node_literal_ref(image, node, expected_sort, work, work_limit, is_cancelled)
+}
+
+/// Shared node body; the caller already charged the node lookup. Keep the
+/// child/nonliteral refusals before literal-sort validation, and charge String
+/// bytes before UTF-8 validation, preserving existing intrinsic observations.
+fn runtime_node_literal_ref<'a, C>(
+    image: &TheorySemanticImageV1,
+    node: &'a ENode<FramedSemanticOperator>,
+    expected_sort: TheorySortId,
+    work: &mut u64,
+    work_limit: u64,
+    is_cancelled: &mut C,
+) -> Result<Option<RuntimeLiteralRef<'a>>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
     if !node.children.is_empty() {
         return Ok(None);
     }
@@ -7390,7 +7505,6 @@ where
             bytes.copy_from_slice(payload);
             Ok(Some(RuntimeLiteralRef::Integer(i128::from_le_bytes(bytes))))
         },
-        #[cfg(test)]
         (4, TheoryLiteralCarrierV1::Boolean) if matches!(payload, [0] | [1]) => {
             Ok(Some(RuntimeLiteralRef::Boolean(payload[0] == 1)))
         },
@@ -9321,6 +9435,439 @@ mod tests {
                 entries: Vec::new(),
             },
             actions: Vec::new(),
+        }
+    }
+
+    fn add_raw_theory_operator(
+        egraph: &mut EGraph<FramedSemanticOperator>,
+        exact: Vec<u8>,
+        children: Vec<EClassId>,
+    ) -> EClassId {
+        egraph.add(ENode::new(
+            FramedSemanticOperator::new(
+                THEORY_OPERATOR_DISCRIMINANT,
+                vec![THEORY_OPERATOR_DOMAIN.to_vec(), exact],
+            ),
+            children,
+        ))
+    }
+
+    #[test]
+    fn positional_native_view_borrows_exact_signature_and_every_child() {
+        let mut image = signature_image();
+        image.constructors.push(TheoryConstructorImageV1 {
+            id: TheoryConstructorId(3),
+            domain: vec![TheorySortId(2); 3],
+            codomain: TheorySortId(2),
+            grammar: Some(mettail_grammar_core::TheoryGrammarConstructorV1 {
+                category: mettail_grammar_core::CategoryId(17),
+                constructor: mettail_grammar_core::ConstructorId(29),
+            }),
+        });
+        let mut egraph = EGraph::new();
+        let zero =
+            add(&mut egraph, TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)), vec![]);
+        let one =
+            add(&mut egraph, TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)), vec![]);
+        let root = add(
+            &mut egraph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(3)),
+            vec![zero, one, zero],
+        );
+        let mut work = 5;
+        let view = theory_positional_native_view(
+            &image,
+            &egraph,
+            root,
+            TheorySortId(2),
+            &mut work,
+            9,
+            &mut || false,
+        )
+        .expect("valid positional head")
+        .expect("supported constructor");
+        let TheoryPositionalNativeView::Constructor { signature, children } = view else {
+            panic!("constructor is not a native literal");
+        };
+        assert!(std::ptr::eq(signature, &image.constructors[3]));
+        assert_eq!(children, &[zero, one, zero]);
+        assert_eq!(children.as_ptr(), egraph.nodes(root)[0].children.as_ptr());
+        assert_eq!(work, 9, "charge all three slots, including the repeated vertex");
+    }
+
+    #[test]
+    fn positional_native_view_rejects_wrong_constructor_evidence() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let child =
+            add(&mut egraph, TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)), vec![]);
+        for (exact, children, expected) in [
+            (vec![0, 2, 0, 0, 0], vec![], 2),       // wrong arity
+            (vec![0, 0, 0, 0, 0], vec![], 1),       // wrong codomain
+            (vec![0, 9, 0, 0, 0], vec![], 2),       // missing identifier
+            (vec![0, 0, 0, 0], vec![], 2),          // short identifier
+            (vec![0, 0, 0, 0, 0, 0], vec![], 2),    // trailing byte
+            (vec![0, 2, 0, 0, 0], vec![child], 99), // missing expected sort
+        ] {
+            let root = add_raw_theory_operator(&mut egraph, exact, children);
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    root,
+                    TheorySortId(expected),
+                    &mut 0,
+                    100,
+                    &mut || false
+                ),
+                Err(SemanticMatchUndetermined::InvalidImageEvidence)
+            );
+        }
+        let mut changed = image.clone();
+        changed.constructors[0].id = TheoryConstructorId(1);
+        assert_eq!(
+            theory_positional_native_view(
+                &changed,
+                &egraph,
+                child,
+                TheorySortId(2),
+                &mut 0,
+                100,
+                &mut || false
+            ),
+            Err(SemanticMatchUndetermined::InvalidImageEvidence)
+        );
+        changed = image;
+        changed.sorts[2].id = TheorySortId(1);
+        assert_eq!(
+            theory_positional_native_view(
+                &changed,
+                &egraph,
+                child,
+                TheorySortId(2),
+                &mut 0,
+                100,
+                &mut || false
+            ),
+            Err(SemanticMatchUndetermined::InvalidImageEvidence)
+        );
+    }
+
+    #[test]
+    fn positional_native_view_decodes_exact_native_values_and_work() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        for (sort, value, expected, units) in [
+            (0, TheoryLiteralV1::String("a💡z".into()), RuntimeLiteralRef::String("a💡z"), 7),
+            (0, TheoryLiteralV1::String(String::new()), RuntimeLiteralRef::String(""), 1),
+            (1, TheoryLiteralV1::Integer(i128::MIN), RuntimeLiteralRef::Integer(i128::MIN), 1),
+            (1, TheoryLiteralV1::Integer(i128::MAX), RuntimeLiteralRef::Integer(i128::MAX), 1),
+            (14, TheoryLiteralV1::Boolean(false), RuntimeLiteralRef::Boolean(false), 1),
+            (14, TheoryLiteralV1::Boolean(true), RuntimeLiteralRef::Boolean(true), 1),
+        ] {
+            let sort = TheorySortId(sort);
+            let root = add(&mut egraph, TheoryImageOperatorV1::Literal { sort, value }, vec![]);
+            let mut work = 0;
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    root,
+                    sort,
+                    &mut work,
+                    units,
+                    &mut || false
+                ),
+                Ok(Some(TheoryPositionalNativeView::Literal { sort, value: expected }))
+            );
+            assert_eq!(work, units);
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    root,
+                    TheorySortId(2),
+                    &mut 0,
+                    100,
+                    &mut || false
+                ),
+                Err(SemanticMatchUndetermined::InvalidImageEvidence)
+            );
+        }
+    }
+
+    #[test]
+    fn positional_native_view_preserves_literal_refusal_order() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let child =
+            add(&mut egraph, TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)), vec![]);
+        let invalid_frame_with_child =
+            egraph.add(ENode::new(FramedSemanticOperator::new(0, vec![]), vec![child]));
+        let mut work = 0;
+        assert_eq!(
+            runtime_literal_ref(
+                &image,
+                &egraph,
+                invalid_frame_with_child,
+                TheorySortId(99),
+                &mut work,
+                1,
+                &mut || false
+            ),
+            Ok(None)
+        );
+        assert_eq!(work, 1, "child refusal precedes framing and literal-sort validation");
+        assert_eq!(
+            runtime_literal_ref(&image, &egraph, child, TheorySortId(99), &mut 0, 1, &mut || false),
+            Ok(None)
+        );
+        for (exact, sort) in [
+            (vec![5, 1, 0, 0, 0, 2, 0], 1),      // short Integer
+            (vec![5, 14, 0, 0, 0, 4, 2], 14),    // noncanonical Boolean
+            (vec![5, 14, 0, 0, 0, 4, 1, 0], 14), // trailing Boolean
+            (vec![5, 0, 0, 0, 0, 4, 1], 0),      // wrong declared carrier
+        ] {
+            let root = add_raw_theory_operator(&mut egraph, exact, vec![]);
+            let mut work = 0;
+            assert_eq!(
+                runtime_literal_ref(
+                    &image,
+                    &egraph,
+                    root,
+                    TheorySortId(sort),
+                    &mut work,
+                    1,
+                    &mut || false
+                ),
+                Ok(None)
+            );
+            assert_eq!(work, 1);
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    root,
+                    TheorySortId(sort),
+                    &mut 0,
+                    1,
+                    &mut || false
+                ),
+                Ok(None)
+            );
+        }
+    }
+
+    #[test]
+    fn positional_native_view_charges_string_bytes_before_utf8_validation() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let invalid_utf8 = add_raw_theory_operator(
+            &mut egraph,
+            vec![5, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0xff],
+            vec![],
+        );
+        for (limit, expected, expected_work) in [
+            (1, SemanticMatchUndetermined::WorkBudgetExhausted, 1),
+            (2, SemanticMatchUndetermined::InvalidImageEvidence, 2),
+        ] {
+            let mut work = 0;
+            assert_eq!(
+                runtime_literal_ref(
+                    &image,
+                    &egraph,
+                    invalid_utf8,
+                    TheorySortId(0),
+                    &mut work,
+                    limit,
+                    &mut || false
+                ),
+                Err(expected)
+            );
+            assert_eq!(work, expected_work);
+            work = 0;
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    invalid_utf8,
+                    TheorySortId(0),
+                    &mut work,
+                    limit,
+                    &mut || false
+                ),
+                Err(expected)
+            );
+            assert_eq!(work, expected_work);
+        }
+        let wrong_length = add_raw_theory_operator(
+            &mut egraph,
+            vec![5, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, b'a'],
+            vec![],
+        );
+        let mut work = 0;
+        assert_eq!(
+            runtime_literal_ref(
+                &image,
+                &egraph,
+                wrong_length,
+                TheorySortId(0),
+                &mut work,
+                100,
+                &mut || false
+            ),
+            Err(SemanticMatchUndetermined::InvalidImageEvidence)
+        );
+        assert_eq!(work, 1);
+        let mut calls = 0;
+        work = 0;
+        assert_eq!(
+            runtime_literal_ref(
+                &image,
+                &egraph,
+                invalid_utf8,
+                TheorySortId(0),
+                &mut work,
+                100,
+                &mut || {
+                    calls += 1;
+                    calls == 2
+                }
+            ),
+            Err(SemanticMatchUndetermined::Cancelled)
+        );
+        assert_eq!((work, calls), (1, 2));
+    }
+
+    #[test]
+    fn positional_native_view_checks_public_root_and_resource_boundaries() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        let zero =
+            add(&mut egraph, TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)), vec![]);
+        for (initial, limit) in [(0, 0), (2, 1), (u64::MAX, u64::MAX - 1), (u64::MAX, u64::MAX)] {
+            let mut work = initial;
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    zero,
+                    TheorySortId(2),
+                    &mut work,
+                    limit,
+                    &mut || false
+                ),
+                Err(SemanticMatchUndetermined::WorkBudgetExhausted)
+            );
+            assert_eq!(work, initial);
+        }
+        let mut work = 0;
+        assert_eq!(
+            theory_positional_native_view(
+                &image,
+                &egraph,
+                zero,
+                TheorySortId(2),
+                &mut work,
+                100,
+                &mut || true
+            ),
+            Err(SemanticMatchUndetermined::Cancelled)
+        );
+        assert_eq!(work, 0);
+        assert_eq!(
+            theory_positional_native_view(
+                &image,
+                &egraph,
+                EClassId(u32::MAX),
+                TheorySortId(2),
+                &mut 0,
+                100,
+                &mut || false
+            ),
+            Err(SemanticMatchUndetermined::InvalidImageEvidence)
+        );
+        let one =
+            add(&mut egraph, TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)), vec![]);
+        egraph.merge(zero, one);
+        assert_eq!(
+            theory_positional_native_view(
+                &image,
+                &egraph,
+                zero,
+                TheorySortId(2),
+                &mut 0,
+                100,
+                &mut || false
+            ),
+            Err(SemanticMatchUndetermined::InvalidImageEvidence)
+        );
+    }
+
+    #[test]
+    fn positional_native_view_keeps_unsupported_and_invalid_frames_distinct() {
+        let image = signature_image();
+        let mut egraph = EGraph::new();
+        for (operator, sort) in [
+            (TheoryImageOperatorV1::Product { sort: TheorySortId(4) }, 4),
+            (
+                TheoryImageOperatorV1::Collection {
+                    sort: TheorySortId(3),
+                    element: TheorySortId(2),
+                    kind: CollectionKind::List,
+                },
+                3,
+            ),
+        ] {
+            let root = add(&mut egraph, operator, vec![]);
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    root,
+                    TheorySortId(sort),
+                    &mut 0,
+                    100,
+                    &mut || false
+                ),
+                Ok(None)
+            );
+        }
+        for operator in [
+            FramedSemanticOperator::new(
+                0,
+                vec![THEORY_OPERATOR_DOMAIN.to_vec(), vec![0, 0, 0, 0, 0]],
+            ),
+            FramedSemanticOperator::new(
+                THEORY_OPERATOR_DISCRIMINANT,
+                vec![vec![], vec![0, 0, 0, 0, 0]],
+            ),
+            FramedSemanticOperator::new(
+                THEORY_OPERATOR_DISCRIMINANT,
+                vec![THEORY_OPERATOR_DOMAIN.to_vec()],
+            ),
+            FramedSemanticOperator::new(
+                THEORY_OPERATOR_DISCRIMINANT,
+                vec![THEORY_OPERATOR_DOMAIN.to_vec(), vec![], vec![]],
+            ),
+            FramedSemanticOperator::new(
+                THEORY_OPERATOR_DISCRIMINANT,
+                vec![THEORY_OPERATOR_DOMAIN.to_vec(), vec![]],
+            ),
+        ] {
+            let root = egraph.add(ENode::leaf(operator));
+            assert_eq!(
+                theory_positional_native_view(
+                    &image,
+                    &egraph,
+                    root,
+                    TheorySortId(2),
+                    &mut 0,
+                    100,
+                    &mut || false
+                ),
+                Err(SemanticMatchUndetermined::InvalidImageEvidence)
+            );
         }
     }
 
