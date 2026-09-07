@@ -69,10 +69,15 @@ theories/GeneratedSemanticAdapter.v
 theories/NativeReflectionCodec.v
 theories/InstalledFltHeadCodec.v
 theories/InstalledFltTermCodec.v
+theories/FusedOccurrenceExecution.v
+theories/BorrowedOccurrenceExecution.v
+theories/InstalledFltOccurrence.v
+theories/ReflectedParEnvelope.v
 theories/ExecutableTheoryCore.v
 theories/ExecutableTheoryImage.v
 theories/CollectionComprehension.v
 theories/SemanticTransitionKernel.v
+theories/InstalledFltGraphProjection.v
 theories/InstalledFltJudgments.v
 theories/InstalledFltTraversal.v
 theories/SemanticIntrinsics.v

@@ -224,6 +224,11 @@ The proof layers have distinct responsibilities:
 | [Installed constructor heads](../../formal/rocq/runtime_grammar/theories/InstalledFltHeadCodec.v) | Checked unique bindings and reserved-namespace separation; the argument plan uses the same resolved constructor's ordered domain |
 | [Finite structural terms](../../formal/rocq/runtime_grammar/theories/InstalledFltTermCodec.v) | Both partial inverses over complete finite occurrence trees, with each node's owner and each child's expected sort checked |
 | [Traversal contract](../../formal/rocq/runtime_grammar/theories/InstalledFltTraversal.v) | Reuse of checked stack scheduling and assembly ownership; singleton completion and preservation of the full prior resource charge |
+| [Checked occurrence assembly](../../formal/rocq/runtime_grammar/theories/InstalledFltOccurrence.v) | Every successful projection supplies a checked occurrence witness; concrete postorder and borrowed execution return that exact projection and preserve the enclosing value stack |
+| [Immediate instruction execution](../../formal/rocq/runtime_grammar/theories/FusedOccurrenceExecution.v) | The existing compiler emits at most one instruction per transition; executing it immediately preserves partial assembly, with exhaustion distinct from rejection |
+| [Borrowed traversal](../../formal/rocq/runtime_grammar/theories/BorrowedOccurrenceExecution.v) | Deterministic local lookup has a unique finite unfolding; reference-based steps and runs refine the occurrence machine for sources with such an unfolding |
+| [Reachable graph projection](../../formal/rocq/runtime_grammar/theories/InstalledFltGraphProjection.v) | The kernel's existing remapping contract transports every published root's complete finite occurrence, including native payloads and ordered child slots |
+| [Reflected Par envelopes](../../formal/rocq/runtime_grammar/theories/ReflectedParEnvelope.v) | All nine executable component families are checked; an accepted expression, private-tag or send envelope cannot hide another executable component, including a conditional |
 
 For example, the term model distinguishes a native Boolean from an ordinary
 constructor returning the Boolean sort. Its mixed-literal witness also uses
@@ -245,14 +250,42 @@ its source syntax, for example as a regular-expression anchor.
 These are proofs about structural observations, not arbitrary `Par` metadata
 or protobuf byte strings. The concrete adapter must obtain its carrier map and
 constructor bindings from the admitted image, establish native/constructor
-separation in the actual reflected tags, and connect its borrowed traversal to
-the finite occurrence witness. The existing
+separation in the actual reflected tags, and connect its physical source lookup
+to the checked structural observation. The existing
 [occurrence assembly model](../../formal/rocq/prattail_wpda_runtime/theories/SelectedOccurrencePlan.v)
-already proves postorder execution preserves declarative partial assembly; it
-must be instantiated with the checked codec rather than an arbitrary result.
-Cycle checks, graph-coordinate realization, iterative destruction and actual
-per-operation charging remain concrete refinement obligations. A final resource
-bound on a supplied charge trace does not itself prove those charges were made.
+proves postorder execution preserves declarative partial assembly.
+`InstalledFltOccurrence` instantiates it with concrete semantic-node construction
+and proves that successful projection supplies the needed witness. The borrowed
+walker uses source references; neither its witness tree nor an instruction
+program needs to be allocated by the implementation.
+
+A borrowed reference can pair an expected sort with a source coordinate.
+Its local view must preserve the exact head and ordered typed children.
+The reference-runner theorem is conditional on a finite unfolding, not an
+assertion that every graph is acyclic. For reflected `Par`, children are strictly
+contained source elements. For a graph, checks must use canonical class
+coordinates and reject a cycle along the active ancestor path. A repeated
+sibling or shared acyclic subtree is still visited at every occurrence.
+Budget interruption or cancellation during lookup is `Undetermined`, not the
+pure lookup model's missing-node rejection.
+
+The graph-projection proof interprets both arenas through the same immutable
+table of complete heads. A table entry includes native payload and sort identity
+or the complete constructor identity and signature; a constructor discriminant
+alone is insufficient. Remapping preserves this observation and every child
+position without requiring old and new arena identifiers to be equal.
+
+The envelope proof separates executable structure from annotations. A
+`conditional` alongside an otherwise valid reflected list or private tag is
+additional executable content and must be refused, including in nested child
+envelopes. This cardinality theorem does not replace the existing checks for
+expression variants, private-name framing or ground markers.
+
+Cycle filtering, fresh-arena insertion, physical view correspondence, iterative
+destruction and actual per-operation charging remain concrete refinement
+obligations. Control fuel bounds the model's scheduling transitions, not byte
+work, allocation or semantic execution cost. A final resource bound on a
+supplied charge trace does not itself prove those charges were made.
 
 This model does not prove cryptographic collision freedom, Rust extraction,
 the full normalization algorithm, or the later asynchronous RSpace produce and

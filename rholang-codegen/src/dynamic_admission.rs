@@ -1075,6 +1075,7 @@ fn exact_expr(par: &Par) -> Option<&ExprInstance> {
         || !par.receives.is_empty()
         || !par.news.is_empty()
         || !par.matches.is_empty()
+        || !par.conditionals.is_empty()
         || !par.bundles.is_empty()
         || !par.connectives.is_empty()
         || !par.unforgeables.is_empty()
@@ -1093,6 +1094,7 @@ fn private_tag(par: &Par) -> Option<String> {
         || !par.receives.is_empty()
         || !par.news.is_empty()
         || !par.matches.is_empty()
+        || !par.conditionals.is_empty()
         || !par.bundles.is_empty()
         || !par.connectives.is_empty()
     {
@@ -1137,6 +1139,7 @@ fn exact_sends(par: &Par) -> Option<&[models::rhoapi::Send]> {
         || !par.receives.is_empty()
         || !par.news.is_empty()
         || !par.matches.is_empty()
+        || !par.conditionals.is_empty()
         || !par.bundles.is_empty()
         || !par.connectives.is_empty()
         || !par.unforgeables.is_empty()
@@ -1298,6 +1301,61 @@ mod tests {
             .expect("forged child");
         assert!(native_leaf(child, FP, valid_text_label));
         assert!(!admission.admits_category(&forged, FP, CategoryId(0)));
+    }
+
+    fn reflected_list_mut(value: &mut Par) -> &mut Vec<Par> {
+        match value.exprs[0]
+            .expr_instance
+            .as_mut()
+            .expect("reflected expression")
+        {
+            ExprInstance::EListBody(list) => &mut list.ps,
+            _ => panic!("fixture must be a reflected positional list"),
+        }
+    }
+
+    #[test]
+    fn exact_envelopes_reject_executable_conditional_sidecars() {
+        let mut expression = reflect_ground_term_par(&GroundTerm::nullary("Zero"), FP);
+        assert!(exact_expr(&expression).is_some());
+        let mut tag = reflected_list_mut(&mut expression)[0].clone();
+        assert!(private_tag(&tag).is_some());
+        let mut sends = Par::default();
+        assert!(exact_sends(&sends).is_some());
+
+        expression.conditionals.push(Default::default());
+        tag.conditionals.push(Default::default());
+        sends.conditionals.push(Default::default());
+        assert!(exact_expr(&expression).is_none(), "expression envelope hid a conditional");
+        assert!(private_tag(&tag).is_none(), "private-tag envelope hid a conditional");
+        assert!(exact_sends(&sends).is_none(), "send envelope hid a conditional");
+    }
+
+    #[test]
+    fn recursive_admission_rejects_conditional_sidecars_at_every_envelope() {
+        let admission = DynamicSyntaxAdmission::compile(&grammar()).expect("grammar compiles");
+        for location in ["root", "tag", "marker", "child", "child_tag"] {
+            let mut value = reflect_ground_term_par(
+                &GroundTerm::new("Wrap", vec![GroundTerm::nullary("Zero")]),
+                FP,
+            );
+            assert!(admission.admits_category(&value, FP, CategoryId(0)));
+            let envelope = match location {
+                "root" => &mut value,
+                "tag" => &mut reflected_list_mut(&mut value)[0],
+                "marker" => &mut reflected_list_mut(&mut value)[1],
+                "child" => &mut reflected_list_mut(&mut value)[2],
+                "child_tag" => &mut reflected_list_mut(&mut reflected_list_mut(&mut value)[2])[0],
+                _ => unreachable!("fixed envelope locations"),
+            };
+            envelope.conditionals.push(Default::default());
+            let mut budget = 1_000;
+            assert_eq!(
+                admission.check_category_with_budget(&value, FP, CategoryId(0), &mut budget),
+                DynamicAdmissionDecision::Rejected,
+                "conditional sidecar at {location} was not rejected"
+            );
+        }
     }
 
     fn add_token(

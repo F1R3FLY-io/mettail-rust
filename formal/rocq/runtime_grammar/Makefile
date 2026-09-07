@@ -36,11 +36,16 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.NativeReflectionCodec \
 	RuntimeGrammar.InstalledFltHeadCodec \
 	RuntimeGrammar.InstalledFltTermCodec \
+	RuntimeGrammar.FusedOccurrenceExecution \
+	RuntimeGrammar.BorrowedOccurrenceExecution \
+	RuntimeGrammar.InstalledFltOccurrence \
+	RuntimeGrammar.ReflectedParEnvelope \
 	RuntimeGrammar.InstalledFltTraversal \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \
 	RuntimeGrammar.SemanticTransitionKernel \
+	RuntimeGrammar.InstalledFltGraphProjection \
 	RuntimeGrammar.SemanticIntrinsics \
 	RuntimeGrammar.SemanticNormalization \
 	RuntimeGrammar.RegexGsltSyntax \
