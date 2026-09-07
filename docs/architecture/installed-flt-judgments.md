@@ -227,6 +227,7 @@ The proof layers have distinct responsibilities:
 | [Checked occurrence assembly](../../formal/rocq/runtime_grammar/theories/InstalledFltOccurrence.v) | Every successful projection supplies a checked occurrence witness; concrete postorder and borrowed execution return that exact projection and preserve the enclosing value stack |
 | [Immediate instruction execution](../../formal/rocq/runtime_grammar/theories/FusedOccurrenceExecution.v) | The existing compiler emits at most one instruction per transition; executing it immediately preserves partial assembly, with exhaustion distinct from rejection |
 | [Borrowed traversal](../../formal/rocq/runtime_grammar/theories/BorrowedOccurrenceExecution.v) | Deterministic local lookup has a unique finite unfolding; reference-based steps and runs refine the occurrence machine for sources with such an unfolding |
+| [Fresh-arena realization](../../formal/rocq/runtime_grammar/theories/InstalledFltArena.v) | Exact interning preserves existing node meanings and realizes every ordered child occurrence; checked add-only construction supplies a topological arena and hence finite unfolding |
 | [Reachable graph projection](../../formal/rocq/runtime_grammar/theories/InstalledFltGraphProjection.v) | The kernel's existing remapping contract transports every published root's complete finite occurrence, including native payloads and ordered child slots |
 | [Reflected Par envelopes](../../formal/rocq/runtime_grammar/theories/ReflectedParEnvelope.v) | All nine executable component families are checked; an accepted expression, private-tag or send envelope cannot hide another executable component, including a conditional |
 
@@ -263,9 +264,10 @@ A borrowed reference can pair an expected sort with a source coordinate.
 Its local view must preserve the exact head and ordered typed children.
 The reference-runner theorem is conditional on a finite unfolding, not an
 assertion that every graph is acyclic. For reflected `Par`, children are strictly
-contained source elements. For a graph, checks must use canonical class
-coordinates and reject a cycle along the active ancestor path. A repeated
-sibling or shared acyclic subtree is still visited at every occurrence.
+contained source elements. For a graph, the existing kernel admission and
+publication passes use canonical class coordinates and reject cycles before
+publishing a fresh, single-representative arena. A repeated sibling or shared
+acyclic subtree is still visited at every occurrence during restoration.
 Budget interruption or cancellation during lookup is `Undetermined`, not the
 pure lookup model's missing-node rejection.
 
@@ -275,15 +277,39 @@ or the complete constructor identity and signature; a constructor discriminant
 alone is insufficient. Remapping preserves this observation and every child
 position without requiring old and new arena identifiers to be equal.
 
+Fresh-arena construction uses the existing e-graph interner. A successful
+insertion either reuses an exactly matching node or appends a singleton class
+whose children already exist. No merge or rebuild occurs in this phase.
+The arena proof connects returned coordinates to complete occurrence meanings
+and preserves the meanings of all older coordinates. Each child's coordinate
+precedes its parent's, which establishes finite unfolding from construction.
+The effective capacity must also prevent the class identifier's integer
+representation from overflowing; exact duplicates still succeed at capacity.
+
+The inverse adapter borrows the actual `ProvenSemanticTransitions` bundle for
+the whole restoration operation. Its private graph is immutable and has already
+passed kernel publication, so the adapter must not add another pass just to
+recheck cycles. This path does not accept an arbitrary detached graph or a
+graph modified after `into_parts`. Each referenced root still needs `try_find`
+and the independently expected sort's typed checks. All outputs are restored
+or the operation fails without publishing a prefix.
+
+Only the graph is private: transition roots, sorts and receipts remain publicly
+mutable Rust fields. Therefore this boundary proves graph structure, not
+receipt authenticity. The service retains the fresh kernel result without
+intervening mutation and applies the request, action, image and receipt checks
+before publication. A valid interior graph node is not evidence that it was
+the action's original output.
+
 The envelope proof separates executable structure from annotations. A
 `conditional` alongside an otherwise valid reflected list or private tag is
 additional executable content and must be refused, including in nested child
 envelopes. This cardinality theorem does not replace the existing checks for
 expression variants, private-name framing or ground markers.
 
-Cycle filtering, fresh-arena insertion, physical view correspondence, iterative
-destruction and actual per-operation charging remain concrete refinement
-obligations. Control fuel bounds the model's scheduling transitions, not byte
+Concrete correspondence with kernel admission/publication, fresh-arena
+insertion, physical views, iterative destruction and actual per-operation
+charging remains required. Control fuel bounds the model's scheduling transitions, not byte
 work, allocation or semantic execution cost. A final resource bound on a
 supplied charge trace does not itself prove those charges were made.
 

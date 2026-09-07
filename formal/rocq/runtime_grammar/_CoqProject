@@ -1,8 +1,10 @@
 -Q theories RuntimeGrammar
 -Q ../../../dovetail/formal/rocq/theories Dovetail
 -Q ../prattail_wpda_runtime/theories PrattailWpdaRuntime
+-Q ../egraph/theories EGraph
 
 ../prattail_wpda_runtime/theories/SelectedOccurrencePlan.v
+../egraph/theories/EGraphBudgetDedup.v
 
 theories/CanonicalComposition.v
 theories/ExactWeight.v
@@ -71,6 +73,7 @@ theories/InstalledFltHeadCodec.v
 theories/InstalledFltTermCodec.v
 theories/FusedOccurrenceExecution.v
 theories/BorrowedOccurrenceExecution.v
+theories/InstalledFltArena.v
 theories/InstalledFltOccurrence.v
 theories/ReflectedParEnvelope.v
 theories/ExecutableTheoryCore.v
