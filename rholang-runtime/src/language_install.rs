@@ -4408,6 +4408,141 @@ mod tests {
         }
     }
 
+    fn assert_installed_regex_literal_fill(category: &str, admits_variables: bool) {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let batch = runtime
+            .install_all(rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE))
+            .expect("the real inline Regex module installs");
+        let token = &batch
+            .exports
+            .iter()
+            .find(|export| export.name == "Regex")
+            .expect("the module exports its Regex theory")
+            .handle;
+        let fill = runtime
+            .construct_template(
+                token,
+                &[RuntimeTemplatePiece::Text("a".into())],
+                &[],
+                Some(category),
+                &BTreeMap::new(),
+            )
+            .expect("the installed parser and reflector construct the literal-bearing value");
+        let handle = runtime
+            .resolve(token, LanguageRight::Construct)
+            .expect("the installed handle grants construction");
+        let installed = runtime
+            .service
+            .table()
+            .authorize(&handle, LanguageRight::Construct)
+            .expect("the same language remains installed");
+        let category_definition = installed
+            .core()
+            .categories
+            .iter()
+            .find(|definition| definition.name == category)
+            .expect("the requested category is declared");
+        assert_eq!(
+            category_definition.admits_variables, admits_variables,
+            "the regression must preserve the declared {category} hole policy"
+        );
+        let admission = DynamicSyntaxAdmission::compile(installed.core())
+            .expect("the installed grammar's structural automaton compiles");
+        assert!(
+            admission.admits_category(
+                &fill,
+                &grammar_fingerprint_label(handle.fingerprint()),
+                category_definition.id,
+            ),
+            "the installed {category} category must admit its parsed reflected value",
+        );
+        // Scalar deliberately forbids template variables. Test its membership
+        // without bypassing that policy; Pattern also exercises actual filling.
+        if !admits_variables {
+            return;
+        }
+        let constructed = runtime
+            .construct_template(
+                token,
+                &[RuntimeTemplatePiece::Hole(0)],
+                &[NamedRuntimeTemplateHole {
+                    id: 0,
+                    name: "literal".into(),
+                    category: Some(category.into()),
+                }],
+                Some(category),
+                &BTreeMap::from([("literal".into(), fill.clone())]),
+            )
+            .expect("the same installed category admits its parsed structural fill");
+        assert_eq!(constructed, fill, "a typed fill must preserve the existing reflected value");
+    }
+
+    #[test]
+    fn installed_regex_literal_fill_preserves_direct_scalar_category() {
+        assert_installed_regex_literal_fill("Scalar", false);
+    }
+
+    #[test]
+    fn installed_regex_literal_fill_preserves_nested_pattern_category() {
+        assert_installed_regex_literal_fill("Pattern", true);
+    }
+
+    #[test]
+    fn installed_regex_boolean_carrier_admits_computed_values_without_lexical_tokens() {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let batch = runtime
+            .install_all(rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE))
+            .expect("the inline Regex module installs");
+        let token = &batch
+            .exports
+            .iter()
+            .find(|export| export.name == "Regex")
+            .expect("Regex is exported")
+            .handle;
+        let handle = runtime
+            .resolve(token, LanguageRight::Construct)
+            .expect("the installed handle grants construction");
+        let installed = runtime
+            .service
+            .table()
+            .authorize(&handle, LanguageRight::Construct)
+            .expect("the language remains installed");
+        let core = installed.core();
+        let category = core
+            .categories
+            .iter()
+            .find(|category| category.name == "Bool")
+            .expect("the theory declares the Boolean result category");
+        assert_eq!(
+            category.carrier,
+            mettail_grammar_core::Carrier::Builtin(mettail_grammar_core::BuiltinCarrier::Boolean)
+        );
+        assert!(
+            core.tokens
+                .iter()
+                .all(|token| token.category != Some(category.id)),
+            "this regression requires a carrier without a lexical token"
+        );
+        let admission = DynamicSyntaxAdmission::compile(core).expect("the automaton compiles");
+        let fingerprint = grammar_fingerprint_label(handle.fingerprint());
+        for value in [false, true] {
+            let ground = dynamic_syntax_to_ground_term(
+                &mettail_grammar_core::DynamicValue::Boolean(value),
+                core,
+                &BTreeMap::new(),
+            )
+            .expect("the existing reflector encodes native Boolean results");
+            let reflected = mettail_rholang_codegen::reflect_ground_term_par(&ground, &fingerprint);
+            assert!(admission.admits_category(&reflected, &fingerprint, category.id));
+        }
+    }
+
     #[test]
     fn module_programs_stage_in_source_order_and_release_only_after_commit() {
         let source = r#"Module Programmed {

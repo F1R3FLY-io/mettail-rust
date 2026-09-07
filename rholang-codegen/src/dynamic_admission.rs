@@ -14,7 +14,8 @@ use crate::dynamic_reflection::{
 use crate::rho_net_lower::BYTES_REFLECT_LABEL;
 use crate::{ac_soup_channel, is_ground_marker_par, is_marked_object_label, parse_reflected_tag};
 use mettail_grammar_core::{
-    CategoryId, CollectionKind, FieldSource, GrammarCoreV1, SyntaxItem, TokenDecoder,
+    runtime_token_output_contract, BuiltinCarrier, Carrier, CategoryId, CollectionKind,
+    FieldSource, GrammarCoreV1, RuntimeNativeValueKind, RuntimeTokenOutputContract, SyntaxItem,
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
@@ -57,9 +58,60 @@ impl std::fmt::Display for DynamicAdmissionCompileError {
 
 impl std::error::Error for DynamicAdmissionCompileError {}
 
+/// Why structural category membership could not be established or refuted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynamicAdmissionUnknown {
+    WorkLimit,
+    UnavailableContract,
+}
+
+/// A failed proof is not necessarily a proof of non-membership. Existing
+/// boolean consumers accept only `Admitted`; semantic services can retain the
+/// distinction between a malformed term and an unavailable judgment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynamicAdmissionDecision {
+    Admitted,
+    Rejected,
+    Undetermined(DynamicAdmissionUnknown),
+}
+
+impl From<bool> for DynamicAdmissionDecision {
+    fn from(value: bool) -> Self {
+        if value {
+            Self::Admitted
+        } else {
+            Self::Rejected
+        }
+    }
+}
+
+impl DynamicAdmissionDecision {
+    fn conjunction(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Rejected, _) | (_, Self::Rejected) => Self::Rejected,
+            (Self::Undetermined(reason), _) | (_, Self::Undetermined(reason)) => {
+                Self::Undetermined(reason)
+            },
+            (Self::Admitted, Self::Admitted) => Self::Admitted,
+        }
+    }
+
+    fn alternative(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Admitted, _) | (_, Self::Admitted) => Self::Admitted,
+            (Self::Undetermined(reason), _) | (_, Self::Undetermined(reason)) => {
+                Self::Undetermined(reason)
+            },
+            (Self::Rejected, Self::Rejected) => Self::Rejected,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Shape {
     Any,
+    Never,
+    Unavailable,
     Category(CategoryId),
     Text,
     Integer,
@@ -86,6 +138,7 @@ pub struct DynamicSyntaxAdmission {
     states: Vec<Shape>,
     category_states: Vec<StateId>,
     productions: Vec<Vec<ProductionShape>>,
+    category_native_states: Vec<Vec<StateId>>,
     productions_by_label: BTreeMap<String, Vec<Vec<StateId>>>,
     any: StateId,
     any_pair: StateId,
@@ -97,6 +150,7 @@ enum MatchTask<'a> {
     Store((usize, StateId)),
     And(usize),
     Or(usize),
+    Unavailable,
 }
 
 enum HashTask<'a> {
@@ -151,10 +205,39 @@ impl DynamicSyntaxAdmission {
             alternatives.sort();
             alternatives.dedup();
         }
+        let mut category_native_states = Vec::with_capacity(core.categories.len());
+        for category in &core.categories {
+            let mut states = match &category.carrier {
+                Carrier::Dynamic => core
+                    .tokens
+                    .iter()
+                    .filter(|token| token.category == Some(category.id))
+                    .map(|token| builder.token_state(token))
+                    .filter(|state| *state != builder.never)
+                    .collect::<Vec<_>>(),
+                // The declared semantic carrier is not widened by a token
+                // with an incompatible evaluator output. It also exists
+                // when the grammar has no lexical token for that category.
+                Carrier::Builtin(BuiltinCarrier::String) => vec![builder.text],
+                Carrier::Builtin(BuiltinCarrier::Integer) => vec![builder.integer],
+                Carrier::Builtin(BuiltinCarrier::Boolean) => vec![builder.boolean],
+                Carrier::Builtin(BuiltinCarrier::Bytes) => vec![builder.bytes],
+                Carrier::Builtin(
+                    BuiltinCarrier::Rational | BuiltinCarrier::FixedPoint | BuiltinCarrier::Float,
+                )
+                | Carrier::Collection(_)
+                | Carrier::Extern { .. }
+                | Carrier::HostOpaque { .. } => vec![builder.unavailable],
+            };
+            states.sort_unstable();
+            states.dedup();
+            category_native_states.push(states);
+        }
         Ok(Self {
             states: builder.states,
             category_states: builder.category_states,
             productions,
+            category_native_states,
             productions_by_label,
             any: builder.any,
             any_pair: builder.any_pair,
@@ -162,14 +245,32 @@ impl DynamicSyntaxAdmission {
         })
     }
 
-    /// Check one value as a complete member of `category`.  Exhaustion is a
-    /// rejection, never a partially trusted result.
+    /// Fail-closed compatibility wrapper: only established membership passes.
     pub fn admits_category(&self, value: &Par, fingerprint: &str, category: CategoryId) -> bool {
-        let Some(state) = self.category_states.get(category.0 as usize).copied() else {
-            return false;
-        };
         let mut budget = self.max_steps;
-        self.admits_state(value, fingerprint, state, &mut budget)
+        self.check_category_with_budget(value, fingerprint, category, &mut budget)
+            == DynamicAdmissionDecision::Admitted
+    }
+
+    /// Check one category under a caller-owned logical-work allowance. The
+    /// automaton's own limit also applies; unused caller work is not discarded
+    /// or replenished. Exhaustion is `Undetermined`, never an empty alternative.
+    /// Work counts evaluated structural states, not bytes or allocation size.
+    pub fn check_category_with_budget(
+        &self,
+        value: &Par,
+        fingerprint: &str,
+        category: CategoryId,
+        remaining: &mut usize,
+    ) -> DynamicAdmissionDecision {
+        let Some(state) = self.category_states.get(category.0 as usize).copied() else {
+            return DynamicAdmissionDecision::Rejected;
+        };
+        let allowance = (*remaining).min(self.max_steps);
+        let mut budget = allowance;
+        let result = self.check_state(value, fingerprint, state, &mut budget);
+        *remaining -= allowance - budget;
+        result
     }
 
     /// Return the canonical structural hash only when `value` is a complete
@@ -288,25 +389,30 @@ impl DynamicSyntaxAdmission {
             self.category_states
                 .get(category.0 as usize)
                 .copied()
-                .is_some_and(|state| self.admits_state(value, fingerprint, state, &mut budget))
+                .is_some_and(|state| {
+                    self.check_state(value, fingerprint, state, &mut budget)
+                        == DynamicAdmissionDecision::Admitted
+                })
         })
     }
 
-    fn admits_state(
+    fn check_state(
         &self,
         value: &Par,
         fingerprint: &str,
         state: StateId,
         budget: &mut usize,
-    ) -> bool {
+    ) -> DynamicAdmissionDecision {
         let mut tasks = vec![MatchTask::Eval(value, state)];
         let mut values = Vec::new();
-        let mut memo: HashMap<(usize, StateId), bool> = HashMap::new();
+        let mut memo: HashMap<(usize, StateId), DynamicAdmissionDecision> = HashMap::new();
         while let Some(task) = tasks.pop() {
             match task {
                 MatchTask::Eval(par, state) => {
                     if *budget == 0 {
-                        return false;
+                        return DynamicAdmissionDecision::Undetermined(
+                            DynamicAdmissionUnknown::WorkLimit,
+                        );
                     }
                     *budget -= 1;
                     let key = (par as *const Par as usize, state);
@@ -326,7 +432,10 @@ impl DynamicSyntaxAdmission {
                         .len()
                         .checked_sub(count)
                         .expect("admission conjunction lost an operand");
-                    let result = values[first..].iter().all(|value| *value);
+                    let result = values[first..].iter().copied().fold(
+                        DynamicAdmissionDecision::Admitted,
+                        DynamicAdmissionDecision::conjunction,
+                    );
                     values.truncate(first);
                     values.push(result);
                 },
@@ -335,13 +444,28 @@ impl DynamicSyntaxAdmission {
                         .len()
                         .checked_sub(count)
                         .expect("admission disjunction lost an operand");
-                    let result = values[first..].iter().any(|value| *value);
+                    let result = values[first..].iter().copied().fold(
+                        DynamicAdmissionDecision::Rejected,
+                        DynamicAdmissionDecision::alternative,
+                    );
                     values.truncate(first);
                     values.push(result);
                 },
+                MatchTask::Unavailable => {
+                    let envelope = values.pop().expect("unavailable contract lost envelope");
+                    values.push(match envelope {
+                        DynamicAdmissionDecision::Rejected => DynamicAdmissionDecision::Rejected,
+                        _ => DynamicAdmissionDecision::Undetermined(
+                            DynamicAdmissionUnknown::UnavailableContract,
+                        ),
+                    });
+                },
             }
         }
-        values.pop() == Some(true) && values.is_empty()
+        match values.as_slice() {
+            [result] => *result,
+            _ => DynamicAdmissionDecision::Rejected,
+        }
     }
 
     fn schedule_shape<'a>(
@@ -350,62 +474,94 @@ impl DynamicSyntaxAdmission {
         fingerprint: &str,
         state: StateId,
         tasks: &mut Vec<MatchTask<'a>>,
-        values: &mut Vec<bool>,
+        values: &mut Vec<DynamicAdmissionDecision>,
     ) {
         let Some(shape) = self.states.get(state as usize) else {
-            values.push(false);
+            values.push(DynamicAdmissionDecision::Rejected);
             return;
         };
         match shape {
             Shape::Any => self.schedule_any(par, fingerprint, tasks, values),
-            Shape::Category(category) => {
-                let Some((label, children)) = positional(par, fingerprint) else {
-                    values.push(false);
-                    return;
-                };
-                let alternatives = self
-                    .productions
-                    .get(category.0 as usize)
-                    .into_iter()
-                    .flatten()
-                    .filter(|production| production.label == label)
-                    .map(|production| production.fields.as_slice())
-                    .collect::<Vec<_>>();
-                schedule_alternatives(children, &alternatives, tasks, values);
+            Shape::Never => values.push(DynamicAdmissionDecision::Rejected),
+            Shape::Unavailable => {
+                // A callback without an output contract may return a valid
+                // nonnullary value. Validate its existing structural envelope
+                // first; this is never positive evidence of category membership.
+                tasks.push(MatchTask::Unavailable);
+                tasks.push(MatchTask::Eval(par, self.any));
             },
-            Shape::Text => values.push(native_leaf(par, fingerprint, valid_text_label)),
-            Shape::Integer => values.push(native_leaf(par, fingerprint, valid_integer_label)),
-            Shape::Boolean => values.push(native_leaf(par, fingerprint, |label| {
-                matches!(label.strip_prefix(BOOLEAN_LABEL), Some("true" | "false"))
-            })),
-            Shape::Bytes => values.push(native_leaf(par, fingerprint, |label| {
-                label
-                    .strip_prefix(BYTES_REFLECT_LABEL)
-                    .is_some_and(valid_hex)
-            })),
-            Shape::Unit => values.push(native_leaf(par, fingerprint, |label| label == UNIT_LABEL)),
+            Shape::Category(category) => {
+                let positional = positional(par, fingerprint);
+                let alternatives =
+                    positional
+                        .as_ref()
+                        .map_or_else(Vec::new, |(label, children)| {
+                            self.productions[category.0 as usize]
+                                .iter()
+                                .filter(|production| {
+                                    production.label == *label
+                                        && production.fields.len() == children.len()
+                                })
+                                .map(|production| production.fields.as_slice())
+                                .collect::<Vec<_>>()
+                        });
+                let natives = &self.category_native_states[category.0 as usize];
+                tasks.push(MatchTask::Or(alternatives.len() + natives.len()));
+                tasks.extend(
+                    natives
+                        .iter()
+                        .rev()
+                        .map(|state| MatchTask::Eval(par, *state)),
+                );
+                if let Some((_, children)) = positional {
+                    for states in alternatives.into_iter().rev() {
+                        schedule_conjunction(children, states, tasks);
+                    }
+                }
+            },
+            Shape::Text => values.push(native_leaf(par, fingerprint, valid_text_label).into()),
+            Shape::Integer => {
+                values.push(native_leaf(par, fingerprint, valid_integer_label).into())
+            },
+            Shape::Boolean => values.push(
+                native_leaf(par, fingerprint, |label| {
+                    matches!(label.strip_prefix(BOOLEAN_LABEL), Some("true" | "false"))
+                })
+                .into(),
+            ),
+            Shape::Bytes => values.push(
+                native_leaf(par, fingerprint, |label| {
+                    label
+                        .strip_prefix(BYTES_REFLECT_LABEL)
+                        .is_some_and(valid_hex)
+                })
+                .into(),
+            ),
+            Shape::Unit => {
+                values.push(native_leaf(par, fingerprint, |label| label == UNIT_LABEL).into())
+            },
             Shape::Sequence(states) => {
                 let Some((label, children)) = positional(par, fingerprint) else {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 };
                 if label != SEQUENCE_LABEL || children.len() != states.len() {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 }
                 schedule_conjunction(children, states, tasks);
             },
             Shape::OptionalSequence(state) => {
                 let Some((label, children)) = positional(par, fingerprint) else {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 };
                 if label != SEQUENCE_LABEL || children.len() > 1 {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                 } else if let Some(child) = children.first() {
                     tasks.push(MatchTask::Eval(child, *state));
                 } else {
-                    values.push(true);
+                    values.push(DynamicAdmissionDecision::Admitted);
                 }
             },
             Shape::Collection { kind, entry } => {
@@ -419,7 +575,7 @@ impl DynamicSyntaxAdmission {
         par: &'a Par,
         fingerprint: &str,
         tasks: &mut Vec<MatchTask<'a>>,
-        values: &mut Vec<bool>,
+        values: &mut Vec<DynamicAdmissionDecision>,
     ) {
         if let Some((label, children)) = positional(par, fingerprint) {
             let leaf = (label.starts_with(TEXT_LABEL) && valid_text_label(&label))
@@ -430,7 +586,7 @@ impl DynamicSyntaxAdmission {
                     .is_some_and(valid_hex)
                 || label == UNIT_LABEL;
             if leaf {
-                values.push(children.is_empty());
+                values.push(children.is_empty().into());
                 return;
             }
             if matches!(label.as_str(), SEQUENCE_LABEL | LIST_LABEL) {
@@ -465,7 +621,7 @@ impl DynamicSyntaxAdmission {
         }
         if let Some(ExprInstance::ESetBody(set)) = exact_expr(par) {
             if set.remainder.is_some() || set.connective_used {
-                values.push(false);
+                values.push(DynamicAdmissionDecision::Rejected);
                 return;
             }
             tasks.push(MatchTask::And(set.ps.len()));
@@ -485,7 +641,7 @@ impl DynamicSyntaxAdmission {
                     .iter()
                     .any(|pair| pair.key.is_none() || pair.value.is_none())
             {
-                values.push(false);
+                values.push(DynamicAdmissionDecision::Rejected);
                 return;
             }
             tasks.push(MatchTask::And(map.kvs.len() * 2));
@@ -506,7 +662,7 @@ impl DynamicSyntaxAdmission {
         kind: CollectionKind,
         entry: &[StateId],
         tasks: &mut Vec<MatchTask<'a>>,
-        values: &mut Vec<bool>,
+        values: &mut Vec<DynamicAdmissionDecision>,
     ) {
         match kind {
             CollectionKind::List | CollectionKind::PathMap => {
@@ -516,11 +672,11 @@ impl DynamicSyntaxAdmission {
                     PATHMAP_LABEL
                 };
                 let Some((label, children)) = positional(par, fingerprint) else {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 };
                 if label != expected_label || entry.len() != 1 {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 }
                 tasks.push(MatchTask::And(children.len()));
@@ -533,18 +689,18 @@ impl DynamicSyntaxAdmission {
             },
             CollectionKind::Bag => {
                 if entry.len() != 1 {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 }
                 self.schedule_bag(par, fingerprint, entry[0], tasks, values);
             },
             CollectionKind::Set => {
                 let Some(ExprInstance::ESetBody(set)) = exact_expr(par) else {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 };
                 if entry.len() != 1 || set.remainder.is_some() || set.connective_used {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 }
                 tasks.push(MatchTask::And(set.ps.len()));
@@ -557,7 +713,7 @@ impl DynamicSyntaxAdmission {
             },
             CollectionKind::Map => {
                 let Some(ExprInstance::EMapBody(map)) = exact_expr(par) else {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 };
                 if entry.len() != 2
@@ -568,7 +724,7 @@ impl DynamicSyntaxAdmission {
                         .iter()
                         .any(|pair| pair.key.is_none() || pair.value.is_none())
                 {
-                    values.push(false);
+                    values.push(DynamicAdmissionDecision::Rejected);
                     return;
                 }
                 tasks.push(MatchTask::And(map.kvs.len() * 2));
@@ -590,10 +746,10 @@ impl DynamicSyntaxAdmission {
         fingerprint: &str,
         entry: StateId,
         tasks: &mut Vec<MatchTask<'a>>,
-        values: &mut Vec<bool>,
+        values: &mut Vec<DynamicAdmissionDecision>,
     ) {
         let Some(sends) = exact_sends(par) else {
-            values.push(false);
+            values.push(DynamicAdmissionDecision::Rejected);
             return;
         };
         let channel = ac_soup_channel(fingerprint, BAG_LABEL);
@@ -603,7 +759,7 @@ impl DynamicSyntaxAdmission {
                 || send.data.len() != 1
                 || send.chan.as_ref().and_then(exact_string) != Some(channel.as_str())
         }) {
-            values.push(false);
+            values.push(DynamicAdmissionDecision::Rejected);
             return;
         }
         tasks.push(MatchTask::And(sends.len()));
@@ -659,7 +815,7 @@ fn schedule_alternatives<'a>(
     children: &'a [Par],
     alternatives: &[&[StateId]],
     tasks: &mut Vec<MatchTask<'a>>,
-    values: &mut Vec<bool>,
+    values: &mut Vec<DynamicAdmissionDecision>,
 ) {
     let alternatives = alternatives
         .iter()
@@ -667,7 +823,7 @@ fn schedule_alternatives<'a>(
         .filter(|states| states.len() == children.len())
         .collect::<Vec<_>>();
     if alternatives.is_empty() {
-        values.push(false);
+        values.push(DynamicAdmissionDecision::Rejected);
         return;
     }
     tasks.push(MatchTask::Or(alternatives.len()));
@@ -688,6 +844,8 @@ struct AdmissionBuilder<'a> {
     category_states: Vec<StateId>,
     any: StateId,
     any_pair: StateId,
+    never: StateId,
+    unavailable: StateId,
     text: StateId,
     integer: StateId,
     boolean: StateId,
@@ -705,6 +863,8 @@ impl<'a> AdmissionBuilder<'a> {
             category_states: Vec::new(),
             any: 0,
             any_pair: 0,
+            never: 0,
+            unavailable: 0,
             text: 0,
             integer: 0,
             boolean: 0,
@@ -713,6 +873,8 @@ impl<'a> AdmissionBuilder<'a> {
             empty_sequence: 0,
         };
         builder.any = builder.intern(Shape::Any)?;
+        builder.never = builder.intern(Shape::Never)?;
+        builder.unavailable = builder.intern(Shape::Unavailable)?;
         let any = builder.any;
         builder.any_pair = builder.intern(Shape::Sequence(vec![any, any]))?;
         builder.text = builder.intern(Shape::Text)?;
@@ -894,16 +1056,16 @@ impl<'a> AdmissionBuilder<'a> {
     }
 
     fn token_state(&self, token: &mettail_grammar_core::TokenDefinition) -> StateId {
-        if token.evaluation.is_some() {
-            return self.any;
-        }
-        match &token.decoder {
-            TokenDecoder::Text => self.text,
-            TokenDecoder::Integer { .. } => self.integer,
-            TokenDecoder::Boolean { .. } => self.boolean,
-            TokenDecoder::BytesHex => self.bytes,
-            TokenDecoder::Unit => self.unit,
-            TokenDecoder::Capability(_) => self.any,
+        match runtime_token_output_contract(&token.decoder, token.evaluation.as_ref()) {
+            RuntimeTokenOutputContract::Known(kind) => match kind {
+                RuntimeNativeValueKind::Text => self.text,
+                RuntimeNativeValueKind::Integer => self.integer,
+                RuntimeNativeValueKind::Boolean => self.boolean,
+                RuntimeNativeValueKind::Bytes => self.bytes,
+                RuntimeNativeValueKind::Unit => self.unit,
+            },
+            RuntimeTokenOutputContract::NoSuccessfulOutput => self.never,
+            RuntimeTokenOutputContract::UnavailableContract => self.unavailable,
         }
     }
 }
@@ -1026,8 +1188,9 @@ mod tests {
     use super::*;
     use crate::{reflect_ground_term_par, GroundTerm};
     use mettail_grammar_core::{
-        Carrier, Category, ConstructorId, Precedence, Production, ProductionClass, ProductionId,
-        ReductionPlan,
+        Category, ConstructorId, ModeId, ModeTransition, NativeEvaluation, Precedence, Production,
+        ProductionClass, ProductionId, ReductionPlan, Reservation, TokenDecoder, TokenDefinition,
+        TokenId, TokenPattern,
     };
 
     const FP: &str = "dynamic-admission-test";
@@ -1135,6 +1298,251 @@ mod tests {
             .expect("forged child");
         assert!(native_leaf(child, FP, valid_text_label));
         assert!(!admission.admits_category(&forged, FP, CategoryId(0)));
+    }
+
+    fn add_token(
+        core: &mut GrammarCoreV1,
+        category: CategoryId,
+        decoder: TokenDecoder,
+        evaluation: Option<NativeEvaluation>,
+    ) {
+        let id = core.tokens.len() as u32;
+        core.tokens.push(TokenDefinition {
+            id: TokenId(id),
+            name: format!("token{id}"),
+            pattern: TokenPattern::Regex(".+".into()),
+            category: Some(category),
+            evaluation,
+            priority: 0,
+            mode: ModeId(0),
+            channel: "main".into(),
+            transition: ModeTransition::default(),
+            decoder,
+            reservation: Reservation::None,
+        });
+    }
+
+    fn decision(
+        admission: &DynamicSyntaxAdmission,
+        value: &GroundTerm,
+        category: u32,
+    ) -> DynamicAdmissionDecision {
+        let value = reflect_ground_term_par(value, FP);
+        let mut budget = 1_000_000;
+        admission.check_category_with_budget(&value, FP, CategoryId(category), &mut budget)
+    }
+
+    #[test]
+    fn mixed_category_keeps_constructors_and_only_its_own_token_outputs() {
+        let mut core = grammar();
+        core.categories.push(Category {
+            id: CategoryId(1),
+            name: "Other".into(),
+            carrier: Carrier::Dynamic,
+            primary: false,
+            admits_variables: false,
+        });
+        add_token(
+            &mut core,
+            CategoryId(0),
+            TokenDecoder::Text,
+            Some(NativeEvaluation::Carrier {
+                kind: "str".into(),
+                parameters: BTreeMap::new(),
+            }),
+        );
+        add_token(&mut core, CategoryId(1), TokenDecoder::Integer { radix: None }, None);
+        let admission = DynamicSyntaxAdmission::compile(&core).expect("mixed grammar compiles");
+        let text = GroundTerm::nullary(format!("{TEXT_LABEL}61"));
+        let integer = GroundTerm::nullary(format!("{INTEGER_LABEL}7"));
+        for value in [
+            GroundTerm::nullary("Zero"),
+            text.clone(),
+            GroundTerm::new("Wrap", vec![text.clone()]),
+        ] {
+            assert_eq!(decision(&admission, &value, 0), DynamicAdmissionDecision::Admitted);
+        }
+        assert_eq!(decision(&admission, &integer, 0), DynamicAdmissionDecision::Rejected);
+        assert_eq!(decision(&admission, &integer, 1), DynamicAdmissionDecision::Admitted);
+        for value in [text, GroundTerm::nullary("Zero")] {
+            assert_eq!(decision(&admission, &value, 1), DynamicAdmissionDecision::Rejected);
+        }
+    }
+
+    #[test]
+    fn declared_native_carrier_exists_without_tokens_and_cannot_be_widened() {
+        let mut core = grammar();
+        core.categories[0].carrier = Carrier::Builtin(BuiltinCarrier::Integer);
+        let integer = GroundTerm::nullary(format!("{INTEGER_LABEL}7"));
+        let text = GroundTerm::nullary(format!("{TEXT_LABEL}37"));
+        let admission = DynamicSyntaxAdmission::compile(&core).expect("native grammar compiles");
+        assert_eq!(decision(&admission, &integer, 0), DynamicAdmissionDecision::Admitted);
+        add_token(&mut core, CategoryId(0), TokenDecoder::Text, None);
+        let admission = DynamicSyntaxAdmission::compile(&core).expect("native grammar compiles");
+        assert_eq!(decision(&admission, &text, 0), DynamicAdmissionDecision::Rejected);
+        assert_eq!(decision(&admission, &integer, 0), DynamicAdmissionDecision::Admitted);
+        assert_eq!(
+            decision(&admission, &GroundTerm::nullary("Zero"), 0),
+            DynamicAdmissionDecision::Admitted
+        );
+    }
+
+    #[test]
+    fn captured_token_uses_its_evaluator_output_not_the_category_carrier() {
+        let mut core = grammar();
+        core.categories[0].carrier = Carrier::Builtin(BuiltinCarrier::Float);
+        add_token(
+            &mut core,
+            CategoryId(0),
+            TokenDecoder::Text,
+            Some(NativeEvaluation::Carrier {
+                kind: "float".into(),
+                parameters: BTreeMap::new(),
+            }),
+        );
+        core.productions[1].syntax = vec![SyntaxItem::CaptureToken {
+            token: TokenId(0),
+            slot: "numeric_text".into(),
+        }];
+        let admission = DynamicSyntaxAdmission::compile(&core).expect("captured grammar compiles");
+        let text = GroundTerm::nullary(format!("{TEXT_LABEL}312e30"));
+        assert_eq!(
+            decision(&admission, &text, 0),
+            DynamicAdmissionDecision::Undetermined(DynamicAdmissionUnknown::UnavailableContract)
+        );
+        assert_eq!(
+            decision(&admission, &GroundTerm::new("Wrap", vec![text]), 0),
+            DynamicAdmissionDecision::Admitted
+        );
+        assert_eq!(
+            decision(
+                &admission,
+                &GroundTerm::new("Wrap", vec![GroundTerm::nullary(format!("{INTEGER_LABEL}1"))]),
+                0
+            ),
+            DynamicAdmissionDecision::Rejected
+        );
+    }
+
+    #[test]
+    fn unavailable_output_is_unknown_without_erasing_valid_constructor_evidence() {
+        for (decoder, evaluation) in [
+            (TokenDecoder::Capability("decoder".into()), None),
+            (TokenDecoder::Text, Some(NativeEvaluation::Handler("evaluator".into()))),
+        ] {
+            let mut core = grammar();
+            add_token(&mut core, CategoryId(0), decoder, evaluation);
+            let admission =
+                DynamicSyntaxAdmission::compile(&core).expect("callback grammar compiles");
+            let text = GroundTerm::nullary(format!("{TEXT_LABEL}61"));
+            for value in [text.clone(), GroundTerm::new(SEQUENCE_LABEL, vec![text])] {
+                assert_eq!(
+                    decision(&admission, &value, 0),
+                    DynamicAdmissionDecision::Undetermined(
+                        DynamicAdmissionUnknown::UnavailableContract
+                    )
+                );
+                let reflected = reflect_ground_term_par(&value, FP);
+                assert!(!admission.admits_category(&reflected, FP, CategoryId(0)));
+                let mut budget = 100;
+                assert_eq!(
+                    admission.check_category_with_budget(
+                        &reflected,
+                        "foreign",
+                        CategoryId(0),
+                        &mut budget
+                    ),
+                    DynamicAdmissionDecision::Rejected
+                );
+            }
+            for malformed in [
+                GroundTerm::nullary(format!("{TEXT_LABEL}ff")),
+                GroundTerm::nullary("undeclared"),
+            ] {
+                assert_eq!(decision(&admission, &malformed, 0), DynamicAdmissionDecision::Rejected);
+            }
+            assert_eq!(
+                decision(&admission, &GroundTerm::nullary("Zero"), 0),
+                DynamicAdmissionDecision::Admitted
+            );
+        }
+    }
+
+    #[test]
+    fn native_admission_rejects_wrong_kind_noncanonical_payload_and_extra_children() {
+        let mut core = grammar();
+        add_token(&mut core, CategoryId(0), TokenDecoder::Integer { radix: None }, None);
+        let admission = DynamicSyntaxAdmission::compile(&core).expect("integer grammar compiles");
+        for value in [
+            GroundTerm::nullary(format!("{INTEGER_LABEL}01")),
+            GroundTerm::nullary(format!("{INTEGER_LABEL}+1")),
+            GroundTerm::nullary(format!("{INTEGER_LABEL}170141183460469231731687303715884105728")),
+            GroundTerm::nullary(format!("{TEXT_LABEL}31")),
+            GroundTerm::new(format!("{INTEGER_LABEL}1"), vec![GroundTerm::nullary("Zero")]),
+        ] {
+            assert_eq!(decision(&admission, &value, 0), DynamicAdmissionDecision::Rejected);
+        }
+        let valid = GroundTerm::nullary(format!("{INTEGER_LABEL}-1"));
+        assert_eq!(decision(&admission, &valid, 0), DynamicAdmissionDecision::Admitted);
+    }
+
+    #[test]
+    fn admission_budget_is_shared_and_exhaustion_is_not_refutation() {
+        let mut core = grammar();
+        add_token(&mut core, CategoryId(0), TokenDecoder::Text, None);
+        let admission = DynamicSyntaxAdmission::compile(&core).expect("grammar compiles");
+        let value = reflect_ground_term_par(&GroundTerm::nullary(format!("{TEXT_LABEL}61")), FP);
+        let mut budget = 1;
+        assert_eq!(
+            admission.check_category_with_budget(&value, FP, CategoryId(0), &mut budget),
+            DynamicAdmissionDecision::Undetermined(DynamicAdmissionUnknown::WorkLimit)
+        );
+        assert_eq!(budget, 0);
+        budget = 3;
+        assert_eq!(
+            admission.check_category_with_budget(&value, FP, CategoryId(0), &mut budget),
+            DynamicAdmissionDecision::Admitted
+        );
+        assert_eq!(budget, 1);
+        assert_eq!(
+            admission.check_category_with_budget(&value, FP, CategoryId(0), &mut budget),
+            DynamicAdmissionDecision::Undetermined(DynamicAdmissionUnknown::WorkLimit)
+        );
+        assert_eq!(budget, 0);
+        core.limits.max_forest_nodes = 1;
+        let admission = DynamicSyntaxAdmission::compile(&core).expect("limited grammar compiles");
+        budget = 20;
+        assert_eq!(
+            admission.check_category_with_budget(&value, FP, CategoryId(0), &mut budget),
+            DynamicAdmissionDecision::Undetermined(DynamicAdmissionUnknown::WorkLimit)
+        );
+        assert_eq!(budget, 19);
+    }
+
+    #[test]
+    fn literal_category_admission_uses_a_worklist_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut core = grammar();
+                add_token(&mut core, CategoryId(0), TokenDecoder::Text, None);
+                let admission = DynamicSyntaxAdmission::compile(&core).expect("grammar compiles");
+                let mut ground = GroundTerm::nullary(format!("{TEXT_LABEL}61"));
+                for _ in 0..20_000 {
+                    ground = GroundTerm::new("Wrap", vec![ground]);
+                }
+                let value = reflect_ground_term_par(&ground, FP);
+                assert!(admission.admits_category(&value, FP, CategoryId(0)));
+                let mut budget = 10;
+                assert_eq!(
+                    admission.check_category_with_budget(&value, FP, CategoryId(0), &mut budget),
+                    DynamicAdmissionDecision::Undetermined(DynamicAdmissionUnknown::WorkLimit)
+                );
+                assert_eq!(budget, 0);
+            })
+            .expect("small-stack literal thread")
+            .join()
+            .expect("literal traversal and cleanup are stack-safe");
     }
 
     #[test]

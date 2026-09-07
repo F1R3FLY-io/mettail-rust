@@ -184,7 +184,10 @@ pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,
     ContractFlow,
 };
-pub use dynamic_admission::{DynamicAdmissionCompileError, DynamicSyntaxAdmission};
+pub use dynamic_admission::{
+    DynamicAdmissionCompileError, DynamicAdmissionDecision, DynamicAdmissionUnknown,
+    DynamicSyntaxAdmission,
+};
 pub use dynamic_reflection::{
     dynamic_syntax_to_ground_term, dynamic_template_hole_categories, DynamicReflectionError,
 };

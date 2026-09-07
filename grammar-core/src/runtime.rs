@@ -1865,6 +1865,85 @@ fn decode_hex(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Native leaf kinds produced by the closed token decoders and evaluators.
+/// This is an output-kind contract, not a claim that every value of that kind
+/// belongs to a token's lexical image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeNativeValueKind {
+    Text,
+    Integer,
+    Boolean,
+    Bytes,
+    Unit,
+}
+
+/// What can be established about a token's successful evaluation without
+/// executing it or invoking a capability. An unavailable callback contract is
+/// not an arbitrary successful value and must remain unknown to admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeTokenOutputContract {
+    Known(RuntimeNativeValueKind),
+    NoSuccessfulOutput,
+    UnavailableContract,
+}
+
+impl RuntimeTokenOutputContract {
+    fn narrow(self, accepted: &[RuntimeNativeValueKind], output: RuntimeNativeValueKind) -> Self {
+        match self {
+            Self::Known(kind) if accepted.contains(&kind) => Self::Known(output),
+            Self::Known(_) | Self::NoSuccessfulOutput => Self::NoSuccessfulOutput,
+            // A closed evaluator still constrains its successful output even
+            // if a capability decoder can supply an arbitrary input kind.
+            Self::UnavailableContract => Self::Known(output),
+        }
+    }
+}
+
+/// Project the existing decoder and one-input evaluator into their successful
+/// output kind. No parsing, native evaluation, or host authorization occurs.
+/// Keep this projection beside `default_evaluate`: operators/carriers use that
+/// closed evaluator, while handlers alone dispatch to the runtime host.
+/// `DynamicCategoryAdmission.v` proves the kind-level composition laws.
+pub fn runtime_token_output_contract(
+    decoder: &TokenDecoder,
+    evaluation: Option<&NativeEvaluation>,
+) -> RuntimeTokenOutputContract {
+    use RuntimeNativeValueKind::{Boolean, Bytes, Integer, Text, Unit};
+    use RuntimeTokenOutputContract::{Known, NoSuccessfulOutput, UnavailableContract};
+
+    let input = match decoder {
+        TokenDecoder::Text => Known(Text),
+        TokenDecoder::Integer { .. } => Known(Integer),
+        TokenDecoder::Boolean { .. } => Known(Boolean),
+        TokenDecoder::BytesHex => Known(Bytes),
+        TokenDecoder::Unit => Known(Unit),
+        TokenDecoder::Capability(_) => UnavailableContract,
+    };
+    match evaluation {
+        None => input,
+        Some(NativeEvaluation::Carrier { kind, .. }) => match kind.as_str() {
+            "int" => input.narrow(&[Integer, Text], Integer),
+            "bool" => input.narrow(&[Boolean, Text], Boolean),
+            // These are Text outputs in the current runtime, not FloatBits,
+            // rational, or fixed-point native values.
+            "str" | "rat" | "fixed" | "float" => input.narrow(&[Text], Text),
+            _ => NoSuccessfulOutput,
+        },
+        Some(NativeEvaluation::Operator(operator)) => match operator.as_str() {
+            "neg" => input.narrow(&[Integer], Integer),
+            "not" => input.narrow(&[Boolean], Boolean),
+            // Capability inputs can also be sequences or collections; all
+            // successful length cases nevertheless produce an Integer.
+            "len" => input.narrow(&[Text, Bytes], Integer),
+            // Tokens supply exactly one input. The other operators are
+            // binary or unavailable in the closed runtime evaluator.
+            _ => NoSuccessfulOutput,
+        },
+        Some(NativeEvaluation::Handler(_)) => UnavailableContract,
+        Some(NativeEvaluation::Source { .. }) => NoSuccessfulOutput,
+    }
+}
+
 fn default_evaluate(
     evaluation: &NativeEvaluation,
     inputs: &[DynamicValue],
@@ -1992,6 +2071,132 @@ mod tests {
         Precedence, Production, ProductionClass, ReductionPlan, Reservation, RuntimeRule,
         RuntimeRuleSemantic, RuntimeSymbol, TokenDefinition,
     };
+
+    #[test]
+    fn token_output_contract_covers_the_existing_closed_unary_evaluator() {
+        use RuntimeNativeValueKind::{Boolean, Bytes, Integer, Text, Unit};
+        use RuntimeTokenOutputContract::{Known, NoSuccessfulOutput, UnavailableContract};
+
+        let inputs = [
+            (TokenDecoder::Text, DynamicValue::Text("7".into()), Text),
+            (TokenDecoder::Text, DynamicValue::Text("true".into()), Text),
+            (TokenDecoder::Text, DynamicValue::Text("λ".into()), Text),
+            (TokenDecoder::Integer { radix: None }, DynamicValue::Integer(7), Integer),
+            (
+                TokenDecoder::Boolean {
+                    true_text: "true".into(),
+                    false_text: "false".into(),
+                },
+                DynamicValue::Boolean(true),
+                Boolean,
+            ),
+            (TokenDecoder::BytesHex, DynamicValue::Bytes(vec![0, 255]), Bytes),
+            (TokenDecoder::Unit, DynamicValue::Unit, Unit),
+        ];
+        let mut evaluations = Vec::with_capacity(28);
+        for kind in ["int", "bool", "str", "rat", "fixed", "float", "unknown"] {
+            evaluations.push(NativeEvaluation::Carrier {
+                kind: kind.into(),
+                parameters: BTreeMap::new(),
+            });
+        }
+        for operator in [
+            "neg", "not", "len", "add", "sub", "mul", "div", "mod", "eq", "ne", "lt", "gt", "le",
+            "ge", "and", "or", "xor", "concat", "unknown",
+        ] {
+            evaluations.push(NativeEvaluation::Operator(operator.into()));
+        }
+        evaluations.push(NativeEvaluation::Source { semantics: Vec::new(), text: "7".into() });
+        for (decoder, input, kind) in &inputs {
+            assert_eq!(runtime_token_output_contract(decoder, None), Known(*kind));
+            for evaluation in &evaluations {
+                let contract = runtime_token_output_contract(decoder, Some(evaluation));
+                let result = default_evaluate(evaluation, std::slice::from_ref(input));
+                if contract == NoSuccessfulOutput {
+                    assert!(result.is_err(), "{decoder:?} {evaluation:?}: {result:?}");
+                }
+                if let Ok(value) = result {
+                    let actual = match value {
+                        DynamicValue::Text(_) => Text,
+                        DynamicValue::Integer(_) => Integer,
+                        DynamicValue::Boolean(_) => Boolean,
+                        DynamicValue::Bytes(_) => Bytes,
+                        DynamicValue::Unit => Unit,
+                        other => panic!("closed unary evaluator produced unexpected {other:?}"),
+                    };
+                    assert_eq!(contract, Known(actual), "{decoder:?} {evaluation:?}");
+                }
+            }
+            assert_eq!(
+                runtime_token_output_contract(
+                    decoder,
+                    Some(&NativeEvaluation::Handler("host".into()))
+                ),
+                UnavailableContract,
+            );
+        }
+    }
+
+    #[test]
+    fn token_output_contract_narrows_capabilities_without_executing_them() {
+        use RuntimeNativeValueKind::{Boolean, Integer, Text};
+        use RuntimeTokenOutputContract::{Known, NoSuccessfulOutput, UnavailableContract};
+
+        let capability = TokenDecoder::Capability("decoder".into());
+        assert_eq!(runtime_token_output_contract(&capability, None), UnavailableContract);
+        for (kind, expected) in [
+            ("int", Integer),
+            ("bool", Boolean),
+            ("str", Text),
+            ("rat", Text),
+            ("fixed", Text),
+            ("float", Text),
+        ] {
+            let evaluation = NativeEvaluation::Carrier {
+                kind: kind.into(),
+                parameters: BTreeMap::new(),
+            };
+            assert_eq!(
+                runtime_token_output_contract(&capability, Some(&evaluation)),
+                Known(expected)
+            );
+        }
+        for (operator, expected) in [("neg", Integer), ("not", Boolean), ("len", Integer)] {
+            assert_eq!(
+                runtime_token_output_contract(
+                    &capability,
+                    Some(&NativeEvaluation::Operator(operator.into()))
+                ),
+                Known(expected),
+            );
+        }
+        assert_eq!(
+            runtime_token_output_contract(
+                &TokenDecoder::Text,
+                Some(&NativeEvaluation::Operator("neg".into()))
+            ),
+            NoSuccessfulOutput,
+        );
+        assert_eq!(
+            runtime_token_output_contract(
+                &capability,
+                Some(&NativeEvaluation::Operator("add".into()))
+            ),
+            NoSuccessfulOutput,
+        );
+        for input in [
+            DynamicValue::Sequence(Vec::new()),
+            DynamicValue::Collection {
+                kind: crate::CollectionKind::List,
+                entries: Vec::new(),
+            },
+        ] {
+            assert_eq!(
+                default_evaluate(&NativeEvaluation::Operator("len".into()), &[input]),
+                Ok(DynamicValue::Integer(0))
+            );
+        }
+    }
 
     fn integer_grammar() -> (GrammarCoreV1, ParserImageV1) {
         let mut grammar = GrammarCoreV1::new("Integer");

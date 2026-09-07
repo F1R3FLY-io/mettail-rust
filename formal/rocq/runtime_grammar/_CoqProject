@@ -13,6 +13,7 @@ theories/LexerMaximalMunch.v
 theories/LexicalSurvivorAdapter.v
 theories/ReductionSemantics.v
 theories/TokenCategoryNormalization.v
+theories/DynamicCategoryAdmission.v
 theories/WorklistSaturation.v
 theories/ForestTermination.v
 theories/ZeroSpanCertificate.v

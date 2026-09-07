@@ -47,6 +47,11 @@ native atom. Decode that atom under the expected theory sort and declared
 literal carrier. Do not invent a scalar constructor or reinterpret its text
 as source code.
 
+The [structural category-admission contract](dynamic-syntax-admission.md)
+describes how constructor and literal alternatives are combined, including
+unknown callback output contracts and bounded checking. This checker establishes
+structural membership; it is not the bidirectional semantic-kernel adapter.
+
 The adapter must account for every shape used by the practical application.
 Unsupported shapes require stable refusal; a required shape is an implementation
 blocker, not grounds for silently narrowing the application. Round-trip laws
