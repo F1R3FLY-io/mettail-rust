@@ -10,7 +10,10 @@ Inductive LanguageRight : Type :=
 | Reduce
 | Bridge
 | Publish
-| Introspect.
+| Introspect
+| Check
+| SearchProof
+| Spend.
 
 Inductive SpaceRight : Type :=
 | Gensym
@@ -31,7 +34,10 @@ Definition language_right_eqb (left right : LanguageRight) : bool :=
   | Reduce, Reduce
   | Bridge, Bridge
   | Publish, Publish
-  | Introspect, Introspect => true
+  | Introspect, Introspect
+  | Check, Check
+  | SearchProof, SearchProof
+  | Spend, Spend => true
   | _, _ => false
   end.
 

@@ -1,0 +1,215 @@
+# Installed FLT semantic judgments
+
+## Boundary and implementation status
+
+A foreign-language term (FLT) is scoped structural syntax, not an authority
+token. A semantic request names an opaque installed-language handle and an
+action or declared observation of that language. Its input has already passed
+through the language-qualified parser/template path. Execution must not render
+the term and parse it again.
+
+The [dispatch model](../../formal/rocq/runtime_grammar/theories/InstalledFltJudgments.v)
+specifies the missing installed-service boundary before its Rust implementation.
+The existing semantic kernel and installation services are implemented; the
+reflected-term adapter, qualified reduce/observe service and service wire are
+not yet connected. This document is their implementation contract, not a claim
+that the node demonstration is runnable.
+
+## Reuse and representation
+
+| Responsibility | Existing implementation | Required connection |
+|---|---|---|
+| Resolve authority | `RholangLanguageRuntime::resolve` and `InstalledLanguageTable::authorize_all` | Resolve only the caller's opaque handle and check every operation/action right together |
+| Parse and fill syntax | `dynamic_syntax_to_ground_term` and `reflect_flt_construction` | Consume the already reflected value; preserve structural holes and their scope |
+| Check reflected syntax | `DynamicSyntaxAdmission` | Factor its structural recognition into a checked inverse with distinct rejection and exhaustion |
+| Represent theory operators | `theory_operator_to_machine` | Resolve constructor bindings and literal carriers from the installed theory |
+| Admit semantic input | `SemanticTransitionInput::admit` | Supply the typed structural projection and explicit limits |
+| Execute an action | `SemanticTransitionMatcher::execute_action` | Invoke the existing one-step or normalization policy, with the exact image used to restore the matcher |
+| Commit a service result | `InstalledLanguageTable::with_authorized_all` | Revalidate the same handle while committing the complete prepared result |
+
+The sources are the
+[language service](../../rholang-runtime/src/language_install.rs),
+[installed table](../../grammar-core/src/installed.rs),
+[dynamic reflection](../../rholang-codegen/src/dynamic_reflection.rs),
+[structural admission](../../rholang-codegen/src/dynamic_admission.rs), and
+[semantic kernel](../../dovetail-runtime/src/semantic_transition_kernel.rs).
+
+The generated `SemanticMachineImage` projection has a different operator
+representation from runtime theory execution. Its projector is not a drop-in
+replacement for `theory_operator_to_machine`. The new adapter must preserve
+the existing reflected ABI and resolve
+`TheoryConstructorImageV1::grammar`; equal numeric identifiers in different
+tables do not establish a correspondence.
+
+A literal category need not have a constructor. For example, the existing
+Regex `Scalar` token produces `DynamicValue::Text`, reflected as an existing
+native atom. Decode that atom under the expected theory sort and declared
+literal carrier. Do not invent a scalar constructor or reinterpret its text
+as source code.
+
+The adapter must account for every shape used by the practical application.
+Unsupported shapes require stable refusal; a required shape is an implementation
+blocker, not grounds for silently narrowing the application. Round-trip laws
+must cover admitted constructors, literals, ordering, multiplicity and scope.
+Their proofs precede the corresponding adapter implementation.
+
+## Exact dispatch and rights
+
+An installed bundle keeps its authoritative language value, admitted semantic
+image and restored matcher together. `restore(image)` does not itself retain
+an image fingerprint, so the service must prevent pairing that matcher with a
+different image. A cache hit never bypasses installation or authorization.
+
+The model's trusted bundle lookup is keyed by the installed authority entry's
+commitment. Canonical action/observation names resolve to identifiers only
+inside that bundle. The kernel request is built from the resolved call:
+installed language/theory/image commitments, selected action, exact input key,
+and the handle's actual granted rights. Reflected tags cannot supply any of
+these authorities.
+
+| Request | Required rights | Selection |
+|---|---|---|
+| Reduce an action | `Reduce` plus the action's declared rights | Exactly the named action |
+| Observe a declaration | `Observe` plus the action's declared rights | Exactly the action and result sort named by that observation |
+
+An observation does not grant raw `ReflectAst` access. It also does not invent
+an unconditional `Reduce` requirement: a one-step observational action may
+declare no such right. A normalization action already requires `Reduce` in its
+validated declaration. Nested transition and guard requirements remain enforced
+by the existing kernel.
+
+Before execution, check the input's expected sort against the selected domain.
+Pass the selected result sort into reconstruction. Observation result-sort
+mismatch, absent declarations and unsupported input shapes cannot fall back to
+another action or parser.
+
+## Private execution and complete publication
+
+The service follows this order. The pseudocode names operations, not new
+alternative implementations of the parser or kernel.
+
+```text
+resolve the opaque handle and its installed bundle
+select the exact action or declared observation
+authorize the operation right and all declared action rights
+compute installed / host / request limit intersections
+decode and type-check the reflected input with a bounded worklist
+invoke the bundle's existing kernel with the derived request
+propagate Refuted or Undetermined without a successful value
+verify every successful transition receipt against that request
+check each receipt's repeated work equals the one execution aggregate
+reconstruct every output at the declared result sort
+prepare the entire canonical reply and complete receipt evidence
+check total work, output and receipt limits
+revalidate the same handle at the guarded service commit
+publish the complete prepared result
+```
+
+Reconstruction and encoding are all-or-error traversals. A valid first output
+followed by an invalid or exhausted output must expose neither output. The
+model retains every source transition and its receipt in order; that is a
+transport-preservation theorem, not a proof that an arbitrary input list
+contains valid semantic successors. Receipt checks and the exact kernel call
+are separate, mandatory premises.
+
+Canonical public order must be independent of temporary e-class or substitution
+identifiers. The kernel currently uses such identifiers as internal tie-breakers;
+the wire adapter must establish an order from exact structural keys and complete
+neutral receipt evidence without pruning alternatives. No internal graph ID is
+a public term identity.
+
+`Refuted` is not automatically a Boolean false observation. In particular,
+`NoTransition` and a violated determinism claim remain distinct failures.
+`Undetermined` is not an empty successful result. An exhausted search cannot
+publish a prefix, spend a purse or commit an effect.
+
+## Resource accounting
+
+For each resource dimension, the effective limit is the intersection of the
+installed language, host policy and request ceilings:
+
+```math
+L_{\mathrm{effective}}(d)=
+\min\bigl(L_{\mathrm{installed}}(d),
+          L_{\mathrm{host}}(d),
+          L_{\mathrm{request}}(d)\bigr).
+```
+
+The dimensions include logical work, normalization steps, frontier, proof and
+term bounds, and output bounds. `SemanticTransitionLimits::from` does not
+perform this intersection; the service must do it. Each stage must check its
+allocation/traversal limit before incurring the bounded work, not only after
+constructing a large reply.
+
+`ProvenSemanticTransitions::work` is aggregate request work. Each transition's
+receipt repeats that aggregate. Charge it once, then add boundary conversion
+and encoding work; summing all receipt work fields would multiply the charge
+by the number of results. Semantic input admission already included in the
+kernel aggregate must not also be counted as boundary decoding.
+
+The publication gate also checks that every receipt reports that same aggregate.
+Without this equality, request/image binding could accept a receipt reporting
+100 units while the separate execution usage reports zero. The closed negative
+example in the model exercises exactly that mismatch, with a ceiling of 20;
+the revised gate rejects it as invalid internal evidence before encoding.
+
+The dispatch model uses mathematical naturals and abstract receipt/payload
+atoms. Its publication bound is not yet a concrete byte-codec or allocation
+proof. The implementation must supply exact byte-length and work-count
+correspondence, checked integer arithmetic and pre-allocation checks.
+The model names the abstract output dimension `OutputAtoms`, not bytes.
+Its current execution and codec parameters are checked at publication; these
+checks do not prove that computation stops before exceeding a ceiling. Passing
+residual work to each stage and proving prefix/pre-allocation enforcement are
+mandatory implementation refinements, not consequences of a final bound.
+
+Logical work, semantic `Cost(G)` grades and actual host funding are different
+quantities. `NoSemanticGrade` does not mean free host execution. A costed image
+without the required resource evidence returns `ResourceGradeUnavailable`;
+purity cannot justify manufacturing a grade.
+
+## Formal correspondence and verification
+
+The model reuses
+[installed-language authority](../../formal/rocq/runtime_grammar/theories/InstalledLanguageAuthority.v)
+and the
+[kernel decision/receipt definitions](../../formal/rocq/runtime_grammar/theories/SemanticTransitionKernel.v).
+The kernel is a parameterized execution boundary applied to the exact resolved
+request. This establishes routing and checked publication for an implementation
+of that boundary; it does not assume or prove that an arbitrary supplied
+function implements GSLT semantics. Concrete instantiation uses the existing
+kernel and its separate
+[normalization model](../../formal/rocq/runtime_grammar/theories/SemanticNormalization.v).
+
+The obligations are deliberately separate:
+
+- Dispatch: exact installed selection, input annotation and output-sort routing.
+- Authority: all required rights at the before/after epochs, with revocation
+  preventing publication.
+- Evidence: every exported receipt binds the derived request and installed image,
+  and repeats the single execution work aggregate.
+- Transport: all results and modeled receipts survive successful preparation;
+  errors discard the private prefix.
+- Resources: effective ceilings cannot amplify any source ceiling, and checked
+  publication obeys its modeled usage bounds.
+- Implementation refinement: actual codec typing, canonical bytes/order, work,
+  stack safety and Rust source correspondence remain required before exposing
+  the service.
+
+This model does not prove cryptographic collision freedom, Rust extraction,
+the full normalization algorithm, or the later asynchronous RSpace produce and
+funding transaction. The node integration must connect the service result to
+its actual atomic effect/accounting boundary. The practical demonstration
+still requires that public MeTTaIL-only node path and its end-to-end tests.
+
+The before/after authority relation constrains successful publication; it is
+not an operational proof that unauthorized requests never invoke the kernel.
+The service implementation must enforce that earlier authorization gate.
+The modeled receipt records do not yet represent every concrete intrinsic or
+normalization receipt field. Their complete wire transport requires an explicit
+correspondence proof, not an assertion that the abstract record is the wire ABI.
+
+Run proof compilation and separate kernel checking one at a time under the
+repository's resource policy: at most 1 GiB memory, no swap, and generated
+proof artifacts under `target/`. Do not invoke the entire formal workspace to
+recheck this bounded dependency slice.
