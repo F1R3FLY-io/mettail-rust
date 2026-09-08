@@ -8,6 +8,83 @@ use crate::canonical::{RhoValue, ValueDecodeError};
 use mettail_grammar_core as core;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IntrinsicOpcode {
+    ExactTermEq,
+    Utf8AtEnd,
+    Utf8ScalarAt,
+    Utf8Slice,
+    CheckedNatAdd,
+    Utf8ConcatMany,
+}
+
+/// Shape only: the contextual compiler still owns variable availability,
+/// output freshness, declared sorts, and Derived-slot allocation.
+pub(crate) struct IntrinsicShape<'a> {
+    opcode: IntrinsicOpcode,
+    inputs: Vec<&'a str>,
+    outputs: Vec<(&'a str, String)>,
+}
+
+/// Shared by presentation validation and executable rule compilation. The
+/// existing sort decoder is iterative, including nested collection/functions.
+pub(crate) fn decode_intrinsic_shape<'a>(
+    value: &'a RhoValue,
+    path: &str,
+) -> Result<IntrinsicShape<'a>, ValueDecodeError> {
+    let tagged = expect_list(value, path)?;
+    require_len(tagged, 2, path)?;
+    if expect_string(&tagged[0], &format!("{path}[0]"))? != "intrinsic" {
+        return error(path, "expected intrinsic premise");
+    }
+    let spec_path = format!("{path}[1]");
+    let spec = expect_map(&tagged[1], &spec_path)?;
+    if spec.len() != 3
+        || !spec.contains_key("op")
+        || !spec.contains_key("inputs")
+        || !spec.contains_key("outputs")
+    {
+        return error(&spec_path, "intrinsic requires exactly op, inputs, and outputs");
+    }
+    let op = required_string(spec, "op", &spec_path)?;
+    let (opcode, input_arity, output_arity) = match op {
+        "exact_term_eq" => (IntrinsicOpcode::ExactTermEq, 2, 1),
+        "utf8_at_end" => (IntrinsicOpcode::Utf8AtEnd, 2, 1),
+        "utf8_scalar_at" => (IntrinsicOpcode::Utf8ScalarAt, 2, 2),
+        "utf8_slice" => (IntrinsicOpcode::Utf8Slice, 3, 1),
+        "checked_nat_add" => (IntrinsicOpcode::CheckedNatAdd, 2, 1),
+        "utf8_concat_many" => (IntrinsicOpcode::Utf8ConcatMany, 1, 1),
+        _ => return error(format!("{spec_path}.op"), format!("unknown closed intrinsic `{op}`")),
+    };
+    let input_values =
+        expect_list(required(spec, "inputs", &spec_path)?, &format!("{spec_path}.inputs"))?;
+    let output_values =
+        expect_list(required(spec, "outputs", &spec_path)?, &format!("{spec_path}.outputs"))?;
+    if input_values.len() != input_arity || output_values.len() != output_arity {
+        return error(
+            path,
+            format!("intrinsic `{op}` expects {input_arity} inputs and {output_arity} outputs"),
+        );
+    }
+    let mut inputs = Vec::with_capacity(input_arity);
+    for (index, input) in input_values.iter().enumerate() {
+        inputs.push(expect_nonempty_string(input, &format!("{spec_path}.inputs[{index}]"))?);
+    }
+    let mut outputs = Vec::with_capacity(output_arity);
+    for (index, output) in output_values.iter().enumerate() {
+        let output_path = format!("{spec_path}.outputs[{index}]");
+        let output = expect_list(output, &output_path)?;
+        if output.len() != 3 || expect_string(&output[0], &format!("{output_path}[0]"))? != "typed"
+        {
+            return error(&output_path, "expected [\"typed\", name, sort]");
+        }
+        let name = expect_nonempty_string(&output[1], &format!("{output_path}[1]"))?;
+        let sort = decode_context_sort(&output[2], &format!("{output_path}[2]"))?;
+        outputs.push((name, sort));
+    }
+    Ok(IntrinsicShape { opcode, inputs, outputs })
+}
+
 fn decode_pathmap_mode(
     value: &RhoValue,
     path: &str,
@@ -1445,55 +1522,9 @@ impl<'a> RuleCompiler<'a> {
                             ))
                         },
                         "intrinsic" => {
-                            require_len(tagged, 2, &path)?;
-                            let spec = expect_map(&tagged[1], &format!("{path}[1]"))?;
-                            if spec.len() != 3
-                                || !spec.contains_key("op")
-                                || !spec.contains_key("inputs")
-                                || !spec.contains_key("outputs")
-                            {
-                                return error(
-                                    format!("{path}[1]"),
-                                    "intrinsic requires exactly op, inputs, and outputs",
-                                );
-                            }
-                            let op = required_string(spec, "op", &format!("{path}[1]"))?;
-                            let inputs = expect_list(
-                                required(spec, "inputs", &format!("{path}[1]"))?,
-                                &format!("{path}[1].inputs"),
-                            )?;
-                            let output_values = expect_list(
-                                required(spec, "outputs", &format!("{path}[1]"))?,
-                                &format!("{path}[1].outputs"),
-                            )?;
-                            let (input_arity, output_arity) = match op {
-                                "exact_term_eq" => (2, 1),
-                                "utf8_at_end" => (2, 1),
-                                "utf8_scalar_at" => (2, 2),
-                                "utf8_slice" => (3, 1),
-                                "checked_nat_add" => (2, 1),
-                                "utf8_concat_many" => (1, 1),
-                                _ => {
-                                    return error(
-                                        format!("{path}[1].op"),
-                                        format!("unknown closed intrinsic `{op}`"),
-                                    )
-                                },
-                            };
-                            if inputs.len() != input_arity || output_values.len() != output_arity {
-                                return error(
-                                    &path,
-                                    format!(
-                                        "intrinsic `{op}` expects {input_arity} inputs and {output_arity} outputs",
-                                    ),
-                                );
-                            }
-                            let mut input_ids = Vec::with_capacity(input_arity);
-                            for (index, input) in inputs.iter().enumerate() {
-                                let name = expect_nonempty_string(
-                                    input,
-                                    &format!("{path}[1].inputs[{index}]"),
-                                )?;
+                            let shape = decode_intrinsic_shape(value, &path)?;
+                            let mut input_ids = Vec::with_capacity(shape.inputs.len());
+                            for (index, name) in shape.inputs.iter().copied().enumerate() {
                                 input_ids.push(*self.variable_ids.get(name).ok_or_else(|| {
                                     ValueDecodeError::new(
                                         format!("{path}[1].inputs[{index}]"),
@@ -1501,81 +1532,73 @@ impl<'a> RuleCompiler<'a> {
                                     )
                                 })?);
                             }
-                            let mut output_specs = Vec::with_capacity(output_arity);
                             let mut output_names = BTreeSet::new();
-                            for (index, output) in output_values.iter().enumerate() {
+                            for (index, (name, sort)) in shape.outputs.iter().enumerate() {
                                 let output_path = format!("{path}[1].outputs[{index}]");
-                                let output = expect_list(output, &output_path)?;
-                                if output.len() != 3
-                                    || expect_string(&output[0], &format!("{output_path}[0]"))?
-                                        != "typed"
-                                {
-                                    return error(&output_path, "expected [\"typed\", name, sort]");
-                                }
-                                let name = expect_nonempty_string(
-                                    &output[1],
-                                    &format!("{output_path}[1]"),
-                                )?;
-                                let sort =
-                                    decode_context_sort(&output[2], &format!("{output_path}[2]"))?;
-                                if self.signature.sort(&sort).is_none() {
+                                if self.signature.sort(sort).is_none() {
                                     return error(
                                         &output_path,
                                         format!("unknown theory sort `{sort}`"),
                                     );
                                 }
-                                if self.variable_ids.contains_key(name)
-                                    || !output_names.insert(name.to_string())
+                                if self.variable_ids.contains_key(*name)
+                                    || !output_names.insert(*name)
                                 {
                                     return error(
                                         &output_path,
                                         format!("intrinsic output `{name}` is not fresh"),
                                     );
                                 }
-                                output_specs.push((name.to_string(), sort, output_path));
                             }
-                            let mut output_ids = Vec::with_capacity(output_arity);
-                            for (name, sort, output_path) in output_specs {
+                            let mut output_ids = Vec::with_capacity(shape.outputs.len());
+                            for (index, (name, sort)) in shape.outputs.iter().enumerate() {
                                 output_ids.push(self.add_variable(
-                                    &name,
-                                    &sort,
+                                    name,
+                                    sort,
                                     core::TheoryVariableRoleV1::Derived,
-                                    &output_path,
+                                    &format!("{path}[1].outputs[{index}]"),
                                 )?);
                             }
-                            core::TheoryPremiseFormV1::Intrinsic(match op {
-                                "exact_term_eq" => core::TheoryIntrinsicV1::ExactTermEq {
-                                    left: input_ids[0],
-                                    right: input_ids[1],
-                                    output: output_ids[0],
+                            core::TheoryPremiseFormV1::Intrinsic(match shape.opcode {
+                                IntrinsicOpcode::ExactTermEq => {
+                                    core::TheoryIntrinsicV1::ExactTermEq {
+                                        left: input_ids[0],
+                                        right: input_ids[1],
+                                        output: output_ids[0],
+                                    }
                                 },
-                                "utf8_at_end" => core::TheoryIntrinsicV1::Utf8AtEnd {
+                                IntrinsicOpcode::Utf8AtEnd => core::TheoryIntrinsicV1::Utf8AtEnd {
                                     text: input_ids[0],
                                     cursor: input_ids[1],
                                     output: output_ids[0],
                                 },
-                                "utf8_scalar_at" => core::TheoryIntrinsicV1::Utf8ScalarAt {
-                                    text: input_ids[0],
-                                    cursor: input_ids[1],
-                                    scalar: output_ids[0],
-                                    next_cursor: output_ids[1],
+                                IntrinsicOpcode::Utf8ScalarAt => {
+                                    core::TheoryIntrinsicV1::Utf8ScalarAt {
+                                        text: input_ids[0],
+                                        cursor: input_ids[1],
+                                        scalar: output_ids[0],
+                                        next_cursor: output_ids[1],
+                                    }
                                 },
-                                "utf8_slice" => core::TheoryIntrinsicV1::Utf8Slice {
+                                IntrinsicOpcode::Utf8Slice => core::TheoryIntrinsicV1::Utf8Slice {
                                     text: input_ids[0],
                                     start: input_ids[1],
                                     end: input_ids[2],
                                     output: output_ids[0],
                                 },
-                                "checked_nat_add" => core::TheoryIntrinsicV1::CheckedNatAdd {
-                                    left: input_ids[0],
-                                    right: input_ids[1],
-                                    output: output_ids[0],
+                                IntrinsicOpcode::CheckedNatAdd => {
+                                    core::TheoryIntrinsicV1::CheckedNatAdd {
+                                        left: input_ids[0],
+                                        right: input_ids[1],
+                                        output: output_ids[0],
+                                    }
                                 },
-                                "utf8_concat_many" => core::TheoryIntrinsicV1::Utf8ConcatMany {
-                                    pieces: input_ids[0],
-                                    output: output_ids[0],
+                                IntrinsicOpcode::Utf8ConcatMany => {
+                                    core::TheoryIntrinsicV1::Utf8ConcatMany {
+                                        pieces: input_ids[0],
+                                        output: output_ids[0],
+                                    }
                                 },
-                                _ => unreachable!("closed intrinsic checked above"),
                             })
                         },
                         tag => return error(&path, format!("unknown premise tag `{tag}`")),
@@ -2066,6 +2089,8 @@ fn error<T>(path: impl Into<String>, message: impl Into<String>) -> Result<T, Va
 
 #[cfg(test)]
 mod tests {
+    mod intrinsic_shape;
+
     use super::*;
 
     fn string(value: &str) -> RhoValue {

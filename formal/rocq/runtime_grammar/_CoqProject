@@ -104,6 +104,7 @@ theories/OwnedContractCall.v
 theories/SemanticReplyCompletion.v
 theories/SemanticPreparationContext.v
 theories/SemanticIntrinsics.v
+theories/SemanticIntrinsicSchema.v
 theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v
 theories/RegexGsltMatch.v

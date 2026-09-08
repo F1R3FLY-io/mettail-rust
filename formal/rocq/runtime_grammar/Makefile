@@ -68,6 +68,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SemanticTransitionKernel \
 	RuntimeGrammar.InstalledFltGraphProjection \
 	RuntimeGrammar.SemanticIntrinsics \
+	RuntimeGrammar.SemanticIntrinsicSchema \
 	RuntimeGrammar.SemanticNormalization \
 	RuntimeGrammar.RegexGsltSyntax \
 	RuntimeGrammar.RegexGsltMatch \

@@ -3555,6 +3555,9 @@ fn validate_premise(value: &RhoValue, path: &str, rewrite: bool) -> Result<(), V
                 require_len(values, 2, &path)?;
                 validate_behavioral_predicate(&values[1], &format!("{path}[1]"))?;
             },
+            "intrinsic" => {
+                crate::theory_compile::decode_intrinsic_shape(value, &path)?;
+            },
             tag => return error(&path, format!("unknown premise tag `{tag}`")),
         }
     }
