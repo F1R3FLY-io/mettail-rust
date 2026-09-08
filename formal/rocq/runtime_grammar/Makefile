@@ -47,6 +47,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.ReflectedHeadEnrollment \
 	RuntimeGrammar.ReflectedLocalAssembly \
 	RuntimeGrammar.InstalledFltTraversal \
+	RuntimeGrammar.InstalledFltUsage \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \

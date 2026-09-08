@@ -10,10 +10,12 @@ the term and parse it again.
 
 The [dispatch model](../../formal/rocq/runtime_grammar/theories/InstalledFltJudgments.v)
 specifies the missing installed-service boundary before its Rust implementation.
-The existing semantic kernel and installation services are implemented; the
-reflected-term adapter, qualified reduce/observe service and service wire are
-not yet connected. This document is their implementation contract, not a claim
-that the node demonstration is runnable.
+The existing semantic kernel and installation services are implemented. The
+private reflected-term adapter now connects closed positional constructors and
+String, Integer and Boolean atoms to that kernel in both directions. The
+qualified reduce/observe service and service wire are not yet connected.
+This document is their implementation contract, not a claim that the node
+demonstration is runnable or that every language shape is supported.
 
 ## Reuse and representation
 
@@ -23,7 +25,7 @@ that the node demonstration is runnable.
 | Parse and fill syntax | `dynamic_syntax_to_ground_term` and `reflect_flt_construction` | Consume the already reflected value; preserve structural holes and their scope |
 | Check reflected syntax | `DynamicSyntaxAdmission` | Factor its structural recognition into a checked inverse with distinct rejection and exhaustion |
 | Represent theory operators | `theory_operator_to_machine` | Resolve constructor bindings and literal carriers from the installed theory |
-| Admit semantic input | `SemanticTransitionInput::admit` | Supply the typed structural projection and explicit limits |
+| Admit semantic input | `SemanticTransitionInput::admit_accounted` | Supply the typed structural projection and explicit limits; retain work on every outcome |
 | Execute an action | `SemanticTransitionMatcher::execute_action` | Invoke the existing one-step or normalization policy, with the exact image used to restore the matcher |
 | Commit a service result | `InstalledLanguageTable::with_authorized_all` | Revalidate the same handle while committing the complete prepared result |
 
@@ -284,6 +286,76 @@ proves shared-body equivalence, preservation of ordered child occurrences and
 metadata, and the iterative metadata size observer. Tests explicitly compare
 root and list metadata bytes because ordinary `Par` equality omits that metadata.
 
+### Bidirectional occurrence traversal
+
+`InstalledFltAdapter` binds the exact installed pair and the existing reflected
+owner label derived from its **full language fingerprint**, not its parser-only
+fingerprint. Creating this private object does not authorize a request. The
+service must resolve and authorize the opaque handle first.
+
+Both directions use the same three work-item forms: visit a typed reference,
+advance an ordered child cursor, and assemble a constructor at a saved value-stack
+base. The source reference is a borrowed `Par` in the forward direction and a
+borrowed e-class coordinate in the inverse direction. The constructor instruction
+retains the binding index's exact signature and source label.
+
+```text
+push Visit(root, expected_sort)
+while a pending work item exists:
+    charge one scheduling step
+    Visit(reference, sort):
+        establish the checked local view under the exact installed image
+        native atom: decode/encode its declared carrier and push its value
+        constructor: check arity, then schedule Children before Assemble
+    Children(first :: rest, first_sort :: later_sorts):
+        schedule Visit(first, first_sort) before the remaining child cursor
+    Children(empty, empty): finish this cursor
+    Assemble(binding, saved_base):
+        require exactly binding.arity new values above saved_base
+        reserve the child vector and move those values in original order
+        invoke the shared local assembler and push its single result
+require no pending work and exactly one root value
+```
+
+LIFO insertion puts assembly below the child cursor and later children below
+the next visit. No whole intermediate `GroundTerm`, flattened instruction
+program, guest-source reparse, or recursive traversal is created. Each occurrence
+is visited even when several references point to the same graph node.
+
+The forward machine accepts only canonical closed reflected heads, joins the
+input category to its theory sort, and checks every child against the declared
+domain. Native labels must be nullary and match the exact String, Integer or
+Boolean carrier. Moving decoded String ownership uses `mem::take` through a
+mutable borrow, preserving `DynamicValue`'s existing iterative destructor.
+Unsupported forms are errors, not empty successful results.
+
+Fresh kernel insertion reuses `TheoryPositionalNativeEncoding` and the existing
+add-only e-graph. Its node ceiling is bounded by the representable 32-bit class
+space; every child is an already-built valid canonical coordinate. Duplicate
+insertion is tested before the distinct-node ceiling by the existing e-graph
+method. The complete root then enters the existing exact admission/projection
+once. There is no second cycle analysis or separate graph validator.
+
+The inverse borrows the original `ProvenSemanticTransitions`, whose private
+graph carries the kernel's acyclic publication projection. It checks the declared
+result sort and reconstructs **every** transition, in its original order and with
+all repeated child occurrences. It neither selects a preferred result nor sorts
+or deduplicates roots. A malformed or exhausted later result returns an error,
+not an earlier successful prefix. The public transition roster and receipt fields
+still require the service's separate validation; a valid local view is not an
+authenticated receipt or evidence of the original action-output roster.
+
+Dynamic work/value buffers track logical reserved capacity separately from
+`Vec::capacity()`. A full logical buffer grows by the greater of one and its
+current logical capacity. Checked capacity addition and byte multiplication,
+then cumulative reservation, precede the physical capacity request. Allocator
+spare capacity cannot change the logical charge. Slots cost 33 bytes for a work
+item, nine for a reflected occurrence plus its ground bit, four for an e-class
+coordinate, and eight for an output occurrence reference. These fixed logical
+payloads are not Rust layout, physical heap usage or a wire encoding. Temporary
+child buffers and the shared operator/assembly payload schedules are charged
+separately where they are materialized.
+
 ## Exact dispatch and rights
 
 An installed bundle keeps its authoritative language value, admitted semantic
@@ -378,6 +450,36 @@ and encoding work; summing all receipt work fields would multiply the charge
 by the number of results. Semantic input admission already included in the
 kernel aggregate must not also be counted as boundary decoding.
 
+The adapter uses `ReflectedCodecBudget::run_accounted_stage` to lend the same
+cancellation hook and remaining work allowance to a trusted stage whose local
+counter starts at zero. Its reported usage is absorbed on success **and** error;
+an over-limit report is refused rather than saturated. The converter's remaining
+payload allowance is carried unchanged through this handoff.
+
+Specifically, let $`L`$ be the work ceiling, $`C`$ the conversion prefix, $`A`$
+the input-admission work, and $`K`$ the later kernel aggregate, which includes
+$`A`$. Admission receives at most $`L-C`$ and returns its counter on every
+outcome. The legacy `admit` entry delegates to this same body and discards only
+the usage observation. Later execution must receive the ceiling $`L-C`$, not
+$`L-C-A`$, and its continuation must check $`A\leq K`$ before adding $`K-A`$.
+Thus the combined charge is:
+
+```math
+(C+A)+(K-A)=C+K\leq L.
+```
+
+The [usage model](../../formal/rocq/runtime_grammar/theories/InstalledFltUsage.v)
+proves this prefix accounting and shared-body observation, plus the logical
+buffer-growth reservation equations. The existing kernel action-refutation
+path still needs an accounted result at the service seam; the input-admission
+change alone does not close that service obligation.
+
+`SemanticInputLimits::bytes` is a separate exact-key/publication-size ceiling.
+It is **not** an allocation-usage report or the converter's remaining payload
+allowance. Passing it to the existing kernel does not prove pre-allocation
+accounting for every kernel-internal allocation. Kernel logical work, converter
+payload reservation and kernel structural-size limits remain distinct.
+
 The publication gate also checks that every receipt reports that same aggregate.
 Without this equality, request/image binding could accept a receipt reporting
 100 units while the separate execution usage reports zero. The closed negative
@@ -461,6 +563,7 @@ The proof layers have distinct responsibilities:
 | [Installed binding enrollment](../../formal/rocq/runtime_grammar/theories/InstalledFltBindingEnrollment.v) | Named joins retain distinct coordinates and exact optional carriers; complete signature assembly and collision-rejecting roster construction establish the existing constructor inverse premise without dropping entries |
 | [Operator materialization](../../formal/rocq/runtime_grammar/theories/KernelOperatorMaterialization.v) | Exact inner and framed sizes agree with the existing writer; the conservative fresh-node payload schedule counts every modeled copy before allocation |
 | [Local reflected assembly](../../formal/rocq/runtime_grammar/theories/ReflectedLocalAssembly.v) | Shared-body factoring retains markers, child order and both metadata vectors; the iterative flat length observer counts metadata copies before materialization |
+| [Stage usage and logical reservations](../../formal/rocq/runtime_grammar/theories/InstalledFltUsage.v) | Shared admission-body observations retain every terminal counter; residual ceilings preserve prior work; an execution aggregate includes admission exactly once; logical buffer growth reserves enough new slots independently of physical capacity |
 
 For example, the term model distinguishes a native Boolean from an ordinary
 constructor returning the Boolean sort. Its mixed-literal witness also uses

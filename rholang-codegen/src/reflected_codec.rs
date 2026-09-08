@@ -76,6 +76,27 @@ impl<'a, C: FnMut() -> bool> ReflectedCodecBudget<'a, C> {
         self.remaining_bytes
     }
 
+    /// Run a trusted, separately accounted stage with the remaining work
+    /// ceiling and absorb its reported usage on every result, including errors.
+    /// The callback's counter starts at zero. Its byte-size limits are separate
+    /// from this converter's payload allowance, which is carried unchanged.
+    /// A report beyond the supplied work ceiling is refused, never saturated.
+    pub fn run_accounted_stage<T>(
+        &mut self,
+        run: impl FnOnce(u64, &mut C) -> (T, u64),
+    ) -> Result<T, DynamicReflectionError> {
+        self.charge(0, 0)?;
+        let remaining = self.work_limit - *self.work;
+        let (result, used) = run(remaining, self.is_cancelled);
+        let total = self
+            .work
+            .checked_add(used)
+            .filter(|total| *total <= self.work_limit)
+            .ok_or(DynamicReflectionError::WorkLimit)?;
+        *self.work = total;
+        Ok(result)
+    }
+
     /// Release the work/cancellation borrows without replenishing the byte
     /// allowance. Pass this remainder, not the original ceiling, to the next
     /// stage of the same operation.
@@ -518,6 +539,73 @@ mod tests {
             .expect("small-stack worker")
             .join()
             .expect("stack-safe assembly refusal");
+    }
+
+    #[test]
+    fn reflected_codec_accounted_stage_preserves_error_usage_and_payload_allowance() {
+        for result in [Ok(7), Err("rejected")] {
+            let mut work = 3;
+            let mut cancelled = || false;
+            let mut budget = ReflectedCodecBudget::new(&mut work, 10, 17, &mut cancelled);
+            let observed = budget
+                .run_accounted_stage(|remaining, cancel| {
+                    assert_eq!(remaining, 7);
+                    assert!(!cancel());
+                    (result, 5)
+                })
+                .expect("bounded stage report");
+            assert_eq!(observed, result);
+            assert_eq!((budget.work_used(), budget.remaining_bytes()), (8, 17));
+            assert_eq!(
+                budget.run_accounted_stage(|remaining, _| {
+                    assert_eq!(remaining, 2);
+                    ((), 2)
+                }),
+                Ok(())
+            );
+            assert_eq!((budget.work_used(), budget.remaining_bytes()), (10, 17));
+        }
+    }
+
+    #[test]
+    fn reflected_codec_accounted_stage_rejects_bad_reports_and_preflight_failure() {
+        for (prefix, ceiling, reported) in [(3, 10, 8), (u64::MAX - 1, u64::MAX, 2)] {
+            let mut work = prefix;
+            let mut cancelled = || false;
+            let mut budget = ReflectedCodecBudget::new(&mut work, ceiling, 17, &mut cancelled);
+            assert_eq!(
+                budget.run_accounted_stage(|_, _| ((), reported)),
+                Err(DynamicReflectionError::WorkLimit)
+            );
+            assert_eq!((budget.work_used(), budget.remaining_bytes()), (prefix, 17));
+        }
+        for (prefix, ceiling, cancel, expected) in [
+            (11, 10, false, DynamicReflectionError::WorkLimit),
+            (3, 10, true, DynamicReflectionError::Cancelled),
+        ] {
+            let mut work = prefix;
+            let mut cancelled = || cancel;
+            let mut budget = ReflectedCodecBudget::new(&mut work, ceiling, 17, &mut cancelled);
+            let result: Result<(), _> = budget
+                .run_accounted_stage(|_, _| panic!("failed preflight must not run the stage"));
+            assert_eq!(result, Err(expected));
+            assert_eq!((budget.work_used(), budget.remaining_bytes()), (prefix, 17));
+        }
+        let mut calls = 0;
+        let mut cancelled = || {
+            calls += 1;
+            calls == 2
+        };
+        let mut work = 3;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 10, 17, &mut cancelled);
+        assert_eq!(
+            budget.run_accounted_stage(|_, cancel| {
+                assert!(cancel());
+                (Err::<(), _>(DynamicReflectionError::Cancelled), 2)
+            }),
+            Ok(Err(DynamicReflectionError::Cancelled))
+        );
+        assert_eq!((budget.work_used(), budget.remaining_bytes()), (5, 17));
     }
 
     #[test]

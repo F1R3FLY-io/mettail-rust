@@ -564,66 +564,98 @@ impl SemanticTransitionInput {
         egraph: EGraph<FramedSemanticOperator>,
         root: EClassId,
         limits: SemanticInputLimits,
-        mut is_cancelled: C,
+        is_cancelled: C,
     ) -> SemanticInputDecision
     where
         C: FnMut() -> bool,
     {
+        Self::admit_accounted(egraph, root, limits, is_cancelled).0
+    }
+
+    /// Run the same input admission while reporting work on every outcome,
+    /// including structural refutation after traversal has started.
+    ///
+    /// The returned counter is stage-local and starts at zero. A caller with
+    /// conversion prefix C and total ceiling L supplies L-C, then absorbs the
+    /// reported A even on failure. On success `input.admission_work()` is A;
+    /// later execution already includes A in its aggregate, so add only its
+    /// increment beyond A to the outer counter. Input byte limits remain key/
+    /// publication-size ceilings, not cumulative allocation-byte reporting.
+    pub fn admit_accounted<C>(
+        egraph: EGraph<FramedSemanticOperator>,
+        root: EClassId,
+        limits: SemanticInputLimits,
+        mut is_cancelled: C,
+    ) -> (SemanticInputDecision, u64)
+    where
+        C: FnMut() -> bool,
+    {
+        let mut work = 0;
+        let decision = Self::admit_with_work(egraph, root, limits, &mut work, &mut is_cancelled);
+        (decision, work)
+    }
+
+    fn admit_with_work<C: FnMut() -> bool>(
+        egraph: EGraph<FramedSemanticOperator>,
+        root: EClassId,
+        limits: SemanticInputLimits,
+        work: &mut u64,
+        is_cancelled: &mut C,
+    ) -> SemanticInputDecision {
         let Some(source_root) = egraph.try_find(root) else {
             return SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected);
         };
         if egraph.nodes(source_root).is_empty() {
             return SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected);
         }
-        let mut work = 0;
         let exact_key = match exact_ground_key(
             &egraph,
             source_root,
-            &mut work,
+            work,
             GroundKeyLimits {
                 work: limits.work,
                 nodes: limits.nodes,
                 bytes: limits.bytes,
                 limit_reason: SemanticMatchUndetermined::InputLimitExceeded,
             },
-            &mut is_cancelled,
+            is_cancelled,
         ) {
             Ok(exact_key) => exact_key,
             Err(SemanticMatchUndetermined::InvalidImageEvidence) => {
                 return SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected);
             },
-            Err(reason) => return SemanticInputDecision::Undetermined { reason, work },
+            Err(reason) => return SemanticInputDecision::Undetermined { reason, work: *work },
         };
         let (projected, remap) = match project_reachable_egraph(
             &egraph,
             &[source_root],
-            &mut work,
+            work,
             ProjectionLimits {
                 work: limits.work,
                 nodes: limits.nodes,
                 bytes: limits.bytes,
                 limit_reason: SemanticMatchUndetermined::InputLimitExceeded,
             },
-            &mut is_cancelled,
+            is_cancelled,
         ) {
             Ok(projected) => projected,
             Err(SemanticMatchUndetermined::InvalidImageEvidence) => {
                 return SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected);
             },
-            Err(reason) => return SemanticInputDecision::Undetermined { reason, work },
+            Err(reason) => return SemanticInputDecision::Undetermined { reason, work: *work },
         };
         let projected_root = match remapped_eclass(&remap, source_root) {
             Ok(root) => root,
             Err(SemanticMatchUndetermined::InvalidImageEvidence) => {
                 return SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected);
             },
-            Err(reason) => return SemanticInputDecision::Undetermined { reason, work },
+            Err(reason) => return SemanticInputDecision::Undetermined { reason, work: *work },
         };
         SemanticInputDecision::Proven(Self {
             root: projected_root,
             egraph: projected,
             exact_key,
-            admission_work: work,
+            admission_work: *work,
         })
     }
 
@@ -9414,6 +9446,92 @@ mod tests {
             let encoded = plan.encode().expect("reserved encoder");
             assert_eq!(encoded, expected);
             assert_eq!(encoded.payload_segments()[1], original_inner);
+        }
+    }
+
+    fn accounted_admission_graph(ambiguous: bool) -> (EGraph<FramedSemanticOperator>, EClassId) {
+        let mut graph = EGraph::with_config(EGraphConfig { max_nodes: 8 });
+        let root = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        if ambiguous {
+            let alternative = graph.add(ENode::leaf(theory_operator_to_machine(
+                &TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)),
+            )));
+            graph.merge(root, alternative);
+        }
+        (graph, root)
+    }
+
+    #[test]
+    fn accounted_admission_retains_success_and_rejection_usage() {
+        let limits = SemanticInputLimits { work: 100, nodes: 8, bytes: 1000 };
+        for ambiguous in [false, true] {
+            let (graph, root) = accounted_admission_graph(ambiguous);
+            let (decision, used) =
+                SemanticTransitionInput::admit_accounted(graph, root, limits, || false);
+            let (graph, root) = accounted_admission_graph(ambiguous);
+            let legacy = SemanticTransitionInput::admit(graph, root, limits, || false);
+            match (decision, legacy) {
+                (SemanticInputDecision::Proven(input), SemanticInputDecision::Proven(old)) => {
+                    assert!(!ambiguous);
+                    assert_eq!(input.exact_key(), old.exact_key());
+                    assert_eq!(input.admission_work(), old.admission_work());
+                    assert_eq!(input.admission_work(), used);
+                    assert_eq!(used, 4, "one visit and finish in keying and projection");
+                },
+                (SemanticInputDecision::Refuted(reason), SemanticInputDecision::Refuted(old)) => {
+                    assert!(ambiguous);
+                    assert_eq!(reason, old);
+                    assert_eq!(used, 1, "refutation after the first traversal charge is not free");
+                },
+                _ => panic!("accounting must preserve the existing decision"),
+            }
+        }
+        let (decision, used) = SemanticTransitionInput::admit_accounted(
+            EGraph::with_config(EGraphConfig { max_nodes: 8 }),
+            EClassId(0),
+            limits,
+            || false,
+        );
+        assert!(matches!(
+            decision,
+            SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        ));
+        assert_eq!(used, 0, "invalid root fails before traversal");
+    }
+
+    #[test]
+    fn accounted_admission_retains_exhaustion_and_cancellation_usage() {
+        for work_limit in 0..4 {
+            let (graph, root) = accounted_admission_graph(false);
+            let (decision, used) = SemanticTransitionInput::admit_accounted(
+                graph,
+                root,
+                SemanticInputLimits { work: work_limit, nodes: 8, bytes: 1000 },
+                || false,
+            );
+            assert!(matches!(decision, SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted, work,
+            } if work == used));
+            assert_eq!(used, work_limit);
+        }
+        for cancel_at in 1..=4 {
+            let mut calls = 0;
+            let (graph, root) = accounted_admission_graph(false);
+            let (decision, used) = SemanticTransitionInput::admit_accounted(
+                graph,
+                root,
+                SemanticInputLimits { work: 100, nodes: 8, bytes: 1000 },
+                || {
+                    calls += 1;
+                    calls == cancel_at
+                },
+            );
+            assert!(matches!(decision, SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled, work,
+            } if work == used));
+            assert_eq!(used, cancel_at - 1);
         }
     }
 

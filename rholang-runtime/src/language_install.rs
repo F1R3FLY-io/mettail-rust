@@ -3969,6 +3969,493 @@ mod tests {
             .expect("the modified fixture supplies an admitted pair")
     }
 
+    fn installed_flt_adapter_fixture(
+    ) -> (RholangLanguageRuntime, Par, Arc<mettail_grammar_core::InstalledLanguage>) {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let batch = runtime
+            .install_all(rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE))
+            .expect("inline Regex DDL installs through the generated Rholang parser");
+        let token = batch
+            .exports
+            .into_iter()
+            .find(|export| export.name == "Regex")
+            .expect("Regex export")
+            .handle;
+        let handle = runtime
+            .resolve(&token, LanguageRight::Construct)
+            .expect("construct authority");
+        let installed = runtime
+            .service
+            .table()
+            .authorize(&handle, LanguageRight::Construct)
+            .expect("exact immutable installed pair");
+        (runtime, token, installed)
+    }
+
+    #[test]
+    fn installed_flt_adapter_connects_parsed_regex_to_actual_kernel_outputs() {
+        use crate::installed_flt::{InstalledFltAdapter, InstalledFltError};
+        use mettail_dovetail_runtime::{
+            SemanticActionExecutionRequest, SemanticInputLimits, SemanticTransitionDecision,
+            SemanticTransitionMatcher,
+        };
+        use mettail_grammar_core::{LanguageRights, TheoryActionId, TheorySortId};
+        use mettail_rholang_codegen::{ReflectedCodecBudget, ReflectedPositionalContext};
+        use prost::Message;
+
+        let (runtime, token, installed) = installed_flt_adapter_fixture();
+        let category = installed
+            .core()
+            .categories
+            .iter()
+            .find(|entry| entry.name == "Pattern")
+            .expect("Pattern category")
+            .id;
+        let image = installed.semantic_image().expect("semantic image");
+        let matcher = SemanticTransitionMatcher::restore(image).expect("existing matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let input_limits = SemanticInputLimits {
+            work: 1_000_000,
+            nodes: 10_000,
+            bytes: 1_000_000,
+        };
+        let mut work = 7;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 10_000_000, 10_000_000, &mut cancel);
+        let adapter = InstalledFltAdapter::new(&installed, &mut budget).expect("adapter");
+        // This tests structural conversion around the real kernel, not the
+        // forthcoming service's execution-accounting/receipt authorization.
+        for (source, action, label, arity) in
+            [("a+", 0, "PConcat", 2), ("a?", 1, "PAlt", 2), ("(a)", 2, "PLiteral", 1)]
+        {
+            let reflected = runtime
+                .construct_template(
+                    &token,
+                    &[RuntimeTemplatePiece::Text(source.into())],
+                    &[],
+                    Some("Pattern"),
+                    &BTreeMap::new(),
+                )
+                .expect("real installed parser and reflector");
+            let input = adapter
+                .to_kernel(&reflected, category, input_limits, &mut budget)
+                .expect("typed structural conversion");
+            let decision = matcher.execute_action(
+                SemanticActionExecutionRequest {
+                    image,
+                    action: TheoryActionId(action),
+                    granted_rights: &rights,
+                    input,
+                    limits: installed.language_core().theory.limits.into(),
+                },
+                || false,
+            );
+            let mut bundle = match decision {
+                SemanticTransitionDecision::Proven(bundle) => bundle,
+                SemanticTransitionDecision::Refuted(reason) => panic!("kernel refuted: {reason:?}"),
+                SemanticTransitionDecision::Undetermined { reason, work, .. } => {
+                    panic!("kernel undetermined: {reason:?} after {work}")
+                },
+            };
+            assert_eq!(bundle.transitions.len(), 1);
+            let sort = bundle.transitions[0].output_sort;
+            let outputs = adapter
+                .reflect_transitions(&bundle, sort, &mut budget)
+                .expect("all outputs");
+            let owner = grammar_fingerprint_label(installed.commitment().language_fingerprint);
+            let context = ReflectedPositionalContext::new(&owner, &mut budget).expect("owner");
+            let head = context
+                .view(&outputs[0], &mut budget)
+                .expect("view")
+                .expect("closed result");
+            assert_eq!((head.label(), head.children().len()), (label, arity));
+            // The inverse must produce precisely the same semantic term, not
+            // merely the same visible root label or a graph-coordinate digest.
+            let reconstructed = adapter
+                .to_kernel(&outputs[0], category, input_limits, &mut budget)
+                .expect("output is accepted by the same typed adapter");
+            assert_eq!(
+                reconstructed.exact_key().as_bytes(),
+                bundle.transitions[0].receipt.output.as_slice()
+            );
+            if action == 0 {
+                let star = context
+                    .view(&head.children()[1], &mut budget)
+                    .expect("view")
+                    .expect("star");
+                assert_eq!(star.label(), "PStar");
+                assert_eq!(
+                    head.children()[0].encode_to_vec(),
+                    star.children()[0].encode_to_vec(),
+                    "both occurrences of the shared child survive exactly"
+                );
+            }
+            // Public transition rosters may contain repeated roots. The codec
+            // preserves them; the service separately verifies each receipt.
+            bundle.transitions.push(bundle.transitions[0].clone());
+            let repeated = adapter
+                .reflect_transitions(&bundle, sort, &mut budget)
+                .expect("repeats");
+            assert_eq!(repeated.len(), 2);
+            assert_eq!(repeated[0].encode_to_vec(), repeated[1].encode_to_vec());
+            let mut output_work = 0;
+            let mut output_cancel = || false;
+            let mut output_budget = ReflectedCodecBudget::new(
+                &mut output_work,
+                1_000_000,
+                1_000_000,
+                &mut output_cancel,
+            );
+            adapter
+                .reflect_transitions(&bundle, sort, &mut output_budget)
+                .expect("measure complete output reservation");
+            let used_bytes = 1_000_000 - output_budget.finish();
+            let mut exhausted_work = 0;
+            let mut exhausted_budget = ReflectedCodecBudget::new(
+                &mut exhausted_work,
+                1_000_000,
+                used_bytes - 1,
+                &mut output_cancel,
+            );
+            assert!(matches!(
+                adapter.reflect_transitions(&bundle, sort, &mut exhausted_budget),
+                Err(InstalledFltError::Resource(
+                    mettail_rholang_codegen::DynamicReflectionError::PayloadByteLimit
+                ))
+            ));
+            assert!(
+                exhausted_budget.work_used() > 0,
+                "output failure retains work and returns no prefix"
+            );
+            bundle.transitions[1].output_sort = TheorySortId(u32::MAX);
+            assert!(matches!(
+                adapter.reflect_transitions(&bundle, sort, &mut budget),
+                Err(InstalledFltError::UnsupportedOrMalformed("transition output sort"))
+            ));
+        }
+    }
+
+    #[test]
+    fn installed_flt_adapter_native_carriers_and_malformed_inputs_are_exact() {
+        use crate::installed_flt::{InstalledFltAdapter, InstalledFltError};
+        use mettail_dovetail_runtime::{
+            theory_positional_native_view, RuntimeLiteralRef, SemanticInputLimits,
+            TheoryPositionalNativeView,
+        };
+        use mettail_grammar_core::{DynamicValue, TheorySortId};
+        use mettail_rholang_codegen::GroundTerm;
+        use mettail_rholang_codegen::{reflect_ground_term_par, ReflectedCodecBudget};
+
+        let installed = installed_regex_binding_fixture();
+        let owner = grammar_fingerprint_label(installed.commitment().language_fingerprint);
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 10_000_000, 10_000_000, &mut cancel);
+        let adapter = InstalledFltAdapter::new(&installed, &mut budget).expect("adapter");
+        let limits = SemanticInputLimits {
+            work: 100_000,
+            nodes: 100,
+            bytes: 100_000,
+        };
+        let category = |name: &str| {
+            installed
+                .core()
+                .categories
+                .iter()
+                .find(|entry| entry.name == name)
+                .expect("category")
+                .id
+        };
+        let sort = |name: &str| {
+            TheorySortId(
+                installed
+                    .language_core()
+                    .theory
+                    .sorts
+                    .iter()
+                    .position(|entry| entry.name == name)
+                    .expect("sort") as u32,
+            )
+        };
+        for (name, value) in [
+            ("Text", DynamicValue::Text(String::new())),
+            ("Text", DynamicValue::Text("α\0💡".into())),
+            ("Nat", DynamicValue::Integer(i128::MIN)),
+            ("Nat", DynamicValue::Integer(i128::MAX)),
+            ("Bool", DynamicValue::Boolean(false)),
+            ("Bool", DynamicValue::Boolean(true)),
+        ] {
+            let ground = dynamic_syntax_to_ground_term(&value, installed.core(), &BTreeMap::new())
+                .expect("existing native reflection");
+            let reflected = reflect_ground_term_par(&ground, &owner);
+            let input = adapter
+                .to_kernel(&reflected, category(name), limits, &mut budget)
+                .expect("declared carrier");
+            let mut view_work = 0;
+            let observed = theory_positional_native_view(
+                installed.semantic_image().expect("image"),
+                input.egraph(),
+                input.root(),
+                sort(name),
+                &mut view_work,
+                100_000,
+                &mut || false,
+            )
+            .expect("existing typed decoder")
+            .expect("supported native view");
+            let expected = match &value {
+                DynamicValue::Text(text) => RuntimeLiteralRef::String(text),
+                DynamicValue::Integer(value) => RuntimeLiteralRef::Integer(*value),
+                DynamicValue::Boolean(value) => RuntimeLiteralRef::Boolean(*value),
+                _ => unreachable!("scalar fixture"),
+            };
+            assert_eq!(
+                observed,
+                TheoryPositionalNativeView::Literal { sort: sort(name), value: expected }
+            );
+            let wrong = if name == "Bool" { "Text" } else { "Bool" };
+            assert!(matches!(
+                adapter.to_kernel(&reflected, category(wrong), limits, &mut budget),
+                Err(InstalledFltError::UnsupportedOrMalformed("native literal carrier"))
+            ));
+        }
+        for (name, term, fingerprint) in [
+            ("Text", GroundTerm::nullary("^dynamic-text:FF"), owner.as_str()),
+            ("Text", GroundTerm::nullary("^dynamic-text:ff"), owner.as_str()),
+            ("Nat", GroundTerm::nullary("^dynamic-integer:+1"), owner.as_str()),
+            ("Bool", GroundTerm::nullary("^dynamic-boolean:True"), owner.as_str()),
+            ("Pattern", GroundTerm::nullary("PLiteral"), owner.as_str()),
+            (
+                "Pattern",
+                GroundTerm::new("PLiteral", vec![GroundTerm::nullary("BTrue")]),
+                owner.as_str(),
+            ),
+            ("Pattern", GroundTerm::nullary("PEpsilon"), "foreign-owner"),
+            (
+                "Text",
+                GroundTerm::new("^dynamic-text:61", vec![GroundTerm::nullary("PEpsilon")]),
+                owner.as_str(),
+            ),
+        ] {
+            let par = reflect_ground_term_par(&term, fingerprint);
+            assert!(
+                matches!(
+                    adapter.to_kernel(&par, category(name), limits, &mut budget),
+                    Err(InstalledFltError::UnsupportedOrMalformed(_))
+                ),
+                "malformed fixture must not produce a kernel input"
+            );
+        }
+    }
+
+    #[test]
+    fn installed_flt_adapter_conversion_budget_is_cumulative_and_cancellable() {
+        use crate::installed_flt::{InstalledFltAdapter, InstalledFltError};
+        use mettail_dovetail_runtime::{SemanticInputLimits, SemanticMatchUndetermined};
+        use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
+        let (runtime, token, installed) = installed_flt_adapter_fixture();
+        let par = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("a|a".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("parsed repeated input");
+        let category = installed
+            .core()
+            .categories
+            .iter()
+            .find(|entry| entry.name == "Pattern")
+            .expect("Pattern")
+            .id;
+        let limits = SemanticInputLimits {
+            work: 1_000_000,
+            nodes: 3,
+            bytes: 1_000_000,
+        };
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut setup = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+        let adapter = InstalledFltAdapter::new(&installed, &mut setup).expect("adapter");
+        setup.finish();
+        let mut measured_work = 7;
+        let mut calls = 0;
+        let mut count_calls = || {
+            calls += 1;
+            false
+        };
+        let mut measured =
+            ReflectedCodecBudget::new(&mut measured_work, 1_000_000, 1_000_000, &mut count_calls);
+        let input = adapter
+            .to_kernel(&par, category, limits, &mut measured)
+            .expect("exact three distinct nodes despite five occurrences");
+        assert_eq!(input.egraph().node_count(), 3);
+        let spent_bytes = 1_000_000 - measured.finish();
+        for (work_limit, byte_limit, succeeds) in [
+            (measured_work, spent_bytes, true),
+            (measured_work - 1, spent_bytes, false),
+            (measured_work, spent_bytes - 1, false),
+        ] {
+            let mut work = 7;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, work_limit, byte_limit, &mut cancel);
+            let result = adapter.to_kernel(&par, category, limits, &mut budget);
+            assert_eq!(result.is_ok(), succeeds);
+            assert!(budget.work_used() >= 7 && budget.work_used() <= work_limit);
+        }
+        for cancel_at in 1..=calls {
+            let mut observed = 0;
+            let mut cancel = || {
+                observed += 1;
+                observed == cancel_at
+            };
+            let mut work = 7;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+            assert!(matches!(
+                adapter.to_kernel(&par, category, limits, &mut budget),
+                Err(InstalledFltError::Resource(DynamicReflectionError::Cancelled))
+                    | Err(InstalledFltError::Binding(
+                        crate::installed_flt::InstalledFltBindingError::Resource(
+                            DynamicReflectionError::Cancelled
+                        )
+                    ))
+                    | Err(InstalledFltError::Kernel(SemanticMatchUndetermined::Cancelled))
+            ));
+        }
+        let mut work = 7;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+        assert!(matches!(
+            adapter.to_kernel(
+                &par,
+                category,
+                SemanticInputLimits { nodes: 2, ..limits },
+                &mut budget
+            ),
+            Err(InstalledFltError::Kernel(SemanticMatchUndetermined::InputLimitExceeded))
+        ));
+    }
+
+    #[test]
+    fn installed_flt_adapter_deep_round_trip_and_failure_cleanup_are_stack_safe() {
+        use crate::installed_flt::{InstalledFltAdapter, InstalledFltError};
+        use mettail_dovetail_runtime::{
+            SemanticActionExecutionRequest, SemanticInputLimits, SemanticTransitionDecision,
+            SemanticTransitionMatcher,
+        };
+        use mettail_grammar_core::{LanguageRights, TheoryActionId};
+        use mettail_rholang_codegen::{
+            reflect_ground_term_par, DynamicReflectionError, GroundTerm, ReflectedCodecBudget,
+            ReflectedPositionalContext,
+        };
+
+        // Change only the explicit resource profile for a depth regression;
+        // retain the actual installed Regex constructors and RemoveGroup rule.
+        let baseline = installed_regex_binding_fixture();
+        let mut core = baseline.language_core().clone();
+        core.theory.limits.max_steps = 200_000;
+        core.theory.limits.max_term_nodes = 10_000;
+        core.theory.limits.max_output_nodes = 10_000;
+        core.theory.limits.max_output_bytes = 10_000_000;
+        let installed = install_binding_core(&core);
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let depth = 2_048;
+                let owner = grammar_fingerprint_label(installed.commitment().language_fingerprint);
+                let mut tree =
+                    GroundTerm::new("PLiteral", vec![GroundTerm::nullary("^dynamic-text:61")]);
+                for _ in 0..depth {
+                    tree = GroundTerm::new("PStar", vec![tree]);
+                }
+                tree = GroundTerm::new("PGroup", vec![tree]);
+                let par = reflect_ground_term_par(&tree, &owner);
+                let mut work = 0;
+                let mut cancel = || false;
+                let mut budget =
+                    ReflectedCodecBudget::new(&mut work, 20_000_000, 20_000_000, &mut cancel);
+                let adapter = InstalledFltAdapter::new(&installed, &mut budget).expect("adapter");
+                let category = installed
+                    .core()
+                    .categories
+                    .iter()
+                    .find(|entry| entry.name == "Pattern")
+                    .expect("Pattern")
+                    .id;
+                let input_limits = SemanticInputLimits {
+                    work: 200_000,
+                    nodes: 10_000,
+                    bytes: 10_000_000,
+                };
+                let input = adapter
+                    .to_kernel(&par, category, input_limits, &mut budget)
+                    .expect("deep forward traversal");
+                let image = installed.semantic_image().expect("image");
+                let matcher = SemanticTransitionMatcher::restore(image).expect("matcher");
+                let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+                let bundle = match matcher.execute_action(
+                    SemanticActionExecutionRequest {
+                        image,
+                        action: TheoryActionId(2),
+                        granted_rights: &rights,
+                        input,
+                        limits: core.theory.limits.into(),
+                    },
+                    || false,
+                ) {
+                    SemanticTransitionDecision::Proven(bundle) => bundle,
+                    SemanticTransitionDecision::Refuted(reason) => {
+                        panic!("deep rule refuted: {reason:?}")
+                    },
+                    SemanticTransitionDecision::Undetermined { reason, work, .. } => {
+                        panic!("deep rule undetermined: {reason:?} after {work}")
+                    },
+                };
+                let sort = bundle.transitions[0].output_sort;
+                let outputs = adapter
+                    .reflect_transitions(&bundle, sort, &mut budget)
+                    .expect("deep inverse traversal");
+                assert_eq!(outputs.len(), 1);
+                let context =
+                    ReflectedPositionalContext::new(&owner, &mut budget).expect("context");
+                let mut cursor = &outputs[0];
+                for _ in 0..depth {
+                    let head = context
+                        .view(cursor, &mut budget)
+                        .expect("view")
+                        .expect("closed node");
+                    assert_eq!(head.label(), "PStar");
+                    cursor = &head.children()[0];
+                }
+                assert_eq!(
+                    context
+                        .view(cursor, &mut budget)
+                        .expect("view")
+                        .expect("leaf")
+                        .label(),
+                    "PLiteral"
+                );
+                budget.finish();
+                let mut spent = 0;
+                let mut exhausted =
+                    ReflectedCodecBudget::new(&mut spent, 20_000_000, 30_000, &mut cancel);
+                assert!(matches!(
+                    adapter.reflect_transitions(&bundle, sort, &mut exhausted),
+                    Err(InstalledFltError::Resource(DynamicReflectionError::PayloadByteLimit))
+                ));
+                // Scope exit also drops the deep source, input projection, actual
+                // kernel bundle, and reconstructed Par with the existing destructors.
+            })
+            .expect("small-stack worker")
+            .join()
+            .expect("bounded-stack conversion and cleanup");
+    }
+
     fn assert_installed_binding_correspondence(
         installed: &mettail_grammar_core::InstalledLanguage,
     ) {
