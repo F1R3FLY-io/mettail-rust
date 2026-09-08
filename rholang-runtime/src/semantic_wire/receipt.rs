@@ -84,12 +84,13 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
     }
 
     fn premise(&mut self, p: SemanticPremiseReceipt) -> Result<Par> {
+        let tag = premise_tag(&p);
         match p {
             SemanticPremiseReceipt::Freshness { rule, premise } => {
-                self.tuple(|e| Ok([e.uint(0_u32)?, e.uint(rule.0)?, e.uint(premise)?]))
+                self.tuple(|e| Ok([e.uint(tag)?, e.uint(rule.0)?, e.uint(premise)?]))
             },
             SemanticPremiseReceipt::Transition { rule, premise, child_rule } => self.tuple(|e| {
-                Ok([e.uint(1_u32)?, e.uint(rule.0)?, e.uint(premise)?, e.uint(child_rule.0)?])
+                Ok([e.uint(tag)?, e.uint(rule.0)?, e.uint(premise)?, e.uint(child_rule.0)?])
             }),
             SemanticPremiseReceipt::Judgment {
                 rule,
@@ -99,7 +100,7 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
                 proof_steps,
             } => self.tuple(|e| {
                 Ok([
-                    e.uint(2_u32)?,
+                    e.uint(tag)?,
                     e.uint(rule.0)?,
                     e.uint(premise)?,
                     e.uint(judgment.0)?,
@@ -108,11 +109,11 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
                 ])
             }),
             SemanticPremiseReceipt::ForAll { rule, premise, elements } => self.tuple(|e| {
-                Ok([e.uint(3_u32)?, e.uint(rule.0)?, e.uint(premise)?, e.uint(elements)?])
+                Ok([e.uint(tag)?, e.uint(rule.0)?, e.uint(premise)?, e.uint(elements)?])
             }),
             SemanticPremiseReceipt::Intrinsic { rule, premise, receipt } => self.tuple(|e| {
                 Ok([
-                    e.uint(4_u32)?,
+                    e.uint(tag)?,
                     e.uint(rule.0)?,
                     e.uint(premise)?,
                     e.uint(opcode_tag(receipt.opcode))?,
@@ -128,7 +129,7 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
                 evidence_commitment,
             } => self.tuple(|e| {
                 Ok([
-                    e.uint(5_u32)?,
+                    e.uint(tag)?,
                     e.uint(rule.0)?,
                     e.uint(premise)?,
                     e.fingerprint(guard_commitment)?,
@@ -199,7 +200,18 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
     }
 }
 
-fn opcode_tag(opcode: SemanticIntrinsicOpcodeV1) -> u32 {
+pub(super) fn premise_tag(premise: &SemanticPremiseReceipt) -> u32 {
+    match premise {
+        SemanticPremiseReceipt::Freshness { .. } => 0,
+        SemanticPremiseReceipt::Transition { .. } => 1,
+        SemanticPremiseReceipt::Judgment { .. } => 2,
+        SemanticPremiseReceipt::ForAll { .. } => 3,
+        SemanticPremiseReceipt::Intrinsic { .. } => 4,
+        SemanticPremiseReceipt::Guard { .. } => 5,
+    }
+}
+
+pub(super) fn opcode_tag(opcode: SemanticIntrinsicOpcodeV1) -> u32 {
     match opcode {
         SemanticIntrinsicOpcodeV1::ExactTermEq => 0,
         SemanticIntrinsicOpcodeV1::Utf8AtEnd => 1,
@@ -210,7 +222,7 @@ fn opcode_tag(opcode: SemanticIntrinsicOpcodeV1) -> u32 {
     }
 }
 
-fn effect_tag(effect: SemanticEffectClassV1) -> u32 {
+pub(super) fn effect_tag(effect: SemanticEffectClassV1) -> u32 {
     match effect {
         SemanticEffectClassV1::Pure => 0,
         SemanticEffectClassV1::Structural => 1,

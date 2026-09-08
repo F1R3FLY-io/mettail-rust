@@ -1140,8 +1140,53 @@ checked merge algorithm, two successful faithful sorts of the same receipt
 multiset produce identical neutral receipt sequences. This does not assert
 equality of their final comparison states or usage counters. The concrete model's
 12 printed theorem contexts and the adapters' seven contexts were closed after
-compilation and separate kernel checks. The remaining Rust correspondence must
-preserve these field comparisons while charging bounded work before inspection.
+compilation and separate kernel checks.
+
+The [Rust ordering implementation](../../rholang-runtime/src/semantic_wire/ordering.rs)
+compares borrowed fields directly in that order. Premise, opcode and effect tags
+come from the receipt encoder's shared mappings. Every variable-length roster
+uses an iterative cursor; the finite receipt schema bounds the nesting of
+comparison calls. No reflected term is cloned, encoded or compared as a key.
+The implementation uses the following logical schedule, where $`n`$ denotes
+the number of complete result records and $`m`$ the size of a byte chunk.
+
+| Operation | Logical work | Logical payload reservation |
+|---|---|---|
+| Scalar or variant-tag comparison | One visit | None |
+| Byte comparison entry | One visit | None |
+| Common-prefix byte chunk, at most 65,536 bytes per side | $`2m`$ visits, before inspection | None |
+| Roster comparison entry | One visit, followed by child comparisons | None |
+| Two scratch vectors and initial indices | $`n`$ writes | $`32+16n`$ bytes |
+| Each bottom-up merge pass | $`n`$ writes, plus comparisons | None beyond reserved scratch |
+| Inverse-permutation fill and assignment | $`2n`$ writes | Reuses the second scratch vector |
+| Whole-record permutation | $`4n`$ prepaid loop-test and swap allowance | None |
+
+Both scratch allocations are fallible and preceded by checked logical
+reservations. The movement allowance covers at most $`n`$ swaps and $`n`$
+cursor advances, including both the result-record swap and the corresponding
+index swap. Zero-work cancellation checks run throughout movement. Scalar work
+fields in a receipt remain data: their numeric values are not recharged as
+execution. These logical reservations do not claim to measure allocator
+capacity, physical memory or protobuf size.
+
+Comparison or allocation refusal leaves the original result order unchanged.
+Cancellation during movement may leave a permutation of the private reply,
+but preserves every complete term/receipt pair. The eventual wire caller must
+discard the entire private reply on any error; no partially ordered prefix is
+publishable. This caller integration remains required.
+
+The [focused correspondence tests](../../rholang-runtime/src/semantic_wire/ordering/tests.rs)
+compare against independently constructed wire-level keys for 483 valid
+single-field or roster mutations, explicitly covering all 13 receipt fields,
+and all pairings of the 60 effect/opcode/resource combinations. They also check
+stable duplicate preservation relative to each shuffled or reversed input,
+identical canonical receipt sequences across those input permutations,
+whole-record pairing, exact and one-less budgets, every cancellation checkpoint,
+second-chunk refusal with retained prior charges, malformed permutation refusal,
+chunk boundaries, 20,000-element proof rosters and 4,097-result sorting on a
+128 KiB thread stack. The combined 16-test scalar/receipt/ordering suite passed locally.
+This establishes focused Rust correspondence evidence, not a proof of the
+entire Rust program or completion of the system-process request/reply API.
 
 ## Guarded host publication contract
 

@@ -13,7 +13,9 @@ use models::rhoapi::{expr::ExprInstance, Par};
 use models::rust::utils::{new_gbigint_expr, new_gint_par};
 use num_bigint::BigInt;
 
+mod ordering;
 mod receipt;
+pub(crate) use ordering::sort_results;
 pub use receipt::{decode_receipt_v1, encode_receipt_v1};
 
 const VALUE_DESCRIPTOR_BYTES: usize = 16;
