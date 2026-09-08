@@ -908,6 +908,71 @@ repository's resource policy: at most 1 GiB memory, no swap, and generated
 proof artifacts under `target/`. Do not invoke the entire formal workspace to
 recheck this bounded dependency slice.
 
+## Semantic request preparation and receipt transport
+
+The typed operation and its wire adapter share one private preparation path.
+Its prefix records already consumed logical work and boundary payload bytes;
+the typed API supplies a zero prefix. Preparation subtracts consumed payload
+from the smaller host/request allowance with checked subtraction. The existing
+work counter continues under the installed/host/request meet. An overdrawn
+prefix is refused, not reset or saturated. Every outcome retains usage, including
+cancellation and failure after kernel execution. The kernel's aggregate is
+still absorbed only once, excluding its already charged admission prefix.
+
+Successful preparation returns complete private results and retained publication
+authority. It neither publishes a reply nor holds an authority lock. This lets
+the wire adapter finish bounded encoding before the actual guarded host commit.
+The typed API commits the same prepared result directly; it does not rerun the
+semantic kernel.
+
+The [service model](../../formal/rocq/runtime_grammar/theories/InstalledSemanticService.v)
+proves that resumed payload plus its consumed prefix equals the attenuated
+ceiling, and that overdraw cannot replenish the allowance. These arithmetic
+laws complement the existing cumulative-work and single-aggregate laws.
+
+The [receipt wire model](../../formal/rocq/runtime_grammar/theories/SemanticReceiptWire.v)
+specifies exact tagged lists over unsigned integer atoms and byte-string atoms.
+At this layer, a byte string is data, never guest source text. A receipt is the
+following 13-field list, in order:
+
+```text
+[languageFingerprint, theoryFingerprint, imageFingerprint,
+ action, rule, inputKey, outputKey, effect, effectClass,
+ resource, premises, normalizationHops, work]
+```
+
+Here `premises` and `normalizationHops` are complete ordered lists. The resource
+form is `[0]` for no semantic grade, or `[1, sort, gradeKey, costImageFingerprint]`
+for a checked grade. Absence is never represented as a zero-valued grade.
+Effect-class tags are `0` pure, `1` structural, `2` behavioral, `3` resource,
+and `4` external, matching the existing theory-image codec.
+
+| Premise | Exact list fields |
+|---|---|
+| Freshness | `[0, rule, premise]` |
+| Transition | `[1, rule, premise, childRule]` |
+| Judgment | `[2, rule, premise, judgment, proofs, proofSteps]` |
+| Universal premise | `[3, rule, premise, elements]` |
+| Intrinsic | `[4, rule, premise, opcode, inputKeys, outputKeys, work]` |
+| Guard | `[5, rule, premise, guardCommitment, evidenceCommitment]` |
+
+Intrinsic opcode tags are `0` exact term equality, `1` UTF-8 end test, `2` UTF-8
+scalar lookup, `3` UTF-8 slice, `4` checked natural addition and `5` UTF-8
+concatenation. A normalization hop is `[beforeKey, afterKey, proofs, work]`;
+each proof is `[rule, beforeKey, afterKey, premises]`. Every exhaustive proof
+and repeated premise remains present. Work numbers in these records are
+transported values, not additional execution charges.
+
+All layers have executable partial decoders and proved left inverses. Thus
+receipt encoding is injective, and decoding a complete encoded roster returns
+exactly that roster, including order and multiplicity. Unknown tags, wrong
+arities and wrong scalar kinds are rejected by the model. Its 13 printed
+theorem contexts were closed after compilation and separate kernel checking.
+The model deliberately does not yet prove concrete integer widths, byte ranges,
+commitment lengths, `Par` sidecar rejection, canonical sorting, resource bounds
+or semantic evidence validity. Those are distinct wire-refinement obligations;
+this structural proof alone is not a completed wire implementation.
+
 ## Guarded host publication contract
 
 The typed service's final authorization does not yet authorize an actual

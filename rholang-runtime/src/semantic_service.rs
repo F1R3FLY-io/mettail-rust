@@ -210,22 +210,77 @@ impl ProduceCommitGuard for InstalledSemanticPublication {
     }
 }
 
+#[derive(Default)]
+struct SemanticServicePrefix {
+    work: u64,
+    payload_bytes: usize,
+}
+
+struct SemanticServiceUsage {
+    work: u64,
+    kernel_work: Option<u64>,
+    effective_limits: Option<SemanticServiceLimits>,
+    remaining_boundary_payload_bytes: usize,
+}
+
+struct PreparedSemanticInvocation {
+    results: Vec<SemanticServiceResult>,
+    publication: InstalledSemanticPublication,
+}
+
+impl PreparedSemanticInvocation {
+    fn commit(self) -> Result<Vec<SemanticServiceResult>, InstalledSemanticError> {
+        // Move already prepared results only; no user callback, directory
+        // access, encoding or receiver dispatch runs under this table lock.
+        self.publication
+            .authorize(|| self.results)
+            .map_err(InstalledSemanticError::Access)
+    }
+}
+
+struct PreparedSemanticReport {
+    outcome: Result<PreparedSemanticInvocation, InstalledSemanticError>,
+    usage: SemanticServiceUsage,
+}
+
 impl RholangLanguageRuntime {
     /// Execute one exact installed action or declared observation using the
     /// existing semantic kernel. Input is an already constructed structural FLT.
     pub fn execute_semantic<C: FnMut() -> bool>(
         &self,
         request: SemanticServiceRequest<'_>,
-        mut is_cancelled: C,
+        is_cancelled: C,
     ) -> SemanticServiceReport {
-        let mut work = 0;
+        let prepared =
+            self.prepare_semantic(request, SemanticServicePrefix::default(), is_cancelled);
+        SemanticServiceReport {
+            outcome: prepared
+                .outcome
+                .and_then(PreparedSemanticInvocation::commit),
+            work: prepared.usage.work,
+            kernel_work: prepared.usage.kernel_work,
+            effective_limits: prepared.usage.effective_limits,
+            remaining_boundary_payload_bytes: prepared.usage.remaining_boundary_payload_bytes,
+        }
+    }
+
+    fn prepare_semantic<C: FnMut() -> bool>(
+        &self,
+        request: SemanticServiceRequest<'_>,
+        prefix: SemanticServicePrefix,
+        mut is_cancelled: C,
+    ) -> PreparedSemanticReport {
+        let mut work = prefix.work;
         let mut kernel_work = None;
         let mut effective_limits = None;
         let host = self.service().policy().semantic_service;
-        let mut remaining = host
-            .boundary_payload_bytes
-            .min(request.limits.boundary_payload_bytes);
+        let mut remaining = 0;
         let outcome = (|| {
+            remaining = host
+                .boundary_payload_bytes
+                .min(request.limits.boundary_payload_bytes)
+                .checked_sub(prefix.payload_bytes)
+                .ok_or(DynamicReflectionError::PayloadByteLimit)?;
             let handle = self
                 .resolve(request.handle, request.operation.right())
                 .map_err(|error| match error {
@@ -269,18 +324,16 @@ impl RholangLanguageRuntime {
                 handle,
                 required,
             };
-            // Existing directory -> table lock order is preserved. No caller
-            // callback, directory access or result construction under this lock.
-            publication
-                .authorize(|| results)
-                .map_err(InstalledSemanticError::Access)
+            Ok(PreparedSemanticInvocation { results, publication })
         })();
-        SemanticServiceReport {
+        PreparedSemanticReport {
             outcome,
-            work,
-            kernel_work,
-            effective_limits,
-            remaining_boundary_payload_bytes: remaining,
+            usage: SemanticServiceUsage {
+                work,
+                kernel_work,
+                effective_limits,
+                remaining_boundary_payload_bytes: remaining,
+            },
         }
     }
 }
@@ -803,6 +856,112 @@ mod tests {
         TheoryPatternEntryV1, TheoryPatternInvocationV1, TheoryPatternStateId,
         TheoryResourceProfileV1, TheoryRuleProgramId, TheorySortId,
     };
+
+    #[test]
+    fn semantic_service_preparation_preserves_wire_prefixes_and_delays_publication() {
+        use mettail_grammar_core::RuntimeTemplatePiece;
+        use std::collections::BTreeMap;
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let input = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("actual installed guest parser");
+        let request = |limits| SemanticServiceRequest {
+            handle: &token,
+            operation: SemanticOperation::Reduce("expand-plus"),
+            input: &input,
+            limits,
+        };
+        let baseline =
+            runtime.execute_semantic(request(SemanticServiceLimits::default()), || false);
+        let baseline_results = baseline.outcome.expect("baseline reduction");
+        let payload = baseline
+            .effective_limits
+            .expect("effective limits")
+            .boundary_payload_bytes
+            - baseline.remaining_boundary_payload_bytes;
+        let mut limits = SemanticServiceLimits::default();
+        limits.execution.work = baseline.work + 7;
+        limits.boundary_payload_bytes = payload + 11;
+        let prefix = || SemanticServicePrefix { work: 7, payload_bytes: 11 };
+        let prepared = runtime.prepare_semantic(request(limits), prefix(), || false);
+        assert_eq!(prepared.usage.work, baseline.work + 7);
+        assert_eq!(prepared.usage.kernel_work, baseline.kernel_work);
+        assert_eq!(prepared.usage.remaining_boundary_payload_bytes, 0);
+        let results = prepared
+            .outcome
+            .expect("exact cumulative allowance")
+            .commit()
+            .expect("commit");
+        assert_eq!(results.len(), baseline_results.len());
+        for (actual, expected) in results.iter().zip(&baseline_results) {
+            assert_eq!(actual.term, expected.term);
+            assert_eq!(actual.receipt, expected.receipt);
+        }
+
+        for (work_delta, byte_delta, expected) in [
+            (1, 0, DynamicReflectionError::WorkLimit),
+            (0, 1, DynamicReflectionError::PayloadByteLimit),
+        ] {
+            let mut short = limits;
+            short.execution.work -= work_delta;
+            short.boundary_payload_bytes -= byte_delta;
+            let rejected = runtime.prepare_semantic(request(short), prefix(), || false);
+            assert!(matches!(rejected.outcome,
+                Err(InstalledSemanticError::Resource(actual)) if actual == expected));
+            assert!(rejected.usage.work >= 7 && rejected.usage.work <= short.execution.work);
+            assert_eq!(rejected.usage.kernel_work, baseline.kernel_work);
+        }
+
+        let mut overdrawn = limits;
+        overdrawn.boundary_payload_bytes = 10;
+        let rejected = runtime.prepare_semantic(request(overdrawn), prefix(), || {
+            panic!("overdrawn payload must fail before preparation")
+        });
+        assert!(matches!(
+            rejected.outcome,
+            Err(InstalledSemanticError::Resource(DynamicReflectionError::PayloadByteLimit))
+        ));
+        assert_eq!(rejected.usage.work, 7);
+        assert_eq!(rejected.usage.remaining_boundary_payload_bytes, 0);
+        assert_eq!(rejected.usage.kernel_work, None);
+
+        overdrawn = limits;
+        overdrawn.execution.work = 6;
+        let rejected = runtime.prepare_semantic(request(overdrawn), prefix(), || false);
+        assert!(matches!(
+            rejected.outcome,
+            Err(InstalledSemanticError::Resource(DynamicReflectionError::WorkLimit))
+        ));
+        assert_eq!(rejected.usage.work, 7, "retain, do not reset or saturate the prior usage");
+        assert_eq!(rejected.usage.kernel_work, None);
+
+        let cancelled = runtime.prepare_semantic(request(limits), prefix(), || true);
+        assert!(matches!(
+            cancelled.outcome,
+            Err(InstalledSemanticError::Resource(DynamicReflectionError::Cancelled))
+        ));
+        assert_eq!(cancelled.usage.work, 7);
+        assert_eq!(cancelled.usage.remaining_boundary_payload_bytes, payload);
+        assert_eq!(cancelled.usage.kernel_work, None);
+
+        let pending = runtime.prepare_semantic(request(limits), prefix(), || false);
+        let invocation = pending.outcome.expect("private prepared results");
+        assert_eq!(pending.usage.kernel_work, baseline.kernel_work);
+        runtime
+            .revoke(&token)
+            .expect("preparation retains no authority lock");
+        assert!(matches!(
+            invocation.commit(),
+            Err(InstalledSemanticError::Access(LanguageAccessError::StaleHandle))
+        ));
+    }
 
     #[test]
     fn semantic_service_publication_rechecks_every_required_right_and_table_identity() {

@@ -120,6 +120,34 @@ Theorem boundary_payload_is_separate_and_attenuated : forall installed host requ
   boundary_payload (effective installed host requested) <= boundary_payload requested.
 Proof. intros; split; [apply Nat.le_min_l | apply Nat.le_min_r]. Qed.
 
+(** A wire header may spend payload before the requested attenuation is known.
+    Resume under the meet by subtracting that spent prefix, never by granting
+    a fresh allowance. Checked subtraction refuses an already overdrawn prefix. *)
+Definition resume_payload host requested spent :=
+  let ceiling := Nat.min host requested in
+  if Nat.leb spent ceiling then Some (ceiling - spent) else None.
+
+Theorem resumed_payload_keeps_the_spent_prefix : forall host requested spent remaining,
+  resume_payload host requested spent = Some remaining ->
+  spent + remaining = Nat.min host requested /\
+  spent <= host /\ spent <= requested.
+Proof.
+  intros host requested spent remaining H. unfold resume_payload in H.
+  destruct (Nat.leb spent (Nat.min host requested)) eqn:E; try discriminate.
+  apply Nat.leb_le in E. inversion H; subst.
+  pose proof (Nat.le_min_l host requested).
+  pose proof (Nat.le_min_r host requested). lia.
+Qed.
+
+Theorem overdrawn_payload_is_not_replenished : forall host requested spent,
+  Nat.min host requested < spent -> resume_payload host requested spent = None.
+Proof.
+  intros host requested spent H. unfold resume_payload.
+  assert (E : Nat.leb spent (Nat.min host requested) = false) by
+    (apply Nat.leb_gt; exact H).
+  now rewrite E.
+Qed.
+
 (** Existing TheoryLimitsV1 projection. These six source fields populate ten
     execution coordinates; no field is reinterpreted as cumulative payload. *)
 Definition project_theory steps queue proof_limit terms nodes bytes :=
@@ -223,6 +251,8 @@ End InstalledSemanticService.
 Print Assumptions InstalledSemanticService.concrete_meet_refines_existing_dimensions.
 Print Assumptions InstalledSemanticService.execution_never_amplifies_a_ceiling.
 Print Assumptions InstalledSemanticService.boundary_payload_is_separate_and_attenuated.
+Print Assumptions InstalledSemanticService.resumed_payload_keeps_the_spent_prefix.
+Print Assumptions InstalledSemanticService.overdrawn_payload_is_not_replenished.
 Print Assumptions InstalledSemanticService.installed_projection_keeps_distinct_size_measures.
 Print Assumptions InstalledSemanticService.policy_words_retain_every_coordinate.
 Print Assumptions InstalledSemanticService.successful_setup_keeps_prefix_and_total.
