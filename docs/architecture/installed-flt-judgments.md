@@ -1026,6 +1026,54 @@ results establish this transport checkpoint; neutral result ordering, complete
 request/response accounting and installed system-process integration remain
 separate obligations before the wire service is complete.
 
+### Stable result-ordering model
+
+The [merge model](../../formal/rocq/runtime_grammar/theories/SemanticResultMerge.v)
+specifies the fallible bottom-up merge algorithm selected for the result
+boundary. Its comparison state includes already spent work; a refused comparison
+returns that updated state and no result list. Refusal is never treated as an
+equal-key comparison. Sorting operates on whole records so it cannot exchange
+a term's receipt with another term's receipt.
+
+The algorithm starts with singleton runs. A *run* is a contiguous sorted portion
+of the index sequence; each nonfinal run fills the current width. One pass merges
+adjacent runs, and the next pass doubles that width:
+
+```text
+current := input occurrence indices
+width := 1
+while width < length(current):
+    scratch := empty sequence
+    for each adjacent pair of width-sized runs in current:
+        merge the runs into scratch
+        choose the right head only on Greater; otherwise choose the left
+        on comparison refusal, return failure with the updated comparison state
+    exchange current and scratch
+    width := 2 * width
+return current
+```
+
+This is algorithmic pseudocode, not a second allocating implementation. The
+Rocq specification represents contiguous ranges with `firstn` and `skipn`;
+the intended Rust implementation borrows the corresponding index-buffer slices.
+Its mathematical fuel parameters bound specification recursion. The termination
+proof shows that those indices suffice whenever comparisons succeed; they do
+not introduce another runtime allowance or replenish the caller's budget.
+
+The checked laws establish occurrence permutation, exact multiplicities, record
+property preservation, aligned-run growth and sorted output. Stability has the
+stronger statement that filtering the input and output for any one key yields
+the same ordered subsequence of whole records. This requires successful
+comparisons to agree with the pure key order; non-strict order soundness alone
+does not establish stable ties.
+
+These generic laws still require instantiation with the complete neutral
+receipt comparison. They do not verify concrete byte-comparison charges or
+the inverse-permutation swaps that move the owned Rust records. Those
+implementation obligations remain separate. Canonical sorted output also does
+not imply that comparison work is invariant under permutations of the incoming
+roster; the public accounting contract must state its actual guarantee.
+
 ## Guarded host publication contract
 
 The typed service's final authorization does not yet authorize an actual

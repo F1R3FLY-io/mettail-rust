@@ -94,6 +94,7 @@ theories/InstalledSemanticService.v
 theories/SemanticReceiptTransport.v
 theories/SemanticReceiptWire.v
 theories/SemanticWireScalar.v
+theories/SemanticResultMerge.v
 theories/GuardedReplyPublication.v
 theories/SemanticIntrinsics.v
 theories/SemanticNormalization.v
