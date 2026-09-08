@@ -968,10 +968,63 @@ receipt encoding is injective, and decoding a complete encoded roster returns
 exactly that roster, including order and multiplicity. Unknown tags, wrong
 arities and wrong scalar kinds are rejected by the model. Its 13 printed
 theorem contexts were closed after compilation and separate kernel checking.
-The model deliberately does not yet prove concrete integer widths, byte ranges,
+This structural model deliberately does not prove concrete integer widths, byte ranges,
 commitment lengths, `Par` sidecar rejection, canonical sorting, resource bounds
 or semantic evidence validity. Those are distinct wire-refinement obligations;
 this structural proof alone is not a completed wire implementation.
+
+### Concrete scalar and receipt codecs
+
+The public `semantic_wire` module provides bounded `encode_receipt_v1` and
+`decode_receipt_v1` functions for that exact schema. Decoding returns untrusted
+receipt data, not a semantic proof or publication capability. Neither function
+executes a theory, sorts results, prunes alternatives or parses guest source.
+
+Unsigned values through `i64::MAX` use `GInt`. Larger u64 values use exactly
+nine positive signed big-endian `GBigInt` bytes: a zero sign byte followed by
+the eight-byte word. The bounded reader rejects negative values, redundant
+representations, wrong lengths, executable sidecars and nonliteral metadata;
+dense-coordinate and host-index conversions are checked rather than truncated.
+The existing signed integer decoder and BigInt writer are reused.
+
+The [scalar model](../../formal/rocq/runtime_grammar/theories/SemanticWireScalar.v)
+adapts the existing fixed-width big-endian induction to binary arithmetic, so
+the proof checker need not allocate unary representations of 64-bit endpoints.
+It proves round trips in both directions on the admitted domain, representation
+uniqueness, exact widths and rejection of negative small integers. All eight
+printed theorem contexts were closed after compilation and a separate kernel
+check. The mathematical decoder is not a proof of the BigInt library; boundary
+vectors and 10,000 deterministic Rust samples check that correspondence.
+
+Wire materialization uses a cumulative logical reservation schedule:
+
+| Operation | Additional logical payload reservation |
+|---|---|
+| Scalar or moved byte-buffer value | 16-byte value descriptor |
+| Wide integer | Value descriptor plus nine materialized bytes |
+| List encoding or decoded roster | Value descriptor plus eight bytes per child slot |
+| Fingerprint encoding | Value descriptor plus 32 copied bytes |
+| Borrowed variable-byte decoding | Value descriptor plus the copied bytes |
+| Fingerprint decoding | 32 copied bytes |
+| Decoded top-level receipt | One value descriptor |
+
+Descriptors and slots are accounting units, not Rust object sizes or a physical
+memory guarantee. Encoding an already owned byte buffer moves it; it does not
+reserve another copy of its contents. Scalar decoding borrows without allocating.
+Each visited wire value contributes one work unit, and materialized or decoded
+scalar bytes contribute their byte visits. Roster storage is reserved before
+allocation, and variable-size copies use fallible reservation. Previously
+charged semantic execution is never repeated because its numeric work value
+appears in a receipt.
+
+The eight-test scalar/receipt suite passed locally. It exercises all 60
+effect/opcode/resource combinations, complete nested evidence and duplicate
+records, exact and one-less work/payload limits, cancellation at every checked
+boundary, malformed nested envelopes and a 10,000-premise roster on a 128 KiB
+stack. Fixed-depth codecs use iterative loops over variable rosters. These
+results establish this transport checkpoint; neutral result ordering, complete
+request/response accounting and installed system-process integration remain
+separate obligations before the wire service is complete.
 
 ## Guarded host publication contract
 

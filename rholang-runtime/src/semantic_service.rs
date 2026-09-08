@@ -843,7 +843,7 @@ fn charge_receipt_premises<C: FnMut() -> bool>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use mettail_dovetail_runtime::{
         SemanticIntrinsicOpcodeV1, SemanticIntrinsicReceiptV1, SemanticNormalizationHopReceiptV1,
@@ -1326,7 +1326,7 @@ mod tests {
         }
     }
 
-    fn transport_receipt() -> SemanticTransitionReceipt {
+    pub(crate) fn transport_receipt() -> SemanticTransitionReceipt {
         let rule = TheoryRuleProgramId(9); // nested premise, not the entry rule
         let premises = vec![
             SemanticPremiseReceipt::Freshness { rule, premise: 0 },

@@ -1238,7 +1238,7 @@ fn account_string(
     Ok(())
 }
 
-fn signed_i128(bytes: &[u8]) -> Option<i128> {
+pub(crate) fn signed_i128(bytes: &[u8]) -> Option<i128> {
     if bytes.is_empty() {
         return None;
     }
