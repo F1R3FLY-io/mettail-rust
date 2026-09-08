@@ -1272,6 +1272,56 @@ copies; allocation-identity tests and source correspondence cover the owned
 glue separately. Incoming replay metadata returned by the split is distinct
 from the space's replay state used during actual dispatch.
 
+### Prepaid reply completion
+
+The [reply-completion model](../../formal/rocq/runtime_grammar/theories/SemanticReplyCompletion.v)
+specifies the numeric version-1 envelope `[1, status, body, usage]`. The status
+is derived from the same body constructor that determines whether success is
+permitted: 0 is Proven, 1 Refuted, 2 Undetermined, and 3 Error. Negative bodies
+contain exactly `[domain, code]`, with bounded host-defined codes rather than
+caller-controlled diagnostic strings. Successful bodies are prepared and
+charged separately; this model treats them as opaque values.
+
+Usage is `[total_work, kernel_work_option, limits_option, remaining_payload]`.
+An absent option is `[0]`; a present option is `[1, value]`. The limits value
+contains eleven unsigned integers, in order: work, normalization steps,
+outputs, frontier, proofs, proof nodes, term nodes, term bytes, output nodes,
+output bytes, and boundary payload bytes. The model checks exact decoding
+inverses for these structures. Work values are logical accounting, not semantic
+resource grades or evidence of host funding settlement.
+
+The completion permit is prepaid so that a bounded failure can still be
+reported after execution exhausts its remaining budget. Its reservation is
+derived from the existing scalar and tuple encoding schedule:
+
+| Encoded metadata | Maximum logical work | Maximum logical payload bytes |
+| --- | ---: | ---: |
+| Eleven limits | 111 | 379 |
+| Four-field usage, both options present | 146 | 598 |
+| Complete negative reply, including usage | 152 | 742 |
+
+The reservation covers either scalar width. Fixed protocol tags use the small
+integer encoding; the Rust correspondence must enforce the finite code policy.
+Logical payload reservations are not physical memory measurements.
+
+Completion follows this sequence: reserve both quotas against the cumulative
+prefix; execute and encode the success body under the remaining allowances;
+take the final usage snapshot; consume the permit once to encode the envelope;
+then publish through the independently retained authority guard. The local
+encoder spends prepaid credit without charging the cumulative counters again
+or refunding unused reservation. Failed encoding must also consume the Rust
+permit, with no retry credit. Observed cancellation remains sticky and cannot
+produce a Proven envelope. Tightened limits must retain checked prefix
+subtraction, and final completion checks both cumulative ceilings.
+
+All twelve reported theorem contexts are closed and separately kernel-checked.
+They establish metadata inverses, reservation bounds, successful one-shot
+completion, unchanged cumulative usage, and rejection of cancelled success or
+overdrawn completion. They do not establish semantic correctness, authority,
+success-body accounting, physical allocation bounds, or complete Rust
+implementation correctness; those require their separate models and concrete
+correspondence tests. The wire-service integration remains a separate gate.
+
 ## Regex application handoff
 
 The adapter's signature is language-neutral: any enrolled constructor may have

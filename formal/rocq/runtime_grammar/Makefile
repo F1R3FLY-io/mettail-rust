@@ -60,6 +60,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SemanticReceiptOrder \
 	RuntimeGrammar.GuardedReplyPublication \
 	RuntimeGrammar.OwnedContractCall \
+	RuntimeGrammar.SemanticReplyCompletion \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \

@@ -101,6 +101,7 @@ theories/SemanticComparisonLaws.v
 theories/SemanticReceiptOrder.v
 theories/GuardedReplyPublication.v
 theories/OwnedContractCall.v
+theories/SemanticReplyCompletion.v
 theories/SemanticIntrinsics.v
 theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v
