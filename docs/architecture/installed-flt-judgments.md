@@ -1272,6 +1272,29 @@ copies; allocation-identity tests and source correspondence cover the owned
 glue separately. Incoming replay metadata returned by the split is distinct
 from the space's replay state used during actual dispatch.
 
+### Retaining authority across negative outcomes
+
+The [preparation-context model](../../formal/rocq/runtime_grammar/theories/SemanticPreparationContext.v)
+separates the operation's result from its retained publication context. Exact
+selection determines the complete required-right roster. If selection or full
+authorization fails, no publication context exists. Once full authorization
+succeeds, the context retains that handle and roster before any fallible
+matcher restoration, semantic execution, receipt validation, or reflection.
+Every later outcome retains the same context and final usage, including
+Refuted, Undetermined, and preparation errors. No negative result acquires
+authority merely by having a diagnostic code.
+
+The typed projection preserves the existing service's success/error and usage
+behavior. The richer report additionally allows the wire caller to guard
+negative publication through the same host mutation boundary as success.
+The eight closed, separately kernel-checked theorems reuse the guarded host
+machine: missing context cannot invoke it; retained context always rechecks
+the complete rights; late revocation refuses publication without mutation.
+The model abstracts the fallible semantic pipeline rather than proving its
+algorithm, allocator, or lock implementation. Rust correspondence must retain
+the context before restoration and carry the budget's final remainder on
+both successful and failing exits, without rerunning the kernel.
+
 ### Prepaid reply completion
 
 The [reply-completion model](../../formal/rocq/runtime_grammar/theories/SemanticReplyCompletion.v)
