@@ -1120,6 +1120,29 @@ specification fuel whenever charges succeed. These nine theorem checks passed
 compilation and separate kernel verification; concrete budget arithmetic and
 the receipt-field comparison remain distinct instantiations.
 
+The [complete receipt-order model](../../formal/rocq/runtime_grammar/theories/SemanticReceiptOrder.v)
+instantiates that order with the existing receipt schema. It compares output
+bytes first, then the complete 13-field receipt tuple. Scalars use numeric order;
+byte strings and evidence rosters use lexicographic order, with length deciding
+only after an equal common prefix. Premise and resource tags select their
+ordered variant payloads. Opcode and effect-class numbers come from the existing
+wire encoder, whose checked decoder inverses establish tag-key injectivity.
+
+Its proof-only products and tagged sums retain the existing receipt types.
+Small [comparison adapters](../../formal/rocq/runtime_grammar/theories/SemanticComparisonLaws.v)
+reuse standard-library list-order laws and the established lexicographic
+composition proof. No encoded `Par` comparison, nested evidence sorting, receipt
+deduplication, transient graph identity or arbitrary attached-term comparison
+participates in this order.
+
+Comparator equality is exactly complete receipt equality. Combined with the
+checked merge algorithm, two successful faithful sorts of the same receipt
+multiset produce identical neutral receipt sequences. This does not assert
+equality of their final comparison states or usage counters. The concrete model's
+12 printed theorem contexts and the adapters' seven contexts were closed after
+compilation and separate kernel checks. The remaining Rust correspondence must
+preserve these field comparisons while charging bounded work before inspection.
+
 ## Guarded host publication contract
 
 The typed service's final authorization does not yet authorize an actual

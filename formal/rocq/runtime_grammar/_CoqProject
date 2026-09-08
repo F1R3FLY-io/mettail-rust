@@ -97,6 +97,8 @@ theories/SemanticWireScalar.v
 theories/SemanticResultMerge.v
 theories/SemanticResultPermutation.v
 theories/SemanticChunkComparison.v
+theories/SemanticComparisonLaws.v
+theories/SemanticReceiptOrder.v
 theories/GuardedReplyPublication.v
 theories/SemanticIntrinsics.v
 theories/SemanticNormalization.v
