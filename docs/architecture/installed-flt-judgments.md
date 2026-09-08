@@ -1322,6 +1322,24 @@ success-body accounting, physical allocation bounds, or complete Rust
 implementation correctness; those require their separate models and concrete
 correspondence tests. The wire-service integration remains a separate gate.
 
+The [Rust completion encoder](../../rholang-runtime/src/semantic_wire/completion.rs)
+reuses the receipt encoder's scalar and exact-list helpers. Its private permit
+is consumed by value, including on failure. The final effective limits are
+checked for attenuation from the reservation ceilings and supply both the
+reported limits and the remaining-payload check. Cancellation is recorded by
+one sticky callback wrapper; negative diagnostics can use the prepaid credit,
+but a cancelled success is refused even at the final completion checkpoint.
+The successful body must already be closed, prepared, and charged. Moving it
+does not traverse or clone its subtree.
+
+Eight focused completion tests pass within the 24-test semantic-wire suite.
+They cover metadata order and width, exact quotas and one-less refusals,
+malformed options, nonliteral envelopes, all status/domain combinations,
+counter resets and amplified limits, cancellation at every completion poll,
+and moving or dropping 20,000 nested result nodes on a 128 KiB stack. These
+checks establish the local encoder correspondence, not the still-pending
+same-request usage and authority coupling in the installed system process.
+
 ## Regex application handoff
 
 The adapter's signature is language-neutral: any enrolled constructor may have

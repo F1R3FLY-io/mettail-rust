@@ -39,16 +39,16 @@ fn slots<T, C: FnMut() -> bool>(
     Ok(out)
 }
 
-struct Encoder<'a, 'b, C> {
-    budget: &'a mut ReflectedCodecBudget<'b, C>,
+pub(super) struct Encoder<'a, 'b, C> {
+    pub(super) budget: &'a mut ReflectedCodecBudget<'b, C>,
 }
 
 impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
-    fn uint(&mut self, n: impl Into<u64>) -> Result<Par> {
+    pub(super) fn uint(&mut self, n: impl Into<u64>) -> Result<Par> {
         encode_u64(n.into(), self.budget)
     }
 
-    fn tuple<const N: usize>(
+    pub(super) fn tuple<const N: usize>(
         &mut self,
         fields: impl FnOnce(&mut Self) -> Result<[Par; N]>,
     ) -> Result<Par> {
@@ -232,12 +232,12 @@ pub(super) fn effect_tag(effect: SemanticEffectClassV1) -> u32 {
     }
 }
 
-struct Decoder<'a, 'b, C> {
-    budget: &'a mut ReflectedCodecBudget<'b, C>,
+pub(super) struct Decoder<'a, 'b, C> {
+    pub(super) budget: &'a mut ReflectedCodecBudget<'b, C>,
 }
 
 impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
-    fn uint(&mut self, value: &Par) -> Result<u64> {
+    pub(super) fn uint(&mut self, value: &Par) -> Result<u64> {
         decode_u64(value, self.budget)
     }
     fn coordinate(&mut self, value: &Par) -> Result<u32> {
@@ -252,7 +252,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         Ok(())
     }
 
-    fn list<'v>(&mut self, value: &'v Par) -> Result<&'v [Par]> {
+    pub(super) fn list<'v>(&mut self, value: &'v Par) -> Result<&'v [Par]> {
         self.literal(value)?;
         match exact_expr(value) {
             Some(ExprInstance::EListBody(list))
@@ -264,7 +264,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         }
     }
 
-    fn tuple<'v, const N: usize>(&mut self, value: &'v Par) -> Result<&'v [Par; N]> {
+    pub(super) fn tuple<'v, const N: usize>(&mut self, value: &'v Par) -> Result<&'v [Par; N]> {
         self.list(value)?
             .try_into()
             .map_err(|_| SemanticWireError::Shape("receipt tuple arity"))
