@@ -59,6 +59,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SemanticComparisonLaws \
 	RuntimeGrammar.SemanticReceiptOrder \
 	RuntimeGrammar.GuardedReplyPublication \
+	RuntimeGrammar.OwnedContractCall \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \

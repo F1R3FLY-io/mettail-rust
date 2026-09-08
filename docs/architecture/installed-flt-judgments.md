@@ -1258,6 +1258,20 @@ semantic-service run and seven-test wrapper run passed locally. These checks
 cover this publication adapter, not the still-required wire encoding, installed
 system-process integration, public node frontend or practical Regex application.
 
+### Owned contract-call transport
+
+The [owned contract-call model](../../formal/rocq/runtime_grammar/theories/OwnedContractCall.v)
+checks the prerequisite transport extraction: exactly one outer message is
+accepted, every request field and the caller's random state is retained, and
+the split has an exact inverse on accepted arguments. Binding the final guard
+does not acquire authority; publication still executes the existing guarded
+host machine with the live authority at the actual mutation boundary. The eight
+theorem contexts are closed and separately kernel-checked. Opaque term values
+in this model do not establish Rust buffer ownership or freedom from backend
+copies; allocation-identity tests and source correspondence cover the owned
+glue separately. Incoming replay metadata returned by the split is distinct
+from the space's replay state used during actual dispatch.
+
 ## Regex application handoff
 
 The adapter's signature is language-neutral: any enrolled constructor may have
