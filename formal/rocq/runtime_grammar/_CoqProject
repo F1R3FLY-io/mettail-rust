@@ -108,6 +108,8 @@ theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v
 theories/RegexGsltMatch.v
 theories/RegexGsltNullableMachine.v
+theories/RegexGsltSmartMachine.v
+theories/RegexGsltDerivativeMachine.v
 theories/RegexGsltSearch.v
 theories/RegexGsltReplace.v
 theories/RegexGsltRules.v

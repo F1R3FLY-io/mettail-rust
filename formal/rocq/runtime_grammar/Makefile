@@ -72,6 +72,8 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.RegexGsltSyntax \
 	RuntimeGrammar.RegexGsltMatch \
 	RuntimeGrammar.RegexGsltNullableMachine \
+	RuntimeGrammar.RegexGsltSmartMachine \
+	RuntimeGrammar.RegexGsltDerivativeMachine \
 	RuntimeGrammar.RegexGsltSearch \
 	RuntimeGrammar.RegexGsltReplace \
 	RuntimeGrammar.RegexGsltRules \
