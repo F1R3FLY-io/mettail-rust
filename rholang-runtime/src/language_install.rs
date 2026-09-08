@@ -55,8 +55,9 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 pub use crate::semantic_service::{
-    InstalledSemanticError, SemanticOperation, SemanticServiceLimits, SemanticServiceReport,
-    SemanticServiceRequest, SemanticServiceResult,
+    semantic_runtime_definitions, InstalledSemanticError, SemanticOperation, SemanticServiceLimits,
+    SemanticServiceReport, SemanticServiceRequest, SemanticServiceResult, LANGUAGE_SEMANTIC_ABI_V1,
+    LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
 };
 pub use mettail_elab::wire::DDL_AST_ENVELOPE_V2;
 
@@ -2677,9 +2678,10 @@ pub fn language_runtime_definitions_with_theorem_checker(
         language_install_definition(runtime.clone()),
         language_parse_definition(runtime.clone()),
         language_flt_construct_definition(runtime.clone()),
-        language_flt_pattern_definition(runtime),
+        language_flt_pattern_definition(runtime.clone()),
     ];
     definitions.extend(crate::theorem_channel::theorem_runtime_definitions(theorem_service));
+    definitions.extend(crate::semantic_service::semantic_runtime_definitions(runtime));
     definitions
 }
 
@@ -7832,7 +7834,7 @@ pub(crate) mod tests {
             LanguageInstallPolicy::default(),
         ))));
         let definitions = language_runtime_definitions(runtime);
-        assert_eq!(definitions.len(), 8);
+        assert_eq!(definitions.len(), 10);
         assert_eq!(definitions[0].urn, LANGUAGE_INSTALL_URN);
         assert_eq!(definitions[1].urn, LANGUAGE_PARSE_URN);
         assert_eq!(definitions[2].urn, LANGUAGE_FLT_CONSTRUCT_URN);
@@ -7841,6 +7843,13 @@ pub(crate) mod tests {
         assert_eq!(definitions[5].urn, crate::theorem_channel::THEOREM_CHANNEL_PREPARE_URN);
         assert_eq!(definitions[6].urn, crate::theorem_channel::THEOREM_CHANNEL_COMMIT_URN);
         assert_eq!(definitions[7].urn, crate::theorem_channel::THEOREM_CHANNEL_REVOKE_URN);
+        assert_eq!(definitions[8].urn, crate::semantic_service::LANGUAGE_SEMANTIC_REDUCE_URN);
+        assert_eq!(definitions[9].urn, crate::semantic_service::LANGUAGE_SEMANTIC_OBSERVE_URN);
+        for definition in &definitions[8..] {
+            assert_eq!(definition.arity, 1);
+            assert!(!rholang::rust::interpreter::system_processes::non_deterministic_ops()
+                .contains(&definition.body_ref));
+        }
         for left in 0..definitions.len() {
             for right in left + 1..definitions.len() {
                 assert_ne!(definitions[left].fixed_channel, definitions[right].fixed_channel);

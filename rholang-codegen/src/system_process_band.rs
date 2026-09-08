@@ -14,6 +14,7 @@
 //! | **FLT-construct** | parse and structurally reflect an FLT through an installed capability | `rholang-runtime/src/language_install.rs` |
 //! | **FLT-pattern** | prepare a capability-scoped FLT receive pattern before publication | `rholang-runtime/src/language_install.rs` |
 //! | **theorem-channel** | open, prepare, commit, and revoke bounded theorem-channel transactions | `rholang-runtime/src/theorem_channel.rs` |
+//! | **language-semantic** | reduce an installed FLT or observe a declared action | `rholang-runtime/src/semantic_service/wire.rs` |
 //!
 //! Each contract needs two identifiers, and f1r3node treats them very differently:
 //!
@@ -77,12 +78,13 @@
 //!           7=FLT-match   zero
 //!           8=parse       zero
 //!           9=theorem     operation
+//!          10=semantic    reduce / observe
 //! ```
 //!
 //! * bit 63 is always clear, so every `body_ref` is a positive `i64` (f1r3node compares them as
 //!   signed);
-//! * the band id occupies bits 62..56, so all four bands occupy strictly disjoint ranges
-//!   `0x0100_…` through `0x04FF_…`, and all sit
+//! * the band id occupies bits 62..56, so the ten bands occupy strictly disjoint ranges
+//!   `0x0100_…` through `0x0AFF_…`, and all sit
 //!   astronomically above f1r3node's own std (`0..=36`) and test-framework (`101..=108`)
 //!   `body_ref`s and outside `non_deterministic_ops()`;
 //! * the index occupies bits 55..48, so within ONE language two different sites/rules can never
@@ -230,6 +232,13 @@ pub const THEOREM_CHANNEL_BAND: SystemProcessBand = SystemProcessBand {
     channel_tag: MTL_THEOREM_CHANNEL_TAG,
 };
 
+/// Installed semantic action and observation endpoints, indices zero and one.
+pub const LANGUAGE_SEMANTIC_BAND: SystemProcessBand = SystemProcessBand {
+    name: "language-semantic",
+    band_id: 10,
+    channel_tag: MTL_LANGUAGE_SEMANTIC_CHANNEL_TAG,
+};
+
 /// Leading byte of every held-fold contract channel id.
 pub const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
 /// Leading byte of every native-handler contract channel id.
@@ -250,6 +259,8 @@ pub const MTL_LANGUAGE_FLT_PATTERN_CHANNEL_TAG: u8 = 0xF6;
 pub const MTL_LANGUAGE_PARSE_CHANNEL_TAG: u8 = 0xF7;
 /// Leading byte of every theorem-channel service contract.
 pub const MTL_THEOREM_CHANNEL_TAG: u8 = 0xF8;
+/// Leading byte of installed semantic reduce/observe service channels.
+pub const MTL_LANGUAGE_SEMANTIC_CHANNEL_TAG: u8 = 0xF9;
 
 impl SystemProcessBand {
     /// The unforgeable contract channel for `(index, fingerprint)` in this band:
@@ -386,6 +397,7 @@ mod tests {
             LANGUAGE_FLT_PATTERN_BAND,
             LANGUAGE_PARSE_BAND,
             THEOREM_CHANNEL_BAND,
+            LANGUAGE_SEMANTIC_BAND,
         ] {
             assert_ne!(
                 band.channel(0, FP_A),
@@ -438,6 +450,7 @@ mod tests {
         let pattern = LANGUAGE_FLT_PATTERN_BAND.body_ref_range();
         let parse = LANGUAGE_PARSE_BAND.body_ref_range();
         let theorem = THEOREM_CHANNEL_BAND.body_ref_range();
+        let semantic = LANGUAGE_SEMANTIC_BAND.body_ref_range();
         assert!(fold.end() < native.start(), "the fold and native bands must not overlap");
         assert!(
             native.end() < lookahead.start(),
@@ -455,6 +468,7 @@ mod tests {
         );
         assert!(pattern.end() < parse.start(), "pattern and parse bands must not overlap");
         assert!(parse.end() < theorem.start(), "parse and theorem bands must not overlap");
+        assert!(theorem.end() < semantic.start(), "theorem and semantic bands must not overlap");
         assert!(
             *fold.start() > 108,
             "every band sits above f1r3node's std (0-36) and test-framework (101-108) body_refs"
@@ -471,6 +485,7 @@ mod tests {
                     (LANGUAGE_FLT_PATTERN_BAND, &pattern),
                     (LANGUAGE_PARSE_BAND, &parse),
                     (THEOREM_CHANNEL_BAND, &theorem),
+                    (LANGUAGE_SEMANTIC_BAND, &semantic),
                 ] {
                     let body_ref = band.body_ref(index, fingerprint);
                     assert!(body_ref > 0, "{}: body_ref must be positive", band.name);

@@ -468,6 +468,15 @@ pub(crate) fn encode_results_v1<C: FnMut() -> bool>(
     Ok(encoded)
 }
 
+/// Preallocate the owned producer's singleton payload before execution can
+/// exhaust its allowance. The final push consumes this capacity without a
+/// second reservation; the enclosing completion envelope is prepaid separately.
+pub(crate) fn reserve_reply_payload<C: FnMut() -> bool>(
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Vec<Par>> {
+    slots(1, 1, budget)
+}
+
 /// Decode every field with bounded allocations. A decoded receipt is data,
 /// never evidence that a semantic transition occurred or authority to execute it.
 pub fn decode_receipt_v1<C: FnMut() -> bool>(

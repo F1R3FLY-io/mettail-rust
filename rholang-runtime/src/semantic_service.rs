@@ -24,6 +24,12 @@ use models::rhoapi::Par;
 use rspace_plus_plus::rspace::{errors::RSpaceError, rspace_interface::ProduceCommitGuard};
 use std::sync::Arc;
 
+mod wire;
+pub use wire::{
+    semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_OBSERVE_URN,
+    LANGUAGE_SEMANTIC_REDUCE_URN,
+};
+
 const SEMANTIC_SETUP_SCHEDULE_V1: u128 = 1;
 const SEMANTIC_RECEIPT_SCHEDULE_V1: u128 = 1;
 const DEFAULT_BOUNDARY_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;

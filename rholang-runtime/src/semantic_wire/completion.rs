@@ -143,7 +143,7 @@ const COMPLETION_BYTES: usize = 742;
 
 /// A host-generated diagnostic has a fixed-size code, never untrusted text.
 #[derive(Clone, Copy)]
-pub(super) enum DiagnosticDomain {
+pub(crate) enum DiagnosticDomain {
     Wire,
     Access,
     Service,
@@ -165,7 +165,7 @@ impl DiagnosticDomain {
     }
 }
 
-pub(super) enum ReplyBody {
+pub(crate) enum ReplyBody {
     Proven(Par),
     Refuted(DiagnosticDomain, u16),
     Undetermined(DiagnosticDomain, u16),
@@ -200,31 +200,31 @@ impl ReplyBody {
 }
 
 /// Wrap the operation's one cancellation source before any accounted stage.
-pub(super) struct StickyCancellation<C> {
+pub(crate) struct StickyCancellation<C> {
     check: C,
     observed: bool,
 }
 
 impl<C: FnMut() -> bool> StickyCancellation<C> {
-    pub(super) fn new(check: C) -> Self {
+    pub(crate) fn new(check: C) -> Self {
         Self { check, observed: false }
     }
 
-    pub(super) fn poll(&mut self) -> bool {
+    pub(crate) fn poll(&mut self) -> bool {
         self.observed |= (self.check)();
         self.observed
     }
 }
 
 /// Private, non-Clone credit. Ownership is consumed even if encoding fails.
-pub(super) struct CompletionPermit {
+pub(crate) struct CompletionPermit {
     initial_limits: SemanticServiceLimits,
     minimum_work: u64,
     minimum_payload: usize,
 }
 
 impl CompletionPermit {
-    pub(super) fn reserve<C: FnMut() -> bool>(
+    pub(crate) fn reserve<C: FnMut() -> bool>(
         limits: SemanticServiceLimits,
         budget: &mut ReflectedCodecBudget<'_, C>,
     ) -> Result<Self> {
@@ -245,7 +245,7 @@ impl CompletionPermit {
         })
     }
 
-    pub(super) fn finish<C: FnMut() -> bool>(
+    pub(crate) fn finish<C: FnMut() -> bool>(
         self,
         body: ReplyBody,
         usage: SemanticWireUsage,

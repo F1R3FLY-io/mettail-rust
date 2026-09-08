@@ -18,8 +18,10 @@ mod ordering;
 mod receipt;
 mod request;
 pub use completion::{decode_limits_v1, decode_usage_v1, encode_limits_v1, SemanticWireUsage};
+pub(crate) use completion::{CompletionPermit, DiagnosticDomain, ReplyBody, StickyCancellation};
 pub(crate) use ordering::sort_results;
 pub(crate) use receipt::encode_results_v1;
+pub(crate) use receipt::reserve_reply_payload;
 pub use receipt::{decode_receipt_v1, encode_receipt_v1};
 pub(crate) use request::OwnedSemanticRequest;
 

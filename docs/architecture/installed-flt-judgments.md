@@ -900,8 +900,8 @@ not an operational proof that unauthorized requests never invoke the kernel.
 The service implementation must enforce that earlier authorization gate.
 The original dispatch model's abstract receipt records omit concrete intrinsic
 and normalization fields. `SemanticReceiptTransport` adds the complete typed
-records and whole-field transport laws. The concrete wire layer still requires
-its own encoding correspondence; neither model's record is itself the wire ABI.
+records and whole-field transport laws. The concrete wire layer has its own
+encoding correspondence below; neither model's record is itself the wire ABI.
 
 Run proof compilation and separate kernel checking one at a time under the
 repository's resource policy: at most 1 GiB memory, no swap, and generated
@@ -1022,9 +1022,9 @@ effect/opcode/resource combinations, complete nested evidence and duplicate
 records, exact and one-less work/payload limits, cancellation at every checked
 boundary, malformed nested envelopes and a 10,000-premise roster on a 128 KiB
 stack. Fixed-depth codecs use iterative loops over variable rosters. These
-results establish this transport checkpoint; neutral result ordering, complete
-request/response accounting and installed system-process integration remain
-separate obligations before the wire service is complete.
+results establish the scalar/receipt transport contract. Neutral result ordering,
+complete request/response accounting and installed system-process integration
+have separate contracts and correspondence checks described below.
 
 ### Stable result-ordering model
 
@@ -1255,8 +1255,9 @@ created but before it is polled. They also reject a handle with only the
 operation right when reflection is required, reject an identical language's
 foreign table, and allow revocation after a successful commit. The 19-test
 semantic-service run and seven-test wrapper run passed locally. These checks
-cover this publication adapter, not the still-required wire encoding, installed
-system-process integration, public node frontend or practical Regex application.
+cover this publication adapter, not by themselves the wire encoding and installed
+system-process composition described below. They do not establish the public
+node frontend or practical Regex application.
 
 ### Owned contract-call transport
 
@@ -1365,13 +1366,13 @@ but a cancelled success is refused even at the final completion checkpoint.
 The successful body must already be closed, prepared, and charged. Moving it
 does not traverse or clone its subtree.
 
-Eight focused completion tests pass within the 24-test semantic-wire suite.
+Eight focused completion tests pass within the 32-test semantic-wire suite.
 They cover metadata order and width, exact quotas and one-less refusals,
 malformed options, nonliteral envelopes, all status/domain combinations,
 counter resets and amplified limits, cancellation at every completion poll,
 and moving or dropping 20,000 nested result nodes on a 128 KiB stack. These
-checks establish the local encoder correspondence, not the still-pending
-same-request usage and authority coupling in the installed system process.
+checks establish the local encoder correspondence. Same-request usage and
+authority coupling require the installed system-process checks described below.
 
 ## Owned request and complete result transport
 
@@ -1426,6 +1427,128 @@ refusals, every cancellation checkpoint, and moving/dropping 20,000 nested
 nodes on a 128 KiB stack. The result tests reuse the receipt fixture containing
 all premise forms and maximum-width work values. These local tests do not yet
 establish the complete system-process or public-node integration.
+
+## Installed semantic system processes
+
+The [semantic endpoint composition](../../rholang-runtime/src/semantic_service/wire.rs)
+registers two processes in the same `RholangLanguageRuntime` used for installation,
+construction and pattern preparation:
+
+| URI | Request declaration name | Band index |
+| --- | --- | ---: |
+| `rho:mettail:flt:reduce` | Exact installed action name | 0 |
+| `rho:mettail:flt:observe` | Exact installed observation name | 1 |
+
+Both consume the six-field request above. Their shared system-process band is
+10, with channel tag `0xF9` and allocation identity
+`mettail-language-semantic/1`. That identity is an internal versioned allocator
+input, not a capability or the numeric request version. The existing allocator
+supplies channels and body references; no second allocator is introduced.
+The endpoints are deterministic operations, outside the host's nondeterministic
+operation set. Existing installation, parser, FLT and theorem-channel identifiers
+retain their values and order; these two definitions are appended.
+
+The complete reply is one datum:
+
+```text
+[1, status, body, [total_work, kernel_option, effective_limits_option, remaining_payload]]
+```
+
+Status 0 is Proven and carries the complete sorted result-pair roster. Status 1
+is Refuted, status 2 is Undetermined, and status 3 is Error; these three carry
+exactly `[domain, code]`. An absent option is `[0]`; a present option is
+`[1, value]`. Effective limits use the eleven-field order specified above.
+Undetermined is not a Boolean conclusion and must not be negated into success.
+
+Diagnostics use fixed host-assigned integers, never untrusted error text or
+debug formatting. The version-one assignments are:
+
+| Domain | Codes in order, starting at zero | Status |
+| --- | --- | --- |
+| 0: wire | Shape, IntegerRange, NonCanonicalInteger | Error |
+| 1: access | WrongRegistry, UnknownLanguage, StaleHandle, Revoked, MissingRight, AmplifiedHandle, EpochExhausted, Poisoned | Error |
+| 2: service | InvalidHandleShape, UnknownHandle, MissingSemanticImage, UnknownAction, UnknownObservation, InvalidSelection, InvalidEvidence | Error |
+| 3: kernel refutation | RequestRejected, NoTransition, PremiseRefuted, StuckNonterminal, NormalizationDeterminismClaimViolated | Refuted |
+| 3: kernel uncertainty | WorkBudgetExhausted, Cancelled, InvalidImageEvidence, PremiseEvaluationUnavailable, ResourceGradeUnavailable, InputLimitExceeded, OutputLimitExceeded, EGraphNodeBudgetExhausted, AllocationFailed, FrontierLimitExceeded, ProofLimitExceeded, NormalizationStepLimitExceeded, NormalizationCycleDetected | Undetermined |
+| 4: boundary | UnknownConstructor, ConflictingConstructorLabel, UnknownHole, InvalidHoleId, HoleCategoryConflict, MissingHole, InvalidMapEntry, WorkLimit, PayloadByteLimit, Cancelled, AllocationFailed, InvalidFingerprint | Codes 7–10: Undetermined; others: Error |
+| 5: restoration | IdentifierOverflow, Automaton, Allocation | Error |
+
+The status disambiguates the two kernel code rosters. Diagnostic details such
+as a constructor label or missing right are deliberately not serialized; full
+successful receipts are not truncated by this diagnostic policy.
+
+Preparation follows the existing verified resource and authority contracts:
+
+1. Borrow-decode the request under host ceilings, preserving the consumed prefix.
+2. Meet host and requested limits and subtract prior payload consumption with
+   checked arithmetic.
+3. Prepay the completion envelope, singleton producer payload, and publication
+   reference descriptor **before** semantic execution. Together these reserve
+   154 work units and 782 logical payload bytes, in addition to header decoding.
+4. Invoke the existing installed service with that exact prefix and one sticky
+   cancellation source. The service adds installed execution ceilings and
+   retains the selected handle and every required right before fallible setup.
+5. Continue from the service's returned cumulative work and remaining payload.
+   Sort and encode all successful pairs, or retain a finite negative outcome.
+   Encoding failure discards all private successful output without refunding
+   consumed work or granting a fresh allowance.
+6. Snapshot the final counters and consume the one-shot completion permit.
+   The already-reserved producer vector receives the completed datum without
+   reallocating. Reference materialization consumes its prepaid descriptor;
+   no further logical charge can prevent a bounded negative completion.
+7. Move payload and reply channel into the existing owned producer, supplying
+   the retained full-right guard. Its actual RSpace mutation rechecks live
+   authority. Encoding and receiver dispatch do not run under that authority lock.
+
+Missing full publication context yields a bounded outer interpreter error, not
+an unguarded semantic reply. A worker failure or inability to form a valid
+completion also aborts without publishing a successful prefix. The handler
+awaits the producer and returns its downstream dispatch result unchanged; it
+does not clone the reply to synthesize another return value.
+
+The host's `ProcessContext` currently has no cancellation callback. The reusable
+preparation boundary accepts one for callers and verification, while the
+registered endpoint enforces deterministic work ceilings without claiming an
+unavailable host cancellation integration. Logical payload reservations are
+not physical RSS limits, allocator guarantees, semantic resource grades, or
+host funding settlement. Publication authorization is distinct from both
+rewrite premises and Rholang `where` predicates.
+
+The combined semantic service and wire suite passes 68 tests, including six
+wire-composition tests.
+The exact-prefix test checks service work plus result encoding plus header work
+plus the 154-unit reservation, and the corresponding 782-byte decrement. The
+one-less tests establish that result-encoding exhaustion still produces a
+bounded Undetermined envelope. Other tests cover complete receipts, declared
+observe routing, cancellation, missing authority, late revocation, and actual
+registered endpoint execution.
+
+The [inline application test](../../rholang-runtime/src/semantic_service/wire/tests.rs)
+parses a complete Rholang process containing the Greg/Mike Module/Theory fixture,
+installs it through `rho:mettail:install`, obtains its scoped handle, constructs
+`language:Pattern`-qualified guest syntax, invokes reduce or declared observe,
+and destructures the complete reply in a waiting Rholang process. It checks the
+returned `PConcat` constructor and complete receipt. A second application
+changes only the `ExpandPlus` rule's right-hand side to `PAlt`; the same endpoint
+then returns `PAlt` with changed full-language, theory and semantic-image
+commitments. The receipt's `language_fingerprint` is the full LanguageCore
+commitment, not the separate syntax-only grammar fingerprint. This perturbation
+checks dependence on the installed GSLT rather than a fixed handler result.
+
+Run this focused application witness from the implementation repository with
+the same serial resource cap used for the broader suite:
+
+```sh
+systemd-run --user --scope -p MemoryMax=8G -p MemoryHigh=7G -p MemorySwapMax=0 \
+  env CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p rholang-runtime --no-default-features \
+  --features rholang-runtime,bench-naive-baseline --lib \
+  semantic_service_wire_inline -- --test-threads=1
+```
+
+This establishes the in-memory runtime/library integration. It does not yet
+establish public-node activation, practical regex matching/search/replacement,
+or FLT predicates in `where` clauses; those remain explicit demo requirements.
 
 ## Regex application handoff
 
