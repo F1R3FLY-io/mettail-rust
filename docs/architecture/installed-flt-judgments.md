@@ -1103,6 +1103,23 @@ not an unrelated ideal sorting function. Concrete fallible allocations,
 precharges, array operations and receipt comparisons still require implementation
 correspondence and focused tests; the model alone does not certify them.
 
+The [charged-chunk model](../../formal/rocq/runtime_grammar/theories/SemanticChunkComparison.v)
+refines the standard-library `list_compare` operation instead of defining a
+new lexicographic order. It reserves one entry visit, then charges each bounded
+chunk of the common prefix before comparing that chunk. An unequal chunk
+decides the result; equal chunks advance both cursors. If an input ends, the
+remaining length determines the order. Production code can borrow the byte
+slices without constructing a key or copying receipt payloads.
+
+Successful comparisons equal the standard-library result. Refused entry and
+chunk charges retain the state returned by the charging operation rather than
+returning an empty answer or an equal comparison. Any state property preserved
+by each charge is preserved through the entire traversal, including failures.
+For positive chunk widths, the common-prefix length provides sufficient
+specification fuel whenever charges succeed. These nine theorem checks passed
+compilation and separate kernel verification; concrete budget arithmetic and
+the receipt-field comparison remain distinct instantiations.
+
 ## Guarded host publication contract
 
 The typed service's final authorization does not yet authorize an actual

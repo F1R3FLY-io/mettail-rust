@@ -55,6 +55,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SemanticWireScalar \
 	RuntimeGrammar.SemanticResultMerge \
 	RuntimeGrammar.SemanticResultPermutation \
+	RuntimeGrammar.SemanticChunkComparison \
 	RuntimeGrammar.GuardedReplyPublication \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
