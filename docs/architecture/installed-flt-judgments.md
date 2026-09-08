@@ -26,7 +26,7 @@ demonstration is runnable or that every language shape is supported.
 | Check reflected syntax | `DynamicSyntaxAdmission` | Factor its structural recognition into a checked inverse with distinct rejection and exhaustion |
 | Represent theory operators | `theory_operator_to_machine` | Resolve constructor bindings and literal carriers from the installed theory |
 | Admit semantic input | `SemanticTransitionInput::admit_accounted` | Supply the typed structural projection and explicit limits; retain work on every outcome |
-| Execute an action | `SemanticTransitionMatcher::execute_action` | Invoke the existing one-step or normalization policy, with the exact image used to restore the matcher |
+| Execute an action | `SemanticTransitionMatcher::execute_action_accounted` | Invoke the existing one-step or normalization policy with the exact restored image, retaining usage on every outcome |
 | Commit a service result | `InstalledLanguageTable::with_authorized_all` | Revalidate the same handle while committing the complete prepared result |
 
 The sources are the
@@ -470,9 +470,50 @@ Thus the combined charge is:
 
 The [usage model](../../formal/rocq/runtime_grammar/theories/InstalledFltUsage.v)
 proves this prefix accounting and shared-body observation, plus the logical
-buffer-growth reservation equations. The existing kernel action-refutation
-path still needs an accounted result at the service seam; the input-admission
-change alone does not close that service obligation.
+buffer-growth reservation equations. `execute_action_accounted` and its
+guard-capable counterpart return the existing decision together with the
+aggregate on every outcome. The original execution methods project the
+decision from the same once-run body. Connecting these APIs to the qualified
+service remains a separate obligation.
+
+The kernel's child-call protocol is:
+
+```text
+save the caller's current work
+run the child once with the remaining allowance and a fresh local counter
+absorb its returned work, checking addition and the caller's ceiling
+merge diagnostic counters without erasing the absorbed work on failure
+only then handle success, refutation, exhaustion, or another candidate
+```
+
+Transition matching, judgment-head matching and Horn proof search all report
+their actual terminal counters. Validation failure, an empty match set and a
+refuted premise do not imply zero work. A successful automaton scan is absorbed
+before subsequent fallible rule selection or allocation. Temporary Horn
+evaluators export their counters on failure as well as success. Normalization
+uses the same action counter, so failed alternatives remain included in the
+normalization hop's work and the final aggregate. Guards already implement
+all-outcome reporting and retain that protocol without a second charge.
+
+The [work-transport model](../../formal/rocq/runtime_grammar/theories/SemanticWorkTransport.v)
+uses explicit suspended-counter frames. Its finite-trace laws prove that the
+active and suspended counters together equal the admission prefix plus every
+accepted charge exactly once, with nested ceilings preserved. Child-return
+witnesses cover every semantic outcome and a later diagnostic failure. These
+are accounting laws, not a proof of the Rust evaluator or its semantic branch
+policy; implementation correspondence also requires source review and tests.
+
+An execution request whose admission prefix already exceeds its new work
+ceiling is refused without further execution. The separate aggregate retains
+the spent admission prefix. For compatibility, this exceptional legacy
+`Undetermined` decision still embeds zero; callers must use the accounted
+result rather than infer usage from that field. The installed-service protocol
+establishes a sufficient incoming ceiling and therefore excludes this overdraw.
+
+Correct accounting can exhaust a tight budget earlier than an implementation
+that omitted failed searches. Aggregate and normalization-hop work can increase
+accordingly. The semantic branch policy is unchanged, but prior accounting
+bytes are not promised to remain identical.
 
 `SemanticInputLimits::bytes` is a separate exact-key/publication-size ceiling.
 It is **not** an allocation-usage report or the converter's remaining payload
@@ -564,6 +605,7 @@ The proof layers have distinct responsibilities:
 | [Operator materialization](../../formal/rocq/runtime_grammar/theories/KernelOperatorMaterialization.v) | Exact inner and framed sizes agree with the existing writer; the conservative fresh-node payload schedule counts every modeled copy before allocation |
 | [Local reflected assembly](../../formal/rocq/runtime_grammar/theories/ReflectedLocalAssembly.v) | Shared-body factoring retains markers, child order and both metadata vectors; the iterative flat length observer counts metadata copies before materialization |
 | [Stage usage and logical reservations](../../formal/rocq/runtime_grammar/theories/InstalledFltUsage.v) | Shared admission-body observations retain every terminal counter; residual ceilings preserve prior work; an execution aggregate includes admission exactly once; logical buffer growth reserves enough new slots independently of physical capacity |
+| [Nested work transport](../../formal/rocq/runtime_grammar/theories/SemanticWorkTransport.v) | Finite explicit-stack traces retain every accepted child charge on all outcomes, preserve nested ceilings, and retain already-spent admission on preflight overdraw |
 
 For example, the term model distinguishes a native Boolean from an ordinary
 constructor returning the Boolean sort. Its mixed-literal witness also uses

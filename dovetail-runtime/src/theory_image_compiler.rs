@@ -2131,17 +2131,19 @@ mod tests {
             output_nodes: 64,
             output_bytes: 64 * 1024,
         };
-        let decision = matcher.match_action(
-            TheoryActionId(0),
-            SemanticActionMatchRequest {
-                image: &image,
-                granted_rights: &granted,
-                egraph: &mut egraph,
-                root,
-                limits: match_limits,
-            },
-            || false,
-        );
+        let decision = matcher
+            .match_action_accounted(
+                TheoryActionId(0),
+                SemanticActionMatchRequest {
+                    image: &image,
+                    granted_rights: &granted,
+                    egraph: &mut egraph,
+                    root,
+                    limits: match_limits,
+                },
+                || false,
+            )
+            .0;
         let SemanticMatchDecision::Proven(proven) = decision else {
             panic!("the selected action must match: {decision:?}");
         };
@@ -2161,47 +2163,53 @@ mod tests {
             vec![zero, forged_child],
         ));
         assert_eq!(
-            matcher.match_action(
-                TheoryActionId(0),
-                SemanticActionMatchRequest {
-                    image: &image,
-                    granted_rights: &granted,
-                    egraph: &mut egraph,
-                    root: forged_root,
-                    limits: match_limits,
-                },
-                || false,
-            ),
+            matcher
+                .match_action_accounted(
+                    TheoryActionId(0),
+                    SemanticActionMatchRequest {
+                        image: &image,
+                        granted_rights: &granted,
+                        egraph: &mut egraph,
+                        root: forged_root,
+                        limits: match_limits,
+                    },
+                    || false,
+                )
+                .0,
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
             "a pattern variable must not admit a malformed value of its declared sort",
         );
 
         assert_eq!(
-            matcher.match_action(
-                TheoryActionId(0),
-                SemanticActionMatchRequest {
-                    image: &image,
-                    granted_rights: &LanguageRights::none(),
-                    egraph: &mut egraph,
-                    root,
-                    limits: match_limits,
-                },
-                || false,
-            ),
+            matcher
+                .match_action_accounted(
+                    TheoryActionId(0),
+                    SemanticActionMatchRequest {
+                        image: &image,
+                        granted_rights: &LanguageRights::none(),
+                        egraph: &mut egraph,
+                        root,
+                        limits: match_limits,
+                    },
+                    || false,
+                )
+                .0,
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
         );
         assert!(matches!(
-            matcher.match_action(
-                TheoryActionId(0),
-                SemanticActionMatchRequest {
-                    image: &image,
-                    granted_rights: &granted,
-                    egraph: &mut egraph,
-                    root,
-                    limits: match_limits,
-                },
-                || true,
-            ),
+            matcher
+                .match_action_accounted(
+                    TheoryActionId(0),
+                    SemanticActionMatchRequest {
+                        image: &image,
+                        granted_rights: &granted,
+                        egraph: &mut egraph,
+                        root,
+                        limits: match_limits,
+                    },
+                    || true,
+                )
+                .0,
             SemanticMatchDecision::Undetermined {
                 reason: SemanticMatchUndetermined::Cancelled,
                 ..
@@ -2263,6 +2271,418 @@ mod tests {
             ),
             SemanticInputDecision::Refuted(SemanticMatchRefutation::RequestRejected)
         ));
+    }
+
+    #[test]
+    fn accounted_normalization_retains_failed_semantic_alternatives() {
+        for judgment_premise in [false, true] {
+            let mut language = normalization_fixture(
+                SemanticNormalizationBranchingV1::Deterministic,
+                &["Zero", "Wrap"],
+            );
+            language.theory.judgments = judgment_fixture().theory.judgments;
+            let mut conditional = language.theory.rewrites[0].clone();
+            conditional.name = "conditional-add-zero".into();
+            let premise = if judgment_premise {
+                TheoryPremiseFormV1::Judgment(JudgmentAtomV1 {
+                    judgment: "IsZero".into(),
+                    terms: vec![TheoryTermId(0)],
+                })
+            } else {
+                conditional.arena.variables.push(TheoryVariableV1 {
+                    id: TheoryVariableId(1),
+                    name: "derived".into(),
+                    sort: "Expr".into(),
+                    role: TheoryVariableRoleV1::Derived,
+                });
+                TheoryPremiseFormV1::Transition {
+                    source: TheoryVariableId(0),
+                    target: TheoryVariableId(1),
+                }
+            };
+            conditional.arena.premises = vec![TheoryPremiseNodeV1 { form: premise }];
+            conditional.arena.premise_roots = vec![TheoryPremiseId(0)];
+            language.theory.rewrites.push(conditional);
+            let image =
+                compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+                    .expect("compile failed semantic alternative");
+            let matcher = SemanticTransitionMatcher::restore(&image).expect("restore alternatives");
+            let rights = LanguageRights::from_rights([
+                LanguageRight::Reduce,
+                LanguageRight::Check,
+                LanguageRight::SearchProof,
+            ]);
+            let run = |work| {
+                matcher.execute_action_accounted(
+                    SemanticActionExecutionRequest {
+                        image: &image,
+                        action: TheoryActionId(0),
+                        granted_rights: &rights,
+                        input: normalization_input(TheoryConstructorId(1), 2),
+                        limits: SemanticTransitionLimits { work, ..normalization_limits() },
+                    },
+                    || false,
+                )
+            };
+            let (decision, used) = run(100_000);
+            let SemanticTransitionDecision::Proven(proven) = decision else {
+                panic!("the unconditional sibling must still normalize")
+            };
+            assert_eq!(proven.transitions.len(), 1);
+            assert_eq!(proven.work, used);
+            let receipt = &proven.transitions[0].receipt;
+            assert_eq!(receipt.work, used);
+            assert_eq!(receipt.normalization_hops.len(), 1);
+            assert_eq!(receipt.normalization_hops[0].exhaustive_proofs.len(), 1);
+            if judgment_premise {
+                assert_eq!(
+                    proven.stats.application_roots, 1,
+                    "the unsuccessful judgment scan survives the successful sibling"
+                );
+            } else {
+                // Each transition scan inspects one root: entry, normalization
+                // and the refuted Wrap(Zero) transition premise.
+                assert_eq!(proven.stats.root_classes, 3);
+            }
+            let (exact, reported) = run(used);
+            let SemanticTransitionDecision::Proven(exact) = exact else {
+                panic!("exact limit")
+            };
+            assert_eq!(reported, used);
+            assert_eq!(&exact.transitions[0].receipt, receipt);
+            assert!(matches!(run(used - 1), (SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
+            }, reported) if work == reported && reported == used - 1));
+        }
+    }
+
+    #[test]
+    fn accounted_refuted_guard_is_charged_exactly_once() {
+        let guard = CanonicalValue::String("fixture/guard/accounted".into());
+        let commitment = theory_guard_commitment_v1(&guard).expect("guard commitment");
+        let mut language = fixture();
+        language.theory.rewrites[0].arena.premises =
+            vec![TheoryPremiseNodeV1 { form: TheoryPremiseFormV1::Guard(guard) }];
+        language.theory.rewrites[0].arena.premise_roots = vec![TheoryPremiseId(0)];
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile guard fixture");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore guard matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let run = |guard_work| {
+            let mut evaluator = FixedGuardEvaluator {
+                expected_guard: commitment,
+                decision: SemanticGuardDecision::Refuted { work: guard_work },
+                calls: 0,
+            };
+            let (decision, used) = matcher.execute_action_with_guards_accounted(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input: normalization_input(TheoryConstructorId(1), 1),
+                    limits: normalization_limits(),
+                },
+                &mut evaluator,
+                || false,
+            );
+            assert!(matches!(
+                decision,
+                SemanticTransitionDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+            ));
+            assert_eq!(evaluator.calls, 1);
+            used
+        };
+        assert_eq!(run(2), run(0) + 2);
+    }
+
+    #[test]
+    fn accounted_matcher_preserves_refutation_and_post_scan_failure_work() {
+        let language = fixture();
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile accounted matcher fixture");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let run = |image: &TheorySemanticImageV1,
+                   graph: &mut EGraph<_>,
+                   rights: &LanguageRights,
+                   root,
+                   work| {
+            matcher.match_action_accounted(
+                TheoryActionId(0),
+                SemanticActionMatchRequest {
+                    image,
+                    granted_rights: rights,
+                    egraph: graph,
+                    root,
+                    limits: SemanticTransitionLimits { work, ..normalization_limits() },
+                },
+                || false,
+            )
+        };
+        let (decision, used, stats) = run(&image, &mut graph, &rights, zero, 100_000);
+        assert_eq!(decision, SemanticMatchDecision::Refuted(SemanticMatchRefutation::NoTransition));
+        assert!(used > 0);
+        assert!(stats.root_classes > 0);
+        assert_eq!(run(&image, &mut graph, &rights, zero, used), (decision, used, stats));
+        assert!(matches!(run(&image, &mut graph, &rights, zero, used - 1),
+            (SemanticMatchDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
+            }, reported, _) if work == reported && reported == used - 1));
+        assert_eq!(run(&image, &mut graph, &LanguageRights::none(), zero, 100_000).1, 0);
+
+        // Deliberately corrupt evidence consumed AFTER a successful scan.
+        // Zero matches no rule, so the reference report is exactly validation
+        // plus scan work, with no substitution or fallback materialization.
+        let mut forged = image.clone();
+        forged.patterns.entries[0].rule = TheoryRuleProgramId(u32::MAX);
+        let (decision, failed_work, failed_stats) =
+            run(&forged, &mut graph, &rights, zero, 100_000);
+        assert!(matches!(decision, SemanticMatchDecision::Undetermined {
+            reason: SemanticMatchUndetermined::InvalidImageEvidence, work, ..
+        } if work == used));
+        assert_eq!((failed_work, failed_stats), (used, stats));
+
+        let invalid =
+            graph.add(ENode::leaf(theory_operator_to_machine(&TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Integer(7),
+            })));
+        let (decision, malformed_work, _) = run(&image, &mut graph, &rights, invalid, 100_000);
+        assert_eq!(
+            decision,
+            SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
+        assert!(malformed_work > 0, "typed validation already consumed work");
+    }
+
+    #[test]
+    fn accounted_judgment_retains_negative_heads_and_failed_alternatives() {
+        let mut language = judgment_fixture();
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let rights =
+            LanguageRights::from_rights([LanguageRight::Check, LanguageRight::SearchProof]);
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile judgment fixture");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore judgment matcher");
+        let (heads, head_work, _) = matcher.match_judgment_heads_accounted(
+            SemanticJudgmentHeadRequest {
+                image: &image,
+                judgment: TheoryJudgmentId(0),
+                granted_rights: &rights,
+                egraph: &graph,
+                arguments: &[wrapped],
+                work_limit: 100_000,
+            },
+            || false,
+        );
+        assert_eq!(
+            heads,
+            SemanticJudgmentHeadDecision::Refuted(SemanticMatchRefutation::NoTransition)
+        );
+        assert!(head_work > 0);
+        let limits = SemanticJudgmentLimits {
+            work: 100_000,
+            frontier: 1_000,
+            proofs: 16,
+            proof_nodes: 1_000,
+            term_nodes: 1_000,
+            term_bytes: 64 * 1024,
+        };
+        let run = |work| {
+            matcher.prove_ground_judgment_accounted(
+                SemanticJudgmentProofRequest {
+                    image: &image,
+                    judgment: TheoryJudgmentId(0),
+                    granted_rights: &rights,
+                    egraph: &graph,
+                    arguments: &[wrapped],
+                    limits: SemanticJudgmentLimits { work, ..limits },
+                },
+                || false,
+            )
+        };
+        let (decision, used, stats) = run(limits.work);
+        assert!(matches!(
+            decision,
+            SemanticJudgmentDecision::Refuted(SemanticMatchRefutation::PremiseRefuted)
+        ));
+        assert!(used > head_work);
+        assert_eq!(stats.application_roots, 1, "the refuted child scan must be absorbed");
+        assert!(
+            matches!(run(used), (SemanticJudgmentDecision::Refuted(_), exact, _) if exact == used)
+        );
+        assert!(matches!(run(used - 1), (SemanticJudgmentDecision::Undetermined {
+            reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
+        }, reported, _) if work == reported && reported == used - 1));
+
+        // Reach(Wrap(Zero), Wrap(Zero)) has a reflexive proof and an alternative
+        // requiring IsZero(Wrap(Zero)). The premise argument is a matched ground
+        // reference, so it actually exercises the nested head-scan path rather
+        // than the Horn fallback for a clause-constructed synthetic term.
+        language.theory.judgments[1].rules.truncate(1);
+        language.theory.judgments[1].rules.insert(
+            0,
+            JudgmentRuleV1 {
+                name: "reach-with-refuted-premise".into(),
+                variables: vec![variable(0, "x")],
+                terms: vec![term_variable(0)],
+                premises: vec![JudgmentAtomV1 {
+                    judgment: "IsZero".into(),
+                    terms: vec![TheoryTermId(0)],
+                }],
+                conclusion: JudgmentAtomV1 {
+                    judgment: "Reach".into(),
+                    terms: vec![TheoryTermId(0), TheoryTermId(0)],
+                },
+            },
+        );
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile failed-alternative fixture");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore alternatives");
+        let (decision, used, stats) = matcher.prove_ground_judgment_accounted(
+            SemanticJudgmentProofRequest {
+                image: &image,
+                judgment: TheoryJudgmentId(1),
+                granted_rights: &rights,
+                egraph: &graph,
+                arguments: &[wrapped, wrapped],
+                limits,
+            },
+            || false,
+        );
+        let SemanticJudgmentDecision::Proven(proven) = decision else {
+            panic!("the reflexive proof remains available")
+        };
+        assert_eq!(proven.proofs.len(), 1);
+        assert_eq!(stats.application_roots, 2);
+        assert_eq!(proven.work, used);
+        assert_eq!(proven.proofs[0].work, used);
+        assert!(used > head_work);
+    }
+
+    #[test]
+    fn accounted_actions_keep_all_outcomes_prefixes_and_exact_limits() {
+        let mut divergent = normalization_fixture(
+            SemanticNormalizationBranchingV1::Deterministic,
+            &["Zero", "Wrap"],
+        );
+        divergent
+            .theory
+            .rewrites
+            .push(divergent_add_zero_rule("wrap-add-zero"));
+        for (language, inner, layers, expected) in [
+            (fixture(), TheoryConstructorId(0), 0, SemanticMatchRefutation::NoTransition),
+            (
+                normalization_fixture(SemanticNormalizationBranchingV1::Deterministic, &["Zero"]),
+                TheoryConstructorId(1),
+                1,
+                SemanticMatchRefutation::StuckNonterminal,
+            ),
+            (
+                divergent,
+                TheoryConstructorId(0),
+                2,
+                SemanticMatchRefutation::NormalizationDeterminismClaimViolated,
+            ),
+        ] {
+            let image =
+                compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+                    .expect("compile action outcome fixture");
+            let matcher = SemanticTransitionMatcher::restore(&image).expect("restore action");
+            let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+            let run = |limit| {
+                matcher.execute_action_accounted(
+                    SemanticActionExecutionRequest {
+                        image: &image,
+                        action: TheoryActionId(0),
+                        granted_rights: &rights,
+                        input: normalization_input(inner, layers),
+                        limits: SemanticTransitionLimits { work: limit, ..normalization_limits() },
+                    },
+                    || false,
+                )
+            };
+            let admission = normalization_input(inner, layers).admission_work();
+            let (decision, used) = run(100_000);
+            assert!(
+                matches!(decision, SemanticTransitionDecision::Refuted(ref reason) if *reason == expected)
+            );
+            assert!(used > admission);
+            assert!(matches!(run(used), (SemanticTransitionDecision::Refuted(ref reason), exact)
+                if *reason == expected && exact == used));
+            assert!(matches!(run(used - 1), (SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
+            }, reported) if work == reported && reported == used - 1));
+            assert!(matches!(run(admission - 1), (SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted, work: 0, ..
+            }, reported) if reported == admission));
+        }
+    }
+
+    #[test]
+    fn accounted_action_success_and_cancellation_report_one_aggregate() {
+        let language =
+            normalization_fixture(SemanticNormalizationBranchingV1::Deterministic, &["Zero"]);
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile normalization");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore normalization");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let run = |limit, cancel_at| {
+            let mut calls = 0;
+            let result = matcher.execute_action_accounted(
+                SemanticActionExecutionRequest {
+                    image: &image,
+                    action: TheoryActionId(0),
+                    granted_rights: &rights,
+                    input: normalization_input(TheoryConstructorId(0), 2),
+                    limits: SemanticTransitionLimits { work: limit, ..normalization_limits() },
+                },
+                || {
+                    calls += 1;
+                    calls == cancel_at
+                },
+            );
+            (result, calls)
+        };
+        let ((decision, used), calls) = run(100_000, usize::MAX);
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("normalization succeeds")
+        };
+        assert_eq!(proven.work, used);
+        assert!(proven.transitions.iter().all(|t| t.receipt.work == used));
+        let ((exact, exact_work), _) = run(used, usize::MAX);
+        let SemanticTransitionDecision::Proven(exact) = exact else {
+            panic!("exact allowance succeeds")
+        };
+        assert_eq!(exact_work, used);
+        assert_eq!(exact.transitions[0].receipt, proven.transitions[0].receipt);
+        assert!(
+            matches!(run(used - 1, usize::MAX).0, (SemanticTransitionDecision::Undetermined {
+            reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
+        }, reported) if work == reported && reported == used - 1)
+        );
+        let admission = normalization_input(TheoryConstructorId(0), 2).admission_work();
+        for boundary in 1..=calls {
+            let ((decision, reported), _) = run(100_000, boundary);
+            assert!(
+                matches!(decision, SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled, work, ..
+            } if work == reported),
+                "cancellation boundary {boundary}"
+            );
+            assert!(reported >= admission && reported <= used);
+        }
     }
 
     #[test]
@@ -3834,17 +4254,19 @@ mod tests {
             output_nodes: 64,
             output_bytes: 64 * 1024,
         };
-        let decision = matcher.match_action(
-            TheoryActionId(0),
-            SemanticActionMatchRequest {
-                image: &image,
-                granted_rights: &granted,
-                egraph: &mut graph,
-                root,
-                limits,
-            },
-            || false,
-        );
+        let decision = matcher
+            .match_action_accounted(
+                TheoryActionId(0),
+                SemanticActionMatchRequest {
+                    image: &image,
+                    granted_rights: &granted,
+                    egraph: &mut graph,
+                    root,
+                    limits,
+                },
+                || false,
+            )
+            .0;
         let SemanticMatchDecision::Proven(proven) = decision else {
             panic!("generalized action must match: {decision:?}");
         };

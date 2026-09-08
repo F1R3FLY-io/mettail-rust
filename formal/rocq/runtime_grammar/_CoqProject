@@ -89,6 +89,7 @@ theories/InstalledFltGraphProjection.v
 theories/InstalledFltJudgments.v
 theories/InstalledFltTraversal.v
 theories/InstalledFltUsage.v
+theories/SemanticWorkTransport.v
 theories/SemanticIntrinsics.v
 theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v
