@@ -1373,6 +1373,60 @@ and moving or dropping 20,000 nested result nodes on a 128 KiB stack. These
 checks establish the local encoder correspondence, not the still-pending
 same-request usage and authority coupling in the installed system process.
 
+## Owned request and complete result transport
+
+The [owned request decoder](../../rholang-runtime/src/semantic_wire/request.rs)
+accepts one ordinary list datum with exactly six fields:
+
+```text
+[1, opaque_handle, declaration_name, structural_input, limits11, reply]
+```
+
+The endpoint determines whether the declaration names an action or an
+observation. The version and limits use the existing canonical unsigned scalar
+codec. The declaration name must be one closed string literal. Validation
+borrows these fields; extraction then moves the six values into a fixed array.
+The decoder neither parses guest source nor traverses or clones the structural
+input and reply subtrees. Handle authorization and input admission belong to
+the installed service, not this envelope check. Request decoding contributes to
+the cumulative work prefix and allocates no new logical payload.
+
+The [result encoder](../../rholang-runtime/src/semantic_wire/receipt.rs)
+consumes fresh service results as a list of pairs:
+
+```text
+[[structural_term, complete_receipt13], ...]
+```
+
+It first uses the existing complete-receipt stable sorter, moving whole records.
+It then iteratively materializes each pair through the existing bounded tuple
+and receipt encoders. Terms are already admitted, reflected and charged by the
+service; their outer closure metadata is checked before moving them unchanged.
+Every receipt field and repeated result occurrence remains present. The encoder
+does not re-charge kernel work recorded in receipts, validate external evidence,
+or confer authority. Any encoding or sorting failure drops the entire private
+result rather than returning a successful prefix.
+
+Four additional theorems in the
+[receipt wire model](../../formal/rocq/runtime_grammar/theories/SemanticReceiptWire.v)
+compose its existing receipt inverse with the exact two-field pair and roster
+decoders. They prove lossless pairing, order and multiplicity of the post-sort
+roster for arbitrary opaque term values. The existing sorter laws separately
+establish whole-record permutation and canonical order; the composed encoder is
+not an inverse for arbitrary original input order. All seventeen reported
+contexts are closed, with a separate
+kernel check. These laws do not establish term closure, term/receipt semantic
+binding, Rust allocation safety or publication; those remain the installed
+service's and host's separate obligations.
+
+The 32-test semantic-wire suite includes four request and four result-envelope
+tests. These cover exact scalar/list shapes, preserved input/reply/term buffers,
+complete receipt roundtrips, duplicate retention, exact quotas and one-less
+refusals, every cancellation checkpoint, and moving/dropping 20,000 nested
+nodes on a 128 KiB stack. The result tests reuse the receipt fixture containing
+all premise forms and maximum-width work values. These local tests do not yet
+establish the complete system-process or public-node integration.
+
 ## Regex application handoff
 
 The adapter's signature is language-neutral: any enrolled constructor may have

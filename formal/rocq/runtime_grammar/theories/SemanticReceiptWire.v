@@ -183,6 +183,39 @@ Theorem roster_preserves_every_occurrence : forall receipts decoded,
   decode_roster (encode_roster receipts) = Some decoded -> decoded = receipts.
 Proof. intros. rewrite roster_inverse in H. now inversion H. Qed.
 
+(** A reflected term is transported intact next to its complete receipt. This
+    wrapper does not inspect the term, prove its closure, or validate its
+    semantic relation to the receipt; the installed service owns those facts. *)
+Definition encode_result (result : Value * R.Receipt) :=
+  Tuple [fst result; encode_receipt (snd result)].
+Definition decode_result value := match value with
+  | Tuple [term; receipt] => option_map (fun r => (term, r)) (decode_receipt receipt)
+  | _ => None end.
+Theorem result_inverse : forall result,
+  decode_result (encode_result result) = Some result.
+Proof.
+  intros [term receipt]. cbn -[encode_receipt decode_receipt].
+  now rewrite receipt_inverse.
+Qed.
+
+Definition encode_results results := Tuple (map encode_result results).
+Definition decode_results value := match value with
+  | Tuple results => decode_all decode_result results | _ => None end.
+Theorem results_inverse : forall results,
+  decode_results (encode_results results) = Some results.
+Proof. apply (decode_all_map _ _ encode_result decode_result result_inverse). Qed.
+
+Theorem results_retain_pairing_order_and_multiplicity : forall results decoded,
+  decode_results (encode_results results) = Some decoded -> decoded = results.
+Proof. intros. rewrite results_inverse in H. now inversion H. Qed.
+
+Theorem result_encoding_is_injective : forall a b,
+  encode_results a = encode_results b -> a = b.
+Proof.
+  intros a b H. apply (f_equal decode_results) in H.
+  rewrite !results_inverse in H. now inversion H.
+Qed.
+
 Example absent_grade_is_not_zero_grade :
   encode_resource R.NoGrade <> encode_resource (R.CheckedGrade 0 [] []).
 Proof. discriminate. Qed.
@@ -204,6 +237,10 @@ Print Assumptions SemanticReceiptWire.receipt_inverse.
 Print Assumptions SemanticReceiptWire.receipt_encoding_is_injective.
 Print Assumptions SemanticReceiptWire.roster_inverse.
 Print Assumptions SemanticReceiptWire.roster_preserves_every_occurrence.
+Print Assumptions SemanticReceiptWire.result_inverse.
+Print Assumptions SemanticReceiptWire.results_inverse.
+Print Assumptions SemanticReceiptWire.results_retain_pairing_order_and_multiplicity.
+Print Assumptions SemanticReceiptWire.result_encoding_is_injective.
 Print Assumptions SemanticReceiptWire.absent_grade_is_not_zero_grade.
 Print Assumptions SemanticReceiptWire.unknown_premise_tag_is_refused.
 Print Assumptions SemanticReceiptWire.extra_premise_field_is_refused.

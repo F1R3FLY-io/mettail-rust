@@ -8,6 +8,7 @@
 
 use super::{decode_u32, decode_u64, encode_u64, SemanticWireError, VALUE_DESCRIPTOR_BYTES};
 use crate::language_install::{exact_expr, exact_list, wire_list};
+use crate::semantic_service::SemanticServiceResult;
 use mettail_dovetail_runtime::{
     SemanticIntrinsicOpcodeV1, SemanticIntrinsicReceiptV1, SemanticNormalizationHopReceiptV1,
     SemanticNormalizationStepReceiptV1, SemanticPremiseReceipt, SemanticResourceReceipt,
@@ -447,6 +448,26 @@ pub fn encode_receipt_v1<C: FnMut() -> bool>(
     Ok(encoded)
 }
 
+/// Consume fresh, already validated and charged service results. Whole-record
+/// sorting retains all occurrences; each closed term then moves beside its
+/// complete receipt. On any error all private output is dropped, never returned
+/// as a successful prefix. This boundary does not authorize publication.
+pub(crate) fn encode_results_v1<C: FnMut() -> bool>(
+    mut results: Vec<SemanticServiceResult>,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Par> {
+    super::sort_results(&mut results, budget)?;
+    let encoded = Encoder { budget }.roster(results, |e, result| {
+        e.budget.charge(1, 0)?;
+        if !result.term.locally_free.is_empty() || result.term.connective_used {
+            return Err(SemanticWireError::Shape("semantic result term is not closed"));
+        }
+        e.tuple(|e| Ok([result.term, e.receipt(result.receipt)?]))
+    })?;
+    budget.charge(0, 0)?;
+    Ok(encoded)
+}
+
 /// Decode every field with bounded allocations. A decoded receipt is data,
 /// never evidence that a semantic transition occurred or authority to execute it.
 pub fn decode_receipt_v1<C: FnMut() -> bool>(
@@ -457,6 +478,10 @@ pub fn decode_receipt_v1<C: FnMut() -> bool>(
     budget.charge(0, 0)?;
     Ok(receipt)
 }
+
+#[cfg(test)]
+#[path = "receipt/results_tests.rs"]
+mod results_tests;
 
 #[cfg(test)]
 mod tests {
