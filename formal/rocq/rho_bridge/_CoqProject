@@ -31,6 +31,7 @@ theories/RhoParWellFormedness.v
 theories/RhoArtifactBoundary.v
 theories/RhoAstSendBoundary.v
 theories/RholangAstLowering.v
+theories/RholangFrontendAdmission.v
 theories/RuntimeBackendDispatch.v
 theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v

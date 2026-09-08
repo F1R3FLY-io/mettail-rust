@@ -331,7 +331,8 @@ Then test the real source correspondence, including the negative cases above.
 Rocq compilation and a separate silent kernel check are both required, under
 explicit memory limits with artifacts in `target/`.
 
-Implementation order is the application contract, admitted frontend contract,
+Implementation order is the application contract,
+[admitted frontend contract](rholang-frontend-admission-contract.md),
 nullable/derivative rules, full match, search, replacement, application source,
 and the existing neutral frontend/provider/public-node gates. The provider
 matcher owns the retained predicate/capture descriptor, semantic-atom resolver,
