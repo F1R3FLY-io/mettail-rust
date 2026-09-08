@@ -1068,11 +1068,40 @@ comparisons to agree with the pure key order; non-strict order soundness alone
 does not establish stable ties.
 
 These generic laws still require instantiation with the complete neutral
-receipt comparison. They do not verify concrete byte-comparison charges or
-the inverse-permutation swaps that move the owned Rust records. Those
-implementation obligations remain separate. Canonical sorted output also does
+receipt comparison and concrete byte-comparison charges. Canonical sorted output also does
 not imply that comparison work is invariant under permutations of the incoming
 roster; the public accounting contract must state its actual guarantee.
+
+The [record-movement model](../../formal/rocq/runtime_grammar/theories/SemanticResultPermutation.v)
+connects a successful merge of occurrence indices directly to exact placement
+of the original records. For an input of length $`n`$, the scratch array first
+receives `destination[order[d]] := d`. The sentinel is `n`, outside the valid
+index range; the model proves that each next assignment targets a still
+unassigned slot when `order` is a permutation of those indices.
+
+During movement, `destination[p]` means the desired destination of the record
+currently at position `p`. It is not a permanently unchanged inverse map.
+Each swap exchanges the whole record and its destination entry together,
+preserving the invariant
+
+```math
+\operatorname{values}[p]
+= \operatorname{original}[\operatorname{order}[\operatorname{destination}[p]]].
+```
+
+Swapping position `i` with `destination[i]` fixes the target position without
+disturbing any already fixed position. The number of misplaced records strictly
+decreases. The checked loop therefore performs at most $`n`$ swaps, and its final
+record at position `d` is exactly `original[order[d]]`. The model's fuel also
+counts cursor advances, giving a sufficient $`2n`$ specification bound; this
+ghost bound need not be computed or stored by production Rust.
+
+Both arrays are modeled by finite pointwise views, so no functional-extensionality
+axiom, cloning of records, or equality decision on process terms is used.
+The composition theorem applies to the merge model's actual output permutation,
+not an unrelated ideal sorting function. Concrete fallible allocations,
+precharges, array operations and receipt comparisons still require implementation
+correspondence and focused tests; the model alone does not certify them.
 
 ## Guarded host publication contract
 
