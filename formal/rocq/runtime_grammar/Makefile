@@ -74,7 +74,8 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.RegexGsltSearch \
 	RuntimeGrammar.RegexGsltReplace \
 	RuntimeGrammar.RegexGsltRules \
-	RuntimeGrammar.RegexGsltOracle
+	RuntimeGrammar.RegexGsltOracle \
+	RuntimeGrammar.RegexGsltApplication
 
 all: check-security-kernel
 

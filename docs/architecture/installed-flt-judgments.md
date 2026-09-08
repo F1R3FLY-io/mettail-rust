@@ -1552,6 +1552,11 @@ or FLT predicates in `where` clauses; those remain explicit demo requirements.
 
 ## Regex application handoff
 
+The [practical Regex application contract](regex-gslt-application-contract.md)
+fixes the required operation forms, Unicode offsets, replacements, direct FLT
+predicates in `where`, and public-node acceptance cases. It distinguishes the
+existing service from the remaining application and guard integration.
+
 The adapter's signature is language-neutral: any enrolled constructor may have
 any finite ordered domain of supported Syntax sorts. The current
 [inline Regex fixture](../../rholang-runtime/tests/fixtures/regex_extension.rho)

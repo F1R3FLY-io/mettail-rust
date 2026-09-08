@@ -111,3 +111,4 @@ theories/RegexGsltSearch.v
 theories/RegexGsltReplace.v
 theories/RegexGsltRules.v
 theories/RegexGsltOracle.v
+theories/RegexGsltApplication.v
