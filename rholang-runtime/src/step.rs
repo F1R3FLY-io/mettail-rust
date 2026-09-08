@@ -47,7 +47,9 @@ use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::rspace::RSpace;
-use rspace_plus_plus::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
+use rspace_plus_plus::rspace::rspace_interface::{
+    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::Produce;
@@ -476,6 +478,29 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
         Ok(result)
     }
 
+    async fn produce_guarded(
+        &self,
+        channel: Par,
+        data: ListParWithRandom,
+        persist: bool,
+        guard: &dyn ProduceCommitGuard,
+    ) -> Result<
+        MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        RSpaceError,
+    > {
+        let result = self
+            .inner
+            .produce_guarded(channel, data, persist, guard)
+            .await?;
+        self.emit_if_comm(
+            "comm.produce",
+            &result
+                .as_ref()
+                .map(|(continuation, matched, _)| (continuation.clone(), matched.clone())),
+        );
+        Ok(result)
+    }
+
     async fn install(
         &self,
         channels: Vec<Par>,
@@ -803,8 +828,67 @@ fn format_comm(
 mod tests {
     use super::*;
     use crate::rholang_ast::lower_rholang_term;
+    use crate::speculation::publication_tests::{new_space, TestGuard};
     use mettail_languages::rholang::{Int, Proc, RholangLanguage, RholangTerm, RholangTermInner};
     use mettail_runtime::Language;
+
+    #[tokio::test]
+    async fn publication_stepping_emits_only_after_committed_reply() {
+        use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
+        let (sender, receiver) = crossbeam_channel::bounded(2);
+        let gate = Arc::new(StepGate::new());
+        let observer = Arc::new(StepObserver {
+            sender,
+            gate: gate.clone(),
+            ordinal: AtomicU64::new(0),
+        });
+        let space = SteppingSpace { inner: new_space().await, observer };
+        let channel = new_gstring_par("publication".to_owned(), Vec::new(), false);
+        space
+            .consume(
+                vec![channel.clone()],
+                vec![BindPattern {
+                    patterns: vec![new_freevar_par(0, Vec::new())],
+                    remainder: None,
+                    free_count: 1,
+                }],
+                TaggedContinuation {
+                    tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
+                    guard: None,
+                },
+                false,
+                BTreeSet::new(),
+            )
+            .await
+            .expect("waiting receiver");
+        let data = ListParWithRandom {
+            pars: vec![new_gint_par(42, Vec::new(), false)],
+            random_state: vec![7; 32],
+        };
+        assert_eq!(
+            space
+                .produce_guarded(channel.clone(), data.clone(), false, &TestGuard(false))
+                .await
+                .expect_err("refused reply"),
+            RSpaceError::ProduceCommitDenied
+        );
+        assert!(receiver.try_recv().is_err());
+        gate.release_one();
+        assert!(space
+            .produce_guarded(channel.clone(), data.clone(), false, &TestGuard(true))
+            .await
+            .expect("committed reply")
+            .is_some());
+        match receiver.try_recv().expect("one committed event") {
+            RawStepEvent::Comm(event) => {
+                assert_eq!(event.ordinal, 0);
+                assert_eq!(event.channels, vec![channel]);
+                assert_eq!(event.consumed, vec![data]);
+            },
+            RawStepEvent::Output(_) => panic!("expected COMM event"),
+        }
+        assert!(receiver.try_recv().is_err());
+    }
 
     /// The flagship COMM term: a receive on `@"c"` and a matching send carrying the process
     /// `@"OUT"!("p")` — exactly one rendezvous fires.

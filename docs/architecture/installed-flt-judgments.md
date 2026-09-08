@@ -908,6 +908,76 @@ repository's resource policy: at most 1 GiB memory, no swap, and generated
 proof artifacts under `target/`. Do not invoke the entire formal workspace to
 recheck this bounded dependency slice.
 
+## Guarded host publication contract
+
+The typed service's final authorization does not yet authorize an actual
+RSpace reply: the system-contract producer returns a future, and storage is
+changed only when that future runs. The host integration therefore requires
+a synchronous, one-shot commit callback after asynchronous channel locking
+and candidate preparation. The callback must enclose the existing produce
+counter, event-log, store, COMM and replay-binding mutations. The authority
+guard is released before observer notification and receiver dispatch. A
+refused callback must not run any of those mutations.
+
+The [publication control model](../../formal/rocq/runtime_grammar/theories/GuardedReplyPublication.v)
+uses the existing installed-authority definition and a finite phase machine:
+preparation, authority acquisition, mutation, release, observer invocation,
+and receiver invocation, with a separate refusal state. Its mutation function
+is universally quantified, not assumed correct. Consequently the refusal and
+at-most-once laws apply to all modeled storage, continuation, join, log,
+counter, replay and random-state projections. Successful publication applies
+exactly the supplied mutation; this alone does not prove that mutation's COMM
+semantics. The concrete Rust implementation and correspondence tests remain
+required before this host integration is complete.
+
+Replay preparation must read the count which the pending produce would create
+without incrementing shared state prematurely. A read-only overlay increments
+every lookup of that same produce identity, including repeated occurrences,
+unless the produce is persistent. The model proves that the overlay and the
+postcommit counter give identical exact repeat-count eligibility tests.
+
+The implementation must retain the existing distinction between the play
+event log and replay reporting callbacks. Reporting and step-observer callbacks
+run after the guarded mutation; they cannot be silently moved under the
+authority lock or mistaken for a second evaluator. A callback may revoke the
+handle after publication without undoing the committed reply. These control
+laws do not prove callback termination, rollback of later receiver effects,
+lock-library correctness, machine-integer overflow behavior or atomicity
+against unrelated RSpace readers. They establish the required boundary with
+respect to installed-authority revocation.
+
+RSpace's lazy read caches are not the logical storage projection: a cold read
+may cache an empty channel without creating a message or changing the committed
+root. Its soft checkpoint API also drains the event log and produce counters;
+it is not a passive observation. Refusal tests restore those observations,
+compare populated cache projections and counters, and separately check that a
+cold refusal leaves the complete committed root unchanged.
+
+The generic host guard is trusted Rust code. It must invoke the one-shot
+callback exactly once on success, and never on refusal, while holding its
+authority protection. A guard which calls the callback and subsequently
+returns an error violates that contract: the host reports a distinct protocol
+violation, not an atomic refusal. The callback cannot be sandboxed by an
+in-process trait. The installed-language implementation must use the actual
+installed-table authorization scope; the trait alone does not establish it.
+
+`InstalledSemanticPublication` supplies that concrete implementation. It moves
+the already resolved sealed handle and selected required-right roster into a
+guard referencing the same installed table. Both the typed service commit and
+the host callback reuse `with_authorized_all`; no authorization lease or cached
+Boolean is created. A host refusal maps to `ProduceCommitDenied` without invoking
+the mutation. Preparing or retaining this guard neither holds the table lock nor
+grants additional rights.
+
+The focused correspondence tests exercise the concrete guard with real matched
+and unmatched RSpace publication, including revocation after the future is
+created but before it is polled. They also reject a handle with only the
+operation right when reflection is required, reject an identical language's
+foreign table, and allow revocation after a successful commit. The 19-test
+semantic-service run and seven-test wrapper run passed locally. These checks
+cover this publication adapter, not the still-required wire encoding, installed
+system-process integration, public node frontend or practical Regex application.
+
 ## Regex application handoff
 
 The adapter's signature is language-neutral: any enrolled constructor may have

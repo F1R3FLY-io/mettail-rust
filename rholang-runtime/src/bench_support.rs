@@ -130,7 +130,9 @@ use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::rspace::RSpace;
-use rspace_plus_plus::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
+use rspace_plus_plus::rspace::rspace_interface::{
+    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::Produce;
@@ -639,6 +641,26 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Countin
     > {
         let result = self.inner.produce(channel, data, persist).await?;
         if let Some((continuation, _matched, _produce)) = &result {
+            self.counters.record_comm(&continuation.channels);
+        }
+        Ok(result)
+    }
+
+    async fn produce_guarded(
+        &self,
+        channel: Par,
+        data: ListParWithRandom,
+        persist: bool,
+        guard: &dyn ProduceCommitGuard,
+    ) -> Result<
+        MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        RSpaceError,
+    > {
+        let result = self
+            .inner
+            .produce_guarded(channel, data, persist, guard)
+            .await?;
+        if let Some((continuation, _, _)) = &result {
             self.counters.record_comm(&continuation.channels);
         }
         Ok(result)
@@ -1318,10 +1340,12 @@ async fn drive_peek_channel<R: RhoRuntime>(runtime: &R, channel: &str) -> Vec<Pa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::speculation::publication_tests::{new_space, TestGuard};
     use dovetail::rules::Pattern;
     use dovetail::set_automaton::{PatternId, SetAutomaton};
     use mettail_rholang_codegen::{naive_kt_match_call_par, GroundTerm, NaiveGuardEncoding};
     use models::create_bit_vector;
+    use models::rhoapi::tagged_continuation::TaggedCont;
     use models::rhoapi::{GPrivate, GUnforgeable, ReceiveBind};
     use models::rust::rholang::implicits::GPrivateBuilder;
     use models::rust::utils::{
@@ -1336,6 +1360,52 @@ mod tests {
 
     fn quoted(name: &str) -> Par {
         new_gstring_par(name.to_string(), Vec::new(), false)
+    }
+
+    #[tokio::test]
+    async fn publication_counting_records_only_committed_replies() {
+        let counters = Arc::new(CommCounters::new("publication"));
+        let space = CountingSpace {
+            inner: new_space().await,
+            counters: counters.clone(),
+        };
+        let channel = quoted("publication");
+        space
+            .consume(
+                vec![channel.clone()],
+                vec![BindPattern {
+                    patterns: vec![new_freevar_par(0, Vec::new())],
+                    remainder: None,
+                    free_count: 1,
+                }],
+                TaggedContinuation {
+                    tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
+                    guard: None,
+                },
+                false,
+                BTreeSet::new(),
+            )
+            .await
+            .expect("waiting receiver");
+        let data = ListParWithRandom {
+            pars: vec![quoted("value")],
+            random_state: vec![7; 32],
+        };
+        let before = counters.snapshot();
+        assert_eq!(
+            space
+                .produce_guarded(channel.clone(), data.clone(), false, &TestGuard(false))
+                .await
+                .expect_err("refused reply"),
+            RSpaceError::ProduceCommitDenied
+        );
+        assert_eq!(before, counters.snapshot());
+        assert!(space
+            .produce_guarded(channel, data, false, &TestGuard(true))
+            .await
+            .expect("committed reply")
+            .is_some());
+        assert_eq!(counters.snapshot().observation, before.observation + 1);
     }
 
     /// The reserved subst-TRS rendezvous channel `GPrivate(reflect_tag(fp,

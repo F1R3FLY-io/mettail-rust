@@ -51,6 +51,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SemanticWorkTransport \
 	RuntimeGrammar.InstalledSemanticService \
 	RuntimeGrammar.SemanticReceiptTransport \
+	RuntimeGrammar.GuardedReplyPublication \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \

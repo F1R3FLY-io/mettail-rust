@@ -21,6 +21,7 @@ use mettail_grammar_core::{
 };
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use models::rhoapi::Par;
+use rspace_plus_plus::rspace::{errors::RSpaceError, rspace_interface::ProduceCommitGuard};
 use std::sync::Arc;
 
 const SEMANTIC_SETUP_SCHEDULE_V1: u128 = 1;
@@ -185,6 +186,30 @@ impl From<InstalledFltError> for InstalledSemanticError {
     }
 }
 
+/// Retained authority, not an authorization lease. Every commit rechecks the
+/// sealed handle and the complete selected-right roster under the table lock.
+/// The host invokes this only after candidate preparation and releases it
+/// before observers or receiver dispatch, as modeled by GuardedReplyPublication.
+struct InstalledSemanticPublication {
+    table: Arc<InstalledLanguageTable>,
+    handle: InstalledLanguageHandle,
+    required: Vec<LanguageRight>,
+}
+
+impl InstalledSemanticPublication {
+    fn authorize<R>(&self, commit: impl FnOnce() -> R) -> Result<R, LanguageAccessError> {
+        self.table
+            .with_authorized_all(&self.handle, &self.required, |_| commit())
+    }
+}
+
+impl ProduceCommitGuard for InstalledSemanticPublication {
+    fn with_commit(&self, commit: Box<dyn FnOnce() + '_>) -> Result<(), RSpaceError> {
+        self.authorize(commit)
+            .map_err(|_| RSpaceError::ProduceCommitDenied)
+    }
+}
+
 impl RholangLanguageRuntime {
     /// Execute one exact installed action or declared observation using the
     /// existing semantic kernel. Input is an already constructed structural FLT.
@@ -239,10 +264,15 @@ impl RholangLanguageRuntime {
             );
             remaining = budget.finish();
             let (results, required) = prepared?;
+            let publication = InstalledSemanticPublication {
+                table: Arc::clone(table),
+                handle,
+                required,
+            };
             // Existing directory -> table lock order is preserved. No caller
             // callback, directory access or result construction under this lock.
-            table
-                .with_authorized_all(&handle, &required, |_| results)
+            publication
+                .authorize(|| results)
                 .map_err(InstalledSemanticError::Access)
         })();
         SemanticServiceReport {
@@ -773,6 +803,143 @@ mod tests {
         TheoryPatternEntryV1, TheoryPatternInvocationV1, TheoryPatternStateId,
         TheoryResourceProfileV1, TheoryRuleProgramId, TheorySortId,
     };
+
+    #[test]
+    fn semantic_service_publication_rechecks_every_required_right_and_table_identity() {
+        use mettail_grammar_core::LanguageRights;
+        use rspace_plus_plus::rspace::rspace_interface::commit_produce;
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let handle = runtime
+            .resolve(&token, LanguageRight::Reduce)
+            .expect("installed handle");
+        let required = vec![LanguageRight::Reduce, LanguageRight::ReflectAst];
+        let mut publication = InstalledSemanticPublication {
+            table: Arc::clone(runtime.service().table()),
+            handle: handle.attenuate(&LanguageRights::from_rights([LanguageRight::Reduce])),
+            required,
+        };
+        let mut calls = 0;
+        assert_eq!(
+            commit_produce(Some(&publication), || calls += 1),
+            Err(RSpaceError::ProduceCommitDenied)
+        );
+        assert_eq!(calls, 0, "the operation right alone cannot authorize reflection");
+
+        publication.handle = handle;
+        assert_eq!(commit_produce(Some(&publication), || calls += 1), Ok(()));
+        assert_eq!(calls, 1);
+
+        let (foreign, _, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        publication.table = Arc::clone(foreign.service().table());
+        assert_eq!(
+            commit_produce(Some(&publication), || calls += 1),
+            Err(RSpaceError::ProduceCommitDenied)
+        );
+        assert_eq!(calls, 1, "an identical language in another table is not authority");
+
+        publication.table = Arc::clone(runtime.service().table());
+        runtime
+            .revoke(&token)
+            .expect("no authority lock retained after commit");
+        assert_eq!(
+            commit_produce(Some(&publication), || calls += 1),
+            Err(RSpaceError::ProduceCommitDenied)
+        );
+        assert_eq!(calls, 1, "a previous successful commit cannot renew stale authority");
+    }
+
+    #[tokio::test]
+    async fn semantic_service_publication_guards_actual_matched_and_unmatched_space_mutation() {
+        use models::rhoapi::{
+            tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, TaggedContinuation,
+        };
+        use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
+        use rspace_plus_plus::rspace::rspace_interface::ISpace;
+        use std::collections::BTreeSet;
+
+        for matched in [false, true] {
+            for revoke_before_poll in [false, true] {
+                let (runtime, token, _) =
+                    crate::language_install::tests::installed_flt_adapter_fixture();
+                let publication = InstalledSemanticPublication {
+                    table: Arc::clone(runtime.service().table()),
+                    handle: runtime
+                        .resolve(&token, LanguageRight::Reduce)
+                        .expect("handle"),
+                    required: vec![LanguageRight::Reduce, LanguageRight::ReflectAst],
+                };
+                let space = crate::speculation::publication_tests::new_space().await;
+                let channel = new_gstring_par("semantic-publication".into(), Vec::new(), false);
+                let data = ListParWithRandom {
+                    pars: vec![new_gint_par(42, Vec::new(), false)],
+                    random_state: vec![7; 32],
+                };
+                if matched {
+                    space
+                        .consume(
+                            vec![channel.clone()],
+                            vec![BindPattern {
+                                patterns: vec![new_freevar_par(0, Vec::new())],
+                                remainder: None,
+                                free_count: 1,
+                            }],
+                            TaggedContinuation {
+                                tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
+                                guard: None,
+                            },
+                            false,
+                            BTreeSet::new(),
+                        )
+                        .await
+                        .expect("waiting receiver");
+                }
+                let pending =
+                    space.produce_guarded(channel.clone(), data.clone(), false, &publication);
+                if revoke_before_poll {
+                    runtime
+                        .revoke(&token)
+                        .expect("revoke after future creation");
+                }
+                let result = pending.await;
+                if revoke_before_poll {
+                    assert_eq!(
+                        result.expect_err("stale authority"),
+                        RSpaceError::ProduceCommitDenied
+                    );
+                    assert!(space.get_data(&channel).await.is_empty());
+                    assert_eq!(
+                        space
+                            .get_waiting_continuations(vec![channel.clone()])
+                            .await
+                            .len(),
+                        usize::from(matched),
+                    );
+                } else {
+                    let result = result.expect("authorized actual publication");
+                    assert_eq!(result.is_some(), matched);
+                    if let Some((_, results, _)) = result {
+                        assert_eq!(results.len(), 1);
+                        assert_eq!(results[0].matched_datum, data);
+                    } else {
+                        let stored = space.get_data(&channel).await;
+                        assert_eq!(stored.len(), 1);
+                        assert_eq!(*stored[0].a, data);
+                    }
+                    runtime
+                        .revoke(&token)
+                        .expect("release before later revocation");
+                }
+                assert_eq!(
+                    space
+                        .produce_guarded(channel.clone(), data, false, &publication)
+                        .await
+                        .expect_err("revoked next reply"),
+                    RSpaceError::ProduceCommitDenied,
+                );
+            }
+        }
+    }
 
     fn installed_transition_fixture() -> (Arc<InstalledLanguage>, SemanticTransition) {
         use mettail_grammar_core::RuntimeTemplatePiece;

@@ -316,7 +316,9 @@ use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::hot_store::HotStoreState;
 use rspace_plus_plus::rspace::internal::{Datum, ProduceCandidate, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::rspace::RSpace;
-use rspace_plus_plus::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
+use rspace_plus_plus::rspace::rspace_interface::{
+    commit_produce, ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::Produce;
@@ -914,6 +916,25 @@ impl StagedSpace {
     pub fn staged_consumes(&self) -> usize {
         self.staged_consumes.load(AtomicOrdering::Relaxed)
     }
+
+    fn stage_produce(
+        &self,
+        channel: Par,
+        data: ListParWithRandom,
+        persist: bool,
+        guard: Option<&dyn ProduceCommitGuard>,
+    ) -> Result<
+        MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        RSpaceError,
+    > {
+        let source = Produce::create(&channel, &data, persist);
+        let datum = Datum { a: Arc::new(data), persist, source };
+        commit_produce(guard, || {
+            self.inner.get_store().put_datum(&channel, datum);
+            self.staged_produces.fetch_add(1, AtomicOrdering::Relaxed);
+            None
+        })
+    }
 }
 
 #[async_trait]
@@ -929,12 +950,20 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for StagedS
         MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
         RSpaceError,
     > {
-        let source = Produce::create(&channel, &data, persist);
-        self.inner
-            .get_store()
-            .put_datum(&channel, Datum { a: Arc::new(data), persist, source });
-        self.staged_produces.fetch_add(1, AtomicOrdering::Relaxed);
-        Ok(None)
+        self.stage_produce(channel, data, persist, None)
+    }
+
+    async fn produce_guarded(
+        &self,
+        channel: Par,
+        data: ListParWithRandom,
+        persist: bool,
+        guard: &dyn ProduceCommitGuard,
+    ) -> Result<
+        MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        RSpaceError,
+    > {
+        self.stage_produce(channel, data, persist, Some(guard))
     }
 
     async fn consume(
@@ -1762,6 +1791,85 @@ fn hex(bytes: &[u8]) -> String {
         rendered.push_str(&format!("{byte:02x}"));
     }
     rendered
+}
+
+#[cfg(test)]
+pub(crate) mod publication_tests {
+    use super::*;
+    use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
+
+    pub(crate) struct TestGuard(pub bool);
+
+    impl ProduceCommitGuard for TestGuard {
+        fn with_commit(&self, commit: Box<dyn FnOnce() + '_>) -> Result<(), RSpaceError> {
+            if !self.0 {
+                return Err(RSpaceError::ProduceCommitDenied);
+            }
+            commit();
+            Ok(())
+        }
+    }
+
+    pub(crate) async fn new_space() -> Space {
+        let mut manager = InMemoryStoreManager::new();
+        let stores = manager.r_space_stores().await.expect("publication stores");
+        Space::create(stores, Arc::new(Box::new(SubstrateGuardMatcher::new())))
+            .expect("publication space")
+    }
+
+    #[tokio::test]
+    async fn publication_staging_refuses_atomically_and_never_fires_comm() {
+        for persistent in [false, true] {
+            let staged = StagedSpace::new(new_space().await);
+            let channel = new_gstring_par("publication".to_owned(), Vec::new(), false);
+            let data = ListParWithRandom {
+                pars: vec![new_gint_par(42, Vec::new(), false)],
+                random_state: vec![7; 32],
+            };
+            staged
+                .consume(
+                    vec![channel.clone()],
+                    vec![BindPattern {
+                        patterns: vec![new_freevar_par(0, Vec::new())],
+                        remainder: None,
+                        free_count: 1,
+                    }],
+                    TaggedContinuation {
+                        tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
+                        guard: None,
+                    },
+                    false,
+                    BTreeSet::new(),
+                )
+                .await
+                .expect("stage waiting receiver");
+            let result = staged
+                .produce_guarded(channel.clone(), data.clone(), persistent, &TestGuard(false))
+                .await;
+            assert_eq!(result.expect_err("refused staging"), RSpaceError::ProduceCommitDenied);
+            assert_eq!(staged.staged_produces(), 0);
+            assert!(staged.get_data(&channel).await.is_empty());
+            assert_eq!(
+                staged
+                    .get_waiting_continuations(vec![channel.clone()])
+                    .await
+                    .len(),
+                1
+            );
+            assert!(staged
+                .produce_guarded(channel.clone(), data.clone(), persistent, &TestGuard(true))
+                .await
+                .expect("authorized staging")
+                .is_none());
+            assert_eq!(staged.staged_produces(), 1);
+            let stored = staged.get_data(&channel).await;
+            assert_eq!(stored.len(), 1);
+            assert_eq!(*stored[0].a, data);
+            assert_eq!(stored[0].persist, persistent);
+            assert_eq!(staged.get_waiting_continuations(vec![channel]).await.len(), 1);
+            assert!(staged.take_event_log().await.is_empty());
+        }
+    }
 }
 
 #[cfg(test)]
