@@ -110,6 +110,7 @@ theories/RegexGsltMatch.v
 theories/RegexGsltNullableMachine.v
 theories/RegexGsltSmartMachine.v
 theories/RegexGsltDerivativeMachine.v
+theories/RegexGsltRepeatMachine.v
 theories/RegexGsltSearch.v
 theories/RegexGsltReplace.v
 theories/RegexGsltRules.v
