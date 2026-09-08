@@ -54,6 +54,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
+pub use crate::semantic_service::{
+    InstalledSemanticError, SemanticOperation, SemanticServiceLimits, SemanticServiceReport,
+    SemanticServiceRequest, SemanticServiceResult,
+};
 pub use mettail_elab::wire::DDL_AST_ENVELOPE_V2;
 
 pub const LANGUAGE_CAPABILITY_ABI_V1: &str = "mettail-language-capability/1";
@@ -147,6 +151,7 @@ pub struct LanguageInstallPolicy {
     pub runtime: RuntimePolicy,
     pub parser_image: ParserImageAdmissionLimits,
     pub semantic_image: TheoryImageAdmissionLimits,
+    pub semantic_service: SemanticServiceLimits,
     pub max_installed_languages: u64,
     pub capability_abi: String,
     pub fingerprint: [u8; 32],
@@ -202,11 +207,13 @@ impl LanguageInstallPolicy {
         capability_abi: impl Into<String>,
     ) -> Self {
         let capability_abi = capability_abi.into();
+        let semantic_service = SemanticServiceLimits::default();
         let fingerprint = fingerprint_policy(
             &host_grants,
             runtime,
             parser_image,
             semantic_image,
+            semantic_service,
             max_installed_languages,
             &capability_abi,
         );
@@ -215,10 +222,29 @@ impl LanguageInstallPolicy {
             runtime,
             parser_image,
             semantic_image,
+            semantic_service,
             max_installed_languages,
             capability_abi,
             fingerprint,
         }
+    }
+
+    pub fn with_semantic_service_limits(mut self, limits: SemanticServiceLimits) -> Self {
+        self.semantic_service = limits;
+        self.refresh_fingerprint();
+        self
+    }
+
+    fn refresh_fingerprint(&mut self) {
+        self.fingerprint = fingerprint_policy(
+            &self.host_grants,
+            self.runtime,
+            self.parser_image,
+            self.semantic_image,
+            self.semantic_service,
+            self.max_installed_languages,
+            &self.capability_abi,
+        );
     }
 }
 
@@ -233,11 +259,12 @@ fn fingerprint_policy(
     runtime: RuntimePolicy,
     parser_image: ParserImageAdmissionLimits,
     semantic_image: TheoryImageAdmissionLimits,
+    semantic_service: SemanticServiceLimits,
     max_installed_languages: u64,
     capability_abi: &str,
 ) -> [u8; 32] {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"mettail-install-policy/5\0");
+    bytes.extend_from_slice(b"mettail-install-policy/6\0");
     for right in grants.iter() {
         bytes.extend_from_slice(right.name().as_bytes());
         bytes.push(0);
@@ -256,6 +283,9 @@ fn fingerprint_policy(
     bytes.extend_from_slice(&runtime.max_lexer_work.to_be_bytes());
     bytes.extend_from_slice(&parser_image.fingerprint());
     bytes.extend_from_slice(&semantic_image.fingerprint());
+    for word in semantic_service.commitment_words() {
+        bytes.extend_from_slice(&word.to_be_bytes());
+    }
     bytes.extend_from_slice(&max_installed_languages.to_be_bytes());
     bytes.extend_from_slice(&(capability_abi.len() as u64).to_be_bytes());
     bytes.extend_from_slice(capability_abi.as_bytes());
@@ -300,7 +330,10 @@ pub struct LanguageInstallService {
 }
 
 impl LanguageInstallService {
-    pub fn new(registry: Arc<dyn RegistrySnapshot>, policy: LanguageInstallPolicy) -> Self {
+    pub fn new(registry: Arc<dyn RegistrySnapshot>, mut policy: LanguageInstallPolicy) -> Self {
+        // Public policy fields may have been adjusted by the host. Freeze the
+        // actual values, never a stale caller-supplied fingerprint.
+        policy.refresh_fingerprint();
         Self {
             registry,
             table: Arc::new(InstalledLanguageTable::new()),
@@ -3643,7 +3676,7 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use mettail_grammar_core::{
         AdmissionBudget, AdmissionRefutation, AdmissionTheorem, DefaultRuntimeHost, DynamicValue,
@@ -3969,7 +4002,7 @@ mod tests {
             .expect("the modified fixture supplies an admitted pair")
     }
 
-    fn installed_flt_adapter_fixture(
+    pub(crate) fn installed_flt_adapter_fixture(
     ) -> (RholangLanguageRuntime, Par, Arc<mettail_grammar_core::InstalledLanguage>) {
         let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
             Arc::new(MemoryRegistry::default()),
@@ -3993,6 +4026,609 @@ mod tests {
             .authorize(&handle, LanguageRight::Construct)
             .expect("exact immutable installed pair");
         (runtime, token, installed)
+    }
+
+    #[test]
+    fn semantic_service_preserves_declared_tight_limit_without_partial_outputs() {
+        let (runtime, _, installed) = installed_flt_adapter_fixture();
+        assert_eq!(
+            installed.language_core().theory.limits.max_steps,
+            mettail_grammar_core::TheoryLimitsV1::default().max_steps
+        );
+        // A separate canonical owner retains the explicit tight source policy.
+        // Ample host/request limits must never amplify this installed ceiling.
+        let mut language = installed.language_core().clone();
+        language.theory.limits.max_steps = 4096;
+        let value =
+            mettail_elab::core_value::language_core_to_value(&language).expect("canonical value");
+        let token = runtime
+            .install(InstallCandidate::Canonical(value))
+            .expect("separate declared policy");
+        for (source, operation) in [
+            ("a+", SemanticOperation::Reduce("expand-plus")),
+            ("a?", SemanticOperation::Reduce("expand-optional")),
+            ("(a)", SemanticOperation::Reduce("remove-group")),
+            ("a+", SemanticOperation::Observe("ExpandedPlus")),
+            ("a?", SemanticOperation::Observe("ExpandedOptional")),
+        ] {
+            let input = runtime
+                .construct_template(
+                    &token,
+                    &[RuntimeTemplatePiece::Text(source.into())],
+                    &[],
+                    Some("Pattern"),
+                    &BTreeMap::new(),
+                )
+                .expect("same grammar, exact installed owner");
+            let report = runtime.execute_semantic(
+                SemanticServiceRequest {
+                    handle: &token,
+                    operation,
+                    input: &input,
+                    limits: SemanticServiceLimits::default(),
+                },
+                || false,
+            );
+            assert_eq!(
+                report
+                    .effective_limits
+                    .expect("installed policy")
+                    .execution
+                    .work,
+                4096
+            );
+            assert!(
+                matches!(
+                    report.outcome,
+                    Err(InstalledSemanticError::Resource(
+                        mettail_rholang_codegen::DynamicReflectionError::WorkLimit
+                    ))
+                ),
+                "{operation:?}: {report:?}"
+            );
+            assert!(report.work <= 4096);
+            assert!(report
+                .kernel_work
+                .is_some_and(|work| work > 0 && work < report.work));
+        }
+    }
+
+    #[test]
+    fn semantic_service_executes_regex_reductions_and_observations_with_one_budget() {
+        use mettail_rholang_codegen::{
+            DynamicReflectionError, ReflectedCodecBudget, ReflectedPositionalContext,
+        };
+        let (runtime, token, installed) = installed_flt_adapter_fixture();
+        for (source, operation, label) in [
+            ("a+", SemanticOperation::Reduce("expand-plus"), "PConcat"),
+            ("a?", SemanticOperation::Reduce("expand-optional"), "PAlt"),
+            ("(a)", SemanticOperation::Reduce("remove-group"), "PLiteral"),
+            ("a+", SemanticOperation::Observe("ExpandedPlus"), "PConcat"),
+            ("a?", SemanticOperation::Observe("ExpandedOptional"), "PAlt"),
+        ] {
+            let input = runtime
+                .construct_template(
+                    &token,
+                    &[RuntimeTemplatePiece::Text(source.into())],
+                    &[],
+                    Some("Pattern"),
+                    &BTreeMap::new(),
+                )
+                .expect("installed guest parser");
+            let request = |limits| SemanticServiceRequest {
+                handle: &token,
+                operation,
+                input: &input,
+                limits,
+            };
+            let report =
+                runtime.execute_semantic(request(SemanticServiceLimits::default()), || false);
+            let total_work = report.work;
+            let kernel_work = report.kernel_work.expect("kernel ran");
+            let limits = report.effective_limits.expect("installed limits selected");
+            let used_bytes =
+                limits.boundary_payload_bytes - report.remaining_boundary_payload_bytes;
+            let outputs = report.outcome.unwrap_or_else(|error| {
+                panic!("{operation:?}: {error:?}, work={total_work}, kernel={kernel_work}")
+            });
+            assert_eq!(outputs.len(), 1);
+            assert!(total_work > kernel_work);
+            assert_eq!(outputs[0].receipt.work, kernel_work);
+            let owner = grammar_fingerprint_label(installed.commitment().language_fingerprint);
+            let mut work = 0;
+            let mut cancel = || false;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+            let context = ReflectedPositionalContext::new(&owner, &mut budget).expect("owner");
+            assert_eq!(
+                context
+                    .view(&outputs[0].term, &mut budget)
+                    .expect("view")
+                    .expect("closed head")
+                    .label(),
+                label
+            );
+            for (work_limit, bytes, expected) in [
+                (total_work, used_bytes, None),
+                (total_work - 1, used_bytes, Some(DynamicReflectionError::WorkLimit)),
+                (total_work, used_bytes - 1, Some(DynamicReflectionError::PayloadByteLimit)),
+            ] {
+                let mut requested = limits;
+                requested.execution.work = work_limit;
+                requested.boundary_payload_bytes = bytes;
+                let measured = runtime.execute_semantic(request(requested), || false);
+                match expected {
+                    None => {
+                        assert!(measured.outcome.is_ok(), "exact limits: {:?}", measured.outcome);
+                        assert_eq!(measured.work, total_work);
+                        assert_eq!(measured.kernel_work, Some(kernel_work));
+                        assert_eq!(measured.remaining_boundary_payload_bytes, 0);
+                    },
+                    Some(error) => assert!(
+                        matches!(measured.outcome, Err(InstalledSemanticError::Resource(actual)) if actual == error)
+                    ),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_service_checks_action_authority_and_rejects_non_capabilities() {
+        let (source_runtime, source_token, installed) = installed_flt_adapter_fixture();
+        // Structural FLTs can be transported independently of operation
+        // authority. Construct under the source grant, then test the consumer
+        // grant. The parser's conservative effect rights also require Reduce.
+        let input = source_runtime
+            .construct_template(
+                &source_token,
+                &[RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("authorized construction of the input value");
+        let value = mettail_elab::core_value::language_core_to_value(installed.language_core())
+            .expect("canonical installed source");
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::new(
+                LanguageRights::from_rights([
+                    LanguageRight::Parse,
+                    LanguageRight::Construct,
+                    LanguageRight::Observe,
+                ]),
+                RuntimePolicy::default(),
+                LANGUAGE_CAPABILITY_ABI_V1,
+            ),
+        )));
+        let token = runtime
+            .install(InstallCandidate::Canonical(value))
+            .expect("attenuated grant");
+        for operation in [
+            SemanticOperation::Reduce("expand-plus"),
+            SemanticOperation::Observe("ExpandedPlus"),
+        ] {
+            let report = runtime.execute_semantic(
+                SemanticServiceRequest {
+                    handle: &token,
+                    operation,
+                    input: &input,
+                    limits: SemanticServiceLimits::default(),
+                },
+                || false,
+            );
+            assert!(
+                matches!(
+                    report.outcome,
+                    Err(InstalledSemanticError::Access(LanguageAccessError::MissingRight(
+                        LanguageRight::Reduce
+                    )))
+                ),
+                "{operation:?}: {report:?}"
+            );
+            assert_eq!(report.kernel_work, None);
+        }
+        for handle in [
+            new_gstring_par("Regex".into(), Vec::new(), false),
+            new_gstring_par(
+                grammar_fingerprint_label(installed.commitment().language_fingerprint),
+                Vec::new(),
+                false,
+            ),
+            new_gstring_par("rho:registry:Regex".into(), Vec::new(), false),
+        ] {
+            let report = runtime.execute_semantic(
+                SemanticServiceRequest {
+                    handle: &handle,
+                    operation: SemanticOperation::Observe("ExpandedPlus"),
+                    input: &input,
+                    limits: SemanticServiceLimits::default(),
+                },
+                || panic!("a non-capability cannot start semantic work"),
+            );
+            assert!(matches!(report.outcome, Err(InstalledSemanticError::InvalidHandleShape)));
+            assert_eq!(report.work, 0);
+            assert_eq!(report.kernel_work, None);
+        }
+    }
+
+    #[test]
+    fn semantic_service_rejects_cross_owner_and_wrong_sort_inputs_before_kernel_execution() {
+        let (runtime, token, installed) = installed_flt_adapter_fixture();
+        let wrong_sort = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("true".into())],
+                &[],
+                Some("Bool"),
+                &BTreeMap::new(),
+            )
+            .expect("valid term of a different installed sort");
+        let mut other_core = installed.language_core().clone();
+        other_core.theory.limits.max_steps -= 1;
+        let other_token = runtime
+            .install(InstallCandidate::Canonical(
+                mettail_elab::core_value::language_core_to_value(&other_core)
+                    .expect("canonical distinct owner"),
+            ))
+            .expect("separate installed commitment");
+        let other_handle = runtime
+            .resolve(&other_token, LanguageRight::Construct)
+            .expect("other handle");
+        assert_ne!(other_handle.fingerprint(), installed.commitment().language_fingerprint);
+        let wrong_owner = runtime
+            .construct_template(
+                &other_token,
+                &[RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("valid syntax with different language authority");
+        for input in [&wrong_sort, &wrong_owner] {
+            let report = runtime.execute_semantic(
+                SemanticServiceRequest {
+                    handle: &token,
+                    operation: SemanticOperation::Reduce("expand-plus"),
+                    input,
+                    limits: SemanticServiceLimits::default(),
+                },
+                || false,
+            );
+            assert!(
+                matches!(report.outcome, Err(InstalledSemanticError::InvalidSelection(_))),
+                "{report:?}"
+            );
+            assert_eq!(report.kernel_work, None);
+            assert!(report.work > 0);
+        }
+    }
+
+    #[test]
+    fn semantic_service_retains_negative_usage_and_revokes_before_final_publication() {
+        use mettail_dovetail_runtime::{SemanticMatchRefutation, SemanticMatchUndetermined};
+        use mettail_rholang_codegen::DynamicReflectionError;
+        let (runtime, token, _) = installed_flt_adapter_fixture();
+        let construct = |source: &str| {
+            runtime
+                .construct_template(
+                    &token,
+                    &[RuntimeTemplatePiece::Text(source.into())],
+                    &[],
+                    Some("Pattern"),
+                    &BTreeMap::new(),
+                )
+                .expect("actual installed guest parser")
+        };
+        let input = construct("a+");
+        let nonmatching = construct("a");
+        let request = |input| SemanticServiceRequest {
+            handle: &token,
+            operation: SemanticOperation::Reduce("expand-plus"),
+            input,
+            limits: SemanticServiceLimits::default(),
+        };
+        let negative = runtime.execute_semantic(request(&nonmatching), || false);
+        assert!(
+            matches!(
+                negative.outcome,
+                Err(InstalledSemanticError::Refuted(SemanticMatchRefutation::NoTransition))
+            ),
+            "{negative:?}"
+        );
+        assert!(negative
+            .kernel_work
+            .is_some_and(|work| work > 0 && work < negative.work));
+
+        let mut checkpoints = 0;
+        let baseline = runtime.execute_semantic(request(&input), || {
+            checkpoints += 1;
+            false
+        });
+        assert!(baseline.outcome.is_ok(), "{baseline:?}");
+        assert!(checkpoints > 2);
+        for stop in [1, checkpoints / 2, checkpoints] {
+            let mut calls = 0;
+            let report = runtime.execute_semantic(request(&input), || {
+                calls += 1;
+                calls == stop
+            });
+            assert!(
+                matches!(
+                    report.outcome,
+                    Err(InstalledSemanticError::Resource(DynamicReflectionError::Cancelled))
+                        | Err(InstalledSemanticError::Undetermined(
+                            SemanticMatchUndetermined::Cancelled
+                        ))
+                ),
+                "stop={stop}: {report:?}"
+            );
+            assert!(report.work <= baseline.work);
+            if stop == checkpoints {
+                assert_eq!(report.work, baseline.work);
+                assert_eq!(report.kernel_work, baseline.kernel_work);
+            }
+        }
+        let mut zero = request(&input);
+        zero.limits.execution.work = 0;
+        let zero = runtime.execute_semantic(zero, || false);
+        assert!(matches!(
+            zero.outcome,
+            Err(InstalledSemanticError::Resource(DynamicReflectionError::WorkLimit))
+        ));
+        assert_eq!(zero.work, 0);
+        assert_eq!(zero.kernel_work, None);
+
+        // Revoke after all private results exist, at the final cancellation
+        // checkpoint, but do NOT cancel. Only final authority revalidation can
+        // prevent publication. The callback must run outside registry locks.
+        let mut calls = 0;
+        let revoked = runtime.execute_semantic(request(&input), || {
+            calls += 1;
+            if calls == checkpoints {
+                runtime.revoke(&token).expect("revocation cannot deadlock");
+            }
+            false
+        });
+        assert_eq!(calls, checkpoints);
+        assert!(
+            matches!(
+                revoked.outcome,
+                Err(InstalledSemanticError::Access(LanguageAccessError::StaleHandle))
+            ),
+            "{revoked:?}"
+        );
+        assert_eq!(revoked.work, baseline.work);
+        assert_eq!(revoked.kernel_work, baseline.kernel_work);
+        let stale =
+            runtime.execute_semantic(request(&input), || panic!("revoked token cannot start work"));
+        assert!(matches!(stale.outcome, Err(InstalledSemanticError::UnknownHandle)));
+        assert_eq!(stale.work, 0);
+    }
+
+    #[test]
+    fn semantic_service_selects_exact_declared_regex_actions_and_observations() {
+        use crate::semantic_service::{
+            select_semantic_operation, InstalledSemanticError, SemanticOperation,
+        };
+        use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
+
+        let installed = installed_regex_binding_fixture();
+        let theory = &installed.language_core().theory;
+        let mut operations = Vec::new();
+        for (index, action) in theory.actions.iter().enumerate() {
+            operations.push((SemanticOperation::Reduce(action.id.as_str()), index));
+        }
+        for observation in &theory.observations {
+            let action_index = theory
+                .actions
+                .iter()
+                .position(|a| a.id == observation.action)
+                .expect("admitted observation names an existing action");
+            operations.push((SemanticOperation::Observe(observation.name.as_str()), action_index));
+        }
+        assert!(!theory.observations.is_empty(), "fixture exercises declared observations");
+        for (operation, action_index) in operations {
+            let mut work = 7;
+            let mut cancel = || false;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+            let selected = select_semantic_operation(&installed, operation, &mut budget)
+                .expect("exact declared operation");
+            assert_eq!(selected.action.id.0 as usize, action_index);
+            assert_eq!(selected.input_sort, selected.action.domain[0]);
+            assert_eq!(selected.required[0], operation.right());
+            assert_eq!(
+                selected.required[1..],
+                theory.actions[action_index]
+                    .required_rights
+                    .iter()
+                    .collect::<Vec<_>>()
+            );
+            let exact_work = budget.work_used();
+            let exact_bytes = 1_000_000 - budget.finish();
+            for (work_limit, bytes, expected) in [
+                (exact_work, exact_bytes, None),
+                (exact_work - 1, exact_bytes, Some(DynamicReflectionError::WorkLimit)),
+                (exact_work, exact_bytes - 1, Some(DynamicReflectionError::PayloadByteLimit)),
+            ] {
+                let mut work = 7;
+                let mut budget =
+                    ReflectedCodecBudget::new(&mut work, work_limit, bytes, &mut cancel);
+                let result = select_semantic_operation(&installed, operation, &mut budget);
+                match expected {
+                    None => assert!(result.is_ok()),
+                    Some(error) => assert!(
+                        matches!(result, Err(InstalledSemanticError::Resource(actual)) if actual == error)
+                    ),
+                }
+            }
+        }
+        for (operation, expected) in [
+            (SemanticOperation::Reduce("Expand-Plus"), InstalledSemanticError::UnknownAction),
+            (SemanticOperation::Reduce("ExpandedPlus"), InstalledSemanticError::UnknownAction),
+            (
+                SemanticOperation::Observe("expand-plus"),
+                InstalledSemanticError::UnknownObservation,
+            ),
+            (
+                SemanticOperation::Observe("ExpandedPlus\0"),
+                InstalledSemanticError::UnknownObservation,
+            ),
+        ] {
+            let mut work = 0;
+            let mut cancel = || false;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+            assert!(
+                matches!(select_semantic_operation(&installed, operation, &mut budget), Err(actual) if actual == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_service_preparation_uses_authorized_owner_and_precharges_restoration() {
+        use crate::installed_flt::InstalledFltAdapter;
+        use crate::semantic_service::{InstalledSemanticBundle, InstalledSemanticError};
+        use mettail_dovetail_runtime::{SemanticInputLimits, SemanticTransitionDecision};
+        use mettail_grammar_core::TheoryActionId;
+        use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
+
+        let (runtime, token, installed) = installed_flt_adapter_fixture();
+        let handle = runtime
+            .resolve(&token, LanguageRight::Reduce)
+            .expect("reduce authority");
+        let table = runtime.service.table();
+        let required = [LanguageRight::Reduce];
+        let mut work = 7;
+        let mut calls = 0;
+        let mut cancel = || {
+            calls += 1;
+            false
+        };
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+        let prepared = InstalledSemanticBundle::prepare(table, &handle, &required, &mut budget)
+            .expect("actual admitted image restores under the sealed handle");
+        assert!(Arc::ptr_eq(prepared.installed(), &installed));
+        let setup_work = budget.work_used();
+        let setup_bytes = 1_000_000 - budget.finish();
+        let setup_calls = calls;
+
+        for (limit, bytes, cancelled, expected) in [
+            (setup_work, setup_bytes, false, None),
+            (setup_work - 1, setup_bytes, false, Some(DynamicReflectionError::WorkLimit)),
+            (
+                setup_work,
+                setup_bytes - 1,
+                false,
+                Some(DynamicReflectionError::PayloadByteLimit),
+            ),
+            (setup_work, setup_bytes, true, Some(DynamicReflectionError::Cancelled)),
+        ] {
+            let mut work = 7;
+            let mut cancel = || cancelled;
+            let mut budget = ReflectedCodecBudget::new(&mut work, limit, bytes, &mut cancel);
+            let result = InstalledSemanticBundle::prepare(table, &handle, &required, &mut budget);
+            match expected {
+                None => {
+                    assert!(result.is_ok());
+                    assert_eq!(budget.work_used(), setup_work);
+                },
+                Some(error) => assert!(
+                    matches!(result, Err(InstalledSemanticError::Resource(actual)) if actual == error)
+                ),
+            }
+        }
+        // The last checkpoint occurs after restoration: cancellation must also
+        // refuse this fully prepared but still private object.
+        let mut work = 7;
+        let mut calls = 0;
+        let mut cancel = || {
+            calls += 1;
+            calls == setup_calls
+        };
+        let mut budget = ReflectedCodecBudget::new(&mut work, setup_work, setup_bytes, &mut cancel);
+        assert!(matches!(
+            InstalledSemanticBundle::prepare(table, &handle, &required, &mut budget),
+            Err(InstalledSemanticError::Resource(DynamicReflectionError::Cancelled))
+        ));
+        assert_eq!(budget.work_used(), setup_work);
+        budget.finish();
+
+        let attenuated = handle.attenuate(&LanguageRights::from_rights([LanguageRight::Parse]));
+        let mut work = 0;
+        let mut cancel = || panic!("missing authority must refuse before setup");
+        let mut budget = ReflectedCodecBudget::new(&mut work, 0, 0, &mut cancel);
+        assert!(matches!(
+            InstalledSemanticBundle::prepare(table, &attenuated, &required, &mut budget),
+            Err(InstalledSemanticError::Access(LanguageAccessError::MissingRight(
+                LanguageRight::Reduce
+            )))
+        ));
+        budget.finish();
+
+        let reflected = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("real installed Regex parser");
+        let category = installed
+            .core()
+            .categories
+            .iter()
+            .find(|c| c.name == "Pattern")
+            .expect("Pattern category")
+            .id;
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+        let adapter = InstalledFltAdapter::new(prepared.installed(), &mut budget)
+            .expect("same owner adapter");
+        let input = adapter
+            .to_kernel(
+                &reflected,
+                category,
+                SemanticInputLimits {
+                    work: 1_000_000,
+                    nodes: 10_000,
+                    bytes: 1_000_000,
+                },
+                &mut budget,
+            )
+            .expect("typed input");
+        let admission = input.admission_work();
+        let (decision, aggregate) = prepared
+            .execute_accounted(
+                TheoryActionId(0),
+                input,
+                installed.language_core().theory.limits.into(),
+                || false,
+            )
+            .expect("inseparable image/matcher pair");
+        let SemanticTransitionDecision::Proven(result) = decision else {
+            panic!("actual installed Regex action must succeed")
+        };
+        assert_eq!(result.transitions.len(), 1);
+        assert!(aggregate > admission);
+        assert_eq!(result.work, aggregate);
+        assert_eq!(result.transitions[0].receipt.work, aggregate);
+        assert_eq!(
+            result.transitions[0].receipt.language_fingerprint,
+            installed.commitment().language_fingerprint
+        );
+
+        runtime.revoke(&token).expect("revoke original owner");
+        let mut work = 0;
+        let mut cancel = || panic!("revoked authority must refuse before setup");
+        let mut budget = ReflectedCodecBudget::new(&mut work, 0, 0, &mut cancel);
+        assert!(matches!(
+            InstalledSemanticBundle::prepare(table, &handle, &required, &mut budget),
+            Err(InstalledSemanticError::Access(_))
+        ));
     }
 
     #[test]
@@ -7108,6 +7744,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn semantic_service_policy_commits_every_coordinate_and_preserves_existing_policy() {
+        let base = LanguageInstallPolicy::new(
+            LanguageRights::from_rights([LanguageRight::Parse, LanguageRight::Reduce]),
+            RuntimePolicy::default(),
+            LANGUAGE_CAPABILITY_ABI_CURRENT,
+        );
+        let mut fingerprints = std::collections::BTreeSet::from([base.fingerprint]);
+        for coordinate in 0..11 {
+            let mut limits = base.semantic_service;
+            match coordinate {
+                0 => limits.execution.work += 1,
+                1 => limits.execution.normalization_steps += 1,
+                2 => limits.execution.outputs += 1,
+                3 => limits.execution.frontier += 1,
+                4 => limits.execution.proofs += 1,
+                5 => limits.execution.proof_nodes += 1,
+                6 => limits.execution.term_nodes += 1,
+                7 => limits.execution.term_bytes += 1,
+                8 => limits.execution.output_nodes += 1,
+                9 => limits.execution.output_bytes += 1,
+                10 => limits.boundary_payload_bytes += 1,
+                _ => unreachable!("eleven semantic policy coordinates"),
+            }
+            let changed = base.clone().with_semantic_service_limits(limits);
+            assert!(fingerprints.insert(changed.fingerprint), "coordinate {coordinate}");
+            assert_eq!(changed.semantic_service, limits);
+            assert_eq!(changed.host_grants, base.host_grants);
+            assert_eq!(changed.runtime, base.runtime);
+            assert_eq!(changed.parser_image, base.parser_image);
+            assert_eq!(changed.semantic_image, base.semantic_image);
+            assert_eq!(changed.max_installed_languages, base.max_installed_languages);
+            assert_eq!(changed.capability_abi, base.capability_abi);
+            assert_eq!(changed.clone().with_semantic_service_limits(limits), changed);
+        }
+    }
+
+    #[test]
+    fn semantic_service_constructor_commits_actual_fields_not_a_stale_fingerprint() {
+        let base = LanguageInstallPolicy::default();
+        let mut changed = base.clone();
+        changed.semantic_service.execution.work = 0;
+        changed.semantic_service.boundary_payload_bytes = 0;
+        assert_eq!(changed.fingerprint, base.fingerprint, "caller has not recomputed it");
+        let expected = base.with_semantic_service_limits(changed.semantic_service);
+        let service = LanguageInstallService::new(Arc::new(EmptyRegistrySnapshot), changed);
+        assert_eq!(service.policy, expected);
     }
 
     #[test]

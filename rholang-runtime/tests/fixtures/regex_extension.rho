@@ -166,7 +166,7 @@ Module RegexExtension {
           "max_term_nodes":4096,
           "max_proof_nodes":4096,
           "max_frontier":256,
-          "max_steps":4096,
+          "max_steps":10000000,
           "max_grade_bits":128
         }
       }

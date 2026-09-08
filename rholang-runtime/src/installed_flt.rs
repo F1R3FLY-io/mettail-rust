@@ -366,6 +366,21 @@ impl<'a> InstalledFltAdapter<'a> {
         Ok(Self { bindings, fingerprint })
     }
 
+    /// Resolve the action's expected theory sort through the already checked
+    /// named binding. Equal numeric sort/category coordinates are not assumed.
+    pub(crate) fn input_category<C: FnMut() -> bool>(
+        &self,
+        sort: TheorySortId,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<CategoryId, InstalledFltError> {
+        match self.bindings.sort(sort, budget)? {
+            Some(InstalledFltSort::Syntax { category, .. }) => Ok(category.id),
+            _ => Err(InstalledFltError::UnsupportedOrMalformed(
+                "action input is not a bound syntax sort",
+            )),
+        }
+    }
+
     pub(crate) fn to_kernel<C: FnMut() -> bool>(
         &self,
         par: &Par,

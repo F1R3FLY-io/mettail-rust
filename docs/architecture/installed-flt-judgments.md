@@ -9,11 +9,15 @@ through the language-qualified parser/template path. Execution must not render
 the term and parse it again.
 
 The [dispatch model](../../formal/rocq/runtime_grammar/theories/InstalledFltJudgments.v)
-specifies the missing installed-service boundary before its Rust implementation.
+specifies the installed-service boundary and precedes its Rust implementation.
 The existing semantic kernel and installation services are implemented. The
 private reflected-term adapter now connects closed positional constructors and
 String, Integer and Boolean atoms to that kernel in both directions. The
-qualified reduce/observe service and service wire are not yet connected.
+typed semantic service connects committed limits, bounded matcher preparation,
+exact action/observation selection, existing-kernel execution, complete output and
+receipt preparation, and final capability-authorized publication. Its Rholang
+wire interface and the node's funding/effect transaction are separate connections
+that are not yet implemented by this service.
 This document is their implementation contract, not a claim that the node
 demonstration is runnable or that every language shape is supported.
 
@@ -386,7 +390,57 @@ Pass the selected result sort into reconstruction. Observation result-sort
 mismatch, absent declarations and unsupported input shapes cannot fall back to
 another action or parser.
 
+### Installed preparation and exact names
+
+The private [semantic-service support](../../rholang-runtime/src/semantic_service.rs)
+owns an `InstalledSemanticBundle`: an authorized `Arc<InstalledLanguage>`, the
+matcher restored from that owner's borrowed image, and the same sealed handle.
+Its constructor accepts a table, handle and required rights, not a separately
+supplied image or matcher. Execution obtains its image from the stored owner and
+its grant from the stored handle. There is no matcher cache or second image
+compilation in this path. The structural adapter borrows the same owner.
+
+Preparation calls `authorize_all` before any setup or restoration work. A flat
+planning pass charges the setup schedule below, then the existing
+`SemanticTransitionMatcher::restore` constructs its transition and judgment
+automata. Both planning and the final post-restoration check consult cancellation.
+The restorer itself has no cancellation callback: this does not promise an
+interrupt inside restoration or a wall-clock response bound. A cancellation
+observed afterward refuses the still-private bundle.
+
+Exact name selection scans the admitted declaration roster with a bounded,
+allocation-free cursor. It does not assume that names are sorted. Each comparison
+charges a cursor step and the declaration name's UTF-8 length; the requested name
+is also charged before the scan. The existing compiler preserves source action
+order when assigning dense image action identifiers. Selection checks the selected
+identifier, ordered unary input, input/result sort names and declared rights
+against that same owner's image. Observation lookup first selects the declaration,
+then its named action, and checks its declared result against the action codomain.
+Unknown, differently cased or trailing-NUL names are not aliases.
+
+The operation right and action rights are reserved and collected into one private
+slice for the table's existing single-lock authorization. Possessing this selection
+or preparation is not permission to publish. Final publication must use the same
+sealed handle and complete required-right slice. The final table-read callback
+must only move already prepared results: acquiring the capability-directory lock
+there would reverse the existing directory-then-table lock order used by revocation.
+
 ## Private execution and complete publication
+
+`RholangLanguageRuntime::execute_semantic` accepts a `SemanticServiceRequest`:
+an opaque handle `Par`, `SemanticOperation::Reduce(action)` or
+`SemanticOperation::Observe(observation)`, an already constructed input `Par`,
+and requested `SemanticServiceLimits`. It returns `SemanticServiceReport`.
+Success contains every `SemanticServiceResult`, pairing a reflected term with
+its complete original `SemanticTransitionReceipt`. Failure contains a typed
+`InstalledSemanticError`, not a successful prefix. Both outcomes retain whole-
+request work, optional kernel aggregate, effective limits when authorization
+reached that stage, and the remaining cumulative boundary payload allowance.
+
+This typed report is not the canonical Rholang wire reply or a node settlement
+certificate. The downstream wire layer must carry the remaining allowances and
+establish neutral public ordering without discarding results. It must not reset
+work or treat the kernel's repeated receipt counters as new execution charges.
 
 The service follows this order. The pseudocode names operations, not new
 alternative implementations of the parser or kernel.
@@ -428,7 +482,7 @@ publish a prefix, spend a purse or commit an effect.
 
 ## Resource accounting
 
-For each resource dimension, the effective limit is the intersection of the
+For each kernel execution dimension, the effective limit is the intersection of the
 installed language, host policy and request ceilings:
 
 ```math
@@ -443,6 +497,76 @@ term bounds, and output bounds. `SemanticTransitionLimits::from` does not
 perform this intersection; the service must do it. Each stage must check its
 allocation/traversal limit before incurring the bounded work, not only after
 constructing a large reply.
+
+### Committed host ceilings and setup reservations
+
+`SemanticServiceLimits` contains the existing ten-coordinate
+`SemanticTransitionLimits` and a separate `boundary_payload_bytes` allowance.
+Execution limits use the intersection above. The boundary allowance is cumulative
+logical payload reserved by preparation and conversion; it is not the kernel's
+input-key or output-size limit. Because `TheoryLimitsV1` has no cumulative
+boundary-allocation coordinate, this allowance meets **host and request only**.
+Neither allowance is a semantic `Cost(G)` grade.
+
+The existing theory-to-execution projection is retained exactly:
+
+| Installed theory field | Execution coordinates |
+|---|---|
+| `max_steps` | `work`, `normalization_steps` |
+| `max_frontier` | `outputs`, `frontier`, `proofs` |
+| `max_proof_nodes` | `proof_nodes` |
+| `max_term_nodes` | `term_nodes` |
+| `max_output_nodes` | `output_nodes` |
+| `max_output_bytes` | `term_bytes`, `output_bytes` |
+
+Default host execution ceilings use `TheoryLimitsV1::default()` through this
+projection. The separately defined default boundary allowance is 16 MiB.
+Requests may attenuate any coordinate, including to zero; no minimum amount of
+work is silently granted to make a request succeed.
+
+Installation policy commitment domain `mettail-install-policy/6` retains the
+existing parser, artifact, grant and capability fields. It additionally commits
+the setup and receipt-transport schedule versions and all eleven semantic-service coordinates in fixed
+order, each encoded as a sixteen-byte big-endian unsigned word. Pointer width
+does not determine the encoding. The semantic-limit builder recomputes the
+commitment, and service construction recomputes it from the actual policy fields
+so a host's earlier field mutation cannot leave a stale fingerprint. This is a
+policy identity change, not a semantic-image ABI change.
+
+Setup schedule version 1 visits the transition automaton followed by the judgment
+automaton. It makes no allocation and uses no recursive descent. Every row below
+is charged before advancing into the corresponding work-bearing structure:
+
+| Structure | Logical work | Logical payload bytes |
+|---|---:|---:|
+| Automaton header, including empty rosters | 1 | 16 |
+| State: identifier, slot count, tag and argument count | 1 | 17 |
+| Fixed operator descriptor, including every non-positional form | 1 | 32 |
+| String or Bytes literal payload of length $`n`$ | $`n`$ | $`n`$ |
+| Invocation target and parent-slot count | 1 | 12 |
+| Parent-slot coordinate | 1 | 4 |
+| Entry identifier, rule, root and variable count | 1 | 20 |
+| Variable coordinate and reconstructed slot name | 12 | 23 |
+
+The last row reserves a four-byte coordinate, eight-byte length and at most
+eleven bytes for the existing `v`-prefixed decimal `u32` name. The fixed operator
+descriptor is a padded logical scalar/coordinate reservation, **not** a new
+encoder. Actual operator encoding and automaton reconstruction remain in the
+existing matcher. Literal lengths are observed without traversing their contents;
+all roster and slot walks are incrementally charged. A failed reservation leaves
+both balances unchanged and prevents restoration. Accepted earlier charges are
+not refunded on later failure.
+
+This schedule measures admitted image structure, not every temporary copy,
+hash-table probe, allocation, CPU instruction or byte of resident memory.
+Restoration remains constrained by artifact admission as well. The
+[service glue model](../../formal/rocq/runtime_grammar/theories/InstalledSemanticService.v)
+proves non-amplification, retention of every ordered prehash policy word, exact
+name-to-source coordinates, setup prefix conservation and the authorized
+same-owner factory contract. It does not prove hash injectivity, arbitrary
+restorer correctness or Rust implementation correctness. Focused source tests
+exercise all operator forms, both automata, exact/one-less limits, cancellation
+prefixes, policy commitments, and actual installed Regex actions and observations.
 
 `ProvenSemanticTransitions::work` is aggregate request work. Each transition's
 receipt repeats that aggregate. Charge it once, then add boundary conversion
@@ -473,8 +597,8 @@ proves this prefix accounting and shared-body observation, plus the logical
 buffer-growth reservation equations. `execute_action_accounted` and its
 guard-capable counterpart return the existing decision together with the
 aggregate on every outcome. The original execution methods project the
-decision from the same once-run body. Connecting these APIs to the qualified
-service remains a separate obligation.
+decision from the same once-run body. The qualified service uses that accounted
+entrypoint and absorbs only the increment beyond input admission.
 
 The kernel's child-call protocol is:
 
@@ -541,6 +665,73 @@ Logical work, semantic `Cost(G)` grades and actual host funding are different
 quantities. `NoSemanticGrade` does not mean free host execution. A costed image
 without the required resource evidence returns `ResourceGradeUnavailable`;
 purity cannot justify manufacturing a grade.
+
+### Complete receipt preparation and transport
+
+The service checks only its own immediate, unmodified kernel result. Publicly
+mutable transition records from an external caller do not carry this provenance.
+Each fresh receipt must match the installed language/theory/image commitments,
+selected action and executable entry rule, exact input key, output sort,
+effect/class, resource profile and single kernel work aggregate. The original
+input key is retained by an inexpensive shared `ContentKey` handle; successful
+kernel execution has already populated its shared flattened-byte cache.
+
+Output-key creation and graph publication are existing kernel responsibilities;
+the service does not traverse the graph again to reconstruct every output key.
+The inverse adapter still checks and reflects every output at the declared sort.
+For normalization, adjacent hop boundaries and the final output must agree.
+The first hop begins after the entry rewrite, not at the original input. Nested
+premise rule identifiers may differ from the entry rule. Judgment receipts retain
+their counts and identifiers; they are not expanded into invented proof trees.
+
+Receipt schedule version 1 reserves every field through a borrowed, flat walk.
+Its nesting is finite: receipts contain hops, hops contain proofs, and premises
+may contain intrinsic key lists. No recursive serializer is introduced.
+
+| Receipt component | Logical work | Logical payload bytes |
+|---|---:|---:|
+| Fixed receipt header: commitments, action/rule/effect, class, work | 1 | 117 |
+| Variable byte payload of length $`n`$, including its length | $`n+1`$ | $`n+8`$ |
+| No-grade resource tag | 1 | 1 |
+| Checked-grade descriptor, excluding its variable grade payload | 1 | 37 |
+| Premise, hop, proof or intrinsic-key list count | 1 | 8 |
+| Common premise descriptor: tag, rule and premise coordinate | 1 | 9 |
+| Transition or universal-premise extra coordinate | 1 | 4 |
+| Judgment extra coordinates and proof counts | 1 | 12 |
+| Guard and evidence commitments | 1 | 64 |
+| Intrinsic opcode and recorded work | 1 | 9 |
+| Hop's recorded work | 1 | 8 |
+| Normalization proof's rule coordinate | 1 | 4 |
+
+Freshness premises need only the common descriptor. Every intrinsic input/output
+key, hop boundary, proof boundary and repeated premise is visited and reserved.
+Recorded aggregate, hop and intrinsic work values are transported as fixed-width
+data; their numeric values are never added again as execution work. The checked-
+grade shape is accounted for by the walker but does not authorize a costed action
+without the kernel's separately required grade evidence.
+
+After reflection, the term and transition counts must agree before pairing.
+Pairing reserves sixteen logical payload bytes per result record, charges the
+record roster and each move, and moves the whole receipt without cloning its
+payloads. Duplicate derivations remain separate entries. A mismatch, cancellation
+or failure after a private prefix returns an error with no exported results.
+The final authorization callback only moves the complete prepared result and
+never invokes user callbacks while holding the installed-table lock.
+
+The [receipt transport model](../../formal/rocq/runtime_grammar/theories/SemanticReceiptTransport.v)
+mirrors all six premise variants and the complete hop/proof records. It proves
+both budget-prefix laws, preservation of every receipt field and ordered list,
+and rejection of unequal-length pairing. Its envelope projection reuses the
+existing binding predicate; it does not independently prove kernel semantics,
+fresh-output provenance, a final wire encoding or physical memory bounds.
+
+The [Regex fixture](../../rholang-runtime/tests/fixtures/regex_extension.rho)
+explicitly uses the existing finite theory default of 10,000,000 work units.
+That source policy covers whole-request processing, not just the rewrite kernel.
+Tests separately install an identical theory with a 4,096-unit source ceiling
+and require failure without outputs; larger host/request ceilings cannot amplify
+it. Each successful action and observation is also exercised at its measured
+exact request-work/payload bounds and with either bound one unit smaller.
 
 ## Formal correspondence and verification
 
@@ -707,9 +898,10 @@ still requires that public MeTTaIL-only node path and its end-to-end tests.
 The before/after authority relation constrains successful publication; it is
 not an operational proof that unauthorized requests never invoke the kernel.
 The service implementation must enforce that earlier authorization gate.
-The modeled receipt records do not yet represent every concrete intrinsic or
-normalization receipt field. Their complete wire transport requires an explicit
-correspondence proof, not an assertion that the abstract record is the wire ABI.
+The original dispatch model's abstract receipt records omit concrete intrinsic
+and normalization fields. `SemanticReceiptTransport` adds the complete typed
+records and whole-field transport laws. The concrete wire layer still requires
+its own encoding correspondence; neither model's record is itself the wire ABI.
 
 Run proof compilation and separate kernel checking one at a time under the
 repository's resource policy: at most 1 GiB memory, no swap, and generated
@@ -779,7 +971,9 @@ or same-sort cross-codomain normalization is invented at this boundary.
 The installed adapter tests establish concrete kernel/FLT round trips for the
 three existing fixture actions, exact literal preservation, ordered repeated
 occurrences, malformed-input refusal, cumulative allowances and deep-stack
-cleanup. They are not evidence that the additional application declarations or
-the public reduce/observe service already exist. The service must consume this
-private adapter, validate complete receipts, and only then publish its reply;
-the actual MeTTaIL-only node entrypoint remains a separate end-to-end gate.
+cleanup. Separate typed-service tests cover qualified execution, complete receipt
+preparation, exact/one-less limits, missing action rights, wrong owner/sort,
+cancellation and revocation immediately before final publication. Neither suite
+establishes the additional matching/replacement application declarations, the
+Rholang wire API or the actual MeTTaIL-only node entrypoint; those retain their
+separate implementation and end-to-end gates.

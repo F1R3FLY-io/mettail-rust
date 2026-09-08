@@ -49,6 +49,8 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.InstalledFltTraversal \
 	RuntimeGrammar.InstalledFltUsage \
 	RuntimeGrammar.SemanticWorkTransport \
+	RuntimeGrammar.InstalledSemanticService \
+	RuntimeGrammar.SemanticReceiptTransport \
 	RuntimeGrammar.ExecutableTheoryCore \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \

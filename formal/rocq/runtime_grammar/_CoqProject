@@ -90,6 +90,8 @@ theories/InstalledFltJudgments.v
 theories/InstalledFltTraversal.v
 theories/InstalledFltUsage.v
 theories/SemanticWorkTransport.v
+theories/InstalledSemanticService.v
+theories/SemanticReceiptTransport.v
 theories/SemanticIntrinsics.v
 theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v
