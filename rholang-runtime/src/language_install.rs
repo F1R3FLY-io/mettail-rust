@@ -3692,7 +3692,7 @@ pub(crate) mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Default)]
-    struct MemoryRegistry {
+    pub(crate) struct MemoryRegistry {
         modules: HashMap<String, RegistryModuleValue>,
         languages: HashMap<String, RegistryLanguageRecord>,
         trust_error: Option<String>,

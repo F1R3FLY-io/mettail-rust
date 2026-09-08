@@ -223,24 +223,34 @@ struct SemanticServiceUsage {
     remaining_boundary_payload_bytes: usize,
 }
 
-struct PreparedSemanticInvocation {
-    results: Vec<SemanticServiceResult>,
-    publication: InstalledSemanticPublication,
-}
-
-impl PreparedSemanticInvocation {
-    fn commit(self) -> Result<Vec<SemanticServiceResult>, InstalledSemanticError> {
-        // Move already prepared results only; no user callback, directory
-        // access, encoding or receiver dispatch runs under this table lock.
-        self.publication
-            .authorize(|| self.results)
-            .map_err(InstalledSemanticError::Access)
-    }
-}
-
 struct PreparedSemanticReport {
-    outcome: Result<PreparedSemanticInvocation, InstalledSemanticError>,
+    outcome: Result<Vec<SemanticServiceResult>, InstalledSemanticError>,
+    publication: Option<InstalledSemanticPublication>,
     usage: SemanticServiceUsage,
+}
+
+impl PreparedSemanticReport {
+    fn commit(self) -> SemanticServiceReport {
+        let outcome = self.outcome.and_then(|results| {
+            let publication = self
+                .publication
+                .ok_or(InstalledSemanticError::InvalidEvidence(
+                    "prepared success has no publication context",
+                ))?;
+            // Move already prepared results only; no user callback, directory
+            // access, encoding or receiver dispatch runs under this table lock.
+            publication
+                .authorize(|| results)
+                .map_err(InstalledSemanticError::Access)
+        });
+        SemanticServiceReport {
+            outcome,
+            work: self.usage.work,
+            kernel_work: self.usage.kernel_work,
+            effective_limits: self.usage.effective_limits,
+            remaining_boundary_payload_bytes: self.usage.remaining_boundary_payload_bytes,
+        }
+    }
 }
 
 impl RholangLanguageRuntime {
@@ -251,17 +261,8 @@ impl RholangLanguageRuntime {
         request: SemanticServiceRequest<'_>,
         is_cancelled: C,
     ) -> SemanticServiceReport {
-        let prepared =
-            self.prepare_semantic(request, SemanticServicePrefix::default(), is_cancelled);
-        SemanticServiceReport {
-            outcome: prepared
-                .outcome
-                .and_then(PreparedSemanticInvocation::commit),
-            work: prepared.usage.work,
-            kernel_work: prepared.usage.kernel_work,
-            effective_limits: prepared.usage.effective_limits,
-            remaining_boundary_payload_bytes: prepared.usage.remaining_boundary_payload_bytes,
-        }
+        self.prepare_semantic(request, SemanticServicePrefix::default(), is_cancelled)
+            .commit()
     }
 
     fn prepare_semantic<C: FnMut() -> bool>(
@@ -273,6 +274,7 @@ impl RholangLanguageRuntime {
         let mut work = prefix.work;
         let mut kernel_work = None;
         let mut effective_limits = None;
+        let mut publication = None;
         let host = self.service().policy().semantic_service;
         let mut remaining = 0;
         let outcome = (|| {
@@ -308,26 +310,40 @@ impl RholangLanguageRuntime {
                 remaining,
                 &mut is_cancelled,
             );
-            let prepared = prepare_semantic_results(
-                table,
-                &handle,
-                &installed,
-                &request,
-                limits,
-                &mut budget,
-                &mut kernel_work,
-            );
+            let prepared = (|| {
+                let SelectedSemanticOperation { action, input_sort, required } =
+                    select_semantic_operation(&installed, request.operation, &mut budget)?;
+                let authorized = table
+                    .authorize_all(&handle, &required)
+                    .map_err(InstalledSemanticError::Access)?;
+                let retained = publication.insert(InstalledSemanticPublication {
+                    table: Arc::clone(table),
+                    handle,
+                    required,
+                });
+                if !Arc::ptr_eq(&authorized, &installed) {
+                    return Err(InstalledSemanticError::InvalidEvidence("installed owner changed"));
+                }
+                let bundle = InstalledSemanticBundle::prepare_authorized(
+                    authorized,
+                    &retained.handle,
+                    &mut budget,
+                )?;
+                prepare_semantic_results(
+                    &bundle,
+                    SelectedSemanticExecution { action, input_sort },
+                    request.input,
+                    limits,
+                    &mut budget,
+                    &mut kernel_work,
+                )
+            })();
             remaining = budget.finish();
-            let (results, required) = prepared?;
-            let publication = InstalledSemanticPublication {
-                table: Arc::clone(table),
-                handle,
-                required,
-            };
-            Ok(PreparedSemanticInvocation { results, publication })
+            prepared
         })();
         PreparedSemanticReport {
             outcome,
+            publication,
             usage: SemanticServiceUsage {
                 work,
                 kernel_work,
@@ -339,23 +355,18 @@ impl RholangLanguageRuntime {
 }
 
 fn prepare_semantic_results<C: FnMut() -> bool>(
-    table: &InstalledLanguageTable,
-    handle: &InstalledLanguageHandle,
-    installed: &Arc<InstalledLanguage>,
-    request: &SemanticServiceRequest<'_>,
+    prepared: &InstalledSemanticBundle<'_>,
+    selection: SelectedSemanticExecution<'_>,
+    input: &Par,
     limits: SemanticServiceLimits,
     budget: &mut ReflectedCodecBudget<'_, C>,
     kernel_work: &mut Option<u64>,
-) -> Result<(Vec<SemanticServiceResult>, Vec<LanguageRight>), InstalledSemanticError> {
-    let selection = select_semantic_operation(installed, request.operation, budget)?;
-    let prepared = InstalledSemanticBundle::prepare(table, handle, &selection.required, budget)?;
-    if !Arc::ptr_eq(prepared.installed(), installed) {
-        return Err(InstalledSemanticError::InvalidEvidence("installed owner changed"));
-    }
+) -> Result<Vec<SemanticServiceResult>, InstalledSemanticError> {
+    let installed = prepared.installed();
     let adapter = InstalledFltAdapter::new(prepared.installed(), budget)?;
     let category = adapter.input_category(selection.input_sort, budget)?;
     let input = adapter.to_kernel(
-        request.input,
+        input,
         category,
         SemanticInputLimits {
             work: limits.execution.work,
@@ -423,8 +434,7 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     }
     let terms = adapter.reflect_transitions(&proven, selection.action.codomain, budget)?;
     let (_graph, transitions) = proven.into_parts();
-    let results = pair_semantic_results(terms, transitions, budget)?;
-    Ok((results, selection.required))
+    pair_semantic_results(terms, transitions, budget)
 }
 
 /// Whole-record move refinement of SemanticReceiptTransport.pair_results.
@@ -552,6 +562,11 @@ pub(crate) struct SelectedSemanticOperation<'a> {
     pub(crate) required: Vec<LanguageRight>,
 }
 
+struct SelectedSemanticExecution<'a> {
+    action: &'a TheoryActionImageV1,
+    input_sort: TheorySortId,
+}
+
 fn find_exact_name<'a, C: FnMut() -> bool>(
     names: impl Iterator<Item = &'a str>,
     requested: &str,
@@ -661,6 +676,14 @@ impl<'a> InstalledSemanticBundle<'a> {
         let installed = table
             .authorize_all(handle, required)
             .map_err(InstalledSemanticError::Access)?;
+        Self::prepare_authorized(installed, handle, budget)
+    }
+
+    fn prepare_authorized<C: FnMut() -> bool>(
+        installed: Arc<InstalledLanguage>,
+        handle: &'a InstalledLanguageHandle,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Self, InstalledSemanticError> {
         let image = installed
             .semantic_image()
             .ok_or(InstalledSemanticError::MissingSemanticImage)?;
@@ -894,11 +917,7 @@ pub(crate) mod tests {
         assert_eq!(prepared.usage.work, baseline.work + 7);
         assert_eq!(prepared.usage.kernel_work, baseline.kernel_work);
         assert_eq!(prepared.usage.remaining_boundary_payload_bytes, 0);
-        let results = prepared
-            .outcome
-            .expect("exact cumulative allowance")
-            .commit()
-            .expect("commit");
+        let results = prepared.commit().outcome.expect("commit");
         assert_eq!(results.len(), baseline_results.len());
         for (actual, expected) in results.iter().zip(&baseline_results) {
             assert_eq!(actual.term, expected.term);
@@ -917,6 +936,7 @@ pub(crate) mod tests {
                 Err(InstalledSemanticError::Resource(actual)) if actual == expected));
             assert!(rejected.usage.work >= 7 && rejected.usage.work <= short.execution.work);
             assert_eq!(rejected.usage.kernel_work, baseline.kernel_work);
+            assert!(rejected.publication.is_some(), "late failure retains full authority context");
         }
 
         let mut overdrawn = limits;
@@ -950,17 +970,202 @@ pub(crate) mod tests {
         assert_eq!(cancelled.usage.work, 7);
         assert_eq!(cancelled.usage.remaining_boundary_payload_bytes, payload);
         assert_eq!(cancelled.usage.kernel_work, None);
+        assert!(cancelled.publication.is_none(), "selection never completed");
 
         let pending = runtime.prepare_semantic(request(limits), prefix(), || false);
-        let invocation = pending.outcome.expect("private prepared results");
+        assert!(pending.outcome.is_ok(), "private prepared results");
         assert_eq!(pending.usage.kernel_work, baseline.kernel_work);
         runtime
             .revoke(&token)
             .expect("preparation retains no authority lock");
         assert!(matches!(
-            invocation.commit(),
+            pending.commit().outcome,
             Err(InstalledSemanticError::Access(LanguageAccessError::StaleHandle))
         ));
+    }
+
+    #[test]
+    fn semantic_service_retains_context_before_setup_but_not_before_full_authorization() {
+        use crate::language_install::tests::MemoryRegistry;
+        use crate::language_install::{
+            InstallCandidate, LanguageInstallPolicy, LanguageInstallService,
+            LANGUAGE_CAPABILITY_ABI_V1,
+        };
+        use mettail_grammar_core::{LanguageRights, RuntimePolicy, RuntimeTemplatePiece};
+        use std::collections::BTreeMap;
+
+        let (runtime, token, installed) =
+            crate::language_install::tests::installed_flt_adapter_fixture();
+        let input = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("actual guest parser");
+        let operation = SemanticOperation::Reduce("expand-plus");
+        let mut work = 7;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+        let selected =
+            select_semantic_operation(&installed, operation, &mut budget).expect("selection");
+        let selection_bytes = 1_000_000 - budget.finish();
+        let mut limits = SemanticServiceLimits::default();
+        limits.execution.work = work;
+        let report = runtime.prepare_semantic(
+            SemanticServiceRequest {
+                handle: &token,
+                operation,
+                input: &input,
+                limits,
+            },
+            SemanticServicePrefix { work: 7, payload_bytes: 11 },
+            || false,
+        );
+        assert_eq!(
+            report.outcome.unwrap_err(),
+            InstalledSemanticError::Resource(DynamicReflectionError::WorkLimit)
+        );
+        let retained = report
+            .publication
+            .expect("context retained before setup fails");
+        assert_eq!(retained.required, selected.required);
+        assert_eq!(report.usage.work, work);
+        assert_eq!(report.usage.kernel_work, None);
+        assert_eq!(
+            report.usage.remaining_boundary_payload_bytes,
+            limits.boundary_payload_bytes - 11 - selection_bytes
+        );
+
+        let report = runtime.prepare_semantic(
+            SemanticServiceRequest {
+                handle: &token,
+                operation: SemanticOperation::Reduce("not-an-action"),
+                input: &input,
+                limits: SemanticServiceLimits::default(),
+            },
+            SemanticServicePrefix::default(),
+            || false,
+        );
+        assert_eq!(report.outcome.unwrap_err(), InstalledSemanticError::UnknownAction);
+        assert!(report.publication.is_none());
+        assert_eq!(report.usage.kernel_work, None);
+
+        let value = mettail_elab::core_value::language_core_to_value(installed.language_core())
+            .expect("canonical source");
+        let attenuated = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::new(
+                LanguageRights::from_rights([
+                    LanguageRight::Parse,
+                    LanguageRight::Construct,
+                    LanguageRight::Observe,
+                ]),
+                RuntimePolicy::default(),
+                LANGUAGE_CAPABILITY_ABI_V1,
+            ),
+        )));
+        let other = attenuated
+            .install(InstallCandidate::Canonical(value))
+            .expect("attenuated installation");
+        let report = attenuated.prepare_semantic(
+            SemanticServiceRequest {
+                handle: &other,
+                operation: SemanticOperation::Observe("ExpandedPlus"),
+                input: &input,
+                limits: SemanticServiceLimits::default(),
+            },
+            SemanticServicePrefix::default(),
+            || false,
+        );
+        assert_eq!(
+            report.outcome.unwrap_err(),
+            InstalledSemanticError::Access(LanguageAccessError::MissingRight(
+                LanguageRight::Reduce
+            ))
+        );
+        assert!(report.publication.is_none(), "operation right alone is insufficient");
+        assert_eq!(report.usage.kernel_work, None);
+    }
+
+    #[test]
+    fn semantic_service_negative_context_rechecks_authority_without_changing_typed_error() {
+        use mettail_grammar_core::RuntimeTemplatePiece;
+        use rspace_plus_plus::rspace::rspace_interface::commit_produce;
+        use std::collections::BTreeMap;
+
+        for undetermined in [false, true] {
+            let (runtime, token, _) =
+                crate::language_install::tests::installed_flt_adapter_fixture();
+            let source = if undetermined { "a+" } else { "a" };
+            let input = runtime
+                .construct_template(
+                    &token,
+                    &[RuntimeTemplatePiece::Text(source.into())],
+                    &[],
+                    Some("Pattern"),
+                    &BTreeMap::new(),
+                )
+                .expect("actual guest parser");
+            let mut limits = SemanticServiceLimits::default();
+            if undetermined {
+                limits.execution.outputs = 0;
+            }
+            let report = runtime.prepare_semantic(
+                SemanticServiceRequest {
+                    handle: &token,
+                    operation: SemanticOperation::Reduce("expand-plus"),
+                    input: &input,
+                    limits,
+                },
+                SemanticServicePrefix::default(),
+                || false,
+            );
+            let error = report
+                .outcome
+                .as_ref()
+                .expect_err("negative judgment")
+                .clone();
+            if undetermined {
+                assert!(matches!(error, InstalledSemanticError::Undetermined(_)), "{error:?}");
+            } else {
+                assert_eq!(
+                    error,
+                    InstalledSemanticError::Refuted(SemanticMatchRefutation::NoTransition)
+                );
+            }
+            let retained = report
+                .publication
+                .as_ref()
+                .expect("negative retains publication context");
+            assert!(retained.required.contains(&LanguageRight::Reduce));
+            assert!(report
+                .usage
+                .kernel_work
+                .is_some_and(|w| w > 0 && w < report.usage.work));
+            let mut calls = 0;
+            assert_eq!(commit_produce(Some(retained), || calls += 1), Ok(()));
+            assert_eq!(calls, 1);
+            runtime
+                .revoke(&token)
+                .expect("context holds no registry lock");
+            assert_eq!(
+                commit_produce(Some(retained), || calls += 1),
+                Err(RSpaceError::ProduceCommitDenied)
+            );
+            assert_eq!(calls, 1, "revoked negative cannot mutate");
+            let work = report.usage.work;
+            let kernel = report.usage.kernel_work;
+            let typed = report.commit();
+            assert_eq!(
+                typed.outcome.unwrap_err(),
+                error,
+                "typed negative is not replaced by a stale-handle error"
+            );
+            assert_eq!((typed.work, typed.kernel_work), (work, kernel));
+        }
     }
 
     #[test]

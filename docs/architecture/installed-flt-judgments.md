@@ -1295,6 +1295,16 @@ algorithm, allocator, or lock implementation. Rust correspondence must retain
 the context before restoration and carry the budget's final remainder on
 both successful and failing exits, without rerunning the kernel.
 
+The service now implements this separation. It moves the selected rights and
+resolved handle into the retained context immediately after full authorization,
+then restores the matcher from that exact authorized owner. Its typed commit
+reauthorizes successful results only, preserving existing typed errors and
+usage. The 22-test semantic-service suite passes, including exact-prefix
+failure before matcher setup, absent context before full authorization, real
+Refuted and Undetermined Regex judgments, and revocation of a retained negative
+reply guard. This is preparation evidence; wire publication still requires
+the retained context to be passed to the actual owned producer.
+
 ### Prepaid reply completion
 
 The [reply-completion model](../../formal/rocq/runtime_grammar/theories/SemanticReplyCompletion.v)
