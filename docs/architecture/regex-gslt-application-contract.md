@@ -142,9 +142,9 @@ count Unicode scalars; the concrete rules advance byte cursors using existing
 UTF-8 intrinsics. They must preserve this correspondence:
 
 ```math
-\operatorname{byteSpan}(s,[i,j)) =
-[\operatorname{scalarByteOffset}(s,i),
- \operatorname{scalarByteOffset}(s,j)).
+\mathrm{byteSpan}(s,[i,j)) =
+[\mathrm{scalarByteOffset}(s,i),
+ \mathrm{scalarByteOffset}(s,j)).
 ```
 
 Here $`s`$ is the scalar sequence and $`[i,j)`$ its half-open reference span.
@@ -268,15 +268,15 @@ the rows are semantic test vectors, not runnable host code fragments.
 
 | Case | Operation and input | Expected result |
 |---|---|---|
-| M1 | Full match `a(b|c)+`, `abcb` | True |
-| M2 | Full match `a(b|c)+`, `ax` | False |
-| M3 | Full match `a(b|c)+`, `xab` | False, not substring search |
+| M1 | Full match `a(b\|c)+`, `abcb` | True |
+| M2 | Full match `a(b\|c)+`, `ax` | False |
+| M3 | Full match `a(b\|c)+`, `xab` | False, not substring search |
 | M4 | Nullable `a?`; full match `.`, newline | True in each case |
 | M5 | Full match `a{2,3}`, `a` / `aaa` / `aaaa` | False / true / false |
 | M6 | `a{3,2}` | Denotes failure |
 | D1 | Derivative `a`, `a+` | `DonePattern(a*)` |
 | S1 | Search `a+`, `xaaab` | `MatchFound(1,4,"aaa")` |
-| S2 | Search `a|aa`, `aa` | `MatchFound(0,2,"aa")` |
+| S2 | Search `a\|aa`, `aa` | `MatchFound(0,2,"aa")` |
 | S3 | Search `a+`, `bc` | `NoMatch` |
 | U1 | Search `λ+`, `éλλx` | `MatchFound(2,6,"λλ")` |
 | U2 | Literal U+00E9 against U+0065 U+0301 | False; no normalization |
