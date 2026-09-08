@@ -673,3 +673,71 @@ Run proof compilation and separate kernel checking one at a time under the
 repository's resource policy: at most 1 GiB memory, no swap, and generated
 proof artifacts under `target/`. Do not invoke the entire formal workspace to
 recheck this bounded dependency slice.
+
+## Regex application handoff
+
+The adapter's signature is language-neutral: any enrolled constructor may have
+any finite ordered domain of supported Syntax sorts. The current
+[inline Regex fixture](../../rholang-runtime/tests/fixtures/regex_extension.rho)
+exercises its actual parser and the `ExpandPlus`, `ExpandOptional` and
+`RemoveGroup` kernel rules. It does not yet implement full matching, search or
+replacement. The following roster relates that fixture and the existing
+[Regex signature model](../../formal/rocq/runtime_grammar/theories/RegexGsltSyntax.v)
+to the same structural boundary. Sort names below denote semantic sorts, not
+equal-numbered grammar categories.
+
+| Constructors | Ordered domain | Result | Concrete status |
+|---|---|---|---|
+| `PFail`, `PEpsilon`, `PAny` | Empty | Pattern | Installed fixture |
+| `PLiteral` | Scalar | Pattern | Installed fixture; native String child |
+| `PGroup`, `PStar`, `PPlus`, `POptional` | Pattern | Pattern | Installed fixture; the abstract model erases grouping |
+| `PAlt`, `PConcat` | Pattern, Pattern | Pattern | Installed fixture |
+| `PRepeat` | Pattern, Nat, Nat | Pattern | Signature model; application declaration remains required |
+| `MatchScan` | Pattern, Text | MatchState | Signature model |
+| `SearchScan` | Pattern, Text, Nat | SearchState | Signature model |
+| `NoMatch`; `MatchFound` | Empty; Nat, Nat, Text | MatchResult | Signature model |
+| `ReplacementEmpty`, `ReplacementWhole` | Empty | ReplacementTemplate | Signature model |
+| `ReplacementLiteral`; `ReplacementAppend` | Text; ReplacementTemplate, ReplacementTemplate | ReplacementTemplate | Signature model |
+| `OutputPattern`, `OutputBool`, `OutputMatch`, `OutputText` | Pattern; Bool; MatchResult; Text, respectively | Output | Signature model |
+| `OutputUndetermined` | Empty | Output | Signature model; not permission to turn service exhaustion into success |
+| `TEmpty`; `TCons` | Empty; Scalar, Text | Text | Abstract constructor presentation, not the native String encoding |
+| `NZero`; `NSucc` | Empty; Nat | Nat | Abstract constructor presentation, not the native Integer encoding |
+| `BFalse`, `BTrue` | Empty | Bool | Ordinary constructors, distinct from native Boolean atoms |
+
+Each concrete application declaration must supply the installed grammar pair
+and exact semantic signature used by the index. A semantic-only list used
+internally by `Utf8ConcatMany` need not cross the FLT boundary. If an application
+exposes that list, a binder, or another unsupported form as an input or result,
+the missing boundary support is a blocker; the application must not discard it
+to fit this adapter.
+
+The native-carrier and abstract Regex models have separate obligations. In the
+[matching model](../../formal/rocq/runtime_grammar/theories/RegexGsltMatch.v),
+Scalar is an abstract natural and Text is a list of scalars. Its Unicode
+realization must map valid scalar values to their UTF-8 encoding, and Text to
+the concatenation of those encodings. The native String codec preserves those
+bytes but does not prove this semantic realization or the scalar/byte-position
+correspondence required by search. Likewise, the natural-number embedding into
+signed 128-bit Integer is partial, with domain $`0\leq n\leq 2^{127}-1`$.
+The generic codec intentionally preserves negative Integers too; a sort named
+`Nat` does not add an undeclared nonnegativity predicate. Application rules and
+checked intrinsics must establish the numeric and UTF-8 premises, not infer them
+from the sort's spelling. Native Boolean atoms and `BFalse`/`BTrue` are also
+different representations unless the theory explicitly relates them.
+
+The practical application must connect these realizations to the proved
+matching/search/[replacement semantics](../../formal/rocq/runtime_grammar/theories/RegexGsltReplace.v).
+That is an application refinement, not another decoder or evaluator in the
+structural adapter. Request, continuation and `Done(result)` wrappers must be
+ordinary declared positional constructors of the application's computation
+sort. Endomorphic normalization terminates at a declared terminal wrapper; a
+qualified FLT pattern then extracts its result. No terminal outgoing rewrite
+or same-sort cross-codomain normalization is invented at this boundary.
+
+The installed adapter tests establish concrete kernel/FLT round trips for the
+three existing fixture actions, exact literal preservation, ordered repeated
+occurrences, malformed-input refusal, cumulative allowances and deep-stack
+cleanup. They are not evidence that the additional application declarations or
+the public reduce/observe service already exist. The service must consume this
+private adapter, validate complete receipts, and only then publish its reply;
+the actual MeTTaIL-only node entrypoint remains a separate end-to-end gate.
