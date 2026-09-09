@@ -114,6 +114,7 @@ theories/RegexGsltDerivativeMachine.v
 theories/RegexGsltRepeatMachine.v
 theories/RegexGsltSurfaceMachine.v
 theories/RegexGsltNativeAdmission.v
+theories/RegexGsltRepeatAdmission.v
 theories/RegexGsltSearch.v
 theories/RegexGsltReplace.v
 theories/RegexGsltRules.v

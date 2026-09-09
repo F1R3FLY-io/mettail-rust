@@ -3679,6 +3679,8 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    mod regex_gslt;
+
     use super::*;
     use mettail_grammar_core::{
         AdmissionBudget, AdmissionRefutation, AdmissionTheorem, DefaultRuntimeHost, DynamicValue,

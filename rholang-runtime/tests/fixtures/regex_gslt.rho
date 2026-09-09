@@ -1,0 +1,296 @@
+Module RegexGSLT {
+  Theory Regex() {
+    Data({
+      "types": [
+        "Pattern", "Computation", "NFrames", "DFrames", "EFrames",
+        {"name":"Scalar", "carrier":"String", "admits_variables":true},
+        {"name":"Text", "carrier":"String", "admits_variables":true},
+        {"name":"Bool", "carrier":"bool", "admits_variables":false},
+        {"name":"Flag", "carrier":"bool", "admits_variables":false},
+        {"name":"Nat", "carrier":"BigInt", "admits_variables":false},
+        {"name":"Grade", "carrier":"BigInt", "admits_variables":false}
+      ],
+      "literals": [
+        {"category":"Scalar", "pattern":"[A-Za-z0-9\\u{80}-\\u{10FFFF}]", "eval":["carrier", "str", Map()]},
+        {"category":"Nat", "pattern":"[0-9]+", "eval":["carrier", "int", Map()]}
+      ]
+    })
+    Terms {
+      PFail . |- "(?!)" : Pattern;
+      PEpsilon . |- "()" : Pattern;
+      PAny . |- "." : Pattern;
+      PLiteral . scalar:Scalar |- scalar : Pattern;
+      PGroup . body:Pattern |- "(" body ")" : Pattern;
+      BFalse . |- "false" : Bool;
+      BTrue . |- "true" : Bool;
+      CallNullable . p:Pattern |- "nullable(" p ")" : Computation;
+      CallDerivative . c:Scalar, p:Pattern |- "derivative(" c "," p ")" : Computation;
+      DoneBool . b:Bool |- "doneBool(" b ")" : Computation;
+      DonePattern . p:Pattern |- "donePattern(" p ")" : Computation;
+
+      SAlt . p:Pattern, q:Pattern |- "smartAlt(" p "," q ")" : Computation;
+      SAltRight . p:Pattern, q:Pattern |- "smartAltRight(" p "," q ")" : Computation;
+      SAltEqual . p:Pattern, q:Pattern |- "smartAltEqual(" p "," q ")" : Computation;
+      SAltDecide . b:Flag, p:Pattern, q:Pattern |- "smartAltDecide(" b "," p "," q ")" : Computation;
+      SConcat . p:Pattern, q:Pattern |- "smartConcat(" p "," q ")" : Computation;
+      SConcatRight . p:Pattern, q:Pattern |- "smartConcatRight(" p "," q ")" : Computation;
+      SStar . p:Pattern |- "smartStar(" p ")" : Computation;
+      SDone . p:Pattern |- "smartDone(" p ")" : Computation;
+
+      NNil . |- "nNil" : NFrames;
+      NAltLeft . p:Pattern, k:NFrames |- "nAltLeft(" p "," k ")" : NFrames;
+      NAltRight . b:Bool, k:NFrames |- "nAltRight(" b "," k ")" : NFrames;
+      NConcatLeft . p:Pattern, k:NFrames |- "nConcatLeft(" p "," k ")" : NFrames;
+      NConcatRight . b:Bool, k:NFrames |- "nConcatRight(" b "," k ")" : NFrames;
+      NEval . p:Pattern, k:NFrames |- "nEval(" p "," k ")" : Computation;
+      NReturn . b:Bool, k:NFrames |- "nReturn(" b "," k ")" : Computation;
+      NDone . b:Bool |- "nDone(" b ")" : Computation;
+
+      DNil . |- "dNil" : DFrames;
+      DAltLeft . c:Scalar, q:Pattern, k:DFrames |- "dAltLeft(" c "," q "," k ")" : DFrames;
+      DAltRight . p:Pattern, k:DFrames |- "dAltRight(" p "," k ")" : DFrames;
+      DConcatLeft . c:Scalar, p:Pattern, q:Pattern, k:DFrames |- "dConcatLeft(" c "," p "," q "," k ")" : DFrames;
+      DConcatProduct . c:Scalar, p:Pattern, q:Pattern, k:DFrames |- "dConcatProduct(" c "," p "," q "," k ")" : DFrames;
+      DConcatRight . p:Pattern, k:DFrames |- "dConcatRight(" p "," k ")" : DFrames;
+      DStarBody . p:Pattern, k:DFrames |- "dStarBody(" p "," k ")" : DFrames;
+      DStarFactor . p:Pattern, k:DFrames |- "dStarFactor(" p "," k ")" : DFrames;
+      DEval . c:Scalar, p:Pattern, k:DFrames |- "dEval(" c "," p "," k ")" : Computation;
+      DCompare . c:Scalar, d:Scalar, k:DFrames |- "dCompare(" c "," d "," k ")" : Computation;
+      DDecide . b:Flag, k:DFrames |- "dDecide(" b "," k ")" : Computation;
+      DReturn . p:Pattern, k:DFrames |- "dReturn(" p "," k ")" : Computation;
+      DNullable . sub:Computation, c:Scalar, q:Pattern, p:Pattern, k:DFrames |- "dNullable(" sub "," c "," q "," p "," k ")" : Computation;
+      DSmart . sub:Computation, k:DFrames |- "dSmart(" sub "," k ")" : Computation;
+      DDone . p:Pattern |- "dDone(" p ")" : Computation;
+
+      ENil . |- "eNil" : EFrames;
+      EAltLeft . p:Pattern, k:EFrames |- "eAltLeft(" p "," k ")" : EFrames;
+      EAltRight . p:Pattern, k:EFrames |- "eAltRight(" p "," k ")" : EFrames;
+      EConcatLeft . p:Pattern, k:EFrames |- "eConcatLeft(" p "," k ")" : EFrames;
+      EConcatRight . p:Pattern, k:EFrames |- "eConcatRight(" p "," k ")" : EFrames;
+      EStar . k:EFrames |- "eStar(" k ")" : EFrames;
+      EPlus . k:EFrames |- "ePlus(" k ")" : EFrames;
+      EPlusFactor . p:Pattern, k:EFrames |- "ePlusFactor(" p "," k ")" : EFrames;
+      EOptional . k:EFrames |- "eOptional(" k ")" : EFrames;
+      ERepeat . lo:Nat, hi:Nat, k:EFrames |- "eRepeat(" lo "," hi "," k ")" : EFrames;
+      EEval . p:Pattern, k:EFrames |- "eEval(" p "," k ")" : Computation;
+      EReturn . p:Pattern, k:EFrames |- "eReturn(" p "," k ")" : Computation;
+      ESmart . sub:Computation, k:EFrames |- "eSmart(" sub "," k ")" : Computation;
+      ERepeating . sub:Computation, k:EFrames |- "eRepeating(" sub "," k ")" : Computation;
+      EDone . p:Pattern |- "eDone(" p ")" : Computation;
+      EScalar . c:Scalar, k:EFrames |- "eScalar(" c "," k ")" : Computation;
+      EReadScalar . c:Scalar, zero:Nat, k:EFrames |- "eReadScalar(" c "," zero "," k ")" : Computation;
+      EScalarDecide . b:Flag, c:Scalar, k:EFrames |- "eScalarDecide(" b "," c "," k ")" : Computation;
+
+      RInit . p:Pattern, lo:Nat, hi:Nat |- "rInit(" p "," lo "," hi ")" : Computation;
+      RBounds . p:Pattern, lo:Nat, hi:Nat, zero:Nat, one:Nat |- "rBounds(" p "," lo "," hi "," zero "," one ")" : Computation;
+      RRequired . p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, acc:Pattern |- "rRequired(" p "," lo "," hi "," i "," one "," acc ")" : Computation;
+      RAtLower . b:Flag, p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, acc:Pattern |- "rAtLower(" b "," p "," lo "," hi "," i "," one "," acc ")" : Computation;
+      RCheckUpper . p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, acc:Pattern |- "rCheckUpper(" p "," lo "," hi "," i "," one "," acc ")" : Computation;
+      RAtUpper . b:Flag, p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, acc:Pattern |- "rAtUpper(" b "," p "," lo "," hi "," i "," one "," acc ")" : Computation;
+      RAppend . p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, sub:Computation |- "rAppend(" p "," lo "," hi "," i "," one "," sub ")" : Computation;
+      ROptional . p:Pattern, hi:Nat, i:Nat, one:Nat, req:Pattern, acc:Pattern |- "rOptional(" p "," hi "," i "," one "," req "," acc ")" : Computation;
+      ROptionalAtUpper . b:Flag, p:Pattern, hi:Nat, i:Nat, one:Nat, req:Pattern, acc:Pattern |- "rOptionalAtUpper(" b "," p "," hi "," i "," one "," req "," acc ")" : Computation;
+      RProduct . p:Pattern, hi:Nat, i:Nat, one:Nat, req:Pattern, sub:Computation |- "rProduct(" p "," hi "," i "," one "," req "," sub ")" : Computation;
+      RAlternative . p:Pattern, hi:Nat, i:Nat, one:Nat, req:Pattern, sub:Computation |- "rAlternative(" p "," hi "," i "," one "," req "," sub ")" : Computation;
+      RFinish . sub:Computation |- "rFinish(" sub ")" : Computation;
+      RDone . p:Pattern |- "rDone(" p ")" : Computation;
+
+      NullableSurface . sub:Computation |- "nullableSurface(" sub ")" : Computation;
+      NullableCore . sub:Computation |- "nullableCore(" sub ")" : Computation;
+      DerivativeScalar . c:Scalar, p:Pattern |- "derivativeScalar(" c "," p ")" : Computation;
+      DerivativeReadScalar . c:Scalar, p:Pattern, zero:Nat |- "derivativeReadScalar(" c "," p "," zero ")" : Computation;
+      DerivativeScalarDecide . b:Flag, c:Scalar, p:Pattern |- "derivativeScalarDecide(" b "," c "," p ")" : Computation;
+      DerivativeSurface . c:Scalar, sub:Computation |- "derivativeSurface(" c "," sub ")" : Computation;
+      DerivativeCore . sub:Computation |- "derivativeCore(" sub ")" : Computation;
+    }
+    Data({
+      "terms": [
+        {"label":"PAlt", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p",["lit","|"],"q"], "assoc":"left", "prefix_bp":10},
+        {"label":"PConcat", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p","q"], "assoc":"left", "prefix_bp":20},
+        {"label":"PStar", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","*"]], "prefix_bp":30},
+        {"label":"PPlus", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","+"]], "prefix_bp":30},
+        {"label":"POptional", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","?"]], "prefix_bp":30},
+        {"label":"PRepeat", "category":"Pattern", "context":[["param","p","Pattern"],["param","lo","Nat"],["param","hi","Nat"]], "syntax":["p",["lit","{"],"lo",["lit",","],"hi",["lit","}"]], "prefix_bp":30}
+      ]
+    })
+    Equations {
+      (PAlt (PFail) P) == P;
+      (PAlt P (PFail)) == P;
+      (PAlt P P) == P;
+      (PConcat (PFail) P) == (PFail);
+      (PConcat P (PFail)) == (PFail);
+      (PConcat (PEpsilon) P) == P;
+      (PConcat P (PEpsilon)) == P;
+      (PStar (PFail)) == (PEpsilon);
+      (PStar (PEpsilon)) == (PEpsilon);
+      (PStar (PStar P)) == (PStar P);
+    }
+    Rewrites {
+      StartNullable : (CallNullable P) ~> (NullableSurface (EEval P (ENil)));
+      StartDerivative : (CallDerivative C P) ~> (DerivativeScalar C P);
+      NullableSurfaceStep : if S ~> T then (NullableSurface S) ~> (NullableSurface T);
+      NullableSurfaceDone : (NullableSurface (EDone P)) ~> (NullableCore (NEval P (NNil)));
+      NullableCoreStep : if S ~> T then (NullableCore S) ~> (NullableCore T);
+      NullableCoreDone : (NullableCore (NDone B)) ~> (DoneBool B);
+      DerivativeSurfaceStep : if S ~> T then (DerivativeSurface C S) ~> (DerivativeSurface C T);
+      DerivativeSurfaceDone : (DerivativeSurface C (EDone P)) ~> (DerivativeCore (DEval C P (DNil)));
+      DerivativeCoreStep : if S ~> T then (DerivativeCore S) ~> (DerivativeCore T);
+      DerivativeCoreDone : (DerivativeCore (DDone P)) ~> (DonePattern P);
+
+      SmartAltFail : (SAlt (PFail) Q) ~> (SDone Q);
+      SmartAltEpsilon : (SAlt (PEpsilon) Q) ~> (SAltRight (PEpsilon) Q);
+      SmartAltLiteral : (SAlt (PLiteral C) Q) ~> (SAltRight (PLiteral C) Q);
+      SmartAltAny : (SAlt (PAny) Q) ~> (SAltRight (PAny) Q);
+      SmartAltAlt : (SAlt (PAlt P R) Q) ~> (SAltRight (PAlt P R) Q);
+      SmartAltConcat : (SAlt (PConcat P R) Q) ~> (SAltRight (PConcat P R) Q);
+      SmartAltStar : (SAlt (PStar P) Q) ~> (SAltRight (PStar P) Q);
+      SmartAltRightFail : (SAltRight P (PFail)) ~> (SDone P);
+      SmartAltRightEpsilon : (SAltRight P (PEpsilon)) ~> (SAltEqual P (PEpsilon));
+      SmartAltRightLiteral : (SAltRight P (PLiteral C)) ~> (SAltEqual P (PLiteral C));
+      SmartAltRightAny : (SAltRight P (PAny)) ~> (SAltEqual P (PAny));
+      SmartAltRightAlt : (SAltRight P (PAlt Q R)) ~> (SAltEqual P (PAlt Q R));
+      SmartAltRightConcat : (SAltRight P (PConcat Q R)) ~> (SAltEqual P (PConcat Q R));
+      SmartAltRightStar : (SAltRight P (PStar Q)) ~> (SAltEqual P (PStar Q));
+      SmartConcatFail : (SConcat (PFail) Q) ~> (SDone (PFail));
+      SmartConcatEpsilon : (SConcat (PEpsilon) Q) ~> (SDone Q);
+      SmartConcatLiteral : (SConcat (PLiteral C) Q) ~> (SConcatRight (PLiteral C) Q);
+      SmartConcatAny : (SConcat (PAny) Q) ~> (SConcatRight (PAny) Q);
+      SmartConcatAlt : (SConcat (PAlt P R) Q) ~> (SConcatRight (PAlt P R) Q);
+      SmartConcatConcat : (SConcat (PConcat P R) Q) ~> (SConcatRight (PConcat P R) Q);
+      SmartConcatStar : (SConcat (PStar P) Q) ~> (SConcatRight (PStar P) Q);
+      SmartConcatRightFail : (SConcatRight P (PFail)) ~> (SDone (PFail));
+      SmartConcatRightEpsilon : (SConcatRight P (PEpsilon)) ~> (SDone P);
+      SmartConcatRightLiteral : (SConcatRight P (PLiteral C)) ~> (SDone (PConcat P (PLiteral C)));
+      SmartConcatRightAny : (SConcatRight P (PAny)) ~> (SDone (PConcat P (PAny)));
+      SmartConcatRightAlt : (SConcatRight P (PAlt Q R)) ~> (SDone (PConcat P (PAlt Q R)));
+      SmartConcatRightConcat : (SConcatRight P (PConcat Q R)) ~> (SDone (PConcat P (PConcat Q R)));
+      SmartConcatRightStar : (SConcatRight P (PStar Q)) ~> (SDone (PConcat P (PStar Q)));
+      SmartStarFail : (SStar (PFail)) ~> (SDone (PEpsilon));
+      SmartStarEpsilon : (SStar (PEpsilon)) ~> (SDone (PEpsilon));
+      SmartStarLiteral : (SStar (PLiteral C)) ~> (SDone (PStar (PLiteral C)));
+      SmartStarAny : (SStar (PAny)) ~> (SDone (PStar (PAny)));
+      SmartStarAlt : (SStar (PAlt P Q)) ~> (SDone (PStar (PAlt P Q)));
+      SmartStarConcat : (SStar (PConcat P Q)) ~> (SDone (PStar (PConcat P Q)));
+      SmartStarStar : (SStar (PStar P)) ~> (SDone (PStar P));
+
+      NullableFail : (NEval (PFail) K) ~> (NReturn (BFalse) K);
+      NullableEpsilon : (NEval (PEpsilon) K) ~> (NReturn (BTrue) K);
+      NullableLiteral : (NEval (PLiteral C) K) ~> (NReturn (BFalse) K);
+      NullableAny : (NEval (PAny) K) ~> (NReturn (BFalse) K);
+      NullableStar : (NEval (PStar P) K) ~> (NReturn (BTrue) K);
+      NullableAlt : (NEval (PAlt P Q) K) ~> (NEval P (NAltLeft Q K));
+      NullableConcat : (NEval (PConcat P Q) K) ~> (NEval P (NConcatLeft Q K));
+      NullableReturn : (NReturn B (NNil)) ~> (NDone B);
+      NullableAltLeft : (NReturn B (NAltLeft Q K)) ~> (NEval Q (NAltRight B K));
+      NullableAltFalse : (NReturn B (NAltRight (BFalse) K)) ~> (NReturn B K);
+      NullableAltTrue : (NReturn B (NAltRight (BTrue) K)) ~> (NReturn (BTrue) K);
+      NullableConcatLeft : (NReturn B (NConcatLeft Q K)) ~> (NEval Q (NConcatRight B K));
+      NullableConcatFalse : (NReturn B (NConcatRight (BFalse) K)) ~> (NReturn (BFalse) K);
+      NullableConcatTrue : (NReturn B (NConcatRight (BTrue) K)) ~> (NReturn B K);
+
+      DerivativeFail : (DEval C (PFail) K) ~> (DReturn (PFail) K);
+      DerivativeEpsilon : (DEval C (PEpsilon) K) ~> (DReturn (PFail) K);
+      DerivativeLiteral : (DEval C (PLiteral D) K) ~> (DCompare C D K);
+      DerivativeAny : (DEval C (PAny) K) ~> (DReturn (PEpsilon) K);
+      DerivativeAlt : (DEval C (PAlt P Q) K) ~> (DEval C P (DAltLeft C Q K));
+      DerivativeConcat : (DEval C (PConcat P Q) K) ~> (DEval C P (DConcatLeft C P Q K));
+      DerivativeStar : (DEval C (PStar P) K) ~> (DEval C P (DStarBody P K));
+      DerivativeReturn : (DReturn P (DNil)) ~> (DDone P);
+      DerivativeAltLeft : (DReturn P (DAltLeft C Q K)) ~> (DEval C Q (DAltRight P K));
+      DerivativeAltRight : (DReturn Q (DAltRight P K)) ~> (DSmart (SAlt P Q) K);
+      DerivativeConcatLeft : (DReturn D (DConcatLeft C P Q K)) ~> (DSmart (SConcat D Q) (DConcatProduct C P Q K));
+      DerivativeConcatProduct : (DReturn D (DConcatProduct C P Q K)) ~> (DNullable (NEval P (NNil)) C Q D K);
+      DerivativeConcatRight : (DReturn D (DConcatRight P K)) ~> (DSmart (SAlt P D) K);
+      DerivativeStarBody : (DReturn D (DStarBody P K)) ~> (DSmart (SStar P) (DStarFactor D K));
+      DerivativeStarFactor : (DReturn P (DStarFactor D K)) ~> (DSmart (SConcat D P) K);
+      DerivativeSmartStep : if S ~> T then (DSmart S K) ~> (DSmart T K);
+      DerivativeSmartDone : (DSmart (SDone P) K) ~> (DReturn P K);
+      DerivativeNullableStep : if S ~> T then (DNullable S C Q P K) ~> (DNullable T C Q P K);
+      DerivativeNullableTrue : (DNullable (NDone (BTrue)) C Q P K) ~> (DEval C Q (DConcatRight P K));
+      DerivativeNullableFalse : (DNullable (NDone (BFalse)) C Q P K) ~> (DReturn P K);
+
+      ElaborateFail : (EEval (PFail) K) ~> (EReturn (PFail) K);
+      ElaborateEpsilon : (EEval (PEpsilon) K) ~> (EReturn (PEpsilon) K);
+      ElaborateLiteral : (EEval (PLiteral C) K) ~> (EScalar C K);
+      ElaborateAny : (EEval (PAny) K) ~> (EReturn (PAny) K);
+      ElaborateGroup : (EEval (PGroup P) K) ~> (EEval P K);
+      ElaborateAlt : (EEval (PAlt P Q) K) ~> (EEval P (EAltLeft Q K));
+      ElaborateConcat : (EEval (PConcat P Q) K) ~> (EEval P (EConcatLeft Q K));
+      ElaborateStar : (EEval (PStar P) K) ~> (EEval P (EStar K));
+      ElaboratePlus : (EEval (PPlus P) K) ~> (EEval P (EPlus K));
+      ElaborateOptional : (EEval (POptional P) K) ~> (EEval P (EOptional K));
+      ElaborateRepeat : (EEval (PRepeat P L U) K) ~> (EEval P (ERepeat L U K));
+      ElaborateReturn : (EReturn P (ENil)) ~> (EDone P);
+      ElaborateAltLeft : (EReturn P (EAltLeft Q K)) ~> (EEval Q (EAltRight P K));
+      ElaborateAltRight : (EReturn Q (EAltRight P K)) ~> (ESmart (SAlt P Q) K);
+      ElaborateConcatLeft : (EReturn P (EConcatLeft Q K)) ~> (EEval Q (EConcatRight P K));
+      ElaborateConcatRight : (EReturn Q (EConcatRight P K)) ~> (ESmart (SConcat P Q) K);
+      ElaborateStarReturn : (EReturn P (EStar K)) ~> (ESmart (SStar P) K);
+      ElaboratePlusReturn : (EReturn P (EPlus K)) ~> (ESmart (SStar P) (EPlusFactor P K));
+      ElaboratePlusFactor : (EReturn Q (EPlusFactor P K)) ~> (ESmart (SConcat P Q) K);
+      ElaborateOptionalReturn : (EReturn P (EOptional K)) ~> (ESmart (SAlt (PEpsilon) P) K);
+      ElaborateRepeatReturn : (EReturn P (ERepeat L U K)) ~> (ERepeating (RInit P L U) K);
+      ElaborateSmartStep : if S ~> T then (ESmart S K) ~> (ESmart T K);
+      ElaborateSmartDone : (ESmart (SDone P) K) ~> (EReturn P K);
+      ElaborateRepeatStep : if S ~> T then (ERepeating S K) ~> (ERepeating T K);
+      ElaborateRepeatDone : (ERepeating (RDone P) K) ~> (EReturn P K);
+
+      RepeatAppendStep : if S ~> T then (RAppend P L U I O S) ~> (RAppend P L U I O T);
+      RepeatProductStep : if S ~> T then (RProduct P U I O R S) ~> (RProduct P U I O R T);
+      RepeatProductDone : (RProduct P U I O R (SDone A)) ~> (RAlternative P U I O R (SAlt (PEpsilon) A));
+      RepeatAlternativeStep : if S ~> T then (RAlternative P U I O R S) ~> (RAlternative P U I O R T);
+      RepeatFinishStep : if S ~> T then (RFinish S) ~> (RFinish T);
+      RepeatFinishDone : (RFinish (SDone P)) ~> (RDone P);
+    }
+    Data({
+      "rewrites": [
+        {"name":"SmartAltCompare","context":[["typed","p","Pattern"],["typed","q","Pattern"]],"left":["SAltEqual","p","q"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["p","q"],"outputs":[["typed","b","Flag"]]}]],"right":["SAltDecide","b","p","q"]},
+        {"name":"SmartAltSame","left":["SAltDecide",["lit","bool",true],"p","q"],"right":["SDone","p"]},
+        {"name":"SmartAltDifferent","left":["SAltDecide",["lit","bool",false],"p","q"],"right":["SDone",["PAlt","p","q"]]},
+        {"name":"DerivativeCompare","context":[["typed","c","Scalar"],["typed","d","Scalar"],["typed","k","DFrames"]],"left":["DCompare","c","d","k"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["c","d"],"outputs":[["typed","b","Flag"]]}]],"right":["DDecide","b","k"]},
+        {"name":"DerivativeSame","left":["DDecide",["lit","bool",true],"k"],"right":["DReturn",["PEpsilon"],"k"]},
+        {"name":"DerivativeDifferent","left":["DDecide",["lit","bool",false],"k"],"right":["DReturn",["PFail"],"k"]},
+        {"name":"ElaborateScalarStart","left":["EScalar","c","k"],"right":["EReadScalar","c",["lit","i128",0],"k"]},
+        {"name":"ElaborateScalarRead","context":[["typed","c","Scalar"],["typed","zero","Nat"],["typed","k","EFrames"]],"left":["EReadScalar","c","zero","k"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["c","zero"],"outputs":[["typed","scalar","Scalar"],["typed","next","Nat"]]}],["intrinsic",{"op":"exact_term_eq","inputs":["c","scalar"],"outputs":[["typed","b","Flag"]]}]],"right":["EScalarDecide","b","c","k"]},
+        {"name":"ElaborateScalarAdmitted","left":["EScalarDecide",["lit","bool",true],"c","k"],"right":["EReturn",["PLiteral","c"],"k"]},
+        {"name":"DerivativeScalarStart","left":["DerivativeScalar","c","p"],"right":["DerivativeReadScalar","c","p",["lit","i128",0]]},
+        {"name":"DerivativeScalarRead","context":[["typed","c","Scalar"],["typed","p","Pattern"],["typed","zero","Nat"]],"left":["DerivativeReadScalar","c","p","zero"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["c","zero"],"outputs":[["typed","scalar","Scalar"],["typed","next","Nat"]]}],["intrinsic",{"op":"exact_term_eq","inputs":["c","scalar"],"outputs":[["typed","b","Flag"]]}]],"right":["DerivativeScalarDecide","b","c","p"]},
+        {"name":"DerivativeScalarAdmitted","left":["DerivativeScalarDecide",["lit","bool",true],"c","p"],"right":["DerivativeSurface","c",["EEval","p",["ENil"]]]},
+        {"name":"RepeatInitialize","left":["RInit","p","lo","hi"],"right":["RBounds","p","lo","hi",["lit","i128",0],["lit","i128",1]]},
+        {"name":"RepeatAdmitBounds","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","zero","Nat"],["typed","one","Nat"]],"left":["RBounds","p","lo","hi","zero","one"],"premises":[["intrinsic",{"op":"checked_nat_add","inputs":["lo","zero"],"outputs":[["typed","lower","Nat"]]}],["intrinsic",{"op":"checked_nat_add","inputs":["hi","zero"],"outputs":[["typed","upper","Nat"]]}]],"right":["RRequired","p","lower","upper","zero","one",["PEpsilon"]]},
+        {"name":"RepeatCheckLower","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","acc","Pattern"]],"left":["RRequired","p","lo","hi","i","one","acc"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["i","lo"],"outputs":[["typed","b","Flag"]]}]],"right":["RAtLower","b","p","lo","hi","i","one","acc"]},
+        {"name":"RepeatReachedLower","left":["RAtLower",["lit","bool",true],"p","lo","hi","i","one","acc"],"right":["ROptional","p","hi","i","one","acc",["PEpsilon"]]},
+        {"name":"RepeatBelowLower","left":["RAtLower",["lit","bool",false],"p","lo","hi","i","one","acc"],"right":["RCheckUpper","p","lo","hi","i","one","acc"]},
+        {"name":"RepeatCheckRequiredUpper","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","acc","Pattern"]],"left":["RCheckUpper","p","lo","hi","i","one","acc"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["i","hi"],"outputs":[["typed","b","Flag"]]}]],"right":["RAtUpper","b","p","lo","hi","i","one","acc"]},
+        {"name":"RepeatReversedBounds","left":["RAtUpper",["lit","bool",true],"p","lo","hi","i","one","acc"],"right":["RDone",["PFail"]]},
+        {"name":"RepeatAppendRequired","left":["RAtUpper",["lit","bool",false],"p","lo","hi","i","one","acc"],"right":["RAppend","p","lo","hi","i","one",["SConcat","p","acc"]]},
+        {"name":"RepeatIncrementRequired","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","acc","Pattern"]],"left":["RAppend","p","lo","hi","i","one",["SDone","acc"]],"premises":[["intrinsic",{"op":"checked_nat_add","inputs":["i","one"],"outputs":[["typed","next","Nat"]]}]],"right":["RRequired","p","lo","hi","next","one","acc"]},
+        {"name":"RepeatCheckOptionalUpper","context":[["typed","p","Pattern"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","req","Pattern"],["typed","acc","Pattern"]],"left":["ROptional","p","hi","i","one","req","acc"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["i","hi"],"outputs":[["typed","b","Flag"]]}]],"right":["ROptionalAtUpper","b","p","hi","i","one","req","acc"]},
+        {"name":"RepeatReachedUpper","left":["ROptionalAtUpper",["lit","bool",true],"p","hi","i","one","req","acc"],"right":["RFinish",["SConcat","req","acc"]]},
+        {"name":"RepeatBelowUpper","left":["ROptionalAtUpper",["lit","bool",false],"p","hi","i","one","req","acc"],"right":["RProduct","p","hi","i","one","req",["SConcat","p","acc"]]},
+        {"name":"RepeatIncrementOptional","context":[["typed","p","Pattern"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","req","Pattern"],["typed","acc","Pattern"]],"left":["RAlternative","p","hi","i","one","req",["SDone","acc"]],"premises":[["intrinsic",{"op":"checked_nat_add","inputs":["i","one"],"outputs":[["typed","next","Nat"]]}]],"right":["ROptional","p","hi","next","one","req","acc"]}
+      ],
+      "rights": ["Parse", "Construct", "Match", "Reduce", "Observe", "ReflectAst"],
+      "oslf": {
+        "effects": [{"name":"Pure", "class":"pure", "requires":[], "emits":[]}],
+        "actions": [
+          {"id":"nullable", "domain":["Computation"], "codomain":"Computation",
+           "transition":["rewrite","StartNullable"], "effect":"Pure", "effect_class":"pure",
+           "required_rights":["Reduce"], "grade":"Grade",
+           "execution":{"kind":"normalize", "relation_sort":"Computation", "terminal_constructors":["DoneBool"], "branching":"deterministic"}},
+          {"id":"derivative", "domain":["Computation"], "codomain":"Computation",
+           "transition":["rewrite","StartDerivative"], "effect":"Pure", "effect_class":"pure",
+           "required_rights":["Reduce"], "grade":"Grade",
+           "execution":{"kind":"normalize", "relation_sort":"Computation", "terminal_constructors":["DonePattern"], "branching":"deterministic"}}
+        ],
+        "observations": [
+          {"name":"Nullable", "action":"nullable", "result":"Computation"},
+          {"name":"Derivative", "action":"derivative", "result":"Computation"}
+        ],
+        "limits":{"max_term_nodes":16384,"max_proof_nodes":16384,"max_frontier":256,"max_steps":10000000,"max_grade_bits":128}
+      }
+    })
+  }
+
+  theory Regex()
+}
