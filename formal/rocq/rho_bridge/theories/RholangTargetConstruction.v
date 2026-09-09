@@ -322,6 +322,57 @@ Definition receive (binds : list BindValue) (slots : list CaptureSlot)
       (receive_children binds body condition) (receive_summary binds body condition))
   else ConstructionRejected InvalidBinderLayout.
 
+(** Closed shared service-reply shell: installed_flt_trampoline,
+    wrap_pattern_preparation and HeldFold. Inputs have already been lowered
+    under the generated reply scope; the continuation also has its result
+    binder. This recipe never shifts child terms again or imports caller
+    injections into its generated new. These exact flags are the existing
+    helper policy, not arbitrary metadata overrides for source receives. *)
+Definition service_reply_channel : Value :=
+  singleton (BoundHead 0) [] (bound_summary 0).
+Definition service_reply_capture : Value :=
+  singleton (CaptureHead 0) [] (with_connective true closed_summary).
+Definition service_reply_receive (body : Value) : Value :=
+  singleton (ReceiveHead
+    [{| pattern_count := 1; free_count := 1; remainder_index := None |}]
+    [OrdinarySlot 0] false false)
+    [service_reply_channel; service_reply_capture; body]
+    {| free_bits := union_bits [true] (shift_bits 1 (free_bits (summary_of body)));
+       uses_connective := false |}.
+Definition service_reply (channel : Value) (payloads : list Value) (body : Value) : Value :=
+  let inner := append (send false channel payloads) (service_reply_receive body) in
+  singleton (NewHead 1 [] []) [inner]
+    (with_connective false (shifted_summary 1 (summary_of inner))).
+
+Theorem service_reply_fixed_scope_and_children : forall channel payloads body,
+  heads_of (service_reply channel payloads body) =
+    [MakeHead (NewHead 1 [] [])
+      [append (send false channel payloads) (service_reply_receive body)]] /\
+  heads_of (service_reply_receive body) =
+    [MakeHead (ReceiveHead
+      [{| pattern_count := 1; free_count := 1; remainder_index := None |}]
+      [OrdinarySlot 0] false false)
+      [service_reply_channel; service_reply_capture; body]].
+Proof. intros; split; reflexivity. Qed.
+
+Theorem service_reply_exact_metadata : forall channel payloads body,
+  summary_of (service_reply channel payloads body) =
+    {| free_bits := shift_bits 1
+        (union_bits (free_bits (children_summary (channel :: payloads)))
+          (union_bits [true] (shift_bits 1 (free_bits (summary_of body)))));
+       uses_connective := false |} /\
+  uses_connective (summary_of (service_reply_receive body)) = false.
+Proof. intros; split; reflexivity. Qed.
+
+Theorem service_reply_variables_reuse_existing_checked_operations :
+  bound 1 0 = Constructed service_reply_channel /\
+  capture 1 0 = Constructed service_reply_capture.
+Proof. split; reflexivity. Qed.
+
+Print Assumptions service_reply_fixed_scope_and_children.
+Print Assumptions service_reply_exact_metadata.
+Print Assumptions service_reply_variables_reuse_existing_checked_operations.
+
 (** Checked references return no default value. Ordered duplicate references
     remain ordered duplicates. The implementation must use its explicit work
     stack; this finite list specification states the result to preserve. *)

@@ -124,6 +124,20 @@ Definition checked_receive (descriptors : list BindDescriptor) (has_condition : 
        end)
   end.
 
+(** Single forward decomposition with an exact final continuation slot.
+    A request payload is not implicitly packed/unpacked as a Rholang list. *)
+Fixpoint resolve_service_reply (payload_count : nat) (children : list Value)
+    : option (list Value * Value) :=
+  match payload_count, children with
+  | 0, [body] => Some ([], body)
+  | S remaining, payload :: rest =>
+    match resolve_service_reply remaining rest with
+    | Some (payloads, body) => Some (payload :: payloads, body)
+    | None => None
+    end
+  | _, _ => None
+  end.
+
 Inductive ConstructOp :=
 | EmptyOp | AppendOp
 | IntegerOp (integer_value : Z) | BooleanOp (boolean_value : bool)
@@ -138,6 +152,7 @@ Inductive ConstructOp :=
 | DdlNodeOp (tag : string) | MatchOp | FalseMatchOp
 | PatternUnaryOp | PatternBinaryOp (conjunction : bool) | PatternImplicationOp
 | FreshOp (plan : FreshPlan) (injection_keys : list string)
+| ServiceReplyOp (payload_count : nat)
 | ReceiveOp (descriptors : list BindDescriptor) (has_condition : bool).
 
 (** Maps keep an ordered pair vector. Odd input is rejected; a missing value
@@ -191,6 +206,11 @@ Definition interpret (operation : ConstructOp) (children : list Value)
     (pattern_node (if conjunction then PatternAnd else PatternOr) [lhs; rhs])
   | PatternImplicationOp, [lhs; rhs] => Constructed (pattern_implication lhs rhs)
   | FreshOp plan keys, operands => checked_injected_fresh plan keys operands
+  | ServiceReplyOp count, channel :: rest =>
+    match resolve_service_reply count rest with
+    | Some (payloads, body) => Constructed (service_reply channel payloads body)
+    | None => ConstructionRejected ChildArityMismatch
+    end
   | ReceiveOp descriptors has_condition, operands => checked_receive descriptors has_condition operands
   | _, _ => ConstructionRejected ChildArityMismatch
   end.
@@ -200,6 +220,57 @@ Definition interpret (operation : ConstructOp) (children : list Value)
     is necessary when constructing a parent. Repetition is retained. *)
 Definition operation_host_names (operation : ConstructOp) : list HostNameSlot :=
   match operation with HostNameOp slot => [slot] | _ => [] end.
+
+Theorem service_reply_resolution_preserves_exact_payload_order : forall count children payloads body,
+  resolve_service_reply count children = Some (payloads, body) ->
+  List.length payloads = count /\ children = payloads ++ [body].
+Proof.
+  induction count as [|count IH]; intros children payloads body H.
+  - destruct children as [|child [|extra rest]]; try discriminate.
+    inversion H; subst; split; reflexivity.
+  - destruct children as [|payload rest]; try discriminate.
+    cbn in H. destruct (resolve_service_reply count rest) as [[values continuation]|] eqn:E;
+      try discriminate. inversion H; subst.
+    specialize (IH _ _ _ E) as [L C]. cbn. rewrite L, C; auto.
+Qed.
+
+Theorem service_reply_explicit_children_succeed : forall payloads body,
+  resolve_service_reply (List.length payloads) (payloads ++ [body]) = Some (payloads, body).
+Proof.
+  induction payloads as [|payload rest IH]; intros body; cbn; [reflexivity|now rewrite IH].
+Qed.
+
+Theorem checked_service_reply_reuses_exact_shell : forall channel payloads body,
+  interpret (ServiceReplyOp (List.length payloads)) (channel :: payloads ++ [body]) =
+    Constructed (service_reply channel payloads body).
+Proof. intros; cbn [interpret]; now rewrite service_reply_explicit_children_succeed. Qed.
+
+Theorem service_reply_bad_arity_rejects : forall count channel children,
+  List.length children <> S count ->
+  interpret (ServiceReplyOp count) (channel :: children) = ConstructionRejected ChildArityMismatch.
+Proof.
+  intros count channel children H; cbn [interpret].
+  destruct (resolve_service_reply count children) as [[payloads body]|] eqn:E; [|reflexivity].
+  apply service_reply_resolution_preserves_exact_payload_order in E as [L C].
+  subst children. rewrite length_app, L in H; cbn in H. exfalso; lia.
+Qed.
+
+Example installed_flt_one_payload_specialization : forall channel request body,
+  interpret (ServiceReplyOp 1) [channel; request; body] =
+    Constructed (service_reply channel [request] body).
+Proof. reflexivity. Qed.
+
+Example held_fold_two_payload_specialization : forall channel operand body,
+  interpret (ServiceReplyOp 2) [channel; operand; service_reply_channel; body] =
+    Constructed (service_reply channel [operand; service_reply_channel] body).
+Proof. reflexivity. Qed.
+
+Print Assumptions service_reply_resolution_preserves_exact_payload_order.
+Print Assumptions service_reply_explicit_children_succeed.
+Print Assumptions checked_service_reply_reuses_exact_shell.
+Print Assumptions service_reply_bad_arity_rejects.
+Print Assumptions installed_flt_one_payload_specialization.
+Print Assumptions held_fold_two_payload_specialization.
 
 (** The host-only name carrier is polymorphic so this lookup transports exact
     identity without reconstructing names from strings. The adapter admits

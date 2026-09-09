@@ -72,6 +72,7 @@ target-specific canonical representation is built.
 | Native scalar | Checked integer, Boolean, or decoded string value; no process-text payload | Scalar handlers and existing decoders |
 | Opaque host name | Exact caller-owned name-table identity and slot; no children or embedded process | Explicit host adapter enrollment and binding |
 | Pending installed predicate | Exact retained FLT-use index; selector followed by the use's ordered construction fills | Checked owning session; later guard/provider boundary |
+| Service reply scope | Payload count; channel, ordered payloads, then continuation | Existing installed-FLT, pattern-preparation and held-fold reply helpers |
 | Bound reference | Checked enclosing-binder index | `lower_name_var`, `lower_proc_var` |
 | Pattern capture and wildcard | Capture index or explicit wildcard policy; not an enclosing-binder reference | `enter_pattern`, existing variable constructors |
 | Captured pattern reference | Checked index and pattern depth, retaining the distinction from a bound variable | Installed pattern preparation |
@@ -233,6 +234,83 @@ resource projection and funding at COMM. Category names do not select an action
 or authorize it. A reply-channel request executed before candidate matching
 does not have these semantics and cannot replace the pending atom.
 
+### Existing FLT request and reply recipes
+
+The [request recipe model](../../formal/rocq/rho_bridge/theories/RholangFltRequestRecipes.v)
+specifies the existing `encode_flt_construct_call` and `encode_flt_pattern_call`
+layouts in [the language-service implementation](../../rholang-runtime/src/language_install.rs).
+These are compositions of checked scalar, ordinary list and map construction,
+not another runtime encoder or guest evaluator.
+
+| Field position | Construction request | Pattern-preparation request |
+| --- | --- | --- |
+| 0 | `mettail-language-flt-construct/1` | `mettail-language-flt-pattern/1` |
+| 1 | Installed handle input | Installed handle input |
+| 2 | Ordered piece list | Ordered piece list |
+| 3 | Declared hole list | Declared hole list |
+| 4 | Exact root category string | Exact root category string |
+| 5 | Name-keyed fill map | Reply channel |
+| 6 | Reply channel | No seventh field |
+
+A text piece is `["text", payload]`; a hole occurrence is `["hole", id]`.
+A declaration is `[id, name, optional_category]`. An absent category is the
+empty process; a present empty string is a string value and remains distinct.
+Hole IDs retain the source's unsigned-32-bit range before using the existing
+signed integer constructor. Repeated pieces and hole occurrences remain
+repeated. Fills retain the existing ordered map's name/value associations;
+duplicate or out-of-order keys reject rather than being silently replaced.
+Template validity and exact fill-to-declaration membership remain the existing
+validator/service obligations, not conclusions of wire framing.
+
+The fill-map equation retains the **inputs** to the target map operation.
+The node's `new_emap_par` delegates to `ParMap` and `Ordering::sort_map`, which
+canonicalize values as well as keys. Consequently the neutral pair-preservation
+law does not claim that arbitrary host values emerge unchanged. The existing
+FLT producer supplies bound-variable fills; the emitter correspondence must
+establish their canonical fixed point and string-key ordering. General map
+emission retains its existing canonicalization owner, not a second frontend
+sorter or an assumption that all imported values are already canonical.
+
+Both request families use ordinary child-derived list/map metadata. The model
+proves that the helpers' left-fold union equals the construction algebra's
+right fold for the exact bit vectors, including trailing false entries. This
+is not just equality of the represented sets of free indices.
+
+`ServiceReplyOp(payload_count)` represents the common existing reply shell:
+
+```text
+children = channel :: ordered_payloads ++ [continuation]
+
+new reply in {
+    send(channel, ordered_payloads)
+    | receive(reply, one_result_capture, continuation)
+}
+```
+
+This is structural pseudocode, not new Rholang syntax. Its descriptor fixes
+one fresh reply binder, one result capture, a nonpersistent send/receive, and
+empty URI/injection maps. Child arity and order are checked in one forward
+decomposition. The children are already lowered under the reply scope, and the
+continuation also sees the result binder; the recipe does not shift them again.
+Generated reply scopes do not copy caller URI injections.
+
+Installed FLT construction and pattern preparation send one request payload.
+The existing held-fold path sends two separate payloads, the operand and reply
+channel. Combining those two into a single list would change the wire behavior.
+The one- and two-payload specializations are separate checked laws of the same
+shell, not separate evaluators.
+
+The node helper `models/src/rust/utils.rs::new_boundvar_par` computes the reply
+channel's free-bit vector from index zero, even though the call supplies an
+empty vector. The resulting vector is `[1]`, represented by `[true]` in the
+model. The result capture has empty free bits and a true connective flag.
+Receive free bits combine that reply-channel vector with the binder-adjusted
+continuation; fresh free bits then remove the reply binder from the combined
+send/receive value. The receive's inner and outer connective flags and the
+fresh value's outer flag are explicitly false, as in the existing helpers.
+Send flags remain child-derived. These fixed policies preserve the actual
+helper, without allowing arbitrary overrides on ordinary source constructors.
+
 ## Interpretation and metadata policies
 
 Parallel composition combines process heads, not source syntax tags. In
@@ -265,6 +343,7 @@ Metadata laws are deliberately operation-specific:
 | Wildcard | Existing caller policy | Existing caller policy |
 | Captured pattern reference | Singleton reference index | True |
 | Fresh scope of width $`w`$ | Remove indices below $`w`$; subtract $`w`$ from the rest | Body's flag |
+| Generated service reply scope | Remove one reply binder from send plus reply-receive free bits | False; reply receive also explicitly false |
 | Receive | Sources plus binder-adjusted body and retained condition | Sources and body only |
 | Matching expression | Target and pattern union | False |
 | Statically false matching expression | Target's information; target must still lower successfully | False |
@@ -409,14 +488,12 @@ an exact descriptor and ordered inputs to an actual residual graph node.
 Concrete enrollment, host binding, source/guard correspondence, observation
 and node-byte correspondence remain adapter obligations.
 
-Ordinary FLT construction and receive preparation must reuse their existing
-request encodings and trampolines. The request-recipe correspondence remains a
-separate part of this interface handoff: their ordinary wire-list/map metadata
-must not be replaced with DDL's closed-list policy. The existing installed FLT
-trampoline also specifies its reply-channel/capture metadata and false outer
-connective flags explicitly; an ordinary receive recipe is not interchangeable
-without its exact metadata premises. Direct predicates remain unevaluated guard
-atoms until the authorized candidate-COMM observation boundary.
+The request and service-reply recipes specify that existing composition,
+including exact framing, checked IDs/arity, ordinary wire metadata and fixed
+reply-scope policies. Production factoring must instantiate those same helpers
+and prove its source/target correspondence; a checked recipe is not a claim
+that the runtime has already been factored. Direct predicates remain
+unevaluated guard atoms until the authorized candidate-COMM observation boundary.
 
 The mathematical range wrapper describes a result, not evaluation order in a
 strict programming language. The Rust adapter must check range and resource
