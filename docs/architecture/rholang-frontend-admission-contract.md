@@ -69,8 +69,9 @@ The output comprises:
    semantic-resource projection and funding. A declaration requesting a right
    or a grade is not evidence that the request is authorized or funded.
 
-The typed graph's constructor laws and target homomorphism are a separate
-implementation boundary. This envelope must not label a merely well-shaped
+The [typed graph's construction and observation laws](rholang-neutral-construction-contract.md)
+and target homomorphism are a separate implementation boundary.
+This envelope must not label a merely well-shaped
 graph as canonical node bytes. The node emitter must establish the commuting
 property with the reused lowerer under the same source environment, options,
 and auxiliary descriptors, then use the existing canonical node operations.
