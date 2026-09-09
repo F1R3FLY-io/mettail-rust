@@ -84,6 +84,7 @@ Inductive HeadKind :=
 | BooleanHead (boolean : bool)
 | TextHead (text : string)
 | HostNameHead (slot : HostNameSlot)
+| PendingPredicateHead (use_index : nat)
 | BoundHead (index : nat)
 | CaptureHead (index : nat)
 | WildcardHead
@@ -132,6 +133,20 @@ Fixpoint children_summary (children : list Value) : Summary :=
 Definition ordinary (kind : HeadKind) (children : list Value) : Value :=
   singleton kind children (children_summary children).
 
+(** A residual installed observation, not a Boolean result. Its descriptor is
+    checked by the owning session; explicit inputs retain selector first and
+    then declaration-associated fills. No observation is performed here. *)
+Definition pending_predicate (use_index : nat) (selector : Value) (fills : list Value) : Value :=
+  ordinary (PendingPredicateHead use_index) (selector :: fills).
+
+Theorem pending_predicate_is_not_boolean : forall use_index selector fills boolean_value,
+  pending_predicate use_index selector fills <> boolean boolean_value.
+Proof. intros; discriminate. Qed.
+
+Theorem pending_predicate_metadata_is_structural : forall use_index selector fills,
+  summary_of (pending_predicate use_index selector fills) = children_summary (selector :: fills).
+Proof. reflexivity. Qed.
+
 (** Observe the constructed value, including append-composed heads. This is
     deliberately NOT a source-node-kind predicate or arbitrary Par validator. *)
 Definition single_string (value : Value) : bool :=
@@ -152,6 +167,15 @@ Definition binary (op : BinaryOperator) (left right : Value) : Value :=
     (join_summary (summary_of left) (summary_of right)).
 Definition implication (antecedent consequent : Value) : Value :=
   binary BooleanOr (unary BooleanNot antecedent) consequent.
+
+Theorem negation_preserves_pending_predicate : forall use_index selector fills,
+  heads_of (unary BooleanNot (pending_predicate use_index selector fills)) =
+    [MakeHead (UnaryHead BooleanNot) [pending_predicate use_index selector fills]].
+Proof. reflexivity. Qed.
+
+Print Assumptions pending_predicate_is_not_boolean.
+Print Assumptions pending_predicate_metadata_is_structural.
+Print Assumptions negation_preserves_pending_predicate.
 
 Definition list_value (children : list Value) : Value := ordinary ListHead children.
 Definition pair_children (pairs : list (Value * Value)) : list Value :=

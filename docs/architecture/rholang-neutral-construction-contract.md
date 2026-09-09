@@ -71,6 +71,7 @@ target-specific canonical representation is built.
 | Empty and parallel append | Empty has no children; append retains all children and their multiplicity | `ParFold`, `ParPair` |
 | Native scalar | Checked integer, Boolean, or decoded string value; no process-text payload | Scalar handlers and existing decoders |
 | Opaque host name | Exact caller-owned name-table identity and slot; no children or embedded process | Explicit host adapter enrollment and binding |
+| Pending installed predicate | Exact retained FLT-use index; selector followed by the use's ordered construction fills | Checked owning session; later guard/provider boundary |
 | Bound reference | Checked enclosing-binder index | `lower_name_var`, `lower_proc_var` |
 | Pattern capture and wildcard | Capture index or explicit wildcard policy; not an enclosing-binder reference | `enter_pattern`, existing variable constructors |
 | Captured pattern reference | Checked index and pattern depth, retaining the distinction from a bound variable | Installed pattern preparation |
@@ -209,6 +210,29 @@ followed by observation, while retaining authority, semantic-resource and
 funding obligations. A predicate descriptor is not an observation result,
 even when it occurs beneath Boolean negation.
 
+For a direct guard, `PendingPredicateHead(use_index)` connects the graph to that
+exact retained use. Its first child is associated with the descriptor's lexical
+selector. Each subsequent child is paired with the corresponding construction
+binding, including its hole ID, name and lexical reference. The owning session
+checks that the index exists, identifies a predicate site, and receives exactly
+one selector plus the declared fill count. All value references then pass the
+ordinary construction check. Missing descriptors, wrong roles and missing or
+extra inputs consume the session with typed errors and retained diagnostics.
+
+Exact arity prevents a truncated pairing; it does not prove lexical resolution.
+The existing producer must resolve the selector and fills in their actual
+scope. The pending node derives structural metadata from its explicit inputs
+and is distinct from every Boolean literal. Applying ordinary Boolean negation
+retains that node as the negated operand; construction never evaluates it.
+
+Its later meaning is an installed, declared observation for the current
+candidate's inputs. The guard/provider boundary must select the checked
+predicate declaration through the existing semantic service, classify the
+complete result roster, retain `Undetermined` diagnostics and revalidate rights,
+resource projection and funding at COMM. Category names do not select an action
+or authorize it. A reply-channel request executed before candidate matching
+does not have these semantics and cannot replace the pending atom.
+
 ## Interpretation and metadata policies
 
 Parallel composition combines process heads, not source syntax tags. In
@@ -234,6 +258,7 @@ Metadata laws are deliberately operation-specific:
 | Ordinary unary expression | Operand's information | Operand's flag |
 | Opaque host name | Empty, under the checked name-only enrollment contract | False |
 | Method, ordinary list/map, send | Union of every relevant ordered child | OR of those children |
+| Pending installed predicate | Union of selector and fill inputs | OR of those inputs; not an observation result |
 | Parallel append | Existing append combination | Existing append combination |
 | Bound variable | Singleton enclosing-binder index | Existing caller policy |
 | Pattern free variable | Existing explicit free-reference information | True |
@@ -302,8 +327,20 @@ makes the output transitions explicit:
 Here, “publication” means returning a private frontend artifact to its caller,
 not publishing a process to RSpace. Recording a provider request does not bind
 that provider, and recording a predicate does not establish its truth. The
-model's nonempty-bundle witness tests ownership and reference links only; its
-Boolean condition is not an implementation of an installed predicate.
+model's original nonempty-bundle witness tests ownership and reference links
+only; its Boolean condition is not an implementation of an installed predicate.
+The separate `reachable_pending_guard_bundle` witness starts from an empty
+session, retains a host-name requirement, constructs a real pending atom, and
+registers that atom as the guard condition before finishing. It establishes a
+reachable structural handoff, not successful guest observation.
+
+`check_guards` checks that the condition exists and that the listed use indices
+identify predicate sites. It does not prove that the list equals the pending
+atoms occurring in the condition. The existing producer and target refinement
+must preserve that graph-to-guard association, including enclosing Boolean
+structure. Likewise, pending-atom contextual validity requires the checked
+owning-session transitions, not `GeneratedArena` alone. These obligations do not
+require an additional runtime graph traversal.
 
 `OwnedArtifact` is the construction/session component of
 `RholangFrontendArtifactV1`, not an alternative complete envelope. The enclosing
@@ -366,15 +403,20 @@ error-path cleanup.
 Executable provider implementations and native evaluator closures remain
 host-owned; the neutral artifact retains requests and declaration references.
 
-The host-name and injection laws now specify exact lookup, ordered association,
-failure behavior and requirement retention. Concrete enrollment, host binding
-and node-byte correspondence remain adapter obligations. The remaining graph
-denotation of installed predicates must connect their retained descriptions to
-the actual guard. A side-table entry attached to an unrelated value is not
-a solution to that last obligation. Ordinary FLT construction and receive
-preparation must reuse their existing request encodings and trampolines;
-direct predicates must remain unevaluated guard atoms until the authorized
-candidate-COMM observation boundary.
+The host-name and injection laws specify exact lookup, ordered association,
+failure behavior and requirement retention. The pending-predicate laws connect
+an exact descriptor and ordered inputs to an actual residual graph node.
+Concrete enrollment, host binding, source/guard correspondence, observation
+and node-byte correspondence remain adapter obligations.
+
+Ordinary FLT construction and receive preparation must reuse their existing
+request encodings and trampolines. The request-recipe correspondence remains a
+separate part of this interface handoff: their ordinary wire-list/map metadata
+must not be replaced with DDL's closed-list policy. The existing installed FLT
+trampoline also specifies its reply-channel/capture metadata and false outer
+connective flags explicitly; an ordinary receive recipe is not interchangeable
+without its exact metadata premises. Direct predicates remain unevaluated guard
+atoms until the authorized candidate-COMM observation boundary.
 
 The mathematical range wrapper describes a result, not evaluation order in a
 strict programming language. The Rust adapter must check range and resource

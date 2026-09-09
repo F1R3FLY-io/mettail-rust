@@ -83,7 +83,8 @@ Inductive SessionError :=
 | DanglingValue (reference : nat)
 | DanglingOccurrence (reference : nat)
 | DanglingPredicate (reference : nat)
-| NonPredicateSite (reference : nat).
+| NonPredicateSite (reference : nat)
+| PredicateInputArity (reference : nat).
 
 Definition replace_values (draft : Draft) (values : list Algebra.Value) : Draft :=
   {| private_values := values; private_occurrences := private_occurrences draft;
@@ -162,6 +163,26 @@ Definition record_event (session : Session) (event : RecordEvent) : Registration
     end
   end.
 
+(** Arity establishes the exact ordered association, not lexical resolution.
+    The existing producer must resolve both the selector and every fill under
+    its actual scope. This check introduces no second lexical environment. *)
+Definition check_operation_context (payload : SessionPayload)
+    (operation : Construction.ConstructOp) (references : list nat) : option SessionError :=
+  match operation with
+  | Construction.PendingPredicateOp index =>
+    match nth_error (foreign_uses payload) index with
+    | None => Some (DanglingPredicate index)
+    | Some use =>
+      match Foreign.use_role use with
+      | Foreign.PredicateSite =>
+        if Nat.eqb (List.length references) (S (List.length (Foreign.construction_bindings use)))
+        then None else Some (PredicateInputArity index)
+      | _ => Some (NonPredicateSite index)
+      end
+    end
+  | _ => None
+  end.
+
 (** This is the same checked construction, now inside an owning session.
     A failed construction consumes the session: its partial descriptor table
     cannot be recovered as a successful output by a subsequent finish. *)
@@ -170,11 +191,15 @@ Definition construct_in_session (session : Session) (operation : Construction.Co
   match session with
   | Consumed => RegistrationRejected Consumed SessionAlreadyConsumed []
   | Open draft =>
-    match Construction.construction_step (private_values draft) operation references with
-    | Construction.ValueAppended values index =>
-      Registered (Open (retain_operation_names (replace_values draft values) operation)) index
-    | Construction.StepRejected _ error => RegistrationRejected Consumed (LoweringFailure error)
-        (diagnostics (private_payload draft))
+    match check_operation_context (private_payload draft) operation references with
+    | Some error => RegistrationRejected Consumed error (diagnostics (private_payload draft))
+    | None =>
+      match Construction.construction_step (private_values draft) operation references with
+      | Construction.ValueAppended values index =>
+        Registered (Open (retain_operation_names (replace_values draft values) operation)) index
+      | Construction.StepRejected _ error => RegistrationRejected Consumed (LoweringFailure error)
+          (diagnostics (private_payload draft))
+      end
     end
   end.
 
@@ -327,12 +352,135 @@ Theorem registration_preserves_other_owned_fields : forall draft use,
 Proof. intros; repeat split; reflexivity. Qed.
 
 Theorem construction_failure_consumes_session : forall draft operation references error,
+  check_operation_context (private_payload draft) operation references = None ->
   Construction.construct (private_values draft) operation references = Algebra.ConstructionRejected error ->
   construct_in_session (Open draft) operation references =
     RegistrationRejected Consumed (LoweringFailure error) (diagnostics (private_payload draft)).
 Proof.
-  intros; unfold construct_in_session.
-  rewrite (Construction.failed_step_leaves_arena_unchanged _ _ _ _ H). reflexivity.
+  intros draft operation references error Context Failure; unfold construct_in_session.
+  rewrite Context, (Construction.failed_step_leaves_arena_unchanged _ _ _ _ Failure). reflexivity.
+Qed.
+
+Theorem context_failure_consumes_session : forall draft operation references error,
+  check_operation_context (private_payload draft) operation references = Some error ->
+  construct_in_session (Open draft) operation references =
+    RegistrationRejected Consumed error (diagnostics (private_payload draft)).
+Proof. intros; unfold construct_in_session; now rewrite H. Qed.
+
+Definition predicate_input_association (use : Foreign.ForeignUse) (references : list nat) :=
+  match references with
+  | [] => None
+  | selector :: fills =>
+    if Nat.eqb (List.length fills) (List.length (Foreign.construction_bindings use)) then
+      Some ((Foreign.lexical_selector (Foreign.use_capture use), selector),
+        combine (Foreign.construction_bindings use) fills)
+    else None
+  end.
+
+Lemma equal_length_combine_preserves_both_projections : forall A B (left : list A) (right : list B),
+  List.length left = List.length right ->
+  map fst (combine left right) = left /\ map snd (combine left right) = right.
+Proof.
+  intros A B left; induction left as [|first rest IH]; intros [|value values] L;
+    try discriminate; [split; reflexivity|].
+  cbn in L; injection L as L.
+  specialize (IH values L) as [F S]. cbn; now rewrite F, S.
+Qed.
+
+Theorem pending_context_preserves_exact_input_association : forall payload index references,
+  check_operation_context payload (Construction.PendingPredicateOp index) references = None ->
+  exists use selector fills,
+    nth_error (foreign_uses payload) index = Some use /\
+    Foreign.use_role use = Foreign.PredicateSite /\
+    references = selector :: fills /\
+    predicate_input_association use references = Some
+      ((Foreign.lexical_selector (Foreign.use_capture use), selector),
+        combine (Foreign.construction_bindings use) fills) /\
+    map fst (combine (Foreign.construction_bindings use) fills) = Foreign.construction_bindings use /\
+    map snd (combine (Foreign.construction_bindings use) fills) = fills.
+Proof.
+  intros payload index references H; cbn [check_operation_context] in H.
+  destruct (nth_error (foreign_uses payload) index) as [use|] eqn:U; try discriminate.
+  destruct (Foreign.use_role use) eqn:R; try discriminate.
+  destruct (Nat.eqb (List.length references) (S (List.length (Foreign.construction_bindings use))))
+    eqn:L; try discriminate.
+  apply Nat.eqb_eq in L. destruct references as [|selector fills]; [discriminate|].
+  cbn in L; injection L as L.
+  pose proof (equal_length_combine_preserves_both_projections _ _
+    (Foreign.construction_bindings use) fills (eq_sym L)) as [F S].
+  exists use, selector, fills. repeat split; auto.
+  unfold predicate_input_association. rewrite L, Nat.eqb_refl; reflexivity.
+Qed.
+
+Theorem session_success_has_context_and_construction : forall draft operation references next index,
+  construct_in_session (Open draft) operation references = Registered (Open next) index ->
+  check_operation_context (private_payload draft) operation references = None /\
+  exists value,
+    Construction.construct (private_values draft) operation references = Algebra.Constructed value /\
+    nth_error (private_values next) index = Some value.
+Proof.
+  intros draft operation references next index H; unfold construct_in_session in H.
+  destruct (check_operation_context (private_payload draft) operation references) eqn:C; try discriminate.
+  destruct (Construction.construction_step (private_values draft) operation references) eqn:S;
+    try discriminate.
+  inversion H; subst. split; [reflexivity|].
+  apply Construction.successful_step_appends_interpretation in S as [value [V [A [I N]]]].
+  exists value; split; [exact V|exact N].
+Qed.
+
+(** The graph stores the descriptor index and real ordered input values.
+    The association theorem above retains the selector lexical reference and
+    each fill's ID/name/lexical reference; neither theorem pretends to prove
+    that the source producer resolved those references correctly. *)
+Theorem successful_pending_atom_has_real_ordered_inputs : forall draft use_index references next index,
+  construct_in_session (Open draft) (Construction.PendingPredicateOp use_index) references =
+    Registered (Open next) index ->
+  check_operation_context (private_payload draft) (Construction.PendingPredicateOp use_index) references = None /\
+  exists selector fills,
+    Forall2 (fun reference value => nth_error (private_values draft) reference = Some value)
+      references (selector :: fills) /\
+    nth_error (private_values next) index =
+      Some (Algebra.pending_predicate use_index selector fills).
+Proof.
+  intros draft use_index references next index H.
+  apply session_success_has_context_and_construction in H as [C [value [V N]]].
+  split; [exact C|].
+  apply Construction.construction_uses_exact_ordered_children in V as [children [R I]].
+  destruct children as [|selector fills]; [discriminate|].
+  cbn [Construction.interpret] in I. inversion I; subst.
+  exists selector, fills; auto.
+Qed.
+
+Theorem missing_pending_descriptor_rejects : forall draft index references,
+  nth_error (foreign_uses (private_payload draft)) index = None ->
+  construct_in_session (Open draft) (Construction.PendingPredicateOp index) references =
+    RegistrationRejected Consumed (DanglingPredicate index) (diagnostics (private_payload draft)).
+Proof.
+  intros; apply context_failure_consumes_session.
+  cbn [check_operation_context]; now rewrite H.
+Qed.
+
+Theorem wrong_pending_role_rejects : forall draft index references use,
+  nth_error (foreign_uses (private_payload draft)) index = Some use ->
+  Foreign.use_role use <> Foreign.PredicateSite ->
+  construct_in_session (Open draft) (Construction.PendingPredicateOp index) references =
+    RegistrationRejected Consumed (NonPredicateSite index) (diagnostics (private_payload draft)).
+Proof.
+  intros; apply context_failure_consumes_session.
+  cbn [check_operation_context]; rewrite H.
+  destruct (Foreign.use_role use); try reflexivity; contradiction.
+Qed.
+
+Theorem missing_or_extra_pending_input_rejects : forall draft index references use,
+  nth_error (foreign_uses (private_payload draft)) index = Some use ->
+  Foreign.use_role use = Foreign.PredicateSite ->
+  List.length references <> S (List.length (Foreign.construction_bindings use)) ->
+  construct_in_session (Open draft) (Construction.PendingPredicateOp index) references =
+    RegistrationRejected Consumed (PredicateInputArity index) (diagnostics (private_payload draft)).
+Proof.
+  intros; apply context_failure_consumes_session.
+  cbn [check_operation_context]; rewrite H, H0.
+  apply Nat.eqb_neq in H1; now rewrite H1.
 Qed.
 
 Theorem success_keeps_whole_owned_bundle : forall draft root value,
@@ -454,6 +602,7 @@ Theorem session_construction_preserves_generated_arena : forall draft operation 
 Proof.
   intros draft operation references next index G H.
   cbn [construct_in_session] in H.
+  destruct (check_operation_context (private_payload draft) operation references); try discriminate.
   destruct (Construction.construction_step (private_values draft) operation references) eqn:E;
     try discriminate.
   inversion H; subst. cbn [retain_operation_names replace_values private_values].
@@ -494,6 +643,7 @@ Theorem successful_construction_retains_exact_host_requirements :
   private_host_names next = private_host_names draft ++ Construction.operation_host_names operation.
 Proof.
   intros draft operation references next index H; unfold construct_in_session in H.
+  destruct (check_operation_context (private_payload draft) operation references); try discriminate.
   destruct (Construction.construction_step (private_values draft) operation references);
     try discriminate. inversion H; reflexivity.
 Qed.
@@ -647,10 +797,46 @@ Proof.
   all: reflexivity.
 Qed.
 
+(** Unlike the ownership-only Boolean witness above, this path constructs a
+    real pending atom and makes it the guard condition. The name is still an
+    unresolved host requirement; no predicate result or authority is assumed. *)
+Theorem reachable_pending_guard_bundle : forall slot use origin,
+  Foreign.use_occurrence use = 0 -> Foreign.use_role use = Foreign.PredicateSite ->
+  Foreign.construction_bindings use = [] ->
+  exists first second third fourth fifth artifact,
+    construct_in_session start (Construction.HostNameOp slot) [] = Registered first 0 /\
+    record_event first (RecordOccurrence 1 origin) = Registered second 0 /\
+    record_event second (RecordForeignUse use) = Registered third 0 /\
+    construct_in_session third (Construction.PendingPredicateOp 0) [0] = Registered fourth 1 /\
+    record_event fourth (RecordGuard
+      {| condition_reference := 1; enclosing_captures := []; predicate_references := [0];
+         requested_discharge := true |}) = Registered fifth 0 /\
+    finish fifth (DriverValues [1]) = (Consumed, OwnedOutput artifact) /\
+    nth_error (artifact_values artifact) 1 =
+      Some (Algebra.pending_predicate 0 (Algebra.host_name slot) []) /\
+    foreign_uses (artifact_payload artifact) = [use] /\
+    artifact_host_names artifact = [slot].
+Proof.
+  intros slot use origin O R B.
+  do 6 eexists. repeat split; try reflexivity.
+  unfold construct_in_session; cbn. rewrite R, B; reflexivity.
+  reflexivity.
+  unfold finish, check_links; cbn. rewrite O; cbn. rewrite R; reflexivity.
+  all: reflexivity.
+Qed.
+
 Print Assumptions registration_returns_exact_descriptor.
 Print Assumptions registration_preserves_earlier_descriptors.
 Print Assumptions registration_preserves_other_owned_fields.
 Print Assumptions construction_failure_consumes_session.
+Print Assumptions context_failure_consumes_session.
+Print Assumptions equal_length_combine_preserves_both_projections.
+Print Assumptions pending_context_preserves_exact_input_association.
+Print Assumptions session_success_has_context_and_construction.
+Print Assumptions successful_pending_atom_has_real_ordered_inputs.
+Print Assumptions missing_pending_descriptor_rejects.
+Print Assumptions wrong_pending_role_rejects.
+Print Assumptions missing_or_extra_pending_input_rejects.
 Print Assumptions success_keeps_whole_owned_bundle.
 Print Assumptions output_has_actual_root_and_checked_links.
 Print Assumptions failed_driver_has_no_artifact.
@@ -676,6 +862,7 @@ Print Assumptions checked_bundle_retains_real_reference_targets.
 Print Assumptions missing_condition_blocks_output.
 Print Assumptions nonpredicate_reference_is_not_observation_evidence.
 Print Assumptions reachable_nonempty_foreign_bundle.
+Print Assumptions reachable_pending_guard_bundle.
 Print Assumptions successful_construction_retains_exact_host_requirements.
 Print Assumptions recording_cannot_change_host_requirements.
 Print Assumptions host_name_leaf_registers_exact_slot.

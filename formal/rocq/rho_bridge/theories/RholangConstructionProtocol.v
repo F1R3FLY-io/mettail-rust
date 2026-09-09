@@ -129,6 +129,7 @@ Inductive ConstructOp :=
 | IntegerOp (integer_value : Z) | BooleanOp (boolean_value : bool)
 | TextOp (text_value : string)
 | HostNameOp (slot : HostNameSlot)
+| PendingPredicateOp (use_index : nat)
 | BoundOp (scope index : nat) | CaptureOp (width index : nat)
 | WildcardOp (connective : bool) | PatternReferenceOp (scope index depth : nat)
 | UnaryOp (operator : UnaryOperator) | BinaryOp (operator : BinaryOperator)
@@ -161,6 +162,8 @@ Definition interpret (operation : ConstructOp) (children : list Value)
   | BooleanOp value, [] => Constructed (boolean value)
   | TextOp value, [] => Constructed (text value)
   | HostNameOp slot, [] => Constructed (host_name slot)
+  | PendingPredicateOp use_index, selector :: fills =>
+    Constructed (pending_predicate use_index selector fills)
   | BoundOp scope index, [] =>
     within_target_indices [index] (bound scope index)
   | CaptureOp width index, [] =>
