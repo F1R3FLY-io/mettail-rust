@@ -427,6 +427,48 @@ preparation contract must also retain source/profile/environment commitments,
 complete parse-family evidence and completed preparation usage. Successful
 session finishing does not manufacture any of that evidence.
 
+### Connection to source preparation
+
+The enclosing preparation invocation carries one immutable request context:
+the exact source, language profile, lowering options and limits, ordered caller
+injection image, and identities of the provider-owned reference tables. The
+actual admission result and construction outcome belong to that invocation.
+Commitment hashes identify the declared artifacts; equality of arbitrary hashes
+does not establish equality of source bytes, environments or semantic graphs.
+
+The handoff has four existing responsibilities:
+
+| Boundary | Required input and retained output | Refinement owner |
+| --- | --- | --- |
+| Source admission | Exact request context and actual `ClassifiedSource` result, including the original candidate roster and pending obligations | Admission implementation and parser-to-forest correspondence |
+| Structural lowering | The same context and admitted source drive the existing `Job`/`Kont` worklist; retain the original roster even when one semantically agreeing candidate drives construction | Worklist instantiation and constructor-family correspondence |
+| Session finish | The actual successful `OwnedSession.finish` output supplies the graph, root and descriptors without replacement or reconstruction | Owned-session implementation |
+| Host preparation | Enclose that construction component with the retained request, admission evidence and completed usage; validate emission and host obligations before producing `PreparedProgram` | Neutral emitter and prepared-admission integration |
+
+This is a data-ownership handoff, not a second classification pass or a second
+source traversal. `ClassifiedSource` is the result of the existing
+[admission protocol](../../formal/rocq/rho_bridge/theories/RholangFrontendAdmission.v).
+Its retained-roster theorem establishes finite coverage and semantic agreement
+under that model's premises. It does not certify a parser that has already
+discarded alternatives. A construction representative never replaces the
+original roster or its occurrence-specific obligations.
+
+Completed usage must come from the same invocation's terminal accounting,
+including failure outcomes. Parser statistics and theorem-checker admission
+usage alone are not whole-frontend accounting. Logical work, semantic grades
+and funding certificates remain distinct; session finishing cannot fabricate
+any of them.
+
+The actual owned output establishes which graph this invocation constructed.
+It does **not** establish that the graph faithfully lowers the admitted source.
+That commuting/refinement obligation belongs to the worklist and target
+instantiations under the same context, followed by concrete node emission.
+The existing node `ProgramFrontend::prepare` accepts source and environment,
+and its non-`Clone` `PreparedProgram` consumes a normalized host process. Neither
+already implements this neutral envelope or its accounting record.
+`RholangFrontendArtifactV1` remains the specified output contract, not the name
+of an implemented Rust type.
+
 ## Formal and implementation handoff
 
 The
