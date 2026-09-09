@@ -15,6 +15,8 @@ pub mod metadata;
 pub mod numeric_cast_adapter;
 #[cfg(test)]
 pub mod predicate_lower;
+#[cfg(feature = "runtime-codegen")]
 pub mod rho_dataflow;
+#[cfg(feature = "runtime-codegen")]
 pub mod rho_invocation;
 pub mod wpda_codegen;

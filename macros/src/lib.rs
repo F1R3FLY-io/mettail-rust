@@ -241,8 +241,12 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
     // EMPTY for every language whose declared constructs are all accounted for,
     // which is every shipped one; non-empty it is a `compile_error!` naming the
     // constructs that left the lowering without a disposition.
+    #[cfg(feature = "runtime-codegen")]
     let (lowering_dispositions, disposition_refusal) =
         gen::runtime::dovetail_report::lowering_disposition_inventory(&language_def);
+    #[cfg(not(feature = "runtime-codegen"))]
+    let (lowering_dispositions, disposition_refusal) =
+        gen::runtime::disposition::backend_unselected_inventory(&language_def);
     stage!("lowering_disposition_inventory.done");
 
     stage!("generate_metadata.start");

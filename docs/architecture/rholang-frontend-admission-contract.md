@@ -258,9 +258,9 @@ artifact with a fold trampoline but without its service specification is not
 complete.
 
 Neutrality applies to the actual Cargo dependency closure, including proc-macro
-and build dependencies. Disabling the language crate's optional `rho-codegen`
-feature is insufficient: `languages -> macros -> rholang-codegen -> models`
-currently remains. The existing runtime bridge also directly depends on node
+and build dependencies. The full backend build retains the path
+`languages -> macros -> rholang-codegen -> models`. Disabling only generated
+consumer items cannot remove that path. The existing runtime bridge also directly depends on node
 Rholang, models, the pure evaluator and RSpace. Factor the pure analyses/types
 and target adapters along these existing seams, then check the complete graph.
 Neither an API rename nor a target-only dependency report proves independence.
@@ -277,8 +277,64 @@ requires node values. The
 [relocation check](../../scripts/verify-pure-analysis-relocation.mjs) compares
 their complete implementation bodies with the pinned pre-extraction source,
 allowing only explicit module-path changes and formatting. This extraction is
-not itself the backend feature gate: actual generator invocation and the full
-Cargo dependency closure still require their separate checks.
+not itself the backend feature gate.
+
+### Parser package isolation
+
+The parser boundary uses distinct Cargo packages, not another language
+specification. `mettail-rholang-syntax` loads the existing
+[`languages/src/rholang.rs`](../../languages/src/rholang.rs) by source path,
+including its existing helper modules. Its `parser-macros` dependency compiles
+the same [`macros/src/lib.rs`](../../macros/src/lib.rs) source as the full macro
+package, but has no runtime-backend feature or dependency. The definitions and
+generators have one source; Cargo compiles them in separate dependency contexts.
+
+| Package | Backend selection | Role |
+|---|---|---|
+| `macros` | `runtime-codegen`, enabled by default | Existing full generator; language backend features enable it |
+| `parser-macros` | No backend feature exists | Shared parser/AST generator with a permanently node-independent dependency closure |
+| `mettail-rholang-syntax` | No Rho or Dovetail backend feature exists | Existing Rholang syntax, structural operations, and metadata for the neutral frontend |
+
+Cargo feature selection is additive. A parser consumer requesting no default
+features on the full macro package cannot prevent another consumer from
+enabling its backend. Distinct package identities prevent that union from
+introducing backend edges into the parser package. The
+[dependency-isolation check](../../scripts/verify-parser-dependency-isolation.mjs)
+walks normal and build dependencies in an all-feature workspace resolution,
+with the original backend macro enabled. It rejects reachable node/backend
+packages and cycles, and checks that both macro packages use the same source.
+This graph evidence does not establish parser equivalence or interpreter wiring.
+
+Host-side selection guards the actual backend-generator invocation, not only
+the generated `include!` or module declaration. The enabled branch retains the
+existing generator functions and consumer gates. When backend generation is
+unselected, each equation orientation, rewrite, and fold receives an explicit
+`Suppressed` disposition stating that decision. Order, multiplicity, declared
+versus injected origin, and the existing construct census are retained. This
+is not a claim of semantic rejection or successful lowering. Source semantic
+artifacts, guards, shared structural operations, and parser generation remain
+available; no grammar is converted into a semantics-free `parse_only` fixture.
+
+Parser-only generated files live beneath
+`target/generated/parser-only/<consumer-package>/<language>/`; full backend
+output retains its existing directory. The separate directories prevent the
+two builds from overwriting each other's metadata or included source. They do
+not select a different grammar.
+
+The [selection model](../../formal/rocq/runtime_grammar/theories/ParserBackendSelection.v)
+proves exact enabled output, absence of disabled invocation, retained inventory
+projection, and preservation of a closed dependency region under added external
+edges. It also exhibits why shared-package feature union defeats local opt-out.
+Actual source, manifest, generated-output, and parser tests must discharge the
+model's correspondence obligations; the model alone does not prove Rust or
+Cargo correct. The neutral lowering and node admission connection remain
+separate implementation steps.
+
+The [source-correspondence check](../../scripts/verify-parser-feature-correspondence.mjs)
+compares the enabled generator bodies and shared grammar/helpers against the
+pre-cut commit. The isolated package also reuses the existing DDL, FLT, and
+binder syntax suites by source path, so the boundary is tested with the same
+assertions rather than a separate reduced grammar corpus.
 
 All source traversal, target assembly, scope substitution and teardown must
 retain explicit worklists or existing stack-safe representations. Charge

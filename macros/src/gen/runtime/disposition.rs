@@ -99,6 +99,67 @@ pub(crate) struct LoweringDisposition {
     pub(crate) legacy_diagnostic: bool,
 }
 
+/// Account for every declaration when runtime-backend generation was not
+/// selected for this macro package. This says nothing about whether a backend
+/// could implement the construct: no lowering attempt was made. The source
+/// semantic artifact and guard metadata are still derived normally.
+#[cfg(any(test, not(feature = "runtime-codegen")))]
+pub(crate) fn backend_unselected_inventory(
+    language: &mettail_ast::language::LanguageDef,
+) -> (Vec<LoweringDisposition>, TokenStream) {
+    let fold_count = language
+        .terms
+        .iter()
+        .filter(|rule| rule.eval_mode == Some(mettail_ast::types::EvalMode::Fold))
+        .count();
+    let capacity = language
+        .equations
+        .len()
+        .saturating_mul(2)
+        .saturating_add(language.rewrites.len())
+        .saturating_add(fold_count);
+    let mut dispositions = Vec::with_capacity(capacity);
+    for equation in &language.equations {
+        for orientation in ["forward", "reverse"] {
+            dispositions.push(LoweringDisposition::suppressed(
+                LoweredConstructKind::Equation,
+                equation.name.to_string(),
+                LoweredConstructOrigin::Declared,
+                format!("{orientation} orientation: runtime backend generation is not selected"),
+            ));
+        }
+    }
+    for rewrite in &language.rewrites {
+        dispositions.push(LoweringDisposition::suppressed(
+            LoweredConstructKind::Rewrite,
+            rewrite.name.to_string(),
+            if rewrite.is_auto_injected {
+                LoweredConstructOrigin::AutoInjected
+            } else {
+                LoweredConstructOrigin::Declared
+            },
+            "runtime backend generation is not selected",
+        ));
+    }
+    for rule in &language.terms {
+        if rule.eval_mode == Some(mettail_ast::types::EvalMode::Fold) {
+            dispositions.push(LoweringDisposition::suppressed(
+                LoweredConstructKind::Fold,
+                rule.label.to_string(),
+                LoweredConstructOrigin::Declared,
+                "runtime backend generation is not selected",
+            ));
+        }
+    }
+    let refusal = every_construct_disposed_or_refusal(
+        language,
+        &dispositions,
+        true,
+        "backend_unselected_inventory",
+    );
+    (dispositions, refusal)
+}
+
 impl LoweringDisposition {
     /// A construct this lane lowered, with the label of the rule it emitted.
     pub(crate) fn delivered(
@@ -466,6 +527,54 @@ mod census_refusal_red {
         });
         let _ = rule_fixture(id("Unused"), id("Term"));
         language
+    }
+
+    #[test]
+    fn unselected_backend_retains_order_multiplicity_origins_and_census() {
+        use mettail_ast::language::RewriteRule;
+        use mettail_ast::types::EvalMode;
+        let mut language = language_with_one_equation();
+        language.equations.push(language.equations[0].clone());
+        for automatic in [false, true] {
+            language.rewrites.push(RewriteRule {
+                name: id(if automatic { "Auto" } else { "Written" }),
+                type_context: Vec::new(),
+                premises: Vec::new(),
+                left: Pattern::Term(PatternTerm::Var(id("X"))),
+                right: Pattern::Term(PatternTerm::Var(id("Y"))),
+                is_auto_injected: automatic,
+            });
+        }
+        let mut fold = rule_fixture(id("Sum"), id("Term"));
+        fold.eval_mode = Some(EvalMode::Fold);
+        language.terms.push(fold);
+        let (records, refusal) = backend_unselected_inventory(&language);
+        assert!(refusal.is_empty());
+        assert_eq!(
+            records
+                .iter()
+                .map(|entry| entry.construct.as_str())
+                .collect::<Vec<_>>(),
+            ["Assoc", "Assoc", "Assoc", "Assoc", "Written", "Auto", "Sum"]
+        );
+        assert_eq!(records[4].origin, LoweredConstructOrigin::Declared);
+        assert_eq!(records[5].origin, LoweredConstructOrigin::AutoInjected);
+        for (index, entry) in records.iter().enumerate() {
+            let LoweringOutcome::Suppressed { reason } = &entry.outcome else {
+                panic!("an uninvoked backend cannot claim delivery or semantic refusal");
+            };
+            assert!(reason.contains("runtime backend generation is not selected"));
+            if index < 4 {
+                assert!(reason.starts_with(if index % 2 == 0 { "forward" } else { "reverse" }));
+            }
+        }
+        assert!(!every_construct_disposed_or_refusal(
+            &language,
+            &records[..records.len() - 1],
+            true,
+            "mutation"
+        )
+        .is_empty());
     }
 
     /// ★ THE MUTATION CELL. A declared equation with NO disposition refuses, and

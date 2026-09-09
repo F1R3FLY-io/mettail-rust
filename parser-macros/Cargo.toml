@@ -1,0 +1,42 @@
+[package]
+name = "parser-macros"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+description = "Node-independent compilation of the shared MeTTaIL language macro"
+
+# One source implementation, two Cargo identities. This package deliberately
+# has no backend feature or dependency, so feature union cannot enable one.
+[lib]
+name = "mettail_parser_macros"
+proc-macro = true
+path = "../macros/src/lib.rs"
+
+[features]
+walker-trace = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("runtime-codegen"))'] }
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+prettyplease = "0.2"
+moniker.workspace = true
+indexmap.workspace = true
+mettail-ast = { package = "ast", path = "../ast" }
+mettail-runtime = { package = "runtime", path = "../runtime" }
+mettail-prattail = { package = "prattail", path = "../prattail" }
+mettail-grammar-core = { path = "../grammar-core" }
+ascent_syntax_export.workspace = true
+pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
+rustc-hash = "1.1"
+postcard = { version = "1", features = ["alloc"] }
+
+[dev-dependencies]
+trybuild = "1.0"
+proptest = "1"
+mettail-elab = { path = "../mettail-elab" }

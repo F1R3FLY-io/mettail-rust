@@ -1,0 +1,39 @@
+[package]
+name = "mettail-rholang-syntax"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+description = "Node-independent AST and parser for the existing Rholang language specification"
+
+[features]
+strategies = ["dep:proptest"]
+walker-stats = ["mettail-prattail/walker-stats"]
+walker-trace = ["mettail-prattail/walker-trace", "mettail-macros/walker-trace"]
+
+# Shared generated source recognizes these consumer cfg names. They are NOT
+# features of this parser package and cannot enable backend dependencies.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("rho-codegen", "dovetail-codegen"))'] }
+
+[dependencies]
+mettail-macros = { package = "parser-macros", path = "../parser-macros" }
+mettail-prattail = { package = "prattail", path = "../prattail" }
+mettail-runtime = { package = "runtime", path = "../runtime" }
+mettail-simulation = { package = "simulation", path = "../simulation" }
+num-bigint = "0.4"
+num-integer = "0.1"
+num-rational = "0.4"
+num-traits = "0.2"
+moniker.workspace = true
+rand.workspace = true
+indexmap.workspace = true
+pathmap.workspace = true
+typed-arena = "2.0"
+proptest = { version = "1", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+mettail-elab = { path = "../mettail-elab" }
+mettail-grammar-core = { path = "../grammar-core" }

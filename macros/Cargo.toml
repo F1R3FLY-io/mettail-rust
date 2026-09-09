@@ -15,6 +15,9 @@ name = "mettail_macros"
 proc-macro = true
 
 [features]
+default = ["runtime-codegen"]
+# Host-side generator availability, distinct from consumer-side item cfg.
+runtime-codegen = ["dep:mettail-rholang-codegen"]
 ## Walker diagnostics/trace (2026-07-16): compile-time gate for the codegen-time
 ## `PRATTAIL_MACRO_TRACE` stage instrumentation emitted during `language!`
 ## expansion. OFF BY DEFAULT and zero-cost when off — the
@@ -34,7 +37,7 @@ prettyplease = "0.2"
 moniker = { workspace = true }
 indexmap = { workspace = true }
 mettail-ast = { package = "ast", path = "../ast" }
-mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
+mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen", optional = true }
 # Task #94: the LOWERING-DISPOSITION vocabulary (`LoweringDispositionDef`, `LoweringLane`,
 # `LoweredConstructKind`, …) lives in `mettail-runtime` because the GENERATED metadata returns
 # it as `&'static [LoweringDispositionDef]`. The macro computes dispositions at expansion time

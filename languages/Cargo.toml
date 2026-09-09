@@ -138,16 +138,16 @@ walker-trace = ["mettail-prattail/walker-trace", "mettail-macros/walker-trace"]
 ## This is part of the default production surface: generated helpers return
 ## `mettail_rho_codegen::RhoScalarContractInvocation` values for the
 ## Dovetail/Rho installer, while still avoiding a dependency on the Rho runtime.
-rho-codegen = ["dep:mettail-rholang-codegen"]
+rho-codegen = ["dep:mettail-rholang-codegen", "mettail-macros/runtime-codegen"]
 ## Compile the macro-generated AST-first Dovetail report compiler. Generated
 ## helpers lower typed AST constructors and supported rewrite/equation rules
 ## directly into `dovetail::EGraph` and checked `RuntimeDovetailRunReport`
 ## values; unsupported side-condition families fail closed instead of falling
 ## back to Ascent/CESK.
-dovetail-codegen = ["dep:dovetail", "dep:mettail-dovetail-runtime", "dep:rigail"]
+dovetail-codegen = ["dep:dovetail", "dep:mettail-dovetail-runtime", "dep:rigail", "mettail-macros/runtime-codegen"]
 
 [dependencies]
-mettail-macros = { package = "macros", path = "../macros" }
+mettail-macros = { package = "macros", path = "../macros", default-features = false }
 mettail-prattail = { package = "prattail", path = "../prattail" }
 mettail-runtime = { package = "runtime", path = "../runtime" }
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen", optional = true }

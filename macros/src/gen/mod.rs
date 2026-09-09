@@ -2591,21 +2591,27 @@ mod category_capability_tests {
         assert!(!matched.contains("meta_bindings"));
         assert!(!matched.contains("implMeta{"));
 
-        let dovetail = runtime::dovetail_report::generate_dovetail_report(&language)
-            .to_string()
-            .replace(' ', "");
-        assert!(!dovetail.contains("VisitMeta"));
-        assert!(!dovetail.contains("__mettail_dovetail_add_meta"));
-        let meta_builder_context = dovetail
-            .find("__mettail_dovetail_build_meta_d")
-            .map(|index| &dovetail[index.saturating_sub(160)..(index + 240).min(dovetail.len())]);
-        assert!(
-            meta_builder_context.is_none(),
-            "data reconstructor leaked into Dovetail: {meta_builder_context:?}"
-        );
-        assert!(dovetail.contains("VisitProc"));
-        assert!(dovetail.contains("__mettail_dovetail_add_proc"));
-        assert!(dovetail.contains("FieldOpaque"));
+        #[cfg(feature = "runtime-codegen")]
+        {
+            let dovetail = runtime::dovetail_report::generate_dovetail_report(&language)
+                .to_string()
+                .replace(' ', "");
+            assert!(!dovetail.contains("VisitMeta"));
+            assert!(!dovetail.contains("__mettail_dovetail_add_meta"));
+            let meta_builder_context =
+                dovetail
+                    .find("__mettail_dovetail_build_meta_d")
+                    .map(|index| {
+                        &dovetail[index.saturating_sub(160)..(index + 240).min(dovetail.len())]
+                    });
+            assert!(
+                meta_builder_context.is_none(),
+                "data reconstructor leaked into Dovetail: {meta_builder_context:?}"
+            );
+            assert!(dovetail.contains("VisitProc"));
+            assert!(dovetail.contains("__mettail_dovetail_add_proc"));
+            assert!(dovetail.contains("FieldOpaque"));
+        }
 
         let parse_filter = term_ops::parse_alt_filter::generate_parse_alt_filter_methods(&language)
             .to_string()
@@ -2616,14 +2622,17 @@ mod category_capability_tests {
             "closed data is not an executable wrapper alternative"
         );
 
-        let rho_support = runtime::rho_invocation::generate_rho_reflection_support(&language);
-        let rho_flt = runtime::rho_invocation::generate_flt_reflect(&language);
-        let rho_reflect = quote::quote! { #rho_support #rho_flt }
-            .to_string()
-            .replace(' ', "");
-        assert!(!rho_reflect.contains("VisitMeta"));
-        assert!(!rho_reflect.contains("ClosedDataTransitTermInner::Meta"));
-        assert!(rho_reflect.contains("non-structuralfield"));
+        #[cfg(feature = "runtime-codegen")]
+        {
+            let rho_support = runtime::rho_invocation::generate_rho_reflection_support(&language);
+            let rho_flt = runtime::rho_invocation::generate_flt_reflect(&language);
+            let rho_reflect = quote::quote! { #rho_support #rho_flt }
+                .to_string()
+                .replace(' ', "");
+            assert!(!rho_reflect.contains("VisitMeta"));
+            assert!(!rho_reflect.contains("ClosedDataTransitTermInner::Meta"));
+            assert!(rho_reflect.contains("non-structuralfield"));
+        }
     }
 
     #[test]

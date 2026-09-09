@@ -24,10 +24,11 @@ pub(crate) mod op_enum;
 pub(crate) mod reconstruct;
 pub(crate) mod semantic_adapter;
 pub(crate) mod typed_lowering;
+#[cfg(feature = "runtime-codegen")]
 pub(crate) mod typed_report;
 pub(crate) mod withholding;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-codegen"))]
 #[path = "../../../tests/support/dovetail_report_recursive_oracle.rs"]
 mod dovetail_report_recursive_oracle;
 
@@ -48,6 +49,7 @@ mod dovetail_report_recursive_oracle;
 /// Languages with neither (BaseMath; native-output-only fold languages like Calculator) keep the
 /// existing `EGraph<String>` path unchanged. Renamed from `needs_typed_fold_path` (the path is no
 /// longer fold-only); the old name is retained as a thin alias for any external caller.
+#[cfg(feature = "runtime-codegen")]
 pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
     let has_native_fold = language.terms.iter().any(|rule| {
         rule.eval_mode == Some(mettail_ast::types::EvalMode::Fold)
@@ -173,6 +175,7 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
 
 /// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
 /// fold-only after E1; this preserves the historical name for any out-of-module reference).
+#[cfg(feature = "runtime-codegen")]
 pub(crate) fn needs_typed_fold_path(language: &LanguageDef) -> bool {
     needs_typed_dovetail_path(language)
 }
@@ -928,6 +931,7 @@ fn collect_apply_constructors(pattern: &AstPattern, out: &mut HashSet<String>) {
 /// (so the Dovetail report path and the Rho lowering agree byte-for-byte on which rewrites are nested
 /// firings) — it rejects the flat `OpenRule` (no nested element), a Comm/substitution, and any
 /// non-nested shape. Premises must be congruence-only (same gate as every structural lowering).
+#[cfg(feature = "runtime-codegen")]
 pub(crate) fn is_nested_structural_ac_rewrite(
     language: &LanguageDef,
     rw: &RewriteRule,
@@ -1899,6 +1903,7 @@ fn lower_equation(
 /// | `\| S ~/> T \|-` — **withheld** | [`withholding`] | `Suppressed`, naming the severed position (or `Declined`, naming why the lane cannot honour it) |
 /// | `\| S ~> T \|-` — **declared** | the congruence branch | `DeliveredElsewhere { EGraphCongruenceClosure }` when the closure REACHES the position; `Declined` naming the carrier when it does not |
 /// | nothing declared | not reached | the intrinsic closure — the sensible default, unchanged |
+#[cfg(feature = "runtime-codegen")]
 fn lower_rewrite(
     language: &LanguageDef,
     rw: &RewriteRule,
@@ -2093,6 +2098,7 @@ fn lower_rewrite(
 /// lane ([`reclassify_binder_float_equations`]) before the answer is final, because an equation
 /// whose LHS carries a `Lambda` metapattern is refused *here* while being discharged in full by
 /// the generated binder-congruence normal form.
+#[cfg(feature = "runtime-codegen")]
 fn rule_block(
     language: &LanguageDef,
     enum_id: Option<&Ident>,
@@ -2140,6 +2146,7 @@ fn rule_block(
 /// when every declared construct is disposed). This function's product is a
 /// macro-time record, so it has no output of its own to hang a diagnostic on; the
 /// boundary (`macros/src/lib.rs`) splices what it returns into the expansion.
+#[cfg(feature = "runtime-codegen")]
 pub(crate) fn lowering_disposition_inventory(
     language: &LanguageDef,
 ) -> (Vec<LoweringDisposition>, TokenStream) {
@@ -2238,6 +2245,7 @@ fn reclassify_binder_float_equations(
 
 /// Generate feature-gated helpers that compile generated typed AST terms into
 /// checked `RuntimeDovetailRunReport` values.
+#[cfg(feature = "runtime-codegen")]
 pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // Fold-bearing languages (non-native-output `fold`s — Rholang's Proc casts/arith) take the
     // typed-`L` path: a typed op-enum + native-rewrite dispatcher that actually reduces folds.
@@ -2589,7 +2597,7 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-codegen"))]
 mod tests {
     use super::*;
 

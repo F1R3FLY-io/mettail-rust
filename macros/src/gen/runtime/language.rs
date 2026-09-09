@@ -69,6 +69,34 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         "language_trait_impl",
         language_trait_impl,
     );
+    let runtime_backend_includes = generate_runtime_backend_includes(language);
+    let numeric_cast_adapter_include = crate::logic::writer::spill_and_include(
+        &lang_key,
+        "numeric_cast_adapter",
+        crate::gen::runtime::numeric_cast_adapter::generate_numeric_cast_adapter(language),
+    );
+
+    quote! {
+        #term_wrapper_include
+        #language_struct_include
+        #language_trait_impl_include
+        #runtime_backend_includes
+        #numeric_cast_adapter_include
+    }
+}
+
+// This selection is compiled into the proc-macro itself. Consumer-side cfg
+// below additionally prevents loading a backend the consumer did not select.
+#[cfg(not(feature = "runtime-codegen"))]
+fn generate_runtime_backend_includes(_language: &LanguageDef) -> TokenStream {
+    TokenStream::new()
+}
+
+#[cfg(feature = "runtime-codegen")]
+fn generate_runtime_backend_includes(language: &LanguageDef) -> TokenStream {
+    let name = &language.name;
+    let name_lower = name.to_string().to_lowercase();
+    let lang_key = name_lower.clone();
     let rho_scalar_invocation_include = crate::logic::writer::spill_and_include(
         &lang_key,
         "rho_scalar_invocation",
@@ -113,17 +141,7 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         } else {
             TokenStream::new()
         };
-    let numeric_cast_adapter_include = crate::logic::writer::spill_and_include(
-        &lang_key,
-        "numeric_cast_adapter",
-        crate::gen::runtime::numeric_cast_adapter::generate_numeric_cast_adapter(language),
-    );
-
     quote! {
-        #term_wrapper_include
-        #language_struct_include
-        #language_trait_impl_include
-
         // Gate the generated-source loader itself, not merely the generated items.  Macro
         // expansion otherwise makes an unselected backend contribute syntax and type-checking
         // work.  Dovetail retains a child-module boundary and explicitly re-exports only its
@@ -139,7 +157,6 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         #[cfg(feature = "dovetail-codegen")]
         #dovetail_report_module
         #dovetail_public_exports
-        #numeric_cast_adapter_include
     }
 }
 
@@ -3032,7 +3049,7 @@ fn generate_language_trait_impl_multi(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-codegen"))]
 mod backend_include_tests {
     use super::*;
 
@@ -3088,6 +3105,26 @@ mod backend_include_tests {
             "pub use __mettail_backendmoduleexport_dovetail_backend :: BackendModuleExportDovetailOp"
         ));
         assert!(!generated.contains("pub use __mettail_backendmoduleexport_dovetail_backend :: *"));
+    }
+}
+
+#[cfg(all(test, not(feature = "runtime-codegen")))]
+mod parser_backend_selection_tests {
+    use super::*;
+
+    #[test]
+    fn disabled_backend_contributes_no_generator_or_loader() {
+        let language: LanguageDef = syn::parse_str(
+            "name: ParserBackendAbsent, types { Expr } terms { Unit . |- \"unit\" : Expr; }",
+        )
+        .expect("parser-only fixture");
+        assert!(generate_runtime_backend_includes(&language).is_empty());
+        let generated = generate_language_impl(&language).to_string();
+        assert!(!generated.contains("rho-codegen"));
+        assert!(!generated.contains("dovetail-codegen"));
+        assert!(!generated.contains("rho_net_invocation"));
+        assert!(generated.contains("term_wrapper"));
+        assert!(generated.contains("numeric_cast_adapter"));
     }
 }
 

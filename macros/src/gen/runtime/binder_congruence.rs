@@ -553,11 +553,12 @@ pub fn generate_binder_congruence_term_wrapper(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use mettail_ast::analysis::binder_float::{
+        equations_boundary_canonicalizable, language_has_float_handler,
+    };
+    use mettail_ast::auto_inject::reconstruct_language_def;
     use mettail_ast::auto_inject::reconstruct_language_def_from_tokens;
     use mettail_ast::language_scan;
-    use mettail_rholang_codegen::{
-        equations_boundary_canonicalizable, language_has_float_handler, reconstruct_language_def,
-    };
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
     use syn::Item;

@@ -61,10 +61,15 @@ pub fn lang_generated_dir(lang_name: &str) -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let base = Path::new(&manifest_dir);
     let target_root = find_workspace_root(base).unwrap_or_else(|| base.to_path_buf());
-    target_root
-        .join("target")
-        .join("generated")
-        .join(lang_name.to_lowercase())
+    let generated = target_root.join("target").join("generated");
+    // Backend-enabled output keeps its established paths and bytes. Parser-only
+    // compilations have distinct metadata and may run alongside that build;
+    // never let the two packages overwrite one another's included source.
+    #[cfg(not(feature = "runtime-codegen"))]
+    let generated = generated
+        .join("parser-only")
+        .join(std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "standalone".to_owned()));
+    generated.join(lang_name.to_lowercase())
 }
 
 /// Walk parent dirs from `start` looking for a `Cargo.toml` whose content

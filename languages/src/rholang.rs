@@ -12,6 +12,7 @@ use std::ops::Neg;
 /// evaluator (`receive::eval_guard_bool`) and the pattern compiler
 /// (`rholang-runtime::rholang_formula`). `pub`, not `pub(crate)`, precisely so
 /// there is ONE classification and the two consumers cannot drift apart.
+#[path = "rholang/formula.rs"]
 pub mod formula;
 /// ★ THE `where` → Dovetail/SFT WIRE, surface half: the `Proc` → [`mettail_prattail::guard_formula::GuardFormula`]
 /// encoder, and the COMM-time guard decision derived from it.
@@ -20,7 +21,9 @@ pub mod formula;
 /// time where it is statically decidable (Presburger automata / the propositional algebra /
 /// a scalar sort's effective Boolean algebra), at run time otherwise. An `if` condition is
 /// unaffected: that is the Rholang interpreter's to decide.
+#[path = "rholang/guard_substrate.rs"]
 pub mod guard_substrate;
+#[path = "rholang/pathmap.rs"]
 pub(crate) mod pathmap;
 /// The HOST receive semantics — including [`receive::eval_guard_bool`], the host `where`-guard
 /// evaluator.
@@ -30,9 +33,13 @@ pub(crate) mod pathmap;
 /// acts only when the host evaluator and the MACHINE evaluator (`rho_pure_eval` under the
 /// reducer's own `SpatialMatcherOracle`) agree; the host leg is a free redundancy check that
 /// turns any divergence between the two into a loud warning rather than an unsound elision.
+#[path = "rholang/receive.rs"]
 pub mod receive;
+#[path = "rholang/runtime.rs"]
 pub(crate) mod runtime;
+#[path = "rholang/type_inference.rs"]
 mod type_inference;
+#[path = "rholang/zipper.rs"]
 pub(crate) mod zipper;
 
 language! {
