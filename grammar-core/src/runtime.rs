@@ -1705,9 +1705,10 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                 .last()
                 .is_none_or(|index| tighter(child_tops.get(*index).copied().flatten(), true))
         } else if parent.classification.postfix {
+            let allow_equal = parent.precedence.associativity != Associativity::NonAssociative;
             category_children
                 .first()
-                .is_none_or(|index| tighter(child_tops.get(*index).copied().flatten(), true))
+                .is_none_or(|index| tighter(child_tops.get(*index).copied().flatten(), allow_equal))
         } else {
             true
         }
@@ -2417,16 +2418,16 @@ mod tests {
     #[test]
     fn token_value_image_roundtrip_is_deterministic_and_rejects_stale_compiler_abi() {
         let (grammar, mut image) = tagged_integer_grammar();
-        image.compiler_abi = "mettail-rtn/3".into();
+        image.compiler_abi = "mettail-rtn/4".into();
         let bytes = image.encode().expect("encode");
         let decoded =
-            ParserImageV1::decode_executable_verified(&bytes, &grammar, "mettail-rtn/3", "test")
+            ParserImageV1::decode_executable_verified(&bytes, &grammar, "mettail-rtn/4", "test")
                 .expect("decode");
         assert_eq!(decoded.encode().expect("encode again"), bytes);
-        for stale in ["mettail-rtn/1", "mettail-rtn/2"] {
+        for stale in ["mettail-rtn/1", "mettail-rtn/2", "mettail-rtn/3"] {
             image.compiler_abi = stale.into();
             assert!(matches!(
-                image.verify_executable(&grammar, "mettail-rtn/3", "test"),
+                image.verify_executable(&grammar, "mettail-rtn/4", "test"),
                 Err(crate::ImageError::CompilerAbiMismatch)
             ));
         }

@@ -2945,10 +2945,17 @@ fn decode_term(value: &RhoValue, path: &str) -> Result<TermDecl, ValueDecodeErro
     let associativity = values
         .get("assoc")
         .map(|value| {
-            Ok(match expect_enum_string(value, &["left", "right"], &format!("{path}.assoc"))? {
-                "right" => core::Associativity::Right,
-                _ => core::Associativity::Left,
-            })
+            Ok(
+                match expect_enum_string(
+                    value,
+                    &["left", "right", "nonassoc"],
+                    &format!("{path}.assoc"),
+                )? {
+                    "right" => core::Associativity::Right,
+                    "nonassoc" => core::Associativity::NonAssociative,
+                    _ => core::Associativity::Left,
+                },
+            )
         })
         .transpose()?
         .unwrap_or(core::Associativity::Left);
@@ -5806,6 +5813,51 @@ mod tests {
         };
         values.insert("mettail".into(), s("language/3"));
         value
+    }
+
+    #[test]
+    fn postfix_precedence_decodes_all_associations_and_optional_powers() {
+        for (spelling, expected) in [
+            (None, core::Associativity::Left),
+            (Some("left"), core::Associativity::Left),
+            (Some("right"), core::Associativity::Right),
+            (Some("nonassoc"), core::Associativity::NonAssociative),
+        ] {
+            for power in [None, Some(0_u16), Some(30), Some(u16::MAX)] {
+                let mut postfix = BTreeMap::from([
+                    ("label".into(), s("Postfix")),
+                    ("category".into(), s("Expr")),
+                    ("context".into(), l([l([s("param"), s("body"), s("Expr")])])),
+                    ("syntax".into(), l([s("body"), l([s("lit"), s("*")])])),
+                ]);
+                if let Some(spelling) = spelling {
+                    postfix.insert("assoc".into(), s(spelling));
+                }
+                if let Some(power) = power {
+                    postfix.insert("prefix_bp".into(), RhoValue::Integer(i128::from(power)));
+                }
+                let value = language(
+                    "Postfix",
+                    [
+                        ("types", l([s("Expr")])),
+                        ("terms", l([term("Atom", "Expr", "a"), RhoValue::Map(postfix)])),
+                    ],
+                );
+                let grammar = value_to_core(&value).expect("declared precedence decodes");
+                let production = &grammar.productions[1];
+                assert_eq!(production.precedence.associativity, expected);
+                assert_eq!(production.precedence.binding_power, power);
+                assert!(production.classification.postfix);
+            }
+        }
+        for invalid in [s("NonAssociative"), s("none"), RhoValue::Boolean(false)] {
+            let mut atom = term("Atom", "Expr", "a");
+            let RhoValue::Map(fields) = &mut atom else {
+                unreachable!("term helper returns a map")
+            };
+            fields.insert("assoc".into(), invalid);
+            assert!(decode_term(&atom, "$.terms[0]").is_err());
+        }
     }
 
     #[test]

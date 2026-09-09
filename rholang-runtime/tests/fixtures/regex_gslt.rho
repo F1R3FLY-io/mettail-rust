@@ -107,10 +107,10 @@ Module RegexGSLT {
       "terms": [
         {"label":"PAlt", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p",["lit","|"],"q"], "assoc":"left", "prefix_bp":10},
         {"label":"PConcat", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p","q"], "assoc":"left", "prefix_bp":20},
-        {"label":"PStar", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","*"]], "prefix_bp":30},
-        {"label":"PPlus", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","+"]], "prefix_bp":30},
-        {"label":"POptional", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","?"]], "prefix_bp":30},
-        {"label":"PRepeat", "category":"Pattern", "context":[["param","p","Pattern"],["param","lo","Nat"],["param","hi","Nat"]], "syntax":["p",["lit","{"],"lo",["lit",","],"hi",["lit","}"]], "prefix_bp":30}
+        {"label":"PStar", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","*"]], "assoc":"nonassoc", "prefix_bp":30},
+        {"label":"PPlus", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","+"]], "assoc":"nonassoc", "prefix_bp":30},
+        {"label":"POptional", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","?"]], "assoc":"nonassoc", "prefix_bp":30},
+        {"label":"PRepeat", "category":"Pattern", "context":[["param","p","Pattern"],["param","lo","Nat"],["param","hi","Nat"]], "syntax":["p",["lit","{"],"lo",["lit",","],"hi",["lit","}"]], "assoc":"nonassoc", "prefix_bp":30}
       ]
     })
     Equations {

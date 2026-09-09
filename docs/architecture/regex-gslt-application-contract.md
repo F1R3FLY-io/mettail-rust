@@ -64,6 +64,12 @@ defaults unless explicitly overridden. Bounds are nonnegative integers; reversed
 bounds denote `PFail`, as proved by `invalid_repeat_bounds_are_rejected`, rather
 than an implementation-selected alternate interpretation.
 
+The four quantifier declarations explicitly select `"assoc": "nonassoc"` with
+`"prefix_bp": 30` in their canonical term data. The shared runtime precedence
+check rejects an equal-power postfix operand while admitting the unranked
+`PGroup` boundary. See [runtime postfix admission](runtime-lexical-lattice.md#nonassociative-postfix-declarations)
+for the generalized rule and its proof and codec boundaries.
+
 The literal token accepts individual ASCII letters/digits and non-ASCII Unicode
 scalars; the existing ASCII-only token must be expanded for the Unicode cases.
 Arbitrary scalars, including metacharacters and whitespace, remain expressible

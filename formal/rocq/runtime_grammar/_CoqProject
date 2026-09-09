@@ -35,6 +35,7 @@ theories/RegistryModuleClosure.v
 theories/WpdaDispatchPartition.v
 theories/CategoricalPrattFloor.v
 theories/JuxtapositionPrecedence.v
+theories/UnaryPostfixPrecedence.v
 theories/StructuralTemplate.v
 theories/StructuralConstructMatch.v
 theories/WireAdmission.v

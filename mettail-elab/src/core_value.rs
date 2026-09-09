@@ -567,6 +567,41 @@ mod tests {
     }
 
     #[test]
+    fn nonassociative_postfix_exact_codecs_preserve_language_and_fingerprints() {
+        for power in [None, Some(0), Some(30), Some(u16::MAX)] {
+            let mut expected = comprehensive_language();
+            let production = &mut expected.grammar.productions[0];
+            production.precedence.associativity = Associativity::NonAssociative;
+            production.precedence.binding_power = power;
+            production.classification.prefix = false;
+            production.classification.postfix = true;
+            let value = language_core_to_value(&expected).expect("exact language encoding");
+            let fragment = language_core_to_data_fragment(&expected).expect("exact Data encoding");
+            for actual in [
+                crate::canonical::value_to_language_core(&value).expect("exact language decoding"),
+                decode_language_core_data_fragment(&fragment)
+                    .expect("valid Data fragment")
+                    .expect("exact Data fragment"),
+            ] {
+                assert_eq!(actual, expected);
+                assert_eq!(
+                    actual.grammar.fingerprint().expect("grammar fingerprint"),
+                    expected
+                        .grammar
+                        .fingerprint()
+                        .expect("expected grammar fingerprint")
+                );
+                assert_eq!(
+                    actual.fingerprint().expect("language fingerprint"),
+                    expected
+                        .fingerprint()
+                        .expect("expected language fingerprint")
+                );
+            }
+        }
+    }
+
+    #[test]
     fn exact_data_fragment_round_trip_preserves_every_field_without_identity_headers() {
         let expected = comprehensive_language();
         let fragment = language_core_to_data_fragment(&expected).expect("encoding succeeds");

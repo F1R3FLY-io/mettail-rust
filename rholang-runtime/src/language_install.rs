@@ -3680,6 +3680,7 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
 #[cfg(test)]
 pub(crate) mod tests {
     mod regex_gslt;
+    mod regex_quantifiers;
 
     use super::*;
     use mettail_grammar_core::{

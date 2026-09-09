@@ -6,7 +6,7 @@ use crate::automata::subset::subset_construction;
 use crate::automata::{CharClass, Nfa, NfaState, TokenKind, DEAD_STATE};
 use mettail_grammar_core as core;
 
-pub const RUNTIME_COMPILER_ABI: &str = "mettail-rtn/3";
+pub const RUNTIME_COMPILER_ABI: &str = "mettail-rtn/4";
 pub const RUNTIME_UNICODE_ABI: &str = "unicode-regex-syntax-0.8";
 
 #[derive(Debug)]
@@ -230,6 +230,8 @@ fn token_kind_id(kind: &TokenKind) -> Option<core::TokenId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod postfix;
 
     fn category(id: u32, name: &str, primary: bool) -> core::Category {
         core::Category {

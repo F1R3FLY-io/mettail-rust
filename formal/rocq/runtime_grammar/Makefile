@@ -9,6 +9,7 @@ ifneq ($(filter clean,$(MAKECMDGOALS)),clean)
 endif
 
 RUNTIME_GRAMMAR_SECURITY_MODULES := \
+	RuntimeGrammar.UnaryPostfixPrecedence \
 	RuntimeGrammar.CapabilitySeparation \
 	RuntimeGrammar.InstalledLanguageAuthority \
 	RuntimeGrammar.TheoremChannel \

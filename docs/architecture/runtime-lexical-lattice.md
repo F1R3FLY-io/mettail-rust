@@ -129,10 +129,40 @@ incrementing bounded powers, including at `u16::MAX`. No declared power means
 this check imposes no association. Cross-category, binder, collection, and
 delimited shapes retain their separate binding contracts.
 
-The Regex fixture's keyword `eps` also admits the literal sequence `e`, `p`, `s`.
-Left-associative concatenation removes the right-associated tree, but does not
-authorize removing either the epsilon constructor or the left-associated literal
-tree. Ranking those two readings is not evidence that one is invalid.
+A grammar declaring `eps` as an epsilon keyword may also admit the literal
+sequence `e`, `p`, `s`. Left-associative concatenation removes the right-associated
+tree, but does not authorize removing either the epsilon constructor or the
+left-associated literal tree. Ranking those two readings is not evidence that one
+is invalid. The practical Regex fixture uses `()` for epsilon instead.
+
+## Nonassociative postfix declarations
+
+Canonical term declarations accept `"assoc": "left"`, `"right"`, or `"nonassoc"`;
+omission retains `"left"`. For a postfix production with a declared `prefix_bp`,
+`"nonassoc"` requires the operand's top production to have **strictly greater**
+binding power, or no declared power. Left and right settings both preserve the
+existing postfix behavior, which also accepts equal power. If the parent has no
+declared power, this admission check remains unrestricted for every setting.
+
+The Regex declaration gives its four quantifiers binding power 30 and
+`"assoc": "nonassoc"`. Thus `a*?` is rejected, while `(a*)?` is accepted: the
+`PGroup` constructor has no declared binding power. This checks the constructor
+boundary; it does not inspect parentheses or descend into the group. In bounded
+repetition, `PRepeat(Pattern, Nat, Nat)`, only the operand in the result category
+`Pattern` supplies this comparison; the ordered `Nat` bounds are unchanged.
+Strict comparison requires no increment, even at `u16::MAX`.
+
+Admission filters each supplied candidate independently and leaves admitted
+syntax, semantic value, parse cost, and derivation rank unchanged. It does not
+license selecting the first candidate or treating resource exhaustion as a
+syntax rejection. The exact `language_core_to_value` and
+`language_core_to_data_fragment` codecs preserve the setting and both grammar and
+language fingerprints. The legacy `value_to_presentation` projection is not a
+lossless precedence codec.
+
+This setting is implemented for installed runtime grammars. It does not assert
+nonassociative-postfix support in generated compile-time parsers or change their
+typed-parser hot path.
 
 ## Bounds, identity, and verification
 
@@ -149,7 +179,7 @@ It is not a universal CPU meter or a replacement for host-callback limits,
 semantic cost accounting, parser-item limits, or forest/result limits.
 
 These limits participate in both installation-policy and symbolic-template-cache
-commitments. The runtime compiler ABI is `mettail-rtn/3`; installation policy uses
+commitments. The runtime compiler ABI is `mettail-rtn/4`; installation policy uses
 the `mettail-install-policy/5` domain. Stale executable images are rejected. The
 Rholang transport reports lexical exhaustion as `Exhausted`, never `NoParse`.
 
@@ -160,6 +190,9 @@ Formal sources in `formal/rocq/runtime_grammar/theories/`:
   composition, mode/root preservation, failure classification, and reservations.
 - `JuxtapositionPrecedence.v`: exact shape recognition and refinement to the
   existing `CategoricalPrattFloor.v` admission predicate; candidate preservation.
+- `UnaryPostfixPrecedence.v`: optional parent/child powers, strict nonassociative
+  admission, unchanged left/right admission, bounded-power safety, and exact
+  supplied-candidate retention, reusing the existing Pratt and filter laws.
 
 These are scoped model/refinement proofs, not a claim that the entire Rust parser
 or all end-to-end ambiguity handling has been formally verified. Regression tests
