@@ -14,8 +14,10 @@
     fresh and receive below check local cardinalities only. They consume
     already scope-resolved descriptors; they do not establish URI permutation,
     uniqueness, machine-width limits, remainder validity, or scope ownership.
-    The checked operation dispatcher and private publication protocol must
-    enforce those obligations before this model can justify a runtime target.
+    RholangConstructionProtocol supplies checked dispatch and the admitted
+    fresh/receive layouts over this algebra. Full session publication and
+    source-producer correspondence remain separate obligations before a
+    runtime target can be justified.
     The named theorems assert only the explicit equations and premises shown. *)
 
 From Stdlib Require Import List String Bool PeanoNat ZArith Lia.
@@ -173,7 +175,7 @@ Definition bound_summary (index : nat) : Summary :=
 
 Inductive ConstructionError :=
 | IndexOutOfScope | IntegerOutOfRange | ChildArityMismatch
-| InvalidBinderLayout | MissingReference (index : nat).
+| InvalidBinderLayout | TargetIndexOutOfRange | MissingReference (index : nat).
 Inductive ConstructionResult :=
 | Constructed (value : Value)
 | ConstructionRejected (error : ConstructionError).

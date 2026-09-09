@@ -31,8 +31,9 @@ observe(value_reference)
     -> Result<StructuralObservation, ConstructionError>
 ```
 
-`construct` first validates the operation's child roles, arity, reference
-bounds, and declared integer/binder bounds. It then builds the value privately.
+`construct` resolves the ordered references, rejecting the first missing
+reference, then validates the operation's child roles, arity, and declared
+integer/binder bounds. It then builds the value privately.
 Failure returns a typed error, never an empty-process substitute or a partially
 published root. Runtime allocation, cancellation, and work limits remain
 additional fallible checks; mathematical constructor totality is not permission
@@ -87,6 +88,40 @@ binders and foreign-language-term (FLT) holes in their original combined order.
 Source, pattern, body, and condition are distinct roles; a generic list whose
 roles must be guessed is insufficient. The body cannot be scheduled until its
 patterns establish that roster.
+
+The admitted receive producers all emit exactly **one outer pattern per bind**
+and no remainder. A polyadic bind uses one list pattern; an empty input bind
+uses one wildcard with zero captures and a false connective flag. It does not
+use an empty pattern vector or an empty-list pattern. The descriptor retains
+the pattern producer's ordered capture telescope and derives its free-count
+from that telescope. The full receive roster is the concatenation of those
+telescopes. Equal counts alone do not prove that a telescope belongs to a
+particular pattern; the existing producer must establish that correspondence.
+
+Receive persistence is the OR of the bind persistence flags. Mixed persistence
+and repeated capture names are not rejected by this interface. The existing
+environment insertion rules determine shadowing, while the roster preserves
+every slot occurrence. An empty join is rejected; an empty sequence of receive
+rows instead schedules its body through the existing `ForRows` owner.
+
+Fresh-scope descriptors distinguish ordinary allocation from URI allocation:
+
+| Descriptor | Preserved data and validation |
+| --- | --- |
+| Plain | Ordered binder identities, no URIs; zero binders remain representable |
+| URI | Nonempty normalized URI–binder pairs from `unbind_uri_scope`; both output projections use the same pairs |
+
+The existing URI owner validates the backtick envelope and nonempty interior,
+sorts the pairs, and rejects duplicate URIs. The target checks the normalized
+sequence in one forward pass; it neither sorts again nor introduces URI-scheme
+validation. Strict ordering establishes uniqueness without a separate
+quadratic duplicate scan. The body must be lowered under the binder order
+from those same pairs, an explicit producer-refinement obligation.
+
+Signed 32-bit bounds apply to emitted indices, pattern depths, fresh counts,
+and receive free/bind counts. The total enclosing scope size is not an emitted
+field and must not acquire an implicit signed-32-bit limit from these checks.
+Any session-wide environment limit belongs to the declared resource policy.
 
 DDL projection reuses the existing exhaustive plan and captured-string decoder.
 Embedded `Data` processes return to the same host worklist. A DDL wire node is
@@ -179,14 +214,38 @@ implementation supplies the bounded cleanup and reentrancy evidence.
 
 ## Formal and implementation handoff
 
-The initial
+The
 [construction algebra](../../formal/rocq/rho_bridge/theories/RholangTargetConstruction.v)
 defines structured values, append-aware observations, named metadata policies,
-ordered references, local scope laws, and origin erasure. Its source header
-explicitly identifies the remaining checked-dispatch and descriptor-admission
-obligations. Local constructor proofs do not yet establish a complete admission
-interface or publication protocol. In particular, the current abstract pending
-context is not a proof about concrete FLT template contents.
+ordered references, local scope laws, and origin erasure. The
+[checked construction protocol](../../formal/rocq/rho_bridge/theories/RholangConstructionProtocol.v)
+connects that algebra to a closed operation vocabulary, checked references,
+fresh/receive descriptors, observations, and private append-only construction.
+Its `GeneratedArena` relation starts at an empty arena and admits a new value
+only through an actual successful interpretation. It is construction provenance,
+not an assumed validity flag or proof of correct lexical resolution.
+
+The protocol establishes these connected results:
+
+1. Successful construction resolves the exact ordered children, preserving
+   repeated references, and returns their actual interpretation.
+2. A successful private step appends that value at the returned index and
+   preserves all earlier references. Observation reads the constructed value.
+3. A rejected step leaves the private arena unchanged and returns its error;
+   missing operands never become empty processes.
+4. Checked fresh construction preserves the normalized URI/binder association.
+   Checked receive construction preserves its pattern roles, capture roster,
+   derived count and persistence, body/condition suffix, and metadata policy.
+
+These results do not yet establish full artifact publication or concrete FLT
+descriptor retention. The algebra's abstract pending context is not a proof
+about actual FLT template contents. The remaining owned session boundary must
+retain those descriptors and obligations alongside the graph and root.
+
+The mathematical range wrapper describes a result, not evaluation order in a
+strict programming language. The Rust adapter must check range and resource
+limits **before** materializing index-sized metadata; an eagerly evaluated
+argument to a checking helper would not establish that ordering.
 
 The construction model must define its interpretation concretely and prove
 arity/reference rejection, ordered-child preservation, append-aware observation,
