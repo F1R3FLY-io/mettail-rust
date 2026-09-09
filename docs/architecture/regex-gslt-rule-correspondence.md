@@ -104,8 +104,9 @@ describes its generalized rule and scoped proof.
 
 ## What the evidence establishes
 
-The Rocq models were compiled and separately kernel-checked before the
-corresponding nontrivial implementation changes. Source correspondence is
+The existing Rocq models have been compiled and separately kernel-checked;
+their unchanged sources and recorded evidence predate this validation-only
+checkpoint. Source correspondence is
 inspected and exercised by the named tests; Rust and DDL are not extracted from
 these proofs. In particular:
 
