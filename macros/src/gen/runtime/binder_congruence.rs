@@ -91,8 +91,8 @@
 //! unlicensed, which is the same defect one arm over.
 
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
+use mettail_ast::analysis::binder_float::float_satellite_table;
 use mettail_ast::language::LanguageDef;
-use mettail_rholang_codegen::float_satellite_table;
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
@@ -118,7 +118,9 @@ pub(crate) fn should_emit_binder_congruence(language: &LanguageDef) -> bool {
 /// A language is host-backed iff any of its guard obligations is a
 /// `RhoNativeJoin` (a Rho-native guarded join / RSpace atomic continuation).
 fn has_no_host_disposition(language: &LanguageDef) -> bool {
-    use mettail_rholang_codegen::backend::{collect_guard_obligations, RhoGuardObligationKind};
+    use mettail_ast::analysis::guard_obligations::{
+        collect_guard_obligations, RhoGuardObligationKind,
+    };
     !collect_guard_obligations(language)
         .iter()
         .any(|o| matches!(o.kind, RhoGuardObligationKind::RhoNativeJoin))

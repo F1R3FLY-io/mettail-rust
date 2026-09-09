@@ -265,6 +265,21 @@ Rholang, models, the pure evaluator and RSpace. Factor the pure analyses/types
 and target adapters along these existing seams, then check the complete graph.
 Neither an API rename nor a target-only dependency report proves independence.
 
+The shared pure analyses now live in the AST crate:
+[binder-float analysis](../../ast/src/analysis/binder_float.rs) derives the
+declared float satellites and their coverage classification, while
+[guard-obligation analysis](../../ast/src/analysis/guard_obligations.rs) collects
+the obligations used by both macro generation and backend admission. The old
+backend paths re-export those same definitions. Float satellites retain the
+first declared occurrence per constructor; guard obligations retain the
+existing sorted, deduplicated set. Neither analysis evaluates a guest term or
+requires node values. The
+[relocation check](../../scripts/verify-pure-analysis-relocation.mjs) compares
+their complete implementation bodies with the pinned pre-extraction source,
+allowing only explicit module-path changes and formatting. This extraction is
+not itself the backend feature gate: actual generator invocation and the full
+Cargo dependency closure still require their separate checks.
+
 All source traversal, target assembly, scope substitution and teardown must
 retain explicit worklists or existing stack-safe representations. Charge
 bounded work and storage before growth. Preserve collection mode/arity and

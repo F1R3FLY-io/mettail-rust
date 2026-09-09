@@ -8,9 +8,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
-use mettail_ast::language::{
-    BehavioralPred, GuardConfig, GuardSlotDecl, LanguageDef, Premise, RewriteRule,
-};
+use mettail_ast::language::LanguageDef;
+#[cfg(test)]
+use mettail_ast::language::{BehavioralPred, Premise, RewriteRule};
 use mettail_ast::types::TypeExpr;
 use models::rhoapi::Par;
 
@@ -56,35 +56,9 @@ impl RhoRejectedRuleDispositionKind {
     }
 }
 
-/// Class of predicated-type / guard obligation induced by a `LanguageDef`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RhoGuardObligationKind {
-    /// Runtime predicate over matched values, facts, channels, or named
-    /// predicate relations.
-    BehavioralPredicate,
-    /// Structural pattern predicate such as AC matching, binding shape, or
-    /// guarded rewrite pattern structure.
-    StructuralPattern,
-    /// Registered predicate theory that must supply an effective Boolean
-    /// algebra or an equivalent verified theory adapter.
-    TheoryRegistration,
-    /// Rho-native guarded receive/join/channel scheduling obligation.
-    RhoNativeJoin,
-}
-
-/// One guard/predicated-type obligation that must be covered before the Rho
-/// backend may become the default runtime for a language.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RhoGuardObligation {
-    pub id: String,
-    pub kind: RhoGuardObligationKind,
-}
-
-impl RhoGuardObligation {
-    fn new(id: impl Into<String>, kind: RhoGuardObligationKind) -> Self {
-        Self { id: id.into(), kind }
-    }
-}
+pub use mettail_ast::analysis::guard_obligations::{
+    collect_guard_obligations, RhoGuardObligation, RhoGuardObligationKind,
+};
 
 /// Disposition kind for a guard/predicated-type obligation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -267,265 +241,6 @@ pub fn guard_disposition_covers(
         },
         RhoNativeJoinObligation => matches!(disposition_kind, RhoNativeJoin),
     }
-}
-
-fn pred_has_structural_component(pred: &BehavioralPred) -> bool {
-    let mut work = vec![pred];
-    while let Some(pred) = work.pop() {
-        match pred {
-            BehavioralPred::AcMatch { .. } => return true,
-            BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
-                work.push(body);
-            },
-            BehavioralPred::And(left, right)
-            | BehavioralPred::Or(left, right)
-            | BehavioralPred::Implies(left, right) => {
-                work.push(right);
-                work.push(left);
-            },
-            BehavioralPred::RelationQuery { .. } | BehavioralPred::Top => {},
-        }
-    }
-    false
-}
-
-fn guard_pred_obligation_kind(pred: &BehavioralPred) -> RhoGuardObligationKind {
-    if pred_has_structural_component(pred) {
-        RhoGuardObligationKind::StructuralPattern
-    } else {
-        RhoGuardObligationKind::BehavioralPredicate
-    }
-}
-
-/// Induce the guard obligations of one `terms { }` rule.
-///
-/// A term parameter is a semantic-predicate slot in exactly two ways, and both induce the SAME
-/// obligation id — `term:<Label>:guard:<param>` — so no downstream consumer can tell them apart:
-///
-/// | surface | how it is recognized |
-/// |---|---|
-/// | `?param:Guard` | by its **type**: a [`TermParam::GuardBody`] |
-/// | `param:SomeCategory` + a `guards { guard_slots { Label(param); } }` declaration | by the author's **declaration** |
-///
-/// The second exists for a language whose guard sublanguage IS its own expression language.
-/// Rholang's `where` is the case: its guard is an ordinary `Proc`, which is what keeps
-/// `where x + y < 10` and `where t matches {phi | psi}` writable — neither is expressible as a
-/// `BehavioralPred`, whose grammar is relation queries, quantifiers and AC-matches with no
-/// comparison, no arithmetic and no nesting inside arguments. Retyping the slot to `Guard` would
-/// therefore not "make the guard a semantic predicate"; it would delete most of the guard
-/// language. The declaration says the same thing without the loss.
-///
-/// ★ It is a DECLARATION, never an inference. Nothing here reads the rule's syntax form, so no
-/// `"where"` literal and no parameter *name* is load-bearing — recognition by spelling is the
-/// drift this tree forbids, and `rholang/formula.rs` states the rule outright:
-/// *"Recognition is by CONSTRUCTOR, never by spelling."*
-fn collect_term_guard_obligations(
-    rule: &GrammarRule,
-    declared_slots: &[GuardSlotDecl],
-    out: &mut BTreeSet<RhoGuardObligation>,
-) {
-    if let Some(params) = rule.term_context.as_ref() {
-        let label = rule.label.to_string();
-        let declared: BTreeSet<String> = declared_slots
-            .iter()
-            .filter(|decl| decl.label == label)
-            .map(|decl| decl.param.to_string())
-            .collect();
-        collect_term_param_guard_obligations(&label, params, &declared, out);
-    }
-}
-
-fn collect_term_param_guard_obligations(
-    label: &str,
-    params: &[TermParam],
-    declared: &BTreeSet<String>,
-    out: &mut BTreeSet<RhoGuardObligation>,
-) {
-    let mut work: Vec<_> = params.iter().rev().collect();
-    while let Some(param) = work.pop() {
-        match param {
-            TermParam::GuardBody { name } => {
-                out.insert(RhoGuardObligation::new(
-                    format!("term:{label}:guard:{name}"),
-                    RhoGuardObligationKind::BehavioralPredicate,
-                ));
-            },
-            // A category-typed parameter the author DECLARED to be a guard slot.
-            TermParam::Simple { name, .. } if declared.contains(&name.to_string()) => {
-                out.insert(RhoGuardObligation::new(
-                    format!("term:{label}:guard:{name}"),
-                    RhoGuardObligationKind::BehavioralPredicate,
-                ));
-            },
-            TermParam::Optional { params } => work.extend(params.iter().rev()),
-            TermParam::Simple { .. }
-            | TermParam::Abstraction { .. }
-            | TermParam::MultiAbstraction { .. } => {},
-        }
-    }
-}
-
-fn collect_premise_guard_obligations(
-    owner_kind: &str,
-    owner_name: &str,
-    premises: &[Premise],
-    out: &mut BTreeSet<RhoGuardObligation>,
-) {
-    for (index, premise) in premises.iter().enumerate() {
-        let mut premise = premise;
-        loop {
-            match premise {
-                Premise::ForAll { body, .. } => premise = body,
-                Premise::BehavioralGuard(pred) => {
-                    out.insert(RhoGuardObligation::new(
-                        format!("{owner_kind}:{owner_name}:guard:{index}"),
-                        guard_pred_obligation_kind(pred),
-                    ));
-                    break;
-                },
-                // ★ (#195) `CongruenceWithheld` carries no guard obligation for the same
-                // reason `Congruence` does not: neither is a semantic predicate. It is
-                // listed explicitly (not defaulted) so the day a polarity acquires an
-                // obligation, the compiler asks about BOTH.
-                Premise::Freshness(_)
-                | Premise::Congruence { .. }
-                | Premise::CongruenceWithheld { .. }
-                | Premise::RelationQuery { .. }
-                | Premise::SyntheticInjGuard { .. } => break,
-            }
-        }
-    }
-}
-
-fn collect_rewrite_guard_obligations(
-    rewrite: &RewriteRule,
-    out: &mut BTreeSet<RhoGuardObligation>,
-) {
-    collect_premise_guard_obligations("rewrite", &rewrite.name.to_string(), &rewrite.premises, out);
-}
-
-/// `true` iff the language can actually reach the built-in predicate vocabulary.
-///
-/// The vocabulary is consumed by the **predicate sublanguage**, and the only way into that
-/// sublanguage is a `?name:Guard` term parameter — a `TermParam::GuardBody`, which lowers to the
-/// parser's `GuardExpression` item. A language with no such slot never parses a predicate, so
-/// there is no built-in-predicate work to induce an obligation for.
-fn language_reaches_the_builtin_predicate_vocabulary(def: &LanguageDef) -> bool {
-    def.terms
-        .iter()
-        .filter_map(|rule| rule.term_context.as_ref())
-        .any(|params| params_have_guard_body(params))
-}
-
-fn params_have_guard_body(params: &[TermParam]) -> bool {
-    let mut work: Vec<_> = params.iter().collect();
-    while let Some(param) = work.pop() {
-        match param {
-            TermParam::GuardBody { .. } => return true,
-            TermParam::Optional { params } => work.extend(params),
-            TermParam::Simple { .. }
-            | TermParam::Abstraction { .. }
-            | TermParam::MultiAbstraction { .. } => {},
-        }
-    }
-    false
-}
-
-#[cfg(test)]
-#[path = "../tests/support/backend_recursive_oracle.rs"]
-mod recursive_oracle;
-
-fn collect_guard_config_obligations(
-    guard_config: &GuardConfig,
-    reaches_builtin_vocabulary: bool,
-    out: &mut BTreeSet<RhoGuardObligation>,
-) {
-    match guard_config.builtin_predicates.as_ref() {
-        Some(predicates) => {
-            for predicate in predicates {
-                out.insert(RhoGuardObligation::new(
-                    format!("predicate:{}", predicate.name),
-                    RhoGuardObligationKind::BehavioralPredicate,
-                ));
-            }
-        },
-        // ★ OPEN-WORLD built-ins — but only where they are REACHABLE (2026-07-26).
-        //
-        // The `None` arm means "the standard built-in predicates are available to the predicate
-        // sublanguage", and that is a claim about the sublanguage, not about the `guards { }`
-        // block. Firing it for the mere PRESENCE of a block conflated two different facts, and
-        // the conflation surfaced the moment a language declared a `guards { }` block for
-        // something else: Rholang's `guard_slots` declaration induced an uncovered
-        // `predicate:standard-builtins` obligation for a vocabulary it cannot reach, because it
-        // has no `?name:Guard` slot and therefore never enters the predicate sublanguage.
-        //
-        // Every language that DOES have such a slot is unaffected — GuardedRho still induces it —
-        // and every language with explicit built-ins takes the `Some` arm above.
-        None if reaches_builtin_vocabulary => {
-            out.insert(RhoGuardObligation::new(
-                "predicate:standard-builtins",
-                RhoGuardObligationKind::BehavioralPredicate,
-            ));
-        },
-        None => {},
-    }
-
-    for theory in &guard_config.theories {
-        out.insert(RhoGuardObligation::new(
-            format!("theory:{}", theory.name),
-            RhoGuardObligationKind::TheoryRegistration,
-        ));
-    }
-
-    if let Some(channels) = guard_config.channels.as_ref() {
-        for channel in &channels.channel_categories {
-            out.insert(RhoGuardObligation::new(
-                format!("channel:{}", channel.category),
-                RhoGuardObligationKind::RhoNativeJoin,
-            ));
-        }
-        for join in &channels.join_patterns {
-            out.insert(RhoGuardObligation::new(
-                format!("join:{}", join.label),
-                RhoGuardObligationKind::RhoNativeJoin,
-            ));
-        }
-    }
-}
-
-/// Collect the exact guard/predicated-type obligation set induced by a
-/// `LanguageDef`.
-pub fn collect_guard_obligations(def: &LanguageDef) -> Vec<RhoGuardObligation> {
-    let mut obligations = BTreeSet::new();
-
-    if let Some(guard_config) = def.guard_config.as_ref() {
-        collect_guard_config_obligations(
-            guard_config,
-            language_reaches_the_builtin_predicate_vocabulary(def),
-            &mut obligations,
-        );
-    }
-
-    let declared_guard_slots: &[GuardSlotDecl] = def
-        .guard_config
-        .as_ref()
-        .map_or(&[], |config| config.guard_slots.as_slice());
-    for rule in &def.terms {
-        collect_term_guard_obligations(rule, declared_guard_slots, &mut obligations);
-    }
-    for equation in &def.equations {
-        collect_premise_guard_obligations(
-            "equation",
-            &equation.name.to_string(),
-            &equation.premises,
-            &mut obligations,
-        );
-    }
-    for rewrite in &def.rewrites {
-        collect_rewrite_guard_obligations(rewrite, &mut obligations);
-    }
-
-    obligations.into_iter().collect()
 }
 
 /// The fail-closed guard-quality blockers for a set of substrate-derived
@@ -1687,30 +1402,22 @@ mod tests {
     fn guard_obligations_cover_behavioral_structural_eba_and_rho_native_surfaces() {
         let def = guarded_scalar_with_structural_guard();
         let obligations = collect_guard_obligations(&def);
+        let obligation = |id: &str, kind| RhoGuardObligation { id: id.to_owned(), kind };
         assert_eq!(
             obligations,
             vec![
-                RhoGuardObligation::new("channel:Name", RhoGuardObligationKind::RhoNativeJoin),
-                RhoGuardObligation::new(
-                    "join:PGuardedInput",
-                    RhoGuardObligationKind::RhoNativeJoin
-                ),
-                RhoGuardObligation::new(
-                    "predicate:gt",
-                    RhoGuardObligationKind::BehavioralPredicate
-                ),
-                RhoGuardObligation::new(
+                obligation("channel:Name", RhoGuardObligationKind::RhoNativeJoin),
+                obligation("join:PGuardedInput", RhoGuardObligationKind::RhoNativeJoin),
+                obligation("predicate:gt", RhoGuardObligationKind::BehavioralPredicate),
+                obligation(
                     "rewrite:GuardedStep:guard:0",
                     RhoGuardObligationKind::StructuralPattern
                 ),
-                RhoGuardObligation::new(
+                obligation(
                     "term:PGuardedInput:guard:guard",
                     RhoGuardObligationKind::BehavioralPredicate
                 ),
-                RhoGuardObligation::new(
-                    "theory:arithmetic",
-                    RhoGuardObligationKind::TheoryRegistration
-                ),
+                obligation("theory:arithmetic", RhoGuardObligationKind::TheoryRegistration),
             ]
         );
     }

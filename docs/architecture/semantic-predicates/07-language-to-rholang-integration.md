@@ -92,9 +92,10 @@ emits no runtime structure.
 
 ### 4.1 Obligations
 
-`collect_guard_obligations(def)` (`rholang-codegen/src/backend.rs`) walks the
-`LanguageDef` and induces the exact obligation set, each tagged with a
-`RhoGuardObligationKind`:
+`collect_guard_obligations(def)` is implemented in the
+[shared AST analysis](../../../ast/src/analysis/guard_obligations.rs) and
+re-exported by `rholang-codegen/src/backend.rs`. It walks the `LanguageDef` and
+induces the exact obligation set, each tagged with a `RhoGuardObligationKind`:
 
 | Source in `language!` | Obligation id | `RhoGuardObligationKind` |
 |---|---|---|

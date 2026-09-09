@@ -2202,7 +2202,7 @@ fn reclassify_binder_float_equations(
     eq: &Equation,
     dispositions: &mut [LoweringDisposition],
 ) {
-    use mettail_rholang_codegen::rho_net_lower::{
+    use mettail_ast::analysis::binder_float::{
         classify_equation_float_disposition, EquationFloatDisposition,
     };
 
