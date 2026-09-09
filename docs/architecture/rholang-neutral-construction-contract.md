@@ -469,6 +469,53 @@ already implements this neutral envelope or its accounting record.
 `RholangFrontendArtifactV1` remains the specified output contract, not the name
 of an implemented Rust type.
 
+## Shared worklist storage
+
+The existing driver now uses the node-independent
+[`Worklist<Job, Par>` storage](../../runtime/src/worklist.rs) through its local
+`Stacks` wrapper. This is a concrete direct-node storage instantiation, not an
+implementation of the full neutral construction target. The driver still owns
+its `Job`/`Kont` instructions, scope environment, staged receives, constructors
+and session machinery. No second traversal or constructor interpreter was added.
+
+The storage keeps the existing two vectors and initial 64-element capacities.
+Work is last-in/first-out; completed values retain source order. The producer's
+immutable classifier distinguishes an Enter from a continuation of arity zero.
+Its three incremental counters count pending Enters, continuations and operands;
+the invariant check is constant-time and runs at complete transition boundaries.
+It must not run halfway through scheduling a continuation and its children.
+
+The checked API rejects counter overflow/underflow, unavailable operands,
+invalid debt, pending work and zero/multiple final values. Counter errors are
+detected before storage mutation. A failed suffix pop preserves the original
+values. The current trusted-driver wrapper retains its internal-error panic
+behavior and debug checks; future public admission must propagate the checked
+errors rather than treating a failed construction as an empty process.
+
+The [storage model](../../formal/rocq/rho_bridge/theories/RholangWorklistStorage.v)
+proves exact counter updates over mathematical lists, ordered suffix removal,
+zero-arity behavior, debt preservation for complete and staged transitions,
+value-carrier mapping and origin erasure, and the singleton completion shape.
+It also gives a counterexample: correct global debt does not imply that the
+next continuation has enough operands. Local checked pops are still required.
+
+These are not proofs of arbitrary Rust callbacks, machine-word arithmetic,
+allocation, recursive value destruction, concrete receive scheduling or host
+publication. The classifier must remain stable on each immutable job, and
+untrusted arity arithmetic must be checked by its producer. The Rust tests
+exercise returned-error atomicity, machine-word overflow without large
+allocation, non-palindromic repeated-child order, staged replacement and
+20,000 shallow jobs on a 256 KiB thread stack. That last check tests storage,
+not lifecycle safety of arbitrary recursively owned payloads.
+
+The existing recursive differential and continuation-coverage tests exercise
+the actual Rholang driver. The
+[source-correspondence check](../../scripts/verify-worklist-storage-correspondence.mjs)
+additionally pins the extraction boundary: all code outside the storage wrapper
+and its two final count-accessor replacements remains unchanged, including
+constructors, environments, FLT/DDL staging and the retained oracle. This is
+source evidence for this extraction, not a general compiler-correctness proof.
+
 ## Formal and implementation handoff
 
 The

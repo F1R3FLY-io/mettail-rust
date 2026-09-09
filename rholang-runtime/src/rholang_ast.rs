@@ -1052,7 +1052,7 @@ pub(crate) fn drive_formula(formula: &Proc, env: &BoundEnv) -> Result<Par, Rhola
 // A deterministic, finite-control, **data-stack** transducer over a ranked tree, in the idiom
 // of `prattail/src/sppf_realize.rs:164` — this repository's own explicit-stack pattern, already
 // inside the WPDA pipeline. Its `Vec<(SppfId, Phase)>` with `Phase::{Enter, Leave}` is exactly
-// [`Stacks::work`] carrying [`Job`] (Enter) and [`Job::Combine`] (Leave); the one deliberate
+// [`Stacks`] carrying [`Job`] (Enter) and [`Job::Combine`] (Leave); the one deliberate
 // divergence is that this machine also needs a VALUE stack, because `sppf_realize` memoizes
 // results by node id in a `HashMap` and a lowering has no such reuse (each `Proc` occurrence
 // lowers under its own binder environment, so a memo keyed by node would be wrong).
@@ -1564,14 +1564,7 @@ pub(crate) fn kont_trace(
 
 /// The two stacks, plus the three incremental counters the deficit invariant needs.
 struct Stacks<'a> {
-    work: Vec<Job<'a>>,
-    values: Vec<Par>,
-    /// `D` — the number of **Enter** items in `work`.
-    enters: usize,
-    /// `|C|` — the number of pending continuations in `work`.
-    konts: usize,
-    /// `Σ_{k ∈ C} arity(k)`.
-    kont_arity: usize,
+    inner: mettail_runtime::worklist::Worklist<Job<'a>, Par>,
 }
 
 impl<'a> Stacks<'a> {
@@ -1580,50 +1573,49 @@ impl<'a> Stacks<'a> {
         // a hot post-order walk is pure waste. 64 covers every term in the test corpus without
         // a realloc; deeper terms grow amortised.
         let mut stacks = Stacks {
-            work: Vec::with_capacity(64),
-            values: Vec::with_capacity(64),
-            enters: 0,
-            konts: 0,
-            kont_arity: 0,
+            inner: mettail_runtime::worklist::Worklist::with_capacity(64, 64),
         };
         stacks.push(seed);
         stacks
     }
 
     fn push(&mut self, job: Job<'a>) {
-        match &job {
-            Job::Combine(kont) => {
-                self.konts += 1;
-                self.kont_arity += kont.arity();
-                #[cfg(test)]
-                KONT_TRACE.with(|trace| trace.borrow_mut().insert(kont.name()));
-            },
-            _ => self.enters += 1,
+        #[cfg(test)]
+        if let Job::Combine(kont) = &job {
+            KONT_TRACE.with(|trace| trace.borrow_mut().insert(kont.name()));
         }
-        self.work.push(job);
+        self.inner
+            .push(job, Self::classify)
+            .expect("rholang lowering: worklist counter overflow");
     }
 
     fn pop(&mut self) -> Option<Job<'a>> {
-        let job = self.work.pop()?;
-        match &job {
-            Job::Combine(kont) => {
-                self.konts -= 1;
-                self.kont_arity -= kont.arity();
-            },
-            _ => self.enters -= 1,
+        self.inner
+            .pop(Self::classify)
+            .expect("rholang lowering: worklist counter underflow")
+    }
+
+    /// Immutable classification: zero-arity continuations are not Enter jobs.
+    fn classify(job: &Job<'a>) -> Option<usize> {
+        match job {
+            Job::Combine(kont) => Some(kont.arity()),
+            _ => None,
         }
-        Some(job)
+    }
+
+    fn value_count(&self) -> usize {
+        self.inner.value_count()
     }
 
     fn value(&mut self, par: Par) {
-        self.values.push(par);
+        self.inner.value(par);
     }
 
     /// Pop exactly one value. Every caller has already been told how many to expect by
     /// [`Kont::arity`], so an empty stack here is a machine bug, not an input error.
     fn pop_value(&mut self) -> Par {
-        self.values
-            .pop()
+        self.inner
+            .pop_value()
             .expect("rholang lowering: continuation popped more values than its arity")
     }
 
@@ -1631,12 +1623,9 @@ impl<'a> Stacks<'a> {
     /// pop — and push their values — in source order, so the tail of the value stack is
     /// already in the order an `EList` wants.
     fn pop_values(&mut self, n: usize) -> Vec<Par> {
-        let start = self
-            .values
-            .len()
-            .checked_sub(n)
-            .expect("rholang lowering: continuation popped more values than its arity");
-        self.values.split_off(start)
+        self.inner
+            .pop_values(n)
+            .expect("rholang lowering: continuation popped more values than its arity")
     }
 
     /// ★ **The deficit invariant**, asserted at the head of the drive loop.
@@ -1671,14 +1660,10 @@ impl<'a> Stacks<'a> {
     /// 4,096, and a rescan would make the debug build O(n²) on exactly the terms that matter.
     #[inline]
     fn check(&self) {
-        debug_assert_eq!(
-            self.values.len() + self.enters + self.konts,
-            1 + self.kont_arity,
-            "rholang lowering: deficit invariant violated — |V|={} D={} |C|={} Σarity={}",
-            self.values.len(),
-            self.enters,
-            self.konts,
-            self.kont_arity
+        debug_assert!(
+            self.inner.check().is_ok(),
+            "rholang lowering: deficit invariant violated: {:?}",
+            self.inner.check()
         );
     }
 }
@@ -1776,10 +1761,10 @@ fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstLowerErro
     }
 
     debug_assert_eq!(
-        drive.stacks.values.len(),
+        drive.stacks.value_count(),
         1,
         "rholang lowering: the machine halted with {} values, not 1",
-        drive.stacks.values.len()
+        drive.stacks.value_count()
     );
     Ok(drive.stacks.pop_value())
 }

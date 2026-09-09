@@ -15,6 +15,9 @@ pub use binding::*;
 /// Stage 7 of W7 plan v5.1.
 pub mod diagnostics;
 
+/// Shared job/value stack storage; source traversal remains with its producer.
+pub mod worklist;
+
 // Canonical float types for Float category (Eq/Hash/Ord)
 mod canonical_float;
 pub use canonical_float::{CanonicalFloat32, CanonicalFloat64};
