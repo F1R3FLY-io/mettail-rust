@@ -15,8 +15,9 @@ From Stdlib Require Import List String Bool PeanoNat ZArith Lia Structures.Order
 From RhoBridge Require Import RholangTargetConstruction.
 Import ListNotations.
 
-(** Target reference fields use nonnegative signed 32-bit integers. Checking
-    their mathematical values precedes allocating a singleton free-bit vector.
+(** Target reference fields use nonnegative signed 32-bit integers. The Rust
+    refinement must check these values before allocating a singleton free-bit vector;
+    the extensional definition here does not establish strict evaluation order.
     Z is used for the bound, avoiding reduction of a billion Peano successors. *)
 Definition fits_target_index (index : nat) : bool :=
   (Z.of_nat index <=? 2147483647)%Z.

@@ -135,6 +135,38 @@ above. There is no generic `OpaquePar`, protobuf, executable callback, or
 uninterpreted-process escape. Provider slots request later binding; they do not
 grant the rights of an installed-language handle.
 
+The concrete descriptor preserves the fields already supplied by
+[`FltNode` and `ScopedFltTemplate`](../../runtime/src/flt_node.rs):
+
+| Field group | Retained meaning |
+| --- | --- |
+| Selector and root category | The scoped reference and exact category spelling; selector spelling is separate diagnostic data |
+| Declared telescope | Ordered hole IDs, names and optional category declarations; an absent category stays absent |
+| Structural pieces | Exact text strings and hole-ID occurrences, without concatenation across holes or deduplication |
+| Provenance and extent | Piece/first-occurrence ranges, delimiters, captured body, opener position and structural byte/count bounds |
+| Host use site | Occurrence identity and construction, receive-pattern or predicate role |
+| Scope associations | Construction fills and declared-hole associations with the enclosing receive slots |
+
+The existing `runtime_template_parts` projection removes ranges from the
+runtime parser input; it does not turn the retained body string into a second
+parse input. The original descriptor still owns its provenance. Existing
+`FltNode::validate` remains responsible for declaration, range and extent
+validation, and the shared guest parser handles the structural pieces.
+
+Declared holes and reflected matching occurrences are different rosters.
+A repeated hole keeps one declaration ID but can produce several raw matching
+captures. The existing `PreparedCapturePlan::compile` and `project` check
+repetitions and project those occurrences back to declaration order. The
+frontend retains the declared telescope and scope associations; it does not
+replace that matcher-owned plan or treat its occurrence count as a declaration
+count.
+
+Use-site roles determine polarity and pending obligations. Receive-pattern
+sites request negative matching. Predicate sites request positive construction
+followed by observation, while retaining authority, semantic-resource and
+funding obligations. A predicate descriptor is not an observation result,
+even when it occurs beneath Boolean negation.
+
 ## Interpretation and metadata policies
 
 Parallel composition combines process heads, not source syntax tags. In
@@ -237,10 +269,20 @@ The protocol establishes these connected results:
    Checked receive construction preserves its pattern roles, capture roster,
    derived count and persistence, body/condition suffix, and metadata policy.
 
-These results do not yet establish full artifact publication or concrete FLT
-descriptor retention. The algebra's abstract pending context is not a proof
-about actual FLT template contents. The remaining owned session boundary must
-retain those descriptors and obligations alongside the graph and root.
+The [concrete FLT transport model](../../formal/rocq/rho_bridge/theories/RholangFltTransport.v)
+additionally preserves exact strings, optional category declarations, hole IDs
+and occurrence order, selector/category, bounds, use-site polarity and pending
+obligations. It reuses the admission model's reference and obligation vocabulary.
+The earlier abstract structural-template model uses numeric text-chunk IDs;
+its lexical and graft laws alone do not prove this exact-string transport.
+
+These results do not yet establish full artifact publication. The algebra's
+abstract pending context is not a substitute for the concrete FLT descriptions.
+The remaining owned session boundary must retain those descriptions and
+obligations alongside the graph and root. Current separate fold/native/guard
+collectors are implementation reuse points, not a proof of error-path cleanup.
+Executable provider implementations and native evaluator closures remain
+host-owned; the neutral artifact retains requests and declaration references.
 
 The mathematical range wrapper describes a result, not evaluation order in a
 strict programming language. The Rust adapter must check range and resource
