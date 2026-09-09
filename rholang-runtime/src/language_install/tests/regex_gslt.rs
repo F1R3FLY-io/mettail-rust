@@ -2,6 +2,18 @@ use super::*;
 
 const SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt.rho");
 
+fn computation(runtime: &RholangLanguageRuntime, token: &Par, source: &str) -> Par {
+    runtime
+        .construct_template(
+            token,
+            &[RuntimeTemplatePiece::Text(source.into())],
+            &[],
+            Some("Computation"),
+            &BTreeMap::new(),
+        )
+        .unwrap_or_else(|error| panic!("declared computation {source}: {error:?}"))
+}
+
 #[test]
 fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_entrypoint() {
     let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
@@ -78,5 +90,96 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
         assert_eq!(outputs.len(), 1, "{source}: deterministic declared result");
         assert_eq!(outputs[0].term, expected, "{source}: complete structural result");
         eprintln!("{source}: exact result verified; work={}", report.work);
+    }
+}
+
+#[test]
+fn practical_regex_gslt_scalar_holes_admit_singletons_and_refuse_other_text() {
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("inline declaration");
+    let token = &batch.exports[0].handle;
+    let handle = runtime
+        .resolve(token, LanguageRight::Construct)
+        .expect("construct authority");
+    let installed = runtime
+        .service
+        .table()
+        .authorize(&handle, LanguageRight::Construct)
+        .expect("installed language");
+    let owner = grammar_fingerprint_label(handle.fingerprint());
+    for text in ["a", "λ", "€", "🙂", "", "ab", "λ🙂"] {
+        let ground = dynamic_syntax_to_ground_term(
+            &mettail_grammar_core::DynamicValue::Text(text.into()),
+            installed.core(),
+            &BTreeMap::new(),
+        )
+        .expect("native text reflection");
+        let fill = mettail_rholang_codegen::reflect_ground_term_par(&ground, &owner);
+        for (prefix, suffix, action) in
+            [("nullable(", ")", "nullable"), ("derivative(", ",a)", "derivative")]
+        {
+            let input = runtime
+                .construct_template(
+                    token,
+                    &[
+                        RuntimeTemplatePiece::Text(prefix.into()),
+                        RuntimeTemplatePiece::Hole(0),
+                        RuntimeTemplatePiece::Text(suffix.into()),
+                    ],
+                    &[NamedRuntimeTemplateHole {
+                        id: 0,
+                        name: "scalar".into(),
+                        category: Some("Scalar".into()),
+                    }],
+                    Some("Computation"),
+                    &BTreeMap::from([("scalar".into(), fill.clone())]),
+                )
+                .expect("typed native text hole constructs without textual interpolation");
+            let request = |limits| SemanticServiceRequest {
+                handle: token,
+                operation: SemanticOperation::Reduce(action),
+                input: &input,
+                limits,
+            };
+            let report =
+                runtime.execute_semantic(request(SemanticServiceLimits::default()), || false);
+            if text.chars().count() == 1 {
+                let expected = match (action, text) {
+                    ("nullable", _) => "doneBool(false)",
+                    (_, "a") => "donePattern(())",
+                    _ => "donePattern((?!))",
+                };
+                let outputs = report.outcome.expect("singleton scalar admission");
+                assert_eq!(outputs.len(), 1);
+                assert_eq!(outputs[0].term, computation(&runtime, token, expected));
+                let mut zero = SemanticServiceLimits::default();
+                zero.execution.work = 0;
+                let refused = runtime.execute_semantic(request(zero), || false);
+                assert!(matches!(
+                    refused.outcome,
+                    Err(InstalledSemanticError::Resource(
+                        mettail_rholang_codegen::DynamicReflectionError::WorkLimit
+                    ))
+                ));
+                assert_eq!(refused.work, 0);
+            } else {
+                assert!(
+                    matches!(
+                        report.outcome,
+                        Err(InstalledSemanticError::Refuted(
+                            mettail_dovetail_runtime::SemanticMatchRefutation::StuckNonterminal
+                        ))
+                    ),
+                    "{action}({text:?}): {:?}",
+                    report.outcome
+                );
+            }
+            eprintln!("{action} scalar hole {text:?}: admission/refusal verified");
+        }
     }
 }

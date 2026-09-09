@@ -39,6 +39,7 @@ use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_freevar_par, new_receive_par, new_wildcard_par, union,
 };
 
+use crate::dynamic_admission::canonical_native_leaf_is_ground;
 use crate::rho_net_lower::{
     assemble_positional_ground_node, ground_marker_tag_par, is_marked_object_label,
     par_carries_ground_marker, reflect_ground_term_par, reflect_tag, GroundTerm,
@@ -432,8 +433,9 @@ fn flt_receive_condition(
 /// one point: a `^free(name)` leaf is replaced by the typed reflected-`Par` fill `fills[name]`
 /// (NEVER text — the No-Injection substrate). The critical correctness constraint is **C2**: EVERY
 /// ancestor's E-2-D marker is RECOMPUTED from its FILLED children's own ground bits
-/// ([`par_carries_ground_marker`] on a fill, threaded recursively otherwise) — never keeping a
-/// template `^gnd`. A fill only makes a node LESS ground (`InRhoCreeperTrace.oground`), so recompute
+/// (an existing marker or checked canonical native-leaf evidence on a fill,
+/// threaded bottom-up otherwise) — never keeping a template `^gnd`.
+/// A fill only makes a node LESS ground (`InRhoCreeperTrace.oground`), so recompute
 /// is conservatively sound; a stale `^gnd` over a `^bound`-carrying fill would let the reducer's
 /// hereditary-ground guard short-circuit `^subst` to the identity, silently skipping the required β.
 ///
@@ -473,7 +475,9 @@ fn reflect_construction_node(
                     let fill = fills
                         .get(&name)
                         .ok_or(FltReflectError::UnknownHole { hole: name })?;
-                    values.push((fill.clone(), par_carries_ground_marker(fill, fingerprint)));
+                    let ground = par_carries_ground_marker(fill, fingerprint)
+                        || canonical_native_leaf_is_ground(fill, fingerprint);
+                    values.push((fill.clone(), ground));
                 } else if term.coll_type.is_some() {
                     if let Some(hole) = first_fill_hole_in(term, fills) {
                         return Err(FltReflectError::ArityMismatch { hole });
@@ -1312,8 +1316,146 @@ mod tests {
         GroundTerm::nullary(label)
     }
 
-    /// THE Stage-2 round-trip gate: `reflect_flt_construction(App(^free(f), K), {f: ⟦id⟧}, fp)` is
-    /// BYTE-FOR-BYTE `reflect_ground_term_par(App(id, K), fp)`.
+    /// Native fills retain the same ground evidence as direct reflection,
+    /// including through multiple enclosing constructors.
+    #[test]
+    fn reflect_flt_construction_native_fill_matches_direct_ground_reflection() {
+        for label in [
+            "^dynamic-text:61",
+            "^dynamic-text:",
+            "^dynamic-text:cebb",
+            "^dynamic-integer:0",
+            "^dynamic-integer:-170141183460469231731687303715884105728",
+            "^dynamic-integer:170141183460469231731687303715884105727",
+            "^dynamic-boolean:true",
+            "^dynamic-boolean:false",
+            "^dynamic-bytes:00ff",
+            "^dynamic-bytes:",
+            "^dynamic-unit",
+        ] {
+            let native = GroundTerm::nullary(label);
+            let enclosing = |first, second| {
+                GroundTerm::new(
+                    "Outer",
+                    vec![
+                        GroundTerm::nullary("Before"),
+                        GroundTerm::new("Inner", vec![first, second]),
+                        GroundTerm::nullary("After"),
+                    ],
+                )
+            };
+            let template = enclosing(g_free("value"), g_free("value"));
+            let direct = enclosing(native.clone(), native.clone());
+            let fill = reflect_ground_term_par(&native, FP);
+            let constructed =
+                reflect_flt_construction(&template, &BTreeMap::from([("value".into(), fill)]), FP)
+                    .expect("native fill");
+            assert_eq!(
+                constructed.cmp(&reflect_ground_term_par(&direct, FP)),
+                std::cmp::Ordering::Equal,
+                "native ground bit must survive substitution: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn reflect_flt_construction_native_fill_rejects_forged_ground_evidence() {
+        use models::rhoapi::g_unforgeable::UnfInstance;
+
+        fn list_mut(par: &mut Par) -> &mut models::rhoapi::EList {
+            match par.exprs[0]
+                .expr_instance
+                .as_mut()
+                .expect("list expression")
+            {
+                ExprInstance::EListBody(list) => list,
+                _ => panic!("positional fixture"),
+            }
+        }
+
+        let native = GroundTerm::nullary("^dynamic-text:61");
+        let canonical = reflect_ground_term_par(&native, FP);
+        assert!(canonical_native_leaf_is_ground(&canonical, FP));
+        let mut rejected = Vec::new();
+        for label in [
+            "^dynamic-text:6",
+            "^dynamic-text:FF",
+            "^dynamic-text:ff",
+            "^dynamic-integer:+1",
+            "^dynamic-integer:01",
+            "^dynamic-integer:-0",
+            "^dynamic-integer:170141183460469231731687303715884105728",
+            "^dynamic-boolean:1",
+            "^dynamic-bytes:0",
+            "^dynamic-bytes:FF",
+            "^dynamic-unit:0",
+            "^unknown-native",
+        ] {
+            rejected.push((label, reflect_ground_term_par(&GroundTerm::nullary(label), FP)));
+        }
+        rejected.push(("foreign owner", reflect_ground_term_par(&native, "foreign-owner")));
+        rejected.push(("bound fill", reflect_ground_term_par(&g_id(), FP)));
+
+        let mut extra_child = canonical.clone();
+        list_mut(&mut extra_child).ps.push(canonical.clone());
+        rejected.push(("extra child", extra_child));
+        let mut sidecar = canonical.clone();
+        sidecar.sends.push(models::rhoapi::Send::default());
+        rejected.push(("executable sidecar", sidecar));
+        for metadata in [vec![0], vec![1]] {
+            let mut par_metadata = canonical.clone();
+            par_metadata.locally_free = metadata.clone();
+            let mut list_metadata = canonical.clone();
+            list_mut(&mut list_metadata).locally_free = metadata.clone();
+            let mut head_metadata = canonical.clone();
+            list_mut(&mut head_metadata).ps[0].locally_free = metadata;
+            for (case, altered) in [
+                ("Par metadata", par_metadata),
+                ("list metadata", list_metadata),
+                ("head metadata", head_metadata),
+            ] {
+                assert_eq!(altered, canonical, "semantic equality omits {case}");
+                assert_ne!(altered.cmp(&canonical), std::cmp::Ordering::Equal, "{case}");
+                rejected.push((case, altered));
+            }
+        }
+        let mut par_connective = canonical.clone();
+        par_connective.connective_used = true;
+        rejected.push(("Par connective metadata", par_connective));
+        let mut head_connective = canonical.clone();
+        list_mut(&mut head_connective).ps[0].connective_used = true;
+        rejected.push(("head connective metadata", head_connective));
+        let mut nominal_alias = canonical.clone();
+        let Some(UnfInstance::GPrivateBody(private)) = list_mut(&mut nominal_alias).ps[0]
+            .unforgeables[0]
+            .unf_instance
+            .as_mut()
+        else {
+            panic!("private tag");
+        };
+        private.id.extend_from_slice(&[0x10, 0x00]);
+        rejected.push(("noncanonical private bytes", nominal_alias));
+
+        let template = GroundTerm::new("Outer", vec![g_free("value")]);
+        for (case, fill) in rejected {
+            assert!(!canonical_native_leaf_is_ground(&fill, FP), "{case}");
+            assert!(!par_carries_ground_marker(&fill, FP), "{case}");
+            let mut constructed = reflect_flt_construction(
+                &template,
+                &BTreeMap::from([("value".into(), fill.clone())]),
+                FP,
+            )
+            .expect("construction preserves fill; category admission remains separate");
+            let list = list_mut(&mut constructed);
+            assert_eq!(list.ps[1], ground_marker_tag_par(FP, false), "{case}");
+            assert_eq!(
+                list.ps[2].cmp(&fill),
+                std::cmp::Ordering::Equal,
+                "the original fill must remain unchanged: {case}"
+            );
+        }
+    }
+
     #[test]
     fn reflect_flt_construction_round_trips_to_the_ground_reflection() {
         let template = GroundTerm::new("App", vec![g_free("f"), g_k()]);

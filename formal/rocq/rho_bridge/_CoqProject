@@ -207,6 +207,9 @@ theories/InRhoScionGraft.v
 # combinator body `oLam(oBound 0)` DECLINES). Grounds the E-2-D production tax: NF results stay
 # byte-identical (the guard replaces identity subst/shift chains with one `ret!(t)`).
 theories/InRhoCreeperTrace.v
+# Canonical native fills retain direct reflection's ground evidence without
+# changing payloads, ordered occurrences, or any enclosing assembly result.
+theories/NativeFillGroundEvidence.v
 # Stage 3e — the native-system-process dispatch (NativeProc(a..) ~> <native value>) is
 # TOTAL-OR-REJECT + the emitted payload is EXACTLY the trusted handler's value
 # (NativeSystemProcessBoundary): lower_native_system_process either materializes the flat one-slot

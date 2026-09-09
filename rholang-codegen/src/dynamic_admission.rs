@@ -834,6 +834,37 @@ fn native_leaf(par: &Par, fingerprint: &str, predicate: impl FnOnce(&str) -> boo
         .is_some_and(|(label, children)| children.is_empty() && predicate(&label))
 }
 
+/// Ground evidence for an unmarked native atom at a construction hole.
+///
+/// This does not establish category membership or grant authority. Reuse the
+/// native payload validators, then compare the entire retained value with the
+/// existing canonical writer: a decoded tag alone must not promote altered
+/// private-name bytes, metadata, or executable sidecars. The nullary check
+/// precedes reflection/equality, keeping this operation at fixed structural
+/// depth and linear in the inspected encoded tag and native payload sizes.
+pub(crate) fn canonical_native_leaf_is_ground(par: &Par, fingerprint: &str) -> bool {
+    let Some((label, children)) = positional(par, fingerprint) else {
+        return false;
+    };
+    if !children.is_empty()
+        || !(valid_text_label(&label)
+            || valid_integer_label(&label)
+            || decode_boolean_label(&label).is_some()
+            || label
+                .strip_prefix(BYTES_REFLECT_LABEL)
+                .is_some_and(valid_hex)
+            || label == UNIT_LABEL)
+    {
+        return false;
+    }
+    let canonical = crate::reflect_ground_term_par(&crate::GroundTerm::nullary(label), fingerprint);
+    // Rholang's semantic PartialEq intentionally omits locally_free. Reuse
+    // its existing stack-safe Ord comparator, which compares every retained
+    // field (also used for exact PathMap values), instead of duplicating a
+    // metadata field roster or serializing a potentially hostile subtree.
+    par.cmp(&canonical) == std::cmp::Ordering::Equal
+}
+
 struct AdmissionBuilder<'a> {
     core: &'a GrammarCoreV1,
     states: Vec<Shape>,
