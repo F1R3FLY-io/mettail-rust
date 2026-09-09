@@ -57,6 +57,23 @@ Definition checked_fresh (plan : FreshPlan) (body : Value) : ConstructionResult 
       (fresh (List.length (fresh_binders plan)) (fresh_uris plan) body)
   else ConstructionRejected InvalidBinderLayout.
 
+(** The caller map can be empty and can contain an empty unused key. Reuse
+    the strict string-order check, not normalized_uris' different domain.
+    The adapter projects its existing ordered map; this does not sort again. *)
+Definition ordered_injection_keys (keys : list string) : bool :=
+  match keys with [] => true | first :: rest => ordered_uri_tail first rest end.
+Definition checked_injected_fresh (plan : FreshPlan) (keys : list string)
+    (children : list Value) : ConstructionResult :=
+  match children with
+  | [] => ConstructionRejected ChildArityMismatch
+  | body :: injections =>
+    if fresh_plan_valid plan && ordered_injection_keys keys then
+      within_target_indices [List.length (fresh_binders plan)]
+        (fresh_with_injections (List.length (fresh_binders plan))
+          (fresh_uris plan) keys body injections)
+    else ConstructionRejected InvalidBinderLayout
+  end.
+
 (** Every admitted receive bind has one outer pattern and no remainder.
     A polyadic payload is inside that pattern's list. Empty input uses a
     wildcard pattern with no captures, NOT a zero-length pattern vector.
@@ -111,6 +128,7 @@ Inductive ConstructOp :=
 | EmptyOp | AppendOp
 | IntegerOp (integer_value : Z) | BooleanOp (boolean_value : bool)
 | TextOp (text_value : string)
+| HostNameOp (slot : HostNameSlot)
 | BoundOp (scope index : nat) | CaptureOp (width index : nat)
 | WildcardOp (connective : bool) | PatternReferenceOp (scope index depth : nat)
 | UnaryOp (operator : UnaryOperator) | BinaryOp (operator : BinaryOperator)
@@ -118,7 +136,7 @@ Inductive ConstructOp :=
 | ListOp | MapOp | MethodOp (name : string) | SendOp (persistent : bool)
 | DdlNodeOp (tag : string) | MatchOp | FalseMatchOp
 | PatternUnaryOp | PatternBinaryOp (conjunction : bool) | PatternImplicationOp
-| FreshOp (plan : FreshPlan)
+| FreshOp (plan : FreshPlan) (injection_keys : list string)
 | ReceiveOp (descriptors : list BindDescriptor) (has_condition : bool).
 
 (** Maps keep an ordered pair vector. Odd input is rejected; a missing value
@@ -142,6 +160,7 @@ Definition interpret (operation : ConstructOp) (children : list Value)
   | IntegerOp value, [] => integer value
   | BooleanOp value, [] => Constructed (boolean value)
   | TextOp value, [] => Constructed (text value)
+  | HostNameOp slot, [] => Constructed (host_name slot)
   | BoundOp scope index, [] =>
     within_target_indices [index] (bound scope index)
   | CaptureOp width index, [] =>
@@ -168,10 +187,61 @@ Definition interpret (operation : ConstructOp) (children : list Value)
   | PatternBinaryOp conjunction, [lhs; rhs] => Constructed
     (pattern_node (if conjunction then PatternAnd else PatternOr) [lhs; rhs])
   | PatternImplicationOp, [lhs; rhs] => Constructed (pattern_implication lhs rhs)
-  | FreshOp plan, [body] => checked_fresh plan body
+  | FreshOp plan keys, operands => checked_injected_fresh plan keys operands
   | ReceiveOp descriptors has_condition, operands => checked_receive descriptors has_condition operands
   | _, _ => ConstructionRejected ChildArityMismatch
   end.
+
+(** Incremental requirements of this operation only. Its already-constructed
+    children have already registered their own slots. No recursive graph scan
+    is necessary when constructing a parent. Repetition is retained. *)
+Definition operation_host_names (operation : ConstructOp) : list HostNameSlot :=
+  match operation with HostNameOp slot => [slot] | _ => [] end.
+
+(** The host-only name carrier is polymorphic so this lookup transports exact
+    identity without reconstructing names from strings. The adapter admits
+    only closed opaque NAME values into this table; these lookup laws do not
+    prove that adapter check, capability rights, or unforgeability. The table
+    is an explicit argument, never a process-global provider lookup. *)
+Inductive HostNameError := HostNameOwnerMismatch | HostNameSlotMissing.
+Inductive HostNameResult (Name : Type) :=
+| HostNameResolved (name : Name)
+| HostNameRejected (error : HostNameError).
+Arguments HostNameResolved {Name} _.
+Arguments HostNameRejected {Name} _.
+Definition resolve_host_name {Name : Type} (owner : nat) (names : list Name)
+    (slot : HostNameSlot) : HostNameResult Name :=
+  if Nat.eqb owner (host_name_owner slot) then
+    match nth_error names (host_name_index slot) with
+    | Some name => HostNameResolved name
+    | None => HostNameRejected HostNameSlotMissing
+    end
+  else HostNameRejected HostNameOwnerMismatch.
+
+Theorem host_resolution_preserves_exact_identity : forall Name owner names slot (name : Name),
+  resolve_host_name owner names slot = HostNameResolved name ->
+  owner = host_name_owner slot /\ nth_error names (host_name_index slot) = Some name.
+Proof.
+  intros Name owner names slot name H; unfold resolve_host_name in H.
+  destruct (Nat.eqb owner (host_name_owner slot)) eqn:E; try discriminate.
+  destruct (nth_error names (host_name_index slot)) eqn:N; try discriminate.
+  inversion H; subst. split; [now apply Nat.eqb_eq|reflexivity].
+Qed.
+
+Theorem host_owner_mismatch_cannot_resolve : forall Name owner (names : list Name) slot,
+  owner <> host_name_owner slot ->
+  resolve_host_name owner names slot = HostNameRejected HostNameOwnerMismatch.
+Proof. intros; unfold resolve_host_name. apply Nat.eqb_neq in H; now rewrite H. Qed.
+
+Theorem missing_host_slot_cannot_resolve : forall Name owner (names : list Name) index,
+  nth_error names index = None ->
+  resolve_host_name owner names {| host_name_owner := owner; host_name_index := index |} =
+    HostNameRejected HostNameSlotMissing.
+Proof. intros; unfold resolve_host_name; cbn; now rewrite Nat.eqb_refl, H. Qed.
+
+Theorem host_name_operation_requires_no_children : forall slot first rest,
+  interpret (HostNameOp slot) (first :: rest) = ConstructionRejected ChildArityMismatch.
+Proof. reflexivity. Qed.
 
 Inductive ChildrenResult :=
 | ChildrenResolved (values : list Value)
@@ -468,6 +538,60 @@ Proof.
   apply Forall_forall with (x := EmptyString) in Hall; auto. inversion Hall.
 Qed.
 
+Theorem injection_key_check_excludes_duplicates : forall keys,
+  ordered_injection_keys keys = true -> NoDup keys.
+Proof.
+  intros [|first rest] H; [constructor|].
+  now apply ordered_uri_check_excludes_duplicates.
+Qed.
+
+Theorem empty_injection_operation_reuses_fresh : forall plan body,
+  interpret (FreshOp plan []) [body] = checked_fresh plan body.
+Proof.
+  intros. cbn [interpret checked_injected_fresh ordered_injection_keys].
+  rewrite andb_true_r. unfold checked_fresh.
+  now rewrite empty_injections_specialize_fresh.
+Qed.
+
+Theorem injected_fresh_success_has_exact_layout : forall plan keys body injections value,
+  interpret (FreshOp plan keys) (body :: injections) = Constructed value ->
+  fresh_plan_valid plan = true /\ ordered_injection_keys keys = true /\
+  (Z.of_nat (List.length (fresh_binders plan)) <= 2147483647)%Z /\
+  List.length keys = List.length injections /\
+  heads_of value = [MakeHead
+    (NewHead (List.length (fresh_binders plan)) (fresh_uris plan) keys) (body :: injections)] /\
+  summary_of value = shifted_summary (List.length (fresh_binders plan)) (summary_of body).
+Proof.
+  intros plan keys body injections value H.
+  cbn [interpret checked_injected_fresh] in H.
+  destruct (fresh_plan_valid plan && ordered_injection_keys keys) eqn:E; try discriminate.
+  apply andb_true_iff in E as [P K].
+  apply checked_indices_success_bounded in H as [B F]. inversion B; subst.
+  apply injected_fresh_preserves_all_entries in F as [L [U [C S]]].
+  repeat split; auto.
+Qed.
+
+Example unused_empty_injection_key_is_retained :
+  interpret (FreshOp (PlainFresh []) [EmptyString]) [empty; text "value"] =
+    Constructed (singleton (NewHead 0 [] [EmptyString]) [empty; text "value"] closed_summary).
+Proof. reflexivity. Qed.
+
+Example duplicate_injection_keys_reject :
+  interpret (FreshOp (PlainFresh []) ["key"%string; "key"%string]) [empty; text "a"; text "b"] =
+    ConstructionRejected InvalidBinderLayout.
+Proof. reflexivity. Qed.
+
+Example missing_injection_value_rejects :
+  interpret (FreshOp (PlainFresh []) ["key"%string]) [empty] =
+    ConstructionRejected ChildArityMismatch.
+Proof. reflexivity. Qed.
+
+Example repeated_injection_values_remain_associated : forall body value,
+  interpret (FreshOp (PlainFresh []) ["a"%string; "b"%string]) [body; value; value] =
+    Constructed (singleton (NewHead 0 [] ["a"%string; "b"%string]) [body; value; value]
+      (shifted_summary 0 (summary_of body))).
+Proof. reflexivity. Qed.
+
 Theorem fresh_uri_and_binder_projection_remain_associated : forall pairs,
   combine (fresh_uris (UriFresh pairs)) (fresh_binders (UriFresh pairs)) = pairs.
 Proof. induction pairs as [|[uri binder] rest IH]; cbn in *; [reflexivity|now rewrite IH]. Qed.
@@ -476,7 +600,7 @@ Theorem checked_fresh_success_has_exact_layout : forall plan body value,
   checked_fresh plan body = Constructed value ->
   fresh_plan_valid plan = true /\
   (Z.of_nat (List.length (fresh_binders plan)) <= 2147483647)%Z /\
-  heads_of value = [MakeHead (NewHead (List.length (fresh_binders plan)) (fresh_uris plan)) [body]] /\
+  heads_of value = [MakeHead (NewHead (List.length (fresh_binders plan)) (fresh_uris plan) []) [body]] /\
   summary_of value = shifted_summary (List.length (fresh_binders plan)) (summary_of body).
 Proof.
   intros plan body value H; unfold checked_fresh in H.
@@ -579,7 +703,7 @@ Qed.
 
 Example plain_fresh_zero_preserved :
   checked_fresh (PlainFresh []) empty = Constructed
-    (singleton (NewHead 0 []) [empty] closed_summary).
+    (singleton (NewHead 0 [] []) [empty] closed_summary).
 Proof. reflexivity. Qed.
 
 Local Open Scope string_scope.
@@ -661,6 +785,17 @@ Print Assumptions ordered_uri_check_excludes_duplicates.
 Print Assumptions normalized_uri_check_retains_nonempty_unique_sequence.
 Print Assumptions fresh_uri_and_binder_projection_remain_associated.
 Print Assumptions checked_fresh_success_has_exact_layout.
+Print Assumptions host_resolution_preserves_exact_identity.
+Print Assumptions host_owner_mismatch_cannot_resolve.
+Print Assumptions missing_host_slot_cannot_resolve.
+Print Assumptions host_name_operation_requires_no_children.
+Print Assumptions injection_key_check_excludes_duplicates.
+Print Assumptions empty_injection_operation_reuses_fresh.
+Print Assumptions injected_fresh_success_has_exact_layout.
+Print Assumptions unused_empty_injection_key_is_retained.
+Print Assumptions duplicate_injection_keys_reject.
+Print Assumptions missing_injection_value_rejects.
+Print Assumptions repeated_injection_values_remain_associated.
 Print Assumptions receive_role_resolution_preserves_layout.
 Print Assumptions receive_has_no_empty_join_constructor.
 Print Assumptions receive_roster_keeps_order_and_duplicates.

@@ -68,11 +68,13 @@ Definition Occurrences := list (nat * Admission.Origin).
 Record Draft := {
   private_values : list Algebra.Value;
   private_occurrences : Occurrences;
+  private_host_names : list Algebra.HostNameSlot;
   private_payload : SessionPayload
 }.
 Inductive Session := Open (draft : Draft) | Consumed.
 Definition start : Session := Open
-  {| private_values := []; private_occurrences := []; private_payload := empty_payload |}.
+  {| private_values := []; private_occurrences := []; private_host_names := [];
+     private_payload := empty_payload |}.
 
 Inductive SessionError :=
 | SessionAlreadyConsumed
@@ -85,6 +87,11 @@ Inductive SessionError :=
 
 Definition replace_values (draft : Draft) (values : list Algebra.Value) : Draft :=
   {| private_values := values; private_occurrences := private_occurrences draft;
+     private_host_names := private_host_names draft;
+     private_payload := private_payload draft |}.
+Definition retain_operation_names (draft : Draft) (operation : Construction.ConstructOp) : Draft :=
+  {| private_values := private_values draft; private_occurrences := private_occurrences draft;
+     private_host_names := private_host_names draft ++ Construction.operation_host_names operation;
      private_payload := private_payload draft |}.
 Definition append_foreign_use (payload : SessionPayload) (use : Foreign.ForeignUse) : SessionPayload :=
   {| foreign_uses := foreign_uses payload ++ [use];
@@ -93,6 +100,7 @@ Definition append_foreign_use (payload : SessionPayload) (use : Foreign.ForeignU
      fold_requirements := fold_requirements payload; diagnostics := diagnostics payload |}.
 Definition replace_payload (draft : Draft) (payload : SessionPayload) : Draft :=
   {| private_values := private_values draft; private_occurrences := private_occurrences draft;
+     private_host_names := private_host_names draft;
      private_payload := payload |}.
 
 Inductive RegistrationResult :=
@@ -127,6 +135,7 @@ Definition record_event (session : Session) (event : RecordEvent) : Registration
     | RecordOccurrence value origin => Registered (Open
         {| private_values := private_values draft;
            private_occurrences := private_occurrences draft ++ [(value, origin)];
+           private_host_names := private_host_names draft;
            private_payload := payload |}) (List.length (private_occurrences draft))
     | RecordForeignUse use => register_foreign session use
     | RecordGuard guard => Registered (Open (replace_payload draft
@@ -163,7 +172,7 @@ Definition construct_in_session (session : Session) (operation : Construction.Co
   | Open draft =>
     match Construction.construction_step (private_values draft) operation references with
     | Construction.ValueAppended values index =>
-      Registered (Open (replace_values draft values)) index
+      Registered (Open (retain_operation_names (replace_values draft values) operation)) index
     | Construction.StepRejected _ error => RegistrationRejected Consumed (LoweringFailure error)
         (diagnostics (private_payload draft))
     end
@@ -232,10 +241,12 @@ Record OwnedArtifact := {
   artifact_values : list Algebra.Value;
   artifact_root : nat;
   artifact_occurrences : Occurrences;
+  artifact_host_names : list Algebra.HostNameSlot;
   artifact_payload : SessionPayload
 }.
 Definition bundle (draft : Draft) (root : nat) : OwnedArtifact :=
   {| artifact_values := private_values draft; artifact_root := root;
+     artifact_host_names := private_host_names draft;
      artifact_occurrences := private_occurrences draft; artifact_payload := private_payload draft |}.
 
 (** Semantic comparison erases diagnostic origins at BOTH levels: outer
@@ -254,6 +265,7 @@ Definition erase_payload_diagnostics (payload : SessionPayload) : SemanticPayloa
      retained_folds := fold_requirements payload |}.
 Definition semantic_artifact (artifact : OwnedArtifact) :=
   (artifact_values artifact, artifact_root artifact, map fst (artifact_occurrences artifact),
+   artifact_host_names artifact,
    erase_payload_diagnostics (artifact_payload artifact)).
 Inductive DriverOutcome :=
 | DriverValues (result_stack : list nat)
@@ -307,6 +319,7 @@ Theorem registration_preserves_other_owned_fields : forall draft use,
   let updated := replace_payload draft (append_foreign_use (private_payload draft) use) in
   private_values updated = private_values draft /\
   private_occurrences updated = private_occurrences draft /\
+  private_host_names updated = private_host_names draft /\
   guard_descriptions (private_payload updated) = guard_descriptions (private_payload draft) /\
   provider_requirements (private_payload updated) = provider_requirements (private_payload draft) /\
   fold_requirements (private_payload updated) = fold_requirements (private_payload draft) /\
@@ -357,7 +370,8 @@ Theorem consumed_session_cannot_register : forall use,
 Proof. reflexivity. Qed.
 
 Theorem fresh_session_has_no_inherited_state :
-  start = Open {| private_values := []; private_occurrences := []; private_payload := empty_payload |}.
+  start = Open {| private_values := []; private_occurrences := []; private_host_names := [];
+    private_payload := empty_payload |}.
 Proof. reflexivity. Qed.
 
 Theorem origin_erasure_retains_owned_payload : forall draft root,
@@ -368,7 +382,7 @@ Proof. reflexivity. Qed.
 
 Theorem semantic_projection_retains_all_owned_requirements : forall draft root,
   semantic_artifact (bundle draft root) =
-  (private_values draft, root, map fst (private_occurrences draft),
+  (private_values draft, root, map fst (private_occurrences draft), private_host_names draft,
    {| retained_foreign_uses := map Foreign.retain_use (foreign_uses (private_payload draft));
       retained_guards := guard_descriptions (private_payload draft);
       retained_providers := provider_requirements (private_payload draft);
@@ -376,22 +390,26 @@ Theorem semantic_projection_retains_all_owned_requirements : forall draft root,
 Proof. reflexivity. Qed.
 
 Theorem changing_diagnostics_does_not_change_semantics :
-  forall values root occurrences uses guards providers folds first second,
+  forall values root occurrences names uses guards providers folds first second,
   semantic_artifact
     {| artifact_values := values; artifact_root := root; artifact_occurrences := occurrences;
+       artifact_host_names := names;
        artifact_payload := {| foreign_uses := uses; guard_descriptions := guards;
          provider_requirements := providers; fold_requirements := folds; diagnostics := first |} |} =
   semantic_artifact
     {| artifact_values := values; artifact_root := root; artifact_occurrences := occurrences;
+       artifact_host_names := names;
        artifact_payload := {| foreign_uses := uses; guard_descriptions := guards;
          provider_requirements := providers; fold_requirements := folds; diagnostics := second |} |}.
 Proof. reflexivity. Qed.
 
-Theorem changing_occurrence_origins_does_not_change_semantics : forall values root first second payload,
+Theorem changing_occurrence_origins_does_not_change_semantics : forall values root first second names payload,
   map fst first = map fst second ->
   semantic_artifact {| artifact_values := values; artifact_root := root;
+    artifact_host_names := names;
     artifact_occurrences := first; artifact_payload := payload |} =
   semantic_artifact {| artifact_values := values; artifact_root := root;
+    artifact_host_names := names;
     artifact_occurrences := second; artifact_payload := payload |}.
 Proof. intros; unfold semantic_artifact; cbn; now rewrite H. Qed.
 
@@ -438,7 +456,7 @@ Proof.
   cbn [construct_in_session] in H.
   destruct (Construction.construction_step (private_values draft) operation references) eqn:E;
     try discriminate.
-  inversion H; subst. cbn [replace_values private_values].
+  inversion H; subst. cbn [retain_operation_names replace_values private_values].
   eapply Construction.successful_step_retains_generated_image; eauto.
 Qed.
 
@@ -447,7 +465,8 @@ Qed.
     additionally establish the meaning of their descriptors and occurrences. *)
 Inductive ReachableDraft : Draft -> Prop :=
 | InitialDraft : ReachableDraft
-    {| private_values := []; private_occurrences := []; private_payload := empty_payload |}
+    {| private_values := []; private_occurrences := []; private_host_names := [];
+       private_payload := empty_payload |}
 | RecordedDraft : forall prior event next index,
     ReachableDraft prior -> record_event (Open prior) event = Registered (Open next) index ->
     ReachableDraft next
@@ -463,6 +482,58 @@ Proof.
   - constructor.
   - rewrite (record_event_preserves_constructed_values _ _ _ _ H0); exact IHReachableDraft.
   - eapply session_construction_preserves_generated_arena; eauto.
+Qed.
+
+(** Requirements are recorded at the successful leaf step, not rediscovered
+    by a traversal of the finished graph. Recording unrelated descriptors
+    cannot alter them. Target binding validates every retained slot before
+    producing a host artifact; the private frontend does not resolve names. *)
+Theorem successful_construction_retains_exact_host_requirements :
+  forall draft operation references next index,
+  construct_in_session (Open draft) operation references = Registered (Open next) index ->
+  private_host_names next = private_host_names draft ++ Construction.operation_host_names operation.
+Proof.
+  intros draft operation references next index H; unfold construct_in_session in H.
+  destruct (Construction.construction_step (private_values draft) operation references);
+    try discriminate. inversion H; reflexivity.
+Qed.
+
+Theorem recording_cannot_change_host_requirements : forall draft event next index,
+  record_event (Open draft) event = Registered (Open next) index ->
+  private_host_names next = private_host_names draft.
+Proof.
+  intros draft event next index H; destruct event;
+    cbn [record_event register_foreign replace_payload append_foreign_use] in H;
+    inversion H; reflexivity.
+Qed.
+
+Theorem host_name_leaf_registers_exact_slot : forall draft slot,
+  construct_in_session (Open draft) (Construction.HostNameOp slot) [] =
+    Registered (Open (retain_operation_names
+      (replace_values draft (private_values draft ++ [Algebra.host_name slot]))
+      (Construction.HostNameOp slot))) (List.length (private_values draft)).
+Proof. reflexivity. Qed.
+
+Theorem bundle_preserves_host_binding_requirements : forall draft root,
+  artifact_host_names (bundle draft root) = private_host_names draft.
+Proof. reflexivity. Qed.
+
+(** GeneratedArena alone forgets the coupled requirement history. The real
+    adapter must use private reachable sessions, not accept a caller-assembled
+    Draft merely because its value vector has construction provenance. *)
+Theorem successful_step_and_finish_retain_host_requirements :
+  forall prior operation references next index stack artifact,
+  ReachableDraft prior ->
+  construct_in_session (Open prior) operation references = Registered (Open next) index ->
+  snd (finish (Open next) (DriverValues stack)) = OwnedOutput artifact ->
+  ReachableDraft next /\
+  artifact_host_names artifact = private_host_names prior ++ Construction.operation_host_names operation.
+Proof.
+  intros prior operation references next index stack artifact R C F.
+  split; [eapply ConstructedDraft; eauto|].
+  apply output_has_actual_root_and_checked_links in F as [root [value [S [V [L B]]]]].
+  subst artifact. cbn [bundle artifact_host_names].
+  now apply successful_construction_retains_exact_host_requirements in C.
 Qed.
 
 Theorem value_link_check_has_actual_targets : forall arena references,
@@ -605,3 +676,8 @@ Print Assumptions checked_bundle_retains_real_reference_targets.
 Print Assumptions missing_condition_blocks_output.
 Print Assumptions nonpredicate_reference_is_not_observation_evidence.
 Print Assumptions reachable_nonempty_foreign_bundle.
+Print Assumptions successful_construction_retains_exact_host_requirements.
+Print Assumptions recording_cannot_change_host_requirements.
+Print Assumptions host_name_leaf_registers_exact_slot.
+Print Assumptions bundle_preserves_host_binding_requirements.
+Print Assumptions successful_step_and_finish_retain_host_requirements.

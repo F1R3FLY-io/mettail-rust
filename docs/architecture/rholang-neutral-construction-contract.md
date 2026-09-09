@@ -70,6 +70,7 @@ target-specific canonical representation is built.
 | --- | --- | --- |
 | Empty and parallel append | Empty has no children; append retains all children and their multiplicity | `ParFold`, `ParPair` |
 | Native scalar | Checked integer, Boolean, or decoded string value; no process-text payload | Scalar handlers and existing decoders |
+| Opaque host name | Exact caller-owned name-table identity and slot; no children or embedded process | Explicit host adapter enrollment and binding |
 | Bound reference | Checked enclosing-binder index | `lower_name_var`, `lower_proc_var` |
 | Pattern capture and wildcard | Capture index or explicit wildcard policy; not an enclosing-binder reference | `enter_pattern`, existing variable constructors |
 | Captured pattern reference | Checked index and pattern depth, retaining the distinction from a bound variable | Installed pattern preparation |
@@ -79,7 +80,7 @@ target-specific canonical representation is built.
 | Ordered list | All elements, including empty and repeated elements | `ListLit`, `PatListLit` |
 | Map | Explicit ordered key/value pairs, including the empty map | `MapLit`, `PatMapLit` |
 | Send | Persistence and payload arity; channel followed by payloads | `send_par`, `send_par_persistent` and existing sugar |
-| Fresh scope | Binder count and checked URI/binder association; body | `Kont::New`, `unbind_uri_scope` |
+| Fresh scope | Binder count, checked URI/binder association and ordered injection keys; body followed by injection values | `Kont::New`, `unbind_uri_scope`, pinned node `combine_p_new` |
 | Receive | Ordered bind descriptors, capture-slot roster, persistence, scoped body and optional condition | Staged `ForSource`, `ForPattern`, `ForBody`, `ForGuard` |
 | DDL wire node | Existing structural tag and ordered data children, with its distinct metadata policy | `DdlLowerPlan::finish` |
 | Matching expression | Target then pattern; static-false form still consumes the lowered target | Existing matching continuations |
@@ -128,6 +129,21 @@ validation. Strict ordering establishes uniqueness without a separate
 quadratic duplicate scan. The body must be lowered under the binder order
 from those same pairs, an explicit producer-refinement obligation.
 
+The caller's entire injection map is retained separately from these URI/binder
+pairs. Its ordered keys correspond one-for-one to the children following the
+body. The target rejects duplicate/out-of-order keys and mismatched key/value
+counts; it does not filter unused entries. Empty maps and empty map keys remain
+representable. With no injections, this operation specializes exactly to the
+existing fresh construction. Its summary still depends on the shifted body,
+not an ordinary union of the injection children.
+
+The node's runtime URI map takes precedence over injections. Its subsequent
+runtime extraction rules are not frontend import validators. A quoted admitted
+structural value uses ordinary nodes and quote/drop forwarding; it is not
+replaced by an opaque process slot. The source-to-target adapter must validate
+the declared import domain and preserve the node's existing runtime refusal
+behavior for used injections.
+
 Signed 32-bit bounds apply to emitted indices, pattern depths, fresh counts,
 and receive free/bind counts. The total enclosing scope size is not an emitted
 field and must not acquire an implicit signed-32-bit limit from these checks.
@@ -144,6 +160,22 @@ slots. Their existing service envelopes and trampolines compose the operations
 above. There is no generic `OpaquePar`, protobuf, executable callback, or
 uninterpreted-process escape. Provider slots request later binding; they do not
 grant the rights of an installed-language handle.
+
+`HostNameSlot` is restricted to closed opaque **name** data. Its owner and index
+resolve against an explicitly retained adapter table, preserving the exact
+host identity. Wrong owners and missing slots reject distinctly. The neutral
+graph carries neither arbitrary `Par` values nor a name reconstructed from a
+fingerprint. Closed, non-string observations rely on checked enrollment into
+this name-only domain; empty metadata or a permissive host extractor is not an
+enrollment proof. Rights remain subject to the installed service's authority
+checks.
+
+Each successful host-name leaf construction appends its slot to the session's
+required-name roster. Parent construction reuses already registered children;
+it does not rewalk their graphs. Recording other descriptors preserves the
+roster, and finishing retains it alongside the graph. Repeated requirements
+remain repeated. Before emitting a host artifact, the adapter must resolve all
+retained slots against the exact table owner.
 
 The concrete descriptor preserves the fields already supplied by
 [`FltNode` and `ScopedFltTemplate`](../../runtime/src/flt_node.rs):
@@ -200,6 +232,7 @@ Metadata laws are deliberately operation-specific:
 | --- | --- | --- |
 | Ordinary binary expression | Union of both operands | OR of both operands |
 | Ordinary unary expression | Operand's information | Operand's flag |
+| Opaque host name | Empty, under the checked name-only enrollment contract | False |
 | Method, ordinary list/map, send | Union of every relevant ordered child | OR of those children |
 | Parallel append | Existing append combination | Existing append combination |
 | Bound variable | Singleton enclosing-binder index | Existing caller policy |
@@ -262,7 +295,7 @@ makes the output transitions explicit:
 | Open session, successful construction | Open session and exact new value reference | Private graph and all existing descriptors |
 | Open session, recording an occurrence or descriptor | Open session and its table index | Exact appended item and every other table |
 | Construction or driver failure | Consumed session and typed error | Diagnostics, no executable artifact |
-| Finish with one existing root and checked links | Consumed session and owned bundle | Graph, root, occurrences, FLT uses, guards, provider/fold requests and diagnostics |
+| Finish with one existing root and checked links | Consumed session and owned bundle | Graph, root, occurrences, host-name requirements, FLT uses, guards, provider/fold requests and diagnostics |
 | Finish with missing links or zero/multiple roots | Consumed session and typed error | Diagnostics, no elected or fabricated root |
 | Any use of the returned consumed session | Rejection | No second publication or inherited registration |
 
@@ -317,6 +350,14 @@ links, preserves the whole bundle, and consumes the returned session. Semantic
 projection removes outer and nested diagnostic origins while retaining capture
 associations, extents, guard policy and all pending requirements.
 
+`GeneratedArena` proves only the value-vector projection. It does not prove that
+a caller-assembled session retained the requirements of those values. The
+handoff therefore retains `ReachableDraft`, which couples actual successful
+construction and recording transitions to the descriptor and host-name rosters.
+The checked step/finish law preserves that reachability and the exact appended
+name requirements. This is a private-session invariant, not a reason to add a
+second runtime graph scan.
+
 These results do not establish Rust ownership, producer correctness, complete
 preparation or live host admission. The algebra's abstract pending context is
 not a substitute for the concrete FLT descriptions. Current separate
@@ -325,9 +366,11 @@ error-path cleanup.
 Executable provider implementations and native evaluator closures remain
 host-owned; the neutral artifact retains requests and declaration references.
 
-Remaining interface correspondence includes concrete host-name reference
-binding, preservation of caller URI injections, and the graph denotation of
-installed predicates. A side-table entry attached to an unrelated value is not
+The host-name and injection laws now specify exact lookup, ordered association,
+failure behavior and requirement retention. Concrete enrollment, host binding
+and node-byte correspondence remain adapter obligations. The remaining graph
+denotation of installed predicates must connect their retained descriptions to
+the actual guard. A side-table entry attached to an unrelated value is not
 a solution to that last obligation. Ordinary FLT construction and receive
 preparation must reuse their existing request encodings and trampolines;
 direct predicates must remain unevaluated guard atoms until the authorized

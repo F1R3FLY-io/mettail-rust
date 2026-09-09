@@ -74,10 +74,16 @@ Record BindShape := {
   remainder_index : option nat
 }.
 
+(** A reference to closed opaque NAME data retained by the caller's adapter.
+    It is not a raw process, serialized capability, lexical index or authority
+    claim. Only the matching owner can supply the referenced name at emission. *)
+Record HostNameSlot := { host_name_owner : nat; host_name_index : nat }.
+
 Inductive HeadKind :=
 | IntegerHead (integer : Z)
 | BooleanHead (boolean : bool)
 | TextHead (text : string)
+| HostNameHead (slot : HostNameSlot)
 | BoundHead (index : nat)
 | CaptureHead (index : nat)
 | WildcardHead
@@ -88,7 +94,7 @@ Inductive HeadKind :=
 | MapHead
 | MethodHead (name : string)
 | SendHead (persistent : bool)
-| NewHead (width : nat) (uris : list string)
+| NewHead (width : nat) (uris injection_keys : list string)
 | ReceiveHead (binds : list BindShape) (slots : list CaptureSlot)
     (persistent has_condition : bool)
 | MatchHead
@@ -110,6 +116,8 @@ Definition singleton (kind : HeadKind) (children : list Value)
   MakeValue [MakeHead kind children] summary.
 Definition text (s : string) : Value := singleton (TextHead s) [] closed_summary.
 Definition boolean (b : bool) : Value := singleton (BooleanHead b) [] closed_summary.
+Definition host_name (slot : HostNameSlot) : Value :=
+  singleton (HostNameHead slot) [] closed_summary.
 
 Definition append (left right : Value) : Value :=
   MakeValue (heads_of left ++ heads_of right)
@@ -205,8 +213,51 @@ Definition integer (value : Z) : ConstructionResult :=
 
 Definition fresh (width : nat) (uris : list string) (body : Value) : ConstructionResult :=
   if List.length uris <=? width then Constructed
-    (singleton (NewHead width uris) [body] (shifted_summary width (summary_of body)))
+    (singleton (NewHead width uris []) [body] (shifted_summary width (summary_of body)))
   else ConstructionRejected InvalidBinderLayout.
+
+(** Injection entries are children, not opaque embedded host processes. Their
+    keys retain ordered-map association. The New summary is derived from its
+    body only, as in the existing normalizer. Key ordering and supported closed
+    injection-value validation are separate checked adapter obligations. *)
+Definition fresh_with_injections (width : nat) (uris keys : list string)
+    (body : Value) (injections : list Value) : ConstructionResult :=
+  if Nat.eqb (List.length keys) (List.length injections) then
+    if List.length uris <=? width then Constructed
+      (singleton (NewHead width uris keys) (body :: injections)
+        (shifted_summary width (summary_of body)))
+    else ConstructionRejected InvalidBinderLayout
+  else ConstructionRejected ChildArityMismatch.
+
+Theorem empty_injections_specialize_fresh : forall width uris body,
+  fresh_with_injections width uris [] body [] = fresh width uris body.
+Proof. reflexivity. Qed.
+
+Theorem injected_fresh_preserves_all_entries : forall width uris keys body injections value,
+  fresh_with_injections width uris keys body injections = Constructed value ->
+  List.length keys = List.length injections /\ List.length uris <= width /\
+  heads_of value = [MakeHead (NewHead width uris keys) (body :: injections)] /\
+  summary_of value = shifted_summary width (summary_of body).
+Proof.
+  intros width uris keys body injections value H; unfold fresh_with_injections in H.
+  destruct (Nat.eqb (List.length keys) (List.length injections)) eqn:K; try discriminate.
+  destruct (List.length uris <=? width) eqn:U; try discriminate.
+  inversion H; subst. apply Nat.eqb_eq in K; apply Nat.leb_le in U.
+  repeat split; auto.
+Qed.
+
+Theorem host_name_has_closed_nonstring_observation : forall slot,
+  summary_of (host_name slot) = closed_summary /\ single_string (host_name slot) = false.
+Proof. split; reflexivity. Qed.
+
+Theorem host_name_retains_exact_slot : forall slot,
+  heads_of (host_name slot) = [MakeHead (HostNameHead slot) []].
+Proof. reflexivity. Qed.
+
+Print Assumptions empty_injections_specialize_fresh.
+Print Assumptions injected_fresh_preserves_all_entries.
+Print Assumptions host_name_has_closed_nonstring_observation.
+Print Assumptions host_name_retains_exact_slot.
 
 Record BindValue := {
   bind_source : Value;
@@ -382,7 +433,7 @@ Proof. reflexivity. Qed.
 Theorem fresh_success_retains_body_and_local_layout : forall width uris body value,
   fresh width uris body = Constructed value ->
   List.length uris <= width /\
-  heads_of value = [MakeHead (NewHead width uris) [body]] /\
+  heads_of value = [MakeHead (NewHead width uris []) [body]] /\
   summary_of value = shifted_summary width (summary_of body).
 Proof.
   intros width uris body value H; unfold fresh in H.
