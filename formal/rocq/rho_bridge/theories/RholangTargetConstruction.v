@@ -66,7 +66,7 @@ Inductive BinaryOperator :=
 | BooleanAnd | BooleanOr | Add | Concat | Subtract | Multiply | Divide | Modulo.
 Inductive PatternOperator := PatternAnd | PatternOr | PatternNot.
 Inductive CaptureSlot := OrdinarySlot (identity : nat)
-  | GuestSlot (name category : string).
+  | GuestSlot (name : string).
 
 Record BindShape := {
   pattern_count : nat;

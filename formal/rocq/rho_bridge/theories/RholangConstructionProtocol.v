@@ -216,6 +216,34 @@ Definition observe (arena : list Value) (index : nat) : ObservationResult :=
   | None => ObservationRejected (MissingReference index)
   end.
 
+(** Quote, drop and name parentheses reuse their child's constructed value.
+    They do not introduce a wrapper or append a new semantic arena node. The
+    existing source driver still records each source occurrence separately. *)
+Inductive ForwardResult := Forwarded (reference : nat)
+  | ForwardRejected (error : ConstructionError).
+Definition forward_reference (arena : list Value) (reference : nat) : ForwardResult :=
+  match nth_error arena reference with
+  | Some _ => Forwarded reference
+  | None => ForwardRejected (MissingReference reference)
+  end.
+
+Theorem quote_drop_forward_exact_reference : forall arena reference value,
+  nth_error arena reference = Some value -> forward_reference arena reference = Forwarded reference.
+Proof. intros; unfold forward_reference; now rewrite H. Qed.
+
+Theorem quote_drop_forward_preserves_observation : forall arena reference forwarded,
+  forward_reference arena reference = Forwarded forwarded ->
+  forwarded = reference /\ observe arena forwarded = observe arena reference.
+Proof.
+  intros arena reference forwarded H; unfold forward_reference in H.
+  destruct (nth_error arena reference); try discriminate. inversion H; subst; auto.
+Qed.
+
+Theorem quote_drop_cannot_forward_missing_value : forall arena reference,
+  nth_error arena reference = None ->
+  forward_reference arena reference = ForwardRejected (MissingReference reference).
+Proof. intros; unfold forward_reference; now rewrite H. Qed.
+
 (** Each step is a private transaction. A failed step returns the unchanged
     arena; successful construction appends one actual interpreted value and
     returns precisely its new reference. There is no public-root field here. *)
@@ -599,10 +627,10 @@ Proof. reflexivity. Qed.
 
 Example repeated_capture_names_retained :
   receive_slots
-    [{| ordered_captures := [OrdinarySlot 4; GuestSlot "capture" "Text"];
+    [{| ordered_captures := [OrdinarySlot 4; GuestSlot "capture"];
         bind_is_persistent := false |};
-     {| ordered_captures := [GuestSlot "capture" "Text"]; bind_is_persistent := true |}] =
-  [OrdinarySlot 4; GuestSlot "capture" "Text"; GuestSlot "capture" "Text"].
+     {| ordered_captures := [GuestSlot "capture"]; bind_is_persistent := true |}] =
+  [OrdinarySlot 4; GuestSlot "capture"; GuestSlot "capture"].
 Proof. reflexivity. Qed.
 
 Print Assumptions target_index_check_exact.
@@ -617,6 +645,9 @@ Print Assumptions successful_step_appends_interpretation.
 Print Assumptions successful_step_preserves_old_references.
 Print Assumptions observe_returned_reference_is_actual_value.
 Print Assumptions observe_missing_reference_rejects.
+Print Assumptions quote_drop_forward_exact_reference.
+Print Assumptions quote_drop_forward_preserves_observation.
+Print Assumptions quote_drop_cannot_forward_missing_value.
 Print Assumptions checked_addition_observes_constructed_values.
 Print Assumptions successful_step_retains_generated_image.
 Print Assumptions generated_member_has_concrete_construction.

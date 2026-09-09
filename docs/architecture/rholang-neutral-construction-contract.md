@@ -21,7 +21,8 @@ indices, not source positions, hashes, capability handles, or arbitrary host
 pointers. A source occurrence identifies a particular use of a value; distinct
 occurrences remain distinct when they share a semantic value.
 
-The construction interface has two operations, written here as pseudocode:
+The construction interface provides construction, observation and identity
+forwarding, written here as pseudocode:
 
 ```text
 construct(operation, ordered_child_references)
@@ -29,6 +30,9 @@ construct(operation, ordered_child_references)
 
 observe(value_reference)
     -> Result<StructuralObservation, ConstructionError>
+
+forward_reference(value_reference)
+    -> Result<ValueRef, ConstructionError>
 ```
 
 `construct` resolves the ordered references, rejecting the first missing
@@ -50,6 +54,10 @@ The interpretation is structural. Constructing a binary operation retains that
 operation and its operands; it does not calculate the operation's answer.
 Methods likewise retain the receiver, name, and ordered arguments. The existing
 reducer owns evaluation, type errors, effects, and charges.
+
+Name quotation, process drop and name parentheses forward their child's checked
+reference unchanged. They do not allocate a semantic wrapper. Their distinct
+source occurrences still receive distinct origin records.
 
 ## Required construction vocabulary
 
@@ -85,6 +93,8 @@ for its current arity encoding.
 A receive bind descriptor retains its source, pattern vector, optional
 remainder, and checked free-count. The capture-slot roster retains both ordinary
 binders and foreign-language-term (FLT) holes in their original combined order.
+An FLT receive slot retains the hole's name; its optional category belongs to
+the separate declared FLT telescope, not to an invented receive-slot field.
 Source, pattern, body, and condition are distinct roles; a generic list whose
 roles must be guessed is insufficient. The body cannot be scheduled until its
 patterns establish that roster.
@@ -244,6 +254,30 @@ Construction failure cannot publish a root while losing its descriptor table,
 and a subsequent session cannot inherit those descriptors. The worklist/session
 implementation supplies the bounded cleanup and reentrancy evidence.
 
+The [owned-session model](../../formal/rocq/rho_bridge/theories/RholangOwnedSession.v)
+makes the output transitions explicit:
+
+| Input state and action | Result | Retained output |
+| --- | --- | --- |
+| Open session, successful construction | Open session and exact new value reference | Private graph and all existing descriptors |
+| Open session, recording an occurrence or descriptor | Open session and its table index | Exact appended item and every other table |
+| Construction or driver failure | Consumed session and typed error | Diagnostics, no executable artifact |
+| Finish with one existing root and checked links | Consumed session and owned bundle | Graph, root, occurrences, FLT uses, guards, provider/fold requests and diagnostics |
+| Finish with missing links or zero/multiple roots | Consumed session and typed error | Diagnostics, no elected or fabricated root |
+| Any use of the returned consumed session | Rejection | No second publication or inherited registration |
+
+Here, “publication” means returning a private frontend artifact to its caller,
+not publishing a process to RSpace. Recording a provider request does not bind
+that provider, and recording a predicate does not establish its truth. The
+model's nonempty-bundle witness tests ownership and reference links only; its
+Boolean condition is not an implementation of an installed predicate.
+
+`OwnedArtifact` is the construction/session component of
+`RholangFrontendArtifactV1`, not an alternative complete envelope. The enclosing
+preparation contract must also retain source/profile/environment commitments,
+complete parse-family evidence and completed preparation usage. Successful
+session finishing does not manufacture any of that evidence.
+
 ## Formal and implementation handoff
 
 The
@@ -276,13 +310,28 @@ obligations. It reuses the admission model's reference and obligation vocabulary
 The earlier abstract structural-template model uses numeric text-chunk IDs;
 its lexical and graft laws alone do not prove this exact-string transport.
 
-These results do not yet establish full artifact publication. The algebra's
-abstract pending context is not a substitute for the concrete FLT descriptions.
-The remaining owned session boundary must retain those descriptions and
-obligations alongside the graph and root. Current separate fold/native/guard
-collectors are implementation reuse points, not a proof of error-path cleanup.
+The owned-session model connects those concrete FLT descriptions to the graph
+and root. Its reachable states arise from actual recording and construction
+transitions; successful finishing checks occurrence/value and predicate-role
+links, preserves the whole bundle, and consumes the returned session. Semantic
+projection removes outer and nested diagnostic origins while retaining capture
+associations, extents, guard policy and all pending requirements.
+
+These results do not establish Rust ownership, producer correctness, complete
+preparation or live host admission. The algebra's abstract pending context is
+not a substitute for the concrete FLT descriptions. Current separate
+fold/native/guard collectors are implementation reuse points, not a proof of
+error-path cleanup.
 Executable provider implementations and native evaluator closures remain
 host-owned; the neutral artifact retains requests and declaration references.
+
+Remaining interface correspondence includes concrete host-name reference
+binding, preservation of caller URI injections, and the graph denotation of
+installed predicates. A side-table entry attached to an unrelated value is not
+a solution to that last obligation. Ordinary FLT construction and receive
+preparation must reuse their existing request encodings and trampolines;
+direct predicates must remain unevaluated guard atoms until the authorized
+candidate-COMM observation boundary.
 
 The mathematical range wrapper describes a result, not evaluation order in a
 strict programming language. The Rust adapter must check range and resource

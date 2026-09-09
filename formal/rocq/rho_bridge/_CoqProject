@@ -35,6 +35,7 @@ theories/RholangFrontendAdmission.v
 theories/RholangTargetConstruction.v
 theories/RholangConstructionProtocol.v
 theories/RholangFltTransport.v
+theories/RholangOwnedSession.v
 theories/RuntimeBackendDispatch.v
 theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v

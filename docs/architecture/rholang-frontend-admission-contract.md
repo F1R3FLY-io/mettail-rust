@@ -22,7 +22,7 @@ The frontend receives explicit inputs, not ambient process state:
 |---|---|
 | Source | Exact UTF-8 source and its identity; caller-owned provenance label is diagnostic data, not permission to open a file |
 | Language profile | Exact host grammar/compiler/checker/Unicode commitments and supported neutral ABI version |
-| Source environment | Ordered, duplicate-free named bindings translated from the caller's normalization environment; lexical binders shadow them using existing scope rules |
+| Caller injection environment | Exact caller normalization map, retained in canonical key order as URI injections for each source `new`; distinct from the lexical binder environment |
 | Guest context | Explicit read-only compile-time guest descriptions and opaque provider-reference slots; runtime-installed lexical selectors remain staged |
 | Lowering options | Explicit policy, including existing guard-discharge options; no environment-variable override |
 | Limits and cancellation | Source, parser, retained-family, traversal, environment, term, origin and output limits, with cancellation observable at bounded work points |
@@ -35,6 +35,25 @@ fingerprint. The node adapter validates the exact slot identity and its owner;
 the neutral representation does not grant authority. Malformed or unsupported
 environment values receive a named rejection before source admission. Do not
 silently discard the supplied environment or support only the empty map.
+
+The node's `ProgramFrontend::prepare` passes its supplied environment to the
+normalizer. `combine_p_new` in
+`rholang/src/rust/interpreter/compiler/normalizer/processes/p_new_normalizer.rs`
+copies the entire map into each `New.injections` ordered map, including entries
+not used by that scope. `eval_new` in
+`rholang/src/rust/interpreter/reduce.rs` first uses the runtime URI map and
+consults injections only when the URI is absent there. Preserve that precedence,
+the exact key/value association and unused entries; do not replace this behavior
+with bare-variable substitution. The paths refer to the pinned node source,
+not to a new frontend implementation.
+
+Lexical binders still use the existing scope/shadowing rules. A URI-bound name
+enters that lexical environment through its `new` binder; an injection-map key
+alone does not bind a free source variable. The current MeTTaIL `Kont::New`
+supplies an empty injection map, so nonempty caller-environment support remains
+an explicit factoring/emitter obligation. Injection keys are map keys, not
+fresh-URI declarations: do not impose the latter's nonempty-key rule on unused
+map entries. The adapter validates values without inventing host authority.
 
 Public source preparation must preserve the node's existing order: negative
 initial budget rejects before frontend invocation; preparation failure performs
@@ -101,7 +120,7 @@ the application contract**, not that fixture alone.
 | Ordinary, quoted and polyadic sends | `desugar_surface_sugar_node`, send continuations | Existing name/quote semantics, argument versus list shape, persistence and payload order |
 | `PNew`, `PNewUris` | `extend_env`, `unbind_uri_scope`, `New` continuation | Exact binder/URI association, shadowing, duplicate and invalid URI rejection |
 | `PForUser`, receive rows and joins | `ForRows`, `for_source`, `for_pattern`, `assemble_receive` | Exact receive-slot order, persistence, nested continuation scope, all-or-none join behavior |
-| Name quote/drop and variables | `enter_name`, variable handlers | Bound-name/process distinction, external environment lookup, stable unresolved-reference rejection |
+| Name quote/drop and variables | `enter_name`, variable handlers | Bound-name/process distinction, exact lexical lookup and quote/drop forwarding, stable unresolved-reference rejection; caller URI injections are handled by `new` |
 | Quoted nested list patterns | `enter_pattern`, `PatListLit` | Literal tests and each capture in `[1,0,[[term,receipt]],usage]`; no dropped/reordered binding |
 | Int, Bool, String | Existing scalar handlers and decoders | Exact scalar value and closed/open metadata; checked numeric range, no double string decoding |
 | List and Map, including `Map()` | Existing container continuations | Ordered list elements; map key/value association and canonical target semantics; no pair flattening |
