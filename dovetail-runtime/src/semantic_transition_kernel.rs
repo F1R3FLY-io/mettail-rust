@@ -10719,6 +10719,68 @@ mod tests {
     }
 
     #[test]
+    fn closed_intrinsic_checked_nat_add_preserves_maximum_and_refuses_overflow() {
+        let image = signature_image();
+        let rule = intrinsic_rule();
+        for (left, right, expected) in [
+            (0, 0, Some(0)),
+            (i128::MAX, 0, Some(i128::MAX)),
+            (i128::MAX - 1, 1, Some(i128::MAX)),
+            (i128::MAX, 1, None),
+            (1, i128::MAX, None),
+            (i128::MAX, i128::MAX, None),
+            (-1, 0, None),
+            (0, -1, None),
+        ] {
+            let mut graph = EGraph::new();
+            let lhs = test_literal(&mut graph, 1, TheoryLiteralV1::Integer(left));
+            let rhs = test_literal(&mut graph, 1, TheoryLiteralV1::Integer(right));
+            let mut work = 0;
+            let result = execute_intrinsic(
+                &image,
+                &rule,
+                &TheoryImageIntrinsicV1::CheckedNatAdd {
+                    left: TheoryVariableId(1),
+                    right: TheoryVariableId(13),
+                    output: TheoryVariableId(9),
+                },
+                &vec![(TheoryVariableId(1), lhs), (TheoryVariableId(13), rhs)],
+                &mut graph,
+                &mut work,
+                semantic_limits(),
+                &mut || false,
+            )
+            .expect("bounded arithmetic has a complete relation result");
+            match (result, expected) {
+                (None, None) => {},
+                (Some(proven), Some(expected)) => {
+                    assert_intrinsic_receipt(
+                        &proven.receipt,
+                        SemanticIntrinsicOpcodeV1::CheckedNatAdd,
+                        2,
+                        1,
+                    );
+                    let output = runtime_literal_ref(
+                        &image,
+                        &graph,
+                        intrinsic_output(&proven, 9),
+                        TheorySortId(1),
+                        &mut work,
+                        semantic_limits().work,
+                        &mut || false,
+                    )
+                    .expect("admitted output")
+                    .expect("integer output");
+                    assert!(
+                        matches!(output, RuntimeLiteralRef::Integer(actual) if actual == expected)
+                    );
+                },
+                _ => panic!("checked natural addition mismatch for {left} + {right}"),
+            }
+        }
+    }
+
+    #[test]
     fn closed_intrinsics_refute_invalid_naturals_and_boundaries_and_fail_closed_on_limits() {
         let image = signature_image();
         let rule = intrinsic_rule();

@@ -320,6 +320,10 @@ Public-node acceptance additionally requires these distinct cases:
 
 ## Proof and implementation correspondence
 
+The [nullable/derivative rule correspondence](regex-gslt-rule-correspondence.md)
+maps the current inline declaration to its checked continuation models and
+concrete tests, with explicit limits on what that evidence establishes.
+
 The six existing `RegexGslt` models provide the signature, derivatives, search,
 replacement, rule interpretation and finite oracles. The existing
 [SemanticIntrinsics](../../formal/rocq/runtime_grammar/theories/SemanticIntrinsics.v)
