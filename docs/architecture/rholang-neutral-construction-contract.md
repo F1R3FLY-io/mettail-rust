@@ -972,6 +972,48 @@ prefix surplus and scheduling arbitrary child lists also require checked,
 charged, cancellable work before allocation. Neither the binary footprint
 model nor these arithmetic lemmas discharge those separate obligations.
 
+### Exact nested construction-size receipts
+
+The [deep construction-size model](../../formal/rocq/rho_bridge/theories/RholangDeepConstructionSize.v)
+specifies a cached receipt: a collection of exact structural measurements
+computed from child receipts when a constructor combines its children. Its
+mathematical tree fold defines the expected result; it does not introduce
+another runtime traversal. The model covers the scalar, append and Fresh
+construction image, not every Rholang constructor.
+
+| Measurement | What it counts |
+| --- | --- |
+| `HeadEntries`, `NewEntries` | All semantic heads, and the subset that are New heads, including descendants |
+| `TextPayloadBytes` | Text-head payload bytes, including descendants |
+| `UriEntries`, `UriPayloadBytes` | URI entries and their byte-string lengths, including descendants |
+| `InjectionEntries`, `KeyPayloadBytes` | Injection entries and key byte-string lengths, including descendants |
+| `NestedMetadata` | New-owned metadata and descendant Par metadata; excludes the current Par's outer metadata |
+| `DescendantPars` | All descendant Par occurrences, not distinct shared graph nodes |
+| `ImmediateNewRoots` | Body and injection roots of top-level New heads; excludes roots below those children |
+
+The current Par's outer metadata length is measured separately. Append adds
+every receipt component, but takes the maximum of the two outer metadata
+lengths. Fresh retains its shifted body metadata both on the enclosing Par and
+on the New head. Each child also retains its own outer and nested metadata.
+The New-owned metadata is therefore derived from that New's body and width,
+never from a surrounding Par whose metadata may have grown through append.
+
+Cached measurements are proved equal to measurements of the constructed
+values, including every repeated injection occurrence. For trees without
+Fresh, the head and text components specialize to the existing flat footprint.
+For the pinned append constructor, copied head measurements are twice the
+left receipt plus the right receipt; the retained output is only their sum.
+This difference remains explicit instead of treating output size as work done.
+
+These are structural counts, not allocator capacities, native object sizes,
+process memory usage, or semantic cost grades. The checked examples include
+six references to the same text occurrence, nested binders, and append growing
+outer metadata without changing an existing New's metadata. Applying the
+model to emitted nodes still requires admitted descriptors and matching
+key/child counts. Clone/drop control, temporary vectors, ordered-map
+construction, and preallocation charges remain separate source-correspondence
+obligations before Fresh graph emission can use these receipts.
+
 ### Bound-reference metadata and resource accounting
 
 Bound and wildcard nodes are nullary operations. They do not change the

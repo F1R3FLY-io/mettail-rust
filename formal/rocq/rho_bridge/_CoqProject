@@ -49,6 +49,7 @@ theories/RholangGraphCapacity.v
 theories/RholangInitialGraphMachine.v
 theories/RholangInitialGraphResources.v
 theories/RholangBoundMetadata.v
+theories/RholangDeepConstructionSize.v
 theories/RholangFltTransport.v
 theories/RholangFltRequestRecipes.v
 theories/RholangOwnedSession.v
