@@ -56,6 +56,7 @@ theories/RholangEnvironmentReservation.v
 theories/RholangScopeConstructionRecipe.v
 theories/RholangInheritedBindingFold.v
 theories/IndexedCopySlots.v
+theories/HashBagBindingReconstruction.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
 theories/RholangFreshMetadataPasses.v
