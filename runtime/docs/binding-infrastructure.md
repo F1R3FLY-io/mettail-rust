@@ -169,6 +169,37 @@ using cached scope equality. They also cover duplicate and reordered binders,
 unnamed and Unicode names, nonzero depths, unchanged shared inputs, and the
 existing invalid-index refusal behavior.
 
+### Bag reconstruction during binding
+
+Binding can make previously distinct bag keys equal. The existing
+`HashBag::close_term` and `open_term` semantics rebuild those keys with
+`HashMap::insert`, not the accumulating `HashBag::insert_n` operation. Their
+shared private helper accepts transformed entry/count pairs in visitation
+order, keeps the first equal key object and last supplied count, retains the
+original `total_count`, and recomputes the cached hash summary once.
+
+`HashBag::rebuild_binding_entries` exposes this same recipe to generated
+reconstruction. It does not transform keys itself. Its caller supplies one
+transformed pair per original distinct entry, in the original traversal
+order. Diagnostic fields ignored by key equality still belong to the first
+stored key, so sorting or reversing equal-key entries changes behavior.
+Ordinary cloning and accumulating insertion remain unchanged.
+
+For example, if two distinct source entries with counts 2 and 5 transform
+into equal keys, the stored count is 5 when that is the visitation order,
+while the retained total is 7. Reversing visitation selects count 2 instead.
+This documents the existing generic binding behavior; it neither establishes
+that such collisions occur in a well-formed freshening workflow nor repairs
+the difference between retained total and surviving multiplicities.
+
+The [bag model](../../formal/rocq/rho_bridge/theories/HashBagBindingReconstruction.v)
+proves transformation/insertion fusion and the retained-key/count recipe.
+It abstracts concrete hashing and map bucket order. Runtime tests compare
+the helper and native open/close against the previous insertion loop using
+real free/bound-variable collisions, and compare cached hashes with a full
+recomputation. The helper is not a checked allocation interface, and the
+model makes no panic-unwind recovery claim.
+
 ## Thread-Local Caches
 
 ### Variable Cache (`VAR_CACHE`)

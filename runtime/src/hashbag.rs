@@ -106,6 +106,33 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         self.hash_summary = summary;
     }
 
+    // Preserve the existing binding loop's insertion and summary recipe.
+    // This is deliberately not insert_n: equal transformed keys retain the
+    // first key object and take the last count, while total_count is unchanged.
+    fn insert_binding_entries(&mut self, entries: impl IntoIterator<Item = (T, usize)>) {
+        for (element, count) in entries {
+            self.counts.insert(element, count);
+        }
+        self.rebuild_hash_summary();
+    }
+
+    /// Rebuild already-transformed binding entries using the native binding
+    /// policy. Generated traversal must supply one pair per original distinct
+    /// entry, with its original count, in the original visitation order.
+    ///
+    /// Equal transformed keys retain the first key object (including diagnostic
+    /// fields ignored by equality) and the last count. The source total is
+    /// retained verbatim, even when collisions change the surviving count sum.
+    /// This is not multiset union, normalization, or a resource-admission API.
+    /// Ordinary cloning and [`Self::insert_n`] keep their existing semantics.
+    #[doc(hidden)]
+    pub fn rebuild_binding_entries(&self, entries: impl IntoIterator<Item = (T, usize)>) -> Self {
+        let mut result = Self::new();
+        result.total_count = self.total_count;
+        result.insert_binding_entries(entries);
+        result
+    }
+
     /// Creates an empty `HashBag`.
     ///
     /// # Examples
@@ -577,25 +604,19 @@ where
         // Close each unique element
         // We need to rebuild the map because closing might change element identity
         let old_counts = std::mem::take(&mut self.counts);
-        self.counts = HashMap::default();
-
-        for (mut elem, count) in old_counts {
+        self.insert_binding_entries(old_counts.into_iter().map(|(mut elem, count)| {
             elem.close_term(state, on_free);
-            self.counts.insert(elem, count);
-        }
-        self.rebuild_hash_summary();
+            (elem, count)
+        }));
     }
 
     fn open_term(&mut self, state: ScopeState, on_bound: &impl OnBoundFn<N>) {
         // Open each unique element
         let old_counts = std::mem::take(&mut self.counts);
-        self.counts = HashMap::default();
-
-        for (mut elem, count) in old_counts {
+        self.insert_binding_entries(old_counts.into_iter().map(|(mut elem, count)| {
             elem.open_term(state, on_bound);
-            self.counts.insert(elem, count);
-        }
-        self.rebuild_hash_summary();
+            (elem, count)
+        }));
     }
 
     fn visit_vars(&self, on_var: &mut impl FnMut(&Var<N>)) {
@@ -690,6 +711,142 @@ mod tests {
 
     fn assert_cached_hash_matches_legacy<T: Clone + Hash + Eq>(bag: &HashBag<T>) {
         assert_eq!(hash_of(bag), legacy_hash_of(bag));
+    }
+
+    fn binding_recipe_oracle(
+        source: &HashBag<crate::OrdVar>,
+        entries: impl IntoIterator<Item = (crate::OrdVar, usize)>,
+    ) -> HashBag<crate::OrdVar> {
+        let mut result = HashBag::new();
+        result.total_count = source.total_count;
+        for (key, count) in entries {
+            result.counts.insert(key, count);
+        }
+        result.rebuild_hash_summary();
+        result
+    }
+
+    fn diagnostic_name(value: &crate::OrdVar) -> Option<&str> {
+        match &value.0 {
+            Var::Free(value) => value.pretty_name.as_deref(),
+            Var::Bound(value) => value.pretty_name.as_deref(),
+        }
+    }
+
+    fn assert_binding_recipe(actual: &HashBag<crate::OrdVar>, expected: &HashBag<crate::OrdVar>) {
+        assert_eq!(actual.total_count, expected.total_count);
+        assert_eq!(actual.counts, expected.counts);
+        for (key, count) in &expected.counts {
+            let (actual_key, actual_count) = actual
+                .counts
+                .get_key_value(key)
+                .expect("expected stored key");
+            assert_eq!(actual_count, count);
+            assert_eq!(diagnostic_name(actual_key), diagnostic_name(key));
+        }
+        assert_cached_hash_matches_legacy(actual);
+        assert_cached_hash_matches_legacy(expected);
+    }
+
+    #[test]
+    fn binding_rebuild_matches_old_recipe_and_native_open_close_collisions() {
+        use crate::OrdVar;
+        use moniker::{Binder, BinderIndex, BoundVar, FreeVar, ScopeOffset};
+        for closing in [false, true] {
+            let free: FreeVar<String> = FreeVar::fresh_named("free");
+            let binders = vec![Binder(free.clone())];
+            let bound = OrdVar(Var::Bound(BoundVar {
+                scope: ScopeOffset(0),
+                binder: BinderIndex(0),
+                pretty_name: Some("already-bound".to_owned()),
+            }));
+            let mut source = HashBag::new();
+            source.insert_n(OrdVar(Var::Free(free)), 2);
+            source.insert_n(bound, 5);
+            let original = source.clone();
+            let mut native = source.clone();
+            let entries: Vec<_> = native
+                .iter()
+                .map(|(key, count)| {
+                    let mut key = key.clone();
+                    if closing {
+                        key.close_term(ScopeState::new(), &binders);
+                    } else {
+                        key.open_term(ScopeState::new(), &binders);
+                    }
+                    (key, count)
+                })
+                .collect();
+            assert_eq!(entries.len(), 2);
+            assert_eq!(entries[0].0, entries[1].0, "fixture must collide");
+            let expected = binding_recipe_oracle(&source, entries.clone());
+            let rebuilt = source.rebuild_binding_entries(entries.clone());
+            if closing {
+                native.close_term(ScopeState::new(), &binders);
+            } else {
+                native.open_term(ScopeState::new(), &binders);
+            }
+            assert_binding_recipe(&rebuilt, &expected);
+            assert_binding_recipe(&native, &expected);
+            assert_binding_recipe(&source, &original);
+            assert_eq!(rebuilt.total_count, 7);
+            assert_eq!(rebuilt.counts.len(), 1);
+            assert_eq!(rebuilt.count(&entries[0].0), entries[1].1);
+            assert_eq!(
+                diagnostic_name(rebuilt.counts.keys().next().expect("one collision result")),
+                diagnostic_name(&entries[0].0)
+            );
+        }
+    }
+
+    #[test]
+    fn binding_rebuild_retains_first_key_and_last_count_in_supplied_order() {
+        use crate::OrdVar;
+        use moniker::FreeVar;
+        let first: FreeVar<String> = FreeVar::fresh_named("first");
+        let mut last = first.clone();
+        last.pretty_name = Some("last".to_owned());
+        let first = OrdVar(Var::Free(first));
+        let last = OrdVar(Var::Free(last));
+        assert_eq!(first, last);
+        assert_ne!(diagnostic_name(&first), diagnostic_name(&last));
+        let mut source = HashBag::new();
+        source.insert_n(first.clone(), 7);
+        for entries in [
+            vec![(first.clone(), 2), (last.clone(), 5)],
+            vec![(last.clone(), 5), (first.clone(), 2)],
+        ] {
+            let expected = binding_recipe_oracle(&source, entries.clone());
+            let rebuilt = source.rebuild_binding_entries(entries.clone());
+            assert_binding_recipe(&rebuilt, &expected);
+            let (key, count) = rebuilt.counts.iter().next().expect("one stored key");
+            assert_eq!(diagnostic_name(key), diagnostic_name(&entries[0].0));
+            assert_eq!(*count, entries[1].1);
+            assert_eq!(rebuilt.total_count, 7);
+        }
+        let cloned = source.clone();
+        assert_eq!(cloned.count(&first), 7);
+        assert_eq!(cloned.total_count, 7);
+        assert_cached_hash_matches_legacy(&cloned);
+    }
+
+    #[test]
+    fn binding_rebuild_preserves_noncolliding_entries_and_empty_recipe() {
+        use crate::OrdVar;
+        use moniker::FreeVar;
+        let mut source = HashBag::new();
+        source.insert_n(OrdVar(Var::Free(FreeVar::fresh_named("a"))), 2);
+        source.insert_n(OrdVar(Var::Free(FreeVar::fresh_named("b"))), 3);
+        let entries: Vec<_> = source.iter().map(|(key, n)| (key.clone(), n)).collect();
+        let rebuilt = source.rebuild_binding_entries(entries);
+        assert_binding_recipe(&rebuilt, &source);
+        let empty: HashBag<OrdVar> = HashBag::new();
+        assert_binding_recipe(&empty.rebuild_binding_entries(std::iter::empty()), &empty);
+        let expected = binding_recipe_oracle(&source, std::iter::empty());
+        let cleared = source.rebuild_binding_entries(std::iter::empty());
+        assert_binding_recipe(&cleared, &expected);
+        assert!(cleared.counts.is_empty());
+        assert_eq!(cleared.total_count, 5);
     }
 
     #[test]
