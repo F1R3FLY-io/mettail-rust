@@ -262,6 +262,43 @@ Proof.
   intros. unfold weighted. now apply weighted_over_monotone.
 Qed.
 
+(** Concrete logical projection used by reserve_binding_parts. OwnedByte is
+    not base work: the existing reservation convention adds it exactly once.
+    AcquirePool denotes the local vector header, not a new allocation. *)
+Definition base_work_weight (event : Event) : nat :=
+  match event with NativeRecord | OwnedByte => 0 | _ => 1 end.
+Definition record_weight (event : Event) : nat :=
+  match event with
+  | ConstructCategory | AllocateArc | PushDropTask | AcquirePool | NativeRecord => 1
+  | _ => 0
+  end.
+Definition byte_weight (event : Event) : nat :=
+  match event with OwnedByte => 1 | _ => 0 end.
+Definition logical_work_weight (event : Event) : nat :=
+  base_work_weight event + byte_weight event.
+Definition logical_unit_weight (event : Event) : nat :=
+  4 * record_weight event + byte_weight event.
+
+Theorem logical_work_projects_bytes_once :
+  forall counts,
+  weighted logical_work_weight counts =
+    weighted base_work_weight counts + weighted byte_weight counts.
+Proof.
+  intro counts. unfold weighted, logical_work_weight.
+  cbn [weighted_over all_events base_work_weight byte_weight].
+  lia.
+Qed.
+
+Theorem logical_units_project_records_and_bytes :
+  forall counts,
+  weighted logical_unit_weight counts =
+    4 * weighted record_weight counts + weighted byte_weight counts.
+Proof.
+  intro counts. unfold weighted, logical_unit_weight.
+  cbn [weighted_over all_events record_weight byte_weight].
+  lia.
+Qed.
+
 Section Reservation.
 
 Variable local_construction : nat -> Counts.
@@ -370,6 +407,8 @@ Print Assumptions finite_recipes_and_forests_are_active_bounded.
 Print Assumptions active_cleanup_is_componentwise_bounded_by_normal.
 Print Assumptions existing_worklist_computes_receipt.
 Print Assumptions weighted_componentwise_bound.
+Print Assumptions logical_work_projects_bytes_once.
+Print Assumptions logical_units_project_records_and_bytes.
 Print Assumptions reserved_normal_cleanup_also_covers_active.
 Print Assumptions paid_dummy_success_uses_existing_reservation.
 Print Assumptions cancelled_dummy_has_no_result.
