@@ -37,6 +37,7 @@ theories/RholangTargetConstruction.v
 theories/RholangConstructionProtocol.v
 theories/RholangConstructionFacts.v
 theories/RholangWorklistConstruction.v
+theories/RholangInitialGraphInterpretation.v
 theories/RholangFltTransport.v
 theories/RholangFltRequestRecipes.v
 theories/RholangOwnedSession.v
