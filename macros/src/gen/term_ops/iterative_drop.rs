@@ -138,12 +138,49 @@ fn generate_drop_task_enum(language: &LanguageDef) -> TokenStream {
 // Dummy Value Functions
 // =============================================================================
 
+/// The constructors already chosen by the existing dummy-selection rules.
+///
+/// Ordinary categories occur first in dependency_order and select leaf recipes.
+/// Data categories follow in their actual fixed-point selection order. An
+/// uninhabited data category has no entry; its existing renderer refuses it.
+/// VariantKind retains field order, multiplicity and native-carrier descriptors
+/// so rendering and resource projection need no second field algebra.
+pub(super) struct DummyPlan {
+    pub(super) selected: std::collections::BTreeMap<String, VariantKind>,
+    // Retained as the finite-recipe witness for the checked cost projection.
+    #[allow(dead_code)]
+    pub(super) dependency_order: Vec<Ident>,
+}
+
 /// Generate a `dummy_Cat() -> Cat` function for each category.
 ///
 /// Returns the cheapest possible leaf value: a Nullary constructor if one
 /// exists, otherwise a Literal with default value, otherwise a Var with a
 /// dummy FreeVar.
 fn generate_dummy_functions(language: &LanguageDef) -> TokenStream {
+    let plan = select_dummy_plan(language);
+    let fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|lang_type| {
+            let selected = plan.selected.get(&lang_type.name.to_string());
+            if lang_type.is_data() {
+                generate_data_dummy_fn(&lang_type.name, selected, language)
+            } else {
+                generate_dummy_fn(
+                    &lang_type.name,
+                    selected.expect("ordinary categories always select a dummy"),
+                    language,
+                )
+            }
+        })
+        .collect();
+
+    quote! { #(#fns)* }
+}
+
+/// Select once; rendering and resource projection share the actual choices.
+pub(super) fn select_dummy_plan(language: &LanguageDef) -> DummyPlan {
     // A closed data category has no synthetic Var sentinel. Select a finite,
     // declared constructor for each such category by least fixed point over
     // constructor dependencies. Collection and optional fields are productive
@@ -157,6 +194,14 @@ fn generate_dummy_functions(language: &LanguageDef) -> TokenStream {
         .map(|category| category.name.to_string())
         .collect();
     let mut selected = std::collections::BTreeMap::<String, VariantKind>::new();
+    let mut dependency_order = Vec::new();
+
+    // Non-data dependencies were already productive under the existing test.
+    // Seeding their leaf recipes does not change any data constructor choice.
+    for category in language.types.iter().filter(|category| !category.is_data()) {
+        selected.insert(category.name.to_string(), select_ordinary_dummy(&category.name, language));
+        dependency_order.push(category.name.clone());
+    }
     loop {
         let mut changed = false;
         for category in language.types.iter().filter(|category| category.is_data()) {
@@ -169,6 +214,7 @@ fn generate_dummy_functions(language: &LanguageDef) -> TokenStream {
                 .find(|variant| data_variant_is_productive(variant, &data_names, &selected))
             {
                 selected.insert(name, variant);
+                dependency_order.push(category.name.clone());
                 changed = true;
             }
         }
@@ -177,23 +223,208 @@ fn generate_dummy_functions(language: &LanguageDef) -> TokenStream {
         }
     }
 
-    let fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|lang_type| {
-            if lang_type.is_data() {
-                generate_data_dummy_fn(
-                    &lang_type.name,
-                    selected.get(&lang_type.name.to_string()),
-                    language,
-                )
-            } else {
-                generate_dummy_fn(&lang_type.name, language)
-            }
-        })
-        .collect();
+    DummyPlan { selected, dependency_order }
+}
 
-    quote! { #(#fns)* }
+fn select_ordinary_dummy(category: &Ident, language: &LanguageDef) -> VariantKind {
+    let variants = collect_category_variants(category, language);
+    let selected_index = variants
+        .iter()
+        .position(|variant| matches!(variant, VariantKind::Nullary { .. }))
+        .or_else(|| {
+            variants.iter().position(|variant| {
+                matches!(
+                    variant,
+                    VariantKind::Literal { .. } | VariantKind::CollectionLiteral { .. }
+                )
+            })
+        });
+    match selected_index {
+        Some(index) => variants
+            .into_iter()
+            .nth(index)
+            .expect("selected index belongs to the collected variants"),
+        // Preserve the old RecursiveNativeLiteral-only variable fallback too.
+        None => VariantKind::Var { label: generate_var_label(category) },
+    }
+}
+
+#[cfg(test)]
+mod dummy_plan_tests {
+    use super::*;
+
+    fn dependency_fixture() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: DummyDependencies,
+                types { Proc data A data B data C data Choice data Dead },
+                terms {
+                    PZero . |- "0" : Proc;
+                    ANeedsB . b:B |- "a" b : A;
+                    BNeedsC . c:C |- "b" c : B;
+                    CFirst . |- "c0" : C;
+                    CSecond . |- "c1" : C;
+                    ChoiceWait . a:A |- "wait" a : Choice;
+                    ChoiceNow . |- "now" : Choice;
+                    DeadCycle . dead:Dead |- "dead" dead : Dead;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("dummy dependency fixture parses")
+    }
+
+    #[test]
+    fn selection_records_multi_pass_order_without_reselecting() {
+        let language = dependency_fixture();
+        let plan = select_dummy_plan(&language);
+        let order: Vec<_> = plan
+            .dependency_order
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(order, ["Proc", "C", "Choice", "B", "A"]);
+        assert_eq!(plan.selected["C"].label().to_string(), "CFirst");
+        // ChoiceWait becomes productive later; do not replace ChoiceNow.
+        assert_eq!(plan.selected["Choice"].label().to_string(), "ChoiceNow");
+        assert_eq!(plan.selected["B"].label().to_string(), "BNeedsC");
+        assert_eq!(plan.selected["A"].label().to_string(), "ANeedsB");
+        assert!(!plan.selected.contains_key("Dead"));
+    }
+
+    #[test]
+    fn uninhabited_data_keeps_existing_diagnostic() {
+        let language = dependency_fixture();
+        let plan = select_dummy_plan(&language);
+        let category = format_ident!("Dead");
+        let rendered = generate_data_dummy_fn(&category, plan.selected.get("Dead"), &language);
+        assert_eq!(
+            rendered.to_string(),
+            generate_data_dummy_fn(&category, None, &language).to_string()
+        );
+        let rendered = rendered.to_string();
+        assert!(rendered.contains("closed data category `Dead` has no finite declared constructor"));
+        assert!(rendered.contains("compile_error"));
+    }
+
+    #[test]
+    fn ordinary_choices_keep_nullary_literal_collection_and_variable_priority() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let plan = select_dummy_plan(&language);
+        for category in language.types.iter().filter(|category| !category.is_data()) {
+            let variants = collect_category_variants(&category.name, &language);
+            let expected = variants
+                .iter()
+                .find(|variant| matches!(variant, VariantKind::Nullary { .. }))
+                .or_else(|| {
+                    variants.iter().find(|variant| {
+                        matches!(
+                            variant,
+                            VariantKind::Literal { .. } | VariantKind::CollectionLiteral { .. }
+                        )
+                    })
+                })
+                .map(|variant| variant.label().to_string())
+                .unwrap_or_else(|| generate_var_label(&category.name).to_string());
+            assert_eq!(
+                plan.selected[&category.name.to_string()]
+                    .label()
+                    .to_string(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_recursive_native_keeps_variable_fallback() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: DummyNativeFallback,
+            types {
+                Proc
+                ![std::sync::Arc<mettail_runtime::ReadZipperLit<Proc, Proc>>] as ReadZipper
+            },
+            terms { PZero . |- "0" : Proc; },
+            equations {},
+            rewrites {},
+        "#,
+        )
+        .expect("recursive native fixture parses");
+        let category = format_ident!("ReadZipper");
+        let variants = collect_category_variants(&category, &language);
+        assert!(variants
+            .iter()
+            .any(|variant| matches!(variant, VariantKind::RecursiveNativeLiteral { .. })));
+        assert!(matches!(select_ordinary_dummy(&category, &language),
+            VariantKind::Var { label } if label == generate_var_label(&category)));
+    }
+
+    fn scalar(category: &str) -> FieldInfo {
+        FieldInfo {
+            category: format_ident!("{}", category),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: false,
+            is_optional: false,
+            opaque_leaf: None,
+        }
+    }
+
+    #[test]
+    fn selected_fields_retain_multiplicity_and_empty_cases() {
+        let mut optional = scalar("Dead");
+        optional.is_optional = true;
+        let mut collection = scalar("Dead");
+        collection.is_collection = true;
+        collection.coll_type = Some(CollectionType::Vec);
+        let mut text = scalar("String");
+        text.opaque_leaf = Some(OpaqueLeafKind::TokenText);
+        let variant = VariantKind::Regular {
+            label: format_ident!("Composite"),
+            fields: vec![scalar("C"), scalar("C"), optional, collection, text],
+        };
+        let data_names = ["Composite", "C", "Dead"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let selected = [("C".to_owned(), VariantKind::Nullary { label: format_ident!("CFirst") })]
+            .into_iter()
+            .collect();
+        assert!(data_variant_is_productive(&variant, &data_names, &selected));
+        let rendered: String = generate_data_dummy_fn(
+            &format_ident!("Composite"),
+            Some(&variant),
+            &dependency_fixture(),
+        )
+        .to_string()
+        .split_whitespace()
+        .collect();
+        assert!(rendered.contains("Composite::Composite(std::sync::Arc::new(dummy_c()),std::sync::Arc::new(dummy_c()),None,Default::default(),std::string::String::new())"));
+    }
+
+    #[test]
+    fn fixture_drop_expansions_parse_and_optionally_capture_exact_tokens() {
+        for (name, language) in [
+            ("dependencies", dependency_fixture()),
+            ("collections", crate::gen::collection_literal_language_for_tests()),
+            ("singleton", crate::gen::singleton_collection_language_for_tests()),
+        ] {
+            let expansion = generate_iterative_drop(&language);
+            syn::parse2::<syn::File>(expansion.clone())
+                .expect("Drop expansion parses as Rust items");
+            if let Ok(phase) = std::env::var("METTAIL_DROP_EXPANSION_PHASE") {
+                assert!(matches!(phase.as_str(), "before" | "after"));
+                let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../target/verification/drop-emitter")
+                    .join(phase);
+                std::fs::create_dir_all(&directory)
+                    .expect("create target-local Drop capture directory");
+                std::fs::write(directory.join(format!("{name}.tokens")), expansion.to_string())
+                    .expect("capture exact Drop tokens");
+            }
+        }
+    }
 }
 
 fn data_variant_is_productive(
@@ -303,46 +534,45 @@ fn generate_data_dummy_fn(
 }
 
 /// Generate a single `dummy_Cat()` function for one category.
-fn generate_dummy_fn(category: &Ident, language: &LanguageDef) -> TokenStream {
+fn generate_dummy_fn(
+    category: &Ident,
+    selected: &VariantKind,
+    language: &LanguageDef,
+) -> TokenStream {
     let fn_name = format_ident!("dummy_{}", category.to_string().to_lowercase());
-    let variants = collect_category_variants(category, language);
 
     // Strategy 1: Find a Nullary variant (cheapest — no allocation)
-    for v in &variants {
-        if let VariantKind::Nullary { label } = v {
-            return quote! {
-                /// Return the cheapest possible leaf value for this category.
-                ///
-                /// Used as a leaf fallback when extracting children during
-                /// iterative drop. Must be a leaf (no `Box<T>` children).
-                #[inline]
-                #[allow(dead_code)]
-                fn #fn_name() -> #category {
-                    #category::#label
-                }
-            };
-        }
+    if let VariantKind::Nullary { label } = selected {
+        return quote! {
+            /// Return the cheapest possible leaf value for this category.
+            ///
+            /// Used as a leaf fallback when extracting children during
+            /// iterative drop. Must be a leaf (no `Box<T>` children).
+            #[inline]
+            #[allow(dead_code)]
+            fn #fn_name() -> #category {
+                #category::#label
+            }
+        };
     }
 
     // Strategy 2: Find a Literal variant (one allocation for String, zero for numeric)
-    for v in &variants {
-        // Stage 0 identity: this `if let` is NOT exhaustiveness-checked, so the
-        // new discriminant had to be added by hand or the default-term search
-        // would have silently skipped collection-literal categories.
-        if let VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } = v {
-            let default_value = generate_literal_default(category, language);
-            return quote! {
-                #[inline]
-                #[allow(dead_code)]
-                fn #fn_name() -> #category {
-                    #category::#label(#default_value)
-                }
-            };
-        }
+    if let VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } = selected
+    {
+        let default_value = generate_literal_default(category, language);
+        return quote! {
+            #[inline]
+            #[allow(dead_code)]
+            fn #fn_name() -> #category {
+                #category::#label(#default_value)
+            }
+        };
     }
 
     // Strategy 3: Use the Var variant with a dummy FreeVar (always exists)
-    let var_label = generate_var_label(category);
+    let VariantKind::Var { label: var_label } = selected else {
+        unreachable!("ordinary dummy selection returns only nullary, literal or variable")
+    };
     quote! {
         #[inline]
         #[allow(dead_code)]
