@@ -98,6 +98,7 @@ bound variable structure).
 | Method | Purpose |
 |--------|---------|
 | `new(pattern, body)` | Create scope by binding a term with a pattern |
+| `new_iterative(pattern, body)` | Apply the same closing recipe through `IterativeBinding` |
 | `unbind()` | Unbind: freshens bound variables, returns `(P, T)` |
 | `unbind2(other)` | Simultaneously unbind two scopes (shared freshening) |
 | `inner()` | Access underlying `moniker::Scope` (read-only) |
@@ -110,6 +111,63 @@ bound variable structure).
 The `BoundTerm<String>` implementation for `Scope` uses `cached_term_eq()`
 for the `term_eq()` method, which caches comparison results in a thread-local
 `HashMap<(u64, u64), bool>`.
+
+### Iterative closing interface
+
+`IterativeBinding` separates the binding traversal from the scope constructor.
+Its `close_iterative` and `open_iterative` methods take a borrowed term, a
+Moniker `ScopeState` (the depth at which to bind), and the existing ordered
+`Vec<Binder<String>>`. They return a transformed term without changing the
+input. Closing selects the first binder with the matching free-variable
+identity, not the same printed name. Opening replaces a bound variable only
+when its scope offset matches the supplied depth, using its binder index to
+select the supplied identity. Neither method freshens names.
+
+Both scope constructors use the same private `with_closing` recipe. Read this
+as three ordered operations: extract the pattern's binder vector, close the
+body once at depth zero, then retain the unchanged pattern and closed body.
+`new` uses the existing `BoundTerm::close_term`; `new_iterative` selects
+`IterativeBinding::close_iterative`. Neither constructor treats an unclosed
+body as already closed, and neither changes `Scope`'s representation.
+
+```rust
+use mettail_runtime::{Binder, FreeVar, OrdVar, Scope, Var};
+
+let name = FreeVar::fresh_named("x".to_owned());
+let scope = Scope::new_iterative(
+    Binder(name.clone()),
+    OrdVar(Var::Free(name)),
+);
+// The stored body now refers to binder 0 at scope depth 0.
+assert!(matches!(scope.unsafe_body().0, Var::Bound(_)));
+```
+
+The runtime provides a real `OrdVar` leaf implementation that delegates to
+Moniker's existing variable operations. Its `Arc<T>` adapter invokes the inner
+implementation and wraps the result in a new `Arc`, leaving any shared input
+unchanged. This does not alter ordinary `Arc::clone` sharing. A generated
+category implementation must visit recursive children using an explicit
+work stack; recursively delegating those children to `BoundTerm` does not
+satisfy that contract. The interface and leaf adapters alone do not establish
+stack safety for a generated language, and they do not switch parser actions.
+
+These are infallible binding interfaces, not public resource-admission APIs.
+As with Moniker, a bound variable at the selected depth must have a valid
+binder index; an invalid index panics. Bounded public preparation must use
+checked admission and traversal, rather than assuming the constructor reserves
+its work. `Scope::unbind`, freshening, alpha equality, and ordinary variable
+visitors retain their existing implementations.
+
+The [scope-construction model](../../formal/rocq/rho_bridge/theories/RholangScopeConstructionRecipe.v)
+proves the shared recipe's pattern retention, single zero-depth closing
+dispatch, and result equality **if** the selected closers agree. This exposes
+the generated traversal's correspondence obligation; it does not discharge
+it or prove allocation behavior, arbitrary callback effects, or Rust memory
+safety. The [integration tests](../tests/iterative_binding.rs) compare actual
+stored coordinates, identities, and diagnostic names against Moniker, without
+using cached scope equality. They also cover duplicate and reordered binders,
+unnamed and Unicode names, nonzero depths, unchanged shared inputs, and the
+existing invalid-index refusal behavior.
 
 ## Thread-Local Caches
 

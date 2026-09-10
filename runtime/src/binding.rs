@@ -10,10 +10,45 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 // Re-export moniker types
 use moniker::Scope as MonikerScope;
 pub use moniker::{Binder, BoundPattern, BoundTerm, BoundVar, FreeVar, Var};
+
+/// Non-mutating binding operations for terms with an iterative traversal.
+///
+/// Implementations must preserve Moniker's ordered binder-vector semantics:
+/// closing selects the first matching free-variable identity, and opening
+/// selects a binder only at the supplied scope depth. The source is unchanged.
+/// A generated implementation must traverse recursive category children on its
+/// explicit work stack, not fall back to recursive `BoundTerm` dispatch.
+///
+/// These infallible operations do not provide resource admission. Like Moniker,
+/// opening expects valid bound-variable indices for the selected scope. Public
+/// preparation must validate and reserve its work before using an infallible
+/// operation. This trait does not change ordinary `Clone` or alpha equality.
+///
+/// The vector reference is deliberate: Moniker implements its existing
+/// `OnFreeFn` and `OnBoundFn` lookup contracts for `Vec<Binder<String>>`.
+#[allow(clippy::ptr_arg)]
+pub trait IterativeBinding: Sized {
+    /// Return a closed copy at `state`, without freshening the binder vector.
+    fn close_iterative(&self, state: moniker::ScopeState, binders: &Vec<Binder<String>>) -> Self;
+
+    /// Return an opened copy using the supplied identities, without freshening.
+    fn open_iterative(&self, state: moniker::ScopeState, binders: &Vec<Binder<String>>) -> Self;
+}
+
+impl<T: IterativeBinding> IterativeBinding for Arc<T> {
+    fn close_iterative(&self, state: moniker::ScopeState, binders: &Vec<Binder<String>>) -> Self {
+        Arc::new(self.as_ref().close_iterative(state, binders))
+    }
+
+    fn open_iterative(&self, state: moniker::ScopeState, binders: &Vec<Binder<String>>) -> Self {
+        Arc::new(self.as_ref().open_iterative(state, binders))
+    }
+}
 
 // Thread-local variable cache for consistent variable identity within a parsing session.
 // Uses thread_local + RefCell instead of Mutex since parsing is single-threaded.
@@ -254,6 +289,27 @@ where
 }
 
 impl<P, T> Scope<P, T> {
+    /// Keep the constructor recipe identical for both closing dispatches.
+    /// The temporary roster is released at the end of the closing statement,
+    /// before the pattern and closed body are moved into the scope.
+    fn with_closing<N>(
+        pattern: P,
+        mut body: T,
+        close: impl FnOnce(&mut T, moniker::ScopeState, &Vec<Binder<N>>),
+    ) -> Scope<P, T>
+    where
+        N: Clone + PartialEq,
+        P: BoundPattern<N>,
+    {
+        close(&mut body, moniker::ScopeState::new(), &pattern.binders());
+        Scope {
+            inner: MonikerScope {
+                unsafe_pattern: pattern,
+                unsafe_body: body,
+            },
+        }
+    }
+
     /// Create a new scope by binding a term with the given pattern
     pub fn new<N>(pattern: P, body: T) -> Scope<P, T>
     where
@@ -261,7 +317,25 @@ impl<P, T> Scope<P, T> {
         P: BoundPattern<N>,
         T: BoundTerm<N>,
     {
-        Scope { inner: MonikerScope::new(pattern, body) }
+        Self::with_closing(pattern, body, |body, state, binders| {
+            body.close_term(state, binders);
+        })
+    }
+
+    /// Create a scope with the same ordered closing recipe as [`Self::new`],
+    /// using the body's [`IterativeBinding`] implementation.
+    ///
+    /// The pattern is preserved and the body is closed exactly once at depth
+    /// zero. This is not an already-closed-body constructor or a bounded public
+    /// preparation entrypoint. It leaves `BoundTerm` and `unbind` unchanged.
+    pub fn new_iterative(pattern: P, body: T) -> Scope<P, T>
+    where
+        P: BoundPattern<String>,
+        T: IterativeBinding,
+    {
+        Self::with_closing(pattern, body, |body, state, binders| {
+            *body = body.close_iterative(state, binders);
+        })
     }
 
     /// Unbind a term, returning the freshened pattern and body
@@ -448,6 +522,22 @@ impl BoundTerm<String> for OrdVar {
 
     fn visit_mut_vars(&mut self, on_var: &mut impl FnMut(&mut Var<String>)) {
         self.0.visit_mut_vars(on_var)
+    }
+}
+
+impl IterativeBinding for OrdVar {
+    fn close_iterative(&self, state: moniker::ScopeState, binders: &Vec<Binder<String>>) -> Self {
+        let mut result = self.clone();
+        // A Var is a leaf: delegate lookup rather than reimplement identity,
+        // binder order, pretty-name retention or scope-depth semantics.
+        result.0.close_term(state, binders);
+        result
+    }
+
+    fn open_iterative(&self, state: moniker::ScopeState, binders: &Vec<Binder<String>>) -> Self {
+        let mut result = self.clone();
+        result.0.open_term(state, binders);
+        result
     }
 }
 
