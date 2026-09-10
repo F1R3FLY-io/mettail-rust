@@ -77,6 +77,89 @@ pub enum BindingFailure<E> {
     BinderIndexOverflow,
     ScopeDepthOverflow,
     MissingBinder { index: usize },
+    Slot(BindingSlotError),
+}
+
+/// A malformed internal result-slot operation, distinct from budget refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BindingSlotError {
+    OutOfBounds { slot: usize, len: usize },
+    Occupied { slot: usize },
+    Empty { slot: usize },
+    WrongCategory { slot: usize },
+}
+
+/// Append an admitted range of empty indexed result cells without moving values
+/// out of the existing prefix. The returned index starts the new range.
+///
+/// This reserves cell initialization work and logical cell records, not the
+/// category values later stored there. The producer admits those separately.
+pub fn append_binding_slots<T, E>(
+    slots: &mut Vec<Option<T>>,
+    count: usize,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<usize, BindingFailure<E>> {
+    let start = slots.len();
+    let end = start
+        .checked_add(count)
+        .ok_or(BindingFailure::SizeOverflow)?;
+    reserve_binding_parts(count, count, 0, reserve)?;
+    slots.resize_with(end, || None);
+    Ok(start)
+}
+
+/// Fill exactly one empty slot after checking its category and occupancy.
+///
+/// `accepts` must be the generated constant-time category-discriminant check.
+/// The caller already owns `value` and must have admitted its construction and
+/// normal cleanup. Refusal leaves all slots unchanged and drops that value.
+pub fn write_binding_slot<T, E>(
+    slots: &mut [Option<T>],
+    slot: usize,
+    value: T,
+    accepts: impl FnOnce(&T) -> bool,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<(), BindingFailure<E>> {
+    reserve(1, 0).map_err(BindingFailure::Reservation)?;
+    if !accepts(&value) {
+        return Err(BindingFailure::Slot(BindingSlotError::WrongCategory { slot }));
+    }
+    let len = slots.len();
+    let cell = slots
+        .get_mut(slot)
+        .ok_or(BindingFailure::Slot(BindingSlotError::OutOfBounds { slot, len }))?;
+    if cell.is_some() {
+        return Err(BindingFailure::Slot(BindingSlotError::Occupied { slot }));
+    }
+    *cell = Some(value);
+    Ok(())
+}
+
+/// Take one ready result, validating its category before removing it.
+///
+/// A refusal never consumes the cell. Earlier successful takes in an assembly
+/// are not rolled back; the owning worker must clean up its admitted partial
+/// results. `accepts` must inspect only the generated category discriminant.
+pub fn take_binding_slot<T, E>(
+    slots: &mut [Option<T>],
+    slot: usize,
+    accepts: impl FnOnce(&T) -> bool,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<T, BindingFailure<E>> {
+    reserve(1, 0).map_err(BindingFailure::Reservation)?;
+    let len = slots.len();
+    let cell = slots
+        .get_mut(slot)
+        .ok_or(BindingFailure::Slot(BindingSlotError::OutOfBounds { slot, len }))?;
+    let value = cell
+        .as_ref()
+        .ok_or(BindingFailure::Slot(BindingSlotError::Empty { slot }))?;
+    if !accepts(value) {
+        return Err(BindingFailure::Slot(BindingSlotError::WrongCategory { slot }));
+    }
+    Ok(cell
+        .take()
+        .expect("checked binding result remains present after category validation"))
 }
 
 /// Explicit copy/binding contract for a non-category payload.

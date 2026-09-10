@@ -200,6 +200,32 @@ Arc sharing, exact/under limits, refusal and retry. A unit test checks the full
 `ScopeState` representation. These interface tests do not establish a generated
 language's traversal or activate its parser actions.
 
+The category worker uses indexed `Option<T>` result cells with the existing
+two-vector pool lifecycle. `append_binding_slots` checks the range arithmetic
+and reserves initialization work plus cell records before appending empty
+cells; existing values retain their order and ownership. `write_binding_slot`
+admits one step and checks the supplied value's category, bounds, and empty
+destination before filling it. `take_binding_slot` admits one step and checks
+bounds, readiness, and category before removing the value. Generated category
+checks inspect only the enum discriminant, never syntax or printed names.
+
+These operations distinguish slot-shape errors from reservation failures and
+size overflow. A refused operation leaves the cells unchanged. A failed write
+drops its incoming value, whose construction and cleanup must already have
+been admitted by the producer. Earlier successful takes are not rolled back;
+the worker owns and cleans up those partial results. The helpers do not clone
+values, allocate a second worklist, or establish pointer validity for the
+producer's borrowed source.
+
+The [indexed-slot model](../../formal/rocq/rho_bridge/theories/IndexedCopySlots.v)
+proves range disjointness, prefix retention, write/take-once laws, and ordered
+extraction of a ready range, including repeated values. Its category tags map
+to the generated discriminant checks. The [slot tests](../tests/binding_slots.rs)
+use non-Clone values to check these operations, typed refusals, exact/under
+admission, overflow, cancellation before validation, and ownership on failure.
+The generator still must establish that each assembly's slots are ready and
+hold the expected categories.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing

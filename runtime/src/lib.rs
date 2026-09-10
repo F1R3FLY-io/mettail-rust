@@ -13,7 +13,8 @@ pub use binding::*;
 
 mod checked_binding;
 pub use checked_binding::{
-    reserve_binding_copy, reserve_binding_parts, BindingFailure, BindingOperation, CheckedBindingLeaf,
+    append_binding_slots, reserve_binding_copy, reserve_binding_parts, take_binding_slot,
+    write_binding_slot, BindingFailure, BindingOperation, BindingSlotError, CheckedBindingLeaf,
     CheckedIterativeBinding,
 };
 
