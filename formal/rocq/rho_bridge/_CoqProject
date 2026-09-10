@@ -59,6 +59,7 @@ theories/IndexedCopySlots.v
 theories/HashBagBindingReconstruction.v
 theories/MonikerLeafOperations.v
 theories/FltSelectorBinding.v
+theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
 theories/RholangFreshMetadataPasses.v
