@@ -56,6 +56,8 @@ theories/RholangCleanupEvents.v
 theories/RholangFltTransport.v
 theories/RholangFltRequestRecipes.v
 theories/RholangOwnedSession.v
+theories/RholangImportShape.v
+theories/RholangSourceImports.v
 theories/RuntimeBackendDispatch.v
 theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v

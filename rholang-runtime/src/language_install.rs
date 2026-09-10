@@ -4309,6 +4309,95 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(feature = "rholang-runtime")]
+    #[test]
+    fn caller_import_transport_preserves_capability_and_wrong_owner_refusal() {
+        use crate::rholang_ast::imports::{CheckedCallerImports, ImportLimits};
+        use mettail_runtime::{Binder, FreeVar, Scope};
+        use prost::Message;
+
+        let (runtime, token, installed) = installed_flt_adapter_fixture();
+        let mut other_core = installed.language_core().clone();
+        other_core.theory.limits.max_steps -= 1;
+        let other_token = runtime
+            .install(InstallCandidate::Canonical(
+                mettail_elab::core_value::language_core_to_value(&other_core)
+                    .expect("canonical distinct owner"),
+            ))
+            .expect("separate installed commitment");
+        let other_handle = runtime
+            .resolve(&other_token, LanguageRight::Construct)
+            .expect("other handle");
+        assert_ne!(other_handle.fingerprint(), installed.commitment().language_fingerprint);
+        let wrong_owner = runtime
+            .construct_template(
+                &other_token,
+                &[RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("real structural FLT with different language authority");
+        let imports = CheckedCallerImports::admit(
+            HashMap::from([
+                ("capability".to_owned(), token.clone()),
+                ("foreign-term".to_owned(), wrong_owner.clone()),
+            ]),
+            ImportLimits { entries: 2, nodes: 10_000, payload_bytes: 1_000_000 },
+            &mut || false,
+        )
+        .expect("closed capability and structural FLT are admissible caller values");
+        let source = Proc::PNew(Scope::new(
+            vec![Binder(FreeVar::fresh_named("unused".to_owned()))],
+            Arc::new(Proc::PZero),
+        ));
+        let output = crate::rholang_ast::session::lower_public_body(
+            &source,
+            crate::rholang_ast::BoundEnv::new().with_caller_imports(imports),
+        )
+        .expect("source new preserves even unused caller imports");
+        assert_eq!(output.par.news.len(), 1);
+        let transported = &output.par.news[0].injections;
+        assert_eq!(transported.len(), 2);
+        let imported_token = transported.get("capability").expect("transported capability");
+        let imported_wrong_owner = transported.get("foreign-term").expect("transported FLT");
+        assert_eq!(imported_token.encode_to_vec(), token.encode_to_vec());
+        assert_eq!(imported_wrong_owner.encode_to_vec(), wrong_owner.encode_to_vec());
+
+        // Transport preserves opaque identity; the existing service still owns
+        // authorization and must reject the foreign commitment before its kernel.
+        for (handle, input) in [(&token, &wrong_owner), (imported_token, imported_wrong_owner)] {
+            let report = runtime.execute_semantic(
+                SemanticServiceRequest {
+                    handle,
+                    operation: SemanticOperation::Reduce("expand-plus"),
+                    input,
+                    limits: SemanticServiceLimits::default(),
+                },
+                || false,
+            );
+            assert!(
+                matches!(report.outcome, Err(InstalledSemanticError::InvalidSelection(_))),
+                "{report:?}"
+            );
+            assert_eq!(report.kernel_work, None);
+            assert!(report.work > 0);
+        }
+        runtime.revoke(&token).expect("revoke the original capability");
+        let revoked = runtime.execute_semantic(
+            SemanticServiceRequest {
+                handle: imported_token,
+                operation: SemanticOperation::Reduce("expand-plus"),
+                input: imported_wrong_owner,
+                limits: SemanticServiceLimits::default(),
+            },
+            || panic!("transport cannot revive a revoked capability"),
+        );
+        assert!(matches!(revoked.outcome, Err(InstalledSemanticError::UnknownHandle)));
+        assert_eq!(revoked.work, 0);
+        assert_eq!(revoked.kernel_work, None);
+    }
+
     #[test]
     fn semantic_service_retains_negative_usage_and_revokes_before_final_publication() {
         use mettail_dovetail_runtime::{SemanticMatchRefutation, SemanticMatchUndetermined};

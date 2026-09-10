@@ -35,6 +35,7 @@ impl BoundEnv {
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver,
+            caller_imports: Arc::default(),
             free_vars_are_patterns: false,
         }
     }
@@ -47,6 +48,7 @@ impl BoundEnv {
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver: Arc::clone(&self.resolver),
+            caller_imports: Arc::clone(&self.caller_imports),
             free_vars_are_patterns: self.free_vars_are_patterns,
         }
     }

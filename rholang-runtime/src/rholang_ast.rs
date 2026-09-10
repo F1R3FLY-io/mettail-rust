@@ -69,6 +69,7 @@ pub use graph::{interpret_construction_graph, GraphInterpretationError};
 mod scope;
 pub use scope::SourceAdmissionMode;
 
+pub(crate) mod imports;
 pub(crate) mod session;
 
 const FREE_NAME_PREFIX: &str = "mtl:";
@@ -120,6 +121,7 @@ pub struct BoundEnv {
     /// its fill's `^bound` level from here too.
     hole_binders: HashMap<String, usize>,
     resolver: Arc<dyn FltResolve>,
+    caller_imports: Arc<imports::CheckedCallerImports>,
     /// M-1b: are unbound free variables being lowered in PATTERN position?
     ///
     /// `false` everywhere except inside a `matches` formula, so every pre-existing
@@ -174,6 +176,7 @@ impl BoundEnv {
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver: Arc::new(EmptyFltResolver),
+            caller_imports: Arc::default(),
             free_vars_are_patterns: false,
         }
     }
@@ -207,6 +210,7 @@ impl BoundEnv {
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver,
+            caller_imports: Arc::default(),
             free_vars_are_patterns: false,
         }
     }
@@ -255,6 +259,7 @@ impl BoundEnv {
             binders,
             hole_binders,
             resolver: Arc::clone(&self.resolver),
+            caller_imports: Arc::clone(&self.caller_imports),
             free_vars_are_patterns: self.free_vars_are_patterns,
         })
     }
@@ -1399,7 +1404,10 @@ enum Kont<'a> {
     PathmapLit { map: bool, len: usize },
     /// `PNew`'s `new`-scope wrapper over its lowered body. As with the DDL
     /// plan, keep the owned descriptor out of the common work-item layout.
-    New { descriptor: Box<CheckedFreshDescriptor> },
+    New {
+        descriptor: Box<CheckedFreshDescriptor>,
+        env: EnvId,
+    },
     /// `x!(P)[*]` — an unbounded speculation request over `(channel, payload)`.
     SpecAll,
     /// `x!(P)[n]` — a bounded speculation request over `(channel, payload)`.
@@ -1942,13 +1950,13 @@ impl<'a> Drive<'a> {
                 let (binders, body) = scope.clone().unbind::<String>();
                 let descriptor = CheckedFreshDescriptor::new(
                     FreshShape::Plain { binder_count: binders.len() },
-                    Vec::new(),
+                    self.env(env).caller_imports.keys(),
                 )
                 .map_err(RholangAstLowerError::FreshConstruction)?;
                 let extended = self.envs.push(extend_env(self.env(env), &binders)?)?;
                 let body = self.keep(body);
                 self.push_children(
-                    Kont::New { descriptor: Box::new(descriptor) },
+                    Kont::New { descriptor: Box::new(descriptor), env },
                     [Job::Body(body, extended)],
                 );
             },
@@ -1959,7 +1967,7 @@ impl<'a> Drive<'a> {
                         binder_count: ordered_binders.len(),
                         uris: ordered_uris,
                     },
-                    Vec::new(),
+                    self.env(env).caller_imports.keys(),
                 )
                 .map_err(RholangAstLowerError::FreshConstruction)?;
                 let extended = self
@@ -1967,7 +1975,7 @@ impl<'a> Drive<'a> {
                     .push(extend_env(self.env(env), &ordered_binders)?)?;
                 let body = self.keep(body);
                 self.push_children(
-                    Kont::New { descriptor: Box::new(descriptor) },
+                    Kont::New { descriptor: Box::new(descriptor), env },
                     [Job::Body(body, extended)],
                 );
             },
@@ -2710,10 +2718,11 @@ impl<'a> Drive<'a> {
                     connective_used,
                 ));
             },
-            Kont::New { descriptor } => {
+            Kont::New { descriptor, env } => {
                 let body = self.stacks.pop_value();
+                let injections = self.env(env).caller_imports.values();
                 self.stacks.value(
-                    Target::fresh(*descriptor, body, Vec::new())
+                    Target::fresh(*descriptor, body, injections)
                         .map_err(RholangAstLowerError::FreshConstruction)?,
                 );
             },
@@ -5421,6 +5430,7 @@ fn extend_env(
         binders: binder_map,
         hole_binders,
         resolver: Arc::clone(&env.resolver),
+        caller_imports: Arc::clone(&env.caller_imports),
         free_vars_are_patterns: env.free_vars_are_patterns,
     })
 }

@@ -64,11 +64,14 @@ The frontend receives explicit inputs, not ambient process state:
 | Limits and cancellation | Source, parser, retained-family, traversal, environment, term, origin and output limits, with cancellation observable at bounded work points |
 
 Nonempty environments are required. At minimum, their closed values must cover
-the admitted scalar, list/map, quoted-name and structural FLT forms. An opaque
-host name or installed handle is transported through an explicit provider-owned
-reference slot, not serialized as a forgeable string or recreated from a
-fingerprint. The node adapter validates the exact slot identity and its owner;
-the neutral representation does not grant authority. Malformed or unsupported
+the admitted scalar, list/map, quoted-name and structural FLT forms. The direct
+node interface supplies actual `Par` values: it retains each original opaque
+host name or installed handle, without reconstructing it from strings or
+fingerprints. It has no synthetic owner/slot fields. The provider checks the
+original handle and the requested operation at semantic use; transport does
+not grant authority. In the subsequent neutral representation, these names
+travel through explicit provider-owned reference slots, whose exact identity
+and owner the node adapter validates. Malformed or unsupported
 environment values receive a named rejection before source admission. Do not
 silently discard the supplied environment or support only the empty map.
 
@@ -85,11 +88,60 @@ not to a new frontend implementation.
 
 Lexical binders still use the existing scope/shadowing rules. A URI-bound name
 enters that lexical environment through its `new` binder; an injection-map key
-alone does not bind a free source variable. The current MeTTaIL `Kont::New`
-supplies an empty injection map, so nonempty caller-environment support remains
-an explicit factoring/emitter obligation. Injection keys are map keys, not
+alone does not bind a free source variable. Direct `PNew` and `PNewUris` lowering
+use the same checked, immutable caller map; `Kont::New` passes its corresponding
+ordered values to the existing checked fresh constructor. Generated fold and
+service-reply scopes keep their own empty injection maps. Injection keys are map keys, not
 fresh-URI declarations: do not impose the latter's nonempty-key rule on unused
 map entries. The adapter validates values without inventing host authority.
+
+### Direct import admission
+
+[`CheckedCallerImports`](../../rholang-runtime/src/rholang_ast/imports.rs)
+checks the original values without decoding or normalizing them again. The
+currently admitted direct carrier covers integer, Boolean, string, URI, byte
+array and raw-bit floating-point literals; present unforgeable names; and
+closed lists/maps containing those values. An empty process (`Nil`) may occur
+inside a collection but is not an admissible import root. Structural FLTs use
+their existing list/name/value representation. A reflected language tag is
+data, never a substitute for the provider's installed-language check.
+
+Quoted scalar and collection names have these same `Par` carriers. Arbitrary
+quoted executable processes do not: the existing node's injection reducer
+accepts a singleton expression or unforgeable name, not an arbitrary process.
+Such inputs and expression families outside this profile receive explicit
+shape refusals. This boundary does not change their Rholang syntax or claim
+that their broader import support is implemented.
+
+Every admitted node must have empty locally-free metadata, no connective-use
+flag and no executable sidecars. Collection metadata must also be closed,
+remainders absent, and both fields of every map entry present. The check walks
+all children, so falsifying only a parent's metadata cannot hide an open child.
+Map order, duplicate entries and payload bytes are preserved rather than
+silently sorted or deduplicated; only the outer caller-map keys are ordered.
+These checks establish the stated closed carrier, not arbitrary `Par`
+canonicality or authorization to execute an FLT.
+
+The traversal proceeds as follows:
+
+1. Check cancellation and the complete entry/key-byte bounds before retaining
+   the ordered map. Sorting is bounded by those sizes and bracketed by
+   cancellation checks.
+2. For each root, charge its occurrence, then visit an explicit worklist.
+   Check the local shape and payload bound. Before reserving child slots,
+   charge their complete count and check required fields.
+3. Use the node's existing structural child table, retaining every ordered
+   occurrence. Return the original map only after every value succeeds.
+
+The [shape model](../../formal/rocq/rho_bridge/theories/RholangImportShape.v)
+proves the modeled field/refusal and bounded-charge laws. The
+[transport model](../../formal/rocq/rho_bridge/theories/RholangSourceImports.v)
+proves complete association, lexical separation, URI precedence and hereditary
+worklist admission. Concrete schema classification, child-table correspondence
+and cancellation are checked against the Rust tests; these models are not a
+proof of all Rust code. Import-only bounds also do not replace whole-preparation
+accounting for repeated source-scope copies and output construction. The checked
+frontend must compose that separate budget before exposing this path publicly.
 
 Public source preparation must preserve the node's existing order: negative
 initial budget rejects before frontend invocation; preparation failure performs
