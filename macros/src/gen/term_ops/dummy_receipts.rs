@@ -98,6 +98,36 @@ fn emit_table(
             [mettail_runtime::binding_receipt::Receipt; #count],
             mettail_runtime::binding_receipt::ReceiptOverflow,
         > = build_binding_dummy_receipts();
+
+        #[allow(dead_code)]
+        const fn build_binding_dummy_charges() -> Result<
+            [mettail_runtime::binding_receipt::BindingCharge; #count],
+            mettail_runtime::binding_receipt::DummyChargeError,
+        > {
+            use mettail_runtime::binding_receipt as __br;
+            let receipts = match BINDING_DUMMY_RECEIPTS {
+                Ok(receipts) => receipts,
+                Err(error) => return Err(__br::DummyChargeError::Counts(error)),
+            };
+            let mut charges = [__br::BindingCharge::ZERO; #count];
+            let mut index = 0;
+            while index < #count {
+                charges[index] = match receipts[index].replacement_charge() {
+                    Ok(charge) => charge,
+                    Err(error) => return Err(error),
+                };
+                index += 1;
+            }
+            Ok(charges)
+        }
+
+        // Only the checked constructor's selected three-word charge is copied
+        // at runtime. Event projection and dependency composition stay const.
+        #[allow(dead_code)]
+        static BINDING_DUMMY_CHARGES: Result<
+            [mettail_runtime::binding_receipt::BindingCharge; #count],
+            mettail_runtime::binding_receipt::DummyChargeError,
+        > = build_binding_dummy_charges();
     };
     Ok(DummyReceiptEmission { tokens, indices })
 }
@@ -322,6 +352,7 @@ mod tests {
         assert!(source.contains("table[2usize]"));
         assert!(source.contains("&[table[1usize],table[1usize]]"));
         assert_eq!(source.matches("__br::compose(").count(), 3);
+        assert!(source.contains("staticBINDING_DUMMY_CHARGES:Result<"));
         syn::parse2::<syn::File>(emitted.tokens).expect("table is Rust syntax");
     }
 
@@ -477,6 +508,24 @@ mod tests {
         })
         .expect("overflow is a target arithmetic result, not projection failure")
         .tokens;
+        // Keep all individual event counts representable while overflowing
+        // the final record-unit projection. This must not become a zero table.
+        let projection_overflow = emit_table(&plan, |category, variant| {
+            if category == "Leaf" {
+                Ok((
+                    quote! { __br::LocalReceipt {
+                        construction: __br::Counts::singleton(
+                            __br::Event::NativeRecord, usize::MAX / 8),
+                        ..__br::LocalReceipt::ZERO
+                    } },
+                    Vec::new(),
+                ))
+            } else {
+                project_variant(&language, category, variant)
+            }
+        })
+        .expect("projection overflow is a target arithmetic result")
+        .tokens;
         let fixture = quote! {
             #![allow(dead_code, unreachable_patterns)]
             enum Proc { PZero }
@@ -493,7 +542,14 @@ mod tests {
                 pub fn verify() {
                     use mettail_runtime::binding_receipt::Event;
                     let table = BINDING_DUMMY_RECEIPTS.expect("valid table");
+                    let charges = BINDING_DUMMY_CHARGES.as_ref().expect("valid charges");
                     assert_eq!(table.len(), 5);
+                    assert_eq!(charges.len(), table.len());
+                    for (receipt, charge) in table.iter().zip(charges) {
+                        assert_eq!(receipt.replacement_charge(), Ok(*charge));
+                    }
+                    assert_eq!(charges[1], mettail_runtime::binding_receipt::BindingCharge::new(
+                        6, 2, 0).expect("leaf charge"));
                     assert_eq!(table[2].construction.get(Event::AllocateArc), 2);
                     assert_eq!(table[2].construction.get(Event::ConstructCategory), 3);
                     assert_eq!(table[2].extraction.get(Event::HandleField), 5);
@@ -517,14 +573,27 @@ mod tests {
                 use super::*;
                 #overflow
                 pub fn verify() {
-                    use mettail_runtime::binding_receipt::{Event, ReceiptOverflow};
+                    use mettail_runtime::binding_receipt::{DummyChargeError, Event, ReceiptOverflow};
                     assert_eq!(BINDING_DUMMY_RECEIPTS,
                         Err(ReceiptOverflow { event: Event::NativeWork }));
+                    assert_eq!(BINDING_DUMMY_CHARGES,
+                        Err(DummyChargeError::Counts(ReceiptOverflow { event: Event::NativeWork })));
+                }
+            }
+            mod projection_overflow {
+                use super::*;
+                #projection_overflow
+                pub fn verify() {
+                    use mettail_runtime::binding_receipt::{ChargeOverflow, DummyChargeError};
+                    assert!(BINDING_DUMMY_RECEIPTS.is_ok());
+                    assert_eq!(BINDING_DUMMY_CHARGES,
+                        Err(DummyChargeError::Projection(ChargeOverflow::RetentionUnits)));
                 }
             }
             fn main() {
                 normal::verify();
                 overflow::verify();
+                projection_overflow::verify();
                 println!("selected dummy receipts and typed overflow verified");
             }
         };

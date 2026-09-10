@@ -15,6 +15,8 @@ use crate::{
 use moniker::{BinderIndex, ScopeState};
 use std::sync::Arc;
 
+pub(crate) const BINDING_RECORD_UNITS: usize = 4;
+
 /// A copy or known-roster binding operation; no implicit freshening occurs.
 #[derive(Clone, Copy, Debug)]
 pub enum BindingOperation<'a> {
@@ -240,7 +242,7 @@ pub fn reserve_binding_parts<E>(
         .checked_add(owned_bytes)
         .ok_or(BindingFailure::SizeOverflow)?;
     let units = records
-        .checked_mul(4)
+        .checked_mul(BINDING_RECORD_UNITS)
         .and_then(|units| units.checked_add(owned_bytes))
         .ok_or(BindingFailure::SizeOverflow)?;
     reserve(work, units).map_err(BindingFailure::Reservation)

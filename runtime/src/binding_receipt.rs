@@ -5,7 +5,9 @@
 //! model lives here. Children are previously computed receipts, supplied once
 //! per field occurrence. Normal cleanup assumes an available empty work pool.
 
+mod charge;
 mod defaults;
+pub use charge::{BindingCharge, ChargeOverflow, DummyChargeError};
 
 /// Unweighted events in the selected-dummy cleanup model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
