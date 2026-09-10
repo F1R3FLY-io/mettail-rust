@@ -42,6 +42,7 @@ theories/RholangConstructionProtocol.v
 theories/RholangFreshDescriptor.v
 theories/RholangSourceScope.v
 theories/RholangConstructionFacts.v
+theories/RholangCanonicalMetadata.v
 theories/RholangWorklistConstruction.v
 theories/RholangInitialGraphInterpretation.v
 theories/RholangInitialGraphMachine.v

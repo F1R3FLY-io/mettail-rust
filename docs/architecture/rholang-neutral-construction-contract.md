@@ -467,6 +467,30 @@ workspaces, together with arbitrary-child scheduling bounds. The existing
 flat-head footprint theorem does not establish those bounds. No unsupported
 Fresh graph operation is exposed by this descriptor increment.
 
+### Canonical metadata for fresh construction
+
+The [canonical-metadata model](../../formal/rocq/rho_bridge/theories/RholangCanonicalMetadata.v)
+defines canonical locally-free metadata as an empty byte sequence or a sequence
+whose last byte is set. Each Boolean in the model represents one node metadata
+byte, not a packed bit. Bound-reference metadata is canonical, union preserves
+canonical inputs, and the existing shift-and-trim operation produces canonical
+output. The cached fresh fact uses only the body's shifted summary; its exactness
+follows from the existing fresh constructor's key/child preservation theorem.
+
+For a canonical body with metadata length $`b`$ and binder width $`w`$, the
+shifted length is exactly $`\max(b-w,0)`$. The number of surviving set indices is
+at most that length. These facts permit a size allowance computed before
+construction, without allocating a planning copy or traversing a completed
+process subtree. They do not by themselves account for the shifting helper's
+passes, temporary index vector, nested copies, or clone and cleanup workspaces.
+
+The canonical-input premise matters. An externally supplied metadata sequence
+`[1, 0]` has length two, but shifting it by zero trims it to length one. The model
+includes this counterexample, and the direct adapter keeps the existing trimming
+behavior for such inputs. These are representation and size lemmas, not a claim
+that the unfinished graph extension already maintains this invariant or that
+the complete Rust implementation has been formally verified.
+
 ## Guards, origins, and owned session output
 
 The neutral graph retains guard structure and the requested discharge policy.

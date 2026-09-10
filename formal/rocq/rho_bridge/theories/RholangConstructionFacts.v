@@ -75,6 +75,22 @@ Proof.
   now rewrite cached_text_observation_exact.
 Qed.
 
+(** Fresh's observation is not the ordinary union of all children. The source
+    body determines both the shifted free bits and the connective flag; ordered
+    injection values remain children but never contribute to this summary. *)
+Definition fresh_fact (width : nat) (body : ConstructionFact) : ConstructionFact :=
+  {| head_shape := OtherHeads;
+     structural_summary := shifted_summary width (structural_summary body) |}.
+
+Theorem fresh_fact_is_exact : forall width uris keys body injections value,
+  fresh_with_injections width uris keys body injections = Constructed value ->
+  fresh_fact width (fact_of body) = fact_of value.
+Proof.
+  intros width uris keys body injections value H.
+  apply injected_fresh_preserves_all_entries in H as [_ [_ [HH HS]]].
+  unfold fresh_fact, fact_of. rewrite HH, HS. reflexivity.
+Qed.
+
 (** This is the first fully implemented family, not a permissive operation
     enum whose remaining variants silently fail. Wider families retain their
     separate construction and source-admission obligations. *)
@@ -188,6 +204,7 @@ Print Assumptions append_shape_is_exact.
 Print Assumptions cached_text_observation_exact.
 Print Assumptions append_fact_is_exact.
 Print Assumptions fact_observation_is_exact.
+Print Assumptions fresh_fact_is_exact.
 Print Assumptions primitive_cache_commutes.
 Print Assumptions lookup_mapping_commutes.
 Print Assumptions ordered_lookup_reuses_checked_protocol.
