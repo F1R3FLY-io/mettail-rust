@@ -251,6 +251,36 @@ after selector copying retains its already consumed charge but returns no FLT.
 Declared `bounds` never replace measured lengths. This copy operation does not
 establish template validity: the existing validation boundary still owns that.
 
+Behavioral predicates are different: Moniker binding leaves them unchanged,
+but their owned syntax can be deeply nested. Their checked leaf implementation
+therefore delegates to
+[`BehavioralPred::try_clone_with`](../../prattail/src/behavioral_pred.rs), which
+uses the existing iterative reconstruction worker. Ordinary clone and variable
+substitution use infallible adapters to that same worker; no second copier or
+evaluator is introduced.
+
+The dependency-neutral callback receives separate work, logical-record, and
+owned-byte components. The runtime converts these through
+`reserve_binding_parts` into the caller's existing budget. Admission precedes
+task growth, result construction, child-box allocation, argument-vector storage,
+and string copies. Argument inspection and copied bytes are charged separately;
+each flat payload also prepays its ordinary teardown. Variable substitution
+retains the existing shadowing behavior and admits its string comparisons before
+performing them.
+
+Normal failure may leave completed child predicates in the result stack. Each
+new predicate therefore prepays three cleanup work units and one cleanup
+record; each attached child edge prepays twelve cleanup work units and six
+cleanup records. These credits cover the existing destructor's dispatches,
+worklists and replacement `Top` boxes. Children retain their earlier credit
+when attached to a parent. The
+[predicate model](../../formal/rocq/rho_bridge/theories/BehavioralFlatCopy.v)
+proves flat payload recipes and additive upper credits for these selected
+events. Source review connects the counts to the existing destructor; it is
+not a compiler-verified proof of Rust execution, physical allocation bounds,
+or panic recovery. Cancellation tests must exercise an already copied deep
+child, not merely cancellation during descent before any result exists.
+
 ## Thread-Local Caches
 
 ### Variable Cache (`VAR_CACHE`)

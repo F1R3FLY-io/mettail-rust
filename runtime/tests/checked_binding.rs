@@ -422,3 +422,50 @@ fn flt_copy_preserves_repeated_hole_ids_and_optional_empty_category() {
     assert_eq!(result, Err(BindingFailure::MissingBinder { index: 4 }));
     assert_exact(&source.selector, &bound(0, 4, "unresolved"));
 }
+
+#[test]
+fn behavioral_leaf_uses_shared_meter_and_keeps_host_binding_inert() {
+    use mettail_runtime::{BehavioralPred, PredArg};
+    let source = BehavioralPred::RelationQuery {
+        relation_name: "r".into(),
+        args: vec![PredArg::Var("x".into())],
+        negated: false,
+    };
+    let roster = vec![Binder(FreeVar::fresh_named("x"))];
+    // Existing worker: 12 logical work, 8 records, 2 owned bytes.
+    // Runtime projection: work14, retention34. The matching textual name is
+    // a predicate argument, not a Moniker variable to close/open here.
+    for operation in [
+        BindingOperation::Clone,
+        BindingOperation::Open {
+            state: ScopeState::new(),
+            binders: &roster,
+        },
+        BindingOperation::Close {
+            state: ScopeState::new(),
+            binders: &roster,
+        },
+    ] {
+        let (result, used, calls) = copy_with_limits(&source, operation, (14, 34), None);
+        assert_eq!(result.expect("predicate leaf copy"), source);
+        assert_eq!(used, (14, 34));
+        for limits in [(13, 34), (14, 33)] {
+            assert_eq!(
+                copy_with_limits(&source, operation, limits, None).0,
+                Err(BindingFailure::Reservation("limit"))
+            );
+        }
+        for cancel in 1..=calls {
+            assert_eq!(
+                copy_with_limits(&source, operation, (14, 34), Some(cancel)).0,
+                Err(BindingFailure::Reservation("cancelled"))
+            );
+        }
+        assert_eq!(
+            copy_with_limits(&source, operation, (14, 34), None)
+                .0
+                .expect("retry"),
+            source
+        );
+    }
+}

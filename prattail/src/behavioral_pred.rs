@@ -104,6 +104,22 @@ pub enum PredArg {
 }
 
 impl BehavioralPred {
+    /// Clone through the existing iterative worker after resource admission.
+    ///
+    /// The callback receives logical work, storage records and owned bytes as
+    /// separate components. It must check arithmetic and reserve before
+    /// returning success. Errors preserve the source and propagate unchanged;
+    /// earlier reservations are not refunded. Normal cleanup of constructed
+    /// results is prepaid, including the existing destructor's temporary
+    /// worklists and replacement nodes. Units are not allocator capacity or
+    /// resident memory. This operation does not evaluate or substitute a predicate.
+    pub fn try_clone_with<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        lifecycle::try_clone_with(self, reserve)
+    }
+
     /// Substitute variable references in this predicate. Used by the
     /// macro pipeline during pattern-match substitution when a bound
     /// variable's name changes.

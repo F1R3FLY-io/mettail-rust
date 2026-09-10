@@ -27,34 +27,141 @@ enum RebuildTask<'pred> {
     Implies(usize),
 }
 
-fn rebuild_predicate(root: &BehavioralPred, substitution: Option<(&str, &str)>) -> BehavioralPred {
+// Each new predicate prepays its eventual ordinary Drop: (3 work, 1 record)
+// per node and (12 work, 6 records) per attached Box edge. Add construction's
+// node/edge work and records here, before consuming child results. Child
+// credits already paid when constructed are not charged again.
+fn admit_result<E>(
+    child_edges: usize,
+    reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+) -> Result<(), E> {
+    reserve(4, 2, 0)?;
+    for _ in 0..child_edges {
+        reserve(13, 7, 0)?;
+    }
+    Ok(())
+}
+
+fn copy_text<E>(
+    text: &str,
+    reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+) -> Result<String, E> {
+    // One flat teardown event, one copy event, header and actual owned bytes.
+    reserve(2, 1, text.len())?;
+    Ok(text.to_owned())
+}
+
+fn copy_argument<E>(
+    argument: &PredArg,
+    substitution: Option<(&str, &str)>,
+    reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+) -> Result<PredArg, E> {
+    // The enclosing vector/standalone caller prepays the argument slot.
+    reserve(1, 0, 0)?;
+    let bytes = match (argument, substitution) {
+        (PredArg::Var(name), Some((old, new))) => {
+            // Inspect selected borrowed text; the existing substitution helper
+            // repeats the identity comparison, so admit both comparisons.
+            reserve(name.len(), 0, 0)?;
+            reserve(name.len(), 0, 0)?;
+            if name == old {
+                new.len()
+            } else {
+                name.len()
+            }
+        },
+        (PredArg::Var(name) | PredArg::StringLit(name), _) => name.len(),
+        (PredArg::IntLit(_), _) => 0,
+    };
+    reserve(1, 0, 0)?; // Ordinary flat-payload teardown credit.
+    reserve(1, 0, bytes)?;
+    Ok(match substitution {
+        Some((old, new)) => argument.substitute_var(old, new),
+        None => argument.clone(),
+    })
+}
+
+fn copy_arguments<E>(
+    arguments: &[PredArg],
+    substitution: Option<(&str, &str)>,
+    reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+) -> Result<Vec<PredArg>, E> {
+    reserve(2, 1, 0)?; // Vector header copy and teardown.
+    reserve(0, arguments.len(), 0)?; // Before allocating entry storage.
+    let mut copied = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        copied.push(copy_argument(argument, substitution, reserve)?);
+    }
+    Ok(copied)
+}
+
+fn copy_domain<E>(
+    domain: &Option<QuantifiedDomain>,
+    substitution: Option<(&str, &str)>,
+    reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+) -> Result<Option<QuantifiedDomain>, E> {
+    reserve(1, 0, 0)?;
+    Ok(match domain {
+        None => None,
+        Some(domain) => {
+            reserve(2, 1, 0)?; // Domain record copy and flat teardown.
+            Some(match domain {
+                leaf @ (QuantifiedDomain::Named(_) | QuantifiedDomain::Bounded(_)) => {
+                    if let QuantifiedDomain::Named(name) = leaf {
+                        reserve(2, 1, name.len())?;
+                    }
+                    // Reuse the existing flat-domain recipe; only enumerated
+                    // domains need per-element admission in this worker.
+                    match substitution {
+                        Some((old, new)) => leaf.substitute_var(old, new),
+                        None => leaf.clone(),
+                    }
+                },
+                QuantifiedDomain::Enumerated(arguments) => {
+                    QuantifiedDomain::Enumerated(copy_arguments(arguments, substitution, reserve)?)
+                },
+            })
+        },
+    })
+}
+
+fn rebuild_predicate<E>(
+    root: &BehavioralPred,
+    substitution: Option<(&str, &str)>,
+    reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+) -> Result<BehavioralPred, E> {
+    reserve(0, 3, 0)?; // Two worklist headers and the initial task slot.
     let mut tasks = vec![RebuildTask::Visit(root, substitution.is_some())];
     let mut values = Vec::new();
 
-    while let Some(task) = tasks.pop() {
+    while !tasks.is_empty() {
+        reserve(1, 0, 0)?;
+        let task = tasks.pop().expect("nonempty predicate rebuild worklist");
         match task {
             RebuildTask::Visit(pred, substitute_here) => match pred {
-                BehavioralPred::Top => values.push(BehavioralPred::Top),
+                BehavioralPred::Top => {
+                    admit_result(0, reserve)?;
+                    values.push(BehavioralPred::Top);
+                },
                 BehavioralPred::RelationQuery { relation_name, args, negated } => {
-                    let args = if substitute_here {
-                        let (old, new) = substitution
-                            .expect("behavioral rebuild marked substitution without a mapping");
-                        args.iter()
-                            .map(|arg| arg.substitute_var(old, new))
-                            .collect()
-                    } else {
-                        args.clone()
-                    };
+                    admit_result(0, reserve)?;
+                    let active = if substitute_here { substitution } else { None };
+                    let args = copy_arguments(args, active, reserve)?;
+                    let relation_name = copy_text(relation_name, reserve)?;
                     values.push(BehavioralPred::RelationQuery {
-                        relation_name: relation_name.clone(),
+                        relation_name,
                         args,
                         negated: *negated,
                     });
                 },
                 BehavioralPred::Quantified { quantifier, var, domain, body } => {
+                    if substitute_here && substitution.is_some() {
+                        reserve(var.len(), 0, 0)?;
+                    }
                     let body_substitution =
                         substitute_here && substitution.is_some_and(|(old, _)| var.as_str() != old);
                     let value_base = values.len();
+                    reserve(0, 2, 0)?;
                     tasks.push(RebuildTask::Quantified {
                         quantifier: *quantifier,
                         var,
@@ -65,40 +172,40 @@ fn rebuild_predicate(root: &BehavioralPred, substitution: Option<(&str, &str)>) 
                     tasks.push(RebuildTask::Visit(body, body_substitution));
                 },
                 BehavioralPred::AcMatch { bag, elements, rest } => {
-                    let (bag, elements) = if substitute_here {
-                        let (old, new) = substitution
-                            .expect("behavioral rebuild marked substitution without a mapping");
-                        (
-                            bag.substitute_var(old, new),
-                            elements
-                                .iter()
-                                .map(|element| element.substitute_var(old, new))
-                                .collect(),
-                        )
-                    } else {
-                        (bag.clone(), elements.clone())
-                    };
-                    values.push(BehavioralPred::AcMatch { bag, elements, rest: rest.clone() });
+                    admit_result(0, reserve)?;
+                    let active = if substitute_here { substitution } else { None };
+                    reserve(0, 1, 0)?;
+                    let bag = copy_argument(bag, active, reserve)?;
+                    let elements = copy_arguments(elements, active, reserve)?;
+                    let rest = rest
+                        .as_ref()
+                        .map(|text| copy_text(text, reserve))
+                        .transpose()?;
+                    values.push(BehavioralPred::AcMatch { bag, elements, rest });
                 },
                 BehavioralPred::And(left, right) => {
                     let value_base = values.len();
+                    reserve(0, 3, 0)?;
                     tasks.push(RebuildTask::And(value_base));
                     tasks.push(RebuildTask::Visit(right, substitute_here));
                     tasks.push(RebuildTask::Visit(left, substitute_here));
                 },
                 BehavioralPred::Or(left, right) => {
                     let value_base = values.len();
+                    reserve(0, 3, 0)?;
                     tasks.push(RebuildTask::Or(value_base));
                     tasks.push(RebuildTask::Visit(right, substitute_here));
                     tasks.push(RebuildTask::Visit(left, substitute_here));
                 },
                 BehavioralPred::Not(inner) => {
                     let value_base = values.len();
+                    reserve(0, 2, 0)?;
                     tasks.push(RebuildTask::Not(value_base));
                     tasks.push(RebuildTask::Visit(inner, substitute_here));
                 },
                 BehavioralPred::Implies(left, right) => {
                     let value_base = values.len();
+                    reserve(0, 3, 0)?;
                     tasks.push(RebuildTask::Implies(value_base));
                     tasks.push(RebuildTask::Visit(right, substitute_here));
                     tasks.push(RebuildTask::Visit(left, substitute_here));
@@ -111,37 +218,35 @@ fn rebuild_predicate(root: &BehavioralPred, substitution: Option<(&str, &str)>) 
                 substitute_here,
                 value_base,
             } => {
+                admit_result(1, reserve)?;
                 let body = values
                     .pop()
                     .expect("behavioral rebuild lost a quantified body");
                 values.truncate(value_base);
-                let domain = if substitute_here {
-                    let (old, new) = substitution
-                        .expect("behavioral rebuild marked substitution without a mapping");
-                    domain
-                        .as_ref()
-                        .map(|domain| domain.substitute_var(old, new))
-                } else {
-                    domain.clone()
-                };
+                let active = if substitute_here { substitution } else { None };
+                let domain = copy_domain(domain, active, reserve)?;
+                let var = copy_text(var, reserve)?;
                 values.push(BehavioralPred::Quantified {
                     quantifier,
-                    var: var.to_owned(),
+                    var,
                     domain,
                     body: Box::new(body),
                 });
             },
             RebuildTask::And(value_base) => {
+                admit_result(2, reserve)?;
                 finish_binary(&mut values, value_base, |left, right| {
                     BehavioralPred::And(Box::new(left), Box::new(right))
                 });
             },
             RebuildTask::Or(value_base) => {
+                admit_result(2, reserve)?;
                 finish_binary(&mut values, value_base, |left, right| {
                     BehavioralPred::Or(Box::new(left), Box::new(right))
                 });
             },
             RebuildTask::Not(value_base) => {
+                admit_result(1, reserve)?;
                 let inner = values
                     .pop()
                     .expect("behavioral rebuild lost a negated operand");
@@ -149,6 +254,7 @@ fn rebuild_predicate(root: &BehavioralPred, substitution: Option<(&str, &str)>) 
                 values.push(BehavioralPred::Not(Box::new(inner)));
             },
             RebuildTask::Implies(value_base) => {
+                admit_result(2, reserve)?;
                 finish_binary(&mut values, value_base, |left, right| {
                     BehavioralPred::Implies(Box::new(left), Box::new(right))
                 });
@@ -157,7 +263,7 @@ fn rebuild_predicate(root: &BehavioralPred, substitution: Option<(&str, &str)>) 
     }
 
     debug_assert_eq!(values.len(), 1);
-    values.pop().expect("behavioral rebuild produced no result")
+    Ok(values.pop().expect("behavioral rebuild produced no result"))
 }
 
 fn finish_binary(
@@ -177,12 +283,28 @@ fn finish_binary(
 
 impl Clone for BehavioralPred {
     fn clone(&self) -> Self {
-        rebuild_predicate(self, None)
+        rebuild_infallible(self, None)
     }
 }
 
 pub(super) fn substitute_var(root: &BehavioralPred, old: &str, new: &str) -> BehavioralPred {
-    rebuild_predicate(root, Some((old, new)))
+    rebuild_infallible(root, Some((old, new)))
+}
+
+fn rebuild_infallible(root: &BehavioralPred, substitution: Option<(&str, &str)>) -> BehavioralPred {
+    match rebuild_predicate(root, substitution, &mut |_, _, _| {
+        Ok::<(), std::convert::Infallible>(())
+    }) {
+        Ok(result) => result,
+        Err(impossible) => match impossible {},
+    }
+}
+
+pub(super) fn try_clone_with<E>(
+    root: &BehavioralPred,
+    reserve: &mut impl FnMut(usize, usize, usize) -> Result<(), E>,
+) -> Result<BehavioralPred, E> {
+    rebuild_predicate(root, None, reserve)
 }
 
 fn take_children(pred: &mut BehavioralPred, work: &mut Vec<BehavioralPred>) {

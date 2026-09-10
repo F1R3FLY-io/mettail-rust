@@ -213,6 +213,20 @@ impl CheckedBindingLeaf for Vec<u8> {
     }
 }
 
+impl CheckedBindingLeaf for crate::BehavioralPred {
+    fn try_copy_binding<E>(
+        &self,
+        _: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>> {
+        // Moniker binding is a no-op for this carrier. Its clone is recursive
+        // in shape, so reuse its existing explicit worker with the same meter.
+        self.try_clone_with(&mut |work, records, bytes| {
+            reserve_binding_parts(work, records, bytes, reserve)
+        })
+    }
+}
+
 fn add_copy_component<E>(total: &mut usize, amount: usize) -> Result<(), BindingFailure<E>> {
     *total = total
         .checked_add(amount)
