@@ -327,3 +327,114 @@ Print Assumptions overflowing_sum_produces_no_index.
 Print Assumptions checked_shift_success_is_exact_and_bounded.
 Print Assumptions checked_shift_preserves_lookup_on_success.
 Print Assumptions unopened_reference_never_becomes_a_bound_value.
+
+(** Width counts declared slots, including unused and shadowed occurrences.
+    It is not the cardinality of either lookup map. A full enclosing width is
+    a machine-sized index-space bound, not an emitted signed-32-bit field. *)
+Record LexicalEnvironment := {
+  lexical_width : nat;
+  lexical_bindings : Scope
+}.
+Definition empty_lexical_environment : LexicalEnvironment :=
+  {| lexical_width := 0; lexical_bindings := [] |}.
+Definition extend_lexical_environment (env : LexicalEnvironment) (slots : list ScopeKey)
+    : LexicalEnvironment :=
+  {| lexical_width := lexical_width env + List.length slots;
+     lexical_bindings := extend_scope (lexical_bindings env) slots |}.
+Definition selected_indices_are_in_scope (env : LexicalEnvironment) : Prop :=
+  forall key index, lookup_scope key (lexical_bindings env) = Some index ->
+    index < lexical_width env.
+
+Theorem empty_environment_has_no_selected_index :
+  selected_indices_are_in_scope empty_lexical_environment.
+Proof. intros key index H; discriminate. Qed.
+
+Theorem extension_preserves_every_selected_index_in_scope : forall env slots,
+  selected_indices_are_in_scope env ->
+  selected_indices_are_in_scope (extend_lexical_environment env slots).
+Proof.
+  intros env slots Hscope key index Hlookup.
+  change (lookup_scope key (extend_scope (lexical_bindings env) slots) = Some index) in Hlookup.
+  rewrite extension_preserves_selected_slot_or_shifted_outer_lookup in Hlookup.
+  destruct (assigned_index slots key) as [assigned|] eqn:HA.
+  - inversion Hlookup; subst index. apply assigned_slot_is_inside_its_width in HA.
+    cbn [lexical_width extend_lexical_environment]; lia.
+  - destruct (lookup_scope key (lexical_bindings env)) as [outer|] eqn:HO; [|discriminate].
+    inversion Hlookup; subst index. specialize (Hscope key outer HO).
+    cbn [lexical_width extend_lexical_environment]; lia.
+Qed.
+
+Definition checked_extend_environment maximum env slots : option LexicalEnvironment :=
+  match checked_sum maximum (lexical_width env) (List.length slots) with
+  | None => None
+  | Some width =>
+    match checked_shift_scope maximum (List.length slots) (lexical_bindings env) with
+    | None => None
+    | Some shifted => Some
+      {| lexical_width := width; lexical_bindings := install_slots slots shifted |}
+    end
+  end.
+Theorem checked_environment_extension_preserves_exact_width_and_bindings :
+  forall maximum env slots extended,
+  checked_extend_environment maximum env slots = Some extended ->
+  extended = extend_lexical_environment env slots /\ lexical_width extended <= maximum.
+Proof.
+  intros maximum env slots extended H. unfold checked_extend_environment in H.
+  destruct (checked_sum maximum (lexical_width env) (List.length slots)) as [width|] eqn:HW;
+    [|discriminate].
+  destruct (checked_shift_scope maximum (List.length slots) (lexical_bindings env))
+    as [shifted|] eqn:HS; [|discriminate].
+  inversion H; subst extended.
+  apply checked_sum_success_is_exact_and_bounded in HW.
+  apply checked_shift_success_is_exact_and_bounded in HS.
+  destruct HW as [HW HB], HS as [HS _]. subst width shifted.
+  split; [reflexivity|exact HB].
+Qed.
+
+Inductive ReachableLexicalEnvironment (maximum : nat) : LexicalEnvironment -> Prop :=
+| LexicalRoot : ReachableLexicalEnvironment maximum empty_lexical_environment
+| LexicalExtension : forall env slots extended,
+    ReachableLexicalEnvironment maximum env ->
+    checked_extend_environment maximum env slots = Some extended ->
+    ReachableLexicalEnvironment maximum extended.
+
+Theorem reachable_environment_lookup_is_in_scope : forall maximum env,
+  ReachableLexicalEnvironment maximum env -> selected_indices_are_in_scope env.
+Proof.
+  intros maximum env H. induction H.
+  - apply empty_environment_has_no_selected_index.
+  - apply checked_environment_extension_preserves_exact_width_and_bindings in H0.
+    destruct H0 as [H0 _]. subst.
+    now apply extension_preserves_every_selected_index_in_scope.
+Qed.
+
+Theorem reachable_enclosing_hole_fallback_is_in_scope : forall maximum env identity pretty index,
+  ReachableLexicalEnvironment maximum env ->
+  lexical_lookup (lexical_bindings env) identity pretty = Some index ->
+  index < lexical_width env.
+Proof.
+  intros maximum env identity pretty index Hreachable Hlookup.
+  pose proof (reachable_environment_lookup_is_in_scope _ _ Hreachable) as Hscope.
+  unfold lexical_lookup in Hlookup.
+  destruct (lookup_scope (MonikerKey identity) (lexical_bindings env)) eqn:HM.
+  - inversion Hlookup; subst. now apply (Hscope (MonikerKey identity)).
+  - destruct pretty as [name|]; [now apply (Hscope (HoleKey name))|discriminate].
+Qed.
+
+Theorem adding_unused_slots_still_increases_width : forall env slots,
+  lexical_width (extend_lexical_environment env slots) =
+  lexical_width env + List.length slots.
+Proof. reflexivity. Qed.
+
+Example repeated_named_slots_do_not_shrink_the_scope : forall name,
+  let env := extend_lexical_environment empty_lexical_environment [HoleKey name; HoleKey name] in
+  lexical_width env = 2 /\ lookup_scope (HoleKey name) (lexical_bindings env) = Some 0.
+Proof. intros. cbn. rewrite String.eqb_refl. auto. Qed.
+
+Print Assumptions empty_environment_has_no_selected_index.
+Print Assumptions extension_preserves_every_selected_index_in_scope.
+Print Assumptions checked_environment_extension_preserves_exact_width_and_bindings.
+Print Assumptions reachable_environment_lookup_is_in_scope.
+Print Assumptions reachable_enclosing_hole_fallback_is_in_scope.
+Print Assumptions adding_unused_slots_still_increases_width.
+Print Assumptions repeated_named_slots_do_not_shrink_the_scope.

@@ -32,9 +32,9 @@ export function beforeSourceScope(source) {
   const previous = old(driver);
   for (const [start, priorStart, end, hash] of [
     ["#[derive(Clone)]\npub struct BoundEnv", "#[derive(Clone)]\npub struct BoundEnv",
-      "/// #14: one binder slot", "f38d9100528b4f7e14c16e32bdf72d0db790fd8d643de6a00d4be1fb370e4abb"],
+      "/// #14: one binder slot", "694929b8a2a72959356160292c776681d147aae7bbd7bf47f4b0ec29508debd5"],
     ["/// Fallible rholang-to-Rholang-AST lowering error.", "/// Fallible rholang-to-Rholang-AST lowering error.",
-      "/// Rholang language adapter for the AST-first", "68a57a478639ba9d2c965d05544673e560531fe20fd7da79c150ca9583c53212"],
+      "/// Rholang language adapter for the AST-first", "cb72242e83e69551d1fe340fa429700d8e23e61120fb9d223d66edf489d7ce4b"],
     ["impl<'a> EnvArena<'a>", "impl<'a> EnvArena<'a>",
       "/// The `ExprInstance` constructors", "0d7feb7a39e7a3e9374d2052d6d374199e02bc6165a534a7cb35623dc4b6419c"],
     ["    /// A fresh lexical environment,", "    /// `BoundEnv::new()`, materialised at most once.",
@@ -42,7 +42,7 @@ export function beforeSourceScope(source) {
     ["fn lower_name_var(", "fn lower_name_var(",
       "/// L9-6b: the de-Bruijn level a free", "8aacc4bc4ef3cb0a892f7171059d5177f4eeeab388eb28d3e1e59669f235a49e"],
     ["fn extend_env(", "fn extend_env(", "fn send_par(",
-      "df3d7dbb70cd03fa3cc0e6e07c562de562969db1a78729561489599dd5826195"],
+      "bd9dcf42265e49276917313d9f86182662e2359769cc3dc3a6c43c9c3675d924"],
   ]) {
     const current = section(source, start, end);
     assert.equal(digest(current), hash, `reviewed scope section: ${start}`);
@@ -68,11 +68,14 @@ export function beforeSourceScope(source) {
     [".push(self.env(state.env).extend_slots(&state.slots));",
       ".push(self.env(state.env).extend_slots(&state.slots)?)?;", 1],
   ]) source = replace(source, before, after, count);
-  for (const spaces of [16, 8]) {
+  for (const [spaces, current] of [
+    [16, "fills.insert(\n                    hole.name.clone(),\n                    scope::lower_bound_index(self.env(env_new).scope_width, level)?,\n                );"],
+    [8, "fills.insert(hole.name.clone(), scope::lower_bound_index(env.scope_width, level)?);"],
+  ]) {
     const indent = " ".repeat(spaces);
     source = replace(source,
       `${indent}fills.insert(\n${indent}    hole.name.clone(),\n${indent}    new_boundvar_par(level as i32, create_bit_vector(&[level]), false),\n${indent});`,
-      `${indent}fills.insert(hole.name.clone(), scope::lower_bound_index(level)?);`);
+      `${indent}${current}`);
   }
   return source;
 }
@@ -91,7 +94,7 @@ export function beforeScopeOracle(source) {
 }
 
 function checkResolver(source) {
-  assert.equal(digest(source), "11e54c2a54abb2c9589ea3773ca851509777ab076f7ccb72e2e5ad05c36799ab",
+  assert.equal(digest(source), "5fc3d84797f42aaa065c4656a88bd674102a3d4382847223383b840555788ba6",
     "exact reviewed lexical resolver; behavioral evidence is checked separately");
 }
 
@@ -103,7 +106,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   checkResolver(resolver);
   for (const [from, to] of [
     [".or_else(|| flt_hole_bound_level(free_var, env))", ".or(Some(0))"],
-    ["i32::try_from(index)", "Ok(index as i32)"],
+    ["CheckedBoundReference::new(scope, index)", "CheckedBoundReference::new(index, scope)"],
     [".checked_add(width)", ".wrapping_add(width)"],
     ["SourceAdmissionMode::Public => Err", "SourceAdmissionMode::Harness => Err"],
   ]) {

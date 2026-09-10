@@ -162,6 +162,31 @@ fn direct_append_preserves_order_metadata_and_forwarding() {
 }
 
 #[test]
+fn direct_bound_validation_rejects_before_index_sized_construction() {
+    let mut target = DirectNodeTarget;
+    for (scope, index) in [(0, 0), (2, 2), (1, 31)] {
+        assert_eq!(
+            target.construct(ValueOp::Bound { scope, index }, vec![]),
+            Err(ConstructionError::IndexOutOfScope { scope, index })
+        );
+    }
+    let index = i32::MAX as usize + 1;
+    for scope in [0, usize::MAX] {
+        assert_eq!(
+            target.construct(ValueOp::Bound { scope, index }, vec![]),
+            Err(ConstructionError::TargetIndexOutOfRange { index })
+        );
+    }
+    // A large enclosing width does not imply a large emitted reference.
+    same_bytes(
+        &target
+            .construct(ValueOp::Bound { scope: usize::MAX, index: 0 }, vec![])
+            .expect("small reference"),
+        &new_boundvar_par(0, vec![], false),
+    );
+}
+
+#[test]
 fn direct_target_rejects_every_wrong_arity_in_initial_family() {
     let mut target = DirectNodeTarget;
     for operation in [
@@ -169,6 +194,8 @@ fn direct_target_rejects_every_wrong_arity_in_initial_family() {
         ValueOp::Integer(0),
         ValueOp::Boolean(false),
         ValueOp::Text("".into()),
+        ValueOp::Bound { scope: 1, index: 0 },
+        ValueOp::Wildcard { connective: true },
     ] {
         assert_eq!(
             target.construct(operation, vec![Par::default()]),
@@ -180,6 +207,86 @@ fn direct_target_rejects_every_wrong_arity_in_initial_family() {
             target.construct(ValueOp::Append, vec![Par::default(); actual]),
             Err(ConstructionError::ChildArity { expected: 2, actual })
         );
+    }
+}
+
+#[test]
+fn checked_bound_and_wildcard_targets_match_independent_wire_and_actual_worker() {
+    for index in [0usize, 1, 7, 8, 15, 31] {
+        let mut expected =
+            vec![0x2a, 7, 0x9a, 1, 4, 0x0a, 2, 0x08, (index * 2) as u8, 0x4a, (index + 1) as u8];
+        expected.extend(std::iter::repeat_n(0, index));
+        expected.push(1);
+        let direct = DirectNodeTarget
+            .construct(ValueOp::Bound { scope: index + 1, index }, vec![])
+            .expect("bound target");
+        assert_eq!(direct.encode_to_vec(), expected);
+        let variable = super::super::FreeVar::fresh_named("bound".to_owned());
+        let env = super::super::extend_env(
+            &super::super::BoundEnv::new(),
+            &(0..=index)
+                .map(|_| super::super::Binder(variable.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .expect("declared scope");
+        // Last insertion selects zero; outer shifting then reaches index.
+        let env = super::super::extend_env(
+            &env,
+            &(0..index)
+                .map(|_| {
+                    super::super::Binder(super::super::FreeVar::fresh_named("unused".to_owned()))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("shift");
+        let actual = super::super::lower_proc_in_env(
+            &super::super::Proc::PVar(super::super::OrdVar(super::super::Var::Free(variable))),
+            &env,
+        )
+        .expect("same source worker");
+        same_bytes(&direct, &actual);
+        let graph = with_neutral_target(
+            ConstructionLimits {
+                nodes: 1,
+                edges: 0,
+                payload_bytes: index + 1,
+                work: index + 3,
+            },
+            || false,
+            |mut target| {
+                let root = target
+                    .construct(ValueOp::Bound { scope: index + 1, index }, vec![])
+                    .expect("neutral bound");
+                target.finish_graph(root).expect("graph")
+            },
+        );
+        same_graph_interpretation(&graph, &direct);
+    }
+    for connective in [false, true] {
+        let direct = DirectNodeTarget
+            .construct(ValueOp::Wildcard { connective }, vec![])
+            .expect("wildcard");
+        let mut expected = vec![0x2a, 7, 0x9a, 1, 4, 0x0a, 2, 0x1a, 0];
+        if connective {
+            expected.extend([0x50, 1]);
+        }
+        assert_eq!(direct.encode_to_vec(), expected);
+        let graph = with_neutral_target(
+            ConstructionLimits {
+                nodes: 1,
+                edges: 0,
+                payload_bytes: 0,
+                work: 2,
+            },
+            || false,
+            |mut target| {
+                let root = target
+                    .construct(ValueOp::Wildcard { connective }, vec![])
+                    .expect("neutral wildcard");
+                target.finish_graph(root).expect("graph")
+            },
+        );
+        same_graph_interpretation(&graph, &direct);
     }
 }
 

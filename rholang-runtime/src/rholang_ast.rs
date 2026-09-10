@@ -102,6 +102,9 @@ pub struct BoundEnv {
     /// entry point is the option every nested `for` sees.
     options: LoweringOptions,
     admission: SourceAdmissionMode,
+    /// Declared lexical slots, including unused and shadowed occurrences.
+    /// Map cardinality is not a scope width; this total is not an emitted i32.
+    scope_width: usize,
     binders: HashMap<FreeVar<String>, usize>,
     /// L9-6b: FLT hole name → de-Bruijn level. A `${name}` hole captured by an FLT
     /// receive pattern ([`reflect_flt_pattern`]) is a receive binder, but — unlike
@@ -163,6 +166,7 @@ impl BoundEnv {
         BoundEnv {
             options,
             admission: SourceAdmissionMode::Harness,
+            scope_width: 0,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver: Arc::new(EmptyFltResolver),
@@ -195,6 +199,7 @@ impl BoundEnv {
         BoundEnv {
             options,
             admission: SourceAdmissionMode::Harness,
+            scope_width: 0,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver,
@@ -217,6 +222,7 @@ impl BoundEnv {
     /// level space (fixes the L9-6b `&`-join fail-closed).
     fn extend_slots(&self, slots: &[ReceiveSlot]) -> Result<BoundEnv, RholangAstLowerError> {
         let width = slots.len();
+        let scope_width = scope::checked_shift(self.scope_width, width)?;
         let mut binders = self
             .binders
             .iter()
@@ -241,6 +247,7 @@ impl BoundEnv {
         Ok(BoundEnv {
             options: self.options,
             admission: self.admission,
+            scope_width,
             binders,
             hole_binders,
             resolver: Arc::clone(&self.resolver),
@@ -306,6 +313,7 @@ pub enum RholangAstLowerError {
     BoundIndexOutOfRange {
         index: usize,
     },
+    BoundConstruction(mettail_rholang_frontend::construction::ConstructionError),
     ScopeIndexOverflow,
     ScopeArenaOverflow,
     ScopeArenaAllocationFailed,
@@ -2233,7 +2241,10 @@ impl<'a> Drive<'a> {
                             hole.name
                         ))
                     })?;
-                fills.insert(hole.name.clone(), scope::lower_bound_index(level)?);
+                fills.insert(
+                    hole.name.clone(),
+                    scope::lower_bound_index(self.env(env_new).scope_width, level)?,
+                );
             }
             node.validate()
                 .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
@@ -5277,7 +5288,7 @@ fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, Rholang
         // child-`locally_free` union into the EList, marking the var for descent. Its
         // absent `^gnd` marker is read as non-ground by C2, so the hole-bearing node's
         // recomputed marker is `⌜^nog⌝` (a fill only ever makes a node LESS ground).
-        fills.insert(hole.name.clone(), scope::lower_bound_index(level)?);
+        fills.insert(hole.name.clone(), scope::lower_bound_index(env.scope_width, level)?);
     }
     reflect_flt_construction(&ground, &fills, &fingerprint)
         .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))
@@ -5322,6 +5333,7 @@ fn extend_env(
     binders: &[Binder<String>],
 ) -> Result<BoundEnv, RholangAstLowerError> {
     let width = binders.len();
+    let scope_width = scope::checked_shift(env.scope_width, width)?;
     let mut binder_map = env
         .binders
         .iter()
@@ -5347,6 +5359,7 @@ fn extend_env(
         // same declared options as its parent (S-D0).
         options: env.options,
         admission: env.admission,
+        scope_width,
         binders: binder_map,
         hole_binders,
         resolver: Arc::clone(&env.resolver),

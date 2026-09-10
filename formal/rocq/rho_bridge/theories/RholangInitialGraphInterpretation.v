@@ -12,7 +12,9 @@ Import ListNotations.
 
 Inductive InitialScalar :=
 | EmptyScalar | IntegerScalar (value : Z) | BooleanScalar (value : bool)
-| TextScalar (value : string).
+| TextScalar (value : string)
+| BoundScalar (scope index : nat)
+| WildcardScalar (connective : bool).
 Inductive InitialNode :=
 | ScalarNode (scalar : InitialScalar)
 | AppendNode (lhs rhs : nat).

@@ -6,6 +6,7 @@
 //! integer representability before calling index-sized node constructors.
 
 use super::*;
+use mettail_rholang_frontend::construction::{CheckedBoundReference, ConstructionError};
 
 /// Whether unresolved term references reject or use the explicit oracle ABI.
 /// Guard-discharge options do not select source admission policy.
@@ -30,6 +31,7 @@ impl BoundEnv {
         Self {
             options,
             admission,
+            scope_width: 0,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver,
@@ -41,6 +43,7 @@ impl BoundEnv {
         Self {
             options: self.options,
             admission: self.admission,
+            scope_width: 0,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver: Arc::clone(&self.resolver),
@@ -62,13 +65,20 @@ pub(super) fn next_environment_index(length: usize) -> Result<u32, RholangAstLow
         .ok_or(RholangAstLowerError::ScopeArenaOverflow)
 }
 
-fn checked_bound_index(index: usize) -> Result<i32, RholangAstLowerError> {
-    i32::try_from(index).map_err(|_| RholangAstLowerError::BoundIndexOutOfRange { index })
+fn checked_bound_reference(
+    scope: usize,
+    index: usize,
+) -> Result<CheckedBoundReference, RholangAstLowerError> {
+    CheckedBoundReference::new(scope, index).map_err(|error| match error {
+        ConstructionError::TargetIndexOutOfRange { index } => {
+            RholangAstLowerError::BoundIndexOutOfRange { index }
+        },
+        error => RholangAstLowerError::BoundConstruction(error),
+    })
 }
 
-pub(super) fn lower_bound_index(index: usize) -> Result<Par, RholangAstLowerError> {
-    let index = checked_bound_index(index)?;
-    Ok(new_boundvar_par(index, Vec::new(), false))
+pub(super) fn lower_bound_index(scope: usize, index: usize) -> Result<Par, RholangAstLowerError> {
+    Ok(Target::bound(checked_bound_reference(scope, index)?))
 }
 
 #[derive(Clone, Copy)]
@@ -78,7 +88,7 @@ pub(super) enum ReferenceRole {
 }
 
 enum Resolution<'a> {
-    Bound(i32),
+    Bound(CheckedBoundReference),
     Wildcard,
     Harness(&'a str),
 }
@@ -109,7 +119,7 @@ fn resolve<'a>(
         .copied()
         .or_else(|| flt_hole_bound_level(free_var, env));
     match index {
-        Some(index) => Ok(Resolution::Bound(checked_bound_index(index)?)),
+        Some(index) => Ok(Resolution::Bound(checked_bound_reference(env.scope_width, index)?)),
         None if env.free_vars_are_patterns => Ok(Resolution::Wildcard),
         None => match env.admission {
             SourceAdmissionMode::Public => Err(match role {
@@ -127,8 +137,8 @@ pub(super) fn lower_reference(
     role: ReferenceRole,
 ) -> Result<Par, RholangAstLowerError> {
     Ok(match resolve(var, env, role)? {
-        Resolution::Bound(index) => new_boundvar_par(index, Vec::new(), false),
-        Resolution::Wildcard => new_wildcard_par(Vec::new(), true),
+        Resolution::Bound(reference) => Target::bound(reference),
+        Resolution::Wildcard => Target::wildcard(true),
         Resolution::Harness(name) => {
             let marker = new_gstring_par(format!("{FREE_NAME_PREFIX}{name}"), Vec::new(), false);
             match role {

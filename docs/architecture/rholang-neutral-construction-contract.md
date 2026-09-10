@@ -7,7 +7,7 @@ The [admission contract](rholang-frontend-admission-contract.md) determines
 which source forms are supported. A target operation appearing below does not
 by itself admit a corresponding source form.
 
-The initial primitive construction target and its bounded graph interpreter
+The primitive and bound/wildcard construction target and its bounded graph interpreter
 are implemented; the broader interface below remains the contract for
 subsequent constructor families. The existing source lowerer still constructs
 node `Par` values. Complete constructor-family emission, owned session output,
@@ -403,11 +403,24 @@ shifted lookup, unchanged context inputs, and rejection of unopened moniker
 coordinates. Focused tests additionally compare the actual source worker and
 node bytes; these model laws do not prove arbitrary Rust correctness.
 
+`BoundEnv` retains the total declared lexical width separately from its lookup
+maps. Unused binders and repeated slots still increase that width; overwriting
+a map entry does not remove its declared slot. The reachable-environment model
+starts with zero width and extends by the complete ordered slot roster. It
+proves that every selected moniker or enclosing-hole index lies within the
+resulting width. Both ordinary and mixed-slot extension check total-width
+addition before map construction, without imposing an extra signed-32-bit cap
+on that unencoded total.
+
 The pinned node's locally-free vector stores **one byte per membership flag**,
 not eight packed flags per byte. A singleton at index $`i`$ therefore allocates
-$`i+1`$ bytes. Range checking alone is not a resource bound. Metadata allocation
-precharge, neutral bound/fresh operations and their graph interpretation remain
-required scope-family work. Caller URI-injection enrollment is a later
+$`i+1`$ bytes. Range checking alone is not a resource bound. The shared
+`CheckedBoundReference` checks the emitted index and its enclosing width before
+node construction; the neutral target caches the exact flags, and the graph
+interpreter reserves the metadata costs described below. The ordinary source
+worker delegates reference/wildcard construction to the same direct target.
+Fresh operations, budgeted environment-map growth and complete source-session
+resource admission remain required scope-family work. Caller URI-injection enrollment is a later
 integration boundary and does not make injection keys into lexical binders.
 
 ## Guards, origins, and owned session output
@@ -797,6 +810,52 @@ their direct node result. A 20,000-level empty-append graph tests successful
 materialization and mid-expansion refusal on a 256 KiB native thread stack.
 None of this substitutes for the remaining source-family and session migration
 or the real public-node application gate.
+
+### Bound-reference metadata and resource accounting
+
+Bound and wildcard nodes are nullary operations. They do not change the
+`Visit`/`Append` graph scheduling or its proved stack capacities. They do change
+observations: bound terms carry locally-free flags, and a wildcard retains its
+explicit connective flag. The empty-input wildcard and formula wildcard must
+therefore remain distinct. `CheckedBoundReference` validates signed-index
+representability before the enclosing-width check, matching the construction
+protocol's error order; neither check allocates index-sized metadata.
+
+Let $`b=i+1`$ be a bound node's metadata length. For append, let $`l`$ and $`r`$
+be its operand metadata lengths and let $`m=\max(l,r)`$. The node's bound helper
+initializes $`b`$ bytes and then `with_exprs` clones those bytes. Append clones
+the left metadata, takes the right metadata, and initializes/fills a new union.
+The final observation comparison may inspect the whole result metadata.
+
+| Operation | Retained metadata bytes | Additional logical work | Additional allocation/copy units |
+| --- | --- | --- | --- |
+| Bound reference | $`b`$ | $`3b`$: initialization, clone, comparison | $`2b`$ |
+| Wildcard, either flag | $`0`$ | $`0`$ | $`0`$ |
+| Parallel append | $`m`$ | $`l+3m`$: left clone, union initialization, fill, comparison | $`l+m`$ |
+
+These metadata charges add to the existing expression/text charges in **one
+atomic reservation before invoking the node helper**. They count declared byte
+passes and allocated/copied payload volume, not CPU cycles, allocator capacity,
+RSS or semantic gas. Constant control operations remain covered by the existing
+logical step policy. Retained metadata length uses maximum, whereas expression
+and text payload measures remain additive. Using one additive measure for both
+would give incorrect retained sizes and copy charges.
+
+The [metadata model](../../formal/rocq/rho_bridge/theories/RholangBoundMetadata.v)
+proves singleton length, maximum-length union, exact cached metadata lengths,
+the explicit pass charges and combined reservation laws. The existing scalar
+resource model keeps its closed-output theorem with a concrete restriction to
+the original scalar domain; its extended flat-head theorem includes bound and
+wildcard heads without claiming their metadata is closed. Existing non-refund,
+cancellation and intermediate-stack proofs are reused.
+
+Focused tests cover unequal metadata lengths in both append orders, repeated
+bound references, exact work/allocation budgets and one-unit-short rejection,
+failure before constructor invocation, source-worker/direct/neutral agreement,
+independent protobuf bytes, and wrong metadata/flags. Large representable
+indices reject under a small neutral metadata allowance before allocation.
+This evidence does not complete fresh-scope interpretation, environment-map
+budgets, session admission or the public-node application.
 
 ## Formal and implementation handoff
 

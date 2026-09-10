@@ -14,13 +14,20 @@ pub enum ValueOp {
     Boolean(bool),
     Text(String),
     Append,
+    Bound { scope: usize, index: usize },
+    Wildcard { connective: bool },
 }
 
 impl ValueOp {
     pub fn arity(&self) -> usize {
         match self {
             Self::Append => 2,
-            Self::Empty | Self::Integer(_) | Self::Boolean(_) | Self::Text(_) => 0,
+            Self::Empty
+            | Self::Integer(_)
+            | Self::Boolean(_)
+            | Self::Text(_)
+            | Self::Bound { .. }
+            | Self::Wildcard { .. } => 0,
         }
     }
 
@@ -29,6 +36,35 @@ impl ValueOp {
             Self::Text(text) => text.len(),
             _ => 0,
         }
+    }
+}
+
+/// A bound reference validated before any index-sized metadata allocation.
+/// The total lexical scope is not restricted to an emitted signed field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckedBoundReference {
+    emitted_index: i32,
+    metadata_bytes: usize,
+}
+
+impl CheckedBoundReference {
+    pub fn new(scope: usize, index: usize) -> Result<Self, ConstructionError> {
+        let emitted_index =
+            i32::try_from(index).map_err(|_| ConstructionError::TargetIndexOutOfRange { index })?;
+        if index >= scope {
+            return Err(ConstructionError::IndexOutOfScope { scope, index });
+        }
+        let metadata_bytes = index
+            .checked_add(1)
+            .ok_or(ConstructionError::ReferenceIndexOverflow)?;
+        Ok(Self { emitted_index, metadata_bytes })
+    }
+
+    pub fn emitted_index(self) -> i32 {
+        self.emitted_index
+    }
+    pub fn metadata_bytes(self) -> usize {
+        self.metadata_bytes
     }
 }
 
@@ -57,6 +93,8 @@ pub enum ConstructionError {
     ReferenceIndexOverflow,
     AllocationFailed,
     Cancelled,
+    TargetIndexOutOfRange { index: usize },
+    IndexOutOfScope { scope: usize, index: usize },
 }
 
 impl std::fmt::Display for ConstructionError {

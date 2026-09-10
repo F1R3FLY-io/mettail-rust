@@ -9,7 +9,8 @@
 //! expanding head list. Every owned node and error cleanup is non-recursive.
 
 use crate::construction::{
-    ConstructionError, LimitKind, StructuralObservation, ValueOp, ValueTarget,
+    CheckedBoundReference, ConstructionError, LimitKind, StructuralObservation, ValueOp,
+    ValueTarget,
 };
 use std::marker::PhantomData;
 
@@ -241,6 +242,9 @@ impl<'id, C: FnMut() -> bool> ValueTarget for NeutralTarget<'id, C> {
             .map_err(|_| ConstructionError::ReferenceIndexOverflow)?;
         // All limits precede allocation of a new node or edge vector.
         let free_bytes = match operation {
+            ValueOp::Bound { scope, index } => {
+                CheckedBoundReference::new(scope, index)?.metadata_bytes()
+            },
             ValueOp::Append => self
                 .get(children[0])?
                 .fact
@@ -259,6 +263,26 @@ impl<'id, C: FnMut() -> bool> ValueTarget for NeutralTarget<'id, C> {
             ValueOp::Empty => Fact::closed(HeadShape::Empty),
             ValueOp::Text(_) => Fact::closed(HeadShape::SingleText),
             ValueOp::Integer(_) | ValueOp::Boolean(_) => Fact::closed(HeadShape::Other),
+            ValueOp::Bound { index, .. } => {
+                let mut locally_free = Vec::new();
+                locally_free
+                    .try_reserve_exact(free_bytes)
+                    .map_err(|_| ConstructionError::AllocationFailed)?;
+                for offset in 0..free_bytes {
+                    self.meter.work(&mut self.cancelled)?;
+                    locally_free.push(u8::from(offset == *index));
+                }
+                Fact {
+                    shape: HeadShape::Other,
+                    locally_free,
+                    connective_used: false,
+                }
+            },
+            ValueOp::Wildcard { connective } => Fact {
+                shape: HeadShape::Other,
+                locally_free: Vec::new(),
+                connective_used: *connective,
+            },
             ValueOp::Append => {
                 let lhs = &self.nodes[children[0].index as usize].fact;
                 let rhs = &self.nodes[children[1].index as usize].fact;

@@ -8,6 +8,114 @@ const LIMITS: ConstructionLimits = ConstructionLimits {
 };
 
 #[test]
+fn bound_and_wildcard_cache_exact_open_metadata_and_flags() {
+    with_neutral_target(
+        LIMITS,
+        || false,
+        |mut target| {
+            for index in [0, 1, 7, 8, 31] {
+                let value = target
+                    .construct(ValueOp::Bound { scope: index + 1, index }, vec![])
+                    .expect("bound");
+                let mut expected = vec![0; index + 1];
+                expected[index] = 1;
+                assert_eq!(
+                    target.observe(&value),
+                    Ok(StructuralObservation {
+                        single_string: false,
+                        locally_free: &expected,
+                        connective_used: false,
+                    })
+                );
+            }
+            for connective in [false, true] {
+                let value = target
+                    .construct(ValueOp::Wildcard { connective }, vec![])
+                    .expect("wildcard");
+                assert_eq!(
+                    target.observe(&value),
+                    Ok(StructuralObservation {
+                        single_string: false,
+                        locally_free: &[],
+                        connective_used: connective,
+                    })
+                );
+            }
+        },
+    );
+}
+
+#[test]
+fn invalid_or_unaffordable_bound_leaves_never_append_or_allocate_large_metadata() {
+    with_neutral_target(
+        ConstructionLimits { payload_bytes: 8, ..LIMITS },
+        || false,
+        |mut target| {
+            for (scope, index, error) in [
+                (0, 0, ConstructionError::IndexOutOfScope { scope: 0, index: 0 }),
+                (2, 2, ConstructionError::IndexOutOfScope { scope: 2, index: 2 }),
+                (
+                    usize::MAX,
+                    usize::MAX,
+                    ConstructionError::TargetIndexOutOfRange { index: usize::MAX },
+                ),
+                (
+                    usize::MAX,
+                    i32::MAX as usize,
+                    ConstructionError::LimitExceeded(LimitKind::PayloadBytes),
+                ),
+            ] {
+                assert_eq!(target.construct(ValueOp::Bound { scope, index }, vec![]), Err(error));
+                assert_eq!(target.usage().nodes, 0);
+                assert_eq!(target.usage().payload_bytes, 0);
+            }
+        },
+    );
+    assert_eq!(
+        CheckedBoundReference::new(usize::MAX, 0)
+            .expect("large enclosing scope")
+            .metadata_bytes(),
+        1
+    );
+}
+
+#[test]
+fn bound_metadata_loop_cancellation_and_work_refusal_keep_the_graph_private() {
+    with_neutral_target(
+        ConstructionLimits { work: 3, ..LIMITS },
+        || false,
+        |mut target| {
+            assert_eq!(
+                target.construct(ValueOp::Bound { scope: 8, index: 7 }, vec![]),
+                Err(ConstructionError::LimitExceeded(LimitKind::Work))
+            );
+            assert_eq!(
+                target.usage(),
+                ConstructionUsage { work: 3, ..ConstructionUsage::default() }
+            );
+        },
+    );
+    let mut polls = 0;
+    with_neutral_target(
+        LIMITS,
+        || {
+            polls += 1;
+            polls == 4
+        },
+        |mut target| {
+            assert_eq!(
+                target.construct(ValueOp::Bound { scope: 8, index: 7 }, vec![]),
+                Err(ConstructionError::Cancelled)
+            );
+            assert_eq!(
+                target.usage(),
+                ConstructionUsage { work: 3, ..ConstructionUsage::default() }
+            );
+        },
+    );
+}
+
+#[test]
 fn append_fold_checks_empty_seed_and_stops_at_first_failed_append() {
     use crate::construction::append_fold;
     with_neutral_target(

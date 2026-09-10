@@ -6,10 +6,12 @@
 //! those exact implementations and rejects malformed arity before construction.
 
 use mettail_rholang_frontend::construction::{
-    ConstructionError, StructuralObservation, ValueOp, ValueTarget,
+    CheckedBoundReference, ConstructionError, StructuralObservation, ValueOp, ValueTarget,
 };
 use models::rhoapi::Par;
-use models::rust::utils::{new_gbool_par, new_gint_par, new_gstring_par};
+use models::rust::utils::{
+    new_boundvar_par, new_gbool_par, new_gint_par, new_gstring_par, new_wildcard_par,
+};
 
 pub(super) struct DirectNodeTarget;
 
@@ -28,6 +30,16 @@ impl DirectNodeTarget {
 
     pub(super) fn text(value: String) -> Par {
         new_gstring_par(value, Vec::new(), false)
+    }
+
+    /// Integer/scope validation is carried by the descriptor. Resource
+    /// reservation is the caller's separate obligation before invoking this.
+    pub(super) fn bound(reference: CheckedBoundReference) -> Par {
+        new_boundvar_par(reference.emitted_index(), Vec::new(), false)
+    }
+
+    pub(super) fn wildcard(connective: bool) -> Par {
+        new_wildcard_par(Vec::new(), connective)
     }
 
     pub(super) fn append(left: Par, right: Par) -> Par {
@@ -65,6 +77,10 @@ impl ValueTarget for DirectNodeTarget {
             ValueOp::Integer(value) => Self::integer(value),
             ValueOp::Boolean(value) => Self::boolean(value),
             ValueOp::Text(value) => Self::text(value),
+            ValueOp::Bound { scope, index } => {
+                Self::bound(CheckedBoundReference::new(scope, index)?)
+            },
+            ValueOp::Wildcard { connective } => Self::wildcard(connective),
             ValueOp::Append => {
                 let right = children.pop().expect("validated binary arity: right");
                 let left = children.pop().expect("validated binary arity: left");

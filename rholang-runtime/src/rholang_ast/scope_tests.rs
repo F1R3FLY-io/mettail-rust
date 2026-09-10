@@ -69,6 +69,7 @@ fn identity_precedes_hole_names_and_missing_identity_uses_enclosing_holes() {
     let unrelated = named("x");
     env.binders.insert(moniker.clone(), 9);
     env.hole_binders.insert("x".into(), 2);
+    env.scope_width = 10;
     for (var, index) in [(variable(&moniker), 9), (variable(&unrelated), 2)] {
         let expected = new_boundvar_par(index, vec![], false);
         assert_eq!(lower_name_var(&var, &env).expect("name"), expected);
@@ -90,6 +91,7 @@ fn formula_wildcards_do_not_override_bound_references_or_admission_policy() {
         env.admission = admission;
         let bound = named("bound");
         env.binders.insert(bound.clone(), 3);
+        env.scope_width = 4;
         let pattern = env.in_pattern_position();
         assert_eq!(pattern.admission, admission);
         assert!(Arc::ptr_eq(&pattern.resolver, &env.resolver));
@@ -126,6 +128,8 @@ fn ordered_slots_preserve_last_insertion_mixed_numbering_and_outer_shifts() {
         ReceiveSlot::Hole("same".into()),
     ];
     let extended = root.extend_slots(&slots).expect("mixed scope");
+    assert_eq!(root.scope_width, 1);
+    assert_eq!(extended.scope_width, 4);
     same_context(&extended, &root);
     assert_eq!(extended.binders.get(&outer), Some(&3));
     assert_eq!(extended.binders.get(&inner), Some(&1));
@@ -136,10 +140,48 @@ fn ordered_slots_preserve_last_insertion_mixed_numbering_and_outer_shifts() {
     assert_eq!(shadowed.binders.get(&outer), Some(&0));
     assert_eq!(shadowed.binders.get(&inner), Some(&3));
     assert_eq!(shadowed.hole_binders.get("same"), Some(&2));
+    assert_eq!(shadowed.scope_width, 6);
     same_context(&shadowed, &root);
     let reset = shadowed.without_lexical_bindings();
     assert!(reset.binders.is_empty() && reset.hole_binders.is_empty());
+    assert_eq!(reset.scope_width, 0);
     same_context(&reset, &shadowed);
+}
+
+#[test]
+fn declared_width_counts_unused_and_shadowed_slots_without_an_i32_scope_cap() {
+    let var = named("same identity");
+    let first = extend_env(&public_env(), &[Binder(var.clone()), Binder(var.clone())])
+        .expect("repeated identity slots");
+    assert_eq!(first.binders.len(), 1);
+    assert_eq!(first.scope_width, 2);
+    let second = first
+        .extend_slots(&[ReceiveSlot::Hole("x".into()), ReceiveSlot::Hole("x".into())])
+        .expect("repeated hole slots");
+    assert_eq!(second.binders.len() + second.hole_binders.len(), 2);
+    assert_eq!(second.scope_width, 4);
+    assert_eq!(second.binders.get(&var), Some(&2));
+    let mut wide = public_env();
+    wide.scope_width = i32::MAX as usize;
+    let extended = extend_env(&wide, &[Binder(named("unused"))]).expect("total scope is not i32");
+    assert_eq!(extended.scope_width, i32::MAX as usize + 1);
+    let mut maximal = public_env();
+    maximal.scope_width = usize::MAX;
+    assert!(matches!(
+        extend_env(&maximal, &[Binder(named("unused"))]),
+        Err(RholangAstLowerError::ScopeIndexOverflow)
+    ));
+    assert!(matches!(
+        maximal.extend_slots(&[ReceiveSlot::Hole("unused".into())]),
+        Err(RholangAstLowerError::ScopeIndexOverflow)
+    ));
+    assert_eq!(
+        extend_env(&maximal, &[])
+            .expect("zero extension")
+            .scope_width,
+        usize::MAX
+    );
+    assert_eq!(maximal.scope_width, usize::MAX);
 }
 
 #[test]
@@ -187,11 +229,16 @@ fn scope_and_arena_overflow_are_checked_without_large_allocations() {
 
 #[test]
 fn target_index_check_precedes_node_bitvector_construction() {
-    assert_eq!(checked_bound_index(i32::MAX as usize), Ok(i32::MAX));
+    assert_eq!(
+        checked_bound_reference(usize::MAX, i32::MAX as usize)
+            .expect("representable")
+            .emitted_index(),
+        i32::MAX
+    );
     // Never construct the enormous valid endpoint bitvector in this test.
     for index in [i32::MAX as usize + 1, u32::MAX as usize, usize::MAX] {
         assert_eq!(
-            lower_bound_index(index),
+            lower_bound_index(usize::MAX, index),
             Err(RholangAstLowerError::BoundIndexOutOfRange { index })
         );
         for hole in [false, true] {
@@ -224,7 +271,7 @@ fn bound_metadata_and_protobuf_match_independent_small_index_examples() {
         let mut expected = vec![0x2a, 7, 0x9a, 1, 4, 0x0a, 2, 0x08, (index * 2) as u8];
         expected.extend([0x4a, expected_bits.len() as u8]);
         expected.extend_from_slice(&expected_bits);
-        let value = lower_bound_index(index).expect("small bound");
+        let value = lower_bound_index(index + 1, index).expect("small bound");
         assert_eq!(value.locally_free, expected_bits);
         assert!(!value.connective_used);
         assert_eq!(value.encode_to_vec(), expected);

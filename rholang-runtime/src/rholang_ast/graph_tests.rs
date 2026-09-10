@@ -2,13 +2,160 @@ use super::*;
 use mettail_rholang_frontend::arena::{with_neutral_target, ConstructionLimits};
 use prost::Message;
 
+#[test]
+fn bound_graph_charges_both_metadata_allocations_and_observation_before_building() {
+    for index in [0, 1, 7, 8, 31, 65_535] {
+        let graph = graph(vec![(ValueOp::Bound { scope: index + 1, index }, vec![])], 0);
+        let bytes = index + 1;
+        let work = 7 + 3 * bytes as u64;
+        let units = 24 + 2 * bytes;
+        let (result, used, remaining) = run(&graph, work, units, || false);
+        let result = result.expect("exact bound budget");
+        assert_eq!(result.locally_free.len(), bytes);
+        assert_eq!(result.locally_free[index], 1);
+        assert_eq!((used, remaining), (work, 0));
+        let (result, used, remaining) = run(&graph, work - 1, units, || false);
+        assert_eq!(
+            result,
+            Err(GraphInterpretationError::Resource(DynamicReflectionError::WorkLimit))
+        );
+        assert_eq!((used, remaining), (6, units - 20));
+        let (result, used, remaining) = run(&graph, work, units - 1, || false);
+        assert_eq!(
+            result,
+            Err(GraphInterpretationError::Resource(DynamicReflectionError::PayloadByteLimit))
+        );
+        assert_eq!((used, remaining), (6, units - 21));
+    }
+}
+
+#[test]
+fn append_metadata_debits_use_left_copy_and_maximum_length_not_additive_lengths() {
+    for (left_bytes, right_bytes) in [(2, 9), (9, 2), (1, 1)] {
+        let graph = graph(
+            vec![
+                (ValueOp::Bound { scope: left_bytes, index: left_bytes - 1 }, vec![]),
+                (
+                    ValueOp::Bound {
+                        scope: right_bytes,
+                        index: right_bytes - 1,
+                    },
+                    vec![],
+                ),
+                (ValueOp::Append, vec![0, 1]),
+            ],
+            2,
+        );
+        let maximum = left_bytes.max(right_bytes);
+        let work = (20 + 4 * left_bytes + 3 * right_bytes + 3 * maximum) as u64;
+        let units = 64 + 3 * left_bytes + 2 * right_bytes + maximum;
+        let (result, used, remaining) = run(&graph, work, units, || false);
+        let result = result.expect("exact append budget");
+        assert_eq!(result.locally_free.len(), maximum);
+        assert_eq!(result.locally_free[left_bytes - 1], 1);
+        assert_eq!(result.locally_free[right_bytes - 1], 1);
+        assert_eq!((used, remaining), (work, 0));
+        assert!(matches!(
+            run(&graph, work - 1, units, || false).0,
+            Err(GraphInterpretationError::Resource(DynamicReflectionError::WorkLimit))
+        ));
+        assert!(matches!(
+            run(&graph, work, units - 1, || false).0,
+            Err(GraphInterpretationError::Resource(DynamicReflectionError::PayloadByteLimit))
+        ));
+    }
+    let shared = graph(
+        vec![(ValueOp::Bound { scope: 3, index: 2 }, vec![]), (ValueOp::Append, vec![0, 0])],
+        1,
+    );
+    let (result, used, remaining) = run(&shared, 47, 70, || false);
+    assert_eq!(result.expect("both occurrences").locally_free, [0, 0, 1]);
+    assert_eq!((used, remaining), (47, 0));
+}
+
+#[test]
+fn metadata_cost_overflow_and_failed_reservation_never_call_the_constructor() {
+    assert_eq!(MetadataCharge::bound(usize::MAX), Err(GraphInterpretationError::SizeOverflow));
+    assert_eq!(
+        MetadataCharge::append(usize::MAX, 0),
+        Err(GraphInterpretationError::SizeOverflow)
+    );
+    let mut used = 0;
+    let mut cancelled = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut used, 100, 5, &mut cancelled);
+    let mut calls = 0;
+    let result = precharged(
+        &mut budget,
+        Footprint { entries: 1, text_bytes: 0 },
+        MetadataCharge::bound(1).expect("cost"),
+        || {
+            calls += 1;
+            Ok(())
+        },
+    );
+    assert_eq!(
+        result,
+        Err(GraphInterpretationError::Resource(DynamicReflectionError::PayloadByteLimit))
+    );
+    assert_eq!((calls, budget.work_used(), budget.remaining_bytes()), (0, 0, 5));
+}
+
+#[test]
+fn bound_metadata_cancellation_preserves_exact_paid_prefix_without_partial_output() {
+    let graph = graph(
+        vec![(ValueOp::Bound { scope: 3, index: 2 }, vec![]), (ValueOp::Append, vec![0, 0])],
+        1,
+    );
+    // Stack reservation, root/left visits, left construction, right visit/
+    // construction, append visit/construction. A refused reservation is atomic.
+    let paid_prefixes =
+        [(0, 70), (8, 38), (9, 38), (10, 38), (20, 28), (21, 28), (31, 18), (32, 18)];
+    for (stop, expected) in paid_prefixes.into_iter().enumerate() {
+        let mut calls = 0;
+        let (result, spent, remaining) = run(&graph, 47, 70, || {
+            calls += 1;
+            calls == stop + 1
+        });
+        assert_eq!(
+            result,
+            Err(GraphInterpretationError::Resource(DynamicReflectionError::Cancelled))
+        );
+        assert_eq!(calls, stop + 1);
+        assert_eq!((spent, remaining), expected);
+    }
+}
+
+#[test]
+fn exact_metadata_observation_rejects_wrong_reference_and_wildcard_flag() {
+    let bound = graph(vec![(ValueOp::Bound { scope: 2, index: 1 }, vec![])], 0);
+    assert!(matches!(
+        checked_value(
+            &bound,
+            0,
+            models::rust::utils::new_boundvar_par(0, vec![], false),
+            Footprint { entries: 1, text_bytes: 0 }
+        ),
+        Err(GraphInterpretationError::ObservationMismatch { index: 0 })
+    ));
+    let wildcard = graph(vec![(ValueOp::Wildcard { connective: true }, vec![])], 0);
+    assert!(matches!(
+        checked_value(
+            &wildcard,
+            0,
+            DirectNodeTarget::wildcard(false),
+            Footprint { entries: 1, text_bytes: 0 }
+        ),
+        Err(GraphInterpretationError::ObservationMismatch { index: 0 })
+    ));
+}
+
 fn graph(steps: Vec<(ValueOp, Vec<usize>)>, root: usize) -> ConstructionGraph {
     with_neutral_target(
         ConstructionLimits {
             nodes: steps.len(),
             edges: steps.len() * 2,
             payload_bytes: 1_000_000,
-            work: steps.len() * 4 + 1,
+            work: 1_000_000 + steps.len() * 4 + 1,
         },
         || false,
         |mut target| {
@@ -236,20 +383,29 @@ fn precharge_rejects_before_callback_and_retains_paid_failed_callback_cost() {
     let mut cancelled = || false;
     let mut budget = ReflectedCodecBudget::new(&mut work, 10, 4, &mut cancelled);
     let mut calls = 0;
-    let error = precharged(&mut budget, Footprint { entries: 1, text_bytes: 1 }, || {
-        calls += 1;
-        Ok(())
-    });
+    let error = precharged(
+        &mut budget,
+        Footprint { entries: 1, text_bytes: 1 },
+        MetadataCharge::default(),
+        || {
+            calls += 1;
+            Ok(())
+        },
+    );
     assert_eq!(
         error,
         Err(GraphInterpretationError::Resource(DynamicReflectionError::PayloadByteLimit))
     );
     assert_eq!((calls, budget.work_used(), budget.remaining_bytes()), (0, 0, 4));
-    let error: Result<(), _> =
-        precharged(&mut budget, Footprint { entries: 1, text_bytes: 0 }, || {
+    let error: Result<(), _> = precharged(
+        &mut budget,
+        Footprint { entries: 1, text_bytes: 0 },
+        MetadataCharge::default(),
+        || {
             calls += 1;
             Err(GraphInterpretationError::ObservationMismatch { index: 0 })
-        });
+        },
+    );
     assert_eq!(error, Err(GraphInterpretationError::ObservationMismatch { index: 0 }));
     assert_eq!((calls, budget.work_used(), budget.remaining_bytes()), (1, 1, 0));
 }
@@ -268,7 +424,7 @@ fn checked_footprint_arithmetic_never_allocates_or_calls_constructor() {
         Footprint { entries: 1, text_bytes: usize::MAX - 2 },
     ] {
         assert_eq!(
-            precharged(&mut budget, size, || -> Result<(), _> {
+            precharged(&mut budget, size, MetadataCharge::default(), || -> Result<(), _> {
                 panic!("overflow must reject before helper")
             }),
             Err(GraphInterpretationError::SizeOverflow)

@@ -7,7 +7,9 @@
 use super::target::DirectNodeTarget;
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use mettail_rholang_frontend::arena::{ConstructionGraph, NodeView};
-use mettail_rholang_frontend::construction::{ConstructionError, ValueOp, ValueTarget};
+use mettail_rholang_frontend::construction::{
+    CheckedBoundReference, ConstructionError, ValueOp, ValueTarget,
+};
 use mettail_runtime::worklist::{ReductionError, Worklist, WorklistError};
 use models::rhoapi::Par;
 
@@ -54,6 +56,40 @@ struct Footprint {
     text_bytes: usize,
 }
 
+/// Logical metadata byte passes and allocated/copied payload volume are
+/// distinct. The retained outer length is neither of these quantities.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MetadataCharge {
+    work: usize,
+    units: usize,
+}
+
+impl MetadataCharge {
+    fn bound(bytes: usize) -> Result<Self, GraphInterpretationError> {
+        Ok(Self {
+            work: bytes
+                .checked_mul(3)
+                .ok_or(GraphInterpretationError::SizeOverflow)?,
+            units: bytes
+                .checked_mul(2)
+                .ok_or(GraphInterpretationError::SizeOverflow)?,
+        })
+    }
+
+    fn append(left: usize, right: usize) -> Result<Self, GraphInterpretationError> {
+        let result = left.max(right);
+        Ok(Self {
+            work: result
+                .checked_mul(3)
+                .and_then(|passes| left.checked_add(passes))
+                .ok_or(GraphInterpretationError::SizeOverflow)?,
+            units: left
+                .checked_add(result)
+                .ok_or(GraphInterpretationError::SizeOverflow)?,
+        })
+    }
+}
+
 impl Footprint {
     fn plus(self, right: Self) -> Result<Self, GraphInterpretationError> {
         Ok(Self {
@@ -72,15 +108,25 @@ impl Footprint {
         self,
         budget: &mut ReflectedCodecBudget<'_, C>,
     ) -> Result<(), GraphInterpretationError> {
+        self.charge_with_metadata(budget, MetadataCharge::default())
+    }
+
+    fn charge_with_metadata<C: FnMut() -> bool>(
+        self,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+        metadata: MetadataCharge,
+    ) -> Result<(), GraphInterpretationError> {
         let work = self
             .entries
             .checked_add(self.text_bytes)
+            .and_then(|work| work.checked_add(metadata.work))
             .ok_or(GraphInterpretationError::SizeOverflow)?;
         // Fixed logical entry units, NOT native layout or physical allocation.
         let units = self
             .entries
             .checked_mul(4)
             .and_then(|units| units.checked_add(self.text_bytes))
+            .and_then(|units| units.checked_add(metadata.units))
             .ok_or(GraphInterpretationError::SizeOverflow)?;
         budget.charge(work, units)?;
         Ok(())
@@ -142,13 +188,14 @@ fn checked_value(
 fn precharged<C: FnMut() -> bool, T>(
     budget: &mut ReflectedCodecBudget<'_, C>,
     footprint: Footprint,
+    metadata: MetadataCharge,
     build: impl FnOnce() -> Result<T, GraphInterpretationError>,
 ) -> Result<T, GraphInterpretationError> {
-    footprint.charge(budget)?;
+    footprint.charge_with_metadata(budget, metadata)?;
     build()
 }
 
-/// Interpret the initial empty/integer/Boolean/text/append construction family.
+/// Interpret empty/integer/Boolean/text/bound/wildcard/append construction.
 ///
 /// This is a structural component, not full source admission or a prepared
 /// executable program. The caller owns the graph and cumulative budget.
@@ -163,6 +210,13 @@ fn precharged<C: FnMut() -> bool, T>(
 /// additional work unit; each copied expression entry costs one work/four
 /// logical units, and each copied text byte costs one work/one logical unit.
 /// `RholangInitialGraphResources.v` proves the associated footprint/debit laws.
+/// Bound/wildcard leaves retain the same scheduling and stack-capacity proof.
+/// For bound metadata length `b = index + 1`, additionally reserve `3*b` work
+/// and `2*b` units before initialization, the node helper's clone and observation.
+/// For append metadata lengths `l`, `r`, put `m = max(l, r)` and additionally
+/// reserve `l + 3*m` work and `l + m` units before left cloning, union initialization/
+/// filling and observation. `RholangBoundMetadata.v` proves these separate byte-pass
+/// equations. Retained metadata has length `m`, not an additive subtree measure.
 ///
 /// These allowances are not semantic gas, protobuf size or RSS. Existing
 /// worklist/constructor allocation is infallible; cancellation is checked at
@@ -212,21 +266,38 @@ pub fn interpret_construction_graph<C: FnMut() -> bool>(
                         work.push(Job::Visit(*left), Job::arity)?;
                     },
                     scalar => {
+                        let reference = match scalar {
+                            ValueOp::Bound { scope, index } => {
+                                Some(CheckedBoundReference::new(*scope, *index)?)
+                            },
+                            _ => None,
+                        };
+                        let metadata = match reference {
+                            Some(reference) => MetadataCharge::bound(reference.metadata_bytes())?,
+                            None => MetadataCharge::default(),
+                        };
                         let footprint = match scalar {
                             ValueOp::Empty => Footprint { entries: 0, text_bytes: 0 },
                             ValueOp::Text(text) => Footprint { entries: 1, text_bytes: text.len() },
-                            ValueOp::Integer(_) | ValueOp::Boolean(_) => {
-                                Footprint { entries: 1, text_bytes: 0 }
-                            },
+                            ValueOp::Integer(_)
+                            | ValueOp::Boolean(_)
+                            | ValueOp::Bound { .. }
+                            | ValueOp::Wildcard { .. } => Footprint { entries: 1, text_bytes: 0 },
                             ValueOp::Append => unreachable!("append scheduled separately"),
                         };
-                        let value = precharged(budget, footprint, || {
+                        let value = precharged(budget, footprint, metadata, || {
                             // In particular the text clone is AFTER reservation.
                             let value = match scalar {
                                 ValueOp::Empty => DirectNodeTarget::empty(),
                                 ValueOp::Integer(value) => DirectNodeTarget::integer(*value),
                                 ValueOp::Boolean(value) => DirectNodeTarget::boolean(*value),
                                 ValueOp::Text(value) => DirectNodeTarget::text(value.clone()),
+                                ValueOp::Bound { .. } => DirectNodeTarget::bound(
+                                    reference.expect("validated bound descriptor"),
+                                ),
+                                ValueOp::Wildcard { connective } => {
+                                    DirectNodeTarget::wildcard(*connective)
+                                },
                                 ValueOp::Append => unreachable!("append scheduled separately"),
                             };
                             checked_value(graph, index, value, footprint)
@@ -240,7 +311,11 @@ pub fn interpret_construction_graph<C: FnMut() -> bool>(
                     let footprint = left.footprint.plus(right.footprint)?;
                     // Par::append clones left, then concat clones left and right.
                     let copies = left.footprint.plus(footprint)?;
-                    precharged(budget, copies, || {
+                    let metadata = MetadataCharge::append(
+                        left.value.locally_free.len(),
+                        right.value.locally_free.len(),
+                    )?;
+                    precharged(budget, copies, metadata, || {
                         let value =
                             ValueTarget::append(&mut DirectNodeTarget, left.value, right.value)?;
                         checked_value(graph, index, value, footprint)

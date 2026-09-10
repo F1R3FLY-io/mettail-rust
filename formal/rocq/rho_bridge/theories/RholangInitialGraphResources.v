@@ -77,19 +77,46 @@ Definition initial_head (head : Head) : Prop :=
   | _ => False
   end.
 
+(** The old closed-head result has a concrete syntax-domain premise. Bound and
+    wildcard leaves are flat too, but their metadata is not generally closed. *)
+Fixpoint original_scalar_tree (tree : InitialTree) : bool :=
+  match tree with
+  | ScalarTree (BoundScalar _ _) | ScalarTree (WildcardScalar _) => false
+  | ScalarTree _ => true
+  | AppendTree lhs rhs => original_scalar_tree lhs && original_scalar_tree rhs
+  end.
+
 Theorem initial_outputs_have_only_flat_closed_scalar_heads : forall tree,
+  original_scalar_tree tree = true ->
   Forall initial_head (heads_of (tree_denotation tree)) /\
   summary_of (tree_denotation tree) = closed_summary.
 Proof.
-  induction tree as [scalar|lhs [HL SL] rhs [HR SR]].
-  - destruct scalar; cbn; split; repeat constructor.
-  - cbn [tree_denotation]. split.
+  induction tree as [scalar|lhs IHleft rhs IHright]; intro Hdomain.
+  - destruct scalar; cbn in Hdomain; try discriminate; cbn; split; repeat constructor.
+  - apply andb_true_iff in Hdomain. destruct Hdomain as [HLdomain HRdomain].
+    destruct (IHleft HLdomain) as [HL SL], (IHright HRdomain) as [HR SR].
+    cbn [tree_denotation]. split.
     + change (Forall initial_head
         (heads_of (tree_denotation lhs) ++ heads_of (tree_denotation rhs))).
       apply Forall_app; auto.
     + change (join_summary (summary_of (tree_denotation lhs))
         (summary_of (tree_denotation rhs)) = closed_summary).
       now rewrite SL, SR.
+Qed.
+
+Definition flat_reference_head (head : Head) : Prop :=
+  match head with
+  | MakeHead (BoundHead _) [] | MakeHead WildcardHead [] => True
+  | _ => initial_head head
+  end.
+Theorem extended_outputs_have_only_flat_heads : forall tree,
+  Forall flat_reference_head (heads_of (tree_denotation tree)).
+Proof.
+  induction tree as [scalar|lhs HL rhs HR].
+  - destruct scalar; cbn; repeat constructor.
+  - change (Forall flat_reference_head
+      (heads_of (tree_denotation lhs) ++ heads_of (tree_denotation rhs))).
+    apply Forall_app; auto.
 Qed.
 
 Definition append_copy_footprint (lhs rhs : Footprint) := plus lhs (plus lhs rhs).
@@ -211,6 +238,7 @@ Print Assumptions scalar_footprint_is_exact.
 Print Assumptions append_footprint_is_exact.
 Print Assumptions cached_tree_footprint_is_exact.
 Print Assumptions initial_outputs_have_only_flat_closed_scalar_heads.
+Print Assumptions extended_outputs_have_only_flat_heads.
 Print Assumptions append_charge_covers_the_actual_three_copies.
 Print Assumptions successful_reservation_is_exact.
 Print Assumptions reservation_succeeds_exactly_when_both_dimensions_fit.

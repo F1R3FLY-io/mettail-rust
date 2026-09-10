@@ -80,12 +80,15 @@ Qed.
     separate construction and source-admission obligations. *)
 Inductive Primitive :=
 | EmptyPrimitive | IntegerPrimitive (number : Z) | BooleanPrimitive (flag : bool)
-| TextPrimitive (payload : string) | AppendPrimitive.
+| TextPrimitive (payload : string) | AppendPrimitive
+| BoundPrimitive (scope index : nat) | WildcardPrimitive (connective : bool).
 Definition primitive_operation (primitive : Primitive) : ConstructOp :=
   match primitive with
   | EmptyPrimitive => EmptyOp | IntegerPrimitive number => IntegerOp number
   | BooleanPrimitive flag => BooleanOp flag | TextPrimitive payload => TextOp payload
   | AppendPrimitive => AppendOp
+  | BoundPrimitive scope index => BoundOp scope index
+  | WildcardPrimitive flag => WildcardOp flag
   end.
 Definition primitive_fact (primitive : Primitive) (children : list ConstructionFact)
     : option ConstructionFact :=
@@ -96,6 +99,10 @@ Definition primitive_fact (primitive : Primitive) (children : list ConstructionF
   | BooleanPrimitive flag, [] => Some (fact_of (boolean flag))
   | TextPrimitive payload, [] => Some (fact_of (text payload))
   | AppendPrimitive, [lhs; rhs] => Some (append_fact lhs rhs)
+  | BoundPrimitive scope index, [] =>
+    match within_target_indices [index] (bound scope index) with
+    | Constructed value => Some (fact_of value) | _ => None end
+  | WildcardPrimitive flag, [] => Some (fact_of (wildcard flag))
   | _, _ => None
   end.
 

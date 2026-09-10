@@ -11,7 +11,7 @@
     Rust constructor bodies have separate correspondence obligations. *)
 From Stdlib Require Import List Arith Lia Bool String ZArith.
 From RhoBridge Require Import RholangInitialGraphInterpretation
-  RholangTargetConstruction RholangWorklistConstruction.
+  RholangTargetConstruction RholangWorklistConstruction RholangConstructionProtocol.
 Import ListNotations.
 
 Definition scalar_denotation (scalar : InitialScalar) : Value :=
@@ -20,6 +20,8 @@ Definition scalar_denotation (scalar : InitialScalar) : Value :=
   | IntegerScalar number => singleton (IntegerHead number) [] closed_summary
   | BooleanScalar flag => boolean flag
   | TextScalar payload => text payload
+  | BoundScalar _ index => singleton (BoundHead index) [] (bound_summary index)
+  | WildcardScalar flag => wildcard flag
   end.
 
 Theorem integer_denotation_reuses_checked_constructor : forall number,
@@ -29,6 +31,23 @@ Proof.
   intros number [Hlow Hhigh]. unfold integer, scalar_denotation.
   apply Z.leb_le in Hlow. apply Z.leb_le in Hhigh. now rewrite Hlow, Hhigh.
 Qed.
+
+Theorem bound_denotation_reuses_checked_constructor : forall scope index,
+  index < scope -> fits_target_index index = true ->
+  interpret (BoundOp scope index) [] =
+    Constructed (scalar_denotation (BoundScalar scope index)).
+Proof.
+  intros scope index Hscope Hfits.
+  change ((if fits_target_index index && true then bound scope index
+    else ConstructionRejected TargetIndexOutOfRange) =
+    Constructed (scalar_denotation (BoundScalar scope index))).
+  rewrite Hfits. cbn [andb].
+  unfold bound. apply Nat.ltb_lt in Hscope. now rewrite Hscope.
+Qed.
+
+Theorem wildcard_denotation_retains_its_exact_connective_policy : forall flag,
+  interpret (WildcardOp flag) [] = Constructed (scalar_denotation (WildcardScalar flag)).
+Proof. reflexivity. Qed.
 
 Fixpoint tree_denotation (tree : InitialTree) : Value :=
   match tree with
@@ -180,6 +199,8 @@ Proof.
 Qed.
 
 Print Assumptions integer_denotation_reuses_checked_constructor.
+Print Assumptions bound_denotation_reuses_checked_constructor.
+Print Assumptions wildcard_denotation_retains_its_exact_connective_policy.
 Print Assumptions bounded_steps_trans.
 Print Assumptions bounded_steps_weaken.
 Print Assumptions scalar_step.

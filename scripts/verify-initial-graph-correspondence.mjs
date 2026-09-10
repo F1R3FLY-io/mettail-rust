@@ -23,18 +23,49 @@ function checkInterpreter(source) {
     "if current.children.len() != current.operation.arity()",
     "for &child in [left, right] {\n                            if child >= index",
     "work.push(Job::Append(index), Job::arity)?;\n                        work.push(Job::Visit(*right), Job::arity)?;\n                        work.push(Job::Visit(*left), Job::arity)?;",
-    "footprint.charge(budget)?;\n    build()",
-    "let value = precharged(budget, footprint, || {\n                            // In particular the text clone is AFTER reservation.",
+    "footprint.charge_with_metadata(budget, metadata)?;\n    build()",
+    "let value = precharged(budget, footprint, metadata, || {\n                            // In particular the text clone is AFTER reservation.",
     "ValueOp::Text(value) => DirectNodeTarget::text(value.clone())",
     "work.reduce_pair(|left, right| {\n                    let footprint = left.footprint.plus(right.footprint)?;",
-    "let copies = left.footprint.plus(footprint)?;\n                    precharged(budget, copies, || {",
+    "let copies = left.footprint.plus(footprint)?;\n                    let metadata = MetadataCharge::append(\n                        left.value.locally_free.len(),\n                        right.value.locally_free.len(),\n                    )?;\n                    precharged(budget, copies, metadata, || {",
     "ValueTarget::append(&mut DirectNodeTarget, left.value, right.value)?;",
     "if DirectNodeTarget::observation(&value) != node(graph, index)?.observation",
     "        work.check()?;\n    }\n    Ok(work.finish()?.value)",
     ".checked_mul(4)\n            .and_then(|units| units.checked_add(self.text_bytes))",
+    "self.charge_with_metadata(budget, MetadataCharge::default())",
+    "work: bytes\n                .checked_mul(3)",
+    "units: bytes\n                .checked_mul(2)",
+    "let result = left.max(right);",
+    "work: result\n                .checked_mul(3)\n                .and_then(|passes| left.checked_add(passes))",
+    "units: left\n                .checked_add(result)",
+    ".and_then(|work| work.checked_add(metadata.work))",
+    ".and_then(|units| units.checked_add(metadata.units))",
+    "budget.charge(work, units)?;",
+    "Some(CheckedBoundReference::new(*scope, *index)?)",
+    "Some(reference) => MetadataCharge::bound(reference.metadata_bytes())?",
+    "ValueOp::Bound { .. } => DirectNodeTarget::bound(\n                                    reference.expect(\"validated bound descriptor\"),",
+    "DirectNodeTarget::wildcard(*connective)",
   ]) assert(source.includes(witness), `reviewed machine/resource witness missing: ${witness}`);
   assert(!/size_of|HashMap|BTreeMap|\.parse\(|Proc::/.test(source),
     "no native-layout debit, subtree memoization, or second source traversal");
+}
+
+// Remove only the checked bound/wildcard extension. Exact reconstruction below
+// retains every pre-existing target operation; this is an edit-boundary check,
+// not a replacement for constructor tests or the construction-protocol proof.
+function beforeBoundTarget(source) {
+  for (const [before, after] of [
+    ["    ConstructionError, StructuralObservation, ValueOp, ValueTarget,",
+      "    CheckedBoundReference, ConstructionError, StructuralObservation, ValueOp, ValueTarget,"],
+    ["use models::rust::utils::{new_gbool_par, new_gint_par, new_gstring_par};",
+      "use models::rust::utils::{\n    new_boundvar_par, new_gbool_par, new_gint_par, new_gstring_par, new_wildcard_par,\n};"],
+    ["", "    /// Integer/scope validation is carried by the descriptor. Resource\n    /// reservation is the caller's separate obligation before invoking this.\n    pub(super) fn bound(reference: CheckedBoundReference) -> Par {\n        new_boundvar_par(reference.emitted_index(), Vec::new(), false)\n    }\n\n    pub(super) fn wildcard(connective: bool) -> Par {\n        new_wildcard_par(Vec::new(), connective)\n    }\n\n"],
+    ["", "            ValueOp::Bound { scope, index } => {\n                Self::bound(CheckedBoundReference::new(scope, index)?)\n            },\n            ValueOp::Wildcard { connective } => Self::wildcard(connective),\n"],
+  ]) {
+    assert.equal(source.split(after).length - 1, 1, `one exact bound target extension: ${after}`);
+    source = source.replace(after, before);
+  }
+  return source;
 }
 
 function between(source, start, end) {
@@ -56,15 +87,26 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   assert.equal(beforeInitialGraph(read(driver)), git(root, baseline, driver),
     "all pre-existing source lowering remains byte-identical");
   const target = "rholang-runtime/src/rholang_ast/target.rs";
-  assert.equal(read(target), git(root, baseline, target), "existing node target unchanged");
+  assert.equal(beforeBoundTarget(read(target)), git(root, baseline, target),
+    "existing node target unchanged outside checked bound/wildcard extension");
+  assert.throws(() => beforeBoundTarget(read(target).replace(
+    "CheckedBoundReference::new(scope, index)", "CheckedBoundReference::new(index, scope)")));
+  assert.throws(() => beforeBoundTarget(read(target).replace(
+    "new_wildcard_par(Vec::new(), connective)", "new_wildcard_par(Vec::new(), false)")));
   const source = read("rholang-runtime/src/rholang_ast/graph.rs");
   checkInterpreter(source);
   for (const [from, to] of [
     ["work.push(Job::Visit(*right), Job::arity)?;", "work.push(Job::Visit(*left), Job::arity)?;"],
     ["work.push(Job::Visit(*left), Job::arity)?;", ""],
     ["let copies = left.footprint.plus(footprint)?;", "let copies = footprint;"],
-    ["footprint.charge(budget)?;\n    build()", "let result = build();\n    footprint.charge(budget)?;\n    result"],
+    ["footprint.charge_with_metadata(budget, metadata)?;\n    build()", "let result = build();\n    footprint.charge_with_metadata(budget, metadata)?;\n    result"],
     [".checked_mul(4)", ".checked_mul(8)"],
+    ["work: bytes\n                .checked_mul(3)", "work: bytes\n                .checked_mul(2)"],
+    ["units: bytes\n                .checked_mul(2)", "units: bytes\n                .checked_mul(1)"],
+    ["let result = left.max(right);", "let result = left + right;"],
+    [".and_then(|work| work.checked_add(metadata.work))", ""],
+    [".and_then(|units| units.checked_add(metadata.units))", ""],
+    ["Some(CheckedBoundReference::new(*scope, *index)?)", "Some(CheckedBoundReference::new(*index, *scope)?)"],
   ]) {
     assert(source.includes(from), "mutation source exists");
     assert.throws(() => checkInterpreter(source.replace(from, to)));
@@ -77,10 +119,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     ["models/src/rust/utils.rs", "pub fn new_gint_par(", "pub fn new_guri_par("],
     ["models/src/rust/utils.rs", "    pub fn with_exprs(", "    pub fn with_"],
     ["models/src/rust/rholang/implicits.rs", "pub fn vector_par(", "\npub fn "],
+    ["models/src/lib.rs", "pub fn create_bit_vector(", "\n}\n"],
+    ["models/src/lib.rs", "pub fn canonical_bit_vector(", "\n}\n"],
+    ["models/src/rust/utils.rs", "pub fn new_boundvar_par(", "pub fn new_boundvar_expr("],
+    ["models/src/rust/utils.rs", "pub fn new_boundvar_expr(", "pub fn new_freevar_par("],
+    ["models/src/rust/utils.rs", "pub fn new_wildcard_par(", "pub fn new_wildcard_expr("],
+    ["models/src/rust/utils.rs", "pub fn union(", "\n}\n"],
   ]) {
     const current = readFileSync(`${nodeRoot}${path}`, "utf8");
     assert.equal(between(current, start, end), between(git(nodeRoot, nodeBaseline, path), start, end),
       `the exact constructor/copy policy remains pinned: ${start}`);
   }
-  console.log(`Initial graph correspondence passed: unchanged source lowerer/target, pinned node helpers, five rejected scheduling/charging mutations.`);
+  console.log("Graph correspondence passed: unchanged lowering outside declared scope edits, exact bound/wildcard target extension, pinned node helpers, thirteen rejected target/scheduling/charging mutations. Behavioral correctness requires separate proofs/tests.");
 }

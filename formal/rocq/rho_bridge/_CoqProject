@@ -45,6 +45,7 @@ theories/RholangWorklistConstruction.v
 theories/RholangInitialGraphInterpretation.v
 theories/RholangInitialGraphMachine.v
 theories/RholangInitialGraphResources.v
+theories/RholangBoundMetadata.v
 theories/RholangFltTransport.v
 theories/RholangFltRequestRecipes.v
 theories/RholangOwnedSession.v
