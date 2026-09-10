@@ -16,6 +16,7 @@ use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeMap;
 use syn::Ident;
 
 use crate::gen::native_carrier::NativeRecursiveCarrier;
@@ -26,8 +27,12 @@ enum CollectionSurface {
     Literal,
 }
 
+struct CheckedEmissionContext {
+    dummy_indices: BTreeMap<String, usize>,
+}
+
 struct CloneEmissionNames {
-    checked: bool,
+    checked: Option<CheckedEmissionContext>,
     task_enum: Ident,
     task_pool: Ident,
     result_pool: Ident,
@@ -38,12 +43,65 @@ struct CloneEmissionNames {
 impl CloneEmissionNames {
     fn ordinary() -> Self {
         Self {
-            checked: false,
+            checked: None,
             task_enum: format_ident!("CloneTask"),
             task_pool: format_ident!("CLONE_TASK_POOL"),
             result_pool: format_ident!("CLONE_RESULT_POOL"),
             driver: format_ident!("clone_iterative"),
             handler_prefix: "clone_handle_",
+        }
+    }
+
+    // Gated until every field/assembly branch has checked emission. This
+    // constructor changes generation context, not parser activation.
+    #[allow(dead_code)]
+    fn checked(receipts: &super::dummy_receipts::DummyReceiptEmission) -> Self {
+        Self {
+            checked: Some(CheckedEmissionContext { dummy_indices: receipts.indices.clone() }),
+            task_enum: format_ident!("CheckedBindingTask"),
+            task_pool: format_ident!("CHECKED_BINDING_TASK_POOL"),
+            result_pool: format_ident!("CHECKED_BINDING_RESULT_POOL"),
+            driver: format_ident!("copy_binding_iterative"),
+            handler_prefix: "binding_handle_",
+        }
+    }
+
+    #[allow(dead_code)]
+    fn dummy_charge(&self, category: &Ident) -> Result<TokenStream, syn::Error> {
+        let index = self
+            .checked
+            .as_ref()
+            .and_then(|context| context.dummy_indices.get(&category.to_string()))
+            .ok_or_else(|| {
+                syn::Error::new(
+                    category.span(),
+                    "checked binding requires the category's selected dummy receipt",
+                )
+            })?;
+        Ok(quote! { dummy_charges[#index] })
+    }
+
+    fn base_admission(&self) -> TokenStream {
+        if self.checked.is_some() {
+            // ConstructCategory plus the independently rooted normal-cleanup
+            // base. Owned children and field-local effects are separate.
+            quote! { mettail_runtime::reserve_binding_parts(6, 2, 0, reserve)?; }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn publish(&self, category: &Ident, value: TokenStream) -> TokenStream {
+        let wrap = format_ident!("Wrap{}", category);
+        if self.checked.is_some() {
+            quote! {
+                mettail_runtime::write_binding_slot(
+                    results, slot, AnyClonedTerm::#wrap(#value),
+                    |value| matches!(value, AnyClonedTerm::#wrap(_)), reserve,
+                )?;
+            }
+        } else {
+            quote! { results[slot] = Some(AnyClonedTerm::#wrap(#value)); }
         }
     }
 
@@ -53,7 +111,7 @@ impl CloneEmissionNames {
 
     fn task_type(&self) -> TokenStream {
         let task_enum = &self.task_enum;
-        if self.checked {
+        if self.checked.is_some() {
             quote! { (#task_enum, moniker::ScopeState) }
         } else {
             quote! { #task_enum }
@@ -61,7 +119,7 @@ impl CloneEmissionNames {
     }
 
     fn push_task(&self, task: TokenStream, state: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.checked.is_some() {
             quote! {
                 mettail_runtime::reserve_binding_parts(1, 1, 0, reserve)?;
                 stack.push((#task, #state));
@@ -72,7 +130,7 @@ impl CloneEmissionNames {
     }
 
     fn function_generics(&self) -> TokenStream {
-        if self.checked {
+        if self.checked.is_some() {
             quote! { <E> }
         } else {
             TokenStream::new()
@@ -81,10 +139,11 @@ impl CloneEmissionNames {
 
     // Insert after the existing final parameter's comma.
     fn binding_parameters(&self) -> TokenStream {
-        if self.checked {
+        if self.checked.is_some() {
             quote! {
                 operation: mettail_runtime::BindingOperation<'_>,
                 reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                dummy_charges: &[mettail_runtime::binding_receipt::BindingCharge],
             }
         } else {
             TokenStream::new()
@@ -92,7 +151,7 @@ impl CloneEmissionNames {
     }
 
     fn result_type(&self) -> TokenStream {
-        if self.checked {
+        if self.checked.is_some() {
             quote! { -> Result<(), mettail_runtime::BindingFailure<E>> }
         } else {
             TokenStream::new()
@@ -100,7 +159,7 @@ impl CloneEmissionNames {
     }
 
     fn success_tail(&self) -> TokenStream {
-        if self.checked {
+        if self.checked.is_some() {
             quote! { Ok(()) }
         } else {
             TokenStream::new()
@@ -109,15 +168,15 @@ impl CloneEmissionNames {
 
     // Leading comma preserves ordinary calls without adding a trailing comma.
     fn binding_arguments(&self) -> TokenStream {
-        if self.checked {
-            quote! { , operation, reserve }
+        if self.checked.is_some() {
+            quote! { , operation, reserve, dummy_charges }
         } else {
             TokenStream::new()
         }
     }
 
     fn propagate(&self) -> TokenStream {
-        if self.checked {
+        if self.checked.is_some() {
             quote! { ? }
         } else {
             TokenStream::new()
@@ -300,7 +359,7 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
         }
     }
 
-    let loop_body = if emission.checked {
+    let loop_body = if emission.checked.is_some() {
         quote! {
             while !stack.is_empty() {
                 mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
@@ -347,9 +406,14 @@ fn generate_visit_arm(
     let wrap = format_ident!("Wrap{}", category);
     match variant {
         VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
-        VariantKind::Nullary { label } => quote! {
-            #category::#label => {
-                results[slot] = Some(AnyClonedTerm::#wrap(#category::#label));
+        VariantKind::Nullary { label } => {
+            let admission = emission.base_admission();
+            let publish = emission.publish(category, quote! { #category::#label });
+            quote! {
+                #category::#label => {
+                    #admission
+                    #publish
+                }
             }
         },
         VariantKind::Var { label } | VariantKind::Literal { label } => quote! {
@@ -1058,7 +1122,7 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
             },
             quote! { operation.state() },
         );
-        if emission.checked {
+        if emission.checked.is_some() {
             return quote! {
                 impl mettail_runtime::CheckedIterativeBinding for #category {
                     #[allow(unreachable_patterns)]
@@ -1067,6 +1131,8 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
                         operation: mettail_runtime::BindingOperation<'_>,
                         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
                     ) -> Result<Self, mettail_runtime::BindingFailure<E>> {
+                        let dummy_charges = BINDING_DUMMY_CHARGES.as_ref()
+                            .map_err(|_| mettail_runtime::BindingFailure::SizeOverflow)?;
                         // Logical task/result vector headers, regardless of
                         // whether this invocation reuses pooled capacity.
                         mettail_runtime::reserve_binding_parts(0, 2, 0, reserve)?;
@@ -1077,7 +1143,7 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
                                 let root =
                                     mettail_runtime::append_binding_slots(results, 1, reserve)?;
                                 #root_push
-                                #driver(stack, results, operation, reserve)?;
+                                #driver(stack, results, operation, reserve, dummy_charges)?;
                                 let value = mettail_runtime::take_binding_slot(
                                     results,
                                     root,
@@ -1129,6 +1195,122 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_nullary_uses_the_shared_driver_and_prepaid_publication() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: CheckedLeafFixture,
+            types { data Atom },
+            terms { Unit . |- "unit" : Atom; },
+            equations {}, rewrites {},
+        "#,
+        )
+        .expect("closed nullary category");
+        let plan = super::super::iterative_drop::select_dummy_plan(&language);
+        let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
+            .expect("selected nullary receipt");
+        let checked = CloneEmissionNames::checked(&receipts);
+        assert_eq!(
+            compact(
+                checked
+                    .dummy_charge(&format_ident!("Atom"))
+                    .expect("exact selected index")
+            ),
+            "dummy_charges[0usize]"
+        );
+        assert!(checked.dummy_charge(&format_ident!("Missing")).is_err());
+        let ordinary = generate_iterative_clone(&language);
+        let tasks = generate_task_enum(&language, &checked);
+        let engine = generate_engine(&language, &checked);
+        let impls = generate_impls(&language, &checked);
+        let checked_source = compact(quote! { #tasks #engine #impls });
+        assert!(checked_source.contains("reserve_binding_parts(6,2,0,reserve)?"));
+        assert!(checked_source.contains("write_binding_slot("));
+        assert_eq!(
+            checked_source
+                .matches("BINDING_DUMMY_CHARGES.as_ref()")
+                .count(),
+            1
+        );
+        assert!(!checked_source.contains("replacement_charge()"));
+        let drop = super::super::iterative_drop::generate_iterative_drop(&language);
+        let table = receipts.tokens;
+        let fixture = quote! {
+            #![allow(dead_code, unused_variables, unreachable_patterns, non_snake_case)]
+            mod valid {
+                use mettail_runtime::{BindingFailure, BindingOperation, CheckedIterativeBinding};
+                enum Atom { Unit }
+                #ordinary #tasks #engine #impls #drop #table
+                pub fn verify() {
+                    let source = Atom::Unit;
+                    let expected = [(0, 8), (1, 4), (1, 4), (1, 0), (6, 8), (1, 0), (1, 0)];
+                    let mut calls = Vec::new();
+                    let copied = source.try_copy_iterative(BindingOperation::Clone,
+                        &mut |work, units| {
+                            calls.push((work, units));
+                            Ok::<_, usize>(())
+                        }).expect("paid nullary output");
+                    assert!(matches!(copied, Atom::Unit));
+                    assert_eq!(calls, expected);
+                    drop(copied);
+                    for stop in 1..=expected.len() {
+                        let mut calls = Vec::new();
+                        let result = source.try_copy_iterative(BindingOperation::Clone,
+                            &mut |work, units| {
+                                calls.push((work, units));
+                                if calls.len() == stop { Err(stop) } else { Ok(()) }
+                            });
+                        assert!(matches!(result, Err(BindingFailure::Reservation(n)) if n == stop));
+                        assert_eq!(calls, expected[..stop]);
+                        // Both actual generated pools must be empty after
+                        // refusal, including publication and final take.
+                        CHECKED_BINDING_TASK_POOL.with(|pool| {
+                            let tasks = pool.take();
+                            assert!(tasks.is_empty());
+                            pool.set(tasks);
+                        });
+                        CHECKED_BINDING_RESULT_POOL.with(|pool| {
+                            let results = pool.take();
+                            assert!(results.is_empty());
+                            pool.set(results);
+                        });
+                        assert!(matches!(source, Atom::Unit));
+                    }
+                }
+            }
+            mod refused_table {
+                use mettail_runtime::{BindingFailure, BindingOperation, CheckedIterativeBinding};
+                enum Atom { Unit }
+                #ordinary #tasks #engine #impls #drop
+                static BINDING_DUMMY_CHARGES: Result<
+                    [mettail_runtime::binding_receipt::BindingCharge; 1],
+                    mettail_runtime::binding_receipt::DummyChargeError,
+                > = Err(mettail_runtime::binding_receipt::DummyChargeError::Projection(
+                    mettail_runtime::binding_receipt::ChargeOverflow::RetentionUnits));
+                pub fn verify() {
+                    let mut calls = 0;
+                    let result = Atom::Unit.try_copy_iterative(BindingOperation::Clone,
+                        &mut |_, _| { calls += 1; Ok::<_, ()>(()) });
+                    assert!(matches!(result, Err(BindingFailure::SizeOverflow)));
+                    assert_eq!(calls, 0);
+                }
+            }
+            fn main() {
+                valid::verify();
+                refused_table::verify();
+                println!("checked generated nullary admission, cancellation and table refusal verified");
+            }
+        };
+        syn::parse2::<syn::File>(fixture.clone()).expect("checked fixture Rust items");
+        if std::env::var_os("METTAIL_CAPTURE_CHECKED_BINDING").is_some() {
+            let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/verification/clone-emitter");
+            std::fs::create_dir_all(&directory).expect("create checked fixture directory");
+            std::fs::write(directory.join("checked-leaf.rs"), fixture.to_string())
+                .expect("write actual checked emitter fixture");
+        }
+    }
 
     fn compact(tokens: TokenStream) -> String {
         tokens.to_string().split_whitespace().collect()
