@@ -143,6 +143,15 @@ impl LocalReceipt {
         extraction: Counts::ZERO,
         field_glue: Counts::ZERO,
     };
+
+    /// Combine independently described fields without merging their phases.
+    pub const fn checked_add(self, other: Self) -> Result<Self, ReceiptOverflow> {
+        Ok(Self {
+            construction: checked_receipt!(self.construction.checked_add(other.construction)),
+            extraction: checked_receipt!(self.extraction.checked_add(other.extraction)),
+            field_glue: checked_receipt!(self.field_glue.checked_add(other.field_glue)),
+        })
+    }
 }
 
 /// Construction and cleanup of one specific native default value.
@@ -437,6 +446,32 @@ mod tests {
         assert_eq!(receipt.popped_drop.get(OwnedByte), 5);
         assert_eq!(receipt.normal_drop.get(HandleField), 3);
         assert_eq!(receipt.normal_drop.get(OwnedByte), 5);
+    }
+
+    #[test]
+    fn local_field_addition_keeps_phases_separate_and_checks_each() {
+        let field = LocalReceipt {
+            construction: Counts::singleton(Event::NativeWork, 2),
+            extraction: Counts::singleton(Event::NativeWork, 3),
+            field_glue: Counts::singleton(Event::NativeWork, 5),
+        };
+        let repeated = field.checked_add(field).expect("small repeated fields");
+        assert_eq!(repeated.construction.get(Event::NativeWork), 4);
+        assert_eq!(repeated.extraction.get(Event::NativeWork), 6);
+        assert_eq!(repeated.field_glue.get(Event::NativeWork), 10);
+        for phase in 0..3 {
+            let maximum = Counts::singleton(Event::NativeWork, usize::MAX);
+            let mut overflow = LocalReceipt::ZERO;
+            match phase {
+                0 => overflow.construction = maximum,
+                1 => overflow.extraction = maximum,
+                _ => overflow.field_glue = maximum,
+            }
+            assert_eq!(
+                overflow.checked_add(field),
+                Err(ReceiptOverflow { event: Event::NativeWork })
+            );
+        }
     }
 
     #[test]

@@ -147,8 +147,7 @@ fn generate_drop_task_enum(language: &LanguageDef) -> TokenStream {
 /// so rendering and resource projection need no second field algebra.
 pub(super) struct DummyPlan {
     pub(super) selected: std::collections::BTreeMap<String, VariantKind>,
-    // Retained as the finite-recipe witness for the checked cost projection.
-    #[allow(dead_code)]
+    // The finite-recipe witness consumed by the checked cost projection.
     pub(super) dependency_order: Vec<Ident>,
 }
 

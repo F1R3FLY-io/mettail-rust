@@ -17,6 +17,7 @@ pub mod arm_integrity;
 /// element walk and its order-faithfulness law are spelled (#162).
 pub mod collection_walk;
 pub mod depth;
+mod dummy_receipts;
 pub mod ground;
 pub mod iterative_clone;
 pub mod iterative_cmp;

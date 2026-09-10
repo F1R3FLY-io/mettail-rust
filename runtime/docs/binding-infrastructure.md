@@ -315,6 +315,40 @@ These local contracts instantiate the finite-recipe model's parameters. They
 do not establish concrete generator correspondence until its selected-field
 projection is wired and tested, or prove physical-memory bounds.
 
+#### Selected-recipe projection
+
+The [dummy-receipt emitter](../../macros/src/gen/term_ops/dummy_receipts.rs)
+accepts the existing `DummyPlan`; it does not select constructors. It assigns
+an index to each recipe in dependency order, rejects missing or late children,
+and emits a single const-evaluated table. Repeated child fields reference the
+same earlier receipt repeatedly. The generated traversal can then look up a
+receipt without walking dependencies at run time.
+
+```text
+for each selected recipe in dependency order:
+    local, children = project the selected constructor and its actual fields
+    require every child to have an earlier table index
+    table[index] = checked compose(local, table[children in field order])
+return table, or the first typed arithmetic error
+```
+
+Construction follows the existing dummy renderer, while extraction follows the
+existing destructor branch order. In particular, an opaque optional field is
+skipped before optional extraction is considered. A primitive-byte collection
+literal is not extracted as a collection of category terms. Empty category
+collections have no child receipts, but taking their default replacement and
+consuming the empty iterator still have local costs.
+
+The empty consuming-iterator boundary contributes three `NativeWork` events
+(construction, terminal `next`, cleanup) and one `NativeRecord`. Replacement
+default construction is separate. A regular map's additional `into_inner`
+call is not charged to a literal map that consumes its wrapper directly.
+Native zipper extraction uses the existing carrier projection for direct or
+Arc storage, including the emptied owned carrier's cleanup in the Arc case.
+
+This emitter is infrastructure for checked binding generation. Its existence
+does not activate checked traversal or complete public preparation accounting.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing
