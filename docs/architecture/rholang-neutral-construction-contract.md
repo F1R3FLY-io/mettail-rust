@@ -1014,6 +1014,42 @@ key/child counts. Clone/drop control, temporary vectors, ordered-map
 construction, and preallocation charges remain separate source-correspondence
 obligations before Fresh graph emission can use these receipts.
 
+The [Fresh metadata-pass model](../../formal/rocq/rho_bridge/theories/RholangFreshMetadataPasses.v)
+accounts separately for the existing metadata helper. Let $`b`$ be the input
+metadata length, $`t`$ the number of surviving set indices, and $`s`$ the shifted
+output length. The helper scans the input, collects surviving indices, finds
+their maximum, initializes the shifted bytes, and sets those indices. The
+target then copies metadata into New; `with_news` copies the enclosing Par's
+metadata; observation compares the returned metadata. The logical pass totals
+are $`b+3t+4s`$ work units and $`4t+3s`$ payload units, using the existing four
+logical units per index-entry convention. Three metadata buffers are created
+over this path, although only two remain in the returned value.
+An indexed assignment counts as one logical operation, including its index
+read and byte write; these units do not count individual machine accesses.
+
+Canonical metadata gives $`t\leq s`$, so the cached lengths alone support a
+precharge of $`b+7s`$ work and $`7s`$ payload units without a preliminary scan.
+Even when every reference becomes bound and the output is empty, the input
+scan still costs $`b`$. The model proves the survivor-count relation, pass
+totals, conservative bound and atomic combined reservation. It does not equate
+logical entry volume with vector allocation capacity or include the separate
+clone-control, map-construction or cleanup allowances.
+
+The [normal cleanup model](../../formal/rocq/rho_bridge/theories/RholangConstructionCleanup.v)
+connects the descendant receipt to the existing node's iterative destructor.
+Its worklist step pops one Par, detaches its children in the existing order,
+and leaves an empty shell. The total number of owned Par occurrences in the
+pending forest decreases by exactly one on every step. Consequently, a root
+with $`d`$ descendants requires exactly $`d`$ outer-loop pops and at most $`d`$
+pending Par slots. Repeated children are separate owned occurrences here too.
+Source-derived wrapper counts attach to the proved loop count: normal root
+cleanup has $`1+d`$ Par destructor entries and $`1+2d`$ child-table calls,
+including the empty shells' generated destructors. Those annotations are not
+separately proved operational events. They describe the current construction image, not map
+destruction costs, allocation-capacity bounds or panic-unwind proofs. Append's
+temporary ownership and the returned value's eventual cleanup still need
+separate accounting when composing the production reservation.
+
 ### Bound-reference metadata and resource accounting
 
 Bound and wildcard nodes are nullary operations. They do not change the
