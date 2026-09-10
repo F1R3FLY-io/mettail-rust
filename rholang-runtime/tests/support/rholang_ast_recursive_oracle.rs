@@ -694,7 +694,7 @@ fn lower_arm_p_new(
     env: &BoundEnv,
 ) -> Result<Par, RholangAstLowerError> {
     let (binders, body) = scope.clone().unbind::<String>();
-    let extended_env = extend_env(env, &binders);
+    let extended_env = extend_env(env, &binders)?;
     // A-S4: the `new` body is a fold-lift scope — a width/precision fold inside it
     // trampolines here (mirrors receive bodies and the top level).
     let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
@@ -719,7 +719,7 @@ fn lower_arm_p_new_uris(
     env: &BoundEnv,
 ) -> Result<Par, RholangAstLowerError> {
     let (binders, body, uris) = unbind_uri_scope(uris, scope)?;
-    let extended_env = extend_env(env, &binders);
+    let extended_env = extend_env(env, &binders)?;
     let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
     let locally_free = filter_and_adjust_bitset(&body.locally_free, binders.len());
     let connective_used = body.connective_used;
@@ -1017,7 +1017,7 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangA
         let transformed = replace_dynamic_flt(body, &node, &result_drop, &mut replaced);
         assert!(replaced, "the recursive FLT finder and replacement diverged");
 
-        let env_new = extend_env(env, &[Binder(ret_var)]);
+        let env_new = extend_env(env, &[Binder(ret_var)])?;
         let selector = lower_proc_var(&node.selector, &env_new)?;
         let mut fills = BTreeMap::new();
         for hole in &node.holes {
@@ -1047,7 +1047,7 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangA
         );
         let channel = LANGUAGE_FLT_CONSTRUCT_BAND
             .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);
-        let env_for = extend_env(&env_new, &[Binder(result_var)]);
+        let env_for = extend_env(&env_new, &[Binder(result_var)])?;
         let for_body = lower_body_lifting_folds(&transformed, &env_for)?;
         return Ok(installed_flt_trampoline(channel, request, for_body));
     }
@@ -1078,8 +1078,8 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangA
     let transformed = replace_fold(body, &r_drop, &mut replaced);
 
     // `new ret` shifts `env` by 1; the `for` then binds `r` (index 0), `ret` (index 1).
-    let env_new = extend_env(env, &[Binder(ret_var)]);
-    let env_for = extend_env(&env_new, &[Binder(r_var)]);
+    let env_new = extend_env(env, &[Binder(ret_var)])?;
+    let env_for = extend_env(&env_new, &[Binder(r_var)])?;
 
     // Send `@channel!(operand, ret)` at the `new` level (ret = boundvar 0). A statically ground
     // operand EXPRESSION (`5 + 3`) lowers to its metered `Expr`; the machine evaluates it at
@@ -1369,7 +1369,7 @@ fn lower_pfor_user(
     // used by the `locally_free` accounting below. For a moniker-only receive this is byte-identical
     // to the former `extend_env(env, &all_binders)` (same slot order, same `width - 1 - i` levels).
     let receive_binder_count = slots.len();
-    let extended_env = env.extend_slots(&slots);
+    let extended_env = env.extend_slots(&slots)?;
 
     // The continuation is lowered under the extended env: a nested row recurses; otherwise this is
     // the innermost user body, where held folds are lifted into Dovetail trampolines.

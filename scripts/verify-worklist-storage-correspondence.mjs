@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeInitialTarget } from "./verify-initial-target-correspondence.mjs";
+import { beforeScopeOracle } from "./verify-source-scope-boundary.mjs";
 
 // Check the extraction boundary, not arbitrary Rust equivalence. The new
 // storage is separately modeled/tested; this proves no producer, constructor,
@@ -15,7 +16,9 @@ const before = path => execFileSync("git", ["-c", "core.fsmonitor=false", "show"
 // rather than silently dropping constructors from the original comparison.
 const after = path => {
   const source = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-  return path === "rholang-runtime/src/rholang_ast.rs" ? beforeInitialTarget(source) : source;
+  if (path === "rholang-runtime/src/rholang_ast.rs") return beforeInitialTarget(source);
+  if (path === "rholang-runtime/tests/support/rholang_ast_recursive_oracle.rs") return beforeScopeOracle(source);
+  return source;
 };
 function outsideStorage(text) {
   const start = "/// The two stacks, plus the three incremental counters the deficit invariant needs.";

@@ -209,3 +209,121 @@ Print Assumptions public_resolution_cannot_create_a_harness_marker.
 Print Assumptions unresolved_public_terms_reject_by_role.
 Print Assumptions unresolved_formula_variable_remains_a_wildcard.
 Print Assumptions successful_bound_resolution_preserves_checked_index.
+
+(** Context transport does not reconstruct options or substitute a resolver.
+    The parameter types stand for unchanged caller values, not propositions
+    asserting their correctness. Imports remain opaque here: transporting an
+    input is not validating it or enrolling a provider capability. *)
+Section ContextTransport.
+Context {Options Resolver Imports : Type}.
+Record SourceContext := {
+  context_scope : Scope;
+  context_options : Options;
+  context_resolver : Resolver;
+  context_imports : Imports;
+  context_mode : AdmissionMode;
+  context_pattern : bool
+}.
+Definition replace_scope (context : SourceContext) (scope : Scope) : SourceContext :=
+  {| context_scope := scope;
+     context_options := context_options context;
+     context_resolver := context_resolver context;
+     context_imports := context_imports context;
+     context_mode := context_mode context;
+     context_pattern := context_pattern context |}.
+Definition context_inputs (context : SourceContext) :=
+  (context_options context, context_resolver context, context_imports context,
+   context_mode context, context_pattern context).
+Theorem replacing_lexical_scope_preserves_every_context_input : forall context scope,
+  context_inputs (replace_scope context scope) = context_inputs context.
+Proof. reflexivity. Qed.
+Theorem context_extension_uses_the_same_selected_lookup : forall context slots key,
+  lookup_scope key (context_scope
+    (replace_scope context (extend_scope (context_scope context) slots))) =
+  match assigned_index slots key with
+  | Some index => Some index
+  | None => option_map (fun index => index + List.length slots)
+      (lookup_scope key (context_scope context))
+  end.
+Proof. intros; apply extension_preserves_selected_slot_or_shifted_outer_lookup. Qed.
+End ContextTransport.
+
+(** Finite machine arithmetic is checked separately from the mathematical
+    indices. The maximum is supplied by the concrete integer representation;
+    it is not an assumption that input indices are in range. A successful
+    result is the exact mathematical sum, never modular addition. *)
+Definition checked_sum (maximum lhs rhs : nat) : option nat :=
+  if lhs + rhs <=? maximum then Some (lhs + rhs) else None.
+Theorem checked_sum_success_is_exact_and_bounded : forall maximum lhs rhs sum,
+  checked_sum maximum lhs rhs = Some sum <-> sum = lhs + rhs /\ sum <= maximum.
+Proof.
+  intros. unfold checked_sum. destruct (lhs + rhs <=? maximum) eqn:H.
+  - apply Nat.leb_le in H. split; [intro E; inversion E; subst; auto|intros [E _]; now subst].
+  - apply Nat.leb_gt in H. split; [discriminate|intros [E Hbound]; subst; lia].
+Qed.
+Theorem overflowing_sum_produces_no_index : forall maximum lhs rhs,
+  maximum < lhs + rhs -> checked_sum maximum lhs rhs = None.
+Proof. intros; unfold checked_sum. apply Nat.leb_gt in H. now rewrite H. Qed.
+
+Fixpoint checked_shift_scope (maximum width : nat) (scope : Scope) : option Scope :=
+  match scope with
+  | [] => Some []
+  | (key, index) :: rest =>
+    match checked_sum maximum index width with
+    | None => None
+    | Some shifted => match checked_shift_scope maximum width rest with
+      | None => None
+      | Some tail => Some ((key, shifted) :: tail)
+      end
+    end
+  end.
+Theorem checked_shift_success_is_exact_and_bounded : forall scope maximum width shifted,
+  checked_shift_scope maximum width scope = Some shifted ->
+  shifted = shift_scope width scope /\
+  Forall (fun entry => snd entry <= maximum) shifted.
+Proof.
+  induction scope as [|[key index] rest IH]; intros maximum width shifted H; cbn in H.
+  - inversion H; subst. split; [reflexivity|constructor].
+  - destruct (checked_sum maximum index width) as [sum|] eqn:HS; [|discriminate].
+    destruct (checked_shift_scope maximum width rest) as [tail|] eqn:HT; [|discriminate].
+    inversion H; subst shifted. apply checked_sum_success_is_exact_and_bounded in HS.
+    specialize (IH maximum width tail HT). destruct HS as [HS HB], IH as [IH HTB].
+    subst sum tail. split; [reflexivity|constructor; assumption].
+Qed.
+Theorem checked_shift_preserves_lookup_on_success : forall scope maximum width shifted key,
+  checked_shift_scope maximum width scope = Some shifted ->
+  lookup_scope key shifted =
+    option_map (fun index => index + width) (lookup_scope key scope).
+Proof.
+  intros. apply checked_shift_success_is_exact_and_bounded in H.
+  destruct H as [H _]; subst. apply shifting_preserves_lookup_exactly.
+Qed.
+
+(** A residual moniker Bound node has not been opened into the lexical
+    environment. Its embedded coordinates are never accepted as a target
+    de-Bruijn index; rejection applies in formula and harness modes too. *)
+Inductive SourceReference :=
+| FreeSourceReference (identity : nat) (pretty : option string)
+| UnopenedSourceReference (scope_offset binder_offset : nat).
+Inductive ReferenceDecision :=
+| ResolvedFree (resolution : ScopeResolution)
+| UnopenedReferenceRejected (role : ReferenceRole).
+Definition resolve_reference mode pattern role scope reference : ReferenceDecision :=
+  match reference with
+  | FreeSourceReference identity pretty =>
+    ResolvedFree (resolve_free mode pattern role scope identity pretty)
+  | UnopenedSourceReference _ _ => UnopenedReferenceRejected role
+  end.
+Theorem unopened_reference_never_becomes_a_bound_value :
+  forall mode pattern role scope offset binder resolution,
+  resolve_reference mode pattern role scope (UnopenedSourceReference offset binder)
+    <> ResolvedFree resolution.
+Proof. discriminate. Qed.
+
+Print Assumptions replacing_lexical_scope_preserves_every_context_input.
+Print Assumptions context_extension_uses_the_same_selected_lookup.
+Print Assumptions checked_sum_success_is_exact_and_bounded.
+Print Assumptions overflowing_sum_produces_no_index.
+Print Assumptions checked_shift_success_is_exact_and_bounded.
+Print Assumptions checked_shift_preserves_lookup_on_success.
+Print Assumptions unopened_reference_never_becomes_a_bound_value.

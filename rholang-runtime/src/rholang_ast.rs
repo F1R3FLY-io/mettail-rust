@@ -64,6 +64,9 @@ use target::DirectNodeTarget as Target;
 mod graph;
 pub use graph::{interpret_construction_graph, GraphInterpretationError};
 
+mod scope;
+pub use scope::SourceAdmissionMode;
+
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
 
@@ -98,6 +101,7 @@ pub struct BoundEnv {
     /// `with_resolver` all carry it through unchanged, so the option a caller declares at the
     /// entry point is the option every nested `for` sees.
     options: LoweringOptions,
+    admission: SourceAdmissionMode,
     binders: HashMap<FreeVar<String>, usize>,
     /// L9-6b: FLT hole name → de-Bruijn level. A `${name}` hole captured by an FLT
     /// receive pattern ([`reflect_flt_pattern`]) is a receive binder, but — unlike
@@ -142,8 +146,9 @@ pub struct BoundEnv {
 
 impl BoundEnv {
     /// The empty environment with the empty (no-guest) resolver, under the PRODUCTION
-    /// lowering options (guard discharge ON) — the default used by every existing lowering
-    /// entry point.
+    /// lowering options (guard discharge ON), retaining compatibility-harness
+    /// unresolved-reference markers. Public preparation must explicitly select
+    /// [`SourceAdmissionMode::Public`]; guard discharge is a separate policy.
     pub fn new() -> Self {
         Self::with_options(LoweringOptions::PRODUCTION)
     }
@@ -157,6 +162,7 @@ impl BoundEnv {
     pub fn with_options(options: LoweringOptions) -> Self {
         BoundEnv {
             options,
+            admission: SourceAdmissionMode::Harness,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver: Arc::new(EmptyFltResolver),
@@ -188,6 +194,7 @@ impl BoundEnv {
     fn with_resolver_and_options(resolver: Arc<dyn FltResolve>, options: LoweringOptions) -> Self {
         BoundEnv {
             options,
+            admission: SourceAdmissionMode::Harness,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver,
@@ -208,18 +215,18 @@ impl BoundEnv {
     /// `width - 1 - i` — the SAME convention [`extend_env`] uses for moniker joins, so
     /// an FLT hole and a moniker binder that co-occur in a `&`-join share one coherent
     /// level space (fixes the L9-6b `&`-join fail-closed).
-    fn extend_slots(&self, slots: &[ReceiveSlot]) -> BoundEnv {
+    fn extend_slots(&self, slots: &[ReceiveSlot]) -> Result<BoundEnv, RholangAstLowerError> {
         let width = slots.len();
         let mut binders = self
             .binders
             .iter()
-            .map(|(var, index)| (var.clone(), index + width))
-            .collect::<HashMap<FreeVar<String>, usize>>();
+            .map(|(var, index)| Ok((var.clone(), scope::checked_shift(*index, width)?)))
+            .collect::<Result<HashMap<FreeVar<String>, usize>, RholangAstLowerError>>()?;
         let mut hole_binders = self
             .hole_binders
             .iter()
-            .map(|(name, index)| (name.clone(), index + width))
-            .collect::<HashMap<String, usize>>();
+            .map(|(name, index)| Ok((name.clone(), scope::checked_shift(*index, width)?)))
+            .collect::<Result<HashMap<String, usize>, RholangAstLowerError>>()?;
         for (formal_index, slot) in slots.iter().enumerate() {
             let level = width - 1 - formal_index;
             match slot {
@@ -231,13 +238,14 @@ impl BoundEnv {
                 },
             }
         }
-        BoundEnv {
+        Ok(BoundEnv {
             options: self.options,
+            admission: self.admission,
             binders,
             hole_binders,
             resolver: Arc::clone(&self.resolver),
             free_vars_are_patterns: self.free_vars_are_patterns,
-        }
+        })
     }
 }
 
@@ -291,6 +299,16 @@ pub enum RholangAstLowerError {
     UnsupportedProc(&'static str),
     UnsupportedName(&'static str),
     FreeVarWithoutName,
+    /// Public source references must resolve lexically, never to harness data.
+    UnresolvedNameReference,
+    UnresolvedProcessReference,
+    /// Rejected before the node helper can allocate index-sized metadata.
+    BoundIndexOutOfRange {
+        index: usize,
+    },
+    ScopeIndexOverflow,
+    ScopeArenaOverflow,
+    ScopeArenaAllocationFailed,
     EmptyInputJoin,
     InputArityMismatch {
         names: usize,
@@ -1147,12 +1165,13 @@ impl<'a> EnvArena<'a> {
         }
     }
 
-    fn push(&mut self, env: BoundEnv) -> EnvId {
+    fn push(&mut self, env: BoundEnv) -> Result<EnvId, RholangAstLowerError> {
+        let index = scope::next_environment_index(self.derived.len())?;
+        self.derived
+            .try_reserve(1)
+            .map_err(|_| RholangAstLowerError::ScopeArenaAllocationFailed)?;
         self.derived.push(env);
-        EnvId(
-            u32::try_from(self.derived.len())
-                .expect("rholang lowering: more than 2^32 binder sites in one term"),
-        )
+        Ok(EnvId(index))
     }
 }
 
@@ -1689,9 +1708,10 @@ struct Drive<'a> {
     stacks: Stacks<'a>,
     /// One cell per receive bind that carries a `lower_pattern_proc` walk.
     pattern_states: Vec<PatternState>,
-    /// `BoundEnv::new()`, materialised at most once. `lower_pattern_proc`'s fallback arm lowers
-    /// a non-collection pattern in a FRESH empty environment, not the enclosing one; the
-    /// recursive form built a new one at each such site, and they are all equal and immutable.
+    /// A fresh lexical environment, materialised at most once. Public lowering
+    /// retains its root options/resolver/admission policy; the explicit harness
+    /// keeps the recursive oracle's `BoundEnv::new()` convention. Neither case
+    /// inherits lexical bindings from the enclosing receive continuation.
     empty_env: Option<EnvId>,
 }
 
@@ -1709,13 +1729,20 @@ impl<'a> Drive<'a> {
         self.envs.get(id)
     }
 
-    fn empty_env(&mut self) -> EnvId {
+    fn empty_env(&mut self) -> Result<EnvId, RholangAstLowerError> {
         match self.empty_env {
-            Some(id) => id,
+            Some(id) => Ok(id),
             None => {
-                let id = self.envs.push(BoundEnv::new());
+                // Preserve the explicit oracle convention, but never let a
+                // public pattern subterm re-enter harness resolution.
+                let root = self.env(ROOT_ENV);
+                let empty = match root.admission {
+                    SourceAdmissionMode::Harness => BoundEnv::new(),
+                    SourceAdmissionMode::Public => root.without_lexical_bindings(),
+                };
+                let id = self.envs.push(empty)?;
                 self.empty_env = Some(id);
-                id
+                Ok(id)
             },
         }
     }
@@ -1879,7 +1906,7 @@ impl<'a> Drive<'a> {
             ),
             Proc::PNew(scope) => {
                 let (binders, body) = scope.clone().unbind::<String>();
-                let extended = self.envs.push(extend_env(self.env(env), &binders));
+                let extended = self.envs.push(extend_env(self.env(env), &binders)?)?;
                 let body = self.keep(body);
                 self.push_children(
                     Kont::New {
@@ -1891,7 +1918,9 @@ impl<'a> Drive<'a> {
             },
             Proc::PNewUris(uris, scope) => {
                 let (ordered_binders, body, ordered_uris) = unbind_uri_scope(uris, scope)?;
-                let extended = self.envs.push(extend_env(self.env(env), &ordered_binders));
+                let extended = self
+                    .envs
+                    .push(extend_env(self.env(env), &ordered_binders)?)?;
                 let body = self.keep(body);
                 self.push_children(
                     Kont::New {
@@ -2191,7 +2220,7 @@ impl<'a> Drive<'a> {
 
             let env_new = self
                 .envs
-                .push(extend_env(self.env(env), &[Binder(ret_var)]));
+                .push(extend_env(self.env(env), &[Binder(ret_var)])?)?;
             let selector = lower_proc_var(&node.selector, self.env(env_new))?;
             let mut fills = BTreeMap::new();
             for hole in &node.holes {
@@ -2204,10 +2233,7 @@ impl<'a> Drive<'a> {
                             hole.name
                         ))
                     })?;
-                fills.insert(
-                    hole.name.clone(),
-                    new_boundvar_par(level as i32, create_bit_vector(&[level]), false),
-                );
+                fills.insert(hole.name.clone(), scope::lower_bound_index(level)?);
             }
             node.validate()
                 .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
@@ -2226,7 +2252,7 @@ impl<'a> Drive<'a> {
                 .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);
             let env_for = self
                 .envs
-                .push(extend_env(self.env(env_new), &[Binder(result_var)]));
+                .push(extend_env(self.env(env_new), &[Binder(result_var)])?)?;
             self.push_children(
                 Kont::InstalledFlt {
                     channel: Box::new(channel),
@@ -2258,10 +2284,10 @@ impl<'a> Drive<'a> {
         let transformed = self.keep(Arc::new(replace_fold(body, &r_drop, &mut replaced)));
         let env_new = self
             .envs
-            .push(extend_env(self.env(env), &[Binder(ret_var)]));
+            .push(extend_env(self.env(env), &[Binder(ret_var)])?)?;
         let env_for = self
             .envs
-            .push(extend_env(self.env(env_new), &[Binder(r_var)]));
+            .push(extend_env(self.env(env_new), &[Binder(r_var)])?)?;
         let operand = self.keep(Arc::new(operand));
         self.push_children(
             Kont::HeldFold { channel: Box::new(channel) },
@@ -2334,7 +2360,7 @@ impl<'a> Drive<'a> {
             // environment — not the enclosing one. That is what the recursive arm did, and it
             // is load-bearing: a pattern's free variables are its own binders.
             other => {
-                let empty = self.empty_env();
+                let empty = self.empty_env()?;
                 self.stacks.push(Job::Proc(other, empty));
             },
         }
@@ -2369,7 +2395,7 @@ impl<'a> Drive<'a> {
             // An ordinary `Proc`, read as a Rholang pattern: unbound free variables become
             // `Wildcard` rather than the term-position free-variable MARKER.
             FormulaShape::Term => {
-                let pattern_env = self.envs.push(self.env(env).in_pattern_position());
+                let pattern_env = self.envs.push(self.env(env).in_pattern_position())?;
                 self.stacks.push(Job::Proc(formula, pattern_env));
             },
         }
@@ -2925,7 +2951,7 @@ impl<'a> Drive<'a> {
             let token_var = FreeVar::fresh_named("__mtl_flt_pattern_token".to_string());
             let env_new = self
                 .envs
-                .push(extend_env(self.env(env), &[Binder(ret_var)]));
+                .push(extend_env(self.env(env), &[Binder(ret_var)])?)?;
             let selector = lower_proc_var(&node.selector, self.env(env_new))?;
             node.validate()
                 .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
@@ -2946,7 +2972,7 @@ impl<'a> Drive<'a> {
             });
             env = self
                 .envs
-                .push(extend_env(self.env(env_new), &[Binder(token_var.clone())]));
+                .push(extend_env(self.env(env_new), &[Binder(token_var.clone())])?)?;
             tokens[index] = Some(token_var);
         }
         Ok((env, tokens, frames))
@@ -3090,7 +3116,7 @@ impl<'a> Drive<'a> {
     ) -> Result<(), RholangAstLowerError> {
         let extended = self
             .envs
-            .push(self.env(state.env).extend_slots(&state.slots));
+            .push(self.env(state.env).extend_slots(&state.slots)?)?;
         state.extended_env = extended;
         let job = match state.rows.len() > 1 {
             // More rows in THIS `for`: they nest as this row's continuation. These rows are
@@ -5140,54 +5166,11 @@ fn is_empty_bind(bind: &InputBind) -> bool {
 }
 
 fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    match &var.0 {
-        Var::Free(free_var) => {
-            if let Some(index) = env.binders.get(free_var) {
-                Ok(new_boundvar_par(*index as i32, Vec::new(), false))
-            } else if let Some(index) = flt_hole_bound_level(free_var, env) {
-                // L9-6b: an FLT hole captured by an enclosing FLT receive pattern.
-                Ok(new_boundvar_par(index as i32, Vec::new(), false))
-            } else if env.free_vars_are_patterns {
-                // M-1b: inside a `matches` formula an unbound NAME variable is a
-                // pattern placeholder, not a marker. See
-                // `BoundEnv::free_vars_are_patterns`.
-                Ok(new_wildcard_par(Vec::new(), true))
-            } else {
-                let name = pretty_var_name(free_var)?;
-                Ok(new_gstring_par(format!("{FREE_NAME_PREFIX}{name}"), Vec::new(), false))
-            }
-        },
-        Var::Bound(_) => Err(RholangAstLowerError::UnsupportedName("unopened bound name variable")),
-    }
+    scope::lower_reference(var, env, scope::ReferenceRole::Name)
 }
 
 fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    match &var.0 {
-        Var::Free(free_var) => {
-            if let Some(index) = env.binders.get(free_var) {
-                Ok(new_boundvar_par(*index as i32, Vec::new(), false))
-            } else if let Some(index) = flt_hole_bound_level(free_var, env) {
-                // L9-6b: an FLT hole captured by an enclosing FLT receive pattern —
-                // bound by NAME (the hole is a string metavar, so it never shares a
-                // moniker `FreeVar` with this reference).
-                Ok(new_boundvar_par(index as i32, Vec::new(), false))
-            } else if env.free_vars_are_patterns {
-                // M-1b: inside a `matches` formula an unbound PROCESS variable is a
-                // pattern placeholder, not a marker. See
-                // `BoundEnv::free_vars_are_patterns`.
-                Ok(new_wildcard_par(Vec::new(), true))
-            } else {
-                let name = pretty_var_name(free_var)?;
-                Ok(send_par(
-                    new_gstring_par(FREE_PROC_OUTPUT.to_string(), Vec::new(), false),
-                    vec![new_gstring_par(format!("{FREE_NAME_PREFIX}{name}"), Vec::new(), false)],
-                ))
-            }
-        },
-        Var::Bound(_) => {
-            Err(RholangAstLowerError::UnsupportedProc("unopened bound process variable"))
-        },
-    }
+    scope::lower_reference(var, env, scope::ReferenceRole::Process)
 }
 
 /// L9-6b: the de-Bruijn level a free `var` binds to as an FLT hole captured by an
@@ -5294,10 +5277,7 @@ fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, Rholang
         // child-`locally_free` union into the EList, marking the var for descent. Its
         // absent `^gnd` marker is read as non-ground by C2, so the hole-bearing node's
         // recomputed marker is `⌜^nog⌝` (a fill only ever makes a node LESS ground).
-        fills.insert(
-            hole.name.clone(),
-            new_boundvar_par(level as i32, create_bit_vector(&[level]), false),
-        );
+        fills.insert(hole.name.clone(), scope::lower_bound_index(level)?);
     }
     reflect_flt_construction(&ground, &fills, &fingerprint)
         .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))
@@ -5337,13 +5317,16 @@ fn pretty_var_name(var: &FreeVar<String>) -> Result<&str, RholangAstLowerError> 
         .ok_or(RholangAstLowerError::FreeVarWithoutName)
 }
 
-fn extend_env(env: &BoundEnv, binders: &[Binder<String>]) -> BoundEnv {
+fn extend_env(
+    env: &BoundEnv,
+    binders: &[Binder<String>],
+) -> Result<BoundEnv, RholangAstLowerError> {
     let width = binders.len();
     let mut binder_map = env
         .binders
         .iter()
-        .map(|(var, index)| (var.clone(), index + width))
-        .collect::<HashMap<FreeVar<String>, usize>>();
+        .map(|(var, index)| Ok((var.clone(), scope::checked_shift(*index, width)?)))
+        .collect::<Result<HashMap<FreeVar<String>, usize>, RholangAstLowerError>>()?;
 
     for (formal_index, binder) in binders.iter().enumerate() {
         binder_map.insert(binder.0.clone(), width - 1 - formal_index);
@@ -5356,18 +5339,19 @@ fn extend_env(env: &BoundEnv, binders: &[Binder<String>]) -> BoundEnv {
     let hole_binders = env
         .hole_binders
         .iter()
-        .map(|(name, index)| (name.clone(), index + width))
-        .collect::<HashMap<String, usize>>();
+        .map(|(name, index)| Ok((name.clone(), scope::checked_shift(*index, width)?)))
+        .collect::<Result<HashMap<String, usize>, RholangAstLowerError>>()?;
 
-    BoundEnv {
+    Ok(BoundEnv {
         // Compilation options are scope-INVARIANT: a nested binder scope compiles under the
         // same declared options as its parent (S-D0).
         options: env.options,
+        admission: env.admission,
         binders: binder_map,
         hole_binders,
         resolver: Arc::clone(&env.resolver),
         free_vars_are_patterns: env.free_vars_are_patterns,
-    }
+    })
 }
 
 fn send_par(channel: Par, data: Vec<Par>) -> Par {

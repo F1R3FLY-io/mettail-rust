@@ -387,11 +387,27 @@ Resolution distinguishes public terms, compatibility-harness terms and formula
 patterns. An unresolved public name/process rejects by its role, whereas an
 unresolved formula variable retains the existing wildcard meaning. A successful
 bound resolution must satisfy the shared signed-32-bit target-index check.
-Public resolution cannot construct a harness marker. These are proved model
-laws preceding the scope implementation; they do not establish that the current
-source lowerer already enforces public admission. Concrete identity mapping,
-context preservation, metadata allocation precharge and source correspondence
-remain implementation obligations. Caller URI-injection enrollment is a later
+Public resolution cannot construct a harness marker. The
+[lexical resolver](../../rholang-runtime/src/rholang_ast/scope.rs) implements
+this decision over the existing maps. Its explicit `Public` and `Harness`
+policies are independent of guard discharge. Existing compatibility entrypoints
+retain harness behavior; constructing an empty public lexical context is not
+whole-source admission or a prepared-program API. Public pattern subterms keep
+the root policy and resolver when their lexical bindings are cleared.
+
+Scope extension now rejects overflowing index addition, and environment-arena
+insertion checks its next index before reserving storage. Name/process references
+and both existing FLT construction-fill paths check signed-index conversion
+before the node constructor. The model proves exact checked sums, successful
+shifted lookup, unchanged context inputs, and rejection of unopened moniker
+coordinates. Focused tests additionally compare the actual source worker and
+node bytes; these model laws do not prove arbitrary Rust correctness.
+
+The pinned node's locally-free vector stores **one byte per membership flag**,
+not eight packed flags per byte. A singleton at index $`i`$ therefore allocates
+$`i+1`$ bytes. Range checking alone is not a resource bound. Metadata allocation
+precharge, neutral bound/fresh operations and their graph interpretation remain
+required scope-family work. Caller URI-injection enrollment is a later
 integration boundary and does not make injection keys into lexical binders.
 
 ## Guards, origins, and owned session output

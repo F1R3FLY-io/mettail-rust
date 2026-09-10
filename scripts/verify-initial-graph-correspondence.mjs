@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { beforeSourceScope } from "./verify-source-scope-boundary.mjs";
 
 const registration = "\nmod graph;\npub use graph::{interpret_construction_graph, GraphInterpretationError};\n";
 export function beforeInitialGraph(source) {
+  source = beforeSourceScope(source);
   assert.equal(source.split(registration).length - 1, 1, "one graph interpreter registration");
   return source.replace(registration, "");
 }
