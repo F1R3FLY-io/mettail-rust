@@ -235,6 +235,22 @@ Moniker's panic. The model does not prove resource accounting, freshening, or
 the complete generated traversal. These leaf implementations alone do not
 activate the generated binding worker or establish whole-program stack safety.
 
+For an `FltNode`, the checked copy changes only its selector. Guest text,
+structural holes and their order, ranges, declared bounds, and source position
+are copied verbatim. No parser or validating constructor runs during copying.
+The [FLT composition model](../../formal/rocq/rho_bridge/theories/FltSelectorBinding.v)
+lifts the leaf operation through that exact payload-preserving record update.
+
+Payload inspection is admitted before scanning hole and piece entries, with a
+cancellation poll at each entry. Copy charges count the actual five retained
+strings, hole names and optional categories, and text-piece bytes. Logical
+records include the node, five string headers, two vector headers, each hole
+or piece, and its string headers. The selector has its separate checked leaf
+charge. The payload charge is admitted before any payload cloning; a refusal
+after selector copying retains its already consumed charge but returns no FLT.
+Declared `bounds` never replace measured lengths. This copy operation does not
+establish template validity: the existing validation boundary still owns that.
+
 ## Thread-Local Caches
 
 ### Variable Cache (`VAR_CACHE`)

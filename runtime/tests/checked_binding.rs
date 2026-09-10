@@ -236,3 +236,189 @@ fn scalar_copy_is_admitted_before_return_and_empty_values_have_one_record() {
         assert_eq!(copy_with_limits(&Vec::<u8>::new(), operation, (1, 4), None).1, (1, 4));
     }
 }
+
+fn flt_binding_fixture(selector: FreeVar<String>) -> mettail_runtime::FltNode {
+    use mettail_runtime::{
+        FltHole, FltHoleId, FltNode, FltSourceRange as Range, FltTemplateBounds,
+        FltTemplatePiece as Piece,
+    };
+    FltNode {
+        selector: OrdVar(Var::Free(selector)),
+        selector_name: "guest".into(),
+        category: "Term".into(),
+        open_src: "guest:Term`".into(),
+        body_src: "rho:id/*x*/${x}//雪${雪}".into(),
+        close_src: "`".into(),
+        holes: vec![
+            FltHole {
+                id: FltHoleId(0),
+                name: "x".into(),
+                category: Some("Term".into()),
+                first_occurrence: Range::new(11, 15),
+            },
+            FltHole {
+                id: FltHoleId(1),
+                name: "雪".into(),
+                category: None,
+                first_occurrence: Range::new(20, 26),
+            },
+        ],
+        pieces: vec![
+            Piece::Text {
+                text: "rho:id/*x*/".into(),
+                range: Range::new(0, 11),
+            },
+            Piece::Hole {
+                id: FltHoleId(0),
+                range: Range::new(11, 15),
+            },
+            Piece::Text {
+                text: "//雪".into(),
+                range: Range::new(15, 20),
+            },
+            Piece::Hole {
+                id: FltHoleId(1),
+                range: Range::new(20, 26),
+            },
+        ],
+        // Deliberately false provenance: copying is not template validation.
+        bounds: FltTemplateBounds {
+            source_bytes: usize::MAX,
+            body_bytes: usize::MAX,
+            piece_count: usize::MAX,
+            hole_declarations: usize::MAX,
+            hole_occurrences: usize::MAX,
+        },
+        position: usize::MAX,
+    }
+}
+
+fn assert_exact_flt(actual: &mettail_runtime::FltNode, expected: &mettail_runtime::FltNode) {
+    assert_eq!(actual, expected);
+    assert_exact(&actual.selector, &expected.selector);
+}
+
+#[test]
+fn flt_copy_binding_preserves_payload_and_admits_every_copy_and_inspection() {
+    let variable: FreeVar<String> = FreeVar::fresh_named("λ");
+    let source = flt_binding_fixture(variable.clone());
+    let mut selected = variable;
+    selected.pretty_name = Some("selected".into());
+    let roster = vec![Binder(selected)];
+    let state = ScopeState::new().incr().incr();
+    let mut closed_source = source.clone();
+    closed_source.selector = bound(2, 0, "oldhint");
+    // Independently counted: five strings=47 bytes, holes=8, text pieces=16.
+    // Records=8+(3+2)+(2+1+2+1)=19; payload charge=(90,147); inspection=7.
+    for (input, operation, selector_trace, totals) in [
+        (source.clone(), BindingOperation::Clone, vec![(1, 0), (3, 6)], (101, 153)),
+        (
+            source.clone(),
+            BindingOperation::Close { state, binders: &roster },
+            vec![(1, 0), (1, 0), (3, 6)],
+            (102, 153),
+        ),
+        (
+            closed_source,
+            BindingOperation::Open { state, binders: &roster },
+            vec![(1, 0), (9, 12)],
+            (107, 159),
+        ),
+    ] {
+        let original = input.clone();
+        let mut expected = input.clone();
+        match operation {
+            BindingOperation::Clone => {},
+            BindingOperation::Close { .. } => expected.close_term(state, &roster),
+            BindingOperation::Open { .. } => expected.open_term(state, &roster),
+        }
+        let mut trace = vec![(7usize, 0usize)];
+        trace.extend(std::iter::repeat_n((0, 0), 6));
+        trace.extend(selector_trace);
+        trace.push((90, 147));
+        let sum = |parts: &[(usize, usize)]| {
+            parts
+                .iter()
+                .fold((0, 0), |(w, u), &(dw, du)| (w + dw, u + du))
+        };
+        assert_eq!(sum(&trace), totals);
+        let mut observed = Vec::new();
+        let copied = input
+            .try_copy_binding(operation, &mut |work, units| {
+                observed.push((work, units));
+                Ok::<(), &'static str>(())
+            })
+            .expect("FLT copy");
+        assert_eq!(observed, trace);
+        assert_exact_flt(&copied, &expected);
+        assert_exact_flt(&input, &original);
+        let (result, used, calls) = copy_with_limits(&input, operation, totals, None);
+        assert_exact_flt(&result.expect("exact FLT budget"), &expected);
+        assert_eq!((used, calls), (totals, trace.len()));
+        let paid_prefix = sum(&trace[..trace.len() - 1]);
+        for limits in [(totals.0 - 1, totals.1), (totals.0, totals.1 - 1)] {
+            let (result, used, calls) = copy_with_limits(&input, operation, limits, None);
+            assert_eq!(result, Err(BindingFailure::Reservation("limit")));
+            assert_eq!((used, calls), (paid_prefix, trace.len()));
+            assert_exact_flt(&input, &original);
+        }
+        for cancelled in 1..=trace.len() {
+            let (result, used, calls) =
+                copy_with_limits(&input, operation, totals, Some(cancelled));
+            assert_eq!(result, Err(BindingFailure::Reservation("cancelled")));
+            assert_eq!((used, calls), (sum(&trace[..cancelled - 1]), cancelled));
+            assert_exact_flt(&input, &original);
+        }
+        assert_exact_flt(
+            &copy_with_limits(&input, operation, totals, None)
+                .0
+                .expect("retry"),
+            &expected,
+        );
+        let mut other_bounds = input.clone();
+        other_bounds.bounds = Default::default();
+        let (_, other_used, _) = copy_with_limits(&other_bounds, operation, totals, None);
+        assert_eq!(other_used, totals, "declared bounds never reduce copy cost");
+    }
+}
+
+#[test]
+fn binding_parts_checks_every_arithmetic_boundary_before_callback() {
+    for (work, records, bytes) in
+        [(usize::MAX, 0, 1), (0, usize::MAX / 4 + 1, 0), (0, usize::MAX / 4, 4)]
+    {
+        let mut calls = 0;
+        let result = mettail_runtime::reserve_binding_parts(work, records, bytes, &mut |_, _| {
+            calls += 1;
+            Ok::<(), &'static str>(())
+        });
+        assert_eq!(result, Err(BindingFailure::SizeOverflow));
+        assert_eq!(calls, 0);
+    }
+}
+
+#[test]
+fn flt_copy_preserves_repeated_hole_ids_and_optional_empty_category() {
+    let mut source = flt_binding_fixture(FreeVar::fresh_unnamed());
+    source.holes[1].category = Some(String::new());
+    source.pieces.push(source.pieces[1].clone());
+    let original = source.clone();
+    let (result, used, _) =
+        copy_with_limits(&source, BindingOperation::Clone, (usize::MAX, usize::MAX), None);
+    assert_exact_flt(&result.expect("structural copy"), &original);
+    // An empty category still has a string header; a repeated hole occurrence
+    // still has its own piece record. Neither changes the payload bytes.
+    source.holes[1].category = None;
+    let (_, without_header, _) =
+        copy_with_limits(&source, BindingOperation::Clone, (usize::MAX, usize::MAX), None);
+    assert_eq!(used, (without_header.0 + 1, without_header.1 + 4));
+    source.selector = bound(0, 4, "unresolved");
+    let (result, _, _) = copy_with_limits(
+        &source,
+        BindingOperation::Open { state: ScopeState::new(), binders: &[] },
+        (usize::MAX, usize::MAX),
+        None,
+    );
+    assert_eq!(result, Err(BindingFailure::MissingBinder { index: 4 }));
+    assert_exact(&source.selector, &bound(0, 4, "unresolved"));
+}

@@ -10,7 +10,7 @@
 
 use crate::{
     Binder, BoundVar, CanonicalBigInt, CanonicalBigRat, CanonicalFixedPoint, CanonicalFloat32,
-    CanonicalFloat64, FreeVar, OrdVar, Var,
+    CanonicalFloat64, FltNode, FltTemplatePiece, FreeVar, OrdVar, Var,
 };
 use moniker::{BinderIndex, ScopeState};
 
@@ -56,11 +56,25 @@ pub fn reserve_binding_copy<E>(
     owned_bytes: usize,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
 ) -> Result<(), BindingFailure<E>> {
-    let work = owned_bytes
-        .checked_add(1)
+    reserve_binding_parts(1, 1, owned_bytes, reserve)
+}
+
+/// Admit separate work, logical copy records, and owned byte components.
+///
+/// This shares the leaf charge convention with composite native payloads.
+/// All additions and multiplication are checked before invoking the caller.
+pub fn reserve_binding_parts<E>(
+    work: usize,
+    records: usize,
+    owned_bytes: usize,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<(), BindingFailure<E>> {
+    let work = work
+        .checked_add(owned_bytes)
         .ok_or(BindingFailure::SizeOverflow)?;
-    let units = owned_bytes
-        .checked_add(4)
+    let units = records
+        .checked_mul(4)
+        .and_then(|units| units.checked_add(owned_bytes))
         .ok_or(BindingFailure::SizeOverflow)?;
     reserve(work, units).map_err(BindingFailure::Reservation)
 }
@@ -196,5 +210,77 @@ impl CheckedBindingLeaf for Vec<u8> {
     ) -> Result<Self, BindingFailure<E>> {
         reserve_binding_copy(self.len(), reserve)?;
         Ok(self.clone())
+    }
+}
+
+fn add_copy_component<E>(total: &mut usize, amount: usize) -> Result<(), BindingFailure<E>> {
+    *total = total
+        .checked_add(amount)
+        .ok_or(BindingFailure::SizeOverflow)?;
+    Ok(())
+}
+
+impl CheckedBindingLeaf for FltNode {
+    fn try_copy_binding<E>(
+        &self,
+        operation: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>> {
+        // The caller may supply a programmatically constructed node. Its
+        // declared bounds are metadata, never a receipt for actual copy work.
+        let inspection = self
+            .holes
+            .len()
+            .checked_add(self.pieces.len())
+            .and_then(|entries| entries.checked_add(1))
+            .ok_or(BindingFailure::SizeOverflow)?;
+        reserve(inspection, 0).map_err(BindingFailure::Reservation)?;
+        let mut bytes = 0;
+        for field in [
+            &self.selector_name,
+            &self.category,
+            &self.open_src,
+            &self.body_src,
+            &self.close_src,
+        ] {
+            add_copy_component(&mut bytes, field.len())?;
+        }
+        // Node + five String headers + two Vec headers. Entry records and
+        // their String headers follow; this is not physical allocator size.
+        let mut records = 8;
+        for hole in &self.holes {
+            reserve(0, 0).map_err(BindingFailure::Reservation)?;
+            add_copy_component(&mut records, 2)?;
+            add_copy_component(&mut bytes, hole.name.len())?;
+            if let Some(category) = &hole.category {
+                add_copy_component(&mut records, 1)?;
+                add_copy_component(&mut bytes, category.len())?;
+            }
+        }
+        for piece in &self.pieces {
+            reserve(0, 0).map_err(BindingFailure::Reservation)?;
+            add_copy_component(&mut records, 1)?;
+            if let FltTemplatePiece::Text { text, .. } = piece {
+                add_copy_component(&mut records, 1)?;
+                add_copy_component(&mut bytes, text.len())?;
+            }
+        }
+        let selector = self.selector.try_copy_binding(operation, reserve)?;
+        reserve_binding_parts(records, records, bytes, reserve)?;
+        // Only the selector is bound. These flat payload clones preserve
+        // structural hole identity/order and literal guest text exactly.
+        // Do not invoke a constructor: it would validate or rebuild syntax.
+        Ok(Self {
+            selector,
+            selector_name: self.selector_name.clone(),
+            category: self.category.clone(),
+            open_src: self.open_src.clone(),
+            body_src: self.body_src.clone(),
+            holes: self.holes.clone(),
+            pieces: self.pieces.clone(),
+            close_src: self.close_src.clone(),
+            bounds: self.bounds,
+            position: self.position,
+        })
     }
 }

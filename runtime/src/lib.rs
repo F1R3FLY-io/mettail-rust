@@ -13,7 +13,7 @@ pub use binding::*;
 
 mod checked_binding;
 pub use checked_binding::{
-    reserve_binding_copy, BindingFailure, BindingOperation, CheckedBindingLeaf,
+    reserve_binding_copy, reserve_binding_parts, BindingFailure, BindingOperation, CheckedBindingLeaf,
 };
 
 /// Runtime diagnostics queue (D11 ambiguous-display warnings, etc.).
