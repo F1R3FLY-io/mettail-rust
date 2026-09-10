@@ -284,14 +284,89 @@ neutral Boolean evaluator or silently disable the production discharge policy.
 Installed predicate obligations remain residual regardless of literal
 groundness, as specified by the application contract.
 
-Fold specifications and guard reports currently use thread-local storage, and
-the parser uses a thread-local variable cache. A compilation session must own
-its required outputs and isolate variable identity. On success, return every
-required descriptor; on failure, discard private partial outputs and clear or
-restore session-local state. Reentrant and sequential requests must not inherit
-one another's names, fold sites, diagnostics or capability references. An
-artifact with a fold trampoline but without its service specification is not
-complete.
+### Required direct whole-body session
+
+The first demonstration requires normal success/error cleanup and rejection of
+nested lowering. Recovery after an internal Rust panic, including validation of
+the compiler backend's unwinding behavior, belongs to the following milestone.
+The unwind laws below specify that later recovery contract; they are not a
+claim that the demonstration supports catching panics and continuing execution.
+
+Direct lowering must use a private owned-session entry to the existing driver
+with `Seed::Body`, preserving whole-body staging rather than substituting the
+narrower process entry. Its admission policy must explicitly be `Public`, with
+an explicit resolver and
+lowering options; production guard options alone do not select Public scope.
+The successful low-level result must move ownership of the `Par`, all ordered
+`FoldSpec` service descriptions and the `GuardDischargeReport` together. A fold
+trampoline without its matching service description is not a complete result.
+
+Fold specifications and guard reports use thread-local storage (TLS). Retain
+that existing accumulator pair. The required session bracket makes it private
+to one synchronous lowering call while the owner is active.
+The ordering matters because a nested call must not erase the outer call's work:
+
+1. Check for an active owned session and reject reentry with
+   `ReentrantLoweringSession` before clearing, taking or otherwise touching its
+   payload. Rejection leaves the outer session intact.
+2. For an accepted entry, establish private empty fold and guard accumulators
+   under an unwind-safe ownership guard, then run the same whole-body driver.
+3. On direct success, move both accumulators into the result with the returned
+   `Par`, release ownership and leave TLS empty. Publish only that complete
+   bundle.
+4. On lowering failure or stack unwinding, discard both partial outputs and
+   release the session. No bundle is published. This unwind requirement is not
+   a promise of recovery from process abort or allocator failure.
+
+The gate must cover callbacks as well as nested owned entry. Every raw legacy
+or public process, name, formula and term lowering entry must return
+`ReentrantLoweringSession` during an active owned session, before entering the
+driver, invoking a resolver or performing lowering work. The private owner
+entry reaches the same driver without routing through those rejected public
+entries. This preserves existing lowering decisions while preventing a callback
+from appending to or consuming the outer call's outputs.
+
+Public legacy fold and guard-report clear/take accessors must check for an
+active owner before borrowing either accumulator. Their existing signatures
+cannot return a lowering error, so misuse must panic with an explicit
+owned-session diagnostic. Private owner clear/drain operations remain available
+for acquisition, completion and cleanup. A caught accessor panic or handled
+lowering rejection leaves the outer state unchanged. If a panic escapes the
+callback, unwinding through the owned resource acquisition is initialization
+(RAII) guard discards the partial outputs and releases ownership as above.
+
+On successful legacy `lower_rholang_term_with_folds`, release the session,
+republish its owned guard report and return the owned process and folds. This
+preserves the explicit `take_guard_discharge_report` compatibility accessor;
+publication must occur only after ownership is released. The direct API returns
+its guard report in the owned bundle and leaves
+no report in TLS. An accepted later owned call starts with empty accumulators;
+a rejected nested call must not clear a report or folds belonging to its owner.
+
+No asynchronous suspension is permitted while this TLS bracket is live: a
+thread-local owner cannot safely follow a suspended task to another thread.
+Sequential calls must start without inherited fold or guard output. The parser's
+separate thread-local variable cache still needs its own identity-isolation
+boundary; owning these lowering outputs does not establish parser isolation.
+
+Fold service indices use the existing one-byte channel representation. Accept
+indices 0 through 255 only. If the next index is 256 or greater, reject before
+recording its `FoldSpec` or allocating its service channel; truncation would
+alias an earlier service. This representability check is not a preparation-work
+budget and does not authorize executing otherwise unsupported fold forms.
+
+The [owned-session model](../../formal/rocq/rho_bridge/theories/RholangOwnedSession.v)
+is the ownership-protocol reference. Its direct-session extension and concrete
+Rust correspondence must establish the bracket, callback rejection,
+compatibility publication and index rules above; a finite state model alone does
+not prove Rust cleanup, memory bounds or source admission.
+These are required semantics, not an implementation-complete claim. Even a
+successful low-level bundle is **not a public source admission certificate**:
+caller imports, preparation resource budgets, checked frontend adaptation,
+provider binding and qualified FLT `where` integration remain required sibling
+obligations before public activation.
+
+### Subsequent neutral dependency boundary
 
 Neutrality applies to the actual Cargo dependency closure, including proc-macro
 and build dependencies. The full backend build retains the path
@@ -451,11 +526,15 @@ only within their actual scope. Typed IR/target laws, the worklist factoring,
 each constructor family, DDL/FLT sessions and full emitter composition need
 their own precise source correspondence and focused tests.
 
-Acceptance proceeds through pure dependency isolation, typed IR/target laws,
-the shared worklist and required constructor families, explicit sessions,
-node emission/prepared admission, shared provider and guarded COMM integration,
-then actual public eval/gRPC. The source application must run unchanged through
-that final path. Compare canonical node bytes, binders, diagnostics, costs,
+Direct-path acceptance proceeds through the checked composition dependency
+gate, the reused whole-body worklist with explicit sessions and Public scope,
+caller imports and bounded preparation, checked prepared admission, shared
+provider and guarded COMM integration, then actual public eval/gRPC. Subsequent
+neutral extraction additionally requires pure dependency isolation, typed
+IR/target laws, constructor-family migration and node-emission correspondence;
+those obligations are retained, not prerequisites to the first direct revision.
+The source application must run unchanged through the public path. Compare
+canonical node bytes, binders, diagnostics, costs,
 receipts, effects and negative/refusal behavior—not merely printed output.
 Independent public-node and application gates remain necessary after locally
 passing constructor checks. Optimization cannot replace any of these required

@@ -69,6 +69,8 @@ pub use graph::{interpret_construction_graph, GraphInterpretationError};
 mod scope;
 pub use scope::SourceAdmissionMode;
 
+pub(crate) mod session;
+
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
 
@@ -320,6 +322,10 @@ pub enum RholangAstLowerError {
     ScopeIndexOverflow,
     ScopeArenaOverflow,
     ScopeArenaAllocationFailed,
+    ReentrantLoweringSession,
+    FoldSiteIndexOverflow {
+        index: usize,
+    },
     EmptyInputJoin,
     InputArityMismatch {
         names: usize,
@@ -720,6 +726,7 @@ fn lower_rholang_exec_term(
     term: &dyn Term,
     out_channel: &str,
 ) -> Result<Par, RholangAstLowerError> {
+    session::ensure_inactive()?;
     let alternatives = rholang_proc_alternatives_from_term(term)?;
     if let [only] = alternatives.as_slice() {
         if !proc_has_machine_effects(only) {
@@ -929,6 +936,7 @@ pub fn lower_rholang_proc_with_resolver_and_options(
 /// semantic-key deduplication. This prevents the runtime backend from silently
 /// choosing the first parse alternative.
 pub fn lower_rholang_term(term: &dyn Term) -> Result<Par, RholangAstLowerError> {
+    session::ensure_inactive()?;
     let alternatives = rholang_proc_alternatives_from_term(term)?;
     lower_proc_alternatives(alternatives)
 }
@@ -1019,11 +1027,19 @@ fn collect_proc_alternatives<'a>(
 fn lower_proc_alternatives<'a>(
     alternatives: impl IntoIterator<Item = &'a Proc>,
 ) -> Result<Par, RholangAstLowerError> {
+    session::ensure_inactive()?;
+    lower_proc_alternatives_with(alternatives, lower_rholang_proc)
+}
+
+fn lower_proc_alternatives_with<'a>(
+    alternatives: impl IntoIterator<Item = &'a Proc>,
+    mut lower: impl FnMut(&Proc) -> Result<Par, RholangAstLowerError>,
+) -> Result<Par, RholangAstLowerError> {
     let mut seen = BTreeSet::new();
     let mut lowered = Vec::new();
     for proc in alternatives {
         if seen.insert(rholang_proc_semantic_key(proc)) {
-            lowered.push(lower_rholang_proc(proc)?);
+            lowered.push(lower(proc)?);
         }
     }
 
@@ -1775,8 +1791,14 @@ impl<'a> Drive<'a> {
     }
 }
 
-/// Run the machine to its final configuration.
+/// Legacy entry cannot enter a machine while an owned session is active.
 fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    session::ensure_inactive()?;
+    drive_machine(seed, root_env)
+}
+
+/// The same machine, entered either through the legacy gate or its private owner.
+fn drive_machine(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     let arena: Arena<Arc<Proc>> = Arena::new();
     let seed_job = match seed {
         Seed::Proc(proc) => Job::Proc(proc, ROOT_ENV),
@@ -2288,7 +2310,8 @@ impl<'a> Drive<'a> {
             self.stacks.push(Job::Proc(body, env));
             return Ok(());
         };
-        let site_index = HELD_FOLD_SITES.with(|sites| sites.borrow().len()) as u8;
+        let site_index =
+            session::checked_fold_site_index(HELD_FOLD_SITES.with(|sites| sites.borrow().len()))?;
         let fingerprint = held_fold_language_fingerprint();
         HELD_FOLD_SITES.with(|sites| {
             sites.borrow_mut().push(FoldSpec {
@@ -4762,16 +4785,29 @@ fn rebuild_binary(orig: &Proc, a: Proc, b: Proc) -> Proc {
 pub fn lower_rholang_term_with_folds(
     term: &dyn Term,
 ) -> Result<(Par, Vec<FoldSpec>), RholangAstLowerError> {
-    clear_held_fold_sites();
-    let par = lower_rholang_term(term)?;
-    Ok((par, take_held_fold_sites()))
+    let output = session::with_owned_outputs(|owner| {
+        let alternatives = rholang_proc_alternatives_from_term(term)?;
+        lower_proc_alternatives_with(alternatives, |proc| {
+            owner.drive(Seed::Body(proc), &BoundEnv::new())
+        })
+    })?;
+    // This compatibility API retains its explicit take-guard-report accessor.
+    // The direct session returns the report as owned data instead.
+    GUARD_DISCHARGE_REPORT.with(|report| *report.borrow_mut() = output.guard_report);
+    Ok((output.par, output.folds))
 }
 
 /// Clear the fold-site session state. Call before a lowering whose fold contracts you intend to
 /// collect with [`take_held_fold_sites`], so stale sites from a prior lowering don't leak. Used by
 /// the wrapper's `start_reduction_stepper` / the exec path, which lower through the invocation
 /// compiler (not [`lower_rholang_term_with_folds`] directly).
+/// Panics before accessing TLS if an owned lowering session is active.
 pub fn clear_held_fold_sites() {
+    session::assert_legacy_output_access();
+    clear_held_fold_sites_inner();
+}
+
+fn clear_held_fold_sites_inner() {
     HELD_FOLD_SITES.with(|sites| sites.borrow_mut().clear());
 }
 
@@ -4779,7 +4815,13 @@ pub fn clear_held_fold_sites() {
 /// folds (e.g. Calculator, whose invocation compiler never lifts; A-S4: Rholang records a site
 /// for EVERY fold, ground or COMM-held). The caller materializes the contracts with
 /// [`crate::fold_contract::fold_definitions_for`].
+/// Panics before accessing TLS if an owned lowering session is active.
 pub fn take_held_fold_sites() -> Vec<FoldSpec> {
+    session::assert_legacy_output_access();
+    take_held_fold_sites_inner()
+}
+
+fn take_held_fold_sites_inner() -> Vec<FoldSpec> {
     HELD_FOLD_SITES.with(|sites| std::mem::take(&mut *sites.borrow_mut()))
 }
 
@@ -4798,7 +4840,13 @@ thread_local! {
 
 /// Clear the guard-discharge session state. Call before a lowering whose guard report you
 /// intend to collect with [`take_guard_discharge_report`].
+/// Panics before accessing TLS if an owned lowering session is active.
 pub fn clear_guard_discharge_report() {
+    session::assert_legacy_output_access();
+    clear_guard_discharge_report_inner();
+}
+
+fn clear_guard_discharge_report_inner() {
     GUARD_DISCHARGE_REPORT.with(|report| *report.borrow_mut() = GuardDischargeReport::default());
 }
 
@@ -4807,7 +4855,13 @@ pub fn clear_guard_discharge_report() {
 ///
 /// A `Refuted` count is informational — the artifact is byte-identical either way. A non-zero
 /// `disagreements` count is a divergence-A-shaped defect that has already been logged at `WARN`.
+/// Panics before accessing TLS if an owned lowering session is active.
 pub fn take_guard_discharge_report() -> GuardDischargeReport {
+    session::assert_legacy_output_access();
+    take_guard_discharge_report_inner()
+}
+
+fn take_guard_discharge_report_inner() -> GuardDischargeReport {
     GUARD_DISCHARGE_REPORT.with(|report| std::mem::take(&mut *report.borrow_mut()))
 }
 

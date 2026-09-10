@@ -16,7 +16,7 @@
 
 From Stdlib Require Import List String PeanoNat Bool ZArith Lia.
 From RhoBridge Require RholangTargetConstruction RholangConstructionProtocol
-  RholangFrontendAdmission RholangFltTransport.
+  RholangFrontendAdmission RholangFltTransport RholangSourceScope.
 Import ListNotations.
 Module Algebra := RholangTargetConstruction.
 Module Construction := RholangConstructionProtocol.
@@ -824,6 +824,329 @@ Proof.
   unfold finish, check_links; cbn. rewrite O; cbn. rewrite R; reflexivity.
   all: reflexivity.
 Qed.
+
+(** Direct specialization: the existing driver supplies one owned root, rather
+    than an arena index. FoldRequirement is the same descriptor data used above;
+    the report below mirrors the existing observational GuardDischargeReport.
+    Nothing constructs a neutral arena, executes a provider, or re-lowers a root.
+
+    The private synchronous bracket must call the SAME drive(Seed::Body, env).
+    These finite-state laws specify its entry/exit boundary, not Rust execution,
+    panic safety of destructors, allocation bounds, or thread-local borrow safety.
+    Rust must establish cleanup before return/resume_unwind, keep the bracket
+    private and non-suspending, and retain the actual resolver/options/identities.
+    Error and unwind payloads are arbitrary data, not correctness premises. *)
+Record DirectGuardReport := {
+  direct_discharged : nat;
+  direct_refuted : list (nat * string);
+  direct_residual : nat;
+  direct_disagreements : nat
+}.
+Definition empty_direct_report : DirectGuardReport :=
+  {| direct_discharged := 0; direct_refuted := []; direct_residual := 0;
+     direct_disagreements := 0 |}.
+Record DirectSideOutputs := {
+  direct_folds : list FoldRequirement;
+  direct_guards : DirectGuardReport
+}.
+Definition empty_direct_outputs : DirectSideOutputs :=
+  {| direct_folds := fold_requirements empty_payload; direct_guards := empty_direct_report |}.
+Record DirectSessionState := {
+  direct_active : bool;
+  direct_outputs : DirectSideOutputs
+}.
+Definition direct_idle : DirectSessionState :=
+  {| direct_active := false; direct_outputs := empty_direct_outputs |}.
+Definition direct_started : DirectSessionState :=
+  {| direct_active := true; direct_outputs := empty_direct_outputs |}.
+Record DirectArtifact := {
+  direct_root : Algebra.Value;
+  direct_artifact_outputs : DirectSideOutputs
+}.
+Inductive DirectDriverExit (Error Unwind : Type) :=
+| DirectReturned (root : Algebra.Value) (outputs : DirectSideOutputs)
+| DirectFailed (error : Error) (partial : DirectSideOutputs)
+| DirectUnwound (panic_payload : Unwind) (partial : DirectSideOutputs).
+Arguments DirectReturned {Error Unwind} _ _.
+Arguments DirectFailed {Error Unwind} _ _.
+Arguments DirectUnwound {Error Unwind} _ _.
+Inductive DirectResult (Error Unwind : Type) :=
+| DirectOwnedOutput (artifact : DirectArtifact)
+| DirectNoArtifact (error : Error)
+| DirectResumeUnwind (panic_payload : Unwind)
+| DirectReentrant.
+Arguments DirectOwnedOutput {Error Unwind} _.
+Arguments DirectNoArtifact {Error Unwind} _.
+Arguments DirectResumeUnwind {Error Unwind} _.
+Arguments DirectReentrant {Error Unwind}.
+
+Definition finish_direct {Error Unwind} (outcome : DirectDriverExit Error Unwind)
+    : DirectSessionState * DirectResult Error Unwind :=
+  (direct_idle, match outcome with
+   | DirectReturned root outputs => DirectOwnedOutput
+       {| direct_root := root; direct_artifact_outputs := outputs |}
+   | DirectFailed error _ => DirectNoArtifact error
+   | DirectUnwound panic_payload _ => DirectResumeUnwind panic_payload
+   end).
+
+Section DirectPublicBracket.
+Context {Body Options Resolver Imports Error Unwind : Type}.
+Definition direct_public_context (context : @RholangSourceScope.SourceContext Options Resolver Imports)
+    : @RholangSourceScope.SourceContext Options Resolver Imports :=
+  {| RholangSourceScope.context_scope := RholangSourceScope.context_scope context;
+     RholangSourceScope.context_options := RholangSourceScope.context_options context;
+     RholangSourceScope.context_resolver := RholangSourceScope.context_resolver context;
+     RholangSourceScope.context_imports := RholangSourceScope.context_imports context;
+     RholangSourceScope.context_mode := RholangSourceScope.PublicSource;
+     RholangSourceScope.context_pattern := RholangSourceScope.context_pattern context |}.
+
+(** The active check precedes both clearing stale inactive output and invoking
+    the driver. The driver parameter denotes the existing Body entry, not an
+    additional parser, evaluator, or assumed-correct transition function. *)
+Definition prepare_direct_body (state : DirectSessionState) (body : Body)
+    (context : @RholangSourceScope.SourceContext Options Resolver Imports)
+    (drive_body : Body -> @RholangSourceScope.SourceContext Options Resolver Imports ->
+      DirectSessionState -> DirectDriverExit Error Unwind)
+    : DirectSessionState * DirectResult Error Unwind :=
+  if direct_active state then (state, DirectReentrant)
+  else finish_direct (drive_body body (direct_public_context context) direct_started).
+
+Theorem public_direct_context_retains_all_nonmode_inputs : forall context,
+  (RholangSourceScope.context_scope (direct_public_context context),
+   RholangSourceScope.context_options (direct_public_context context),
+   RholangSourceScope.context_resolver (direct_public_context context),
+   RholangSourceScope.context_imports (direct_public_context context),
+   RholangSourceScope.context_pattern (direct_public_context context)) =
+  (RholangSourceScope.context_scope context, RholangSourceScope.context_options context,
+   RholangSourceScope.context_resolver context, RholangSourceScope.context_imports context,
+   RholangSourceScope.context_pattern context) /\
+  RholangSourceScope.context_mode (direct_public_context context) = RholangSourceScope.PublicSource.
+Proof. intro; split; reflexivity. Qed.
+
+Theorem direct_entry_clears_inactive_side_outputs : forall stale body context driver,
+  prepare_direct_body {| direct_active := false; direct_outputs := stale |} body context driver =
+  finish_direct (driver body (direct_public_context context) direct_started).
+Proof. reflexivity. Qed.
+
+Theorem reentrant_direct_entry_preserves_active_payload : forall outputs body context driver,
+  prepare_direct_body {| direct_active := true; direct_outputs := outputs |} body context driver =
+  ({| direct_active := true; direct_outputs := outputs |}, DirectReentrant).
+Proof. reflexivity. Qed.
+
+Theorem reentrant_direct_entry_is_independent_of_driver : forall outputs body context first second,
+  prepare_direct_body {| direct_active := true; direct_outputs := outputs |} body context first =
+  prepare_direct_body {| direct_active := true; direct_outputs := outputs |} body context second.
+Proof. reflexivity. Qed.
+
+Theorem successful_direct_preparation_keeps_exact_driver_payload :
+    forall stale body context driver root outputs,
+  driver body (direct_public_context context) direct_started = DirectReturned root outputs ->
+  prepare_direct_body {| direct_active := false; direct_outputs := stale |} body context driver =
+  (direct_idle, DirectOwnedOutput {| direct_root := root; direct_artifact_outputs := outputs |}).
+Proof. intros. unfold prepare_direct_body; cbn [direct_active]. now rewrite H. Qed.
+
+Theorem failed_direct_preparation_cleans_before_propagation :
+    forall stale body context driver error partial,
+  driver body (direct_public_context context) direct_started = DirectFailed error partial ->
+  prepare_direct_body {| direct_active := false; direct_outputs := stale |} body context driver =
+  (direct_idle, DirectNoArtifact error).
+Proof. intros. unfold prepare_direct_body; cbn [direct_active]. now rewrite H. Qed.
+
+Theorem unwound_direct_preparation_cleans_before_resumption :
+    forall stale body context driver panic_payload partial,
+  driver body (direct_public_context context) direct_started = DirectUnwound panic_payload partial ->
+  prepare_direct_body {| direct_active := false; direct_outputs := stale |} body context driver =
+  (direct_idle, DirectResumeUnwind panic_payload).
+Proof. intros. unfold prepare_direct_body; cbn [direct_active]. now rewrite H. Qed.
+
+Theorem finished_direct_request_cannot_contaminate_next_request :
+    forall (outcome : DirectDriverExit Error Unwind) body context driver,
+  prepare_direct_body (fst (finish_direct outcome)) body context driver =
+  prepare_direct_body direct_idle body context driver.
+Proof. reflexivity. Qed.
+End DirectPublicBracket.
+
+Theorem direct_start_contains_no_prior_folds_or_guard_report :
+  direct_folds (direct_outputs direct_started) = [] /\
+  direct_guards (direct_outputs direct_started) = empty_direct_report /\
+  direct_active direct_started = true.
+Proof. repeat split; reflexivity. Qed.
+
+Theorem every_direct_exit_releases_all_private_outputs : forall Error Unwind
+    (outcome : DirectDriverExit Error Unwind), fst (finish_direct outcome) = direct_idle.
+Proof. reflexivity. Qed.
+
+(** Legacy operations must not bypass the owned bracket through a resolver or
+    reflector callback. Raw lowering has a Result-returning API and rejects
+    with the reentrant error. The four legacy accumulator accessors have no
+    error result in their existing signatures, so they reject at their API
+    boundary by panicking, before borrowing or changing either accumulator.
+
+    The continuation below represents the existing operation AFTER its gate:
+    raw driver execution, or the legacy take/clear operation. Its behavior is
+    arbitrary. The active branch does not apply it and preserves the complete
+    state; the inactive branch retains its exact result and state transition.
+    The private owner's clear/take and driver entry are deliberately not legacy
+    operations: they remain inside prepare_direct_body and finish_direct.
+
+    Refusal is an observation of this model, not a Rust panic implementation.
+    A callback that catches an accessor panic retains the active state. If the
+    panic escapes the driver, it is a DirectUnwound exit and the existing
+    unwound_direct_preparation_cleans_before_resumption law applies. Concrete
+    Rust must establish the gate before callbacks, TLS borrows and driver work;
+    these equations do not prove Rust borrow safety or destructor behavior. *)
+Inductive DirectLegacyOperation :=
+| LegacyRawLowering
+| LegacyTakeFolds
+| LegacyClearFolds
+| LegacyTakeGuardReport
+| LegacyClearGuardReport.
+Inductive DirectLegacyRefusal :=
+| LegacyReentrantError
+| LegacyAccessorPanic.
+Definition direct_legacy_refusal (operation : DirectLegacyOperation) : DirectLegacyRefusal :=
+  match operation with
+  | LegacyRawLowering => LegacyReentrantError
+  | LegacyTakeFolds | LegacyClearFolds | LegacyTakeGuardReport | LegacyClearGuardReport =>
+      LegacyAccessorPanic
+  end.
+Inductive DirectLegacyResult (A : Type) :=
+| LegacyReturned (value : A)
+| LegacyRefused (refusal : DirectLegacyRefusal).
+Arguments LegacyReturned {A} _.
+Arguments LegacyRefused {A} _.
+
+Definition gate_direct_legacy_operation {A} (state : DirectSessionState)
+    (operation : DirectLegacyOperation)
+    (after_gate : DirectSessionState -> DirectSessionState * A)
+    : DirectSessionState * DirectLegacyResult A :=
+  if direct_active state then (state, LegacyRefused (direct_legacy_refusal operation))
+  else let '(next, value) := after_gate state in (next, LegacyReturned value).
+
+Theorem active_legacy_operation_preserves_exact_owned_state : forall A outputs operation
+    (after_gate : DirectSessionState -> DirectSessionState * A),
+  gate_direct_legacy_operation
+    {| direct_active := true; direct_outputs := outputs |} operation after_gate =
+  ({| direct_active := true; direct_outputs := outputs |},
+   LegacyRefused (direct_legacy_refusal operation)).
+Proof. reflexivity. Qed.
+
+Theorem active_legacy_operation_is_independent_of_continuation : forall A outputs operation
+    (first second : DirectSessionState -> DirectSessionState * A),
+  gate_direct_legacy_operation
+    {| direct_active := true; direct_outputs := outputs |} operation first =
+  gate_direct_legacy_operation
+    {| direct_active := true; direct_outputs := outputs |} operation second.
+Proof. reflexivity. Qed.
+
+Theorem inactive_legacy_operation_retains_exact_behavior : forall A outputs operation
+    (after_gate : DirectSessionState -> DirectSessionState * A),
+  gate_direct_legacy_operation
+    {| direct_active := false; direct_outputs := outputs |} operation after_gate =
+  let '(next, value) := after_gate {| direct_active := false; direct_outputs := outputs |} in
+  (next, LegacyReturned value).
+Proof. reflexivity. Qed.
+
+Theorem active_raw_lowering_returns_reentrant_error : forall A outputs
+    (driver : DirectSessionState -> DirectSessionState * A),
+  gate_direct_legacy_operation
+    {| direct_active := true; direct_outputs := outputs |} LegacyRawLowering driver =
+  ({| direct_active := true; direct_outputs := outputs |}, LegacyRefused LegacyReentrantError).
+Proof. reflexivity. Qed.
+
+Theorem active_legacy_accessor_panics_without_payload_change : forall A outputs operation
+    (accessor : DirectSessionState -> DirectSessionState * A),
+  operation <> LegacyRawLowering ->
+  gate_direct_legacy_operation
+    {| direct_active := true; direct_outputs := outputs |} operation accessor =
+  ({| direct_active := true; direct_outputs := outputs |}, LegacyRefused LegacyAccessorPanic).
+Proof.
+  intros A outputs operation accessor H.
+  destruct operation; [exfalso; apply H; reflexivity|reflexivity|reflexivity|reflexivity|reflexivity].
+Qed.
+
+(** The current held-fold channel carries an unsigned byte site. Index 255
+    is representable; the NEXT request at length 256 is not. The continuation
+    stands for the existing fingerprint/channel construction and recording:
+    a rejected index never invokes it. No channel identity is fabricated here. *)
+Definition checked_direct_fold_site (index : nat) : option nat :=
+  if index <=? 255 then Some index else None.
+Definition with_checked_direct_fold_site {A} (index : nat) (after_check : nat -> A) : option A :=
+  match checked_direct_fold_site index with
+  | Some admitted => Some (after_check admitted)
+  | None => None
+  end.
+Definition record_direct_fold (outputs : DirectSideOutputs) (kind : FoldKind)
+    (width : Z) (commitment : string) : option DirectSideOutputs :=
+  with_checked_direct_fold_site (List.length (direct_folds outputs)) (fun index =>
+    {| direct_folds := direct_folds outputs ++
+         [{| fold_kind := kind; fold_width := width; fold_site_index := index;
+             fold_language_commitment := commitment |}];
+       direct_guards := direct_guards outputs |}).
+
+Theorem direct_fold_index_check_is_exact : forall index admitted,
+  checked_direct_fold_site index = Some admitted <-> admitted = index /\ index <= 255.
+Proof.
+  intros index admitted. unfold checked_direct_fold_site.
+  destruct (index <=? 255) eqn:H; [apply Nat.leb_le in H|apply Nat.leb_gt in H].
+  - split.
+    + intro E. split; [congruence|exact H].
+    + intros [E _]. subst admitted. reflexivity.
+  - split; [discriminate|intros [_ E]; lia].
+Qed.
+
+Theorem fold_index_overflow_prevents_followup : forall A index (after_check : nat -> A),
+  256 <= index -> with_checked_direct_fold_site index after_check = None.
+Proof.
+  intros A index after_check H. unfold with_checked_direct_fold_site, checked_direct_fold_site.
+  assert ((index <=? 255) = false) as E by (apply Nat.leb_gt; lia). now rewrite E.
+Qed.
+
+Theorem checked_fold_recording_retains_exact_index_and_guard_report :
+    forall outputs kind width commitment,
+  List.length (direct_folds outputs) <= 255 ->
+  record_direct_fold outputs kind width commitment = Some
+    {| direct_folds := direct_folds outputs ++
+         [{| fold_kind := kind; fold_width := width;
+             fold_site_index := List.length (direct_folds outputs);
+             fold_language_commitment := commitment |}];
+       direct_guards := direct_guards outputs |}.
+Proof.
+  intros outputs kind width commitment H.
+  unfold record_direct_fold, with_checked_direct_fold_site, checked_direct_fold_site.
+  apply Nat.leb_le in H. now rewrite H.
+Qed.
+
+Theorem overflowing_fold_recording_has_no_updated_payload : forall outputs kind width commitment,
+  256 <= List.length (direct_folds outputs) ->
+  record_direct_fold outputs kind width commitment = None.
+Proof. intros. apply fold_index_overflow_prevents_followup. assumption. Qed.
+
+Example direct_fold_byte_boundary_is_inclusive :
+  checked_direct_fold_site 0 = Some 0 /\ checked_direct_fold_site 255 = Some 255 /\
+  checked_direct_fold_site 256 = None.
+Proof. repeat split; reflexivity. Qed.
+
+Print Assumptions public_direct_context_retains_all_nonmode_inputs.
+Print Assumptions direct_entry_clears_inactive_side_outputs.
+Print Assumptions reentrant_direct_entry_preserves_active_payload.
+Print Assumptions reentrant_direct_entry_is_independent_of_driver.
+Print Assumptions successful_direct_preparation_keeps_exact_driver_payload.
+Print Assumptions failed_direct_preparation_cleans_before_propagation.
+Print Assumptions unwound_direct_preparation_cleans_before_resumption.
+Print Assumptions finished_direct_request_cannot_contaminate_next_request.
+Print Assumptions direct_start_contains_no_prior_folds_or_guard_report.
+Print Assumptions every_direct_exit_releases_all_private_outputs.
+Print Assumptions active_legacy_operation_preserves_exact_owned_state.
+Print Assumptions active_legacy_operation_is_independent_of_continuation.
+Print Assumptions inactive_legacy_operation_retains_exact_behavior.
+Print Assumptions active_raw_lowering_returns_reentrant_error.
+Print Assumptions active_legacy_accessor_panics_without_payload_change.
+Print Assumptions direct_fold_index_check_is_exact.
+Print Assumptions fold_index_overflow_prevents_followup.
+Print Assumptions checked_fold_recording_retains_exact_index_and_guard_report.
+Print Assumptions overflowing_fold_recording_has_no_updated_payload.
+Print Assumptions direct_fold_byte_boundary_is_inclusive.
 
 Print Assumptions registration_returns_exact_descriptor.
 Print Assumptions registration_preserves_earlier_descriptors.
