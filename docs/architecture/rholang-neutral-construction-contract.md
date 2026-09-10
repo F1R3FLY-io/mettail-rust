@@ -7,11 +7,12 @@ The [admission contract](rholang-frontend-admission-contract.md) determines
 which source forms are supported. A target operation appearing below does not
 by itself admit a corresponding source form.
 
-The initial primitive construction target is implemented; the broader interface
-below remains the contract for subsequent constructor families. The existing
-runtime still constructs node `Par` values. Worklist instantiation, complete
-constructor-family emission, and final canonical-byte comparison are separate
-acceptance boundaries; this document is not evidence that they are complete.
+The initial primitive construction target and its bounded graph interpreter
+are implemented; the broader interface below remains the contract for
+subsequent constructor families. The existing source lowerer still constructs
+node `Par` values. Complete constructor-family emission, owned session output,
+and final source-to-node canonical-byte comparison remain separate acceptance
+boundaries; this document is not evidence that they are complete.
 
 ## Values, references, and observations
 
@@ -476,7 +477,8 @@ The existing driver now uses the node-independent
 `Stacks` wrapper. This is a concrete direct-node storage instantiation, not an
 implementation of the full neutral construction target. The driver still owns
 its `Job`/`Kont` instructions, scope environment, staged receives, constructors
-and session machinery. No second traversal or constructor interpreter was added.
+and session machinery. The storage layer itself neither traverses source nor
+interprets constructors.
 
 The storage keeps the existing two vectors and initial 64-element capacities.
 Work is last-in/first-out; completed values retain source order. The producer's
@@ -659,6 +661,106 @@ reuse the same worker and preserve its staged scope/receive/session behavior.
 nodes. It is only the construction component, not `RholangFrontendArtifactV1`.
 Owned FLT/session descriptors, source admission, occurrence maps, host emission,
 authority and funding remain their separately checked integration boundaries.
+
+### Bounded graph interpretation
+
+[`interpret_construction_graph`](../../rholang-runtime/src/rholang_ast/graph.rs)
+materializes the initial graph through the existing node target. It consumes
+neither Rholang source nor an FLT payload: its input is the already constructed
+empty/integer/Boolean/text/append graph. It does not admit a program, execute a
+process, resolve a language handle, or create a prepared-program certificate.
+
+The interpreter uses the same `Worklist` storage, with two instruction variants:
+`Visit(index)` and `Append(index)`. Work is LIFO; values retain source order.
+Repeated references schedule repeated visits. A shared graph can describe a
+much larger output, so unique-node counts cannot bound materialization work.
+No table of copied `Par` subtrees hides that expansion or changes multiplicity.
+
+The algorithm is the following iterative machine. `materialize` checks the
+required resource charge before invoking the existing constructor; `check`
+compares the resulting structural observation with the graph's cached one.
+
+```text
+reserve proven work/value capacities
+push Visit(root)
+while a job remains:
+    pop job; reserve one unit of control work
+    Visit(scalar):
+        materialize the scalar; check its observation; push its value
+    Visit(append(left, right)):
+        require both references to precede this node
+        push Append(this), Visit(right), Visit(left)
+    Append(this):
+        consume right, then left through checked reduce_pair
+        reserve all copies performed by the existing append helper
+        materialize append(left, right); check its observation; push its value
+    check the shared worklist's debt invariant
+require no pending jobs and exactly one result
+```
+
+The [graph-unfolding model](../../formal/rocq/rho_bridge/theories/RholangInitialGraphInterpretation.v)
+establishes finite ordered unfolding, including repeated references. The
+[concrete machine model](../../formal/rocq/rho_bridge/theories/RholangInitialGraphMachine.v)
+proves that the actual `Visit`/`Append` transition function produces that
+denotation, preserving arbitrary pending work and value prefixes. Its bounded
+execution relation includes **every intermediate state**, not just the result.
+For root index $`r`$, define $`d=r+1`$. Decreasing references bound depth by $`d`$;
+the proved capacities are $`W=2d+1`$ work slots and $`V=d+1`$ value slots.
+Later unreachable nodes do not affect this root's interpretation or charge.
+
+Each materialized value retains an exact footprint $`(h,b)`$: the number of
+expression entries and the total text payload length in UTF-8 bytes. Empty has
+footprint $`(0,0)`$, integer and Boolean have $`(1,0)`$, and text has
+$`(1,\lvert\mathrm{UTF8}(s)\rvert)`$. Append's **output** footprint is
+$`(h_L+h_R,b_L+b_R)`$, but the existing helper's **copy** footprint is
+$`(2h_L+h_R,2b_L+b_R)`$. Those are different quantities.
+
+The interpreter reuses `ReflectedCodecBudget`: cumulative caller work, a
+decreasing logical payload allowance, and the existing cancellation hook.
+One logical entry costs four units regardless of native struct layout.
+
+| Boundary | Work reservation | Logical payload reservation |
+| --- | --- | --- |
+| Initial stack storage | $`W+V`$ | $`4(W+V)`$ |
+| Each popped job | $`1`$ | $`0`$ |
+| Scalar construction with footprint $`(h,b)`$ | $`h+b`$ | $`4h+b`$ |
+| Append with copy footprint $`(H,B)`$ | $`H+B`$ | $`4H+B`$ |
+
+Checked arithmetic precedes reservation and allocation. Both budget dimensions
+must fit before either balance changes. Already paid control work remains paid
+if a subsequent payload charge fails; a failed constructor or observation
+check does not refund a successful reservation. No failure supplies a partial
+root or an empty-process substitute. Cancellation is checked at reservation
+boundaries, including zero-payload construction.
+
+The [resource model](../../formal/rocq/rho_bridge/theories/RholangInitialGraphResources.v)
+proves exact footprint caching, the flat closed scalar output domain, append
+copy coverage, atomic reservations, callback ordering and non-refunding
+composition. It imports the existing
+[checked-debit laws](../../formal/rocq/prattail_wpda_runtime/theories/ReconstructionWorkBudget.v)
+rather than introducing a different resource framework. These are model
+results, not a proof of the Rust compiler or the entire frontend. The
+[source-boundary check](../../scripts/verify-initial-graph-correspondence.mjs)
+pins the actual node helpers and reviewed scheduling/charging boundaries;
+reversed order, omitted repeated visits, omitted copies and post-construction
+charging fail its negative controls.
+
+The allowance does not measure native record sizes, allocator capacity/control
+allocations, resident memory, CPU time, protobuf size or semantic gas. Existing
+worklist and node-helper allocations are infallible APIs; this interpreter does
+not claim recoverable allocator exhaustion or cancellation inside those
+helpers. Its arithmetic must fit the existing platform's checked integer
+domain. Host funding remains a separate protocol-governed projection.
+
+[Focused Rust tests](../../rholang-runtime/src/rholang_ast/graph_tests.rs) compare
+independent primitive protobuf examples, node values and observations, ordered
+diamonds and repeated edges, unreachable suffixes, doubling graphs, growing
+append prefixes, exact/one-short budgets, overflow and cancellation. Existing
+shared-target tests now also interpret their neutral result and compare it with
+their direct node result. A 20,000-level empty-append graph tests successful
+materialization and mid-expansion refusal on a 256 KiB native thread stack.
+None of this substitutes for the remaining source-family and session migration
+or the real public-node application gate.
 
 ## Formal and implementation handoff
 

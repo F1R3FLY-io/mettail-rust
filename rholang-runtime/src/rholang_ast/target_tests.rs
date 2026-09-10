@@ -57,6 +57,7 @@ fn shared_production_parallel_transitions_accept_both_real_targets() {
             },
         );
         assert_eq!(graph.node_count(), if pair { 3 } else { 2 * texts.len() + 1 });
+        same_graph_interpretation(&graph, &direct);
     }
 }
 
@@ -90,6 +91,24 @@ fn shared_pair_retains_repeated_neutral_reference_without_clone_requirement() {
 fn same_bytes(actual: &Par, expected: &Par) {
     assert_eq!(actual, expected);
     assert_eq!(actual.encode_to_vec(), expected.encode_to_vec());
+}
+
+fn same_graph_interpretation(
+    graph: &mettail_rholang_frontend::arena::ConstructionGraph,
+    expected: &Par,
+) {
+    let mut work = 0;
+    let mut cancelled = || false;
+    let mut budget = mettail_rholang_codegen::ReflectedCodecBudget::new(
+        &mut work,
+        100_000,
+        100_000,
+        &mut cancelled,
+    );
+    let actual = crate::rholang_ast::interpret_construction_graph(graph, &mut budget)
+        .expect("same program through graph interpretation");
+    same_bytes(&actual, expected);
+    assert_eq!(DirectNodeTarget::observation(&actual), DirectNodeTarget::observation(expected));
 }
 
 #[test]
@@ -219,6 +238,7 @@ fn neutral_and_direct_targets_commute_on_shared_worklist_observations() {
     );
     assert_eq!(graph.node_count(), 7);
     assert_eq!(graph.node(graph.root()).expect("root").children, [4, 5]);
+    same_graph_interpretation(&graph, &direct);
     let expected = Par::default()
         .append(new_gstring_par("left".into(), Vec::new(), false))
         .append(new_gint_par(7, Vec::new(), false))

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { beforeInitialGraph } from "./verify-initial-graph-correspondence.mjs";
 
 const replacements = [
   ["", "use mettail_rholang_frontend::construction::{append_fold, ValueTarget};\n"],
@@ -21,6 +22,7 @@ const replacements = [
                     .expect("rholang lowering: valid parallel pair construction");`],
 ];
 export function beforeWorklistConstruction(source) {
+  source = beforeInitialGraph(source);
   for (const [before, after] of replacements) {
     assert.equal(source.split(after).length - 1, 1, "one exact shared transition delegation");
     source = source.replace(after, before);

@@ -17,6 +17,10 @@
 # so its .vo are present. The main harness WholeGsltInRhoOpCorrespondence.v itself
 # carries NO cross-project import (it threads (iii) as cited Section hypotheses).
 -Q ../advanced_automata/theories AdvancedAutomata
+# Reuse the small, dependency-free checked-debit theory. Listing its source
+# lets coq_makefile build this dependency without building the whole WPDA suite.
+-Q ../prattail_wpda_runtime/theories PrattailWpdaRuntime
+../prattail_wpda_runtime/theories/ReconstructionWorkBudget.v
 
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
@@ -38,6 +42,8 @@ theories/RholangConstructionProtocol.v
 theories/RholangConstructionFacts.v
 theories/RholangWorklistConstruction.v
 theories/RholangInitialGraphInterpretation.v
+theories/RholangInitialGraphMachine.v
+theories/RholangInitialGraphResources.v
 theories/RholangFltTransport.v
 theories/RholangFltRequestRecipes.v
 theories/RholangOwnedSession.v

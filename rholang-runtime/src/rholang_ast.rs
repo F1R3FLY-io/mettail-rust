@@ -61,6 +61,9 @@ mod recursive_oracle;
 mod target;
 use target::DirectNodeTarget as Target;
 
+mod graph;
+pub use graph::{interpret_construction_graph, GraphInterpretationError};
+
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
 
