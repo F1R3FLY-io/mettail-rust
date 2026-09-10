@@ -13,7 +13,12 @@
     This module reuses the checked-debit laws. It proves exact cached payload
     measures and atomic, non-refunding precharge composition. The concrete
     graph machine and every intermediate stack bound are proved separately in
-    RholangInitialGraphMachine. No recursive implementation is prescribed. *)
+    RholangInitialGraphMachine. No recursive implementation is prescribed.
+
+    Fresh has one OUTER head and no outer text payload. This module's footprint
+    continues to describe only that outer layer. It does not charge nested New
+    body/injection copies or lifecycle workspaces. Fresh graph emission must
+    add its deep-resource interpretation before using these outer charges. *)
 From Stdlib Require Import List Arith Lia String Bool.
 From RhoBridge Require Import RholangInitialGraphInterpretation
   RholangInitialGraphMachine RholangTargetConstruction.
@@ -41,6 +46,7 @@ Fixpoint tree_footprint (tree : InitialTree) : Footprint :=
   match tree with
   | ScalarTree scalar => scalar_footprint scalar
   | AppendTree lhs rhs => plus (tree_footprint lhs) (tree_footprint rhs)
+  | FreshTree _ _ _ => {| entry_count := 1; text_bytes := 0 |}
   end.
 
 Lemma sequence_bytes_app : forall lhs rhs,
@@ -68,6 +74,7 @@ Proof.
   induction tree; cbn [tree_footprint tree_denotation].
   - apply scalar_footprint_is_exact.
   - now rewrite append_footprint_is_exact, IHtree1, IHtree2.
+  - reflexivity.
 Qed.
 
 Definition initial_head (head : Head) : Prop :=
@@ -84,6 +91,7 @@ Fixpoint original_scalar_tree (tree : InitialTree) : bool :=
   | ScalarTree (BoundScalar _ _) | ScalarTree (WildcardScalar _) => false
   | ScalarTree _ => true
   | AppendTree lhs rhs => original_scalar_tree lhs && original_scalar_tree rhs
+  | FreshTree _ _ _ => false
   end.
 
 Theorem initial_outputs_have_only_flat_closed_scalar_heads : forall tree,
@@ -91,7 +99,7 @@ Theorem initial_outputs_have_only_flat_closed_scalar_heads : forall tree,
   Forall initial_head (heads_of (tree_denotation tree)) /\
   summary_of (tree_denotation tree) = closed_summary.
 Proof.
-  induction tree as [scalar|lhs IHleft rhs IHright]; intro Hdomain.
+  induction tree as [scalar|lhs IHleft rhs IHright|descriptor body IHbody injections]; intro Hdomain.
   - destruct scalar; cbn in Hdomain; try discriminate; cbn; split; repeat constructor.
   - apply andb_true_iff in Hdomain. destruct Hdomain as [HLdomain HRdomain].
     destruct (IHleft HLdomain) as [HL SL], (IHright HRdomain) as [HR SR].
@@ -102,6 +110,7 @@ Proof.
     + change (join_summary (summary_of (tree_denotation lhs))
         (summary_of (tree_denotation rhs)) = closed_summary).
       now rewrite SL, SR.
+  - discriminate.
 Qed.
 
 Definition flat_reference_head (head : Head) : Prop :=
@@ -109,14 +118,22 @@ Definition flat_reference_head (head : Head) : Prop :=
   | MakeHead (BoundHead _) [] | MakeHead WildcardHead [] => True
   | _ => initial_head head
   end.
+Fixpoint flat_reference_tree (tree : InitialTree) : bool :=
+  match tree with
+  | ScalarTree _ => true
+  | AppendTree lhs rhs => flat_reference_tree lhs && flat_reference_tree rhs
+  | FreshTree _ _ _ => false
+  end.
 Theorem extended_outputs_have_only_flat_heads : forall tree,
+  flat_reference_tree tree = true ->
   Forall flat_reference_head (heads_of (tree_denotation tree)).
 Proof.
-  induction tree as [scalar|lhs HL rhs HR].
+  induction tree as [scalar|lhs HL rhs HR|descriptor body HB injections]; intro Hdomain.
   - destruct scalar; cbn; repeat constructor.
   - change (Forall flat_reference_head
       (heads_of (tree_denotation lhs) ++ heads_of (tree_denotation rhs))).
-    apply Forall_app; auto.
+    apply andb_true_iff in Hdomain as [Hleft Hright]. apply Forall_app; auto.
+  - discriminate.
 Qed.
 
 Definition append_copy_footprint (lhs rhs : Footprint) := plus lhs (plus lhs rhs).

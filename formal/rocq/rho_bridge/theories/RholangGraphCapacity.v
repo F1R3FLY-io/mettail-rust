@@ -10,8 +10,8 @@
     active ancestors have strictly decreasing ranks. Repeated siblings run in
     sequence; they can still incur repeated execution and clone costs.
 
-    These arithmetic lemmas do not establish execution of a Fresh graph node.
-    The extended machine must instantiate them at every intermediate state.
+    These arithmetic lemmas alone do not establish execution of a Fresh graph
+    node. RholangInitialGraphMachine instantiates them at every transition.
     They bound retained work/value slots, not split-off child vectors, metadata,
     node clone/drop workspaces, total allocation volume, or machine-integer
     representability. Those remain distinct preconstruction obligations. *)
@@ -92,17 +92,18 @@ Qed.
 Definition initial_node_arity (graph : list InitialNode) (index : nat) : nat :=
   match nth_error graph index with
   | Some (AppendNode _ _) => 2
+  | Some (FreshNode _ _ injections) => S (length injections)
   | _ => 0
   end.
 
 Theorem initial_graph_keeps_its_exact_existing_capacity_formula : forall graph root,
+  (forall index, index <= root -> initial_node_arity graph index <= 2) ->
   job_allowance (initial_node_arity graph) root + 1 = 2 * S root + 1 /\
   value_allowance (initial_node_arity graph) root + 1 = S root + 1.
 Proof.
-  intros graph root.
+  intros graph root Hbinary.
   assert (HB : prefix_surplus (initial_node_arity graph) (S root) = 0).
-  { apply binary_prefix_has_zero_surplus. intros index _.
-    unfold initial_node_arity. destruct (nth_error graph index) as [[scalar|lhs rhs]|]; lia. }
+  { apply binary_prefix_has_zero_surplus. intros index HI. apply Hbinary. lia. }
   unfold job_allowance, value_allowance. rewrite HB. lia.
 Qed.
 

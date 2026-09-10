@@ -488,7 +488,7 @@ The canonical-input premise matters. An externally supplied metadata sequence
 `[1, 0]` has length two, but shifting it by zero trims it to length one. The model
 includes this counterexample, and the direct adapter keeps the existing trimming
 behavior for such inputs. These are representation and size lemmas, not a claim
-that the unfinished graph extension already maintains this invariant or that
+that the unfinished Rust graph extension already maintains this invariant or that
 the complete Rust implementation has been formally verified.
 
 The [worklist refinement](../../formal/rocq/rho_bridge/theories/RholangWorklistConstruction.v)
@@ -835,11 +835,12 @@ require no pending jobs and exactly one result
 The [graph-unfolding model](../../formal/rocq/rho_bridge/theories/RholangInitialGraphInterpretation.v)
 establishes finite ordered unfolding, including repeated references. The
 [concrete machine model](../../formal/rocq/rho_bridge/theories/RholangInitialGraphMachine.v)
-proves that the actual `Visit`/`Append` transition function produces that
+proves that the formal `Visit`/`Append` transition function produces that
 denotation, preserving arbitrary pending work and value prefixes. Its bounded
 execution relation includes **every intermediate state**, not just the result.
 For root index $`r`$, define $`d=r+1`$. Decreasing references bound depth by $`d`$;
-the proved capacities are $`W=2d+1`$ work slots and $`V=d+1`$ value slots.
+the binary specialization gives $`W=2d+1`$ work slots and $`V=d+1`$ value slots
+for the currently implemented graph family.
 Later unreachable nodes do not affect this root's interpretation or charge.
 
 Each materialized value retains an exact footprint $`(h,b)`$: the number of
@@ -900,8 +901,9 @@ or the real public-node application gate.
 
 Fresh construction adds a body and any number of ordered injection children.
 The [capacity arithmetic model](../../formal/rocq/rho_bridge/theories/RholangGraphCapacity.v)
-supplies the inequalities needed to extend the same eager `Visit`/combine
-machine. It is not yet a proof that the implemented graph supports Fresh.
+supplies the inequalities for the same eager `Visit`/combine machine. The
+extended formal machine now instantiates them for Fresh; the Rust graph
+extension still requires its resource and source-correspondence work.
 
 Let $`a(i)`$ be the child count of node $`i`$: zero for a scalar, two for append,
 and one plus the injection count for Fresh. Define the root-prefix surplus
@@ -935,10 +937,37 @@ active ancestor indices strictly decrease. This does not bound total execution
 work: repeated references still require repeated visits and may produce much
 larger unfolded output.
 
-The extended machine must still instantiate these inequalities at every
-intermediate state and establish ordered-child readiness. These slot bounds do
-not cover the temporary child vector extracted from the value stack, cached
-metadata, nested node copies, or clone/drop workspaces. Computing or caching the
+The extended formal machine instantiates these inequalities at every transition
+boundary. `ordered_child_executions_compose` proves readiness by executing each
+ordered child, preserving an arbitrary older prefix and the pending parent
+combine. `graph_machine_interprets_unfolding_with_bounded_stacks` then composes
+entry, all child executions, and the existing checked Fresh callback. The
+binary-root corollary retains the original capacities. A concrete root with one
+body and five injections all referring to the same scalar executes with nine
+work slots and seven value slots; its seven-job expansion exceeds the old
+five-job reservation. All six scalar occurrences remain in the result.
+
+Successful Fresh execution has a concrete `FreshDescriptorsAdmitted` premise:
+every Fresh descriptor passes its existing admission check and its key count
+equals its injection-reference count. This condition is separate from the
+earlier-reference invariant. Shape unfolding alone is not admission. The
+model proves underflow rejection and rejects non-earlier Fresh references;
+it does not prove safety for forged job stacks or descriptor-inconsistent
+graphs. The private Rust graph builder must establish the admitted invariants
+before emission. The successful-execution theorem currently requires admitted
+Fresh descriptors throughout the graph; the independent unfolding and capacity
+suffix laws do not make that theorem applicable to arbitrary invalid later
+descriptors.
+
+Graph denotations now have a proved canonical outer-metadata invariant, so the
+cached Fresh metadata length is exactly the body's length minus its binder
+width, saturating at zero. Injection metadata does not contribute. The old
+flat-head theorem is explicitly restricted to trees without Fresh; outer-head
+footprints remain exact but are not deep-copy allowances.
+
+These slot bounds do not cover the temporary child vector extracted from the
+value stack, cached metadata, nested node copies, or clone/drop workspaces.
+Computing or caching the
 prefix surplus and scheduling arbitrary child lists also require checked,
 charged, cancellable work before allocation. Neither the binary footprint
 model nor these arithmetic lemmas discharge those separate obligations.

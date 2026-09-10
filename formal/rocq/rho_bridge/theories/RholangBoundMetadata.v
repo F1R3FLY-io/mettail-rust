@@ -10,10 +10,13 @@
     Expression/text copy charges remain RholangInitialGraphResources' existing
     charges. Metadata passes are additional and must be combined into the same
     atomic reservation BEFORE node helpers run. The graph scheduling/capacity
-    proof remains the same: Bound and Wildcard are nullary leaves. *)
+    proof treats Bound and Wildcard as nullary leaves. Fresh's outer length is
+    derived from canonical metadata below; its helper passes and deep-resource
+    allowances are not supplied by these flat-construction pass lists. *)
 From Stdlib Require Import List Arith Lia Bool.
 From RhoBridge Require Import RholangTargetConstruction RholangInitialGraphInterpretation
-  RholangInitialGraphMachine RholangInitialGraphResources.
+  RholangInitialGraphMachine RholangInitialGraphResources RholangCanonicalMetadata
+  RholangFreshDescriptor.
 Import ListNotations.
 
 Definition metadata_length (value : Value) : nat :=
@@ -41,13 +44,31 @@ Fixpoint tree_metadata_length (tree : InitialTree) : nat :=
   match tree with
   | ScalarTree scalar => scalar_metadata_length scalar
   | AppendTree lhs rhs => Nat.max (tree_metadata_length lhs) (tree_metadata_length rhs)
+  | FreshTree descriptor body _ =>
+    tree_metadata_length body - shape_width (descriptor_shape descriptor)
   end.
+
+Theorem graph_denotation_has_canonical_outer_metadata : forall tree,
+  canonical_bits (free_bits (summary_of (tree_denotation tree))) = true.
+Proof.
+  induction tree as [scalar|lhs HL rhs HR|descriptor body HB injections].
+  - destruct scalar; try reflexivity. apply bound_metadata_is_canonical.
+  - now apply union_preserves_canonical_metadata.
+  - apply shifted_metadata_is_canonical.
+Qed.
+
 Theorem cached_metadata_length_is_exact : forall tree,
   tree_metadata_length tree = metadata_length (tree_denotation tree).
 Proof.
-  induction tree as [scalar|lhs HL rhs HR]; cbn [tree_metadata_length tree_denotation].
+  induction tree as [scalar|lhs HL rhs HR|descriptor body HB injections];
+    cbn [tree_metadata_length tree_denotation].
   - destruct scalar; try reflexivity. symmetry. apply singleton_bound_metadata_has_one_byte_per_index.
   - now rewrite append_metadata_is_not_additive, HL, HR.
+  - unfold metadata_length, fresh_denotation, singleton.
+    cbn [summary_of free_bits shifted_summary].
+    rewrite canonical_shift_has_exact_saturating_length
+      by apply graph_denotation_has_canonical_outer_metadata.
+    exact (f_equal (fun length => length - shape_width (descriptor_shape descriptor)) HB).
 Qed.
 
 Inductive MetadataPass :=
@@ -108,6 +129,7 @@ Print Assumptions union_metadata_length_is_maximum.
 Print Assumptions singleton_bound_metadata_has_one_byte_per_index.
 Print Assumptions append_metadata_is_not_additive.
 Print Assumptions cached_metadata_length_is_exact.
+Print Assumptions graph_denotation_has_canonical_outer_metadata.
 Print Assumptions bound_pass_debits_cover_both_allocations_and_comparison.
 Print Assumptions append_pass_debits_cover_copy_initialization_fill_and_comparison.
 Print Assumptions combined_payload_and_metadata_reservation_is_exact.
