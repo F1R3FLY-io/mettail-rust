@@ -226,6 +226,43 @@ admission, overflow, cancellation before validation, and ownership on failure.
 The generator still must establish that each assembly's slots are ready and
 hold the expected categories.
 
+### Generated replacement cleanup
+
+The generated destructor replaces extracted category fields with selected
+dummy values. A closed-data dummy can itself contain a finite tree of category
+Arcs; it is not necessarily a leaf. `DummyPlan` in the existing
+[Drop emitter](../../macros/src/gen/term_ops/iterative_drop.rs) records exactly
+which constructors its productivity analysis selected, preserving dependency
+order and repeated fields. Resource projection must reuse the rendering choices;
+a resource calculation must not select a different, cheaper dummy.
+
+The [replacement-receipt model](../../formal/rocq/rho_bridge/theories/GeneratedDummyCleanupReservation.v)
+separates five event counts for each selected finite recipe:
+
+| Receipt | Meaning |
+| --- | --- |
+| `construction` | Build the selected dummy and its fresh child Arcs |
+| `extraction` | Extract original children and construct their replacements |
+| `active_drop` | Destroy a dummy while the iterative destructor's active flag is set |
+| `popped_drop` | Process an owned dummy task, its original children and its active replacement shell |
+| `normal_drop` | Destroy a root with the active flag clear and an available empty work pool |
+
+This distinction matters because the root's automatic field destruction runs
+after the active flag is cleared. Its replacement children require normal
+cleanup, whereas replacement children in popped task shells use active
+cleanup. The model folds the actual dependency occurrences, including repeats,
+and proves that normal-cleanup credit also covers active cleanup under any
+nonnegative event weighting. It composes the resulting construction and cleanup
+charges with the existing preparation reservation laws; it is not another meter.
+
+Native/default construction and flat field cleanup remain explicit local
+contracts. Copying an existing canonical numeric handle does not establish the
+cost of constructing its default value. Type names likewise do not establish
+that cost. The finite-recipe laws require a concrete descriptor mapping and
+source-backed local charges before numerical receipts can be used by generated
+code. They do not prove arbitrary shared-AST destruction, allocator capacity,
+panic recovery, or thread-local-storage teardown behavior.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing
