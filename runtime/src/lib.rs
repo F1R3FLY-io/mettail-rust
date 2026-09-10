@@ -12,6 +12,7 @@ mod binding;
 pub use binding::*;
 
 mod checked_binding;
+pub mod binding_receipt;
 pub use checked_binding::{
     append_binding_slots, reserve_binding_copy, reserve_binding_parts, take_binding_slot,
     write_binding_slot, BindingFailure, BindingOperation, BindingSlotError, CheckedBindingLeaf,

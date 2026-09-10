@@ -263,6 +263,17 @@ source-backed local charges before numerical receipts can be used by generated
 code. They do not prove arbitrary shared-AST destruction, allocator capacity,
 panic recovery, or thread-local-storage teardown behavior.
 
+The runtime's [`binding_receipt`](../src/binding_receipt.rs) module implements
+this algebra with fixed-size event vectors and checked `usize` arithmetic.
+Its `const` composition operation consumes previously computed child receipts;
+it does not recurse, allocate, select defaults, or invoke a budget callback.
+Repeated child fields contribute repeatedly. Overflow returns a typed error
+instead of a partial or saturated receipt. Event counts remain unweighted;
+the generator still must supply the concrete recipe and native contracts.
+Tests check exact leaf and repeated-child recurrences, local contributions,
+constant evaluation, overflow, and a 20,000-level iterative dependency chain
+on a 256 KiB thread stack on 64-bit targets.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing
