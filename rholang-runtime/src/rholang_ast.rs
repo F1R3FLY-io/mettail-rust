@@ -72,6 +72,9 @@ pub use scope::SourceAdmissionMode;
 pub(crate) mod imports;
 pub(crate) mod session;
 
+mod preparation_env;
+use preparation_env::EnvironmentDerivation;
+
 #[cfg(test)]
 mod preparation_tests;
 
@@ -186,8 +189,8 @@ impl BoundEnv {
 
     /// M-1b: this environment, switched into PATTERN mode.
     ///
-    /// The ONLY caller is `rholang_formula::lower_formula_in_env`'s
-    /// `FormulaShape::Term` arm. Binders and FLT holes are carried over unchanged —
+    /// The driver's `FormulaShape::Term` arm uses this after reserving its
+    /// environment copy. Binders and FLT holes are carried over unchanged —
     /// a formula may legitimately reference the receive's bound variables, and
     /// those must still resolve to their `BoundVar`s; it is only the UNBOUND
     /// residue whose reading changes. See [`BoundEnv::free_vars_are_patterns`].
@@ -1881,18 +1884,22 @@ impl<'a> Drive<'a> {
         self.envs.get(id)
     }
 
+    fn derive_environment(
+        &mut self,
+        parent: EnvId,
+        derivation: EnvironmentDerivation<'_>,
+    ) -> Result<EnvId, RholangAstLowerError> {
+        self.envs
+            .derive(parent, derivation, self.stacks.reservation)
+    }
+
     fn empty_env(&mut self) -> Result<EnvId, RholangAstLowerError> {
         match self.empty_env {
             Some(id) => Ok(id),
             None => {
                 // Preserve the explicit oracle convention, but never let a
                 // public pattern subterm re-enter harness resolution.
-                let root = self.env(ROOT_ENV);
-                let empty = match root.admission {
-                    SourceAdmissionMode::Harness => BoundEnv::new(),
-                    SourceAdmissionMode::Public => root.without_lexical_bindings(),
-                };
-                let id = self.envs.push(empty)?;
+                let id = self.derive_environment(ROOT_ENV, EnvironmentDerivation::Empty)?;
                 self.empty_env = Some(id);
                 Ok(id)
             },
@@ -2085,7 +2092,8 @@ impl<'a> Drive<'a> {
                     self.env(env).caller_imports.keys(),
                 )
                 .map_err(RholangAstLowerError::FreshConstruction)?;
-                let extended = self.envs.push(extend_env(self.env(env), &binders)?)?;
+                let extended =
+                    self.derive_environment(env, EnvironmentDerivation::Binders(&binders))?;
                 let body = self.keep(body);
                 self.push_children(
                     Kont::New { descriptor: Box::new(descriptor), env },
@@ -2102,9 +2110,8 @@ impl<'a> Drive<'a> {
                     self.env(env).caller_imports.keys(),
                 )
                 .map_err(RholangAstLowerError::FreshConstruction)?;
-                let extended = self
-                    .envs
-                    .push(extend_env(self.env(env), &ordered_binders)?)?;
+                let extended =
+                    self.derive_environment(env, EnvironmentDerivation::Binders(&ordered_binders))?;
                 let body = self.keep(body);
                 self.push_children(
                     Kont::New { descriptor: Box::new(descriptor), env },
@@ -2413,9 +2420,8 @@ impl<'a> Drive<'a> {
                 self.keep(Arc::new(replace_dynamic_flt(body, &node, &result_drop, &mut replaced)));
             debug_assert!(replaced, "the dynamic FLT finder and replacement PDA diverged");
 
-            let env_new = self
-                .envs
-                .push(extend_env(self.env(env), &[Binder(ret_var)])?)?;
+            let env_new =
+                self.derive_environment(env, EnvironmentDerivation::Binders(&[Binder(ret_var)]))?;
             let selector = lower_proc_var(&node.selector, self.env(env_new))?;
             let mut fills = BTreeMap::new();
             for hole in &node.holes {
@@ -2448,9 +2454,10 @@ impl<'a> Drive<'a> {
             );
             let channel = LANGUAGE_FLT_CONSTRUCT_BAND
                 .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);
-            let env_for = self
-                .envs
-                .push(extend_env(self.env(env_new), &[Binder(result_var)])?)?;
+            let env_for = self.derive_environment(
+                env_new,
+                EnvironmentDerivation::Binders(&[Binder(result_var)]),
+            )?;
             self.push_children(
                 Kont::InstalledFlt {
                     channel: Box::new(channel),
@@ -2481,12 +2488,10 @@ impl<'a> Drive<'a> {
         let r_drop = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(r_var.clone())))));
         let mut replaced = false;
         let transformed = self.keep(Arc::new(replace_fold(body, &r_drop, &mut replaced)));
-        let env_new = self
-            .envs
-            .push(extend_env(self.env(env), &[Binder(ret_var)])?)?;
-        let env_for = self
-            .envs
-            .push(extend_env(self.env(env_new), &[Binder(r_var)])?)?;
+        let env_new =
+            self.derive_environment(env, EnvironmentDerivation::Binders(&[Binder(ret_var)]))?;
+        let env_for =
+            self.derive_environment(env_new, EnvironmentDerivation::Binders(&[Binder(r_var)]))?;
         let operand = self.keep(Arc::new(operand));
         self.push_children(
             Kont::HeldFold { channel: Box::new(channel) },
@@ -2601,7 +2606,7 @@ impl<'a> Drive<'a> {
             // An ordinary `Proc`, read as a Rholang pattern: unbound free variables become
             // `Wildcard` rather than the term-position free-variable MARKER.
             FormulaShape::Term => {
-                let pattern_env = self.envs.push(self.env(env).in_pattern_position())?;
+                let pattern_env = self.derive_environment(env, EnvironmentDerivation::Pattern)?;
                 self.stacks.push(Job::Proc(formula, pattern_env))?;
             },
         }
@@ -3151,9 +3156,8 @@ impl<'a> Drive<'a> {
             }
             let ret_var = FreeVar::fresh_named("__mtl_flt_pattern_ret".to_string());
             let token_var = FreeVar::fresh_named("__mtl_flt_pattern_token".to_string());
-            let env_new = self
-                .envs
-                .push(extend_env(self.env(env), &[Binder(ret_var)])?)?;
+            let env_new =
+                self.derive_environment(env, EnvironmentDerivation::Binders(&[Binder(ret_var)]))?;
             let selector = lower_proc_var(&node.selector, self.env(env_new))?;
             node.validate()
                 .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
@@ -3172,10 +3176,12 @@ impl<'a> Drive<'a> {
                     .channel(0, crate::language_install::LANGUAGE_FLT_PATTERN_ABI_V1),
                 request,
             });
-            env = self
-                .envs
-                .push(extend_env(self.env(env_new), &[Binder(token_var.clone())])?)?;
-            tokens[index] = Some(token_var);
+            let token_binder = Binder(token_var);
+            env = self.derive_environment(
+                env_new,
+                EnvironmentDerivation::Binders(std::slice::from_ref(&token_binder)),
+            )?;
+            tokens[index] = Some(token_binder.0);
         }
         Ok((env, tokens, frames))
     }
@@ -3316,9 +3322,8 @@ impl<'a> Drive<'a> {
         &mut self,
         mut state: Box<ForState<'a>>,
     ) -> Result<(), RholangAstLowerError> {
-        let extended = self
-            .envs
-            .push(self.env(state.env).extend_slots(&state.slots)?)?;
+        let extended =
+            self.derive_environment(state.env, EnvironmentDerivation::Slots(&state.slots))?;
         state.extended_env = extended;
         let job = match state.rows.len() > 1 {
             // More rows in THIS `for`: they nest as this row's continuation. These rows are

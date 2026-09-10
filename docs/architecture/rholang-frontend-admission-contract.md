@@ -478,6 +478,73 @@ Charging the push of an already constructed `Par` does **not** pay for its
 construction. Public activation requires that composition; generic allocator
 failure and panic recovery are not claims of this storage contract.
 
+### Derived lexical environments
+
+Environment admission wraps the existing `extend_env`, `extend_slots`,
+`in_pattern_position` and empty-context helpers. It does not change variable
+identity, slot order, shadowing, scope width or lexical resolution. All driver
+derivations use the same borrowed reservation callback before constructing
+copied maps, not merely before appending an already built environment.
+
+Let $`n`$ count old binder/hole entries plus every added slot occurrence,
+including duplicates that an insertion will overwrite. Let $`s`$ count old
+entries shifted by an extension; it is zero for a pattern-context copy.
+Let $`b`$ be the sum of owned key-byte lengths: optional Moniker pretty names
+and FLT-hole strings. An unnamed variable contributes zero bytes but still
+counts as an entry. Byte lengths, not character counts, determine this charge.
+
+| Phase | Work allowance | Payload allowance |
+|---|---:|---:|
+| Borrowed key-length inspection | $`n`$ | 0 |
+| Copy, shift and retain the derived environment | $`1+n+s+b`$ | $`4(1+n)+b`$ |
+
+The second phase includes one retained environment record and its arena append;
+there is no second append debit. Entries and records use the same four logical
+units as driver storage. These are cumulative logical entry/shift/byte charges,
+not physical hash-table capacity, collision counts, allocator overhead or a
+CPU-time bound. Resolver and checked caller-import services remain shared by
+reference; this charge does not copy their contents.
+
+The implementation follows this sequence:
+
+```text
+check that the next environment identifier is representable
+read container lengths and check the occurrence-count sum
+reserve the complete inspection work
+for each borrowed key occurrence:
+    poll cancellation
+    add its byte length with checked arithmetic
+poll cancellation after the final occurrence
+check and reserve the complete copy/shift/retention cost
+invoke the existing environment helper
+append its result through the existing fallible environment arena
+publish the new identifier only on success
+```
+
+Inspection allocates no roster or key copies. Aggregate admission without
+cancellation is independent of hash-map iteration order; no per-key payload
+debit exposes a partially paid, order-dependent prefix. A returned cancellation
+or exhaustion error publishes no derived environment. A later helper or arena
+failure retains earlier successful charges. Polling precedes the prepaid
+helper; cancellation arriving during that helper is not sampled again before
+its arena append. This does not claim interruption inside a standard-library
+map operation.
+
+The cached empty context always derives from the root, not the innermost
+receive. Public mode retains root policy and service references while clearing
+lexical bindings. The explicit compatibility harness retains its existing
+fresh-default convention. Empty-context creation still reserves one record,
+and the cache is updated only after successful insertion.
+
+The [environment reservation model](../../formal/rocq/rho_bridge/theories/RholangEnvironmentReservation.v)
+composes the existing reservation and checked lexical-extension laws. It proves
+exact aggregate charges, iteration-order independence without cancellation,
+retained charges on refusal and unchanged successful helper results. Concrete
+Rust tests establish the borrowed-input, polling, arithmetic and publication
+correspondence; the functional proof alone does not establish heap separation.
+Scope opening/closing, source AST copies and other source walkers remain
+separate parts of complete bounded preparation.
+
 ### Subsequent neutral dependency boundary
 
 Neutrality applies to the actual Cargo dependency closure, including proc-macro

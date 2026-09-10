@@ -485,3 +485,69 @@ fn bounded_roster_families_preserve_existing_construction_bytes() {
         assert_eq!(bounded.guard_report, reference.guard_report);
     }
 }
+
+#[test]
+fn empty_context_is_paid_once_and_cached_only_after_success() {
+    for admission in [SourceAdmissionMode::Public, SourceAdmissionMode::Harness] {
+        let mut root = BoundEnv::with_options(LoweringOptions::NO_DISCHARGE);
+        root.admission = admission;
+        root.scope_width = 1;
+        root.hole_binders.insert("outer".into(), 0);
+        root.free_vars_are_patterns = true;
+        let nodes = Arena::new();
+        let source = Proc::PZero;
+        let cancelled = Cell::new(false);
+        let mut cancel = || cancelled.get();
+        let mut work = 0;
+        // Exactly the initial stacks/seed plus one empty environment record.
+        let mut budget = ReflectedCodecBudget::new(&mut work, 3, 520, &mut cancel);
+        {
+            let mut reserve = |work, units| {
+                budget
+                    .charge(work, units)
+                    .map_err(RholangAstLowerError::Preparation)
+            };
+            let stacks = Stacks::new(Job::Proc(&source, ROOT_ENV), &mut reserve).expect("seed");
+            let mut drive = Drive {
+                arena: &nodes,
+                envs: EnvArena::new(&root),
+                stacks,
+                pattern_states: Vec::new(),
+                empty_env: None,
+            };
+            cancelled.set(true);
+            assert_eq!(
+                drive.empty_env(),
+                Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+            );
+            assert!(drive.empty_env.is_none());
+            assert!(drive.envs.derived.is_empty());
+            cancelled.set(false);
+            let id = drive.empty_env().expect("paid empty context");
+            let empty = drive.env(id);
+            assert_eq!(empty.scope_width, 0);
+            assert!(empty.binders.is_empty());
+            assert!(empty.hole_binders.is_empty());
+            assert_eq!(empty.admission, admission);
+            match admission {
+                SourceAdmissionMode::Public => {
+                    assert_eq!(empty.options, root.options);
+                    assert!(empty.free_vars_are_patterns);
+                    assert!(Arc::ptr_eq(&empty.resolver, &root.resolver));
+                    assert!(Arc::ptr_eq(&empty.caller_imports, &root.caller_imports));
+                },
+                SourceAdmissionMode::Harness => {
+                    assert_eq!(empty.options, LoweringOptions::PRODUCTION);
+                    assert!(!empty.free_vars_are_patterns);
+                },
+            }
+            // Reusing a cached identifier performs no new helper or allocation.
+            cancelled.set(true);
+            assert_eq!(drive.empty_env().expect("existing context"), id);
+            assert_eq!(drive.envs.derived.len(), 1);
+            assert_eq!(root.hole_binders.get("outer"), Some(&0));
+        }
+        assert_eq!(budget.work_used(), 3);
+        assert_eq!(budget.remaining_bytes(), 0);
+    }
+}
