@@ -72,6 +72,9 @@ pub use scope::SourceAdmissionMode;
 pub(crate) mod imports;
 pub(crate) mod session;
 
+#[cfg(test)]
+mod preparation_tests;
+
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
 
@@ -324,9 +327,14 @@ pub enum RholangAstLowerError {
     },
     BoundConstruction(mettail_rholang_frontend::construction::ConstructionError),
     FreshConstruction(mettail_rholang_frontend::construction::ConstructionError),
+    ValueConstruction(mettail_rholang_frontend::construction::ConstructionError),
     ScopeIndexOverflow,
     ScopeArenaOverflow,
     ScopeArenaAllocationFailed,
+    /// Logical preparation work/payload reservation failed before an operation.
+    Preparation(mettail_rholang_codegen::DynamicReflectionError),
+    PreparationSizeOverflow,
+    Storage(mettail_runtime::worklist::WorklistError),
     ReentrantLoweringSession,
     FoldSiteIndexOverflow {
         index: usize,
@@ -1462,6 +1470,17 @@ enum Kont<'a> {
 }
 
 impl Kont<'_> {
+    /// Check dimensions before the infallible classifier sees this job.
+    fn checked_arity(&self) -> Result<usize, RholangAstLowerError> {
+        let checked = match self {
+            Kont::Method { argc, .. } => argc.checked_add(1),
+            Kont::MapLit(n) | Kont::PatMapLit(n) => n.checked_mul(2),
+            Kont::PathmapLit { map: true, len } => len.checked_mul(2),
+            _ => Some(self.arity()),
+        };
+        checked.ok_or(RholangAstLowerError::PreparationSizeOverflow)
+    }
+
     /// How many values this continuation pops.
     ///
     /// ⚠ Written as an exhaustive `match` that DELIBERATELY DUPLICATES the pop counts in
@@ -1627,34 +1646,80 @@ pub(crate) fn kont_trace(
 /// The two stacks, plus the three incremental counters the deficit invariant needs.
 struct Stacks<'a> {
     inner: mettail_runtime::worklist::Worklist<Job<'a>, Par>,
+    reservation: &'a mut StorageReservation<'a>,
 }
 
+/// A scoped adapter to the existing caller-owned meter, never ambient state.
+/// Storage uses four fixed logical payload units per slot, not native sizeof,
+/// capacity, RSS or semantic gas. Constructors are charged separately.
+type StorageReservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerError> + 'a;
+
 impl<'a> Stacks<'a> {
-    fn new(seed: Job<'a>) -> Self {
+    fn new(
+        seed: Job<'a>,
+        reservation: &'a mut StorageReservation<'a>,
+    ) -> Result<Self, RholangAstLowerError> {
         // Preallocated: a term deep enough to matter will need these, and growing a `Vec` under
         // a hot post-order walk is pure waste. 64 covers every term in the test corpus without
         // a realloc; deeper terms grow amortised.
+        reservation(1, 128 * 4)?;
         let mut stacks = Stacks {
             inner: mettail_runtime::worklist::Worklist::with_capacity(64, 64),
+            reservation,
         };
-        stacks.push(seed);
-        stacks
+        stacks.push(seed)?;
+        Ok(stacks)
     }
 
-    fn push(&mut self, job: Job<'a>) {
+    fn charge_storage(&mut self, work: usize, slots: usize) -> Result<(), RholangAstLowerError> {
+        let units = slots
+            .checked_mul(4)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        (self.reservation)(work, units)
+    }
+
+    /// Reserve a bounded temporary roster before allocation or iterator work.
+    /// The upper bound comes from the source container, not untrusted text.
+    fn collect_roster<T>(
+        &mut self,
+        bound: usize,
+        items: impl IntoIterator<Item = T>,
+    ) -> Result<Vec<T>, RholangAstLowerError> {
+        self.charge_storage(bound, bound)?;
+        let mut roster = Vec::with_capacity(bound);
+        let mut items = items.into_iter();
+        loop {
+            self.charge_storage(0, 0)?;
+            let Some(item) = items.next() else { break };
+            if roster.len() == bound {
+                return Err(RholangAstLowerError::UnsupportedProc(
+                    "lowering roster exceeds its reserved source bound",
+                ));
+            }
+            roster.push(item);
+        }
+        Ok(roster)
+    }
+
+    fn push(&mut self, job: Job<'a>) -> Result<(), RholangAstLowerError> {
+        if let Job::Combine(kont) = &job {
+            kont.checked_arity()?;
+        }
+        self.charge_storage(1, 1)?;
         #[cfg(test)]
         if let Job::Combine(kont) = &job {
             KONT_TRACE.with(|trace| trace.borrow_mut().insert(kont.name()));
         }
         self.inner
             .push(job, Self::classify)
-            .expect("rholang lowering: worklist counter overflow");
+            .map_err(RholangAstLowerError::Storage)
     }
 
-    fn pop(&mut self) -> Option<Job<'a>> {
+    fn pop(&mut self) -> Result<Option<Job<'a>>, RholangAstLowerError> {
+        self.charge_storage(1, 0)?;
         self.inner
             .pop(Self::classify)
-            .expect("rholang lowering: worklist counter underflow")
+            .map_err(RholangAstLowerError::Storage)
     }
 
     /// Immutable classification: zero-arity continuations are not Enter jobs.
@@ -1669,25 +1734,76 @@ impl<'a> Stacks<'a> {
         self.inner.value_count()
     }
 
-    fn value(&mut self, par: Par) {
+    fn value(&mut self, par: Par) -> Result<(), RholangAstLowerError> {
+        self.charge_storage(1, 1)?;
         self.inner.value(par);
+        Ok(())
     }
 
     /// Pop exactly one value. Every caller has already been told how many to expect by
     /// [`Kont::arity`], so an empty stack here is a machine bug, not an input error.
-    fn pop_value(&mut self) -> Par {
+    fn pop_value(&mut self) -> Result<Par, RholangAstLowerError> {
+        self.charge_storage(1, 0)?;
         self.inner
             .pop_value()
-            .expect("rholang lowering: continuation popped more values than its arity")
+            .map_err(RholangAstLowerError::Storage)
     }
 
     /// Pop the last `n` values, LEFT TO RIGHT. Children are pushed in reverse and therefore
     /// pop — and push their values — in source order, so the tail of the value stack is
     /// already in the order an `EList` wants.
-    fn pop_values(&mut self, n: usize) -> Vec<Par> {
+    fn pop_values(&mut self, n: usize) -> Result<Vec<Par>, RholangAstLowerError> {
+        let work = n
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        self.charge_storage(work, n)?;
         self.inner
             .pop_values(n)
-            .expect("rholang lowering: continuation popped more values than its arity")
+            .map_err(RholangAstLowerError::Storage)
+    }
+
+    /// Preserve the shared consuming reductions. Reserve their storage work
+    /// before either operand mutation or callback invocation; callback costs
+    /// themselves belong to the constructor-budget increment.
+    fn reduce_pair<E>(
+        &mut self,
+        build: impl FnOnce(Par, Par) -> Result<Par, E>,
+    ) -> Result<(), RholangAstLowerError>
+    where
+        E: Into<RholangAstLowerError>,
+    {
+        self.charge_storage(3, 1)?;
+        self.inner.reduce_pair(build).map_err(|error| match error {
+            mettail_runtime::worklist::ReductionError::Storage(error) => {
+                RholangAstLowerError::Storage(error)
+            },
+            mettail_runtime::worklist::ReductionError::Construction(error) => error.into(),
+        })
+    }
+
+    fn reduce_values<E>(
+        &mut self,
+        n: usize,
+        build: impl FnOnce(Vec<Par>) -> Result<Par, E>,
+    ) -> Result<(), RholangAstLowerError>
+    where
+        E: Into<RholangAstLowerError>,
+    {
+        let slots = n
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let work = n
+            .checked_add(2)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        self.charge_storage(work, slots)?;
+        self.inner
+            .reduce_values(n, build)
+            .map_err(|error| match error {
+                mettail_runtime::worklist::ReductionError::Storage(error) => {
+                    RholangAstLowerError::Storage(error)
+                },
+                mettail_runtime::worklist::ReductionError::Construction(error) => error.into(),
+            })
     }
 
     /// ★ **The deficit invariant**, asserted at the head of the drive loop.
@@ -1784,18 +1900,23 @@ impl<'a> Drive<'a> {
     }
 
     /// Push `children` so that LIFO pops them in the given (source) order.
-    fn push_children(&mut self, kont: Kont<'a>, children: impl IntoIterator<Item = Job<'a>>) {
-        let children: Vec<Job<'a>> = children.into_iter().collect();
-        debug_assert_eq!(
-            children.len(),
-            kont.arity(),
-            "rholang lowering: a continuation was pushed with a child count that disagrees \
-             with Kont::arity"
-        );
-        self.stacks.push(Job::Combine(kont));
-        for child in children.into_iter().rev() {
-            self.stacks.push(child);
+    fn push_children(
+        &mut self,
+        kont: Kont<'a>,
+        children: impl IntoIterator<Item = Job<'a>>,
+    ) -> Result<(), RholangAstLowerError> {
+        let count = kont.checked_arity()?;
+        let roster = self.stacks.collect_roster(count, children)?;
+        if roster.len() != count {
+            return Err(RholangAstLowerError::UnsupportedProc(
+                "lowering child roster is shorter than its continuation arity",
+            ));
         }
+        self.stacks.push(Job::Combine(kont))?;
+        for child in roster.into_iter().rev() {
+            self.stacks.push(child)?;
+        }
+        Ok(())
     }
 }
 
@@ -1807,6 +1928,16 @@ fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstLowerErro
 
 /// The same machine, entered either through the legacy gate or its private owner.
 fn drive_machine(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    drive_machine_with_reservation(seed, root_env, &mut |_, _| Ok(()))
+}
+
+/// The same driver with an explicitly borrowed reservation policy. This is
+/// an internal composition seam, not a whole-preparation certificate.
+fn drive_machine_with_reservation(
+    seed: Seed<'_>,
+    root_env: &BoundEnv,
+    reservation: &mut StorageReservation<'_>,
+) -> Result<Par, RholangAstLowerError> {
     let arena: Arena<Arc<Proc>> = Arena::new();
     let seed_job = match seed {
         Seed::Proc(proc) => Job::Proc(proc, ROOT_ENV),
@@ -1817,14 +1948,16 @@ fn drive_machine(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstL
     let mut drive = Drive {
         arena: &arena,
         envs: EnvArena::new(root_env),
-        stacks: Stacks::new(seed_job),
+        stacks: Stacks::new(seed_job, reservation)?,
         pattern_states: Vec::new(),
         empty_env: None,
     };
 
     loop {
         drive.stacks.check();
-        let Some(job) = drive.stacks.pop() else { break };
+        let Some(job) = drive.stacks.pop()? else {
+            break;
+        };
         match job {
             Job::Proc(proc, env) => drive.enter_proc(proc, env)?,
             Job::Name(name, env) => drive.enter_name(name, env)?,
@@ -1842,7 +1975,7 @@ fn drive_machine(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstL
         "rholang lowering: the machine halted with {} values, not 1",
         drive.stacks.value_count()
     );
-    Ok(drive.stacks.pop_value())
+    drive.stacks.pop_value()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -1872,20 +2005,20 @@ impl<'a> Drive<'a> {
         }
 
         match proc {
-            Proc::PZero => self.stacks.value(lower_arm_p_zero()?),
-            Proc::PDrop(name) => self.stacks.push(Job::Name(name.as_ref(), env)),
+            Proc::PZero => self.stacks.value(lower_arm_p_zero()?)?,
+            Proc::PDrop(name) => self.stacks.push(Job::Name(name.as_ref(), env))?,
             // L9-6b CONSTRUCTION arm: a `PFlt*` in VALUE position elaborates to the reflected
             // foreign term via the guest reflector selected by its `tag`. No recursive child:
             // the reflector owns the guest's own traversal.
             Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
-                self.stacks.value(lower_arm_p_flt(node, self.env(env))?)
+                self.stacks.value(lower_arm_p_flt(node, self.env(env))?)?
             },
             // A DDL declaration is immutable specification data. The generated parser has
             // already produced the complete structural AST. Project that AST to the closed
             // versioned value envelope without source rendering or a second parse. Embedded
             // Rholang values/programs are scheduled as ordinary jobs in THIS drive.
             Proc::DdlModule(name, items) => {
-                self.enter_ddl(DdlRoot::Module { name, imports: None, items }, env)
+                self.enter_ddl(DdlRoot::Module { name, imports: None, items }, env)?
             },
             Proc::DdlModuleImported(imports, name, items) => self.enter_ddl(
                 DdlRoot::Module {
@@ -1894,58 +2027,57 @@ impl<'a> Drive<'a> {
                     items,
                 },
                 env,
-            ),
+            )?,
             Proc::DdlTheory(name, parameters, body) => {
-                self.enter_ddl(DdlRoot::Theory { name, parameters, body: body.as_ref() }, env)
+                self.enter_ddl(DdlRoot::Theory { name, parameters, body: body.as_ref() }, env)?
             },
             Proc::PPar(parts) => {
-                let members: Vec<&'a Proc> = parts.iter_elements().collect();
                 self.push_children(
-                    Kont::ParFold(members.len()),
-                    members.into_iter().map(|part| Job::Proc(part, env)),
-                );
+                    Kont::ParFold(parts.len()),
+                    parts.iter_elements().map(|part| Job::Proc(part, env)),
+                )?;
             },
             // Bare infix parallel `a | b`. Parallel composition lowers to `Par::append`, which
             // is exactly what lowering the folded `PPar` bag would produce.
             Proc::PParInfix(left, right) => self.push_children(
                 Kont::ParPair,
                 [Job::Proc(left.as_ref(), env), Job::Proc(right.as_ref(), env)],
-            ),
+            )?,
             Proc::POutput(channel, payload) => self.push_children(
                 Kont::Send { persistent: false },
                 [Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)],
-            ),
+            )?,
             // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`. These do NOT lower to a send:
             // the lowering emits a speculation REQUEST and no send at all.
             Proc::PLookaheadAll(subject) => {
                 let (channel, payload) = self.lookahead_operand(subject.as_ref(), env)?;
-                self.push_children(Kont::SpecAll, [channel, payload]);
+                self.push_children(Kont::SpecAll, [channel, payload])?;
             },
             Proc::PLookahead(subject, bound) => {
                 let (channel, payload) = self.lookahead_operand(subject.as_ref(), env)?;
                 let bound = lookahead_bound(bound.as_ref())?;
-                self.push_children(Kont::SpecN { bound }, [channel, payload]);
+                self.push_children(Kont::SpecN { bound }, [channel, payload])?;
             },
             // `for(...)` receive. Each `;`-separated row nests as the continuation of the
             // previous one.
             Proc::PForUser(rows, body) => {
                 self.stacks
-                    .push(Job::ForRows(rows.as_slice(), body.as_ref(), env))
+                    .push(Job::ForRows(rows.as_slice(), body.as_ref(), env))?
             },
             Proc::PPersistOutput(channel, payload) => self.push_children(
                 Kont::Send { persistent: true },
                 [Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)],
-            ),
+            )?,
             // Rholang-style short sends `@P!(q)` / `@P!!(q)`: the channel is the quote of `P`,
             // i.e. `lower_name(NQuote(P)) == lower_proc(P)`.
             Proc::POutputShort(channel_proc, payload) => self.push_children(
                 Kont::Send { persistent: false },
                 [Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)],
-            ),
+            )?,
             Proc::PPersistOutputShort(channel_proc, payload) => self.push_children(
                 Kont::Send { persistent: true },
                 [Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)],
-            ),
+            )?,
             Proc::PNew(scope) => {
                 let (binders, body) = scope.clone().unbind::<String>();
                 let descriptor = CheckedFreshDescriptor::new(
@@ -1958,7 +2090,7 @@ impl<'a> Drive<'a> {
                 self.push_children(
                     Kont::New { descriptor: Box::new(descriptor), env },
                     [Job::Body(body, extended)],
-                );
+                )?;
             },
             Proc::PNewUris(uris, scope) => {
                 let (ordered_binders, body, ordered_uris) = unbind_uri_scope(uris, scope)?;
@@ -1977,36 +2109,42 @@ impl<'a> Drive<'a> {
                 self.push_children(
                     Kont::New { descriptor: Box::new(descriptor), env },
                     [Job::Body(body, extended)],
-                );
+                )?;
             },
             // ── A-S4 cast purity: casts lower STRUCTURALLY ───────────────────────────────────
             Proc::CastInt(value) => self
                 .stacks
-                .value(lower_int_value(value.as_ref(), self.env(env))?),
-            Proc::CastBool(value) => self.stacks.value(lower_arm_cast_bool(value)?),
-            Proc::CastStr(value) => self.stacks.value(lower_arm_cast_str(value)?),
-            Proc::PVar(var) => self.stacks.value(lower_arm_p_var(var, self.env(env))?),
-            Proc::Err => self.stacks.value(lower_arm_err()?),
-            Proc::CastBigRat(value) => self.stacks.value(lower_arm_cast_big_rat(value)?),
-            Proc::CastFixed(value) => self.stacks.value(lower_arm_cast_fixed(value)?),
-            Proc::CastFloat(value) => self.stacks.value(lower_arm_cast_float(value)?),
-            Proc::CastBigInt(value) => self.stacks.value(lower_arm_cast_big_int(value)?),
-            Proc::CastUInt32(value) => self.stacks.value(lower_arm_cast_u_int32(value)?),
+                .value(lower_int_value(value.as_ref(), self.env(env))?)?,
+            Proc::CastBool(value) => self.stacks.value(lower_arm_cast_bool(value)?)?,
+            Proc::CastStr(value) => self.stacks.value(lower_arm_cast_str(value)?)?,
+            Proc::PVar(var) => self.stacks.value(lower_arm_p_var(var, self.env(env))?)?,
+            Proc::Err => self.stacks.value(lower_arm_err()?)?,
+            Proc::CastBigRat(value) => self.stacks.value(lower_arm_cast_big_rat(value)?)?,
+            Proc::CastFixed(value) => self.stacks.value(lower_arm_cast_fixed(value)?)?,
+            Proc::CastFloat(value) => self.stacks.value(lower_arm_cast_float(value)?)?,
+            Proc::CastBigInt(value) => self.stacks.value(lower_arm_cast_big_int(value)?)?,
+            Proc::CastUInt32(value) => self.stacks.value(lower_arm_cast_u_int32(value)?)?,
             Proc::CastList(value) => match value.as_ref() {
                 List::ListLit(items) => self.push_children(
                     Kont::ListLit(items.len()),
                     items.iter().map(|item| Job::Proc(item, env)),
-                ),
+                )?,
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc("computed list process"));
                 },
             },
             Proc::CastBag(value) => match value.as_ref() {
                 Bag::BagLit(entries) => {
-                    let mut entries = entries.iter().collect::<Vec<_>>();
+                    // The map iterator's upper hint counts distinct entries;
+                    // total multiplicity is also a sound fallback bound.
+                    let items = entries.iter();
+                    let count = items.size_hint().1.unwrap_or(entries.len());
+                    let mut entries = self.stacks.collect_roster(count, items)?;
                     entries.sort_by_key(|(item, _)| *item);
+                    self.stacks.charge_storage(entries.len(), entries.len())?;
                     let mut counts = Vec::with_capacity(entries.len());
                     for (_, count) in &entries {
+                        self.stacks.charge_storage(0, 0)?;
                         counts.push(i64::try_from(*count).map_err(|_| {
                             RholangAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
                         })?);
@@ -2014,7 +2152,7 @@ impl<'a> Drive<'a> {
                     self.push_children(
                         Kont::BagLit(counts),
                         entries.into_iter().map(|(item, _)| Job::Proc(item, env)),
-                    );
+                    )?;
                 },
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc("computed bag process"));
@@ -2022,14 +2160,10 @@ impl<'a> Drive<'a> {
             },
             Proc::CastMap(value) => match value.as_ref() {
                 Map::MapLit(entries) => {
-                    let mut children = Vec::with_capacity(2 * entries.len());
-                    let mut pair_count = 0usize;
-                    for (key, value) in entries.iter() {
-                        children.push(Job::Proc(key, env));
-                        children.push(Job::Proc(value, env));
-                        pair_count += 1;
-                    }
-                    self.push_children(Kont::MapLit(pair_count), children);
+                    let children = entries
+                        .iter()
+                        .flat_map(|(key, value)| [Job::Proc(key, env), Job::Proc(value, env)]);
+                    self.push_children(Kont::MapLit(entries.len()), children)?;
                 },
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc("computed map process"));
@@ -2042,15 +2176,15 @@ impl<'a> Drive<'a> {
                 None,
                 Vec::new(),
                 false,
-            )),
+            ))?,
             Proc::CastSet(value) => match value.as_ref() {
                 Set::SetLit(items) => {
-                    let mut items: Vec<&Proc> = items.iter().collect();
+                    let mut items = self.stacks.collect_roster(items.len(), items.iter())?;
                     items.sort();
                     self.push_children(
                         Kont::SetLit(items.len()),
                         items.into_iter().map(|item| Job::Proc(item, env)),
-                    );
+                    )?;
                 },
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc("computed set process"));
@@ -2068,21 +2202,22 @@ impl<'a> Drive<'a> {
                             self.push_children(
                                 Kont::PathmapLit { map: false, len: entries.len() },
                                 children,
-                            );
+                            )?;
                         },
                         mettail_runtime::PathMapMode::Map => {
-                            let mut children = Vec::with_capacity(2 * entries.len());
-                            for entry in entries.iter() {
-                                children.push(Job::Proc(entry.key(), env));
-                                children.push(Job::Proc(
-                                    entry.value().expect("map-mode entry has a value"),
-                                    env,
-                                ));
-                            }
+                            let children = entries.iter().flat_map(|entry| {
+                                [
+                                    Job::Proc(entry.key(), env),
+                                    Job::Proc(
+                                        entry.value().expect("map-mode entry has a value"),
+                                        env,
+                                    ),
+                                ]
+                            });
                             self.push_children(
                                 Kont::PathmapLit { map: true, len: entries.len() },
                                 children,
-                            );
+                            )?;
                         },
                     }
                 },
@@ -2092,39 +2227,39 @@ impl<'a> Drive<'a> {
             },
             Proc::PathmapEmpty => {
                 self.stacks
-                    .value(new_epathmap_set_par(Vec::new(), Vec::new(), false))
+                    .value(new_epathmap_set_par(Vec::new(), Vec::new(), false))?
             },
-            Proc::CastBytes(value) => self.stacks.value(lower_arm_cast_bytes(value)?),
+            Proc::CastBytes(value) => self.stacks.value(lower_arm_cast_bytes(value)?)?,
             // ── A-S4 fold purity: a fold reaching THIS arm sits where the lift traversal
             // cannot reach it — fail closed, typed and named.
-            Proc::IntBinProc(..) => self.stacks.value(lower_arm_int_bin_proc()?),
-            Proc::UIntBinProc(..) => self.stacks.value(lower_arm_u_int_bin_proc()?),
-            Proc::FloatBinProc(..) => self.stacks.value(lower_arm_float_bin_proc()?),
-            Proc::FixedBinProc(..) => self.stacks.value(lower_arm_fixed_bin_proc()?),
-            Proc::BigintCastProc(..) => self.stacks.value(lower_arm_bigint_cast_proc()?),
-            Proc::BigratCastProc(..) => self.stacks.value(lower_arm_bigrat_cast_proc()?),
+            Proc::IntBinProc(..) => self.stacks.value(lower_arm_int_bin_proc()?)?,
+            Proc::UIntBinProc(..) => self.stacks.value(lower_arm_u_int_bin_proc()?)?,
+            Proc::FloatBinProc(..) => self.stacks.value(lower_arm_float_bin_proc()?)?,
+            Proc::FixedBinProc(..) => self.stacks.value(lower_arm_fixed_bin_proc()?)?,
+            Proc::BigintCastProc(..) => self.stacks.value(lower_arm_bigint_cast_proc()?)?,
+            Proc::BigratCastProc(..) => self.stacks.value(lower_arm_bigrat_cast_proc()?)?,
             // ── A-S4 metered machine arithmetic ─────────────────────────────────────────────
-            Proc::Add(a, b) => self.bin(Kont::AddParity, a, b, env),
-            Proc::Sub(a, b) => self.bin(Kont::BinExpr(BinOp::Minus), a, b, env),
-            Proc::Mul(a, b) => self.bin(Kont::BinExpr(BinOp::Mult), a, b, env),
-            Proc::Div(a, b) => self.bin(Kont::BinExpr(BinOp::Div), a, b, env),
-            Proc::Mod(a, b) => self.bin(Kont::BinExpr(BinOp::Mod), a, b, env),
+            Proc::Add(a, b) => self.bin(Kont::AddParity, a, b, env)?,
+            Proc::Sub(a, b) => self.bin(Kont::BinExpr(BinOp::Minus), a, b, env)?,
+            Proc::Mul(a, b) => self.bin(Kont::BinExpr(BinOp::Mult), a, b, env)?,
+            Proc::Div(a, b) => self.bin(Kont::BinExpr(BinOp::Div), a, b, env)?,
+            Proc::Mod(a, b) => self.bin(Kont::BinExpr(BinOp::Mod), a, b, env)?,
             Proc::NegProc(a) => {
-                self.push_children(Kont::UnExpr(UnOp::Neg), [Job::Proc(a.as_ref(), env)])
+                self.push_children(Kont::UnExpr(UnOp::Neg), [Job::Proc(a.as_ref(), env)])?
             },
-            Proc::Eq(a, b) => self.bin(Kont::BinExpr(BinOp::Eq), a, b, env),
-            Proc::Ne(a, b) => self.bin(Kont::BinExpr(BinOp::Neq), a, b, env),
-            Proc::Lt(a, b) => self.bin(Kont::BinExpr(BinOp::Lt), a, b, env),
-            Proc::Gt(a, b) => self.bin(Kont::BinExpr(BinOp::Gt), a, b, env),
-            Proc::LtEq(a, b) => self.bin(Kont::BinExpr(BinOp::Lte), a, b, env),
-            Proc::GtEq(a, b) => self.bin(Kont::BinExpr(BinOp::Gte), a, b, env),
-            Proc::And(a, b) => self.bin(Kont::BinExpr(BinOp::And), a, b, env),
-            Proc::Or(a, b) => self.bin(Kont::BinExpr(BinOp::Or), a, b, env),
+            Proc::Eq(a, b) => self.bin(Kont::BinExpr(BinOp::Eq), a, b, env)?,
+            Proc::Ne(a, b) => self.bin(Kont::BinExpr(BinOp::Neq), a, b, env)?,
+            Proc::Lt(a, b) => self.bin(Kont::BinExpr(BinOp::Lt), a, b, env)?,
+            Proc::Gt(a, b) => self.bin(Kont::BinExpr(BinOp::Gt), a, b, env)?,
+            Proc::LtEq(a, b) => self.bin(Kont::BinExpr(BinOp::Lte), a, b, env)?,
+            Proc::GtEq(a, b) => self.bin(Kont::BinExpr(BinOp::Gte), a, b, env)?,
+            Proc::And(a, b) => self.bin(Kont::BinExpr(BinOp::And), a, b, env)?,
+            Proc::Or(a, b) => self.bin(Kont::BinExpr(BinOp::Or), a, b, env)?,
             // M-0 — material implication: `a implies b ≡ (not a) or b`, with the negation
             // wrapping ONLY the antecedent.
-            Proc::Implies(a, b) => self.bin(Kont::Implies, a, b, env),
+            Proc::Implies(a, b) => self.bin(Kont::Implies, a, b, env)?,
             Proc::Not(a) => {
-                self.push_children(Kont::UnExpr(UnOp::Not), [Job::Proc(a.as_ref(), env)])
+                self.push_children(Kont::UnExpr(UnOp::Not), [Job::Proc(a.as_ref(), env)])?
             },
             // M-1b — the SPATIAL satisfaction operator `t matches φ`.
             //
@@ -2137,15 +2272,15 @@ impl<'a> Drive<'a> {
                     true => self.push_children(
                         Kont::MatchesStaticallyFalse,
                         [Job::Proc(target.as_ref(), env)],
-                    ),
+                    )?,
                     false => self.push_children(
                         Kont::Matches,
                         [Job::Proc(target.as_ref(), env), Job::Formula(formula.as_ref(), env)],
-                    ),
+                    )?,
                 }
             },
             // M-1b — `PPar(φ, ψ)` is a PATTERN former, not a term former.
-            Proc::SpatialPPar(..) => self.stacks.value(lower_arm_spatial_p_par()?),
+            Proc::SpatialPPar(..) => self.stacks.value(lower_arm_spatial_p_par()?)?,
             // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────
             Proc::MethodCall(receiver, method_name, arguments) => {
                 // A literal Bag lowers through a two-element EList ABI. The three
@@ -2161,27 +2296,38 @@ impl<'a> Drive<'a> {
                          the bag's two-element ABI encoding rather than the multiset)",
                     ));
                 }
-                self.method(method_name.as_str(), receiver, arguments, env);
+                self.method(method_name.as_str(), receiver, arguments, env)?;
             },
             // A-S4 fail-closed: every remaining construct has no machine algebra. The typed
             // error NAMES the construct; nothing silently host-evaluates.
-            other => self.stacks.value(lower_arm_unsupported(other)?),
+            other => self.stacks.value(lower_arm_unsupported(other)?)?,
         }
         Ok(())
     }
 
     /// The two-operand shape, which 15 arms share.
-    fn bin(&mut self, kont: Kont<'a>, a: &'a Arc<Proc>, b: &'a Arc<Proc>, env: EnvId) {
-        self.push_children(kont, [Job::Proc(a.as_ref(), env), Job::Proc(b.as_ref(), env)]);
+    fn bin(
+        &mut self,
+        kont: Kont<'a>,
+        a: &'a Arc<Proc>,
+        b: &'a Arc<Proc>,
+        env: EnvId,
+    ) -> Result<(), RholangAstLowerError> {
+        self.push_children(kont, [Job::Proc(a.as_ref(), env), Job::Proc(b.as_ref(), env)])
     }
 
     /// The generic `EMethod` shape. The receiver is child 0 and the ordered argument
     /// vector follows without temporary `Arc` references or name-specific dispatch.
-    fn method(&mut self, name: &'a str, target: &'a Arc<Proc>, arguments: &'a [Proc], env: EnvId) {
-        let mut children = Vec::with_capacity(1 + arguments.len());
-        children.push(Job::Proc(target.as_ref(), env));
-        children.extend(arguments.iter().map(|argument| Job::Proc(argument, env)));
-        self.push_children(Kont::Method { name, argc: arguments.len() }, children);
+    fn method(
+        &mut self,
+        name: &'a str,
+        target: &'a Arc<Proc>,
+        arguments: &'a [Proc],
+        env: EnvId,
+    ) -> Result<(), RholangAstLowerError> {
+        let children = std::iter::once(Job::Proc(target.as_ref(), env))
+            .chain(arguments.iter().map(|argument| Job::Proc(argument, env)));
+        self.push_children(Kont::Method { name, argc: arguments.len() }, children)
     }
 
     /// `lower_lookahead_operand` — the `(channel, payload)` split of `x!(P)[*]`'s operand.
@@ -2231,16 +2377,16 @@ impl<'a> Drive<'a> {
     fn enter_name(&mut self, name: &'a Name, env: EnvId) -> Result<(), RholangAstLowerError> {
         match name {
             // `@P` full quote — the channel IS the lowered process.
-            Name::NQuote(proc) => self.stacks.push(Job::Proc(proc.as_ref(), env)),
+            Name::NQuote(proc) => self.stacks.push(Job::Proc(proc.as_ref(), env))?,
             // `@P` short-quote (raw `NQuoteShort`; folds to `NQuote(P)` at eval time).
-            Name::NQuoteShort(proc) => self.stacks.push(Job::Proc(proc.as_ref(), env)),
+            Name::NQuoteShort(proc) => self.stacks.push(Job::Proc(proc.as_ref(), env))?,
             // `@Nil` quotes `Nil`; its channel is the empty process.
-            Name::NQuoteNil => self.stacks.value(Par::default()),
+            Name::NQuoteNil => self.stacks.value(Par::default())?,
             // Parenthesized name grouping `(N)` is transparent for channels.
-            Name::NParen(inner) => self.stacks.push(Job::Name(inner.as_ref(), env)),
+            Name::NParen(inner) => self.stacks.push(Job::Name(inner.as_ref(), env))?,
             Name::NVar(var) => {
                 let par = lower_name_var(var, self.env(env))?;
-                self.stacks.value(par);
+                self.stacks.value(par)?;
             },
             _ => {
                 return Err(RholangAstLowerError::UnsupportedName("computed rholang name"));
@@ -2311,11 +2457,11 @@ impl<'a> Drive<'a> {
                     request: Box::new(request),
                 },
                 [Job::Body(transformed, env_for)],
-            );
+            )?;
             return Ok(());
         }
         let Some((operand, kind, width)) = find_fold(body) else {
-            self.stacks.push(Job::Proc(body, env));
+            self.stacks.push(Job::Proc(body, env))?;
             return Ok(());
         };
         let site_index =
@@ -2345,7 +2491,7 @@ impl<'a> Drive<'a> {
         self.push_children(
             Kont::HeldFold { channel: Box::new(channel) },
             [Job::Proc(operand, env_new), Job::Body(transformed, env_for)],
-        );
+        )?;
         Ok(())
     }
 
@@ -2358,7 +2504,7 @@ impl<'a> Drive<'a> {
                     let index = state.counter;
                     state.counter += 1;
                     state.binders.push(Binder(free_var.clone()));
-                    self.stacks.value(new_freevar_par(index, Vec::new()));
+                    self.stacks.value(new_freevar_par(index, Vec::new()))?;
                 },
                 Var::Bound(_) => {
                     return Err(RholangAstLowerError::UnsupportedProc(
@@ -2370,7 +2516,7 @@ impl<'a> Drive<'a> {
                 List::ListLit(items) => self.push_children(
                     Kont::PatListLit(items.len()),
                     items.iter().map(|item| Job::Pattern(item, slot)),
-                ),
+                )?,
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc(
                         "computed list receive pattern",
@@ -2379,14 +2525,10 @@ impl<'a> Drive<'a> {
             },
             Proc::CastMap(map) => match map.as_ref() {
                 Map::MapLit(entries) => {
-                    let mut children = Vec::with_capacity(2 * entries.len());
-                    let mut pair_count = 0usize;
-                    for (key, value) in entries.iter() {
-                        children.push(Job::Pattern(key, slot));
-                        children.push(Job::Pattern(value, slot));
-                        pair_count += 1;
-                    }
-                    self.push_children(Kont::PatMapLit(pair_count), children);
+                    let children = entries.iter().flat_map(|(key, value)| {
+                        [Job::Pattern(key, slot), Job::Pattern(value, slot)]
+                    });
+                    self.push_children(Kont::PatMapLit(entries.len()), children)?;
                 },
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc(
@@ -2396,12 +2538,12 @@ impl<'a> Drive<'a> {
             },
             Proc::CastSet(set) => match set.as_ref() {
                 Set::SetLit(items) => {
-                    let mut items: Vec<&Proc> = items.iter().collect();
+                    let mut items = self.stacks.collect_roster(items.len(), items.iter())?;
                     items.sort();
                     self.push_children(
                         Kont::PatSetLit(items.len()),
                         items.into_iter().map(|item| Job::Pattern(item, slot)),
-                    );
+                    )?;
                 },
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc(
@@ -2414,7 +2556,7 @@ impl<'a> Drive<'a> {
             // is load-bearing: a pattern's free variables are its own binders.
             other => {
                 let empty = self.empty_env()?;
-                self.stacks.push(Job::Proc(other, empty));
+                self.stacks.push(Job::Proc(other, empty))?;
             },
         }
         Ok(())
@@ -2423,33 +2565,44 @@ impl<'a> Drive<'a> {
     /// `rholang_formula::lower_formula_in_env` — compile a spatial formula to a pattern.
     fn enter_formula(&mut self, formula: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
         use mettail_languages::rholang::formula::{classify, FormulaShape};
+        // The shared classifier materializes only these separation rosters.
+        // Keep its semantics and reserve their declared dimensions first.
+        let separation_slots = match formula {
+            Proc::SpatialPPar(..) | Proc::PParInfix(..) => 2,
+            Proc::PPar(parts) => parts.len(),
+            _ => 0,
+        };
+        self.stacks
+            .charge_storage(separation_slots, separation_slots)?;
         match classify(formula) {
-            FormulaShape::Verum => self.stacks.value(crate::rholang_formula::verum_pattern()),
-            FormulaShape::Falsum => self.stacks.value(crate::rholang_formula::falsum_pattern()),
+            FormulaShape::Verum => self.stacks.value(crate::rholang_formula::verum_pattern())?,
+            FormulaShape::Falsum => self
+                .stacks
+                .value(crate::rholang_formula::falsum_pattern())?,
             FormulaShape::Conjunction(left, right) => self.push_children(
                 Kont::FormulaAnd,
                 [Job::Formula(left, env), Job::Formula(right, env)],
-            ),
+            )?,
             FormulaShape::Disjunction(left, right) => self.push_children(
                 Kont::FormulaOr,
                 [Job::Formula(left, env), Job::Formula(right, env)],
-            ),
+            )?,
             FormulaShape::Negation(inner) => {
-                self.push_children(Kont::FormulaNot, [Job::Formula(inner, env)])
+                self.push_children(Kont::FormulaNot, [Job::Formula(inner, env)])?
             },
             FormulaShape::Implication(antecedent, consequent) => self.push_children(
                 Kont::FormulaImplies,
                 [Job::Formula(antecedent, env), Job::Formula(consequent, env)],
-            ),
+            )?,
             FormulaShape::Separation(parts) => self.push_children(
                 Kont::FormulaSeparation(parts.len()),
                 parts.into_iter().map(|part| Job::Formula(part, env)),
-            ),
+            )?,
             // An ordinary `Proc`, read as a Rholang pattern: unbound free variables become
             // `Wildcard` rather than the term-position free-variable MARKER.
             FormulaShape::Term => {
                 let pattern_env = self.envs.push(self.env(env).in_pattern_position())?;
-                self.stacks.push(Job::Proc(formula, pattern_env));
+                self.stacks.push(Job::Proc(formula, pattern_env))?;
             },
         }
         Ok(())
@@ -2499,53 +2652,55 @@ fn unbind_uri_scope(
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 impl<'a> Drive<'a> {
-    fn enter_ddl(&mut self, root: DdlRoot<'a>, env: EnvId) {
+    fn enter_ddl(&mut self, root: DdlRoot<'a>, env: EnvId) -> Result<(), RholangAstLowerError> {
         let plan = DdlLowerPlan::build(root);
-        let processes: Vec<_> = plan.process_jobs().collect();
+        let processes = self
+            .stacks
+            .collect_roster(plan.process_jobs().len(), plan.process_jobs())?;
         self.push_children(
             Kont::Ddl(Box::new(plan)),
             processes.into_iter().map(|process| Job::Proc(process, env)),
-        );
+        )
     }
 
     fn combine(&mut self, kont: Kont<'a>) -> Result<(), RholangAstLowerError> {
         match kont {
             Kont::ParFold(n) => {
-                self.stacks
-                    .inner
-                    .reduce_values(n, |parts| append_fold(&mut Target, parts))
-                    .expect("rholang lowering: valid parallel fold construction");
+                self.stacks.reduce_values(n, |parts| {
+                    append_fold(&mut Target, parts).map_err(RholangAstLowerError::ValueConstruction)
+                })?;
             },
             Kont::ParPair => {
-                self.stacks
-                    .inner
-                    .reduce_pair(|left, right| ValueTarget::append(&mut Target, left, right))
-                    .expect("rholang lowering: valid parallel pair construction");
+                self.stacks.reduce_pair(|left, right| {
+                    ValueTarget::append(&mut Target, left, right)
+                        .map_err(RholangAstLowerError::ValueConstruction)
+                })?;
             },
             Kont::Send { persistent } => {
-                let payload = self.stacks.pop_value();
-                let channel = self.stacks.pop_value();
+                let payload = self.stacks.pop_value()?;
+                let channel = self.stacks.pop_value()?;
                 let par = match persistent {
                     true => send_par_persistent(channel, vec![payload]),
                     false => send_par(channel, vec![payload]),
                 };
-                self.stacks.value(par);
+                self.stacks.value(par)?;
             },
             Kont::BinExpr(op) => {
-                let rhs = self.stacks.pop_value();
-                let lhs = self.stacks.pop_value();
+                let rhs = self.stacks.pop_value()?;
+                let lhs = self.stacks.pop_value()?;
                 self.stacks
-                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)));
+                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)))?;
             },
             Kont::UnExpr(op) => {
-                let operand = self.stacks.pop_value();
-                self.stacks.value(unary_expr_par(operand, |p| op.build(p)));
+                let operand = self.stacks.pop_value()?;
+                self.stacks
+                    .value(unary_expr_par(operand, |p| op.build(p)))?;
             },
             // String `+` is Rholang `++` (`EPlusPlus`): when BOTH operands lower to ground
             // string leaves the concat parity arm is chosen; `EPlus` has no GString algebra.
             Kont::AddParity => {
-                let rhs = self.stacks.pop_value();
-                let lhs = self.stacks.pop_value();
+                let rhs = self.stacks.pop_value()?;
+                let lhs = self.stacks.pop_value()?;
                 let op = match Target::observation(&lhs).single_string
                     && Target::observation(&rhs).single_string
                 {
@@ -2553,31 +2708,31 @@ impl<'a> Drive<'a> {
                     false => BinOp::Plus,
                 };
                 self.stacks
-                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)));
+                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)))?;
             },
             // Built from the two shared assemblers rather than one `binary_expr_par` because
             // the negation must wrap ONLY the antecedent: `unary_expr_par` propagates the
             // antecedent's `locally_free`/`connective_used` onto the `ENot`, and
             // `binary_expr_par` then unions that with the consequent's.
             Kont::Implies => {
-                let consequent = self.stacks.pop_value();
-                let antecedent = self.stacks.pop_value();
+                let consequent = self.stacks.pop_value()?;
+                let antecedent = self.stacks.pop_value()?;
                 let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
                 self.stacks
                     .value(binary_expr_par(negated, consequent, |p1, p2| {
                         ExprInstance::EOrBody(EOr { p1, p2 })
-                    }));
+                    }))?;
             },
             Kont::Method { name, argc } => {
-                let mut children = self.stacks.pop_values(1 + argc);
+                let mut children = self.stacks.pop_values(1 + argc)?;
                 let argument_pars = children.split_off(1);
                 let target_par = children.pop().expect("Kont::Method always has a receiver");
                 self.stacks
-                    .value(method_par(name, target_par, argument_pars));
+                    .value(method_par(name, target_par, argument_pars))?;
             },
             Kont::Matches => {
-                let pattern = self.stacks.pop_value();
-                let target = self.stacks.pop_value();
+                let pattern = self.stacks.pop_value()?;
+                let target = self.stacks.pop_value()?;
                 let locally_free = union(target.locally_free.clone(), pattern.locally_free.clone());
                 let mut par = Par::default().with_exprs(vec![Expr {
                     expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
@@ -2587,16 +2742,16 @@ impl<'a> Drive<'a> {
                 }]);
                 par.locally_free = locally_free;
                 par.connective_used = false;
-                self.stacks.value(par);
+                self.stacks.value(par)?;
             },
             Kont::MatchesStaticallyFalse => {
-                let mut target = self.stacks.pop_value();
+                let mut target = self.stacks.pop_value()?;
                 let mut folded = new_gbool_par(false, Vec::new(), false);
                 folded.locally_free = std::mem::take(&mut target.locally_free);
-                self.stacks.value(folded);
+                self.stacks.value(folded)?;
             },
             Kont::ListLit(n) => {
-                let items = self.stacks.pop_values(n);
+                let items = self.stacks.pop_values(n)?;
                 let locally_free = locally_free_union(&items);
                 let connective_used = any_connective_used(&items);
                 self.stacks.value(new_elist_par(
@@ -2606,17 +2761,17 @@ impl<'a> Drive<'a> {
                     None,
                     locally_free,
                     connective_used,
-                ));
+                ))?;
             },
             Kont::Ddl(plan) => {
-                let process_values = self.stacks.pop_values(plan.process_jobs().len());
+                let process_values = self.stacks.pop_values(plan.process_jobs().len())?;
                 let value = plan
                     .finish(process_values)
                     .map_err(RholangAstLowerError::DdlWire)?;
-                self.stacks.value(value);
+                self.stacks.value(value)?;
             },
             Kont::SetLit(n) => {
-                let elements = self.stacks.pop_values(n);
+                let elements = self.stacks.pop_values(n)?;
                 let locally_free = locally_free_union(&elements);
                 let connective_used = any_connective_used(&elements);
                 self.stacks.value(new_eset_par(
@@ -2626,10 +2781,10 @@ impl<'a> Drive<'a> {
                     None,
                     locally_free,
                     connective_used,
-                ));
+                ))?;
             },
             Kont::MapLit(n) => {
-                let children = self.stacks.pop_values(2 * n);
+                let children = self.stacks.pop_values(2 * n)?;
                 let mut pairs = Vec::with_capacity(n);
                 let mut locally_free = Vec::new();
                 let mut connective_used = false;
@@ -2649,17 +2804,17 @@ impl<'a> Drive<'a> {
                     None,
                     locally_free,
                     connective_used,
-                ));
+                ))?;
             },
             Kont::PathmapLit { map: false, len } => {
-                let entries = self.stacks.pop_values(len);
+                let entries = self.stacks.pop_values(len)?;
                 let locally_free = locally_free_union(&entries);
                 let connective_used = any_connective_used(&entries);
                 self.stacks
-                    .value(new_epathmap_set_par(entries, locally_free, connective_used));
+                    .value(new_epathmap_set_par(entries, locally_free, connective_used))?;
             },
             Kont::PathmapLit { map: true, len } => {
-                let children = self.stacks.pop_values(2 * len);
+                let children = self.stacks.pop_values(2 * len)?;
                 let mut entries = Vec::with_capacity(len);
                 let mut locally_free = Vec::new();
                 let mut connective_used = false;
@@ -2673,13 +2828,13 @@ impl<'a> Drive<'a> {
                     entries.push((key, value));
                 }
                 self.stacks
-                    .value(new_epathmap_map_par(entries, locally_free, connective_used));
+                    .value(new_epathmap_map_par(entries, locally_free, connective_used))?;
             },
             // A `Bag` becomes `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` — always
             // exactly 2 elements. That ABI shape is what the routed-method carrier map in
             // `lower_proc`'s C1 block reasons about.
             Kont::BagLit(counts) => {
-                let items = self.stacks.pop_values(counts.len());
+                let items = self.stacks.pop_values(counts.len())?;
                 let mut pairs = Vec::with_capacity(items.len());
                 for (item, count) in items.into_iter().zip(counts) {
                     let count = new_gint_par(count, Vec::new(), false);
@@ -2716,34 +2871,34 @@ impl<'a> Drive<'a> {
                     None,
                     locally_free,
                     connective_used,
-                ));
+                ))?;
             },
             Kont::New { descriptor, env } => {
-                let body = self.stacks.pop_value();
+                let body = self.stacks.pop_value()?;
                 let injections = self.env(env).caller_imports.values();
                 self.stacks.value(
                     Target::fresh(*descriptor, body, injections)
                         .map_err(RholangAstLowerError::FreshConstruction)?,
-                );
+                )?;
             },
             Kont::SpecAll => {
-                let payload = self.stacks.pop_value();
-                let channel = self.stacks.pop_value();
+                let payload = self.stacks.pop_value()?;
+                let channel = self.stacks.pop_value()?;
                 self.stacks
-                    .value(crate::lookahead::spec_all_request(payload, channel));
+                    .value(crate::lookahead::spec_all_request(payload, channel))?;
             },
             Kont::SpecN { bound } => {
-                let payload = self.stacks.pop_value();
-                let channel = self.stacks.pop_value();
+                let payload = self.stacks.pop_value()?;
+                let channel = self.stacks.pop_value()?;
                 self.stacks
-                    .value(crate::lookahead::spec_n_request(payload, bound, channel));
+                    .value(crate::lookahead::spec_n_request(payload, bound, channel))?;
             },
             // `new ret { fold!(operand, *ret) | for(@r <- ret){ … } }` — the held-fold
             // trampoline. The operand is sent to the fold contract's channel; the transformed
             // body runs under the received result.
             Kont::HeldFold { channel } => {
-                let for_body = self.stacks.pop_value();
-                let operand_par = self.stacks.pop_value();
+                let for_body = self.stacks.pop_value()?;
+                let operand_par = self.stacks.pop_value()?;
                 let ret_channel = new_boundvar_par(0, Vec::new(), false);
                 let send = send_par(*channel, vec![operand_par, ret_channel.clone()]);
                 let bind = ReceiveBind {
@@ -2775,35 +2930,35 @@ impl<'a> Drive<'a> {
                     new_locally_free.clone(),
                     new_locally_free,
                     false,
-                ));
+                ))?;
             },
             // `new ret { construct!([..., ret]) | for(@result <- ret){ body[*result] } }`.
             // Parsing and structural reflection happen before the transformed
             // body is admitted to the machine; the lexical handle and fills in
             // `request` are substituted by the surrounding scopes first.
             Kont::InstalledFlt { channel, request } => {
-                let for_body = self.stacks.pop_value();
+                let for_body = self.stacks.pop_value()?;
                 self.stacks
-                    .value(installed_flt_trampoline(*channel, *request, for_body));
+                    .value(installed_flt_trampoline(*channel, *request, for_body))?;
             },
             Kont::ForSource(state) => return self.for_source(state),
             Kont::ForPattern(state, slot) => return self.for_pattern(state, slot),
             Kont::ForBody(mut state) => {
-                state.lowered_body = Some(self.stacks.pop_value());
+                state.lowered_body = Some(self.stacks.pop_value()?);
                 match state.cond {
                     Some(guard) => {
                         let extended = state.extended_env;
-                        self.push_children(Kont::ForGuard(state), [Job::Proc(guard, extended)]);
+                        self.push_children(Kont::ForGuard(state), [Job::Proc(guard, extended)])?;
                     },
                     None => return self.assemble_receive(state, None),
                 }
             },
             Kont::ForGuard(state) => {
-                let condition = self.stacks.pop_value();
+                let condition = self.stacks.pop_value()?;
                 return self.assemble_receive(state, Some(condition));
             },
             Kont::PatListLit(n) => {
-                let item_pars = self.stacks.pop_values(n);
+                let item_pars = self.stacks.pop_values(n)?;
                 let locally_free = locally_free_union(&item_pars);
                 let connective_used = item_pars.iter().any(|item| item.connective_used);
                 self.stacks.value(new_elist_par(
@@ -2813,10 +2968,10 @@ impl<'a> Drive<'a> {
                     None,
                     locally_free,
                     connective_used,
-                ));
+                ))?;
             },
             Kont::PatSetLit(n) => {
-                let elements = self.stacks.pop_values(n);
+                let elements = self.stacks.pop_values(n)?;
                 let locally_free = locally_free_union(&elements);
                 let connective_used = elements.iter().any(|e| e.connective_used);
                 self.stacks.value(new_eset_par(
@@ -2826,10 +2981,10 @@ impl<'a> Drive<'a> {
                     None,
                     locally_free,
                     connective_used,
-                ));
+                ))?;
             },
             Kont::PatMapLit(n) => {
-                let children = self.stacks.pop_values(2 * n);
+                let children = self.stacks.pop_values(2 * n)?;
                 let mut pairs = Vec::with_capacity(n);
                 let mut locally_free = Vec::new();
                 let mut connective_used = false;
@@ -2850,45 +3005,45 @@ impl<'a> Drive<'a> {
                     None,
                     locally_free,
                     connective_used,
-                ));
+                ))?;
             },
             Kont::FormulaAnd => {
-                let right = self.stacks.pop_value();
-                let left = self.stacks.pop_value();
+                let right = self.stacks.pop_value()?;
+                let left = self.stacks.pop_value()?;
                 let operands = [left, right];
                 self.stacks.value(crate::rholang_formula::connective_par(
                     models::rust::utils::new_conn_and_body_par(operands.to_vec(), Vec::new(), true),
                     &operands,
-                ));
+                ))?;
             },
             Kont::FormulaOr => {
-                let right = self.stacks.pop_value();
-                let left = self.stacks.pop_value();
+                let right = self.stacks.pop_value()?;
+                let left = self.stacks.pop_value()?;
                 let operands = [left, right];
                 self.stacks.value(crate::rholang_formula::connective_par(
                     models::rust::utils::new_conn_or_body_par(operands.to_vec(), Vec::new(), true),
                     &operands,
-                ));
+                ))?;
             },
             Kont::FormulaNot => {
-                let inner = self.stacks.pop_value();
-                self.stacks.value(crate::rholang_formula::negated(inner));
+                let inner = self.stacks.pop_value()?;
+                self.stacks.value(crate::rholang_formula::negated(inner))?;
             },
             Kont::FormulaImplies => {
-                let consequent = self.stacks.pop_value();
-                let antecedent = self.stacks.pop_value();
+                let consequent = self.stacks.pop_value()?;
+                let antecedent = self.stacks.pop_value()?;
                 let operands = [crate::rholang_formula::negated(antecedent), consequent];
                 self.stacks.value(crate::rholang_formula::connective_par(
                     models::rust::utils::new_conn_or_body_par(operands.to_vec(), Vec::new(), true),
                     &operands,
-                ));
+                ))?;
             },
             Kont::FormulaSeparation(n) => {
-                let parts = self.stacks.pop_values(n);
+                let parts = self.stacks.pop_values(n)?;
                 let par = parts
                     .into_iter()
                     .fold(Par::default(), |acc, part| acc.append(part));
-                self.stacks.value(par);
+                self.stacks.value(par)?;
             },
         }
         Ok(())
@@ -2951,7 +3106,7 @@ impl<'a> Drive<'a> {
         env: EnvId,
     ) -> Result<(), RholangAstLowerError> {
         if rows.is_empty() {
-            self.stacks.push(Job::Body(body, env));
+            self.stacks.push(Job::Body(body, env))?;
             return Ok(());
         }
         let (binds, persistent, cond) = decompose_for_row_borrowed(&rows[0])?;
@@ -3035,7 +3190,7 @@ impl<'a> Drive<'a> {
                 let channel = bind_channel_name(state.binds[state.next_bind])
                     .ok_or(RholangAstLowerError::UnsupportedProc("for-row channel"))?;
                 let env = state.env;
-                self.push_children(Kont::ForSource(state), [Job::Name(channel, env)]);
+                self.push_children(Kont::ForSource(state), [Job::Name(channel, env)])?;
                 Ok(())
             },
             false => self.schedule_for_body(state),
@@ -3043,7 +3198,7 @@ impl<'a> Drive<'a> {
     }
 
     fn for_source(&mut self, mut state: Box<ForState<'a>>) -> Result<(), RholangAstLowerError> {
-        let source = self.stacks.pop_value();
+        let source = self.stacks.pop_value()?;
         let bind = state.binds[state.next_bind];
 
         // L9-6b: an FLT receive pattern is reflected by the guest, not walked here. Its holes
@@ -3122,7 +3277,7 @@ impl<'a> Drive<'a> {
             .expect("rholang lowering: more than 2^32 receive binds in one term");
         self.pattern_states.push(PatternState::default());
         state.pending_source = Some(source);
-        self.push_children(Kont::ForPattern(state, slot), [Job::Pattern(pat_proc, slot)]);
+        self.push_children(Kont::ForPattern(state, slot), [Job::Pattern(pat_proc, slot)])?;
         Ok(())
     }
 
@@ -3131,7 +3286,7 @@ impl<'a> Drive<'a> {
         mut state: Box<ForState<'a>>,
         slot: u32,
     ) -> Result<(), RholangAstLowerError> {
-        let pat_par = self.stacks.pop_value();
+        let pat_par = self.stacks.pop_value()?;
         let source = state
             .pending_source
             .take()
@@ -3188,7 +3343,7 @@ impl<'a> Drive<'a> {
                 other => Job::Body(other, extended),
             },
         };
-        self.push_children(Kont::ForBody(state), [job]);
+        self.push_children(Kont::ForBody(state), [job])?;
         Ok(())
     }
 
@@ -3263,7 +3418,7 @@ impl<'a> Drive<'a> {
         for frame in pattern_preparations.into_iter().rev() {
             receive_par = wrap_pattern_preparation(receive_par, frame);
         }
-        self.stacks.value(receive_par);
+        self.stacks.value(receive_par)?;
         Ok(())
     }
 }

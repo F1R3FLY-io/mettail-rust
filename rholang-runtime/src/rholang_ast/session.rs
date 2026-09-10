@@ -45,6 +45,20 @@ impl SessionGuard {
     ) -> Result<Par, RholangAstLowerError> {
         drive_machine(seed, context)
     }
+
+    fn drive_with_budget<C: FnMut() -> bool>(
+        &self,
+        seed: Seed<'_>,
+        context: &BoundEnv,
+        budget: &mut mettail_rholang_codegen::ReflectedCodecBudget<'_, C>,
+    ) -> Result<Par, RholangAstLowerError> {
+        let mut reserve = |work, bytes| {
+            budget
+                .charge(work, bytes)
+                .map_err(RholangAstLowerError::Preparation)
+        };
+        drive_machine_with_reservation(seed, context, &mut reserve)
+    }
 }
 
 impl Drop for SessionGuard {
@@ -88,6 +102,20 @@ pub(crate) fn lower_public_body(
     with_owned_outputs(|owner| {
         context.admission = SourceAdmissionMode::Public;
         owner.drive(Seed::Body(proc), &context)
+    })
+}
+
+/// Internal bounded-storage composition of the same owned driver. This is
+/// not public admission: source, constructor and side-output precharges must
+/// also be composed before the node frontend can publish a prepared artifact.
+pub(crate) fn lower_public_body_with_budget<C: FnMut() -> bool>(
+    proc: &Proc,
+    mut context: BoundEnv,
+    budget: &mut mettail_rholang_codegen::ReflectedCodecBudget<'_, C>,
+) -> Result<DirectLoweringOutput, RholangAstLowerError> {
+    with_owned_outputs(|owner| {
+        context.admission = SourceAdmissionMode::Public;
+        owner.drive_with_budget(Seed::Body(proc), &context, budget)
     })
 }
 

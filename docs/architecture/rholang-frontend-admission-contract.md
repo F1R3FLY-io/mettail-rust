@@ -418,6 +418,66 @@ caller imports, preparation resource budgets, checked frontend adaptation,
 provider binding and qualified FLT `where` integration remain required sibling
 obligations before public activation.
 
+### Direct driver storage reservations
+
+The direct driver's storage layer borrows a reservation callback from the
+existing `ReflectedCodecBudget`. The live session owner supplies that callback;
+there is no global meter, new worklist implementation or second lowering pass.
+Legacy internal entry retains its explicit unmetered policy. Neither that entry
+nor the storage-metered entry alone may certify public preparation.
+
+A **work unit** is a declared logical operation charge. A **slot** is one
+temporary roster, pending-job or value-stack position, represented by four
+fixed payload-allowance units. These are cumulative reservations, not a peak
+heap measurement: native object size, vector spare capacity, allocator overhead,
+resident memory and semantic gas are different quantities. Releasing a slot
+does not replenish either allowance.
+
+| Storage operation | Work units reserved | Slots reserved |
+|---|---:|---:|
+| Initial empty job/value stacks | 1 | 128 |
+| Seed or subsequent job push | 1 | 1 |
+| Job pop, including the final empty probe | 1 | 0 |
+| Value push | 1 | 1 |
+| Single-value pop | 1 | 0 |
+| Ordered suffix of length `n` | `1 + n` | `n` |
+| Shared consuming pair reduction | 3 | 1 |
+| Shared consuming `n`-value reduction | `2 + n` | `1 + n` |
+| Temporary roster with admitted upper bound `n` | `n` | `n` |
+
+Check variable sums, arities and the multiplication by four before reservation.
+The shared meter polls cancellation and checks both remaining dimensions before
+changing either balance. Only then may the storage operation execute. A later
+shape or constructor failure retains earlier charges, preserves any unconsumed
+prefix and publishes no substitute result. The driver propagates the error to
+the existing owned-session cleanup.
+
+Child scheduling reserves the roster before allocating or advancing its
+iterator, polls cancellation before every advance, rejects an exceeded bound
+before growing the roster, and checks exact continuation arity before pushing
+jobs. Reversed insertion into the unchanged last-in, first-out work stack
+preserves source order and multiplicity. Bag/set sorting, formula classification
+and DDL planning retain their existing semantics; their immediate temporary
+rosters are reserved at their producing call sites. The borrowed formula
+classifier's finite separation roster is precharged before invoking it.
+
+The [reservation model](../../formal/rocq/rho_bridge/theories/RholangPreparationReservation.v)
+composes the existing atomic-debit and worklist laws. Its generic reservation
+theorem applies to the concrete four-unit slot scale; its specialized push and
+suffix theorems establish shape and order with abstract slot units. Kernel
+checking these laws does not prove all Rust call sites. Concrete tests must
+also establish refusal before mutation, checked arithmetic, retained charges,
+ordered values, byte-equivalent successful lowering and clean subsequent
+sessions.
+
+Storage reservation is only one part of complete preparation accounting.
+Scope opening and copying, source analyses, sorting comparisons, constructed
+values and metadata, caller-import copies, DDL construction and FLT/service
+side outputs still require their own precharges through the same allowance.
+Charging the push of an already constructed `Par` does **not** pay for its
+construction. Public activation requires that composition; generic allocator
+failure and panic recovery are not claims of this storage contract.
+
 ### Subsequent neutral dependency boundary
 
 Neutrality applies to the actual Cargo dependency closure, including proc-macro

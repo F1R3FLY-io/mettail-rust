@@ -283,10 +283,12 @@ fn public_fresh_pattern_environment_does_not_reenable_harness() {
     let root = public_env();
     let arena: Arena<Arc<Proc>> = Arena::new();
     let zero = Proc::PZero;
+    let mut reserve = |_, _| Ok(());
     let mut driver = Drive {
         arena: &arena,
         envs: EnvArena::new(&root),
-        stacks: Stacks::new(Job::Proc(&zero, ROOT_ENV)),
+        stacks: Stacks::new(Job::Proc(&zero, ROOT_ENV), &mut reserve)
+            .expect("scope fixture storage"),
         pattern_states: Vec::new(),
         empty_env: None,
     };
