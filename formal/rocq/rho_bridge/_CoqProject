@@ -50,6 +50,7 @@ theories/RholangInitialGraphMachine.v
 theories/RholangInitialGraphResources.v
 theories/RholangPreparationReservation.v
 theories/RholangEnvironmentReservation.v
+theories/RholangScopeConstructionRecipe.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
 theories/RholangFreshMetadataPasses.v
