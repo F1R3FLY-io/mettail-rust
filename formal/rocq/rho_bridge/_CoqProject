@@ -39,6 +39,7 @@ theories/RholangWorklistStorage.v
 theories/RholangFrontendAdmission.v
 theories/RholangTargetConstruction.v
 theories/RholangConstructionProtocol.v
+theories/RholangSourceScope.v
 theories/RholangConstructionFacts.v
 theories/RholangWorklistConstruction.v
 theories/RholangInitialGraphInterpretation.v

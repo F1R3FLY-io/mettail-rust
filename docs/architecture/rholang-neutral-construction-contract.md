@@ -374,6 +374,26 @@ Duplicate names, shadowing, URI permutation, and numeric range checks retain
 the existing scope owner; unresolvable public names produce named errors rather
 than the integration harness's `mtl:` or `mtl#out` markers.
 
+The [source-scope model](../../formal/rocq/rho_bridge/theories/RholangSourceScope.v)
+separates moniker identity from named FLT-hole lookup. An identity match wins
+before a hole-name fallback; a pretty name is not a moniker identity. Ordered
+slot insertion retains the last occurrence of a repeated key, while surviving
+outer references shift by the full slot width. The model proves exact lookup
+preservation, in-range assigned slots, and separation of shifted outer indices
+from the new slots. Its association list models map lookup and insertion; it
+does not prescribe replacing the existing `BoundEnv` maps or environment arena.
+
+Resolution distinguishes public terms, compatibility-harness terms and formula
+patterns. An unresolved public name/process rejects by its role, whereas an
+unresolved formula variable retains the existing wildcard meaning. A successful
+bound resolution must satisfy the shared signed-32-bit target-index check.
+Public resolution cannot construct a harness marker. These are proved model
+laws preceding the scope implementation; they do not establish that the current
+source lowerer already enforces public admission. Concrete identity mapping,
+context preservation, metadata allocation precharge and source correspondence
+remain implementation obligations. Caller URI-injection enrollment is a later
+integration boundary and does not make injection keys into lexical binders.
+
 ## Guards, origins, and owned session output
 
 The neutral graph retains guard structure and the requested discharge policy.
