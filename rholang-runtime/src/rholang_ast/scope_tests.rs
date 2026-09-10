@@ -321,6 +321,54 @@ fn unopened_moniker_coordinates_reject_in_both_roles_and_modes() {
 }
 
 #[test]
+fn source_uri_fresh_retains_binder_association_through_the_existing_pair_sort() {
+    for used in 0..2 {
+        let binders = vec![Binder(named("b")), Binder(named("a"))];
+        let body = Proc::PVar(variable(&binders[used].0));
+        let source = Proc::PNewUris(
+            vec![Uri::UriText("`b`".into()), Uri::UriText("`a`".into())],
+            mettail_runtime::Scope::new(binders, Arc::new(body)),
+        );
+        let actual = lower_proc_in_env(&source, &public_env()).expect("URI new");
+        // Sorting [b,a] to [a,b] also moves each binder. Reversed de Bruijn
+        // numbering then gives the original b slot 0 and original a slot 1.
+        let expected = new_new_par(
+            2,
+            new_boundvar_par(used as i32, vec![], false),
+            vec!["a".into(), "b".into()],
+            BTreeMap::new(),
+            vec![],
+            vec![],
+            false,
+        );
+        assert_eq!(actual, expected);
+        assert_eq!(actual.encode_to_vec(), expected.encode_to_vec());
+    }
+}
+
+#[test]
+fn source_uri_validation_retains_cardinality_envelope_and_duplicate_errors() {
+    for (count, uris, expected) in [
+        (0, vec![], RholangAstLowerError::InvalidUriBindings { binders: 0, uris: 0 }),
+        (2, vec!["`a`"], RholangAstLowerError::InvalidUriBindings { binders: 2, uris: 1 }),
+        (1, vec!["a"], RholangAstLowerError::InvalidUriLiteral),
+        (1, vec!["``"], RholangAstLowerError::InvalidUriLiteral),
+        (2, vec!["`a`", "`a`"], RholangAstLowerError::DuplicateUriBinding("a".into())),
+    ] {
+        let source = Proc::PNewUris(
+            uris.into_iter()
+                .map(|uri| Uri::UriText(uri.into()))
+                .collect(),
+            mettail_runtime::Scope::new(
+                (0..count).map(|_| Binder(named("binder"))).collect(),
+                Arc::new(Proc::PZero),
+            ),
+        );
+        assert_eq!(lower_proc_in_env(&source, &public_env()), Err(expected));
+    }
+}
+
+#[test]
 fn actual_new_worker_opens_multiple_binders_and_preserves_quote_drop() {
     for count in [2, 3] {
         for used in 0..count {

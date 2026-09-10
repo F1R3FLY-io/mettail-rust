@@ -1,7 +1,112 @@
 use super::*;
 use mettail_rholang_frontend::arena::{with_neutral_target, ConstructionLimits};
+use mettail_rholang_frontend::construction::{CheckedFreshDescriptor, FreshShape};
 use mettail_runtime::worklist::Worklist;
 use prost::Message;
+
+#[test]
+fn fresh_target_moves_every_injection_and_uses_only_body_metadata() {
+    let body = new_boundvar_par(3, vec![], true);
+    let injections = vec![new_gstring_par("empty-key".into(), vec![1; 9], false), Par::default()];
+    let descriptor = CheckedFreshDescriptor::new(
+        FreshShape::Uri {
+            binder_count: 2,
+            uris: vec!["a".into(), "z".into()],
+        },
+        vec!["".into(), "unused".into()],
+    )
+    .expect("descriptor");
+    let expected = new_new_par(
+        2,
+        body.clone(),
+        vec!["a".into(), "z".into()],
+        [("".into(), injections[0].clone()), ("unused".into(), injections[1].clone())].into(),
+        vec![0, 1],
+        vec![0, 1],
+        true,
+    );
+    let actual = DirectNodeTarget::fresh(descriptor, body, injections).expect("fresh target");
+    same_bytes(&actual, &expected);
+    assert_eq!(actual.locally_free, [0, 1]);
+    assert_eq!(actual.news[0].injections.len(), 2);
+    assert!(actual.connective_used);
+
+    // The converse flag case detects an accidental OR of injection metadata.
+    let closed_body = DirectNodeTarget::fresh(
+        CheckedFreshDescriptor::new(FreshShape::Plain { binder_count: 0 }, vec!["unused".into()])
+            .expect("unused injection"),
+        Par::default(),
+        vec![new_gbool_par(true, vec![1; 9], true)],
+    )
+    .expect("body-only summary");
+    assert!(closed_body.locally_free.is_empty());
+    assert!(closed_body.news[0].locally_free.is_empty());
+    assert!(!closed_body.connective_used);
+    assert!(closed_body.news[0].injections["unused"].connective_used);
+
+    // RhoTypes.proto: Par.news=4, New.p=2. A present empty body is encoded.
+    let empty = DirectNodeTarget::fresh(
+        CheckedFreshDescriptor::new(FreshShape::Plain { binder_count: 0 }, vec![]).expect("zero"),
+        Par::default(),
+        vec![],
+    )
+    .expect("empty fresh");
+    assert_eq!(empty.encode_to_vec(), [0x22, 2, 0x12, 0]);
+    // bindCount=1 is sint32 zigzag 2, URI field 3 retains its literal bytes.
+    let uri = DirectNodeTarget::fresh(
+        CheckedFreshDescriptor::new(
+            FreshShape::Uri { binder_count: 1, uris: vec!["u".into()] },
+            vec![],
+        )
+        .expect("uri"),
+        Par::default(),
+        vec![],
+    )
+    .expect("URI fresh");
+    assert_eq!(uri.encode_to_vec(), [0x22, 7, 0x08, 2, 0x12, 0, 0x1a, 1, b'u']);
+}
+
+#[test]
+fn fresh_target_rejects_missing_or_extra_injections_before_zip() {
+    for count in [0, 2] {
+        let descriptor =
+            CheckedFreshDescriptor::new(FreshShape::Plain { binder_count: 0 }, vec!["key".into()])
+                .expect("one injection");
+        assert_eq!(
+            DirectNodeTarget::fresh(descriptor, Par::default(), vec![Par::default(); count]),
+            Err(ConstructionError::ChildArity { expected: 2, actual: count + 1 }),
+        );
+    }
+}
+
+#[test]
+fn fresh_nested_node_clone_and_error_cleanup_reuse_stack_safe_node_lifecycle() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut value = Par::default();
+            for _ in 0..20_000 {
+                let descriptor =
+                    CheckedFreshDescriptor::new(FreshShape::Plain { binder_count: 0 }, vec![])
+                        .expect("zero-binder layout");
+                value = DirectNodeTarget::fresh(descriptor, value, vec![]).expect("nested fresh");
+            }
+            // Existing generated clone and drop traverse the node graph iteratively.
+            drop(value.clone());
+            let descriptor = CheckedFreshDescriptor::new(
+                FreshShape::Plain { binder_count: 0 },
+                vec!["missing".into()],
+            )
+            .expect("one injection");
+            assert!(matches!(
+                DirectNodeTarget::fresh(descriptor, value, vec![]),
+                Err(ConstructionError::ChildArity { expected: 2, actual: 1 }),
+            ));
+        })
+        .expect("small-stack worker")
+        .join()
+        .expect("node lifecycle is stack safe");
+}
 
 fn parallel_transition<T: ValueTarget>(target: &mut T, texts: &[&str], pair: bool) -> T::Value {
     use mettail_rholang_frontend::construction::append_fold;

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { beforeSourceScope } from "./verify-source-scope-boundary.mjs";
+import { beforeFreshTarget } from "./verify-fresh-descriptor-boundary.mjs";
 
 const registration = "\nmod graph;\npub use graph::{interpret_construction_graph, GraphInterpretationError};\n";
 export function beforeInitialGraph(source) {
@@ -87,11 +88,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   assert.equal(beforeInitialGraph(read(driver)), git(root, baseline, driver),
     "all pre-existing source lowering remains byte-identical");
   const target = "rholang-runtime/src/rholang_ast/target.rs";
-  assert.equal(beforeBoundTarget(read(target)), git(root, baseline, target),
+  const boundTarget = beforeFreshTarget(read(target));
+  assert.equal(beforeBoundTarget(boundTarget), git(root, baseline, target),
     "existing node target unchanged outside checked bound/wildcard extension");
-  assert.throws(() => beforeBoundTarget(read(target).replace(
+  assert.throws(() => beforeBoundTarget(boundTarget.replace(
     "CheckedBoundReference::new(scope, index)", "CheckedBoundReference::new(index, scope)")));
-  assert.throws(() => beforeBoundTarget(read(target).replace(
+  assert.throws(() => beforeBoundTarget(boundTarget.replace(
     "new_wildcard_par(Vec::new(), connective)", "new_wildcard_par(Vec::new(), false)")));
   const source = read("rholang-runtime/src/rholang_ast/graph.rs");
   checkInterpreter(source);
@@ -125,6 +127,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     ["models/src/rust/utils.rs", "pub fn new_boundvar_expr(", "pub fn new_freevar_par("],
     ["models/src/rust/utils.rs", "pub fn new_wildcard_par(", "pub fn new_wildcard_expr("],
     ["models/src/rust/utils.rs", "pub fn union(", "\n}\n"],
+    ["models/src/rust/utils.rs", "pub fn new_new_par(", "pub fn new_eset_par("],
+    ["models/src/rust/utils.rs", "    pub fn with_news(", "    pub fn with_exprs("],
   ]) {
     const current = readFileSync(`${nodeRoot}${path}`, "utf8");
     assert.equal(between(current, start, end), between(git(nodeRoot, nodeBaseline, path), start, end),

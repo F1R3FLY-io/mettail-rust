@@ -6,11 +6,12 @@
 //! those exact implementations and rejects malformed arity before construction.
 
 use mettail_rholang_frontend::construction::{
-    CheckedBoundReference, ConstructionError, StructuralObservation, ValueOp, ValueTarget,
+    CheckedBoundReference, CheckedFreshDescriptor, ConstructionError, StructuralObservation,
+    ValueOp, ValueTarget,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{
-    new_boundvar_par, new_gbool_par, new_gint_par, new_gstring_par, new_wildcard_par,
+    new_boundvar_par, new_gbool_par, new_gint_par, new_gstring_par, new_new_par, new_wildcard_par,
 };
 
 pub(super) struct DirectNodeTarget;
@@ -40,6 +41,31 @@ impl DirectNodeTarget {
 
     pub(super) fn wildcard(connective: bool) -> Par {
         new_wildcard_par(Vec::new(), connective)
+    }
+
+    /// Staged checked-descriptor path. Body is present by type; every injection
+    /// value must match a key before zip can consume either sequence. This
+    /// reuses the existing source metadata helper; it is not graph admission.
+    pub(super) fn fresh(
+        descriptor: CheckedFreshDescriptor,
+        body: Par,
+        injections: Vec<Par>,
+    ) -> Result<Par, ConstructionError> {
+        descriptor.validate_injection_count(injections.len())?;
+        let locally_free =
+            super::filter_and_adjust_bitset(&body.locally_free, descriptor.binder_count());
+        let connective = body.connective_used;
+        let (binder_count, uris, keys) = descriptor.into_parts();
+        let injections = keys.into_iter().zip(injections).collect();
+        Ok(new_new_par(
+            binder_count,
+            body,
+            uris,
+            injections,
+            locally_free.clone(),
+            locally_free,
+            connective,
+        ))
     }
 
     pub(super) fn append(left: Par, right: Par) -> Par {

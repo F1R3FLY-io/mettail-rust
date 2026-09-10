@@ -68,6 +68,91 @@ impl CheckedBoundReference {
     }
 }
 
+/// Projection of an already-opened binder roster. URI order and binder order
+/// must originate from the same normalized pairs; this type does not sort.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FreshShape {
+    Plain { binder_count: usize },
+    Uri { binder_count: usize, uris: Vec<String> },
+}
+
+/// Checked structural layout, not a language handle or an injection authority.
+/// Body/injection values and resource admission are separate caller obligations.
+/// The current graph operation family does not yet consume this descriptor.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CheckedFreshDescriptor {
+    binder_count: usize,
+    emitted_binder_count: i32,
+    uris: Vec<String>,
+    injection_keys: Vec<String>,
+    arity: usize,
+}
+
+fn strictly_ordered(values: &[String]) -> bool {
+    values.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+/// Body plus all injection children. The machine-sized arity is not an i32
+/// field and must not inherit the emitted binder-count restriction.
+pub fn checked_fresh_arity(injection_count: usize) -> Result<usize, ConstructionError> {
+    injection_count
+        .checked_add(1)
+        .ok_or(ConstructionError::ArityOverflow)
+}
+
+impl CheckedFreshDescriptor {
+    /// Validate the normalized layout, then emitted count, then machine arity.
+    /// A subsequent constructor must still check its actual injection count.
+    pub fn new(shape: FreshShape, injection_keys: Vec<String>) -> Result<Self, ConstructionError> {
+        let (binder_count, uris) = match shape {
+            FreshShape::Plain { binder_count } => (binder_count, Vec::new()),
+            FreshShape::Uri { binder_count, uris } => {
+                let valid = uris.len() == binder_count
+                    && uris.first().is_some_and(|uri| !uri.is_empty())
+                    && strictly_ordered(&uris);
+                if !valid {
+                    return Err(ConstructionError::InvalidBinderLayout);
+                }
+                (binder_count, uris)
+            },
+        };
+        if !strictly_ordered(&injection_keys) {
+            return Err(ConstructionError::InvalidBinderLayout);
+        }
+        let emitted_binder_count = i32::try_from(binder_count)
+            .map_err(|_| ConstructionError::TargetIndexOutOfRange { index: binder_count })?;
+        let arity = checked_fresh_arity(injection_keys.len())?;
+        Ok(Self {
+            binder_count,
+            emitted_binder_count,
+            uris,
+            injection_keys,
+            arity,
+        })
+    }
+
+    pub fn binder_count(&self) -> usize {
+        self.binder_count
+    }
+
+    pub fn arity(&self) -> usize {
+        self.arity
+    }
+
+    pub fn validate_injection_count(&self, count: usize) -> Result<(), ConstructionError> {
+        let actual = checked_fresh_arity(count)?;
+        if actual != self.arity {
+            return Err(ConstructionError::ChildArity { expected: self.arity, actual });
+        }
+        Ok(())
+    }
+
+    /// Move the admitted fields into the target without cloning string payloads.
+    pub fn into_parts(self) -> (i32, Vec<String>, Vec<String>) {
+        (self.emitted_binder_count, self.uris, self.injection_keys)
+    }
+}
+
 /// Structural information used by construction, not evaluated semantics.
 /// The slice borrows the actual target/value, not a phantom session lifetime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +180,8 @@ pub enum ConstructionError {
     Cancelled,
     TargetIndexOutOfRange { index: usize },
     IndexOutOfScope { scope: usize, index: usize },
+    InvalidBinderLayout,
+    ArityOverflow,
 }
 
 impl std::fmt::Display for ConstructionError {
@@ -145,3 +232,7 @@ pub fn append_fold<T: ValueTarget>(
         .into_iter()
         .try_fold(empty, |left, right| target.append(left, right))
 }
+
+#[cfg(test)]
+#[path = "construction_tests.rs"]
+mod tests;

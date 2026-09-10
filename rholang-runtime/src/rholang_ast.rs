@@ -28,7 +28,9 @@ use mettail_rholang_codegen::{
     FltResolve, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence, LANGUAGE_FLT_CONSTRUCT_BAND,
 };
-use mettail_rholang_frontend::construction::{append_fold, ValueTarget};
+use mettail_rholang_frontend::construction::{
+    append_fold, CheckedFreshDescriptor, FreshShape, ValueTarget,
+};
 use mettail_runtime::{
     Binder, FltNode, FltPolarity, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata,
     OrdVar, RuntimeDovetailRunReport, ScopedFltTemplate, Term, TermType, Var, VarTypeInfo,
@@ -314,6 +316,7 @@ pub enum RholangAstLowerError {
         index: usize,
     },
     BoundConstruction(mettail_rholang_frontend::construction::ConstructionError),
+    FreshConstruction(mettail_rholang_frontend::construction::ConstructionError),
     ScopeIndexOverflow,
     ScopeArenaOverflow,
     ScopeArenaAllocationFailed,
@@ -1378,8 +1381,9 @@ enum Kont<'a> {
     /// keys; map mode consumes `2 * len` interleaved keys and values. Empty is
     /// represented by `map == false, len == 0` and remains mode-neutral.
     PathmapLit { map: bool, len: usize },
-    /// `PNew`'s `new`-scope wrapper over its lowered body.
-    New { binder_count: usize, uris: Vec<String> },
+    /// `PNew`'s `new`-scope wrapper over its lowered body. As with the DDL
+    /// plan, keep the owned descriptor out of the common work-item layout.
+    New { descriptor: Box<CheckedFreshDescriptor> },
     /// `x!(P)[*]` — an unbounded speculation request over `(channel, payload)`.
     SpecAll,
     /// `x!(P)[n]` — a bounded speculation request over `(channel, payload)`.
@@ -1914,27 +1918,34 @@ impl<'a> Drive<'a> {
             ),
             Proc::PNew(scope) => {
                 let (binders, body) = scope.clone().unbind::<String>();
+                let descriptor = CheckedFreshDescriptor::new(
+                    FreshShape::Plain { binder_count: binders.len() },
+                    Vec::new(),
+                )
+                .map_err(RholangAstLowerError::FreshConstruction)?;
                 let extended = self.envs.push(extend_env(self.env(env), &binders)?)?;
                 let body = self.keep(body);
                 self.push_children(
-                    Kont::New {
-                        binder_count: binders.len(),
-                        uris: Vec::new(),
-                    },
+                    Kont::New { descriptor: Box::new(descriptor) },
                     [Job::Body(body, extended)],
                 );
             },
             Proc::PNewUris(uris, scope) => {
                 let (ordered_binders, body, ordered_uris) = unbind_uri_scope(uris, scope)?;
+                let descriptor = CheckedFreshDescriptor::new(
+                    FreshShape::Uri {
+                        binder_count: ordered_binders.len(),
+                        uris: ordered_uris,
+                    },
+                    Vec::new(),
+                )
+                .map_err(RholangAstLowerError::FreshConstruction)?;
                 let extended = self
                     .envs
                     .push(extend_env(self.env(env), &ordered_binders)?)?;
                 let body = self.keep(body);
                 self.push_children(
-                    Kont::New {
-                        binder_count: ordered_binders.len(),
-                        uris: ordered_uris,
-                    },
+                    Kont::New { descriptor: Box::new(descriptor) },
                     [Job::Body(body, extended)],
                 );
             },
@@ -2676,19 +2687,12 @@ impl<'a> Drive<'a> {
                     connective_used,
                 ));
             },
-            Kont::New { binder_count, uris } => {
+            Kont::New { descriptor } => {
                 let body = self.stacks.pop_value();
-                let locally_free = filter_and_adjust_bitset(&body.locally_free, binder_count);
-                let connective_used = body.connective_used;
-                self.stacks.value(new_new_par(
-                    binder_count as i32,
-                    body,
-                    uris,
-                    BTreeMap::new(),
-                    locally_free.clone(),
-                    locally_free,
-                    connective_used,
-                ));
+                self.stacks.value(
+                    Target::fresh(*descriptor, body, Vec::new())
+                        .map_err(RholangAstLowerError::FreshConstruction)?,
+                );
             },
             Kont::SpecAll => {
                 let payload = self.stacks.pop_value();

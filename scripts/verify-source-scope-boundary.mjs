@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { beforeFreshSource } from "./verify-fresh-descriptor-boundary.mjs";
 
 // Exact edit-boundary evidence, NOT a Rust equivalence proof. The new sections
 // are pinned to the reviewed source; model checks and executable tests assess
@@ -29,6 +30,7 @@ function replace(source, before, after, count = 1) {
   return source.replaceAll(after, before);
 }
 export function beforeSourceScope(source) {
+  source = beforeFreshSource(source);
   const previous = old(driver);
   for (const [start, priorStart, end, hash] of [
     ["#[derive(Clone)]\npub struct BoundEnv", "#[derive(Clone)]\npub struct BoundEnv",

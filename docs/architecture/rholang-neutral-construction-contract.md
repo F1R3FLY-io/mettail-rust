@@ -125,6 +125,13 @@ Fresh-scope descriptors distinguish ordinary allocation from URI allocation:
 | Plain | Ordered binder identities, no URIs; zero binders remain representable |
 | URI | Nonempty normalized URI–binder pairs from `unbind_uri_scope`; both output projections use the same pairs |
 
+These are the source-side rosters. The implemented `FreshShape` projects an
+already-opened roster to its count and exact URI sequence; binder identities
+remain with the source environment. `CheckedFreshDescriptor` validates that
+projection and the independent ordered injection keys. URI count must equal
+binder count, not merely be less than it. Its private fields retain the checked
+signed count and machine-sized child arity, without copying the binder roster.
+
 The existing URI owner validates the backtick envelope and nonempty interior,
 sorts the pairs, and rejects duplicate URIs. The target checks the normalized
 sequence in one forward pass; it neither sorts again nor introduces URI-scheme
@@ -419,9 +426,46 @@ $`i+1`$ bytes. Range checking alone is not a resource bound. The shared
 node construction; the neutral target caches the exact flags, and the graph
 interpreter reserves the metadata costs described below. The ordinary source
 worker delegates reference/wildcard construction to the same direct target.
-Fresh operations, budgeted environment-map growth and complete source-session
+Neutral Fresh graph operations, budgeted environment-map growth and complete source-session
 resource admission remain required scope-family work. Caller URI-injection enrollment is a later
 integration boundary and does not make injection keys into lexical binders.
+
+### Checked fresh construction in the source worker
+
+The source `PNew` and `PNewUris` cases create a checked descriptor before
+extending the lexical environment or scheduling the body. URI forms reuse
+`unbind_uri_scope` unchanged. `Kont::New` owns the descriptor behind a box, as
+the existing DDL continuation does with its plan, so a variable-sized payload
+does not enlarge every work item. The continuation consumes the lowered body
+through `DirectNodeTarget::fresh`; it no longer casts an unchecked count into
+the node's signed field.
+
+The direct helper takes a body explicitly and checks the number of supplied
+injection values before pairing them with keys. It moves all fields into the
+existing `new_new_par` constructor and reuses the existing body-metadata
+shifting helper. An unused or empty injection key is retained. Injection
+metadata does not enter the fresh process's summary. Source lowering still
+supplies its existing empty injection map; complete caller-import enrollment
+is a separate, unfinished integration requirement.
+
+The [descriptor refinement](../../formal/rocq/rho_bridge/theories/RholangFreshDescriptor.v)
+proves count/URI/validity preservation when erasing the source roster, exact
+checked-protocol commutation, admitted-descriptor construction, key/child
+association, body-only summary and empty-injection specialization. The staged
+Rust API checks the descriptor before receiving child values; its direct helper
+requires a body by type. This is not a claim that a missing-body error can be
+observed through that typed helper, or that descriptor validation proves
+resource admission. Tests cover invalid layouts, count/arity overflow without
+large allocation, URI/binder association, independent protobuf examples and
+20,000 nested fresh nodes on a 256 KiB native stack, including clone and failed
+construction cleanup using the node's existing lifecycle machinery.
+
+The construction graph deliberately retains its currently implemented
+primitive/bound/wildcard/append domain. Adding Fresh requires accounting for
+nested node copies, URI/key payloads, metadata shifting and clone/cleanup
+workspaces, together with arbitrary-child scheduling bounds. The existing
+flat-head footprint theorem does not establish those bounds. No unsupported
+Fresh graph operation is exposed by this descriptor increment.
 
 ## Guards, origins, and owned session output
 
