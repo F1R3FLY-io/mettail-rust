@@ -349,6 +349,59 @@ Arc storage, including the emptied owned carrier's cleanup in the Arc case.
 This emitter is infrastructure for checked binding generation. Its existence
 does not activate checked traversal or complete public preparation accounting.
 
+#### Precomputed charges and partial outputs
+
+[`BindingCharge`](../src/binding_receipt/charge.rs) projects the event counts
+into the existing reservation convention. Its private fields hold base work,
+logical records and owned bytes; checked constructors reject overflow in both
+the components and the final totals. Each owned byte contributes once to work
+and once to retention units. Each logical record contributes four retention
+units. These units are not semantic `Cost(G)` grades or measured memory.
+
+Category construction, Arc allocation, cleanup-task pushes and obtaining a
+cleanup-pool vector header each contribute one base-work unit and one record.
+Other control events contribute one base-work unit. `NativeRecord` contributes
+only a record, and `OwnedByte` contributes only bytes before final projection.
+The existing reservation callback still owns refusal and budget state.
+
+The generated static `BINDING_DUMMY_CHARGES` table contains construction plus
+normal-cleanup charges for each selected dummy. Dependency composition and
+event weighting occur during constant evaluation; a traversal can borrow the
+table and copy one three-component charge. Both event-count overflow and final
+charge overflow remain errors. A dummy charge excludes its enclosing
+replacement Arc and is **not** the cost of an arbitrary term in that category.
+
+Actual outputs use the separate
+[partial-output model](../../formal/rocq/rho_bridge/theories/GeneratedBindingOutputReservation.v).
+Each producer pays its own construction and local cleanup, including required
+replacement dummies. Its owned children retain their already-paid allowances.
+The additive fold proves that cleanup of independently disposed partial roots
+is covered by those allowances, and that assembling a parent transfers child
+allowances without paying for the same children again. A popped shell is
+bounded by the independently rooted case.
+
+```text
+before constructing a parent:
+    reserve the parent's own construction and local cleanup allowance
+    transfer admitted child outputs from result slots into the parent
+on normal refusal:
+    dispose the remaining slots, assembly locals and constructed parents
+    each owned output occurrence consumes its existing cleanup allowance
+```
+
+A shallow Arc into the still-borrowed source has no owned-subtree allowance:
+the source owner remains alive during normal-error cleanup. Its local reference
+and replacement operations still require admission. Collection collisions must
+partition individual owned outputs, not deduplicate equal terms. A map can
+retain the first key and last value from different input entries; its discarded
+keys and values require their own existing allowances.
+
+The model's partition theorem requires an occurrence-preserving partition,
+and its local facts require correspondence to each emitted field branch.
+Neither premise follows merely from having a charge table. These laws do not
+yet establish the complete generated traversal, concrete collection insertion
+costs, panic recovery, or physical allocation bounds.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing

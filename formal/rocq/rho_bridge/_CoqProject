@@ -59,6 +59,7 @@ theories/IndexedCopySlots.v
 theories/HashBagBindingReconstruction.v
 theories/OrderedBindingReconstruction.v
 theories/GeneratedDummyCleanupReservation.v
+theories/GeneratedBindingOutputReservation.v
 theories/MonikerLeafOperations.v
 theories/FltSelectorBinding.v
 theories/BehavioralFlatCopy.v
