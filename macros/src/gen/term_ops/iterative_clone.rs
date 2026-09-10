@@ -27,6 +27,7 @@ enum CollectionSurface {
 }
 
 struct CloneEmissionNames {
+    checked: bool,
     task_enum: Ident,
     task_pool: Ident,
     result_pool: Ident,
@@ -37,6 +38,7 @@ struct CloneEmissionNames {
 impl CloneEmissionNames {
     fn ordinary() -> Self {
         Self {
+            checked: false,
             task_enum: format_ident!("CloneTask"),
             task_pool: format_ident!("CLONE_TASK_POOL"),
             result_pool: format_ident!("CLONE_RESULT_POOL"),
@@ -47,6 +49,79 @@ impl CloneEmissionNames {
 
     fn handler(&self, category: &Ident) -> Ident {
         format_ident!("{}{}", self.handler_prefix, category.to_string().to_lowercase())
+    }
+
+    fn task_type(&self) -> TokenStream {
+        let task_enum = &self.task_enum;
+        if self.checked {
+            quote! { (#task_enum, moniker::ScopeState) }
+        } else {
+            quote! { #task_enum }
+        }
+    }
+
+    fn push_task(&self, task: TokenStream, state: TokenStream) -> TokenStream {
+        if self.checked {
+            quote! {
+                mettail_runtime::reserve_binding_parts(1, 1, 0, reserve)?;
+                stack.push((#task, #state));
+            }
+        } else {
+            quote! { stack.push(#task); }
+        }
+    }
+
+    fn function_generics(&self) -> TokenStream {
+        if self.checked {
+            quote! { <E> }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    // Insert after the existing final parameter's comma.
+    fn binding_parameters(&self) -> TokenStream {
+        if self.checked {
+            quote! {
+                operation: mettail_runtime::BindingOperation<'_>,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn result_type(&self) -> TokenStream {
+        if self.checked {
+            quote! { -> Result<(), mettail_runtime::BindingFailure<E>> }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn success_tail(&self) -> TokenStream {
+        if self.checked {
+            quote! { Ok(()) }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    // Leading comma preserves ordinary calls without adding a trailing comma.
+    fn binding_arguments(&self) -> TokenStream {
+        if self.checked {
+            quote! { , operation, reserve }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn propagate(&self) -> TokenStream {
+        if self.checked {
+            quote! { ? }
+        } else {
+            TokenStream::new()
+        }
     }
 }
 
@@ -82,6 +157,7 @@ fn generate_value_enum(language: &LanguageDef) -> TokenStream {
 
 fn generate_task_enum(language: &LanguageDef, emission: &CloneEmissionNames) -> TokenStream {
     let task_enum = &emission.task_enum;
+    let task_type = emission.task_type();
     let task_pool = &emission.task_pool;
     let result_pool = &emission.result_pool;
     let visits = language.types.iter().map(|ty| {
@@ -108,7 +184,7 @@ fn generate_task_enum(language: &LanguageDef, emission: &CloneEmissionNames) -> 
         }
 
         thread_local! {
-            static #task_pool: std::cell::Cell<Vec<#task_enum>> =
+            static #task_pool: std::cell::Cell<Vec<#task_type>> =
                 const { std::cell::Cell::new(Vec::new()) };
             static #result_pool: std::cell::Cell<Vec<Option<AnyClonedTerm>>> =
                 const { std::cell::Cell::new(Vec::new()) };
@@ -163,6 +239,13 @@ fn generate_assemble_task(category: &Ident, variant: &VariantKind) -> Option<Tok
 fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> TokenStream {
     let task_enum = &emission.task_enum;
     let driver = &emission.driver;
+    let task_type = emission.task_type();
+    let generics = emission.function_generics();
+    let binding_parameters = emission.binding_parameters();
+    let result_type = emission.result_type();
+    let success_tail = emission.success_tail();
+    let binding_arguments = emission.binding_arguments();
+    let propagate = emission.propagate();
     let handlers = language.types.iter().map(|ty| {
         let category = &ty.name;
         let handler = emission.handler(category);
@@ -173,28 +256,35 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
         quote! {
             #[inline(never)]
             #[allow(dead_code, unused_variables, non_snake_case)]
-            fn #handler(
-                stack: &mut Vec<#task_enum>,
+            fn #handler #generics(
+                stack: &mut Vec<#task_type>,
                 results: &mut Vec<Option<AnyClonedTerm>>,
                 src: *const #category,
                 slot: usize,
-            ) {
+                #binding_parameters
+            ) #result_type {
                 let source = unsafe { &*src };
                 match source {
                     #(#arms)*
                 }
+                #success_tail
             }
         }
     });
 
-    let visits = language.types.iter().map(|ty| {
-        let category = &ty.name;
-        let visit = format_ident!("Clone{}", category);
-        let handler = emission.handler(category);
-        quote! {
-            #task_enum::#visit { src, slot } => #handler(stack, results, src, slot),
-        }
-    });
+    let visits: Vec<_> = language
+        .types
+        .iter()
+        .map(|ty| {
+            let category = &ty.name;
+            let visit = format_ident!("Clone{}", category);
+            let handler = emission.handler(category);
+            quote! {
+                #task_enum::#visit { src, slot } =>
+                    #handler(stack, results, src, slot #binding_arguments) #propagate,
+            }
+        })
+        .collect();
 
     let mut assemblies = Vec::new();
     for ty in &language.types {
@@ -210,20 +300,41 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
         }
     }
 
-    quote! {
-        #(#handlers)*
-
-        #[allow(dead_code, unused_variables, unreachable_patterns)]
-        fn #driver(
-            stack: &mut Vec<#task_enum>,
-            results: &mut Vec<Option<AnyClonedTerm>>,
-        ) {
+    let loop_body = if emission.checked {
+        quote! {
+            while !stack.is_empty() {
+                mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
+                let (task, state) = stack.pop()
+                    .expect("nonempty checked binding worklist");
+                let operation = operation.with_state(state);
+                match task {
+                    #(#visits)*
+                    #(#assemblies)*
+                }
+            }
+        }
+    } else {
+        quote! {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#visits)*
                     #(#assemblies)*
                 }
             }
+        }
+    };
+
+    quote! {
+        #(#handlers)*
+
+        #[allow(dead_code, unused_variables, unreachable_patterns)]
+        fn #driver #generics(
+            stack: &mut Vec<#task_type>,
+            results: &mut Vec<Option<AnyClonedTerm>>,
+            #binding_parameters
+        ) #result_type {
+            #loop_body
+            #success_tail
         }
     }
 }
@@ -938,6 +1049,53 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
         let category = &ty.name;
         let visit = format_ident!("Clone{}", category);
         let wrap = format_ident!("Wrap{}", category);
+        let root_push = emission.push_task(
+            quote! {
+                #task_enum::#visit {
+                    src: self as *const _,
+                    slot: root,
+                }
+            },
+            quote! { operation.state() },
+        );
+        if emission.checked {
+            return quote! {
+                impl mettail_runtime::CheckedIterativeBinding for #category {
+                    #[allow(unreachable_patterns)]
+                    fn try_copy_iterative<E>(
+                        &self,
+                        operation: mettail_runtime::BindingOperation<'_>,
+                        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                    ) -> Result<Self, mettail_runtime::BindingFailure<E>> {
+                        // Logical task/result vector headers, regardless of
+                        // whether this invocation reuses pooled capacity.
+                        mettail_runtime::reserve_binding_parts(0, 2, 0, reserve)?;
+                        mettail_runtime::visitor::with_two_pools_or_fallback(
+                            &#task_pool,
+                            &#result_pool,
+                            |stack, results| {
+                                let root =
+                                    mettail_runtime::append_binding_slots(results, 1, reserve)?;
+                                #root_push
+                                #driver(stack, results, operation, reserve)?;
+                                let value = mettail_runtime::take_binding_slot(
+                                    results,
+                                    root,
+                                    |value| matches!(value, AnyClonedTerm::#wrap(_)),
+                                    reserve,
+                                )?;
+                                match value {
+                                    AnyClonedTerm::#wrap(value) => Ok(value),
+                                    _ => unreachable!(
+                                        "checked binding: validated root category mismatch"
+                                    ),
+                                }
+                            },
+                        )
+                    }
+                }
+            };
+        }
         quote! {
             impl Clone for #category {
                 #[allow(unreachable_patterns)]
@@ -948,10 +1106,7 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
                         |stack, results| {
                             let root = results.len();
                             results.push(None);
-                            stack.push(#task_enum::#visit {
-                                src: self as *const _,
-                                slot: root,
-                            });
+                            #root_push
                             #driver(stack, results);
                             match results[root]
                                 .take()
