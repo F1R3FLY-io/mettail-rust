@@ -169,6 +169,37 @@ using cached scope equality. They also cover duplicate and reordered binders,
 unnamed and Unicode names, nonzero depths, unchanged shared inputs, and the
 existing invalid-index refusal behavior.
 
+### Checked category traversal
+
+`CheckedIterativeBinding::try_copy_iterative` is the fallible category boundary.
+It takes the same caller-owned reservation callback as `CheckedBindingLeaf`,
+but requires recursive category fields to use an explicit worklist. There is
+no blanket `Clone`/`BoundTerm` implementation. `OrdVar` delegates to its checked
+leaf operation. The boundary `Arc<T>` adapter reserves one record before either
+sharing the existing allocation for Clone or invoking the checked inner worker
+and wrapping its result for Open/Close. A refused operation leaves the source
+and its sharing unchanged; earlier successful reservations are not refunded.
+This adapter must not replace worklist scheduling of nested category fields.
+
+`BindingOperation` keeps the borrowed binder roster with the invocation.
+`state()` supplies its initial depth, and `with_state(state)` applies a work
+item's inherited depth without copying the roster or changing the operation.
+`under_scope()` derives the body operation from the parent: Clone stays Clone;
+Open/Close increment once after checking the `u32` boundary. Overflow returns
+`ScopeDepthOverflow` before Moniker's unchecked increment. Ordinary fields and
+siblings continue with the original parent operation, so descending into one
+body cannot change another child's binding depth. These pure helpers do not
+reserve work; the enclosing worker admits its transition before using them.
+
+The [inherited-state model](../../formal/rocq/rho_bridge/theories/RholangInheritedBindingFold.v)
+proves these depth rules and their composition with the existing structural
+fold. The checked-interface tests compare binding coordinates and names,
+preserve roster pointer identity, check sibling depth independence, and exercise
+Arc sharing, exact/under limits, refusal and retry. A unit test checks the full
+`u32` successor boundary directly; it does not fabricate Moniker's private
+`ScopeState` representation. These interface tests do not establish a generated
+language's traversal or activate its parser actions.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing

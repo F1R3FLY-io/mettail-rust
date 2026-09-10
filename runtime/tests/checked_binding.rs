@@ -1,8 +1,128 @@
 //! Compare actual Moniker coordinates and hints, not hint-insensitive equality.
 use mettail_runtime::{
-    reserve_binding_copy, BindingFailure, BindingOperation, CheckedBindingLeaf, OrdVar,
+    reserve_binding_copy, BindingFailure, BindingOperation, CheckedBindingLeaf,
+    CheckedIterativeBinding, OrdVar,
 };
 use moniker::{Binder, BinderIndex, BoundTerm, BoundVar, FreeVar, ScopeOffset, ScopeState, Var};
+use std::sync::Arc;
+
+#[test]
+fn operation_state_is_inherited_without_changing_roster_or_siblings() {
+    let roster = vec![Binder(FreeVar::fresh_named("x"))];
+    let parent_state = ScopeState::new().incr().incr();
+    for parent in [
+        BindingOperation::Open { state: parent_state, binders: &roster },
+        BindingOperation::Close { state: parent_state, binders: &roster },
+    ] {
+        let body = parent
+            .under_scope::<()>()
+            .expect("scope depth is representable");
+        let nested = body
+            .under_scope::<()>()
+            .expect("nested scope depth is representable");
+        assert_eq!(parent.state().depth(), ScopeOffset(2));
+        assert_eq!(body.state().depth(), ScopeOffset(3));
+        assert_eq!(nested.state().depth(), ScopeOffset(4));
+        let sibling = parent.with_state(parent_state);
+        let nested_sibling = parent.under_scope::<()>().expect("independent sibling");
+        assert_eq!(sibling.state().depth(), ScopeOffset(2));
+        assert_eq!(nested_sibling.state().depth(), ScopeOffset(3));
+        for operation in [body, nested, sibling, nested_sibling] {
+            match (parent, operation) {
+                (BindingOperation::Open { .. }, BindingOperation::Open { binders, .. })
+                | (BindingOperation::Close { .. }, BindingOperation::Close { binders, .. }) => {
+                    assert!(std::ptr::eq(binders, roster.as_slice()));
+                },
+                _ => panic!("inherited operation changed kind"),
+            }
+        }
+    }
+    let cloned = BindingOperation::Clone.with_state(parent_state);
+    assert!(matches!(cloned, BindingOperation::Clone));
+    assert!(matches!(cloned.under_scope::<()>(), Ok(BindingOperation::Clone)));
+    assert_eq!(cloned.state().depth(), ScopeOffset(0));
+}
+
+#[test]
+fn checked_arc_boundary_preserves_clone_sharing_and_admits_binding() {
+    let chosen: FreeVar<String> = FreeVar::fresh_named("x");
+    let roster = vec![Binder(chosen.clone())];
+    let original = OrdVar(Var::Free(chosen));
+    let source = Arc::new(original.clone());
+    let mut charges = Vec::new();
+    let cloned = source
+        .try_copy_iterative(BindingOperation::Clone, &mut |work, units| {
+            charges.push((work, units));
+            Ok::<(), &'static str>(())
+        })
+        .expect("paid shallow clone");
+    assert!(Arc::ptr_eq(&source, &cloned));
+    assert_eq!(charges, [(1, 4)]);
+    drop(cloned);
+
+    let close = BindingOperation::Close {
+        state: ScopeState::new(),
+        binders: &roster,
+    };
+    charges.clear();
+    let closed = source
+        .try_copy_iterative(close, &mut |work, units| {
+            charges.push((work, units));
+            Ok::<(), &'static str>(())
+        })
+        .expect("paid binding");
+    assert!(!Arc::ptr_eq(&source, &closed));
+    assert_exact(&closed, &bound(0, 0, "x"));
+    assert_exact(&source, &original);
+    assert_eq!(charges, [(1, 4), (1, 0), (1, 0), (2, 5)]);
+    let mut expected = closed.as_ref().clone();
+    expected.open_term(ScopeState::new(), &roster);
+    let opened = closed
+        .try_copy_iterative(
+            BindingOperation::Open {
+                state: ScopeState::new(),
+                binders: &roster,
+            },
+            &mut |_, _| Ok::<(), ()>(()),
+        )
+        .expect("opening uses the same checked boundary");
+    assert!(!Arc::ptr_eq(&closed, &opened));
+    assert_exact(&opened, &expected);
+
+    for cancelled in 1..=4 {
+        let mut calls = 0;
+        let result = source.try_copy_iterative(close, &mut |_, _| {
+            calls += 1;
+            if calls == cancelled {
+                Err("cancelled")
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Err(BindingFailure::Reservation("cancelled")));
+        assert_eq!(calls, cancelled);
+        assert_eq!(Arc::strong_count(&source), 1);
+        assert_exact(&source, &original);
+    }
+    for limit in [(4usize, 9usize), (5, 8), (5, 9)] {
+        let mut used = (0, 0);
+        let result = source.try_copy_iterative(close, &mut |work, units| {
+            if work > limit.0 - used.0 || units > limit.1 - used.1 {
+                return Err("limit");
+            }
+            used.0 += work;
+            used.1 += units;
+            Ok(())
+        });
+        if limit == (5, 9) {
+            assert_exact(&result.expect("exact limit succeeds after refusals"), &closed);
+            assert_eq!(used, limit);
+        } else {
+            assert_eq!(result, Err(BindingFailure::Reservation("limit")));
+            assert_eq!(used, (3, 4));
+        }
+    }
+}
 
 fn bound(depth: u32, index: u32, hint: &str) -> OrdVar {
     OrdVar(Var::Bound(BoundVar {

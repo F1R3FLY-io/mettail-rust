@@ -1,4 +1,4 @@
-//! Typed leaf operations for the generated, resource-admitted binding worker.
+//! Typed operations for the generated, resource-admitted binding worker.
 //!
 //! Leaves own their copy contract: there is no blanket `Clone + BoundTerm`
 //! fallback that could conceal recursive work. The caller supplies its existing
@@ -13,6 +13,7 @@ use crate::{
     CanonicalFloat64, FltNode, FltTemplatePiece, FreeVar, OrdVar, Var,
 };
 use moniker::{BinderIndex, ScopeState};
+use std::sync::Arc;
 
 /// A copy or known-roster binding operation; no implicit freshening occurs.
 #[derive(Clone, Copy, Debug)]
@@ -28,12 +29,53 @@ pub enum BindingOperation<'a> {
     },
 }
 
+impl<'a> BindingOperation<'a> {
+    /// The initial inherited depth; cloning has no binding depth.
+    pub fn state(self) -> ScopeState {
+        match self {
+            Self::Clone => ScopeState::new(),
+            Self::Open { state, .. } | Self::Close { state, .. } => state,
+        }
+    }
+
+    /// Use a work item's inherited depth without copying or replacing its roster.
+    pub fn with_state(self, state: ScopeState) -> Self {
+        match self {
+            Self::Clone => Self::Clone,
+            Self::Open { binders, .. } => Self::Open { state, binders },
+            Self::Close { binders, .. } => Self::Close { state, binders },
+        }
+    }
+
+    /// Derive a scope body's operation from its parent, not a preceding sibling.
+    ///
+    /// Clone keeps its shallow scope-body boundary. Opening/closing increments
+    /// exactly once, rejecting overflow before Moniker's unchecked increment.
+    /// The worker must admit its traversal step before calling this pure helper.
+    pub fn under_scope<E>(self) -> Result<Self, BindingFailure<E>> {
+        match self {
+            Self::Clone => Ok(Self::Clone),
+            Self::Open { state, .. } | Self::Close { state, .. } => {
+                checked_scope_successor::<E>(state.depth().0)?;
+                Ok(self.with_state(state.incr()))
+            },
+        }
+    }
+}
+
+fn checked_scope_successor<E>(depth: u32) -> Result<u32, BindingFailure<E>> {
+    depth
+        .checked_add(1)
+        .ok_or(BindingFailure::ScopeDepthOverflow)
+}
+
 /// Refusal before an unadmitted copy or an invalid binding operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BindingFailure<E> {
     Reservation(E),
     SizeOverflow,
     BinderIndexOverflow,
+    ScopeDepthOverflow,
     MissingBinder { index: usize },
 }
 
@@ -49,6 +91,48 @@ pub trait CheckedBindingLeaf: Sized {
         operation: BindingOperation<'_>,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<Self, BindingFailure<E>>;
+}
+
+/// Resource-admitted category traversal over the generated explicit worklist.
+///
+/// Unlike a native leaf, a category schedules its recursive fields on that
+/// worklist. Implementations must not delegate recursive category children to
+/// `BoundTerm`, `Clone`, or this trait on each descent. The input stays borrowed
+/// and unchanged; every owned result and traversal uses the caller's meter.
+pub trait CheckedIterativeBinding: Sized {
+    fn try_copy_iterative<E>(
+        &self,
+        operation: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>>;
+}
+
+impl CheckedIterativeBinding for OrdVar {
+    fn try_copy_iterative<E>(
+        &self,
+        operation: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>> {
+        self.try_copy_binding(operation, reserve)
+    }
+}
+
+/// Boundary adapter, not a substitute for scheduling nested category fields.
+impl<T: CheckedIterativeBinding> CheckedIterativeBinding for Arc<T> {
+    fn try_copy_iterative<E>(
+        &self,
+        operation: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>> {
+        reserve_binding_copy(0, reserve)?;
+        match operation {
+            BindingOperation::Clone => Ok(Arc::clone(self)),
+            BindingOperation::Open { .. } | BindingOperation::Close { .. } => {
+                let copied = self.as_ref().try_copy_iterative(operation, reserve)?;
+                Ok(Arc::new(copied))
+            },
+        }
+    }
 }
 
 /// Admit one leaf record and its owned bytes before copying it.
@@ -232,6 +316,22 @@ fn add_copy_component<E>(total: &mut usize, amount: usize) -> Result<(), Binding
         .checked_add(amount)
         .ok_or(BindingFailure::SizeOverflow)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod state_tests {
+    use super::{checked_scope_successor, BindingFailure};
+
+    #[test]
+    fn scope_successor_guards_the_full_u32_boundary() {
+        for depth in [0, 1, 17, u32::MAX - 1] {
+            assert_eq!(checked_scope_successor::<()>(depth), Ok(depth + 1));
+        }
+        assert_eq!(
+            checked_scope_successor::<()>(u32::MAX),
+            Err(BindingFailure::ScopeDepthOverflow),
+        );
+    }
 }
 
 impl CheckedBindingLeaf for FltNode {
