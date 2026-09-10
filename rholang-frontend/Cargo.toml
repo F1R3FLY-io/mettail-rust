@@ -1,0 +1,13 @@
+[package]
+name = "mettail-rholang-frontend"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Node-independent Rholang construction and frontend contracts"
+
+[lib]
+name = "mettail_rholang_frontend"

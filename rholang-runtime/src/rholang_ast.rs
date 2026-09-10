@@ -57,6 +57,9 @@ use models::rust::utils::{
 #[path = "../tests/support/rholang_ast_recursive_oracle.rs"]
 mod recursive_oracle;
 
+mod target;
+use target::DirectNodeTarget as Target;
+
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
 
@@ -2426,15 +2429,13 @@ impl<'a> Drive<'a> {
         match kont {
             Kont::ParFold(n) => {
                 let parts = self.stacks.pop_values(n);
-                let par = parts
-                    .into_iter()
-                    .fold(Par::default(), |acc, part| acc.append(part));
+                let par = parts.into_iter().fold(Target::empty(), Target::append);
                 self.stacks.value(par);
             },
             Kont::ParPair => {
                 let right = self.stacks.pop_value();
                 let left = self.stacks.pop_value();
-                self.stacks.value(left.append(right));
+                self.stacks.value(Target::append(left, right));
             },
             Kont::Send { persistent } => {
                 let payload = self.stacks.pop_value();
@@ -2460,7 +2461,9 @@ impl<'a> Drive<'a> {
             Kont::AddParity => {
                 let rhs = self.stacks.pop_value();
                 let lhs = self.stacks.pop_value();
-                let op = match is_single_gstring_value(&lhs) && is_single_gstring_value(&rhs) {
+                let op = match Target::observation(&lhs).single_string
+                    && Target::observation(&rhs).single_string
+                {
                     true => BinOp::PlusPlus,
                     false => BinOp::Plus,
                 };
@@ -3281,7 +3284,7 @@ fn method_par(method_name: &str, target_par: Par, argument_pars: Vec<Par>) -> Pa
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
 fn lower_arm_p_zero() -> Result<Par, RholangAstLowerError> {
-    Ok(Par::default())
+    Ok(Target::empty())
 }
 
 /// The `Proc::PDrop(name)` arm.
@@ -3365,7 +3368,7 @@ fn lower_arm_cast_int(
 #[inline(never)]
 fn lower_arm_cast_bool(value: &std::sync::Arc<Bool>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
-        Bool::BoolLit(literal) => Ok(new_gbool_par(*literal, Vec::new(), false)),
+        Bool::BoolLit(literal) => Ok(Target::boolean(*literal)),
         _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal boolean expression (Bool category)",
         )),
@@ -3379,7 +3382,7 @@ fn lower_arm_cast_bool(value: &std::sync::Arc<Bool>) -> Result<Par, RholangAstLo
 #[inline(never)]
 fn lower_arm_cast_str(value: &std::sync::Arc<Str>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
-        Str::StringLit(literal) => Ok(new_gstring_par(literal.clone(), Vec::new(), false)),
+        Str::StringLit(literal) => Ok(Target::text(literal.clone())),
         _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal string expression (Str category)",
         )),
@@ -3968,7 +3971,7 @@ fn lower_int_value(value: &Int, _env: &BoundEnv) -> Result<Par, RholangAstLowerE
             "non-literal integer expression (Int category)",
         ));
     };
-    let mut par = new_gint_par(*literal, Vec::new(), false);
+    let mut par = Target::integer(*literal);
     for _ in 0..signs {
         par = unary_expr_par(par, |p| ExprInstance::ENegBody(ENeg { p }));
     }

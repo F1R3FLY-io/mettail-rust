@@ -63,6 +63,7 @@ dstage-instrumentation = ["runtime-report"]
 # Rholang source text that has to be reparsed.
 rholang-runtime = [
     "runtime-report",
+    "dep:mettail-rholang-frontend",
     "dep:mettail-ast",
     "dep:mettail-elab",
     "dep:mettail-grammar-core",
@@ -385,6 +386,7 @@ bench-scion = [
 ]
 
 [dependencies]
+mettail-rholang-frontend = { path = "../rholang-frontend", optional = true }
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
 models = { workspace = true }
 # Decode a reflected-term ABI tag string out of a private name's protobuf `id`

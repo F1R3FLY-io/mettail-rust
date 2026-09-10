@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { beforeInitialTarget } from "./verify-initial-target-correspondence.mjs";
 
 // Check the extraction boundary, not arbitrary Rust equivalence. The new
 // storage is separately modeled/tested; this proves no producer, constructor,
@@ -10,7 +11,12 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const baseline = "a04cc83f27fdf106270de3faf71dfab3b4bc6c3d";
 const before = path => execFileSync("git", ["-c", "core.fsmonitor=false", "show", `${baseline}:${path}`],
   { cwd: root, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
-const after = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+// Compose the later exact target-delegation boundary with the storage boundary,
+// rather than silently dropping constructors from the original comparison.
+const after = path => {
+  const source = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  return path === "rholang-runtime/src/rholang_ast.rs" ? beforeInitialTarget(source) : source;
+};
 function outsideStorage(text) {
   const start = "/// The two stacks, plus the three incremental counters the deficit invariant needs.";
   const end = "/// Everything one drive owns.";

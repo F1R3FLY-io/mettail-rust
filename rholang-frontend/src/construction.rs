@@ -1,0 +1,96 @@
+//! Consuming construction algebra shared with the direct node adapter.
+//!
+//! `Value` deliberately has no `Clone` bound. A direct adapter moves concrete
+//! node values into their parents; the neutral adapter retains checked arena
+//! references. The latter implements the persistent-reference protocol, while
+//! the former does not need a permanent arena of copied node subtrees.
+
+/// The first implemented operation family. Arity is fixed by each variant.
+/// Integer decoding/range checking precedes this signed-64-bit carrier.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ValueOp {
+    Empty,
+    Integer(i64),
+    Boolean(bool),
+    Text(String),
+    Append,
+}
+
+impl ValueOp {
+    pub fn arity(&self) -> usize {
+        match self {
+            Self::Append => 2,
+            Self::Empty | Self::Integer(_) | Self::Boolean(_) | Self::Text(_) => 0,
+        }
+    }
+
+    pub(crate) fn payload_bytes(&self) -> usize {
+        match self {
+            Self::Text(text) => text.len(),
+            _ => 0,
+        }
+    }
+}
+
+/// Structural information used by construction, not evaluated semantics.
+/// The slice borrows the actual target/value, not a phantom session lifetime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StructuralObservation<'a> {
+    pub single_string: bool,
+    pub locally_free: &'a [u8],
+    pub connective_used: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LimitKind {
+    Nodes,
+    Edges,
+    PayloadBytes,
+    Work,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstructionError {
+    MissingReference { index: u32 },
+    ChildArity { expected: usize, actual: usize },
+    LimitExceeded(LimitKind),
+    ReferenceIndexOverflow,
+    AllocationFailed,
+    Cancelled,
+}
+
+impl std::fmt::Display for ConstructionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl std::error::Error for ConstructionError {}
+
+/// Constructors consume child values; observations only borrow them.
+/// Forwarding denotes quote/drop/parentheses, without a semantic wrapper.
+pub trait ValueTarget {
+    type Value;
+
+    fn construct(
+        &mut self,
+        operation: ValueOp,
+        children: Vec<Self::Value>,
+    ) -> Result<Self::Value, ConstructionError>;
+
+    fn observe<'a>(
+        &'a self,
+        value: &'a Self::Value,
+    ) -> Result<StructuralObservation<'a>, ConstructionError>;
+
+    fn forward(&mut self, value: Self::Value) -> Result<Self::Value, ConstructionError>;
+
+    /// Typed binary path. Direct owned targets can avoid allocating a temporary
+    /// child vector; the meaning is exactly `construct(Append, [left, right])`.
+    fn append(
+        &mut self,
+        left: Self::Value,
+        right: Self::Value,
+    ) -> Result<Self::Value, ConstructionError> {
+        self.construct(ValueOp::Append, vec![left, right])
+    }
+}
