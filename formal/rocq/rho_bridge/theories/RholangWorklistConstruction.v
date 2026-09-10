@@ -9,8 +9,9 @@
     The pair specialization has the same mathematical suffix as ordered
     extraction; Rust can pop right/left directly without allocating a vector.
     This model does not change source scheduling or interpret source syntax. *)
-From Stdlib Require Import List Arith Lia.
-From RhoBridge Require Import RholangWorklistStorage RholangConstructionFacts.
+From Stdlib Require Import List Arith Lia Bool.
+From RhoBridge Require Import RholangWorklistStorage RholangConstructionFacts
+  RholangFreshDescriptor RholangCanonicalMetadata.
 Import ListNotations.
 
 Inductive BuildResult (V E : Type) := Built (value : V) | BuildError (error : E).
@@ -150,6 +151,116 @@ Proof.
   cbn [map_transition]. rewrite map_app, append_fact_is_exact. reflexivity.
 Qed.
 
+(** Fresh uses the SAME consuming suffix transition. Descriptor admission is
+    an explicit prerequisite, not a Boolean assertion that an arbitrary cache
+    is correct. The facts callback needs the body fact and the injection count;
+    it does not materialize injection processes or union their metadata.
+
+    This is an extensional transition refinement, not an allocation bound.
+    The Rust worker's suffix extraction allocates before calling its builder,
+    so resource admission must precede reduce_values, not occur only inside
+    the callback. Graph scheduling and lifecycle allowances remain separate. *)
+Definition construction_build (result : RholangTargetConstruction.ConstructionResult)
+    : BuildResult RholangTargetConstruction.Value RholangTargetConstruction.ConstructionError :=
+  match result with
+  | RholangTargetConstruction.Constructed value => Built value
+  | RholangTargetConstruction.ConstructionRejected error => BuildError error
+  end.
+
+Definition build_fresh (descriptor : FreshDescriptor)
+    (children : list RholangTargetConstruction.Value) :=
+  construction_build (checked_shape_fresh (descriptor_shape descriptor)
+    (descriptor_keys descriptor) children).
+
+Definition build_fresh_fact (descriptor : FreshDescriptor) (children : list ConstructionFact)
+    : BuildResult ConstructionFact RholangTargetConstruction.ConstructionError :=
+  match children with
+  | [] => BuildError RholangTargetConstruction.ChildArityMismatch
+  | body :: injections =>
+    if Nat.eqb (length (descriptor_keys descriptor)) (length injections)
+    then Built (fresh_fact (shape_width (descriptor_shape descriptor)) body)
+    else BuildError RholangTargetConstruction.ChildArityMismatch
+  end.
+
+Lemma valid_fresh_shape_has_bounded_uri_projection : forall shape,
+  shape_valid shape = true -> length (shape_uris shape) <= shape_width shape.
+Proof.
+  intros [width|width uris] H; cbn in *; [lia|].
+  apply andb_true_iff in H as [H _]. apply Nat.eqb_eq in H. lia.
+Qed.
+
+Theorem admitted_fresh_callback_cache_commutes : forall shape keys descriptor,
+  admit_fresh_descriptor shape keys = Some descriptor -> forall children,
+  build_fresh_fact descriptor (map fact_of children) =
+  map_build fact_of (build_fresh descriptor children).
+Proof.
+  intros shape keys descriptor HD [|body injections]; [reflexivity|].
+  pose proof (admitted_descriptor_has_exact_fields_and_checked_domain
+    shape keys descriptor HD) as [HS [HK [HV _]]].
+  pose proof (valid_fresh_shape_has_bounded_uri_projection shape HV) as HU.
+  apply Nat.leb_le in HU.
+  unfold build_fresh. rewrite (admitted_descriptor_reuses_existing_fresh_target
+    shape keys descriptor body injections HD).
+  cbn [map build_fresh_fact]. rewrite HS, HK, length_map.
+  unfold RholangTargetConstruction.fresh_with_injections.
+  destruct (Nat.eqb (length keys) (length injections)); [rewrite HU|]; reflexivity.
+Qed.
+
+Theorem actual_fresh_transition_cache_commutes : forall shape keys descriptor,
+  admit_fresh_descriptor shape keys = Some descriptor -> forall values,
+  reduce_values (S (length keys)) (build_fresh_fact descriptor) (map fact_of values) =
+  map_transition fact_of (reduce_values (S (length keys)) (build_fresh descriptor) values).
+Proof.
+  intros shape keys descriptor HD. apply consuming_suffix_commutes.
+  now apply (admitted_fresh_callback_cache_commutes shape keys descriptor).
+Qed.
+
+Theorem fresh_transition_retains_prefix_body_and_ordered_injections :
+    forall shape keys descriptor prefix body injections,
+  admit_fresh_descriptor shape keys = Some descriptor ->
+  length keys = length injections ->
+  reduce_values (S (length keys)) (build_fresh descriptor) (prefix ++ body :: injections) =
+  Completed (prefix ++ [RholangTargetConstruction.singleton
+    (RholangTargetConstruction.NewHead (shape_width shape) (shape_uris shape) keys)
+    (body :: injections)
+    (RholangTargetConstruction.shifted_summary (shape_width shape)
+      (RholangTargetConstruction.summary_of body))]).
+Proof.
+  intros shape keys descriptor prefix body injections HD HL.
+  replace (S (length keys)) with (length (body :: injections)) by (cbn; lia).
+  apply values_success_preserves_prefix_and_source_order.
+  unfold build_fresh. rewrite (admitted_descriptor_reuses_existing_fresh_target
+    shape keys descriptor body injections HD).
+  pose proof (admitted_descriptor_has_exact_fields_and_checked_domain
+    shape keys descriptor HD) as [_ [_ [HV _]]].
+  pose proof (valid_fresh_shape_has_bounded_uri_projection shape HV) as HU.
+  apply Nat.leb_le in HU.
+  unfold RholangTargetConstruction.fresh_with_injections.
+  now rewrite HL, Nat.eqb_refl, HU.
+Qed.
+
+Theorem fresh_transition_underflow_preserves_the_entire_stack : forall descriptor values,
+  length values < S (length (descriptor_keys descriptor)) ->
+  reduce_values (S (length (descriptor_keys descriptor))) (build_fresh descriptor) values =
+  Underflow (S (length (descriptor_keys descriptor))) (length values) values.
+Proof. intros. now apply values_underflow_keeps_original_stack. Qed.
+
+Theorem fresh_fact_callback_never_admits_wrong_injection_count :
+    forall descriptor body injections,
+  length (descriptor_keys descriptor) <> length injections ->
+  build_fresh_fact descriptor (body :: injections) =
+  BuildError RholangTargetConstruction.ChildArityMismatch.
+Proof. intros. cbn [build_fresh_fact]. apply Nat.eqb_neq in H. now rewrite H. Qed.
+
+Theorem fresh_fact_callback_produces_canonical_metadata : forall descriptor children fact,
+  build_fresh_fact descriptor children = Built fact -> canonical_fact fact = true.
+Proof.
+  intros descriptor [|body injections] fact H; cbn [build_fresh_fact] in H;
+    [discriminate|].
+  destruct (Nat.eqb (length (descriptor_keys descriptor)) (length injections));
+    [|discriminate]. inversion H; subst. apply fresh_fact_produces_canonical_metadata.
+Qed.
+
 Print Assumptions values_success_preserves_prefix_and_source_order.
 Print Assumptions values_failure_consumes_only_children.
 Print Assumptions values_underflow_keeps_original_stack.
@@ -161,3 +272,10 @@ Print Assumptions concrete_append_fold_cache_exact.
 Print Assumptions actual_parallel_transition_cache_commutes.
 Print Assumptions empty_fold_constructs_one_empty_value.
 Print Assumptions pair_cache_commutes_on_ordered_children.
+Print Assumptions valid_fresh_shape_has_bounded_uri_projection.
+Print Assumptions admitted_fresh_callback_cache_commutes.
+Print Assumptions actual_fresh_transition_cache_commutes.
+Print Assumptions fresh_transition_retains_prefix_body_and_ordered_injections.
+Print Assumptions fresh_transition_underflow_preserves_the_entire_stack.
+Print Assumptions fresh_fact_callback_never_admits_wrong_injection_count.
+Print Assumptions fresh_fact_callback_produces_canonical_metadata.

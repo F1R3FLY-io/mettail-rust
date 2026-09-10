@@ -45,6 +45,7 @@ theories/RholangConstructionFacts.v
 theories/RholangCanonicalMetadata.v
 theories/RholangWorklistConstruction.v
 theories/RholangInitialGraphInterpretation.v
+theories/RholangGraphCapacity.v
 theories/RholangInitialGraphMachine.v
 theories/RholangInitialGraphResources.v
 theories/RholangBoundMetadata.v

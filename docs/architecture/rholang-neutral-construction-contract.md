@@ -491,6 +491,23 @@ behavior for such inputs. These are representation and size lemmas, not a claim
 that the unfinished graph extension already maintains this invariant or that
 the complete Rust implementation has been formally verified.
 
+The [worklist refinement](../../formal/rocq/rho_bridge/theories/RholangWorklistConstruction.v)
+instantiates the existing consuming-suffix operation for admitted fresh
+descriptors. Its callback and cached-fact callback commute for every input
+stack, including underflow and incorrect child counts. Successful reduction
+preserves the arbitrary older prefix and constructs one fresh value containing
+the body followed by every ordered injection. Repeated child values are not
+deduplicated. The cached summary depends only on the body and is canonical
+after shifting, even if that body's input metadata contains trailing clear
+bytes. Descriptor admission is an explicit premise of the correspondence law;
+the cache callback alone is not an admission interface for untrusted descriptors.
+
+This result specifies the child-combination transition, not graph traversal or
+its memory allowance. In particular, the existing Rust suffix extraction
+allocates its child vector before invoking the builder. Any construction-graph
+resource reservation must therefore precede that extraction, not merely the
+callback's invocation of the node constructor.
+
 ## Guards, origins, and owned session output
 
 The neutral graph retains guard structure and the requested discharge policy.
@@ -878,6 +895,53 @@ their direct node result. A 20,000-level empty-append graph tests successful
 materialization and mid-expansion refusal on a 256 KiB native thread stack.
 None of this substitutes for the remaining source-family and session migration
 or the real public-node application gate.
+
+### Capacity refinement for arbitrary ordered children
+
+Fresh construction adds a body and any number of ordered injection children.
+The [capacity arithmetic model](../../formal/rocq/rho_bridge/theories/RholangGraphCapacity.v)
+supplies the inequalities needed to extend the same eager `Visit`/combine
+machine. It is not yet a proof that the implemented graph supports Fresh.
+
+Let $`a(i)`$ be the child count of node $`i`$: zero for a scalar, two for append,
+and one plus the injection count for Fresh. Define the root-prefix surplus
+$`B(r)`$ and the work/value allowances $`J(r)`$ and $`Q(r)`$ by:
+
+```math
+B(r)=\sum_{i=0}^{r}\max(a(i)-2,0),\qquad
+J(r)=2(r+1)+B(r),\qquad Q(r)=r+1+B(r).
+```
+
+While child $`c`$ at zero-based position $`k`$ of a parent $`r`$ runs, the parent
+retains $`a(r)-k`$ pending jobs (later children plus its combine) and $`k`$
+completed values. For every $`c<r`$ and $`k<a(r)`$, the model proves:
+
+```math
+a(r)-k+J(c)\leq J(r),\qquad k+Q(c)\leq Q(r).
+```
+
+These are the two obligations for composing each child's bounded execution
+under the parent's pending-work and value prefixes. The model also proves
+the initial expanded-state and final child-stack bounds for a nonleaf owner
+at a positive index. A valid nonleaf cannot occupy index zero because it must
+reference an earlier child. The existing one-slot root slack gives prospective
+reservations $`J(r)+1`$ and $`Q(r)+1`$; for the current binary graph, the model
+proves they equal the existing formulas exactly.
+
+Only arities in the root prefix affect this allowance; arbitrary later arities
+cannot change it. Repeated sibling references do not require multiplying the
+surplus by their occurrence count, because siblings run sequentially and
+active ancestor indices strictly decrease. This does not bound total execution
+work: repeated references still require repeated visits and may produce much
+larger unfolded output.
+
+The extended machine must still instantiate these inequalities at every
+intermediate state and establish ordered-child readiness. These slot bounds do
+not cover the temporary child vector extracted from the value stack, cached
+metadata, nested node copies, or clone/drop workspaces. Computing or caching the
+prefix surplus and scheduling arbitrary child lists also require checked,
+charged, cancellable work before allocation. Neither the binary footprint
+model nor these arithmetic lemmas discharge those separate obligations.
 
 ### Bound-reference metadata and resource accounting
 
