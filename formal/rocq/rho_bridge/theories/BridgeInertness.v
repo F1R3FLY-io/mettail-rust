@@ -1,36 +1,30 @@
 (*
- * BridgeInertness: the MeTTaIL <-> f1r3node-rust bridge is STRICTLY ONE-WAY.
+ * BridgeInertness: core independence and upper application composition.
  *
  * M-RHO compiles MeTTaIL GSLTs onto f1r3node-rust's Rho machine via three bridge
- * crates (mettail-rho-{codegen,runtime,adapter}) that depend ONE-WAY on
- * f1r3node-rust: MeTTaIL may depend on f1r3node-rust, f1r3node-rust NEVER on
- * MeTTaIL. f1r3node-rust enforces this OPERATIONALLY with the guard test
- * `mettail_rust_is_not_a_cargo_dependency`
- * (rholang/src/rust/interpreter/accounting/resource_logic.rs:293), which scans
- * every f1r3node-rust Cargo.toml and asserts none names mettail-rust.
+ * crates that depend on the node CORE, never the upper node application.
+ * The two-object section below describes this core-only subgraph. F1r3node
+ * there denotes core libraries, not every package in the repository.
+ * DirectComposition then adds the upper application without reversing a core
+ * edge. The executable Cargo package-graph gate must establish correspondence
+ * with actual normal/build dependencies; these theorems do not inspect Cargo.
  *
- * This file proves that the invariant the guard enforces is INTERNALLY
- * CONSISTENT: with the single permitted bridge edge (MeTTaIL -> f1r3node), the
- * dependency relation is irreversible (f1r3node never reaches MeTTaIL) and
- * ACYCLIC (no repo depends on something that reaches back to it). A dependency
- * cycle would make MeTTaIL a (transitive) dependency of f1r3node, contradicting
- * the one-way design and the guard; ruling cycles out is the formal content of
- * "the bridge is inert / one-way."
- *
- * (M-RHO.0.0 inert milestone: the bridge crates are empty + `engine`-gated; this
- * is the minimal non-vacuous invariant they must preserve — the bridge analogue
- * of the dovetail engine's NBestExtraction.v.)
+ * The core-only subgraph and its extension are internally consistent: core
+ * cannot reach the compiler or application, and no component dependency can
+ * reach back to its source. Concrete packages may have within-layer edges;
+ * their acyclicity is checked by the executable gate, not by this finite model.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List Arith Lia.
 
 Import ListNotations.
 
 Section BridgeInertness.
 
-  (* The two repositories joined by the bridge. *)
+  (* The compiler and core-library sides of the bridge. The type and constructor
+     names are retained for callers of the core-only model. *)
   Inductive Repo : Type := MeTTaIL | F1r3node.
 
   (* Repo is discrete (the two repositories are distinguishable). *)
@@ -93,3 +87,70 @@ Section BridgeInertness.
   Qed.
 
 End BridgeInertness.
+
+(** Component ranks concern cross-layer edges. Dependencies within one layer
+    are not rank-decreasing; the executable gate checks package acyclicity
+    separately, including those edges. *)
+Module DirectComposition.
+  Inductive Component := NodeApplication | MeTTaILBridge | NodeCore.
+  Definition rank component :=
+    match component with NodeApplication => 2 | MeTTaILBridge => 1 | NodeCore => 0 end.
+  Inductive dependency : Component -> Component -> Prop :=
+  | application_bridge : dependency NodeApplication MeTTaILBridge
+  | application_core : dependency NodeApplication NodeCore
+  | bridge_core : dependency MeTTaILBridge NodeCore.
+  Inductive reachable : Component -> Component -> Prop :=
+  | same_component : forall component, reachable component component
+  | follow_dependency : forall source next target,
+      dependency source next -> reachable next target -> reachable source target.
+
+  Lemma dependency_decreases_rank : forall source target,
+    dependency source target -> rank target < rank source.
+  Proof. intros source target H; destruct H; cbn [rank]; lia. Qed.
+
+  Lemma reachability_does_not_increase_rank : forall source target,
+    reachable source target -> rank target <= rank source.
+  Proof.
+    intros source target H; induction H.
+    - lia.
+    - pose proof (dependency_decreases_rank _ _ H). lia.
+  Qed.
+
+  Theorem core_reaches_only_core : forall target,
+    reachable NodeCore target -> target = NodeCore.
+  Proof.
+    intros target H. apply reachability_does_not_increase_rank in H.
+    destruct target; cbn [rank] in H; congruence || lia.
+  Qed.
+
+  Theorem bridge_cannot_reach_application : ~ reachable MeTTaILBridge NodeApplication.
+  Proof.
+    intro H. apply reachability_does_not_increase_rank in H. cbn [rank] in H. lia.
+  Qed.
+
+  Theorem composition_is_acyclic : forall source target,
+    dependency source target -> ~ reachable target source.
+  Proof.
+    intros source target Hedge Hback.
+    apply dependency_decreases_rank in Hedge.
+    apply reachability_does_not_increase_rank in Hback. lia.
+  Qed.
+
+  Definition embed_core_bridge repo :=
+    match repo with MeTTaIL => MeTTaILBridge | F1r3node => NodeCore end.
+  Theorem original_bridge_edges_are_preserved : forall source target,
+    dep source target -> dependency (embed_core_bridge source) (embed_core_bridge target).
+  Proof. intros source target H; destruct H; constructor. Qed.
+
+  Theorem application_composes_existing_bridge : reachable NodeApplication NodeCore.
+  Proof.
+    eapply follow_dependency; [apply application_bridge|].
+    eapply follow_dependency; [apply bridge_core|apply same_component].
+  Qed.
+End DirectComposition.
+
+Print Assumptions DirectComposition.core_reaches_only_core.
+Print Assumptions DirectComposition.bridge_cannot_reach_application.
+Print Assumptions DirectComposition.composition_is_acyclic.
+Print Assumptions DirectComposition.original_bridge_edges_are_preserved.
+Print Assumptions DirectComposition.application_composes_existing_bridge.

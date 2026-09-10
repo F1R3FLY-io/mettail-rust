@@ -1,18 +1,54 @@
 # Rholang frontend admission contract
 
-This contract defines the node-independent frontend boundary needed by the
-[practical Regex application](regex-gslt-application-contract.md). It is a
-contract for the first functional node revision, not a claim that the neutral
-frontend or public cutover is implemented. Remaining language parity and
-self-hosting requirements are not removed by this admitted application profile.
+This contract defines checked source admission for the
+[practical Regex application](regex-gslt-application-contract.md) and its
+subsequent node-independent frontend. The first functional revision uses direct
+composition; neutral extraction follows it. Neither path is claimed complete
+by this document. Remaining language parity and self-hosting requirements stay
+mandatory.
 
 The source language remains the generated
 [Rholang specification](../../languages/src/rholang.rs). The existing
 [AST lowerer](../../rholang-runtime/src/rholang_ast.rs) supplies the structural
 decisions and explicit `Job`/`Kont` worklist. The node's existing
 `ProgramFrontend` and non-`Clone` `PreparedProgram` supply the host handoff.
-The missing seam factors structural target construction from that worklist;
-it does not introduce another parser, normalizer or evaluator.
+Direct preparation wraps that same whole-body worklist with explicit Public
+admission, caller imports, options, resolver, limits and failure-safe owned
+side outputs. It does not introduce another parser, normalizer or evaluator.
+
+## Direct composition and subsequent neutral extraction
+
+The first revision prepares an owned normalized `Par` and its auxiliary fold
+and guard descriptors. Only after all preparation checks succeed may the trusted
+adapter package it in the existing `PreparedProgram`. That type is an ownership
+handoff, not itself a certificate of valid source, authority or funding.
+Failure publishes no artifact or auxiliary state. Public preparation never uses
+Harness unresolved-variable conventions or converts ambiguity into parallelism.
+
+The component dependency direction is:
+
+```text
+Node application -> MeTTaIL bridge -> Node core libraries
+Node application -----------------> Node core libraries
+```
+
+The application supplies the existing shared language runtime and FLT matcher;
+the core interpreter, models, RSpace and funding libraries cannot depend back on
+MeTTaIL or the application. The node's resolved Cargo package-graph gate checks
+normal and build dependencies, including renamed dependencies and proc macros,
+with composition features enabled. It rejects forbidden reachability and cycles.
+The [component proof](../../formal/rocq/rho_bridge/theories/BridgeInertness.v)
+establishes rank-decreasing cross-layer edges and core independence. Actual
+package identity, feature selection and within-layer acyclicity remain the
+executable gate's obligations, not conclusions of that abstract proof.
+
+Neutral carrier migration, graph replay and neutral emission are subsequent
+milestone work. The neutral envelope and graph-specific laws below specify that
+required final boundary; a direct `Par` is deliberately not called neutral.
+Source semantics, caller identity, stack safety, bounded preparation, authority,
+FLT `where` predicates and atomic funded publication apply to the direct path
+too. Deferring graph replay does not waive the cost of direct construction or
+cleanup.
 
 ## Inputs and ownership
 
@@ -21,7 +57,7 @@ The frontend receives explicit inputs, not ambient process state:
 | Input | Contract |
 |---|---|
 | Source | Exact UTF-8 source and its identity; caller-owned provenance label is diagnostic data, not permission to open a file |
-| Language profile | Exact host grammar/compiler/checker/Unicode commitments and supported neutral ABI version |
+| Language profile | Exact host grammar/compiler/checker/Unicode commitments and preparation ABI; neutral ABI additionally applies to the neutral artifact |
 | Caller injection environment | Exact caller normalization map, retained in canonical key order as URI injections for each source `new`; distinct from the lexical binder environment |
 | Guest context | Explicit read-only compile-time guest descriptions and opaque provider-reference slots; runtime-installed lexical selectors remain staged |
 | Lowering options | Explicit policy, including existing guard-discharge options; no environment-variable override |
@@ -63,7 +99,7 @@ which owns signature selection, budget reset, random-state preservation and
 execution. The neutral frontend receives no live RSpace or mutable funding
 ledger. Its accepted artifact is not an execution or funding certificate.
 
-## The versioned output envelope
+## The subsequent neutral output envelope
 
 `RholangFrontendArtifactV1` names this neutral contract, independently of the
 node's `PREPARED_PROGRAM_ABI_V1` and the versions of language/parser/semantic

@@ -7,6 +7,12 @@ The [admission contract](rholang-frontend-admission-contract.md) determines
 which source forms are supported. A target operation appearing below does not
 by itself admit a corresponding source form.
 
+Neutral extraction is required after the first functional revision. That
+revision reuses the existing direct `Par` target under checked public admission,
+as specified by the [composition boundary](rholang-frontend-admission-contract.md#direct-composition-and-subsequent-neutral-extraction).
+Graph replay and its resource receipts are not prerequisites for direct
+composition; the direct constructor's own bounds and cleanup still are.
+
 The primitive and bound/wildcard construction target and its bounded graph interpreter
 are implemented; the broader interface below remains the contract for
 subsequent constructor families. The existing source lowerer still constructs

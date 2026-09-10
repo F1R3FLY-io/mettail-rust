@@ -4,12 +4,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "M-RHO bridge: the OslfResourceLogic<MettaGslt> adapter — pure cost/funding analysis (no RSpace/Tokio), consumed GENERICALLY by f1r3node-rust's funding gate. Depends ONE-WAY on f1r3node-rust."
+description = "M-RHO bridge: the generic OslfResourceLogic<MettaGslt> cost/funding adapter. Depends on node core libraries, never the upper application."
 
 # Pure funding/cost analysis: implements f1r3node-rust's OslfResourceLogic<MettaGslt>
 # by delegating demand/is_funded to the host's VERIFIED delta_sigma over a
-# canonicalized Par. NO RSpace, NO Tokio. Depends ONE-WAY on f1r3node-rust (never
-# the reverse — proven in formal/rocq/rho_bridge/theories/BridgeInertness.v).
+# canonicalized Par. NO RSpace, NO Tokio. Depends ONE-WAY on node core libraries
+# (component independence: formal/rocq/rho_bridge/theories/BridgeInertness.v).
 # Fully integrated (no feature gating): the f1r3node deps are mandatory.
 
 [lib]

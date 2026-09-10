@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "M-RHO bridge: COMPILE-TIME lowering of a MeTTaIL GSLT (LanguageDef) to a parallel-optimized Rholang VM — rules-as-data + Par, e-graph normalization, WTA/cost-Sig assignment, channel-keying. Depends ONE-WAY on f1r3node-rust."
+description = "M-RHO bridge: compile-time lowering of a MeTTaIL GSLT to Rholang VM terms, normalization, cost signatures and channels. Depends on node core libraries, never the upper application."
 
 # Compile-time lowering of a MeTTaIL `LanguageDef` to f1r3node-rust Rholang AST.
-# Depends ONE-WAY on f1r3node-rust (proven one-way in
+# Depends ONE-WAY on node core libraries (component independence is proved in
 # formal/rocq/rho_bridge/theories/BridgeInertness.v). Fully integrated (no gating).
 # `mettail-ast` supplies the LanguageDef/GrammarRule types; `models` supplies the
 # normalized `rhoapi::Par` execution artifact consumed directly by the RhoRuntime.

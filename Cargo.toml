@@ -1,3 +1,5 @@
+cargo-features = ["codegen-backend"]
+
 [workspace]
 members = ["ast", "grammar-core", "mettail-elab", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "dovetail-runtime", "rigail", "semantic-key",
     "rholang-codegen", "rholang-runtime", "rholang-adapter", "parser-macros", "rholang-syntax", "rholang-frontend",
@@ -66,11 +68,12 @@ pathmap = "0.2.2"
 ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }
 
-# ── f1r3node-rust integration (M-RHO) — cross-repo path deps, one-way only ───────
+# ── f1r3node-rust integration (M-RHO) — core-independent composition ───────────
 # MeTTaIL is the COMPILER, f1r3node-rust's Rho machine is the RUNTIME. The bridge
-# crates (mettail-rho-{codegen,runtime,adapter}) depend ONE-WAY on these; f1r3node
-# NEVER depends on mettail-rust (enforced by the host guard test
-# `mettail_rust_is_not_a_cargo_dependency` + proven in
+# crates depend on node core libraries, never its application. The upper node
+# application may compose this compiler with its existing interpreter; core
+# libraries must not reach MeTTaIL. The resolved Cargo graph gate checks this
+# boundary and package acyclicity; the component model is proved in
 # formal/rocq/rho_bridge/theories/BridgeInertness.v). Sibling checkout at
 # ../../f1r3node-rust-f1r3lang (publish=false crates → path deps), checked
 # against .github/f1r3node-revision. The approved engine baseline is recorded
@@ -84,8 +87,9 @@ crypto = { path = "../../f1r3node-rust-f1r3lang/crypto" }
 tokio = { version = "1", features = ["full"] }
 
 # ── rholang-parser override (TEMPORARY) — mirrors f1r3node-rust's root [patch] ────
-# MeTTaIL has NO direct dependency on `rholang_parser`; it never parses Rholang text
-# (it builds `rhoapi::Par` AST directly). The dep is purely transitive: the bridge
+# MeTTaIL has NO direct dependency on `rholang_parser`; its generated parser
+# parses Rholang and its typed lowerer builds `rhoapi::Par` directly. The legacy
+# parser dependency is transitive: the bridge
 # crates use f1r3node-rust's `rholang` runtime crate, which depends on `rholang_parser`.
 # f1r3node-rust's `rholang` is mid-migration onto the cost-accounting parser worktree
 # (carries Proc::SignedTerm / TokenStack / Bind::Signed); its published pin

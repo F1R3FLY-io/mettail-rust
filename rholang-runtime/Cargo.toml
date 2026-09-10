@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's RhoRuntime/DebruijnInterpreter + native handlers; exposes the RhoBackend seam + real-vs-real differential observation tests. Depends ONE-WAY on f1r3node-rust."
+description = "M-RHO bridge: binds generated Rholang to the existing node runtime and native handlers; depends on node core libraries, never the upper application."
 
 # Binds the mettail-rho-codegen output to a real in-memory f1r3node-rust RhoRuntime
 # (InMemoryStoreManager → RSpace → create_rho_runtime), evaluates the lowered
 # Rholang, and reads results back for real-vs-real differential observation.
 # Threading/scheduling are OWNED BY f1r3node (eval_par/RSpace, tokio). Depends
-# ONE-WAY on f1r3node-rust (proven one-way in
+# ONE-WAY on node core libraries; the upper application may compose this bridge
+# (component independence is proved in
 # formal/rocq/rho_bridge/theories/BridgeInertness.v). The runtime is always
 # integrated; only the heavy generated rholang language is feature-gated below.
 
