@@ -52,6 +52,7 @@ theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
 theories/RholangFreshMetadataPasses.v
 theories/RholangConstructionCleanup.v
+theories/RholangCleanupEvents.v
 theories/RholangFltTransport.v
 theories/RholangFltRequestRecipes.v
 theories/RholangOwnedSession.v
