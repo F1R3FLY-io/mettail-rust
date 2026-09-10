@@ -31,8 +31,9 @@ impl DirectNodeTarget {
     }
 
     pub(super) fn append(left: Par, right: Par) -> Par {
-        // Preserve the existing helper: it clones left's fields and takes
-        // right's. No additional child-vector or subtree clone is introduced.
+        // Preserve the helper as-is: it clones left's vectors, takes right's,
+        // then concat clones elements from both temporary sequences. This
+        // adapter adds no further child vector or subtree clone.
         left.append(right)
     }
 

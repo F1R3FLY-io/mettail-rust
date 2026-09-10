@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { beforeWorklistConstruction } from "./verify-worklist-construction-correspondence.mjs";
 
 // Exact source-boundary evidence, not a Rust equivalence prover. Each entry
 // records one reviewed delegation to the direct target. Reconstructing the
@@ -24,6 +25,7 @@ const replacements = [
 ];
 
 export function beforeInitialTarget(source) {
+  source = beforeWorklistConstruction(source);
   for (const [before, after] of replacements) {
     assert.equal(source.split(after).length - 1, 1, `one exact target delegation: ${after}`);
     source = source.replace(after, before);
@@ -40,7 +42,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const current = readFileSync(`${root}${path}`, "utf8");
   assert.equal(beforeInitialTarget(current), before, "all other lowerer code remains unchanged");
   assert.throws(() => beforeInitialTarget(current.replace(
-    "Target::append(left, right)", "Target::append(right, left)")), "operand reversal rejected");
+    "ValueTarget::append(&mut Target, left, right)",
+    "ValueTarget::append(&mut Target, right, left)")), "operand reversal rejected");
   assert.throws(() => assert.equal(beforeInitialTarget(current.replace(
     "fn enter_proc(", "fn corrupted_enter_proc(")), before), "producer mutation rejected");
   console.log(`Initial target delegation correspondence passed against ${baseline}; both mutations rejected.`);

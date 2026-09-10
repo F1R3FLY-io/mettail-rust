@@ -94,3 +94,16 @@ pub trait ValueTarget {
         self.construct(ValueOp::Append, vec![left, right])
     }
 }
+
+/// The existing parallel continuation: construct empty, then append children
+/// left-to-right. Even an empty fold calls the target's checked constructor.
+/// Stop at the first error; no identity substitute or target rollback occurs.
+pub fn append_fold<T: ValueTarget>(
+    target: &mut T,
+    children: impl IntoIterator<Item = T::Value>,
+) -> Result<T::Value, ConstructionError> {
+    let empty = target.construct(ValueOp::Empty, Vec::new())?;
+    children
+        .into_iter()
+        .try_fold(empty, |left, right| target.append(left, right))
+}

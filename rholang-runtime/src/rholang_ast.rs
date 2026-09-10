@@ -28,6 +28,7 @@ use mettail_rholang_codegen::{
     FltResolve, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence, LANGUAGE_FLT_CONSTRUCT_BAND,
 };
+use mettail_rholang_frontend::construction::{append_fold, ValueTarget};
 use mettail_runtime::{
     Binder, FltNode, FltPolarity, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata,
     OrdVar, RuntimeDovetailRunReport, ScopedFltTemplate, Term, TermType, Var, VarTypeInfo,
@@ -2428,14 +2429,16 @@ impl<'a> Drive<'a> {
     fn combine(&mut self, kont: Kont<'a>) -> Result<(), RholangAstLowerError> {
         match kont {
             Kont::ParFold(n) => {
-                let parts = self.stacks.pop_values(n);
-                let par = parts.into_iter().fold(Target::empty(), Target::append);
-                self.stacks.value(par);
+                self.stacks
+                    .inner
+                    .reduce_values(n, |parts| append_fold(&mut Target, parts))
+                    .expect("rholang lowering: valid parallel fold construction");
             },
             Kont::ParPair => {
-                let right = self.stacks.pop_value();
-                let left = self.stacks.pop_value();
-                self.stacks.value(Target::append(left, right));
+                self.stacks
+                    .inner
+                    .reduce_pair(|left, right| ValueTarget::append(&mut Target, left, right))
+                    .expect("rholang lowering: valid parallel pair construction");
             },
             Kont::Send { persistent } => {
                 let payload = self.stacks.pop_value();

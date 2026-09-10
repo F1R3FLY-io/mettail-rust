@@ -8,6 +8,39 @@ const LIMITS: ConstructionLimits = ConstructionLimits {
 };
 
 #[test]
+fn append_fold_checks_empty_seed_and_stops_at_first_failed_append() {
+    use crate::construction::append_fold;
+    with_neutral_target(
+        ConstructionLimits { nodes: 0, ..LIMITS },
+        || false,
+        |mut target| {
+            assert_eq!(
+                append_fold(&mut target, []),
+                Err(ConstructionError::LimitExceeded(LimitKind::Nodes))
+            );
+            assert_eq!(target.usage().nodes, 0);
+        },
+    );
+    with_neutral_target(
+        ConstructionLimits { nodes: 2, ..LIMITS },
+        || false,
+        |mut target| {
+            let leaf = target.construct(ValueOp::Empty, vec![]).expect("leaf");
+            let pulled = std::cell::Cell::new(0);
+            let children = [leaf, leaf, leaf]
+                .into_iter()
+                .inspect(|_| pulled.set(pulled.get() + 1));
+            assert_eq!(
+                append_fold(&mut target, children),
+                Err(ConstructionError::LimitExceeded(LimitKind::Nodes))
+            );
+            assert_eq!(pulled.get(), 1, "no subsequent child processed after failure");
+            assert_eq!(target.usage().nodes, 2, "seed retained, failed append not inserted");
+        },
+    );
+}
+
+#[test]
 fn primitive_values_have_exact_owned_payloads_and_observations() {
     let graph = with_neutral_target(
         LIMITS,

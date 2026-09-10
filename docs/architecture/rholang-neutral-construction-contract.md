@@ -592,8 +592,9 @@ constructs 20,000 append nodes on a 256 KiB thread stack without unfolding them.
 
 The [direct adapter](../../rholang-runtime/src/rholang_ast/target.rs) reuses the
 existing scalar helpers and `Par::append` exactly. That append helper clones
-the left value's fields and takes the right value's fields; this adapter adds
-no further subtree clone. Its typed binary entry point also avoids a new
+the left value's vectors and takes the right value's vectors, then concatenation
+clones elements from both temporary sequences. This adapter adds no further
+subtree clone. Its typed binary entry point also avoids a new
 temporary child vector at existing parallel-composition sites. Forwarding moves
 an owned `Par` unchanged. Borrowed observation reuses the existing single-string
 predicate and exact metadata slices.
@@ -605,6 +606,54 @@ observations. Direct-target tests compare complete `Par` values and protobuf
 bytes against the original helpers, including nontrivial metadata and ordered
 operands. These checks do not establish all constructor families or source
 lowering into the neutral arena.
+
+### Shared consuming continuation transitions
+
+The production `ParPair` and `ParFold` continuations now use
+`Worklist::reduce_pair` and `Worklist::reduce_values`. The first checks that both
+operands exist, then pops right followed by left without a temporary vector.
+The second extracts the same ordered suffix as before. Its constructor uses
+`append_fold`, which constructs empty through the target and appends children
+left-to-right. This includes zero children: an empty fold still performs a
+checked construction rather than supplying an unchecked default.
+
+Both methods accept consuming constructor callbacks. The caller has already
+popped the continuation job; the methods change only the value stack and leave
+job classification and scheduling to the existing driver. Neither method
+requires cloned values or a frontend dependency on the runtime crate.
+
+| Transition outcome | Remaining values | Constructor behavior |
+| --- | --- | --- |
+| Insufficient operands | Original stack unchanged | Not called |
+| Successful construction | Original prefix followed by one result | Called once with source-ordered operands |
+| Failed construction | Original prefix, with operands consumed | No replacement value pushed |
+
+A construction error is terminal to the owning lowering invocation. This is
+not a rollback guarantee: a target may have retained intermediate private nodes
+and recorded work before rejecting. The public owning-session boundary must
+propagate that failure and withhold its artifact. The current trusted direct
+driver keeps its internal-error panic contract; its exact-arity empty/append
+constructors are total on that admitted carrier.
+
+The [consuming-transition model](../../formal/rocq/rho_bridge/theories/RholangWorklistConstruction.v)
+defines these outcomes over the existing checked suffix operation, proves
+prefix/order preservation and underflow/constructor rejection, and instantiates
+the carrier-mapping law with the concrete append-aware cache. It does not
+assume that a Rust callback is correct. Source checks and tests separately
+connect that model to the actual shared methods and their production calls.
+
+Tests use both real targets for empty, singleton and repeated non-palindromic
+folds and binary composition. Additional tests exercise a move-only carrier,
+preserved stack prefixes, underflow without invoking the constructor,
+constructor failure without a fabricated result, and early termination of a
+failed append-fold. The
+[transition source check](../../scripts/verify-worklist-construction-correspondence.mjs)
+composes with the earlier target and storage checks; arity, operand-order and
+unrelated producer mutations fail.
+
+These are shared production continuation transitions, not a claim that all
+`Drive` state is already target-generic. The remaining family migrations must
+reuse the same worker and preserve its staged scope/receive/session behavior.
 
 `ConstructionGraph` owns nodes and a checked root, including retained unreachable
 nodes. It is only the construction component, not `RholangFrontendArtifactV1`.

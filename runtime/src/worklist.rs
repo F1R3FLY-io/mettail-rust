@@ -46,6 +46,15 @@ pub enum WorklistError {
     },
 }
 
+/// A consuming construction transition failed. A storage error leaves values
+/// unchanged. A construction error consumes its children, retains the prefix,
+/// and pushes no substitute value; the owning driver must propagate failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReductionError<E> {
+    Storage(WorklistError),
+    Construction(E),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Counts {
     enters: usize,
@@ -173,6 +182,41 @@ impl<J, V> Worklist<J, V> {
         Ok(self.values.split_off(start))
     }
 
+    /// Apply a binary continuation after the caller has popped its job. Check
+    /// both operands before mutation; preserve left/right order without an
+    /// intermediate vector or a `Clone` requirement on values.
+    pub fn reduce_pair<E>(
+        &mut self,
+        build: impl FnOnce(V, V) -> Result<V, E>,
+    ) -> Result<(), ReductionError<E>> {
+        let available = self.values.len();
+        if available < 2 {
+            return Err(ReductionError::Storage(WorklistError::ValueUnderflow {
+                requested: 2,
+                available,
+            }));
+        }
+        let right = self.values.pop().expect("checked pair length: right");
+        let left = self.values.pop().expect("checked pair length: left");
+        let value = build(left, right).map_err(ReductionError::Construction)?;
+        self.value(value);
+        Ok(())
+    }
+
+    /// Apply a continuation to the exact ordered suffix after its job is
+    /// popped. Preserve the existing suffix allocation; invoke the constructor
+    /// once, including for a zero-arity operation, and push only on success.
+    pub fn reduce_values<E>(
+        &mut self,
+        count: usize,
+        build: impl FnOnce(Vec<V>) -> Result<V, E>,
+    ) -> Result<(), ReductionError<E>> {
+        let children = self.pop_values(count).map_err(ReductionError::Storage)?;
+        let value = build(children).map_err(ReductionError::Construction)?;
+        self.value(value);
+        Ok(())
+    }
+
     /// Validate the global debt at a completed transition boundary.
     #[inline]
     pub fn check(&self) -> Result<(), WorklistError> {
@@ -229,6 +273,94 @@ mod tests {
     }
     fn stacks() -> Worklist<Job, u32> {
         Worklist::with_capacity(64, 64)
+    }
+
+    #[test]
+    fn consuming_pair_keeps_order_and_prefix_without_clone() {
+        #[derive(Debug, PartialEq, Eq)]
+        struct MoveOnly(Box<u32>);
+        let mut stack: Worklist<(), MoveOnly> = Worklist::with_capacity(0, 3);
+        for value in [99, 3, 7] {
+            stack.value(MoveOnly(Box::new(value)));
+        }
+        stack
+            .reduce_pair(|left, right| Ok::<_, ()>(MoveOnly(Box::new(*left.0 * 10 + *right.0))))
+            .expect("ordered consuming pair");
+        assert_eq!(stack.pop_values(2), Ok(vec![MoveOnly(Box::new(99)), MoveOnly(Box::new(37))]));
+    }
+
+    #[test]
+    fn consuming_underflow_never_calls_constructor_or_mutates_values() {
+        for available in [0, 1] {
+            let mut stack = stacks();
+            for _ in 0..available {
+                stack.value(7);
+            }
+            assert_eq!(
+                stack.reduce_pair(|_, _| -> Result<_, ()> {
+                    panic!("pair constructor must not run on underflow")
+                }),
+                Err(ReductionError::Storage(WorklistError::ValueUnderflow {
+                    requested: 2,
+                    available,
+                }))
+            );
+            assert_eq!(
+                stack.reduce_values(2, |_| -> Result<_, ()> {
+                    panic!("suffix constructor must not run on underflow")
+                }),
+                Err(ReductionError::Storage(WorklistError::ValueUnderflow {
+                    requested: 2,
+                    available,
+                }))
+            );
+            assert_eq!(stack.pop_values(available), Ok(vec![7; available]));
+        }
+    }
+
+    #[test]
+    fn consuming_constructor_failure_keeps_only_prefix_and_no_result() {
+        for pair in [false, true] {
+            let mut stack = stacks();
+            for value in [99, 3, 7] {
+                stack.value(value);
+            }
+            let result = if pair {
+                stack.reduce_pair(|left, right| {
+                    assert_eq!((left, right), (3, 7));
+                    Err("refused")
+                })
+            } else {
+                stack.reduce_values(2, |children| {
+                    assert_eq!(children, [3, 7]);
+                    Err("refused")
+                })
+            };
+            assert_eq!(result, Err(ReductionError::Construction("refused")));
+            assert_eq!(stack.pop_values(1), Ok(vec![99]));
+            assert_eq!(stack.value_count(), 0);
+        }
+    }
+
+    #[test]
+    fn consuming_suffix_keeps_repetitions_and_constructs_zero_arity() {
+        let mut stack = stacks();
+        for value in [99, 3, 7, 3, 8] {
+            stack.value(value);
+        }
+        stack
+            .reduce_values(4, |children| {
+                assert_eq!(children, [3, 7, 3, 8]);
+                Ok::<_, ()>(21)
+            })
+            .expect("nonpalindromic repeated suffix");
+        stack
+            .reduce_values(0, |children| {
+                assert!(children.is_empty());
+                Ok::<_, ()>(0)
+            })
+            .expect("zero arity still constructs");
+        assert_eq!(stack.pop_values(3), Ok(vec![99, 21, 0]));
     }
 
     #[test]

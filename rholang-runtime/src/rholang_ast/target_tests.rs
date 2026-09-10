@@ -3,6 +3,90 @@ use mettail_rholang_frontend::arena::{with_neutral_target, ConstructionLimits};
 use mettail_runtime::worklist::Worklist;
 use prost::Message;
 
+fn parallel_transition<T: ValueTarget>(target: &mut T, texts: &[&str], pair: bool) -> T::Value {
+    use mettail_rholang_frontend::construction::append_fold;
+    let mut work = Worklist::with_capacity(1, texts.len());
+    work.push(texts.len(), |arity| Some(*arity))
+        .expect("continuation");
+    for text in texts {
+        work.value(
+            target
+                .construct(ValueOp::Text((*text).into()), vec![])
+                .expect("leaf"),
+        );
+    }
+    work.check().expect("ready continuation");
+    work.pop(|arity| Some(*arity)).expect("pop continuation");
+    match pair {
+        true => work.reduce_pair(|left, right| ValueTarget::append(target, left, right)),
+        false => work.reduce_values(texts.len(), |parts| append_fold(target, parts)),
+    }
+    .expect("same transition as production");
+    work.check().expect("one constructed result");
+    work.finish().expect("complete transition")
+}
+
+#[test]
+fn shared_production_parallel_transitions_accept_both_real_targets() {
+    for (texts, pair) in [
+        (&[][..], false),
+        (&["a"][..], false),
+        (&["a", "b", "a", "c"][..], false),
+        (&["left", "right"][..], true),
+    ] {
+        let direct = parallel_transition(&mut DirectNodeTarget, texts, pair);
+        let expected = texts.iter().fold(Par::default(), |left, text| {
+            left.append(new_gstring_par((*text).into(), Vec::new(), false))
+        });
+        same_bytes(&direct, &expected);
+        let graph = with_neutral_target(
+            ConstructionLimits {
+                nodes: 20,
+                edges: 40,
+                payload_bytes: 100,
+                work: 100,
+            },
+            || false,
+            |mut target| {
+                let root = parallel_transition(&mut target, texts, pair);
+                assert_eq!(
+                    target.observe(&root).expect("observe"),
+                    DirectNodeTarget::observation(&direct)
+                );
+                target.finish_graph(root).expect("graph")
+            },
+        );
+        assert_eq!(graph.node_count(), if pair { 3 } else { 2 * texts.len() + 1 });
+    }
+}
+
+#[test]
+fn shared_pair_retains_repeated_neutral_reference_without_clone_requirement() {
+    with_neutral_target(
+        ConstructionLimits {
+            nodes: 2,
+            edges: 2,
+            payload_bytes: 1,
+            work: 16,
+        },
+        || false,
+        |mut target| {
+            let value = target
+                .construct(ValueOp::Text("a".into()), vec![])
+                .expect("leaf");
+            let mut work: Worklist<(), _> = Worklist::with_capacity(0, 2);
+            work.value(value);
+            work.value(value);
+            work.reduce_pair(|left, right| ValueTarget::append(&mut target, left, right))
+                .expect("pair");
+            let graph = target
+                .finish_graph(work.finish().expect("root"))
+                .expect("graph");
+            assert_eq!(graph.node(graph.root()).expect("root").children, [0, 0]);
+        },
+    );
+}
+
 fn same_bytes(actual: &Par, expected: &Par) {
     assert_eq!(actual, expected);
     assert_eq!(actual.encode_to_vec(), expected.encode_to_vec());
