@@ -48,6 +48,7 @@ theories/RholangInitialGraphInterpretation.v
 theories/RholangGraphCapacity.v
 theories/RholangInitialGraphMachine.v
 theories/RholangInitialGraphResources.v
+theories/RholangPreparationReservation.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
 theories/RholangFreshMetadataPasses.v
