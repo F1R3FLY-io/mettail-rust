@@ -21,6 +21,9 @@
 # lets coq_makefile build this dependency without building the whole WPDA suite.
 -Q ../prattail_wpda_runtime/theories PrattailWpdaRuntime
 ../prattail_wpda_runtime/theories/ReconstructionWorkBudget.v
+# Reuse the structural fold machine for operation-specific binding state.
+-Q ../trampoline/theories Trampoline
+../trampoline/theories/WorklistFoldEquivalence.v
 
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
@@ -51,6 +54,8 @@ theories/RholangInitialGraphResources.v
 theories/RholangPreparationReservation.v
 theories/RholangEnvironmentReservation.v
 theories/RholangScopeConstructionRecipe.v
+theories/RholangInheritedBindingFold.v
+theories/IndexedCopySlots.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
 theories/RholangFreshMetadataPasses.v
