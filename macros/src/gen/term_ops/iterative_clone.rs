@@ -26,11 +26,36 @@ enum CollectionSurface {
     Literal,
 }
 
+struct CloneEmissionNames {
+    task_enum: Ident,
+    task_pool: Ident,
+    result_pool: Ident,
+    driver: Ident,
+    handler_prefix: &'static str,
+}
+
+impl CloneEmissionNames {
+    fn ordinary() -> Self {
+        Self {
+            task_enum: format_ident!("CloneTask"),
+            task_pool: format_ident!("CLONE_TASK_POOL"),
+            result_pool: format_ident!("CLONE_RESULT_POOL"),
+            driver: format_ident!("clone_iterative"),
+            handler_prefix: "clone_handle_",
+        }
+    }
+
+    fn handler(&self, category: &Ident) -> Ident {
+        format_ident!("{}{}", self.handler_prefix, category.to_string().to_lowercase())
+    }
+}
+
 pub fn generate_iterative_clone(language: &LanguageDef) -> TokenStream {
+    let emission = CloneEmissionNames::ordinary();
     let values = generate_value_enum(language);
-    let tasks = generate_task_enum(language);
-    let engine = generate_engine(language);
-    let impls = generate_impls(language);
+    let tasks = generate_task_enum(language, &emission);
+    let engine = generate_engine(language, &emission);
+    let impls = generate_impls(language, &emission);
 
     quote! {
         #values
@@ -55,7 +80,10 @@ fn generate_value_enum(language: &LanguageDef) -> TokenStream {
     }
 }
 
-fn generate_task_enum(language: &LanguageDef) -> TokenStream {
+fn generate_task_enum(language: &LanguageDef, emission: &CloneEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let task_pool = &emission.task_pool;
+    let result_pool = &emission.result_pool;
     let visits = language.types.iter().map(|ty| {
         let category = &ty.name;
         let visit = format_ident!("Clone{}", category);
@@ -74,15 +102,15 @@ fn generate_task_enum(language: &LanguageDef) -> TokenStream {
 
     quote! {
         #[allow(dead_code, non_camel_case_types)]
-        enum CloneTask {
+        enum #task_enum {
             #(#visits,)*
             #(#assemblies,)*
         }
 
         thread_local! {
-            static CLONE_TASK_POOL: std::cell::Cell<Vec<CloneTask>> =
+            static #task_pool: std::cell::Cell<Vec<#task_enum>> =
                 const { std::cell::Cell::new(Vec::new()) };
-            static CLONE_RESULT_POOL: std::cell::Cell<Vec<Option<AnyClonedTerm>>> =
+            static #result_pool: std::cell::Cell<Vec<Option<AnyClonedTerm>>> =
                 const { std::cell::Cell::new(Vec::new()) };
         }
     }
@@ -132,19 +160,21 @@ fn generate_assemble_task(category: &Ident, variant: &VariantKind) -> Option<Tok
     })
 }
 
-fn generate_engine(language: &LanguageDef) -> TokenStream {
+fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let driver = &emission.driver;
     let handlers = language.types.iter().map(|ty| {
         let category = &ty.name;
-        let handler = format_ident!("clone_handle_{}", category.to_string().to_lowercase());
+        let handler = emission.handler(category);
         let arms: Vec<_> = collect_category_variants(category, language)
             .iter()
-            .map(|variant| generate_visit_arm(category, variant))
+            .map(|variant| generate_visit_arm(category, variant, emission))
             .collect();
         quote! {
             #[inline(never)]
             #[allow(dead_code, unused_variables, non_snake_case)]
             fn #handler(
-                stack: &mut Vec<CloneTask>,
+                stack: &mut Vec<#task_enum>,
                 results: &mut Vec<Option<AnyClonedTerm>>,
                 src: *const #category,
                 slot: usize,
@@ -160,9 +190,9 @@ fn generate_engine(language: &LanguageDef) -> TokenStream {
     let visits = language.types.iter().map(|ty| {
         let category = &ty.name;
         let visit = format_ident!("Clone{}", category);
-        let handler = format_ident!("clone_handle_{}", category.to_string().to_lowercase());
+        let handler = emission.handler(category);
         quote! {
-            CloneTask::#visit { src, slot } => #handler(stack, results, src, slot),
+            #task_enum::#visit { src, slot } => #handler(stack, results, src, slot),
         }
     });
 
@@ -172,7 +202,8 @@ fn generate_engine(language: &LanguageDef) -> TokenStream {
         let variants = collect_category_variants(category, language);
         let destructure_is_irrefutable = variants.len() == 1;
         for variant in variants {
-            if let Some(arm) = generate_assemble_arm(category, &variant, destructure_is_irrefutable)
+            if let Some(arm) =
+                generate_assemble_arm(category, &variant, destructure_is_irrefutable, emission)
             {
                 assemblies.push(arm);
             }
@@ -183,8 +214,8 @@ fn generate_engine(language: &LanguageDef) -> TokenStream {
         #(#handlers)*
 
         #[allow(dead_code, unused_variables, unreachable_patterns)]
-        fn clone_iterative(
-            stack: &mut Vec<CloneTask>,
+        fn #driver(
+            stack: &mut Vec<#task_enum>,
             results: &mut Vec<Option<AnyClonedTerm>>,
         ) {
             while let Some(task) = stack.pop() {
@@ -197,7 +228,11 @@ fn generate_engine(language: &LanguageDef) -> TokenStream {
     }
 }
 
-fn generate_visit_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
+fn generate_visit_arm(
+    category: &Ident,
+    variant: &VariantKind,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
     let wrap = format_ident!("Wrap{}", category);
     match variant {
         VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
@@ -213,11 +248,11 @@ fn generate_visit_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
             }
         },
         VariantKind::Regular { label, fields } => {
-            generate_structured_visit(category, label, fields, false)
+            generate_structured_visit(category, label, fields, false, emission)
         },
         VariantKind::Binder { label, pre_scope_fields, .. }
         | VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
-            generate_structured_visit(category, label, pre_scope_fields, true)
+            generate_structured_visit(category, label, pre_scope_fields, true, emission)
         },
         VariantKind::Collection { label, element_cat, coll_type } => generate_collection_visit(
             category,
@@ -225,6 +260,7 @@ fn generate_visit_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
             element_cat,
             coll_type,
             CollectionSurface::Direct,
+            emission,
         ),
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
             generate_collection_visit(
@@ -233,10 +269,11 @@ fn generate_visit_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
                 element_cat,
                 coll_type,
                 CollectionSurface::Literal,
+                emission,
             )
         },
         VariantKind::RecursiveNativeLiteral { label, carrier } => {
-            generate_recursive_native_visit(category, label, carrier)
+            generate_recursive_native_visit(category, label, carrier, emission)
         },
     }
 }
@@ -245,7 +282,9 @@ fn generate_recursive_native_visit(
     category: &Ident,
     label: &Ident,
     carrier: &NativeRecursiveCarrier,
+    emission: &CloneEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let task = format_ident!("Assemble{}_{}", category, label);
     let pathmap = carrier.pathmap_ref(&quote! { native });
     let pushes = carrier.for_each_borrowed_subterm(
@@ -255,7 +294,7 @@ fn generate_recursive_native_visit(
             let visit = format_ident!("Clone{}", child_category);
             quote! {
                 __native_next_slot -= 1;
-                stack.push(CloneTask::#visit {
+                stack.push(#task_enum::#visit {
                     src: #child as *const _,
                     slot: __native_next_slot,
                 });
@@ -271,7 +310,7 @@ fn generate_recursive_native_visit(
             };
             let __native_start = results.len();
             results.resize_with(__native_start + __native_count, || None);
-            stack.push(CloneTask::#task {
+            stack.push(#task_enum::#task {
                 src: source as *const _,
                 slot,
                 elements_start: __native_start,
@@ -288,7 +327,9 @@ fn generate_structured_visit(
     label: &Ident,
     fields: &[FieldInfo],
     has_scope: bool,
+    emission: &CloneEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let field_count = fields.len() + usize::from(has_scope);
     let names: Vec<Ident> = (0..field_count).map(|i| format_ident!("f{}", i)).collect();
     let collection_sites: Vec<_> = fields
@@ -326,14 +367,14 @@ fn generate_structured_visit(
         .map(|(index, field)| {
             let name = &names[*index];
             let start = format_ident!("{}{}_start", prefix, index);
-            generate_collection_push(name, &start, field, field.is_optional)
+            generate_collection_push(name, &start, field, field.is_optional, emission)
         })
         .collect();
 
     quote! {
         #category::#label(#(ref #names),*) => {
             #(#allocations)*
-            stack.push(CloneTask::#task {
+            stack.push(#task_enum::#task {
                 src: source as *const _,
                 slot,
                 #(#starts),*
@@ -349,7 +390,9 @@ fn generate_collection_visit(
     element_cat: &Ident,
     coll_type: &CollectionType,
     _surface: CollectionSurface,
+    emission: &CloneEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let task = format_ident!("Assemble{}_{}", category, label);
     let field = FieldInfo {
         category: element_cat.clone(),
@@ -362,12 +405,12 @@ fn generate_collection_visit(
     let collection = format_ident!("collection");
     let elements_start = format_ident!("elements_start");
     let allocation = generate_collection_allocation(&collection, &elements_start, &field, false);
-    let push = generate_collection_push(&collection, &elements_start, &field, false);
+    let push = generate_collection_push(&collection, &elements_start, &field, false, emission);
 
     quote! {
         #category::#label(ref collection) => {
             #allocation
-            stack.push(CloneTask::#task {
+            stack.push(#task_enum::#task {
                 src: source as *const _,
                 slot,
                 elements_start,
@@ -414,7 +457,9 @@ fn generate_collection_push(
     start: &Ident,
     field: &FieldInfo,
     optional: bool,
+    emission: &CloneEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let visit = format_ident!("Clone{}", field.category);
     let maybe_collection = if optional {
         quote! { #name.as_ref() }
@@ -424,7 +469,7 @@ fn generate_collection_push(
     let body = match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
         CollectionType::Vec | CollectionType::HashSet => quote! {
             for (__index, __element) in __collection.iter().enumerate() {
-                stack.push(CloneTask::#visit {
+                stack.push(#task_enum::#visit {
                     src: __element as *const _,
                     slot: #start + __index,
                 });
@@ -432,7 +477,7 @@ fn generate_collection_push(
         },
         CollectionType::HashBag => quote! {
             for (__index, (__element, _count)) in __collection.iter().enumerate() {
-                stack.push(CloneTask::#visit {
+                stack.push(#task_enum::#visit {
                     src: __element as *const _,
                     slot: #start + __index,
                 });
@@ -440,11 +485,11 @@ fn generate_collection_push(
         },
         CollectionType::HashMap => quote! {
             for (__index, (__key, __value)) in __collection.iter().enumerate() {
-                stack.push(CloneTask::#visit {
+                stack.push(#task_enum::#visit {
                     src: __key as *const _,
                     slot: #start + __index * 2,
                 });
-                stack.push(CloneTask::#visit {
+                stack.push(#task_enum::#visit {
                     src: __value as *const _,
                     slot: #start + __index * 2 + 1,
                 });
@@ -453,13 +498,13 @@ fn generate_collection_push(
         CollectionType::PathMap => quote! {
             let mut __slot = #start;
             for __entry in __collection.iter() {
-                stack.push(CloneTask::#visit {
+                stack.push(#task_enum::#visit {
                     src: __entry.key() as *const _,
                     slot: __slot,
                 });
                 __slot += 1;
                 if let Some(__value) = __entry.value() {
-                    stack.push(CloneTask::#visit {
+                    stack.push(#task_enum::#visit {
                         src: __value as *const _,
                         slot: __slot,
                     });
@@ -482,6 +527,7 @@ fn generate_assemble_arm(
     category: &Ident,
     variant: &VariantKind,
     destructure_is_irrefutable: bool,
+    emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
     match variant {
         VariantKind::Regular { label, fields } if fields.iter().any(|f| f.is_collection) => {
@@ -491,6 +537,7 @@ fn generate_assemble_arm(
                 fields,
                 false,
                 destructure_is_irrefutable,
+                emission,
             ))
         },
         VariantKind::Binder { label, pre_scope_fields, .. }
@@ -503,6 +550,7 @@ fn generate_assemble_arm(
                 pre_scope_fields,
                 true,
                 destructure_is_irrefutable,
+                emission,
             ))
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
@@ -513,6 +561,7 @@ fn generate_assemble_arm(
                 coll_type,
                 CollectionSurface::Direct,
                 destructure_is_irrefutable,
+                emission,
             ))
         },
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
@@ -523,6 +572,7 @@ fn generate_assemble_arm(
                 coll_type,
                 CollectionSurface::Literal,
                 destructure_is_irrefutable,
+                emission,
             ))
         },
         VariantKind::RecursiveNativeLiteral { label, carrier } => {
@@ -531,6 +581,7 @@ fn generate_assemble_arm(
                 label,
                 carrier,
                 destructure_is_irrefutable,
+                emission,
             ))
         },
         VariantKind::Refused { .. }
@@ -548,7 +599,9 @@ fn generate_recursive_native_assemble(
     label: &Ident,
     carrier: &NativeRecursiveCarrier,
     destructure_is_irrefutable: bool,
+    emission: &CloneEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let task = format_ident!("Assemble{}_{}", category, label);
     let wrap = format_ident!("Wrap{}", category);
     let key_wrap = format_ident!("Wrap{}", carrier.key_category());
@@ -567,7 +620,7 @@ fn generate_recursive_native_assemble(
     };
 
     quote! {
-        CloneTask::#task { src, slot, elements_start } => {
+        #task_enum::#task { src, slot, elements_start } => {
             #[inline(never)]
             fn assemble(
                 results: &mut Vec<Option<AnyClonedTerm>>,
@@ -629,7 +682,9 @@ fn generate_structured_assemble(
     fields: &[FieldInfo],
     has_scope: bool,
     destructure_is_irrefutable: bool,
+    emission: &CloneEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let task = format_ident!("Assemble{}_{}", category, label);
     let wrap = format_ident!("Wrap{}", category);
     let prefix = if has_scope { "pf" } else { "f" };
@@ -694,7 +749,7 @@ fn generate_structured_assemble(
     };
 
     quote! {
-        CloneTask::#task { src, slot, #(#starts),* } => {
+        #task_enum::#task { src, slot, #(#starts),* } => {
             // Keep container reconstruction out of the dispatch loop's native
             // stack frame.  In a large generated language, leaving every
             // assembly body's locals in this match makes rustc reserve the
@@ -725,7 +780,9 @@ fn generate_collection_assemble(
     coll_type: &CollectionType,
     surface: CollectionSurface,
     destructure_is_irrefutable: bool,
+    emission: &CloneEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let task = format_ident!("Assemble{}_{}", category, label);
     let wrap = format_ident!("Wrap{}", category);
     let field = FieldInfo {
@@ -753,7 +810,7 @@ fn generate_collection_assemble(
     };
 
     quote! {
-        CloneTask::#task { src, slot, elements_start } => {
+        #task_enum::#task { src, slot, elements_start } => {
             #[inline(never)]
             fn assemble(
                 results: &mut Vec<Option<AnyClonedTerm>>,
@@ -872,7 +929,11 @@ fn generate_collection_rebuild(
     }
 }
 
-fn generate_impls(language: &LanguageDef) -> TokenStream {
+fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let task_pool = &emission.task_pool;
+    let result_pool = &emission.result_pool;
+    let driver = &emission.driver;
     let impls = language.types.iter().map(|ty| {
         let category = &ty.name;
         let visit = format_ident!("Clone{}", category);
@@ -882,16 +943,16 @@ fn generate_impls(language: &LanguageDef) -> TokenStream {
                 #[allow(unreachable_patterns)]
                 fn clone(&self) -> Self {
                     mettail_runtime::visitor::with_two_pools_or_fallback(
-                        &CLONE_TASK_POOL,
-                        &CLONE_RESULT_POOL,
+                        &#task_pool,
+                        &#result_pool,
                         |stack, results| {
                             let root = results.len();
                             results.push(None);
-                            stack.push(CloneTask::#visit {
+                            stack.push(#task_enum::#visit {
                                 src: self as *const _,
                                 slot: root,
                             });
-                            clone_iterative(stack, results);
+                            #driver(stack, results);
                             match results[root]
                                 .take()
                                 .expect("iterative clone: root result missing")
@@ -916,6 +977,30 @@ mod tests {
 
     fn compact(tokens: TokenStream) -> String {
         tokens.to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn ordinary_clone_expansions_remain_valid_rust_items() {
+        for (name, language) in [
+            ("collections", crate::gen::collection_literal_language_for_tests()),
+            ("singleton", crate::gen::singleton_collection_language_for_tests()),
+        ] {
+            let expansion = generate_iterative_clone(&language);
+            syn::parse2::<syn::File>(expansion.clone())
+                .expect("clone expansion parses as Rust items");
+            // Optional exact before/after artifacts for emitter refactoring.
+            // Default test execution needs no environment setting or writes.
+            if let Ok(phase) = std::env::var("METTAIL_CLONE_EXPANSION_PHASE") {
+                assert!(matches!(phase.as_str(), "before" | "after"));
+                let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../target/verification/clone-emitter")
+                    .join(phase);
+                std::fs::create_dir_all(&directory)
+                    .expect("create target-local expansion directory");
+                std::fs::write(directory.join(format!("{name}.tokens")), expansion.to_string())
+                    .expect("write exact clone expansion artifact");
+            }
+        }
     }
 
     #[test]
