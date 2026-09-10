@@ -5,6 +5,8 @@
 //! model lives here. Children are previously computed receipts, supplied once
 //! per field occurrence. Normal cleanup assumes an available empty work pool.
 
+mod defaults;
+
 /// Unweighted events in the selected-dummy cleanup model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
@@ -141,6 +143,81 @@ impl LocalReceipt {
         extraction: Counts::ZERO,
         field_glue: Counts::ZERO,
     };
+}
+
+/// Construction and cleanup of one specific native default value.
+///
+/// Extraction is deliberately absent: replacing or iterating a field is an
+/// operation of its generated constructor, not a property of `Default`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DefaultReceipt {
+    pub construction: Counts,
+    pub field_glue: Counts,
+}
+
+impl DefaultReceipt {
+    pub const ZERO: Self = Self {
+        construction: Counts::ZERO,
+        field_glue: Counts::ZERO,
+    };
+
+    pub const fn checked_add(self, other: Self) -> Result<Self, ReceiptOverflow> {
+        Ok(Self {
+            construction: checked_receipt!(self.construction.checked_add(other.construction)),
+            field_glue: checked_receipt!(self.field_glue.checked_add(other.field_glue)),
+        })
+    }
+
+    pub const fn into_local(self) -> LocalReceipt {
+        LocalReceipt {
+            construction: self.construction,
+            extraction: Counts::ZERO,
+            field_glue: self.field_glue,
+        }
+    }
+}
+
+/// Explicit, source-backed contract for an approved native type's default.
+///
+/// This describes `Self::default()` and cleanup of that freshly constructed
+/// value only. It says nothing about copying or destroying arbitrary instances.
+/// There is no blanket `Default` implementation and no type-name classifier.
+/// A compound contract must propagate arithmetic overflow without saturating.
+pub trait BindingDefaultReceipt: Default {
+    const DEFAULT_RECEIPT: Result<DefaultReceipt, ReceiptOverflow>;
+}
+
+/// Infer the resolved payload type from the actual selected unary constructor.
+/// The function pointer is never called and no default value is constructed.
+///
+/// ```
+/// use mettail_runtime::binding_receipt::{default_local_for, LocalReceipt, ReceiptOverflow};
+/// enum Category { Text(String) }
+/// const RECEIPT: Result<LocalReceipt, ReceiptOverflow> = default_local_for(Category::Text);
+/// assert!(RECEIPT.is_ok());
+/// ```
+///
+/// A suggestive name and `Default` do not supply a receipt contract:
+///
+/// ```compile_fail
+/// use mettail_runtime::binding_receipt::default_local_for;
+/// #[derive(Default)]
+/// struct CustomBigInt;
+/// enum Category { Integer(CustomBigInt) }
+/// let _ = default_local_for(Category::Integer);
+/// ```
+pub const fn default_local_for<T: BindingDefaultReceipt, C>(
+    _constructor: fn(T) -> C,
+) -> Result<LocalReceipt, ReceiptOverflow> {
+    Ok(checked_receipt!(T::DEFAULT_RECEIPT).into_local())
+}
+
+/// Infer a regular field's actual type through a nonexecuted borrowed projection.
+/// This avoids reconstructing enum payload types independently in the emitter.
+pub const fn default_field_local<C, T: BindingDefaultReceipt>(
+    _field: for<'a> fn(&'a C) -> &'a T,
+) -> Result<LocalReceipt, ReceiptOverflow> {
+    Ok(checked_receipt!(T::DEFAULT_RECEIPT).into_local())
 }
 
 /// Separate construction and cleanup contexts from the finite-recipe model.

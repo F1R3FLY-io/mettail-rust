@@ -274,6 +274,47 @@ Tests check exact leaf and repeated-child recurrences, local contributions,
 constant evaluation, overflow, and a 20,000-level iterative dependency chain
 on a 256 KiB thread stack on 64-bit targets.
 
+#### Native default contracts
+
+`BindingDefaultReceipt` describes construction and cleanup of a freshly created
+native default value. It does not describe copying that type or cleaning up an
+arbitrary instance. The associated result is fallible so composed receipts can
+report overflow. Extraction is a separate generated-field operation.
+
+The generator can infer the actual Rust payload type by passing the selected
+unary constructor to `default_local_for`, or a borrowed field projection to
+`default_field_local`. These helpers never execute their function arguments or
+construct a value. A native type must explicitly implement the contract; a
+name ending in `BigInt`, for example, supplies no accounting authority.
+
+The [native contracts](../src/binding_receipt/defaults.rs) use logical events:
+
+| Event | Meaning at a native default boundary |
+| --- | --- |
+| `NativeWork` | One bounded native construction or cleanup call, not CPU instructions |
+| `NativeRecord` | One selected payload record, plus separately retained allocations |
+| `OwnedByte` | Separately handled dynamic payload bytes, not allocator capacity |
+
+Scalar defaults have one construction-call event and one payload record. Empty
+containers additionally account for their bounded field cleanup, without
+constructing elements or invoking element callbacks. Contracts cover the
+runtime's concrete deterministic collection carriers, not arbitrary hashers.
+Read/write zipper defaults compose an empty PathMap, an empty focus vector,
+and their product.
+
+The canonical integer and rational defaults each retain an outer boxed numeric
+value in addition to their payload record. Their zero/one digits are inline in
+the pinned dependency version; zero `OwnedByte` does not mean no allocation.
+The fixed-point default composes the integer default with its scale pair.
+These numeric handles are `Copy`, so their default-field receipts do not invent
+deallocation work. A native Arc default composes the inner contract with Arc
+allocation and final-owner release; its ownership-check event describes Arc's
+destructor check, not `Arc::into_inner`.
+
+These local contracts instantiate the finite-recipe model's parameters. They
+do not establish concrete generator correspondence until its selected-field
+projection is wired and tested, or prove physical-memory bounds.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing
