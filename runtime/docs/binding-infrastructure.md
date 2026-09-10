@@ -200,6 +200,41 @@ real free/bound-variable collisions, and compare cached hashes with a full
 recomputation. The helper is not a checked allocation interface, and the
 model makes no panic-unwind recovery claim.
 
+### Checked leaf copies and binding
+
+[`CheckedBindingLeaf`](../src/checked_binding.rs) supplies the payload boundary
+for a resource-admitted generated traversal. A leaf receives a clone, open, or
+close operation and the caller's reservation callback. It returns an owned
+result or a typed refusal; it neither creates another budget nor freshens names.
+There is no blanket implementation based on `Clone` or `BoundTerm`, because
+either trait can conceal recursive work in a native payload.
+
+| Payload or operation | Admission and behavior |
+| --- | --- |
+| Fixed scalar or canonical numeric handle | Reserve one copy record; copy the existing value or handle, not a numeric magnitude |
+| String or byte vector | Reserve one record and its actual byte length before copying |
+| Direct `FreeVar<String>` | Reserve its record and optional name bytes; Moniker binding is a no-op on this type |
+| Closing `OrdVar(Var::Free(...))` | Admit inspection and each ordered identity comparison; select the first matching identity, validate its `u32` index, then reserve the copy using the source name |
+| Opening a matching-depth bound variable | Admit inspection; validate the roster index; reserve and copy the selected binder's identity and name |
+| Other variable cases | Admit inspection and copy the unchanged variable |
+
+A copy record costs one logical work unit and four logical retention units;
+each owned byte adds one to each charge. Inspection and each identity comparison
+cost one work unit without retained units. Arithmetic is checked before the
+callback. These are logical resource units, not physical allocation capacity,
+resident memory, or elapsed time. Refusal leaves the source unchanged, but
+already admitted work is not refunded. Cancellation is checked during ordered
+lookup rather than only at entry.
+
+The [leaf model](../../formal/rocq/rho_bridge/theories/MonikerLeafOperations.v)
+proves first-identity selection, name provenance, index bounds, and opening
+behavior. Concrete closing correspondence is restricted to representable
+indices and depths: legacy Moniker casts the index, whereas this API rejects
+overflow. A missing index at matching depth is a typed refusal instead of
+Moniker's panic. The model does not prove resource accounting, freshening, or
+the complete generated traversal. These leaf implementations alone do not
+activate the generated binding worker or establish whole-program stack safety.
+
 ## Thread-Local Caches
 
 ### Variable Cache (`VAR_CACHE`)

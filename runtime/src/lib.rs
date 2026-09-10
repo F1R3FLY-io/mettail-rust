@@ -11,6 +11,11 @@
 mod binding;
 pub use binding::*;
 
+mod checked_binding;
+pub use checked_binding::{
+    reserve_binding_copy, BindingFailure, BindingOperation, CheckedBindingLeaf,
+};
+
 /// Runtime diagnostics queue (D11 ambiguous-display warnings, etc.).
 /// Stage 7 of W7 plan v5.1.
 pub mod diagnostics;
