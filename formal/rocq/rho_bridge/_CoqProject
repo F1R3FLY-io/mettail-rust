@@ -57,6 +57,7 @@ theories/RholangScopeConstructionRecipe.v
 theories/RholangInheritedBindingFold.v
 theories/IndexedCopySlots.v
 theories/HashBagBindingReconstruction.v
+theories/OrderedBindingReconstruction.v
 theories/MonikerLeafOperations.v
 theories/FltSelectorBinding.v
 theories/BehavioralFlatCopy.v
