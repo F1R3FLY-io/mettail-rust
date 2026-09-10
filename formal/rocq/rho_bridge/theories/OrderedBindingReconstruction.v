@@ -13,7 +13,7 @@
     Transformation/insertion fusion is pure. Stateful callbacks, resource
     admission, Rust hashing and iterator correspondence are outside this
     model. No collision-freedom hypothesis is required. *)
-From Stdlib Require Import List Arith Bool.
+From Stdlib Require Import List Arith Bool Lia Sorting.Permutation.
 From RhoBridge Require Import HashBagBindingReconstruction.
 Import ListNotations.
 
@@ -301,6 +301,249 @@ Proof.
   now rewrite path_reconstruction_fusion.
 Qed.
 
+(** Width counts stored entries, not bag multiplicity or allocation capacity.
+    Collisions can remove entries; no collision-freedom premise is needed. *)
+Lemma insert_map_width :
+  forall V incoming (entries : list (Key * V)),
+  length (insert_map incoming entries) <= S (length entries).
+Proof.
+  intros V [key value] entries.
+  induction entries as [|[stored old] rest IH].
+  - cbn. lia.
+  - cbn [insert_map fst snd].
+    destruct (Nat.eqb (key_id key) (key_id stored)); cbn; lia.
+Qed.
+
+Lemma fold_insert_map_width :
+  forall V entries (acc : list (Key * V)),
+  length (fold_left (fun acc entry => insert_map entry acc) entries acc)
+  <= length acc + length entries.
+Proof.
+  intros V entries.
+  induction entries as [|entry rest IH]; intros acc.
+  - cbn. lia.
+  - cbn [fold_left].
+    specialize (IH (insert_map entry acc)).
+    pose proof (insert_map_width V entry acc).
+    cbn [length]. lia.
+Qed.
+
+Theorem rebuild_width :
+  forall V (entries : list (Key * V)),
+  length (rebuild entries) <= length entries.
+Proof.
+  intros V entries. unfold rebuild.
+  pose proof (fold_insert_map_width V entries []). cbn in *. lia.
+Qed.
+
+Theorem transformed_rebuild_width :
+  forall A V (transform : A -> Key * V) entries,
+  length (rebuild (map transform entries)) <= length entries.
+Proof.
+  intros. pose proof (rebuild_width V (map transform entries)) as H.
+  now rewrite length_map in H.
+Qed.
+
+Theorem set_rebuild_width :
+  forall keys, length (set_rebuild keys) <= length keys.
+Proof.
+  intros keys. unfold set_rebuild. rewrite length_map.
+  apply transformed_rebuild_width.
+Qed.
+
+Definition path_width {V} (path : Path V) : nat :=
+  match path with
+  | EmptyPath => 0
+  | SetPath keys => length keys
+  | MapPath entries => length entries
+  end.
+
+Theorem path_rebuild_width :
+  forall V (path : Path V),
+  path_width (rebuild_path path) <= path_width path.
+Proof.
+  intros V [|keys|entries]; cbn [rebuild_path path_width].
+  - lia.
+  - apply set_rebuild_width.
+  - apply rebuild_width.
+Qed.
+
+(** Inventories contain ownership-occurrence tags, not semantic identities or
+    heap addresses. Equal values may have different occurrence tags. A map
+    collision retains the old key and incoming value, so whole entries must
+    not be treated as indivisible ownership units. The permutation below
+    conserves multiplicities even without a distinct-tag premise. It does not
+    specify hash cost, destructor order, or unwind behavior. *)
+Section Ownership.
+Context {V : Type}.
+Variable key_owners : Key -> list nat.
+Variable value_owners : V -> list nat.
+
+Definition entry_owners (entry : Key * V) : list nat :=
+  key_owners (fst entry) ++ value_owners (snd entry).
+Definition owners (entries : list (Key * V)) : list nat :=
+  flat_map entry_owners entries.
+
+Lemma insert_owner_partition :
+  forall incoming entries,
+  exists discarded,
+    Permutation (entry_owners incoming ++ owners entries)
+      (owners (insert_map incoming entries) ++ discarded).
+Proof.
+  intros [key value] entries.
+  induction entries as [|[stored old] rest IH].
+  - exists []. cbn [insert_map owners flat_map].
+    now rewrite !app_nil_r.
+  - cbn [insert_map fst snd].
+    destruct (Nat.eqb (key_id key) (key_id stored)).
+    + exists (key_owners key ++ value_owners old).
+      apply (proj2 (Permutation_count_occ Nat.eq_dec _ _)). intro tag.
+      cbn [owners flat_map]. unfold entry_owners. cbn [fst snd].
+      repeat rewrite count_occ_app. lia.
+    + destruct IH as [discarded HP]. exists discarded.
+      apply (proj2 (Permutation_count_occ Nat.eq_dec _ _)). intro tag.
+      pose proof (proj1 (Permutation_count_occ Nat.eq_dec _ _) HP tag) as H.
+      unfold owners in *. cbn [flat_map] in *.
+      repeat rewrite count_occ_app in *. lia.
+Qed.
+
+Lemma fold_owner_partition :
+  forall entries acc,
+  exists discarded,
+    Permutation (owners acc ++ owners entries)
+      (owners (fold_left (fun acc entry => insert_map entry acc) entries acc)
+        ++ discarded).
+Proof.
+  induction entries as [|entry rest IH]; intros acc.
+  - exists []. cbn [owners flat_map fold_left]. reflexivity.
+  - destruct (insert_owner_partition entry acc) as [first HP].
+    destruct (IH (insert_map entry acc)) as [later HQ].
+    exists (first ++ later).
+    apply (proj2 (Permutation_count_occ Nat.eq_dec _ _)). intro tag.
+    pose proof (proj1 (Permutation_count_occ Nat.eq_dec _ _) HP tag) as H.
+    pose proof (proj1 (Permutation_count_occ Nat.eq_dec _ _) HQ tag) as J.
+    unfold owners in *. cbn [flat_map fold_left] in *.
+    repeat rewrite count_occ_app in *. lia.
+Qed.
+
+Theorem rebuild_owner_partition :
+  forall entries,
+  exists discarded,
+    Permutation (owners entries) (owners (rebuild entries) ++ discarded).
+Proof.
+  intro entries. unfold rebuild.
+  exact (fold_owner_partition entries []).
+Qed.
+
+End Ownership.
+
+Section SetOwnership.
+Variable key_owners : Key -> list nat.
+
+Lemma unit_owners_keys :
+  forall entries : list (Key * unit),
+  @owners unit key_owners (fun _ => []) entries =
+  flat_map key_owners (map fst entries).
+Proof.
+  induction entries as [|[key []] rest IH].
+  - reflexivity.
+  - change ((key_owners key ++ []) ++
+      @owners unit key_owners (fun _ => []) rest =
+      key_owners key ++ flat_map key_owners (map fst rest)).
+    rewrite app_nil_r. now rewrite IH.
+Qed.
+
+Theorem set_rebuild_owner_partition :
+  forall keys,
+  exists discarded,
+    Permutation (flat_map key_owners keys)
+      (flat_map key_owners (set_rebuild keys) ++ discarded).
+Proof.
+  intro keys.
+  destruct (@rebuild_owner_partition unit key_owners (fun _ => [])
+    (map (fun key => (key, tt)) keys)) as [discarded HP].
+  exists discarded. rewrite !unit_owners_keys in HP.
+  rewrite map_map in HP. cbn [fst] in HP. rewrite map_id in HP.
+  exact HP.
+Qed.
+
+End SetOwnership.
+
+Definition path_owners {V} (key_owners : Key -> list nat)
+    (value_owners : V -> list nat) (path : Path V) : list nat :=
+  match path with
+  | EmptyPath => []
+  | SetPath keys => flat_map key_owners keys
+  | MapPath entries => owners key_owners value_owners entries
+  end.
+
+Theorem path_rebuild_owner_partition :
+  forall V key_owners value_owners (path : Path V),
+  exists discarded,
+    Permutation (path_owners key_owners value_owners path)
+      (path_owners key_owners value_owners (rebuild_path path) ++ discarded).
+Proof.
+  intros V key_owners value_owners [|keys|entries];
+    cbn [path_owners rebuild_path].
+  - exists []. reflexivity.
+  - apply set_rebuild_owner_partition.
+  - apply rebuild_owner_partition.
+Qed.
+
+(** Distinct occurrence tags make the retained and discarded inventories
+    disjoint. This premise says nothing about equality of represented values.
+    It applies to each partition theorem above, including partially built
+    accumulators through fold_owner_partition. *)
+Lemma nodup_inventory_disjoint :
+  forall retained discarded : list nat,
+  NoDup (retained ++ discarded) ->
+  forall tag, In tag retained -> ~ In tag discarded.
+Proof.
+  induction retained as [|head rest IH]; intros discarded H tag Hin Hout.
+  - contradiction.
+  - inversion H as [|x xs Hnot Htail]; subst.
+    destruct Hin as [Heq|Hin].
+    + subst tag. apply Hnot. apply in_or_app. now right.
+    + exact (IH discarded Htail tag Hin Hout).
+Qed.
+
+Theorem owner_partition_disjoint :
+  forall original retained discarded : list nat,
+  Permutation original (retained ++ discarded) -> NoDup original ->
+  NoDup (retained ++ discarded) /\
+  (forall tag, In tag retained -> ~ In tag discarded).
+Proof.
+  intros original retained discarded HP HN.
+  pose proof (Permutation_NoDup HP HN) as H.
+  split; [exact H|now apply nodup_inventory_disjoint].
+Qed.
+
+Definition inventory_credit (credit : nat -> nat) (inventory : list nat) :=
+  fold_right (fun tag total => credit tag + total) 0 inventory.
+
+Lemma inventory_credit_app :
+  forall credit left right,
+  inventory_credit credit (left ++ right) =
+  inventory_credit credit left + inventory_credit credit right.
+Proof.
+  intros credit left. unfold inventory_credit.
+  induction left as [|tag rest IH]; intro right.
+  - reflexivity.
+  - cbn [fold_right app]. rewrite IH. lia.
+Qed.
+
+Theorem owner_partition_credit_conservation :
+  forall credit original retained discarded,
+  Permutation original (retained ++ discarded) ->
+  inventory_credit credit original =
+  inventory_credit credit retained + inventory_credit credit discarded.
+Proof.
+  intros credit original retained discarded HP.
+  rewrite <- inventory_credit_app.
+  unfold inventory_credit.
+  induction HP; cbn [fold_right] in *; lia.
+Qed.
+
 End Reconstruction.
 Print Assumptions nat_insert_reuses_bag.
 Print Assumptions ordered_transform_insert_fusion.
@@ -316,4 +559,20 @@ Print Assumptions set_collision_retains_first.
 Print Assumptions path_reconstruction_fusion.
 Print Assumptions empty_modes_remain_distinct.
 Print Assumptions zipper_context_exact_focus_inert.
+Print Assumptions insert_map_width.
+Print Assumptions fold_insert_map_width.
+Print Assumptions rebuild_width.
+Print Assumptions transformed_rebuild_width.
+Print Assumptions set_rebuild_width.
+Print Assumptions path_rebuild_width.
+Print Assumptions insert_owner_partition.
+Print Assumptions fold_owner_partition.
+Print Assumptions rebuild_owner_partition.
+Print Assumptions unit_owners_keys.
+Print Assumptions set_rebuild_owner_partition.
+Print Assumptions path_rebuild_owner_partition.
+Print Assumptions nodup_inventory_disjoint.
+Print Assumptions owner_partition_disjoint.
+Print Assumptions inventory_credit_app.
+Print Assumptions owner_partition_credit_conservation.
 End OrderedBindingReconstruction.

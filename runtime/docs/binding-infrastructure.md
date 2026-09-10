@@ -402,6 +402,21 @@ Neither premise follows merely from having a charge table. These laws do not
 yet establish the complete generated traversal, concrete collection insertion
 costs, panic recovery, or physical allocation bounds.
 
+The [ordered-reconstruction model](../../formal/rocq/rho_bridge/theories/OrderedBindingReconstruction.v)
+supplies the corresponding map, set and PathMap width and partition laws for
+its existing insertion operation. Retained entry count cannot exceed the
+admitted input-entry count, including when transformed keys collide. This is
+stored width, not bag multiplicity or hash-table capacity.
+
+The ownership model associates inventories of occurrence tags with keys and
+values separately. Insertion and reconstruction preserve the multiset of tags
+across retained and discarded inventories. If the input occurrence tags are
+distinct, those inventories are disjoint; equal semantic values do not imply
+equal occurrence tags. Summing any nonnegative per-tag credit conserves the
+original credit across both inventories. These laws require the concrete
+worker's key/value moves to match the modeled insertion operation; they do
+not establish hash cost or destructor timing.
+
 ### Bag reconstruction during binding
 
 Binding can make previously distinct bag keys equal. The existing
