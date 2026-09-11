@@ -64,6 +64,7 @@ theories/MonikerLeafOperations.v
 theories/FltSelectorBinding.v
 theories/FlatBindingLeafReservation.v
 theories/ScalarArcBindingReservation.v
+theories/BinderPatternCopy.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
