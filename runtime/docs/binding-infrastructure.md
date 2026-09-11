@@ -441,7 +441,7 @@ therefore disposes credited bare children; failed publication disposes a fully
 admitted parent. The generated-code fixture checks sharing, cross-category
 fields, optional presence, variable binding, every small-case refusal boundary,
 and a 20,000-level chain on a 256 KiB stack. Checked generation remains inactive
-in production until the remaining field and scope cases are integrated.
+in production until the remaining field families and scope shapes are integrated.
 
 #### Mixed category and native fields
 
@@ -472,6 +472,72 @@ cleanup task. The generated fixture uses production enum layouts and checks
 required and optional mixed fields, `None` versus present-empty text, selector
 opening/closing and failure after earlier native copies. This does not establish
 full grammar-to-field-layout parity for every optional-capture syntax shape.
+
+#### Scope fields and required vector fields
+
+Scope and required-vector fields extend the same generated Visit/Assemble
+worker and checked result slots; they do not introduce another clone engine.
+The field descriptor supplies each child's actual category, including a scope
+body whose category differs from its enclosing constructor. Assembly borrows
+the original variant for native fields and scope patterns; the immutable root
+borrow keeps those source pointers valid through normal-error cleanup.
+
+Only Open and Close cross a scope body at the parent's depth plus one. The
+worker admits that step before checking depth overflow, then schedules the
+body with the incremented state and the unchanged external binder roster.
+Scalar prefields keep the parent's state. Clone copies the scope pattern but
+shares its body Arc, just as it shares scalar category Arcs. Pattern copying
+uses the existing checked Binder or binder-vector leaf: it preserves identity,
+diagnostic names, order and duplicates without freshening.
+
+The [scope-field model](../../formal/rocq/rho_bridge/theories/ScopeBindingReservation.v)
+adds seven work units and three records for a single-binder scope, or six work
+units and three records for a multi-binder scope, to the existing required-body
+Arc allowance and its selected dummy charge. These additions cover the scope
+shells, extraction/replacement dispatch and replacement pattern. The original
+pattern's copy and cleanup are charged separately by the
+[pattern-copy contract](../../formal/rocq/rho_bridge/theories/BinderPatternCopy.v).
+Raw `Scope::from_parts_unsafe` reconstruction preserves the transformed body;
+it does not invoke closing again.
+
+A required `Vec<Category>` differs from an Arc field: every stored element is
+copied into an owned output occurrence in Clone, Open and Close. The element's
+own scalar Arc boundaries still retain their normal Clone sharing semantics.
+This applies both to regular fields and to required vector prefields before
+a scope, such as a URI-list prefield. The existing generated Drop arms use
+`mem::take` to leave an empty vector, then push one owned cleanup task per
+stored element; they do not create a selected category dummy for the vector.
+
+For actual vector length $`n`$, the
+[required-vector model](../../formal/rocq/rho_bridge/theories/RequiredVecBindingReservation.v)
+assigns local construction and cleanup $`10 + 4n`$ work units,
+$`4 + 2n`$ records and zero owned bytes. Child production and cleanup, result
+slots, checked takes, traversal-task operations and the parent's base allowance
+are separate. The borrowed reverse walk additionally costs $`3 + n`$ work
+units and one record, admitted before walking. These named iterator contracts
+count construction, terminal advance and teardown, plus successful advances;
+they are logical accounting boundaries, not physical allocation or instruction
+counts. The walk uses the existing reverse-iteration projection without a
+staging vector. Source-order slots and reverse task pushes preserve element
+order and repeated occurrences.
+
+Assembly admits destination storage before requesting vector capacity. Native
+and pattern copies enter paid locals before any child take. It then takes all
+scalar and scope children into bare category locals and vector children into
+the admitted destination vectors, still without category Arc wrappers. A
+refusal cleans up the produced vector prefixes and other paid locals using
+their existing child allowances. Only after every take succeeds are Arc
+wrappers, raw scopes and the parent formed, with no fallible callback until
+publication. No child credit is refunded or charged again during that transfer.
+
+This contract covers required vector fields, not optional vectors, hash-based
+collections, direct collection variants or native zipper carriers. Their
+checked integration and remaining scope shapes are separate obligations.
+Neither these local models nor this shared-worker increment establish complete
+generated Rholang support, production activation, panic recovery or physical
+resident-memory bounds.
+
+#### Other collection reconstruction contracts
 
 The [ordered-reconstruction model](../../formal/rocq/rho_bridge/theories/OrderedBindingReconstruction.v)
 supplies the corresponding map, set and PathMap width and partition laws for

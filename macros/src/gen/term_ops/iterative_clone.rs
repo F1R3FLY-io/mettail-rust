@@ -252,11 +252,50 @@ fn generate_task_enum(language: &LanguageDef, emission: &CloneEmissionNames) -> 
 }
 
 fn checked_scalar_fields(fields: &[FieldInfo], emission: &CloneEmissionNames) -> bool {
-    emission.checked.is_some() && fields.iter().all(|field| !field.is_collection)
+    emission.checked.is_some()
+        && fields
+            .iter()
+            .all(|field| !field.is_collection || required_vec_field(field))
+}
+
+fn required_vec_field(field: &FieldInfo) -> bool {
+    field.is_collection
+        && !field.is_optional
+        && matches!(field.coll_type.as_ref(), None | Some(CollectionType::Vec))
 }
 
 fn inline_binding_leaf(field: &FieldInfo) -> bool {
     field.is_predicate || field.is_opaque_leaf()
+}
+
+#[derive(Clone, Copy)]
+struct CheckedScopeField<'a> {
+    body_category: &'a Ident,
+    multiple: bool,
+}
+
+fn checked_scope_fields<'a>(
+    variant: &'a VariantKind,
+    emission: &CloneEmissionNames,
+) -> Option<(&'a Ident, &'a [FieldInfo], CheckedScopeField<'a>)> {
+    emission.checked.as_ref()?;
+    let (label, fields, body_category, multiple) = match variant {
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
+            (label, pre_scope_fields.as_slice(), body_cat, false)
+        },
+        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
+            (label, pre_scope_fields.as_slice(), body_cat, true)
+        },
+        _ => return None,
+    };
+    // Match the existing Binder/MultiBinder Drop arms, not Regular's broader
+    // field support. Collection prefields need their own checked assembly.
+    let eligible = fields.iter().all(|field| {
+        required_vec_field(field)
+            || (!field.is_collection
+                && (field.is_predicate || (!field.is_opaque_leaf() && !field.is_optional)))
+    });
+    eligible.then_some((label, fields, CheckedScopeField { body_category, multiple }))
 }
 
 fn generate_assemble_task(
@@ -264,6 +303,13 @@ fn generate_assemble_task(
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
+    if let Some((label, fields, _)) = checked_scope_fields(variant, emission) {
+        let task = format_ident!("Assemble{}_{}", category, label);
+        let slots = scalar_slot_fields(fields);
+        return Some(quote! {
+            #task { src: *const #category, slot: usize, #(#slots,)* scope_body_slot: Option<usize> }
+        });
+    }
     let (label, fields, prefix) = match variant {
         VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => {
             let task = format_ident!("Assemble{}_{}", category, label);
@@ -420,6 +466,9 @@ fn generate_visit_arm(
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> TokenStream {
+    if let Some((label, fields, scope)) = checked_scope_fields(variant, emission) {
+        return generate_scalar_visit(category, label, fields, Some(scope), emission);
+    }
     let wrap = format_ident!("Wrap{}", category);
     match variant {
         VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
@@ -457,7 +506,7 @@ fn generate_visit_arm(
         },
         VariantKind::Regular { label, fields } => {
             if checked_scalar_fields(fields, emission) {
-                generate_scalar_visit(category, label, fields, emission)
+                generate_scalar_visit(category, label, fields, None, emission)
             } else {
                 generate_structured_visit(category, label, fields, false, emission)
             }
@@ -541,10 +590,12 @@ fn scalar_slot_fields(fields: &[FieldInfo]) -> Vec<TokenStream> {
         .filter(|(_, field)| !inline_binding_leaf(field))
         .map(|(index, field)| {
             let slot = format_ident!("field_{}_slot", index);
-            if field.is_optional {
-                quote! { #slot: Option<usize> }
+            if required_vec_field(field) {
+                quote! { #slot: (usize, usize) }
             } else {
-                quote! { #slot: usize }
+                // None means absent optional child or an untraversed shallow
+                // Clone edge; operation/source presence distinguish the two.
+                quote! { #slot: Option<usize> }
             }
         })
         .collect()
@@ -587,22 +638,102 @@ fn scalar_field_admission(
             mettail_runtime::reserve_binding_parts(work, records, 0, reserve)?;
         }
     } else {
-        let dummy = match emission.dummy_charge(&field.category) {
-            Ok(charge) => charge,
-            Err(error) => return error.into_compile_error(),
-        };
-        let (work, records) = if owned { (7usize, 3usize) } else { (6, 2) };
-        quote! {
-            mettail_runtime::reserve_binding_parts(#work, #records, 0, reserve)?;
-            #dummy.reserve(reserve)?;
-        }
+        required_field_admission(&field.category, owned, emission)
     }
+}
+
+fn required_field_admission(
+    category: &Ident,
+    owned: bool,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    let dummy = match emission.dummy_charge(category) {
+        Ok(charge) => charge,
+        Err(error) => return error.into_compile_error(),
+    };
+    let (work, records) = if owned { (7usize, 3usize) } else { (6, 2) };
+    quote! {
+        mettail_runtime::reserve_binding_parts(#work, #records, 0, reserve)?;
+        #dummy.reserve(reserve)?;
+    }
+}
+
+fn scope_field_admission(
+    scope: CheckedScopeField<'_>,
+    owned: bool,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    let body = required_field_admission(scope.body_category, owned, emission);
+    // ScopeBindingReservation: scope shells/unpack/dispatch plus the exact
+    // replacement pattern. Original pattern copying is separately admitted.
+    let work = if scope.multiple { 6usize } else { 7usize };
+    quote! { #body mettail_runtime::reserve_binding_parts(#work, 3, 0, reserve)?; }
+}
+
+fn scope_pattern_copy() -> TokenStream {
+    quote! {
+        let copied_pattern = mettail_runtime::CheckedBindingLeaf::try_copy_binding(
+            scope.unsafe_pattern(), operation, reserve,
+        )?;
+    }
+}
+
+fn vec_field_admission(range: &Ident) -> TokenStream {
+    // RequiredVecBindingReservation, excluding child/slot/task charges.
+    quote! {
+        let width = #range.1;
+        let work = width.checked_mul(4).and_then(|v| v.checked_add(10))
+            .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+        let records = width.checked_mul(2).and_then(|v| v.checked_add(4))
+            .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+        mettail_runtime::reserve_binding_parts(work, records, 0, reserve)?;
+    }
+}
+
+fn vec_child_pushes(
+    field: &FieldInfo,
+    source: &Ident,
+    range: &Ident,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    use super::collection_walk::{for_each_subterm, WalkOrder};
+    let task_enum = &emission.task_enum;
+    let visit = format_ident!("Clone{}", field.category);
+    let pushes = for_each_subterm(
+        &CollectionType::Vec,
+        &quote! { #source },
+        WalkOrder::ReverseForLifo,
+        &|child, _| {
+            let push = emission.push_task(
+                quote! {
+                    #task_enum::#visit { src: #child as *const _, slot: next_slot }
+                },
+                quote! { operation.state() },
+            );
+            quote! {
+                next_slot = next_slot.checked_sub(1)
+                    .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                #push
+            }
+        },
+    );
+    quote! {{
+        let (start, width) = #range;
+        let work = width.checked_add(3)
+            .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+        mettail_runtime::reserve_binding_parts(work, 1, 0, reserve)?;
+        let mut next_slot = start.checked_add(width)
+            .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+        #pushes
+        debug_assert_eq!(next_slot, start);
+    }}
 }
 
 fn generate_scalar_visit(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
+    scope: Option<CheckedScopeField<'_>>,
     emission: &CloneEmissionNames,
 ) -> TokenStream {
     let names: Vec<_> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
@@ -613,6 +744,8 @@ fn generate_scalar_visit(
     let admissions = fields.iter().zip(&names).map(|(field, name)| {
         if inline_binding_leaf(field) {
             TokenStream::new()
+        } else if required_vec_field(field) {
+            TokenStream::new() // Vec constructors use the shared assembly path, even in Clone.
         } else {
             scalar_field_admission(field, quote! { #name.is_some() }, false, emission)
         }
@@ -626,7 +759,7 @@ fn generate_scalar_visit(
                 inline_binding_leaf(field)
                     .then(|| native_field_copy(field, name, &format_ident!("bare_{}", index)))
             });
-    let clones = fields
+    let mut clones: Vec<_> = fields
         .iter()
         .zip(&names)
         .enumerate()
@@ -637,27 +770,49 @@ fn generate_scalar_visit(
             } else {
                 quote! { #name.clone() }
             }
+        })
+        .collect();
+    let mut source_names = names.clone();
+    let scope_admission = scope.map(|scope| scope_field_admission(scope, false, emission));
+    let pattern_copy = scope.map(|_| scope_pattern_copy());
+    if scope.is_some() {
+        source_names.push(format_ident!("scope"));
+        clones.push(quote! {
+            mettail_runtime::Scope::from_parts_unsafe(
+                copied_pattern, std::sync::Arc::clone(scope.unsafe_body()))
         });
+    }
     let publish = emission.publish(category, quote! { #category::#label(#(#clones),*) });
     let allocations = fields.iter().zip(&names).zip(&slots).map(|((field, name), slot)| {
         if inline_binding_leaf(field) { TokenStream::new() }
+        else if required_vec_field(field) {
+            quote! {
+                let width = #name.len();
+                let #slot = (mettail_runtime::append_binding_slots(results, width, reserve)?, width);
+            }
+        }
         else if field.is_optional {
             quote! {
-                let #slot = match #name {
-                    Some(_) => Some(mettail_runtime::append_binding_slots(results, 1, reserve)?),
-                    None => None,
+                let #slot = match (#name, cloning) {
+                    (Some(_), false) => Some(mettail_runtime::append_binding_slots(results, 1, reserve)?),
+                    _ => None,
                 };
             }
         } else {
-            quote! { let #slot = mettail_runtime::append_binding_slots(results, 1, reserve)?; }
+            quote! { let #slot = if cloning { None }
+                else { Some(mettail_runtime::append_binding_slots(results, 1, reserve)?) }; }
         }
     });
     let task_enum = &emission.task_enum;
     let task = format_ident!("Assemble{}_{}", category, label);
-    let child_slots = fields
+    let mut child_slots: Vec<_> = fields
         .iter()
         .zip(&slots)
-        .filter_map(|(field, slot)| (!inline_binding_leaf(field)).then_some(slot));
+        .filter_map(|(field, slot)| (!inline_binding_leaf(field)).then_some(slot.clone()))
+        .collect();
+    if scope.is_some() {
+        child_slots.push(format_ident!("scope_body_slot"));
+    }
     let assemble = emission.push_task(
         quote! { #task_enum::#task { src: source as *const _, slot, #(#child_slots),* } },
         quote! { operation.state() },
@@ -671,6 +826,9 @@ fn generate_scalar_visit(
             if inline_binding_leaf(field) {
                 return TokenStream::new();
             }
+            if required_vec_field(field) {
+                return vec_child_pushes(field, name, slot, emission);
+            }
             let visit = format_ident!("Clone{}", field.category);
             let push = emission.push_task(
                 quote! { #task_enum::#visit { src: child.as_ref() as *const _, slot: child_slot } },
@@ -681,35 +839,73 @@ fn generate_scalar_visit(
                     if let (Some(child), Some(child_slot)) = (#name.as_ref(), #slot) { #push }
                 }
             } else {
-                quote! { let child = #name; let child_slot = #slot; #push }
+                quote! { if let Some(child_slot) = #slot { let child = #name; #push } }
             }
         });
-    quote! {
-        #category::#label(#(ref #names),*) => {
-            match operation {
-                mettail_runtime::BindingOperation::Clone => {
-                    #base
-                    #(#admissions)*
-                    #(#native_copies)*
-                    // No fallible call occurs between cloning the handles
-                    // and forming the parent passed to checked publication.
-                    #publish
-                },
-                mettail_runtime::BindingOperation::Open { .. }
-                | mettail_runtime::BindingOperation::Close { .. } => {
-                    #(#allocations)*
-                    #assemble
-                    #(#pushes)*
-                },
-            }
+    let scope_allocation = scope.map(|_| {
+        quote! {
+            let scope_body_slot = if cloning { None }
+                else { Some(mettail_runtime::append_binding_slots(results, 1, reserve)?) };
         }
-    }
+    });
+    let scope_depth = scope.map(|_| {
+        quote! {
+            let body_operation = if cloning { operation } else {
+                mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
+                operation.under_scope()?
+            };
+        }
+    });
+    let scope_push = scope.map(|scope| {
+        let visit = format_ident!("Clone{}", scope.body_category);
+        let push = emission.push_task(
+            quote! { #task_enum::#visit {
+                src: scope.unsafe_body().as_ref() as *const _, slot: child_slot,
+            } },
+            quote! { body_operation.state() },
+        );
+        quote! { if let Some(child_slot) = scope_body_slot { #push } }
+    });
+    let schedule = quote! {
+        let cloning = matches!(operation, mettail_runtime::BindingOperation::Clone);
+        #scope_depth
+        #(#allocations)*
+        #scope_allocation
+        #assemble
+        // The last source child is pushed first on the LIFO stack.
+        #scope_push
+        #(#pushes)*
+    };
+    let body = if fields.iter().any(required_vec_field) {
+        schedule
+    } else {
+        quote! {
+                match operation {
+                    mettail_runtime::BindingOperation::Clone => {
+                        #base
+                        #(#admissions)*
+                        #scope_admission
+                        #(#native_copies)*
+                        #pattern_copy
+                        // No fallible call occurs between cloning the handles
+                        // and forming the parent passed to checked publication.
+                        #publish
+                    },
+                    mettail_runtime::BindingOperation::Open { .. }
+                    | mettail_runtime::BindingOperation::Close { .. } => {
+                        #schedule
+                    },
+                }
+        }
+    };
+    quote! { #category::#label(#(ref #source_names),*) => { #body } }
 }
 
 fn generate_scalar_assemble(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
+    scope: Option<CheckedScopeField<'_>>,
     destructure_is_irrefutable: bool,
     emission: &CloneEmissionNames,
 ) -> TokenStream {
@@ -718,30 +914,46 @@ fn generate_scalar_assemble(
     let slots: Vec<_> = (0..fields.len())
         .map(|i| format_ident!("field_{}_slot", i))
         .collect();
-    let slot_fields = scalar_slot_fields(fields);
-    let child_slots: Vec<_> = fields
+    let mut slot_fields = scalar_slot_fields(fields);
+    let mut child_slots: Vec<_> = fields
         .iter()
         .zip(&slots)
-        .filter_map(|(field, slot)| (!inline_binding_leaf(field)).then_some(slot))
+        .filter_map(|(field, slot)| (!inline_binding_leaf(field)).then_some(slot.clone()))
         .collect();
     let names: Vec<_> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let mut source_names = names.clone();
+    if scope.is_some() {
+        slot_fields.push(quote! { scope_body_slot: Option<usize> });
+        child_slots.push(format_ident!("scope_body_slot"));
+        source_names.push(format_ident!("scope"));
+    }
     let destructure = if destructure_is_irrefutable {
-        quote! { let #category::#label(#(ref #names),*) = source; }
+        quote! { let #category::#label(#(ref #source_names),*) = source; }
     } else {
         quote! {
-            let #category::#label(#(ref #names),*) = source else {
+            let #category::#label(#(ref #source_names),*) = source else {
                 unreachable!("checked binding assembly retains its source variant")
             };
         }
     };
     let base = emission.base_admission();
-    let admissions = fields.iter().zip(&slots).map(|(field, slot)| {
-        if inline_binding_leaf(field) {
-            TokenStream::new()
-        } else {
-            scalar_field_admission(field, quote! { #slot.is_some() }, true, emission)
-        }
-    });
+    let admissions = fields
+        .iter()
+        .zip(&slots)
+        .zip(&names)
+        .map(|((field, slot), name)| {
+            if inline_binding_leaf(field) {
+                TokenStream::new()
+            } else if required_vec_field(field) {
+                vec_field_admission(slot)
+            } else {
+                let shallow =
+                    scalar_field_admission(field, quote! { #name.is_some() }, false, emission);
+                let owned =
+                    scalar_field_admission(field, quote! { #name.is_some() }, true, emission);
+                quote! { if cloning { #shallow } else { #owned } }
+            }
+        });
     let bare: Vec<_> = (0..fields.len())
         .map(|i| format_ident!("bare_{}", i))
         .collect();
@@ -768,7 +980,20 @@ fn generate_scalar_assemble(
                     _ => unreachable!("checked category discriminant is unchanged during take"),
                 }
             };
-            if field.is_optional {
+            if required_vec_field(field) {
+                quote! {
+                    let #bare = {
+                        let (start, width) = #slot;
+                        let mut copied = Vec::with_capacity(width);
+                        for offset in 0..width {
+                            let child_slot = start.checked_add(offset)
+                                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                            copied.push(#take);
+                        }
+                        copied
+                    };
+                }
+            } else if field.is_optional {
                 quote! {
                     let #bare = match #slot {
                         Some(child_slot) => Some(#take),
@@ -776,18 +1001,57 @@ fn generate_scalar_assemble(
                     };
                 }
             } else {
-                quote! { let child_slot = #slot; let #bare = #take; }
+                quote! {
+                    let #bare = if cloning { None } else {
+                        let child_slot = #slot.expect("binding schedules every required scalar child");
+                        Some(#take)
+                    };
+                }
             }
         });
-    let wrappers = fields.iter().zip(&bare).map(|(field, bare)| {
-        if inline_binding_leaf(field) {
-            quote! { #bare }
-        } else if field.is_optional {
-            quote! { #bare.map(std::sync::Arc::new) }
-        } else {
-            quote! { std::sync::Arc::new(#bare) }
+    let mut wrappers: Vec<_> = fields
+        .iter()
+        .zip(&bare).zip(&names)
+        .map(|((field, bare), name)| {
+            if inline_binding_leaf(field) || required_vec_field(field) {
+                quote! { #bare }
+            } else if field.is_optional {
+                quote! { if cloning { #name.clone() } else { #bare.map(std::sync::Arc::new) } }
+            } else {
+                quote! { if cloning { std::sync::Arc::clone(#name) } else {
+                    std::sync::Arc::new(#bare.expect("required scalar child was taken before wrapping"))
+                } }
+            }
+        })
+        .collect();
+    let scope_admission = scope.map(|scope| {
+        let shallow = scope_field_admission(scope, false, emission);
+        let owned = scope_field_admission(scope, true, emission);
+        quote! { if cloning { #shallow } else { #owned } }
+    });
+    let pattern_copy = scope.map(|_| scope_pattern_copy());
+    let body_take = scope.map(|scope| {
+        let wrap = format_ident!("Wrap{}", scope.body_category);
+        quote! {
+            let bare_body = if cloning { None } else {
+                let child_slot = scope_body_slot.expect("binding schedules the scope body");
+                Some(match mettail_runtime::take_binding_slot(
+                results, child_slot,
+                |value| matches!(value, AnyClonedTerm::#wrap(_)), reserve,
+            )? {
+                AnyClonedTerm::#wrap(child) => child,
+                _ => unreachable!("checked scope body category is unchanged during take"),
+                })
+            };
         }
     });
+    if scope.is_some() {
+        wrappers.push(quote! {
+            mettail_runtime::Scope::from_parts_unsafe(
+                copied_pattern, if cloning { std::sync::Arc::clone(scope.unsafe_body()) }
+                else { std::sync::Arc::new(bare_body.expect("scope body taken before wrapping")) })
+        });
+    }
     let publish = emission.publish(category, quote! { #category::#label(#(#wrappers),*) });
     quote! {
         #task_enum::#task { src, slot, #(#child_slots),* } => {
@@ -803,12 +1067,16 @@ fn generate_scalar_assemble(
             ) -> Result<(), mettail_runtime::BindingFailure<E>> {
                 let source = unsafe { &*src };
                 #destructure
+                let cloning = matches!(operation, mettail_runtime::BindingOperation::Clone);
                 #base
                 #(#admissions)*
+                #scope_admission
                 #(#native_copies)*
+                #pattern_copy
                 // Every fallible take precedes ALL wrapper construction.
                 // Failure drops admitted native locals and bare categories.
                 #(#takes)*
+                #body_take
                 #publish
                 Ok(())
             }
@@ -1024,10 +1292,27 @@ fn generate_assemble_arm(
     destructure_is_irrefutable: bool,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
+    if let Some((label, fields, scope)) = checked_scope_fields(variant, emission) {
+        return Some(generate_scalar_assemble(
+            category,
+            label,
+            fields,
+            Some(scope),
+            destructure_is_irrefutable,
+            emission,
+        ));
+    }
     match variant {
-        VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => Some(
-            generate_scalar_assemble(category, label, fields, destructure_is_irrefutable, emission),
-        ),
+        VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => {
+            Some(generate_scalar_assemble(
+                category,
+                label,
+                fields,
+                None,
+                destructure_is_irrefutable,
+                emission,
+            ))
+        },
         VariantKind::Regular { label, fields } if fields.iter().any(|f| f.is_collection) => {
             Some(generate_structured_assemble(
                 category,
@@ -1783,6 +2068,17 @@ mod tests {
                     |- before@Word child *flt(node, Open, Close) guard after@Word : Proc;
                 POptional . *opt(child:Proc, ?guard:Guard)
                     |- prefix@Word *opt(before@Word child *flt(node, Open, Close) guard) : Proc;
+                PSingle . pre:Proc, ^x.body:[Proc -> Proc]
+                    |- "single" pre x body : Proc;
+                PMulti . ^[xs].body:[Proc* -> Proc] |- "multi" xs body : Proc;
+                PGuardScope . ?guard:Guard, ^x.body:[Proc -> Proc]
+                    |- "guardScope" guard x body : Proc;
+                PTextScope . ^x.body:[Proc -> Text] |- "textScope" x body : Proc;
+                PTwoVec . first:Vec(Proc), second:Vec(Proc) |- "twoVec" first second : Proc;
+                PVecMixed . children:Vec(Proc), tail:Proc, ?guard:Guard
+                    |- prefix@Word children tail guard : Proc;
+                PVecScope . entries:Vec(Proc), ^[xs].body:[Proc* -> Proc]
+                    |- "vecScope" entries xs body : Proc;
             },
             equations {}, rewrites {},
         "#,
@@ -1830,7 +2126,7 @@ mod tests {
             #![allow(dead_code, unused_variables, unreachable_patterns, non_snake_case)]
             use std::sync::Arc;
             use mettail_runtime::{Binder, BindingFailure, BindingOperation,
-                CheckedIterativeBinding, FreeVar, OrdVar, Var};
+                CheckedIterativeBinding, FreeVar, OrdVar, Scope, Var};
             #(#enum_types)* #ordinary #tasks #engine #impls #drop #table
 
             fn pools_empty() {
@@ -1959,6 +2255,155 @@ mod tests {
                             if v.unique_id == name.unique_id));
                     }
                 }
+                let pattern = Binder(name.clone());
+                let single = Proc::PSingle(child.clone(),
+                    Scope::from_parts_unsafe(pattern.clone(),child.clone()));
+                let guarded = Proc::PGuardScope(predicate.clone(),
+                    Scope::from_parts_unsafe(pattern.clone(),child.clone()));
+                let text_body = Arc::new(Text::#text_label("body category".into()));
+                let text_scope = Proc::PTextScope(Scope::from_parts_unsafe(pattern.clone(),text_body.clone()));
+                for source in [
+                    Proc::MApplyProc(child.clone(),vec![]),
+                    Proc::MApplyProc(child.clone(),vec![child.as_ref().clone(),Proc::PZero]),
+                    Proc::MApplyText(child.clone(),vec![Text::#text_label("first".into()),Text::#text_label("second".into())]),
+                    Proc::PTwoVec(vec![Proc::PZero],vec![child.as_ref().clone(),Proc::PZero]),
+                ] {
+                    for operation in [BindingOperation::Clone,
+                        BindingOperation::Close {state:moniker::ScopeState::new(),binders:&roster}] {
+                        let (copied,_) = exercise(&source,operation);
+                        match (&source,&copied) {
+                            (Proc::MApplyProc(_,before),Proc::MApplyProc(function,after)) => {
+                                assert_eq!(before.len(),after.len());
+                                if !after.is_empty() {
+                                    assert!(matches!(after[1],Proc::PZero));
+                                    if matches!(operation,BindingOperation::Clone) {
+                                        assert!(matches!(&after[0],Proc::#var(OrdVar(Var::Free(v))) if v.unique_id==name.unique_id));
+                                    } else {check_bound(&after[0],0);}
+                                }
+                                if matches!(operation,BindingOperation::Clone) {assert!(Arc::ptr_eq(function,&child));}
+                                else {check_bound(function,0);}
+                            },
+                            (Proc::MApplyText(..),Proc::MApplyText(function,after)) => {
+                                assert_eq!(after.len(),2);
+                                for (term,expected) in after.iter().zip(["first","second"]) {
+                                    assert!(matches!(term,Text::#text_label(text) if text==expected));
+                                }
+                                if matches!(operation,BindingOperation::Clone) {assert!(Arc::ptr_eq(function,&child));}
+                                else {check_bound(function,0);}
+                            },
+                            (Proc::PTwoVec(..),Proc::PTwoVec(first,second)) => {
+                                assert_eq!(first.len(),1);assert_eq!(second.len(),2);
+                                assert!(matches!(first[0],Proc::PZero));assert!(matches!(second[1],Proc::PZero));
+                                if matches!(operation,BindingOperation::Clone) {
+                                    assert!(matches!(&second[0],Proc::#var(OrdVar(Var::Free(v))) if v.unique_id==name.unique_id));
+                                } else {check_bound(&second[0],0);}
+                            },
+                            _ => panic!("vector constructor preserved"),
+                        }
+                    }
+                }
+                let vector_mixed=Proc::PVecMixed("vector prefix".into(),
+                    vec![child.as_ref().clone(),Proc::PZero],child.clone(),predicate.clone());
+                let vector_scope=Proc::PVecScope(vec![child.as_ref().clone(),Proc::PZero],
+                    Scope::from_parts_unsafe(vec![pattern.clone()],child.clone()));
+                for state in [moniker::ScopeState::new(),moniker::ScopeState::new().incr().incr()] {
+                    for operation in [BindingOperation::Clone,BindingOperation::Close {state,binders:&roster}] {
+                        let (copied,_) = exercise(&vector_mixed,operation);
+                        let Proc::PVecMixed(prefix,values,tail,pred) = &copied else {panic!("mixed vector");};
+                        assert_eq!(prefix,"vector prefix"); assert_eq!(pred,&predicate);
+                        assert_eq!(values.len(),2); assert!(matches!(values[1],Proc::PZero));
+                        if matches!(operation,BindingOperation::Clone) {
+                            assert!(Arc::ptr_eq(tail,&child));
+                            assert!(matches!(&values[0],Proc::#var(OrdVar(Var::Free(v)))
+                                if v.unique_id==name.unique_id && v.pretty_name==name.pretty_name));
+                        } else {check_bound(&values[0],state.depth().0);check_bound(tail,state.depth().0);}
+                        let (copied,_) = exercise(&vector_scope,operation);
+                        let Proc::PVecScope(values,scope) = &copied else {panic!("vector scope");};
+                        assert_eq!(values.len(),2); assert!(matches!(values[1],Proc::PZero));
+                        assert_eq!(scope.unsafe_pattern()[0].0.unique_id,pattern.0.unique_id);
+                        if matches!(operation,BindingOperation::Clone) {
+                            assert!(Arc::ptr_eq(scope.unsafe_body(),&child));
+                            assert!(matches!(&values[0],Proc::#var(OrdVar(Var::Free(v))) if v.unique_id==name.unique_id));
+                        } else {
+                            check_bound(&values[0],state.depth().0);
+                            check_bound(scope.unsafe_body(),state.depth().0+1);
+                            let (opened,_) = exercise(&copied,BindingOperation::Open {state,binders:&roster});
+                            let Proc::PVecScope(values,scope) = &opened else {panic!("opened vector scope");};
+                            for term in [&values[0],scope.unsafe_body().as_ref()] {
+                                assert!(matches!(term,Proc::#var(OrdVar(Var::Free(v))) if v.unique_id==name.unique_id));
+                            }
+                        }
+                    }
+                }
+                for operation in [BindingOperation::Clone,
+                    BindingOperation::Close { state:moniker::ScopeState::new(),binders:&roster }] {
+                    let (copied,_) = exercise(&text_scope,operation);
+                    let Proc::PTextScope(scope) = &copied else { panic!("cross-category scope"); };
+                    assert_eq!(scope.unsafe_pattern().0.unique_id,pattern.0.unique_id);
+                    assert!(matches!(scope.unsafe_body().as_ref(),Text::#text_label(text) if text=="body category"));
+                    if matches!(operation,BindingOperation::Clone) {
+                        assert!(Arc::ptr_eq(scope.unsafe_body(),&text_body));
+                    } else {
+                        assert!(!Arc::ptr_eq(scope.unsafe_body(),&text_body));
+                    }
+                }
+                let (cloned,_) = exercise(&single,BindingOperation::Clone);
+                let Proc::PSingle(pre,scope) = &cloned else { panic!("single clone"); };
+                assert!(Arc::ptr_eq(pre,&child));
+                assert!(Arc::ptr_eq(scope.unsafe_body(),&child));
+                assert_eq!(scope.unsafe_pattern().0.unique_id,pattern.0.unique_id);
+                assert_eq!(scope.unsafe_pattern().0.pretty_name,pattern.0.pretty_name);
+                for state in [moniker::ScopeState::new(),moniker::ScopeState::new().incr().incr()] {
+                    let close = BindingOperation::Close { state, binders:&roster };
+                    let open = BindingOperation::Open { state, binders:&roster };
+                    let (closed,_) = exercise(&single,close);
+                    let Proc::PSingle(pre,scope) = &closed else { panic!("single close"); };
+                    check_bound(pre,state.depth().0);
+                    check_bound(scope.unsafe_body(),state.depth().0+1);
+                    assert_eq!(scope.unsafe_pattern().0.unique_id,pattern.0.unique_id);
+                    assert_eq!(scope.unsafe_pattern().0.pretty_name,pattern.0.pretty_name);
+                    let (opened,_) = exercise(&closed,open);
+                    let Proc::PSingle(pre,scope) = &opened else { panic!("single open"); };
+                    for term in [pre,scope.unsafe_body()] {
+                        assert!(matches!(term.as_ref(),Proc::#var(OrdVar(Var::Free(v)))
+                            if v.unique_id==name.unique_id && v.pretty_name==name.pretty_name));
+                    }
+                    let (guarded,_) = exercise(&guarded,close);
+                    let Proc::PGuardScope(pred,scope) = &guarded else { panic!("scope predicate"); };
+                    assert_eq!(pred,&predicate); check_bound(scope.unsafe_body(),state.depth().0+1);
+                    let mut duplicate = name.clone(); duplicate.pretty_name=Some("duplicate hint".into());
+                    let same_name = FreeVar::fresh_named("bound");
+                    assert_ne!(same_name.unique_id,name.unique_id);
+                    for pattern in [vec![],vec![Binder(name.clone())],
+                        vec![Binder(duplicate),Binder(same_name),Binder(name.clone())]] {
+                        let multi = Proc::PMulti(Scope::from_parts_unsafe(pattern.clone(),child.clone()));
+                        for operation in [BindingOperation::Clone,close] {
+                            let (copied,_) = exercise(&multi,operation);
+                            let Proc::PMulti(scope) = &copied else { panic!("multi scope"); };
+                            assert_eq!(scope.unsafe_pattern().len(),pattern.len());
+                            for (a,b) in scope.unsafe_pattern().iter().zip(&pattern) {
+                                assert_eq!(a.0.unique_id,b.0.unique_id);
+                                assert_eq!(a.0.pretty_name,b.0.pretty_name);
+                            }
+                            match operation {
+                                BindingOperation::Clone => assert!(Arc::ptr_eq(scope.unsafe_body(),&child)),
+                                _ => {
+                                    check_bound(scope.unsafe_body(),state.depth().0+1);
+                                    let (opened,_) = exercise(&copied,open);
+                                    let Proc::PMulti(scope) = &opened else { panic!("multi open"); };
+                                    assert!(matches!(scope.unsafe_body().as_ref(),Proc::#var(OrdVar(Var::Free(v)))
+                                        if v.unique_id==name.unique_id && v.pretty_name==name.pretty_name));
+                                },
+                            }
+                        }
+                    }
+                    let nested = Proc::PMulti(Scope::from_parts_unsafe(vec![],Arc::new(single.clone())));
+                    let (closed,_) = exercise(&nested,close);
+                    let Proc::PMulti(outer) = &closed else { panic!("outer scope"); };
+                    let Proc::PSingle(pre,inner) = outer.unsafe_body().as_ref() else { panic!("inner scope"); };
+                    check_bound(pre,state.depth().0+1);
+                    check_bound(inner.unsafe_body(),state.depth().0+2);
+                }
                 assert!(matches!(child.as_ref(), Proc::#var(OrdVar(Var::Free(v)))
                     if v.unique_id == name.unique_id));
                 std::thread::Builder::new().stack_size(256*1024).spawn(|| {
@@ -1991,6 +2436,54 @@ mod tests {
                         });
                         assert!(matches!(refused, Err(BindingFailure::Reservation(()))));
                         pools_empty();
+                    }
+                    drop(source); pools_empty();
+                    let mut source = Proc::PZero;
+                    for _ in 0..20_000 {source=Proc::PTwoVec(vec![source],vec![]);}
+                    for operation in [BindingOperation::Clone,
+                        BindingOperation::Close {state:moniker::ScopeState::new(),binders:&[]}] {
+                        let mut calls=0;
+                        let copied=source.try_copy_iterative(operation,&mut |_,_| {
+                            calls+=1;Ok::<_,()>(())
+                        }).expect("deep owned vector binding");
+                        let mut cursor=&copied;
+                        for _ in 0..20_000 {
+                            let Proc::PTwoVec(first,second)=cursor else {panic!("vector spine");};
+                            assert_eq!(first.len(),1);assert!(second.is_empty());cursor=&first[0];
+                        }
+                        assert!(matches!(cursor,Proc::PZero));drop(copied);
+                        for stop in [calls/2,calls-3,calls] {
+                            let mut observed=0;
+                            let failed=source.try_copy_iterative(operation,&mut |_,_| {
+                                observed+=1;if observed==stop {Err(())} else {Ok(())}
+                            });
+                            assert!(matches!(failed,Err(BindingFailure::Reservation(()))));pools_empty();
+                        }
+                    }
+                    drop(source);pools_empty();
+                    let name = FreeVar::fresh_named("deep");
+                    let roster = [Binder(name.clone())];
+                    let mut source = Proc::#var(OrdVar(Var::Free(name)));
+                    for _ in 0..20_000 {
+                        source = Proc::PMulti(Scope::from_parts_unsafe(vec![],Arc::new(source)));
+                    }
+                    let operation = BindingOperation::Close { state:moniker::ScopeState::new(),binders:&roster };
+                    let mut calls = 0;
+                    let copied = source.try_copy_iterative(operation,&mut |_,_| {
+                        calls+=1; Ok::<_,()>(())
+                    }).expect("deep scope binding");
+                    let mut cursor = &copied;
+                    for _ in 0..20_000 {
+                        let Proc::PMulti(scope) = cursor else { panic!("scope spine"); };
+                        assert!(scope.unsafe_pattern().is_empty()); cursor=scope.unsafe_body();
+                    }
+                    check_bound(cursor,20_000); drop(copied);
+                    for stop in [calls/2,calls-3,calls] {
+                        let mut observed=0;
+                        let failed=source.try_copy_iterative(operation,&mut |_,_| {
+                            observed+=1; if observed==stop {Err(())} else {Ok(())}
+                        });
+                        assert!(matches!(failed,Err(BindingFailure::Reservation(())))); pools_empty();
                     }
                     drop(source); pools_empty();
                 }).expect("spawn scalar small-stack worker").join().expect("scalar small-stack worker");
