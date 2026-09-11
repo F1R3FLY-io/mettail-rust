@@ -151,14 +151,7 @@ const fn arc_default(
         Ok(value) => value,
         Err(error) => return Err(error),
     };
-    let release = match inner
-        .field_glue
-        .checked_add(Counts::singleton(Event::ReleaseFieldArc, 1))
-    {
-        Ok(value) => value,
-        Err(error) => return Err(error),
-    };
-    let field_glue = match release.checked_add(Counts::singleton(Event::CheckArcOwner, 1)) {
+    let field_glue = match inner.field_glue.checked_add(Counts::ARC_RELEASE) {
         Ok(value) => value,
         Err(error) => return Err(error),
     };

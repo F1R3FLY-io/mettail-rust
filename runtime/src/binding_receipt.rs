@@ -95,6 +95,15 @@ pub struct Counts([usize; EVENT_COUNT]);
 impl Counts {
     pub const ZERO: Self = Self([0; EVENT_COUNT]);
 
+    /// Automatic wrapper release and its last-strong-owner check. This is
+    /// separate from the extraction-time `Arc::into_inner` ownership check.
+    pub const ARC_RELEASE: Self = {
+        let mut result = Self::ZERO;
+        result.0[Event::ReleaseFieldArc as usize] = 1;
+        result.0[Event::CheckArcOwner as usize] = 1;
+        result
+    };
+
     pub const fn singleton(event: Event, count: usize) -> Self {
         let mut result = Self::ZERO;
         result.0[event as usize] = count;
@@ -262,6 +271,7 @@ pub const fn compose(
     children: &[Receipt],
 ) -> Result<Receipt, ReceiptOverflow> {
     let arity = children.len();
+    let arc_release = checked_receipt!(Counts::ARC_RELEASE.checked_scale(arity));
     let mut result = Receipt::ZERO;
     let mut event_index = 0;
     while event_index < EVENT_COUNT {
@@ -294,10 +304,8 @@ pub const fn compose(
                 child_c,
             ]
         ));
-        let glue = checked_receipt!(sum(
-            event,
-            &[local.field_glue.get(event), occurrences(event, Event::ReleaseFieldArc, arity),]
-        ));
+        let glue =
+            checked_receipt!(sum(event, &[local.field_glue.get(event), arc_release.get(event)]));
 
         result.construction.0[event_index] = checked_receipt!(sum(
             event,
@@ -396,7 +404,11 @@ mod tests {
             );
             assert_eq!(
                 receipt.active_drop,
-                counts(&[(EnterDestructor, 1 + arity), (ReleaseFieldArc, arity),])
+                counts(&[
+                    (EnterDestructor, 1 + arity),
+                    (ReleaseFieldArc, arity),
+                    (CheckArcOwner, arity),
+                ])
             );
             assert_eq!(
                 receipt.popped_drop,
@@ -406,7 +418,7 @@ mod tests {
                     (EnterDestructor, 1 + 2 * arity),
                     (ReleaseFieldArc, arity),
                     (AllocateArc, arity),
-                    (CheckArcOwner, arity),
+                    (CheckArcOwner, 2 * arity),
                     (PushDropTask, arity),
                     (ConstructCategory, arity),
                 ])
@@ -421,12 +433,24 @@ mod tests {
                     (ExtractChildren, 1 + 2 * arity),
                     (ReleaseFieldArc, arity),
                     (AllocateArc, arity),
-                    (CheckArcOwner, arity),
+                    (CheckArcOwner, 2 * arity),
                     (PushDropTask, arity),
                     (ConstructCategory, arity),
                 ])
             );
         }
+    }
+
+    #[test]
+    fn automatic_arc_release_matches_the_native_default_contract() {
+        use std::sync::Arc;
+        let expected = counts(&[(Event::ReleaseFieldArc, 1), (Event::CheckArcOwner, 1)]);
+        assert_eq!(Counts::ARC_RELEASE, expected);
+        let native =
+            <Arc<()> as BindingDefaultReceipt>::DEFAULT_RECEIPT.expect("unit Arc default receipt");
+        assert_eq!(native.field_glue, expected);
+        let projected = BindingCharge::from_counts(expected).expect("two release events fit");
+        assert_eq!(projected, BindingCharge::new(2, 0, 0).expect("small release charge"));
     }
 
     #[test]

@@ -255,6 +255,14 @@ and proves that normal-cleanup credit also covers active cleanup under any
 nonnegative event weighting. It composes the resulting construction and cleanup
 charges with the existing preparation reservation laws; it is not another meter.
 
+Each retained or replacement child Arc's automatic cleanup includes both
+wrapper release and a last-strong-owner check. The shared `Counts::ARC_RELEASE`
+contract contributes two logical work events and no records or bytes. This
+check is distinct from the earlier `Arc::into_inner` check on the extracted
+original child; normal and popped cleanup include both, while active cleanup
+includes only automatic release. The native Arc-default contract uses the same
+two-event expression. Child category cleanup remains a separate contribution.
+
 Native/default construction and flat field cleanup remain explicit local
 contracts. Copying an existing canonical numeric handle does not establish the
 cost of constructing its default value. Type names likewise do not establish
