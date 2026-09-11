@@ -410,6 +410,39 @@ Neither premise follows merely from having a charge table. These laws do not
 yet establish the complete generated traversal, concrete collection insertion
 costs, panic recovery, or physical allocation bounds.
 
+#### Scalar category fields
+
+The checked emitter handles required `Arc<Category>` and optional
+`Option<Arc<Category>>` fields through the existing task and result-slot
+machine. Clone preserves shallow sharing with the borrowed source. Open and
+Close visit each present child with the parent's inherited binding state;
+crossing a scalar field does not introduce a lexical scope. Slots follow source
+field order, while visits are pushed in reverse order onto the task stack.
+
+The [scalar-field model](../../formal/rocq/rho_bridge/theories/ScalarArcBindingReservation.v)
+instantiates the partial-output algebra with these local charges:
+
+| Field | Clone: work / records | Open or Close: work / records |
+| --- | --- | --- |
+| Required Arc | 6 / 2, plus selected dummy charge | 7 / 3, plus selected dummy charge |
+| Optional, present | 7 / 3 | 8 / 4 |
+| Optional, absent | 5 / 2 | 5 / 2 |
+
+These exclude the parent's six-work/two-record base, task and slot transitions,
+and already-admitted child outputs. Only a required field constructs a selected
+replacement dummy; optional extraction leaves `None`. The source-pinned Clone
+premise applies during normal-error cleanup, not after arbitrary later owner
+destruction. It is not a bound on an arbitrary shared subtree's lifetime.
+
+Assembly first admits every local charge, then takes **all** child results into
+bare category locals. Only after every take succeeds does it construct the
+Arc wrappers and parent, with no intervening fallible callback. A failed take
+therefore disposes credited bare children; failed publication disposes a fully
+admitted parent. The generated-code fixture checks sharing, cross-category
+fields, optional presence, variable binding, every small-case refusal boundary,
+and a 20,000-level chain on a 256 KiB stack. Checked generation remains inactive
+in production until the remaining field and scope cases are integrated.
+
 The [ordered-reconstruction model](../../formal/rocq/rho_bridge/theories/OrderedBindingReconstruction.v)
 supplies the corresponding map, set and PathMap width and partition laws for
 its existing insertion operation. Retained entry count cannot exceed the

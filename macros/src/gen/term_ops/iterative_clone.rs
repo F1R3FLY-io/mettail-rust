@@ -229,7 +229,7 @@ fn generate_task_enum(language: &LanguageDef, emission: &CloneEmissionNames) -> 
     for ty in &language.types {
         let category = &ty.name;
         for variant in collect_category_variants(category, language) {
-            if let Some(task) = generate_assemble_task(category, &variant) {
+            if let Some(task) = generate_assemble_task(category, &variant, emission) {
                 assemblies.push(task);
             }
         }
@@ -251,8 +251,24 @@ fn generate_task_enum(language: &LanguageDef, emission: &CloneEmissionNames) -> 
     }
 }
 
-fn generate_assemble_task(category: &Ident, variant: &VariantKind) -> Option<TokenStream> {
+fn checked_scalar_fields(fields: &[FieldInfo], emission: &CloneEmissionNames) -> bool {
+    emission.checked.is_some()
+        && fields
+            .iter()
+            .all(|field| !field.is_collection && !field.is_predicate && !field.is_opaque_leaf())
+}
+
+fn generate_assemble_task(
+    category: &Ident,
+    variant: &VariantKind,
+    emission: &CloneEmissionNames,
+) -> Option<TokenStream> {
     let (label, fields, prefix) = match variant {
+        VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => {
+            let task = format_ident!("Assemble{}_{}", category, label);
+            let slots = scalar_slot_fields(fields);
+            return Some(quote! { #task { slot: usize, #(#slots),* } });
+        },
         VariantKind::Regular { label, fields } if fields.iter().any(|f| f.is_collection) => {
             (label, fields.as_slice(), "f")
         },
@@ -439,7 +455,11 @@ fn generate_visit_arm(
             }
         },
         VariantKind::Regular { label, fields } => {
-            generate_structured_visit(category, label, fields, false, emission)
+            if checked_scalar_fields(fields, emission) {
+                generate_scalar_visit(category, label, fields, emission)
+            } else {
+                generate_structured_visit(category, label, fields, false, emission)
+            }
         },
         VariantKind::Binder { label, pre_scope_fields, .. }
         | VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
@@ -510,6 +530,196 @@ fn generate_recursive_native_visit(
             #pushes
             debug_assert_eq!(__native_next_slot, __native_start);
         }
+    }
+}
+
+fn scalar_slot_fields(fields: &[FieldInfo]) -> Vec<TokenStream> {
+    fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let slot = format_ident!("field_{}_slot", index);
+            if field.is_optional {
+                quote! { #slot: Option<usize> }
+            } else {
+                quote! { #slot: usize }
+            }
+        })
+        .collect()
+}
+
+// ScalarArcBindingReservation supplies these field-local projections. Parent,
+// worker/slot charges and existing child credit remain separate.
+fn scalar_field_admission(
+    field: &FieldInfo,
+    present: TokenStream,
+    owned: bool,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    if field.is_optional {
+        let (work, records) = if owned { (8usize, 4usize) } else { (7, 3) };
+        quote! {
+            let (work, records) = if #present { (#work, #records) } else { (5, 2) };
+            mettail_runtime::reserve_binding_parts(work, records, 0, reserve)?;
+        }
+    } else {
+        let dummy = match emission.dummy_charge(&field.category) {
+            Ok(charge) => charge,
+            Err(error) => return error.into_compile_error(),
+        };
+        let (work, records) = if owned { (7usize, 3usize) } else { (6, 2) };
+        quote! {
+            mettail_runtime::reserve_binding_parts(#work, #records, 0, reserve)?;
+            #dummy.reserve(reserve)?;
+        }
+    }
+}
+
+fn generate_scalar_visit(
+    category: &Ident,
+    label: &Ident,
+    fields: &[FieldInfo],
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    let names: Vec<_> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let slots: Vec<_> = (0..fields.len())
+        .map(|i| format_ident!("field_{}_slot", i))
+        .collect();
+    let base = emission.base_admission();
+    let admissions = fields.iter().zip(&names).map(|(field, name)| {
+        scalar_field_admission(field, quote! { #name.is_some() }, false, emission)
+    });
+    let clones = names.iter().map(|name| quote! { #name.clone() });
+    let publish = emission.publish(category, quote! { #category::#label(#(#clones),*) });
+    let allocations = fields.iter().zip(&names).zip(&slots).map(|((field, name), slot)| {
+        if field.is_optional {
+            quote! {
+                let #slot = match #name {
+                    Some(_) => Some(mettail_runtime::append_binding_slots(results, 1, reserve)?),
+                    None => None,
+                };
+            }
+        } else {
+            quote! { let #slot = mettail_runtime::append_binding_slots(results, 1, reserve)?; }
+        }
+    });
+    let task_enum = &emission.task_enum;
+    let task = format_ident!("Assemble{}_{}", category, label);
+    let assemble = emission.push_task(
+        quote! { #task_enum::#task { slot, #(#slots),* } },
+        quote! { operation.state() },
+    );
+    let pushes = fields
+        .iter()
+        .zip(&names)
+        .zip(&slots)
+        .rev()
+        .map(|((field, name), slot)| {
+            let visit = format_ident!("Clone{}", field.category);
+            let push = emission.push_task(
+                quote! { #task_enum::#visit { src: child.as_ref() as *const _, slot: child_slot } },
+                quote! { operation.state() },
+            );
+            if field.is_optional {
+                quote! {
+                    if let (Some(child), Some(child_slot)) = (#name.as_ref(), #slot) { #push }
+                }
+            } else {
+                quote! { let child = #name; let child_slot = #slot; #push }
+            }
+        });
+    quote! {
+        #category::#label(#(ref #names),*) => {
+            match operation {
+                mettail_runtime::BindingOperation::Clone => {
+                    #base
+                    #(#admissions)*
+                    // No fallible call occurs between cloning the handles
+                    // and forming the parent passed to checked publication.
+                    #publish
+                },
+                mettail_runtime::BindingOperation::Open { .. }
+                | mettail_runtime::BindingOperation::Close { .. } => {
+                    #(#allocations)*
+                    #assemble
+                    #(#pushes)*
+                },
+            }
+        }
+    }
+}
+
+fn generate_scalar_assemble(
+    category: &Ident,
+    label: &Ident,
+    fields: &[FieldInfo],
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let task = format_ident!("Assemble{}_{}", category, label);
+    let slots: Vec<_> = (0..fields.len())
+        .map(|i| format_ident!("field_{}_slot", i))
+        .collect();
+    let slot_fields = scalar_slot_fields(fields);
+    let base = emission.base_admission();
+    let admissions = fields.iter().zip(&slots).map(|(field, slot)| {
+        scalar_field_admission(field, quote! { #slot.is_some() }, true, emission)
+    });
+    let bare: Vec<_> = (0..fields.len())
+        .map(|i| format_ident!("bare_{}", i))
+        .collect();
+    let takes = fields
+        .iter()
+        .zip(&slots)
+        .zip(&bare)
+        .map(|((field, slot), bare)| {
+            let wrap = format_ident!("Wrap{}", field.category);
+            let take = quote! {
+                match mettail_runtime::take_binding_slot(results, child_slot,
+                    |value| matches!(value, AnyClonedTerm::#wrap(_)), reserve)? {
+                    AnyClonedTerm::#wrap(child) => child,
+                    _ => unreachable!("checked category discriminant is unchanged during take"),
+                }
+            };
+            if field.is_optional {
+                quote! {
+                    let #bare = match #slot {
+                        Some(child_slot) => Some(#take),
+                        None => None,
+                    };
+                }
+            } else {
+                quote! { let child_slot = #slot; let #bare = #take; }
+            }
+        });
+    let wrappers = fields.iter().zip(&bare).map(|(field, bare)| {
+        if field.is_optional {
+            quote! { #bare.map(std::sync::Arc::new) }
+        } else {
+            quote! { std::sync::Arc::new(#bare) }
+        }
+    });
+    let publish = emission.publish(category, quote! { #category::#label(#(#wrappers),*) });
+    quote! {
+        #task_enum::#task { slot, #(#slots),* } => {
+            #[inline(never)]
+            fn assemble<E>(
+                results: &mut Vec<Option<AnyClonedTerm>>,
+                slot: usize,
+                #(#slot_fields,)*
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                dummy_charges: &[mettail_runtime::binding_receipt::BindingCharge],
+            ) -> Result<(), mettail_runtime::BindingFailure<E>> {
+                #base
+                #(#admissions)*
+                // Every fallible take precedes ALL wrapper construction.
+                // Failure here drops only already-admitted bare categories.
+                #(#takes)*
+                #publish
+                Ok(())
+            }
+            assemble(results, slot, #(#slots,)* reserve, dummy_charges)?;
+        },
     }
 }
 
@@ -721,6 +931,9 @@ fn generate_assemble_arm(
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
     match variant {
+        VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => {
+            Some(generate_scalar_assemble(category, label, fields, emission))
+        },
         VariantKind::Regular { label, fields } if fields.iter().any(|f| f.is_collection) => {
             Some(generate_structured_assemble(
                 category,
@@ -1455,6 +1668,202 @@ mod tests {
             std::fs::create_dir_all(&directory).expect("create checked fixture directory");
             std::fs::write(directory.join("checked-leaf.rs"), fixture.to_string())
                 .expect("write actual checked emitter fixture");
+        }
+    }
+
+    #[test]
+    fn checked_scalar_fields_preserve_sharing_binding_and_partial_cleanup() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: CheckedScalarFixture,
+            types { Proc ![str] as Text },
+            terms {
+                PZero . |- "0" : Proc;
+                PUnary . child:Proc |- "unary" child : Proc;
+                PPair . left:Proc, right:Proc |- "pair" left right : Proc;
+                PMaybe . *opt(child:Proc) |- "maybe" *opt(child) : Proc;
+                PText . text:Text |- "text" text : Proc;
+            },
+            equations {}, rewrites {},
+        "#,
+        )
+        .expect("scalar category field fixture");
+        let plan = super::super::iterative_drop::select_dummy_plan(&language);
+        let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
+            .expect("selected scalar fixture receipts");
+        let checked = CloneEmissionNames::checked(&receipts);
+        let enum_types: Vec<_> = language
+            .types
+            .iter()
+            .map(|ty| {
+                let category = &ty.name;
+                let variants: Vec<_> = collect_category_variants(category, &language)
+                    .iter()
+                    .map(|v| match v {
+                        VariantKind::Nullary { label } => quote! { #label },
+                        VariantKind::Var { label } => quote! { #label(mettail_runtime::OrdVar) },
+                        VariantKind::Literal { label } => quote! { #label(String) },
+                        VariantKind::Regular { label, fields } => {
+                            assert!(checked_scalar_fields(fields, &checked));
+                            let types = fields.iter().map(|field| {
+                                let child = &field.category;
+                                if field.is_optional {
+                                    quote! { Option<Arc<#child>> }
+                                } else {
+                                    quote! { Arc<#child> }
+                                }
+                            });
+                            quote! { #label(#(#types),*) }
+                        },
+                        _ => panic!("unexpected nonscalar fixture variant"),
+                    })
+                    .collect();
+                quote! { enum #category { #(#variants),* } }
+            })
+            .collect();
+        let var = crate::gen::generate_var_label(&format_ident!("Proc"));
+        let text_label = collect_category_variants(&format_ident!("Text"), &language)
+            .into_iter()
+            .find_map(|v| match v {
+                VariantKind::Literal { label } => Some(label),
+                _ => None,
+            })
+            .expect("text literal");
+        let ordinary = generate_iterative_clone(&language);
+        let tasks = generate_task_enum(&language, &checked);
+        let engine = generate_engine(&language, &checked);
+        let impls = generate_impls(&language, &checked);
+        let drop = super::super::iterative_drop::generate_iterative_drop(&language);
+        let table = receipts.tokens;
+        let fixture = quote! {
+            #![allow(dead_code, unused_variables, unreachable_patterns, non_snake_case)]
+            use std::sync::Arc;
+            use mettail_runtime::{Binder, BindingFailure, BindingOperation,
+                CheckedIterativeBinding, FreeVar, OrdVar, Var};
+            #(#enum_types)* #ordinary #tasks #engine #impls #drop #table
+
+            fn pools_empty() {
+                CHECKED_BINDING_TASK_POOL.with(|pool| {
+                    let value = pool.take(); assert!(value.is_empty()); pool.set(value);
+                });
+                CHECKED_BINDING_RESULT_POOL.with(|pool| {
+                    let value = pool.take(); assert!(value.is_empty()); pool.set(value);
+                });
+            }
+            fn exercise(source: &Proc, operation: BindingOperation<'_>) -> (Proc, (usize,usize)) {
+                let mut trace = Vec::new();
+                let result = source.try_copy_iterative(operation, &mut |w,u| {
+                    trace.push((w,u)); Ok::<_, usize>(())
+                }).expect("successful scalar copy");
+                let total = trace.iter().fold((0,0), |(w,u),(x,y)| (w+x,u+y));
+                for stop in 1..=trace.len() {
+                    let mut observed = Vec::new();
+                    let failed = source.try_copy_iterative(operation, &mut |w,u| {
+                        observed.push((w,u));
+                        if observed.len() == stop { Err(stop) } else { Ok(()) }
+                    });
+                    assert!(matches!(failed, Err(BindingFailure::Reservation(n)) if n == stop));
+                    assert_eq!(observed, trace[..stop]); pools_empty();
+                }
+                for limit in [(total.0-1,total.1),(total.0,total.1-1),total] {
+                    let mut used = (0,0);
+                    let result = source.try_copy_iterative(operation, &mut |w,u| {
+                        if w > limit.0-used.0 || u > limit.1-used.1 { return Err(()); }
+                        used.0 += w; used.1 += u; Ok(())
+                    });
+                    assert_eq!(result.is_ok(), limit == total); pools_empty();
+                }
+                (result, total)
+            }
+            fn check_bound(value: &Proc, depth: u32) {
+                assert!(matches!(value, Proc::#var(OrdVar(Var::Bound(v)))
+                    if v.scope == moniker::ScopeOffset(depth) && v.binder == moniker::BinderIndex(0)));
+            }
+            fn main() {
+                let close = BindingOperation::Close { state: moniker::ScopeState::new(), binders: &[] };
+                let unary = Proc::PUnary(Arc::new(Proc::PZero));
+                assert_eq!(exercise(&unary, BindingOperation::Clone).1, (23,40));
+                assert_eq!(exercise(&unary, close).1, (37,64));
+                for present in [false,true] {
+                    let maybe = Proc::PMaybe(present.then(|| Arc::new(Proc::PZero)));
+                    for operation in [BindingOperation::Clone, close] {
+                        let (copied,_) = exercise(&maybe, operation);
+                        assert!(matches!(&copied, Proc::PMaybe(value) if value.is_some() == present));
+                    }
+                }
+                let text = Proc::PText(Arc::new(Text::#text_label("λ雪".into())));
+                let (copied,_) = exercise(&text, close);
+                assert!(matches!(&copied, Proc::PText(value)
+                    if matches!(value.as_ref(), Text::#text_label(s) if s == "λ雪")));
+                let name = FreeVar::fresh_named("bound");
+                let child = Arc::new(Proc::#var(OrdVar(Var::Free(name.clone()))));
+                let pair = Proc::PPair(child.clone(), child.clone());
+                let (copied,_) = exercise(&pair, BindingOperation::Clone);
+                assert!(matches!(&copied, Proc::PPair(a,b)
+                    if Arc::ptr_eq(a,&child) && Arc::ptr_eq(b,&child)));
+                let roster = [Binder(name.clone())];
+                for state in [moniker::ScopeState::new(), moniker::ScopeState::new().incr().incr()] {
+                    let optional = Proc::PMaybe(Some(child.clone()));
+                    let (closed_optional,_) = exercise(&optional,
+                        BindingOperation::Close { state, binders: &roster });
+                    let Proc::PMaybe(Some(value)) = &closed_optional else { panic!("optional shape"); };
+                    check_bound(value,state.depth().0);
+                    let (closed,_) = exercise(&pair, BindingOperation::Close { state, binders: &roster });
+                    let Proc::PPair(left,right) = &closed else { panic!("pair shape"); };
+                    assert!(!Arc::ptr_eq(left,right));
+                    check_bound(left,state.depth().0); check_bound(right,state.depth().0);
+                    let (opened,_) = exercise(&closed, BindingOperation::Open { state, binders: &roster });
+                    let Proc::PPair(left,right) = &opened else { panic!("opened pair shape"); };
+                    for value in [left,right] {
+                        assert!(matches!(value.as_ref(), Proc::#var(OrdVar(Var::Free(v)))
+                            if v.unique_id == name.unique_id));
+                    }
+                }
+                assert!(matches!(child.as_ref(), Proc::#var(OrdVar(Var::Free(v)))
+                    if v.unique_id == name.unique_id));
+                std::thread::Builder::new().stack_size(256*1024).spawn(|| {
+                    let mut source = Proc::PZero;
+                    for depth in 0..20_000 {
+                        source = if depth % 2 == 0 { Proc::PUnary(Arc::new(source)) }
+                            else { Proc::PMaybe(Some(Arc::new(source))) };
+                    }
+                    let operation = BindingOperation::Close {
+                        state: moniker::ScopeState::new(), binders: &[],
+                    };
+                    let mut calls = 0;
+                    let copied = source.try_copy_iterative(operation, &mut |_,_| {
+                        calls += 1; Ok::<_, ()>(())
+                    }).expect("deep checked binding");
+                    let mut cursor = &copied;
+                    for _ in 0..20_000 {
+                        cursor = match cursor {
+                            Proc::PUnary(child) | Proc::PMaybe(Some(child)) => child,
+                            _ => panic!("deep spine shape"),
+                        };
+                    }
+                    assert!(matches!(cursor, Proc::PZero));
+                    drop(copied);
+                    for stop in [calls/2, calls-3, calls] {
+                        let mut observed = 0;
+                        let refused = source.try_copy_iterative(operation, &mut |_,_| {
+                            observed += 1;
+                            if observed == stop { Err(()) } else { Ok(()) }
+                        });
+                        assert!(matches!(refused, Err(BindingFailure::Reservation(()))));
+                        pools_empty();
+                    }
+                    drop(source); pools_empty();
+                }).expect("spawn scalar small-stack worker").join().expect("scalar small-stack worker");
+                println!("checked scalar sharing, binding, refusal and 20k-depth cleanup verified");
+            }
+        };
+        syn::parse2::<syn::File>(fixture.clone()).expect("checked scalar generated Rust syntax");
+        if std::env::var_os("METTAIL_CAPTURE_CHECKED_BINDING").is_some() {
+            let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/verification/clone-emitter");
+            std::fs::create_dir_all(&directory).expect("create scalar fixture directory");
+            std::fs::write(directory.join("checked-scalars.rs"), fixture.to_string())
+                .expect("write actual checked scalar fixture");
         }
     }
 
