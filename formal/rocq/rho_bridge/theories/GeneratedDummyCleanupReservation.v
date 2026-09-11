@@ -53,6 +53,12 @@ Definition Counts := Event -> nat.
 Definition atom (event : Event) : Counts :=
   fun observed => if event_eq_dec event observed then 1 else 0.
 
+(** Automatic Arc field cleanup releases the wrapper and checks whether it
+    was the last strong owner. This is distinct from the earlier into_inner
+    check used while extracting an original child. *)
+Definition arc_release event :=
+  atom ReleaseFieldArc event + atom CheckArcOwner event.
+
 Record Receipt := {
   construction : Counts;
   extraction : Counts;
@@ -97,7 +103,7 @@ Definition recipe_algebra (tag : nat) (children : list Receipt) : Receipt :=
       + sum_receipts construction children event in
   let glue : Counts := fun event =>
       local_field_glue tag event
-      + arity * atom ReleaseFieldArc event in
+      + arity * arc_release event in
   {|
     construction := fun event =>
       atom ConstructCategory event
@@ -299,6 +305,12 @@ Proof.
   lia.
 Qed.
 
+Theorem automatic_arc_release_projects_two_work_no_records :
+  weighted base_work_weight arc_release = 2 /\
+  weighted record_weight arc_release = 0 /\
+  weighted byte_weight arc_release = 0.
+Proof. repeat split; reflexivity. Qed.
+
 Section Reservation.
 
 Variable local_construction : nat -> Counts.
@@ -409,6 +421,7 @@ Print Assumptions existing_worklist_computes_receipt.
 Print Assumptions weighted_componentwise_bound.
 Print Assumptions logical_work_projects_bytes_once.
 Print Assumptions logical_units_project_records_and_bytes.
+Print Assumptions automatic_arc_release_projects_two_work_no_records.
 Print Assumptions reserved_normal_cleanup_also_covers_active.
 Print Assumptions paid_dummy_success_uses_existing_reservation.
 Print Assumptions cancelled_dummy_has_no_result.
