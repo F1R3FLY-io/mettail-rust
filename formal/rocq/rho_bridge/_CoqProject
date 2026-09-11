@@ -66,6 +66,7 @@ theories/FlatBindingLeafReservation.v
 theories/ScalarArcBindingReservation.v
 theories/BinderPatternCopy.v
 theories/ScopeBindingReservation.v
+theories/RequiredVecBindingReservation.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
