@@ -57,7 +57,7 @@ fn checked_arc_boundary_preserves_clone_sharing_and_admits_binding() {
         })
         .expect("paid shallow clone");
     assert!(Arc::ptr_eq(&source, &cloned));
-    assert_eq!(charges, [(1, 4)]);
+    assert_eq!(charges, [(3, 4)]);
     drop(cloned);
 
     let close = BindingOperation::Close {
@@ -74,7 +74,7 @@ fn checked_arc_boundary_preserves_clone_sharing_and_admits_binding() {
     assert!(!Arc::ptr_eq(&source, &closed));
     assert_exact(&closed, &bound(0, 0, "x"));
     assert_exact(&source, &original);
-    assert_eq!(charges, [(1, 4), (1, 0), (1, 0), (2, 5)]);
+    assert_eq!(charges, [(3, 4), (1, 0), (1, 0), (3, 5)]);
     let mut expected = closed.as_ref().clone();
     expected.open_term(ScopeState::new(), &roster);
     let opened = closed
@@ -104,7 +104,7 @@ fn checked_arc_boundary_preserves_clone_sharing_and_admits_binding() {
         assert_eq!(Arc::strong_count(&source), 1);
         assert_exact(&source, &original);
     }
-    for limit in [(4usize, 9usize), (5, 8), (5, 9)] {
+    for limit in [(7usize, 9usize), (8, 8), (8, 9)] {
         let mut used = (0, 0);
         let result = source.try_copy_iterative(close, &mut |work, units| {
             if work > limit.0 - used.0 || units > limit.1 - used.1 {
@@ -114,12 +114,12 @@ fn checked_arc_boundary_preserves_clone_sharing_and_admits_binding() {
             used.1 += units;
             Ok(())
         });
-        if limit == (5, 9) {
+        if limit == (8, 9) {
             assert_exact(&result.expect("exact limit succeeds after refusals"), &closed);
             assert_eq!(used, limit);
         } else {
             assert_eq!(result, Err(BindingFailure::Reservation("limit")));
-            assert_eq!(used, (3, 4));
+            assert_eq!(used, (5, 4));
         }
     }
 }
@@ -225,22 +225,22 @@ fn close_reservations_are_exact_and_cancellable_inside_identity_scan() {
         state: ScopeState::new(),
         binders: &roster,
     };
-    let (result, used, calls) = copy_with_limits(&source, operation, (6, 6), None);
+    let (result, used, calls) = copy_with_limits(&source, operation, (7, 6), None);
     assert_exact(&result.expect("exact budget"), &bound(0, 1, "λ"));
-    assert_eq!((used, calls), ((6, 6), 4));
-    for limits in [(5, 6), (6, 5)] {
+    assert_eq!((used, calls), ((7, 6), 4));
+    for limits in [(6, 6), (7, 5)] {
         let (result, used, calls) = copy_with_limits(&source, operation, limits, None);
         assert_eq!(result, Err(BindingFailure::Reservation("limit")));
         assert_eq!((used, calls), ((3, 0), 4));
     }
     let original = source.clone();
     for cancelled in 1..=4 {
-        let (result, used, calls) = copy_with_limits(&source, operation, (6, 6), Some(cancelled));
+        let (result, used, calls) = copy_with_limits(&source, operation, (7, 6), Some(cancelled));
         assert_eq!(result, Err(BindingFailure::Reservation("cancelled")));
         assert_eq!((used, calls), ((cancelled - 1, 0), cancelled));
         assert_exact(&source, &original);
     }
-    assert!(copy_with_limits(&source, operation, (6, 6), None).0.is_ok());
+    assert!(copy_with_limits(&source, operation, (7, 6), None).0.is_ok());
 }
 
 #[test]
@@ -252,10 +252,10 @@ fn open_copies_selected_hint_and_rejects_missing_index_only_at_matching_depth() 
         state: ScopeState::new(),
         binders: &roster,
     };
-    let (result, used, calls) = copy_with_limits(&source, operation, (5, 7), None);
+    let (result, used, calls) = copy_with_limits(&source, operation, (6, 7), None);
     assert_exact(&result.expect("exact budget"), &OrdVar(Var::Free(selected)));
-    assert_eq!((used, calls), ((5, 7), 2));
-    for limits in [(4, 7), (5, 6)] {
+    assert_eq!((used, calls), ((6, 7), 2));
+    for limits in [(5, 7), (6, 6)] {
         let (result, used, calls) = copy_with_limits(&source, operation, limits, None);
         assert_eq!(result, Err(BindingFailure::Reservation("limit")));
         assert_eq!((used, calls), ((1, 0), 2));
@@ -272,12 +272,12 @@ fn open_copies_selected_hint_and_rejects_missing_index_only_at_matching_depth() 
     );
     assert_eq!(result, Err(BindingFailure::MissingBinder { index: 99 }));
     assert_eq!((used, calls), ((1, 0), 1));
-    let (result, used, calls) = copy_with_limits(&missing, operation, (3, 5), None);
+    let (result, used, calls) = copy_with_limits(&missing, operation, (4, 5), None);
     let mut expected = missing.clone();
     expected.open_term(ScopeState::new(), &roster);
     assert_exact(&result.expect("different depth preserves index"), &expected);
     assert_exact(&missing, &bound(2, 99, "x"));
-    assert_eq!((used, calls), ((3, 5), 2));
+    assert_eq!((used, calls), ((4, 5), 2));
 }
 
 #[test]
@@ -295,18 +295,53 @@ fn freevar_binding_is_a_paid_noop_and_clone_preserves_variable_fields() {
             binders: &roster,
         },
     ] {
-        let (result, used, calls) = copy_with_limits(&source, operation, (3, 6), None);
+        let (result, used, calls) = copy_with_limits(&source, operation, (4, 6), None);
         assert_exact(
             &OrdVar(Var::Free(result.expect("direct FreeVar copy"))),
             &OrdVar(Var::Free(source.clone())),
         );
-        assert_eq!((used, calls), ((3, 6), 1));
+        assert_eq!((used, calls), ((4, 6), 1));
     }
     for source in [OrdVar(Var::Free(source)), bound(2, 3, "λ")] {
         let (result, used, calls) =
-            copy_with_limits(&source, BindingOperation::Clone, (4, 6), None);
+            copy_with_limits(&source, BindingOperation::Clone, (5, 6), None);
         assert_exact(&result.expect("variable clone"), &source);
-        assert_eq!((used, calls), ((4, 6), 2));
+        assert_eq!((used, calls), ((5, 6), 2));
+    }
+}
+
+#[test]
+fn variable_cleanup_tracks_the_selected_optional_name_not_its_spelling() {
+    let unnamed: FreeVar<String> = FreeVar::fresh_unnamed();
+    let mut empty_name = unnamed.clone();
+    empty_name.pretty_name = Some(String::new());
+    for (name, work) in [(unnamed.clone(), 1), (empty_name.clone(), 2)] {
+        let (result, used, calls) =
+            copy_with_limits(&name, BindingOperation::Clone, (work, 4), None);
+        assert_eq!(result.expect("exact optional-name credit").pretty_name, name.pretty_name);
+        assert_eq!((used, calls), ((work, 4), 1));
+        let (result, used, _) =
+            copy_with_limits(&name, BindingOperation::Clone, (work - 1, 4), None);
+        assert_eq!(result, Err(BindingFailure::Reservation("limit")));
+        assert_eq!(used, (0, 0));
+    }
+    let source = bound(0, 0, "this old hint must not be copied or charged");
+    for (name, work) in [(unnamed, 2), (empty_name, 3)] {
+        let roster = [Binder(name.clone())];
+        let (result, used, calls) = copy_with_limits(
+            &source,
+            BindingOperation::Open {
+                state: ScopeState::new(),
+                binders: &roster,
+            },
+            (work, 4),
+            None,
+        );
+        assert_exact(
+            &result.expect("selected binder owns the output hint"),
+            &OrdVar(Var::Free(name)),
+        );
+        assert_eq!((used, calls), ((work, 4), 2));
     }
 }
 
@@ -314,15 +349,20 @@ fn freevar_binding_is_a_paid_noop_and_clone_preserves_variable_fields() {
 fn strings_and_bytes_charge_owned_bytes_before_copying() {
     let text = "λ雪🙂".to_owned();
     let bytes = vec![0, 255, 128, 1];
-    let (copied, used, calls) = copy_with_limits(&text, BindingOperation::Clone, (10, 13), None);
+    let (copied, used, calls) = copy_with_limits(&text, BindingOperation::Clone, (11, 13), None);
     assert_eq!(copied.expect("text copy"), text);
-    assert_eq!((used, calls), ((10, 13), 1));
-    let (copied, used, calls) = copy_with_limits(&bytes, BindingOperation::Clone, (5, 8), None);
+    assert_eq!((used, calls), ((11, 13), 1));
+    let (copied, used, calls) = copy_with_limits(&bytes, BindingOperation::Clone, (6, 8), None);
     assert_eq!(copied.expect("byte copy"), bytes);
-    assert_eq!((used, calls), ((5, 8), 1));
-    let (result, used, _) = copy_with_limits(&text, BindingOperation::Clone, (10, 12), None);
+    assert_eq!((used, calls), ((6, 8), 1));
+    let (result, used, _) = copy_with_limits(&text, BindingOperation::Clone, (11, 12), None);
     assert_eq!(result, Err(BindingFailure::Reservation("limit")));
     assert_eq!(used, (0, 0));
+    for limits in [(10, 13), (11, 12)] {
+        let (result, used, _) = copy_with_limits(&text, BindingOperation::Clone, limits, None);
+        assert_eq!(result, Err(BindingFailure::Reservation("limit")));
+        assert_eq!(used, (0, 0));
+    }
     assert_eq!(text, "λ雪🙂");
 }
 
@@ -352,8 +392,14 @@ fn scalar_copy_is_admitted_before_return_and_empty_values_have_one_record() {
         BindingOperation::Clone,
         BindingOperation::Close { state: ScopeState::new(), binders: &[] },
     ] {
-        assert_eq!(copy_with_limits(&String::new(), operation, (1, 4), None).1, (1, 4));
-        assert_eq!(copy_with_limits(&Vec::<u8>::new(), operation, (1, 4), None).1, (1, 4));
+        let (text, used, _) = copy_with_limits(&String::new(), operation, (2, 4), None);
+        assert_eq!(text.expect("empty text copy and cleanup admitted"), "");
+        assert_eq!(used, (2, 4));
+        let (bytes, used, _) = copy_with_limits(&Vec::<u8>::new(), operation, (2, 4), None);
+        assert!(bytes
+            .expect("empty byte copy and cleanup admitted")
+            .is_empty());
+        assert_eq!(used, (2, 4));
     }
 }
 
@@ -429,20 +475,21 @@ fn flt_copy_binding_preserves_payload_and_admits_every_copy_and_inspection() {
     let mut closed_source = source.clone();
     closed_source.selector = bound(2, 0, "oldhint");
     // Independently counted: five strings=47 bytes, holes=8, text pieces=16.
-    // Records=8+(3+2)+(2+1+2+1)=19; payload charge=(90,147); inspection=7.
+    // Records=8+(3+2)+(2+1+2+1)=19. Copy+cleanup work=2*19+71;
+    // payload charge=(109,147); inspection=7. Selector cleanup is separate.
     for (input, operation, selector_trace, totals) in [
-        (source.clone(), BindingOperation::Clone, vec![(1, 0), (3, 6)], (101, 153)),
+        (source.clone(), BindingOperation::Clone, vec![(1, 0), (4, 6)], (121, 153)),
         (
             source.clone(),
             BindingOperation::Close { state, binders: &roster },
-            vec![(1, 0), (1, 0), (3, 6)],
-            (102, 153),
+            vec![(1, 0), (1, 0), (4, 6)],
+            (122, 153),
         ),
         (
             closed_source,
             BindingOperation::Open { state, binders: &roster },
-            vec![(1, 0), (9, 12)],
-            (107, 159),
+            vec![(1, 0), (10, 12)],
+            (127, 159),
         ),
     ] {
         let original = input.clone();
@@ -455,7 +502,7 @@ fn flt_copy_binding_preserves_payload_and_admits_every_copy_and_inspection() {
         let mut trace = vec![(7usize, 0usize)];
         trace.extend(std::iter::repeat_n((0, 0), 6));
         trace.extend(selector_trace);
-        trace.push((90, 147));
+        trace.push((109, 147));
         let sum = |parts: &[(usize, usize)]| {
             parts
                 .iter()
@@ -531,7 +578,7 @@ fn flt_copy_preserves_repeated_hole_ids_and_optional_empty_category() {
     source.holes[1].category = None;
     let (_, without_header, _) =
         copy_with_limits(&source, BindingOperation::Clone, (usize::MAX, usize::MAX), None);
-    assert_eq!(used, (without_header.0 + 1, without_header.1 + 4));
+    assert_eq!(used, (without_header.0 + 2, without_header.1 + 4));
     source.selector = bound(0, 4, "unresolved");
     let (result, _, _) = copy_with_limits(
         &source,

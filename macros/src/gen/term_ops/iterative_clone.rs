@@ -416,10 +416,26 @@ fn generate_visit_arm(
                 }
             }
         },
-        VariantKind::Var { label } | VariantKind::Literal { label } => quote! {
-            #category::#label(value) => {
-                results[slot] =
-                    Some(AnyClonedTerm::#wrap(#category::#label(value.clone())));
+        VariantKind::Var { label } | VariantKind::Literal { label } => {
+            if emission.checked.is_some() {
+                let admission = emission.base_admission();
+                let publish = emission.publish(category, quote! { #category::#label(copied) });
+                quote! {
+                    #category::#label(value) => {
+                        #admission
+                        let copied = mettail_runtime::CheckedBindingLeaf::try_copy_binding(
+                            value, operation, reserve,
+                        )?;
+                        #publish
+                    }
+                }
+            } else {
+                quote! {
+                    #category::#label(value) => {
+                        results[slot] =
+                            Some(AnyClonedTerm::#wrap(#category::#label(value.clone())));
+                    }
+                }
             }
         },
         VariantKind::Regular { label, fields } => {
@@ -1195,6 +1211,136 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_variables_and_literals_use_the_existing_leaf_contracts() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: CheckedLeavesFixture,
+            types { Proc ![i64] as Int ![str] as Text },
+            terms { PZero . |- "0" : Proc; },
+            equations {}, rewrites {},
+        "#,
+        )
+        .expect("variable and native literal fixture");
+        let plan = super::super::iterative_drop::select_dummy_plan(&language);
+        let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
+            .expect("selected native receipts");
+        let emission = CloneEmissionNames::checked(&receipts);
+        let enum_types: Vec<_> = language
+            .types
+            .iter()
+            .map(|ty| {
+                let category = &ty.name;
+                let variants: Vec<_> = collect_category_variants(category, &language)
+                    .iter()
+                    .map(|v| match v {
+                        VariantKind::Nullary { label } => quote! { #label },
+                        VariantKind::Var { label } => quote! { #label(mettail_runtime::OrdVar) },
+                        VariantKind::Literal { label } => {
+                            if category == "Int" {
+                                quote! { #label(i64) }
+                            } else {
+                                assert_eq!(category, "Text");
+                                quote! { #label(String) }
+                            }
+                        },
+                        _ => panic!("leaf fixture unexpectedly contains a recursive variant"),
+                    })
+                    .collect();
+                quote! { enum #category { #(#variants),* } }
+            })
+            .collect();
+        let proc_var = crate::gen::generate_var_label(&format_ident!("Proc"));
+        let literal_label = |category: &str| {
+            collect_category_variants(&format_ident!("{}", category), &language)
+                .into_iter()
+                .find_map(|variant| match variant {
+                    VariantKind::Literal { label } => Some(label),
+                    _ => None,
+                })
+                .expect("native literal variant")
+        };
+        let int_literal = literal_label("Int");
+        let text_literal = literal_label("Text");
+        let ordinary = generate_iterative_clone(&language);
+        let tasks = generate_task_enum(&language, &emission);
+        let engine = generate_engine(&language, &emission);
+        let impls = generate_impls(&language, &emission);
+        let drop = super::super::iterative_drop::generate_iterative_drop(&language);
+        let table = receipts.tokens;
+        let source = compact(engine.clone());
+        assert!(source.contains("CheckedBindingLeaf::try_copy_binding(value,operation,reserve,)"));
+        let fixture = quote! {
+            #![allow(dead_code, unused_variables, unreachable_patterns, non_snake_case)]
+            use mettail_runtime::{Binder, BindingFailure, BindingOperation,
+                CheckedIterativeBinding, FreeVar, OrdVar, Var};
+            #(#enum_types)* #ordinary #tasks #engine #impls #drop #table
+
+            fn exercise<T: CheckedIterativeBinding>(source: &T,
+                operation: BindingOperation<'_>, expected: (usize, usize)) -> T {
+                let mut trace = Vec::new();
+                let result = source.try_copy_iterative(operation, &mut |w, u| {
+                    trace.push((w, u)); Ok::<_, &'static str>(())
+                }).expect("successful checked leaf traversal");
+                assert_eq!(trace.iter().fold((0, 0), |(w,u), (x,y)| (w+x,u+y)), expected);
+                for stop in 1..=trace.len() {
+                    let mut observed = Vec::new();
+                    let failed = source.try_copy_iterative(operation, &mut |w, u| {
+                        observed.push((w,u));
+                        if observed.len() == stop { Err("cancelled") } else { Ok(()) }
+                    });
+                    assert!(matches!(failed, Err(BindingFailure::Reservation("cancelled"))));
+                    assert_eq!(observed, trace[..stop]);
+                }
+                for limit in [(expected.0 - 1, expected.1), (expected.0, expected.1 - 1), expected] {
+                    let mut used = (0,0);
+                    let copied = source.try_copy_iterative(operation, &mut |w, u| {
+                        if w > limit.0 - used.0 || u > limit.1 - used.1 { return Err("limit"); }
+                        used.0 += w; used.1 += u; Ok(())
+                    });
+                    if limit == expected { assert!(copied.is_ok()); assert_eq!(used, expected); }
+                    else { assert!(matches!(copied, Err(BindingFailure::Reservation("limit")))); }
+                }
+                result
+            }
+            fn main() {
+                let integer = exercise(&Int::#int_literal(37), BindingOperation::Clone, (12,28));
+                assert!(matches!(integer, Int::#int_literal(37)));
+                let text = exercise(&Text::#text_literal("λ".into()), BindingOperation::Clone, (15,30));
+                assert!(matches!(&text, Text::#text_literal(s) if s == "λ"));
+                let name: FreeVar<String> = FreeVar::fresh_named("λ");
+                let mut selected = name.clone(); selected.pretty_name = Some("selected".into());
+                let roster = [Binder(selected.clone())];
+                let original = Proc::#proc_var(OrdVar(Var::Free(name.clone())));
+                let clone = exercise(&original, BindingOperation::Clone, (16,30));
+                assert!(matches!(&clone, Proc::#proc_var(OrdVar(Var::Free(v)))
+                    if v.unique_id == name.unique_id && v.pretty_name == name.pretty_name));
+                let closed = exercise(&original, BindingOperation::Close {
+                    state: moniker::ScopeState::new(), binders: &roster,
+                }, (17,30));
+                assert!(matches!(&closed, Proc::#proc_var(OrdVar(Var::Bound(v)))
+                    if v.scope == moniker::ScopeOffset(0) && v.binder == moniker::BinderIndex(0)
+                    && v.pretty_name.as_deref() == Some("λ")));
+                let opened = exercise(&closed, BindingOperation::Open {
+                    state: moniker::ScopeState::new(), binders: &roster,
+                }, (22,36));
+                assert!(matches!(&opened, Proc::#proc_var(OrdVar(Var::Free(v)))
+                    if v.unique_id == selected.unique_id && v.pretty_name == selected.pretty_name));
+                assert!(matches!(&original, Proc::#proc_var(OrdVar(Var::Free(v)))
+                    if v.pretty_name.as_deref() == Some("λ")));
+                println!("checked generated variable/literal semantics and all refusal boundaries verified");
+            }
+        };
+        syn::parse2::<syn::File>(fixture.clone()).expect("generated checked leaf fixture syntax");
+        if std::env::var_os("METTAIL_CAPTURE_CHECKED_BINDING").is_some() {
+            let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/verification/clone-emitter");
+            std::fs::create_dir_all(&directory).expect("create checked leaf fixture directory");
+            std::fs::write(directory.join("checked-leaves.rs"), fixture.to_string())
+                .expect("write generated variable/literal fixture");
+        }
+    }
 
     #[test]
     fn checked_nullary_uses_the_shared_driver_and_prepaid_publication() {

@@ -460,15 +460,20 @@ either trait can conceal recursive work in a native payload.
 | Payload or operation | Admission and behavior |
 | --- | --- |
 | Fixed scalar or canonical numeric handle | Reserve one copy record; copy the existing value or handle, not a numeric magnitude |
-| String or byte vector | Reserve one record and its actual byte length before copying |
-| Direct `FreeVar<String>` | Reserve its record and optional name bytes; Moniker binding is a no-op on this type |
+| String or byte vector | Reserve one record, actual bytes, copy work and flat cleanup before copying |
+| Direct `FreeVar<String>` | Reserve its record, optional name bytes and cleanup of a present name; Moniker binding is a no-op on this type |
 | Closing `OrdVar(Var::Free(...))` | Admit inspection and each ordered identity comparison; select the first matching identity, validate its `u32` index, then reserve the copy using the source name |
 | Opening a matching-depth bound variable | Admit inspection; validate the roster index; reserve and copy the selected binder's identity and name |
 | Other variable cases | Admit inspection and copy the unchanged variable |
 
 A copy record costs one logical work unit and four logical retention units;
 each owned byte adds one to each charge. Inspection and each identity comparison
-cost one work unit without retained units. Arithmetic is checked before the
+cost one work unit without retained units. Owned String/byte-vector cleanup
+adds one work unit, including for an empty owned buffer. A variable with a
+present name adds one cleanup unit; `None` has no owned name to clean up.
+Opening charges the selected binder's optional name, not the old bound hint.
+Copy-only scalar and canonical numeric handles have no additional owned-field
+cleanup. Arithmetic is checked before the
 callback. These are logical resource units, not physical allocation capacity,
 resident memory, or elapsed time. Refusal leaves the source unchanged, but
 already admitted work is not refunded. Cancellation is checked during ordered
@@ -498,6 +503,21 @@ charge. The payload charge is admitted before any payload cloning; a refusal
 after selector copying retains its already consumed charge but returns no FLT.
 Declared `bounds` never replace measured lengths. This copy operation does not
 establish template validity: the existing validation boundary still owns that.
+
+The [flat-leaf model](../../formal/rocq/rho_bridge/theories/FlatBindingLeafReservation.v)
+assigns one normal teardown event to each FLT node, vector header, entry
+dispatch and owned String field. For this specific flat shape, that tally
+equals its measured payload-record count. Its base work is therefore twice
+that count: copy work plus cleanup. Owned bytes are added once by the existing
+reservation convention. This is not a generic rule for native records, and
+the selector's copy/cleanup remains separately charged.
+
+A standalone checked `Arc<T>` boundary reserves three work units and one
+record for wrapper creation/copy, automatic release, and the last-owner check.
+Open/close reuses the produced child's already-paid cleanup; shallow clone
+keeps the source owner alive through normal-error cleanup. Generated category
+fields have a different extraction/replacement lifecycle and must not reuse
+this standalone-wrapper charge in place of their own field receipts.
 
 Behavioral predicates are different: Moniker binding leaves them unchanged,
 but their owned syntax can be deeply nested. Their checked leaf implementation

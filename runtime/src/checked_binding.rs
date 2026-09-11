@@ -167,7 +167,8 @@ pub fn take_binding_slot<T, E>(
 /// Explicit copy/binding contract for a non-category payload.
 ///
 /// Implementations must admit actual owned copies and traversal before doing
-/// them, preserve the source on failure, and use the supplied reservation for
+/// them, including normal cleanup of returned and private partial results.
+/// They preserve the source on failure and use the supplied reservation for
 /// cancellation inside loops. Recursive payloads must use their existing
 /// explicit worker; being a native field does not imply a constant-time clone.
 pub trait CheckedBindingLeaf: Sized {
@@ -209,7 +210,10 @@ impl<T: CheckedIterativeBinding> CheckedIterativeBinding for Arc<T> {
         operation: BindingOperation<'_>,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<Self, BindingFailure<E>> {
-        reserve_binding_copy(0, reserve)?;
+        // Standalone wrapper construction/copy, automatic release, and final
+        // owner check. A produced child's own cleanup is already admitted.
+        // Generated field extraction has a different Arc lifecycle recipe.
+        reserve_binding_parts(3, 1, 0, reserve)?;
         match operation {
             BindingOperation::Clone => Ok(Arc::clone(self)),
             BindingOperation::Open { .. } | BindingOperation::Close { .. } => {
@@ -252,7 +256,12 @@ fn reserve_name<E>(
     name: &Option<String>,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
 ) -> Result<(), BindingFailure<E>> {
-    reserve_binding_copy(name.as_ref().map_or(0, String::len), reserve)
+    reserve_binding_parts(
+        1 + usize::from(name.is_some()),
+        1,
+        name.as_ref().map_or(0, String::len),
+        reserve,
+    )
 }
 
 impl CheckedBindingLeaf for FreeVar<String> {
@@ -366,7 +375,8 @@ impl CheckedBindingLeaf for String {
         _: BindingOperation<'_>,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<Self, BindingFailure<E>> {
-        reserve_binding_copy(self.len(), reserve)?;
+        // One owned buffer copy plus its eventual flat cleanup.
+        reserve_binding_parts(2, 1, self.len(), reserve)?;
         Ok(self.clone())
     }
 }
@@ -377,7 +387,7 @@ impl CheckedBindingLeaf for Vec<u8> {
         _: BindingOperation<'_>,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<Self, BindingFailure<E>> {
-        reserve_binding_copy(self.len(), reserve)?;
+        reserve_binding_parts(2, 1, self.len(), reserve)?;
         Ok(self.clone())
     }
 }
@@ -464,8 +474,12 @@ impl CheckedBindingLeaf for FltNode {
                 add_copy_component(&mut bytes, text.len())?;
             }
         }
+        // The FLT's concrete flat shape has one teardown event per payload
+        // record (FlatBindingLeafReservation.v). This is not a generic native
+        // record rule. The selector admits its own copy and cleanup separately.
+        let work = records.checked_mul(2).ok_or(BindingFailure::SizeOverflow)?;
         let selector = self.selector.try_copy_binding(operation, reserve)?;
-        reserve_binding_parts(records, records, bytes, reserve)?;
+        reserve_binding_parts(work, records, bytes, reserve)?;
         // Only the selector is bound. These flat payload clones preserve
         // structural hole identity/order and literal guest text exactly.
         // Do not invoke a constructor: it would validate or rebuild syntax.
