@@ -559,6 +559,32 @@ Moniker's panic. The model does not prove resource accounting, freshening, or
 the complete generated traversal. These leaf implementations alone do not
 activate the generated binding worker or establish whole-program stack safety.
 
+`Binder<String>` and `Vec<Binder<String>>` have explicit checked-copy
+implementations for generated scope patterns. Moniker opens and closes these
+patterns without changing them. Copies therefore preserve every identity and
+optional name, including repeated identities and equal names with different
+identities; they do not freshen or derive a replacement roster.
+
+A Binder adds two logical work units for its wrapper construction and flat
+cleanup. Its contained FreeVar supplies the storage record. A binder vector
+first admits its header construction/cleanup and one record per entry, then
+requests capacity for the entry count. Its iterative loop admits
+entry insertion/cleanup dispatch, Binder wrapper work, and name-copy work and
+bytes before each push. A private preadmission path reuses the same FreeVar
+copy primitive without charging its already-reserved record twice; ordinary
+FreeVar copying keeps its existing callback and charges.
+
+For a vector with entry count $`n`$, present-name count $`p`$, and total owned
+name bytes $`b`$, the work allowance is $`2 + 5n + p + b`$ and retention is
+$`4(1+n) + b`$. These use the existing logical units, not allocator capacities.
+The [pattern-copy model](../../formal/rocq/rho_bridge/theories/BinderPatternCopy.v)
+proves exact pattern preservation, ordered-prefix laws and the record
+prepayment identity. The [runtime tests](../tests/checked_binding.rs) compare
+identities and names with Moniker, check every small-case cancellation point
+and exact/under limits, and copy and partially clean up 20,000 binders on a
+256 KiB stack. Scope-body traversal and generated-worker activation remain
+separate obligations; these pattern helpers do not close a body again.
+
 For an `FltNode`, the checked copy changes only its selector. Guest text,
 structural holes and their order, ranges, declared bounds, and source position
 are copied verbatim. No parser or validating constructor runs during copying.

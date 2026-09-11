@@ -3,7 +3,9 @@ use mettail_runtime::{
     reserve_binding_copy, BindingFailure, BindingOperation, CheckedBindingLeaf,
     CheckedIterativeBinding, OrdVar,
 };
-use moniker::{Binder, BinderIndex, BoundTerm, BoundVar, FreeVar, ScopeOffset, ScopeState, Var};
+use moniker::{
+    Binder, BinderIndex, BoundPattern, BoundTerm, BoundVar, FreeVar, ScopeOffset, ScopeState, Var,
+};
 use std::sync::Arc;
 
 #[test]
@@ -171,6 +173,138 @@ fn copy_with_limits<T: CheckedBindingLeaf>(
         Ok(())
     });
     (result, used, calls)
+}
+
+fn assert_binders_exact(actual: &[Binder<String>], expected: &[Binder<String>]) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert_eq!(actual.0.unique_id, expected.0.unique_id);
+        assert_eq!(actual.0.pretty_name, expected.0.pretty_name);
+    }
+}
+
+#[test]
+fn checked_binder_patterns_preserve_roster_occurrences_and_prepaid_storage() {
+    let first = FreeVar::fresh_named("λ");
+    let same_hint = FreeVar::fresh_named("λ");
+    assert_ne!(first.unique_id, same_hint.unique_id);
+    let mut duplicate = first.clone();
+    duplicate.pretty_name = Some("later hint".to_owned());
+    let roster = vec![Binder(first.clone()), Binder(duplicate.clone())];
+    let source = vec![
+        Binder(first),
+        Binder(same_hint),
+        Binder(duplicate),
+        Binder(FreeVar::fresh_unnamed()),
+        Binder(FreeVar::fresh_named("")),
+    ];
+    for state in [ScopeState::new(), ScopeState::new().incr().incr()] {
+        for operation in [
+            BindingOperation::Clone,
+            BindingOperation::Open { state, binders: &roster },
+            BindingOperation::Close { state, binders: &roster },
+        ] {
+            for pattern in [&Vec::new(), &source] {
+                let mut expected = pattern.clone();
+                match operation {
+                    BindingOperation::Clone => {},
+                    BindingOperation::Open { .. } => expected.open_pattern(state, &roster),
+                    BindingOperation::Close { .. } => expected.close_pattern(state, &roster),
+                }
+                assert_binders_exact(&expected, pattern);
+                let bytes: usize = pattern
+                    .iter()
+                    .map(|binder| binder.0.pretty_name.as_ref().map_or(0, String::len))
+                    .sum();
+                let present = pattern
+                    .iter()
+                    .filter(|binder| binder.0.pretty_name.is_some())
+                    .count();
+                let total =
+                    (2 + 5 * pattern.len() + present + bytes, 4 * (1 + pattern.len()) + bytes);
+                let (copied, used, callbacks) = copy_with_limits(pattern, operation, total, None);
+                let copied = copied.expect("exact binder-vector allowance");
+                assert_binders_exact(&copied, &expected);
+                assert_eq!(used, total);
+                assert_eq!(callbacks, 1 + 3 * pattern.len());
+
+                for cancelled in 1..=callbacks {
+                    let (result, _, calls) =
+                        copy_with_limits(pattern, operation, total, Some(cancelled));
+                    assert_eq!(result, Err(BindingFailure::Reservation("cancelled")));
+                    assert_eq!(calls, cancelled);
+                    assert_binders_exact(pattern, &expected);
+                }
+                for limit in [(total.0 - 1, total.1), (total.0, total.1 - 1)] {
+                    let (result, _, _) = copy_with_limits(pattern, operation, limit, None);
+                    assert_eq!(result, Err(BindingFailure::Reservation("limit")));
+                    assert_binders_exact(pattern, &expected);
+                }
+                let (retry, _, _) = copy_with_limits(pattern, operation, total, None);
+                assert_binders_exact(&retry.expect("retry after partial refusal"), &expected);
+            }
+
+            for binder in &source {
+                let name_bytes = binder.0.pretty_name.as_ref().map_or(0, String::len);
+                let total =
+                    (3 + usize::from(binder.0.pretty_name.is_some()) + name_bytes, 4 + name_bytes);
+                let (result, used, calls) = copy_with_limits(binder, operation, total, None);
+                assert_binders_exact(
+                    &[result.expect("exact single-binder allowance")],
+                    std::slice::from_ref(binder),
+                );
+                assert_eq!(used, total);
+                assert_eq!(calls, 2);
+                for cancelled in 1..=calls {
+                    let (result, _, calls) =
+                        copy_with_limits(binder, operation, total, Some(cancelled));
+                    assert_eq!(result, Err(BindingFailure::Reservation("cancelled")));
+                    assert_eq!(calls, cancelled);
+                }
+                for limit in [(total.0 - 1, total.1), (total.0, total.1 - 1)] {
+                    let (result, _, _) = copy_with_limits(binder, operation, limit, None);
+                    assert_eq!(result, Err(BindingFailure::Reservation("limit")));
+                }
+            }
+        }
+    }
+
+    let mut charges = Vec::new();
+    let one = vec![Binder(FreeVar::fresh_named("λ"))];
+    one.try_copy_binding(BindingOperation::Clone, &mut |work, units| {
+        charges.push((work, units));
+        Ok::<(), ()>(())
+    })
+    .expect("observe exact preallocation and entry schedule");
+    // The sole FreeVar record is paid before allocation, not again at copy.
+    assert_eq!(charges, [(2, 8), (2, 0), (2, 0), (4, 2)]);
+}
+
+#[test]
+fn checked_binder_pattern_copy_and_partial_cleanup_use_bounded_stack() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let source: Vec<_> = (0..20_000)
+                .map(|_| Binder(FreeVar::fresh_unnamed()))
+                .collect();
+            let total = (2 + 5 * source.len(), 4 * (1 + source.len()));
+            let (result, used, calls) =
+                copy_with_limits(&source, BindingOperation::Clone, total, None);
+            let copied = result.expect("large flat pattern copy");
+            assert_binders_exact(&copied, &source);
+            assert_eq!(used, total);
+            drop(copied);
+            let (result, _, stopped) =
+                copy_with_limits(&source, BindingOperation::Clone, total, Some(calls));
+            assert_eq!(result, Err(BindingFailure::Reservation("cancelled")));
+            assert_eq!(stopped, calls);
+            let (retry, _, _) = copy_with_limits(&source, BindingOperation::Clone, total, None);
+            assert_binders_exact(&retry.expect("retry after large partial cleanup"), &source);
+        })
+        .expect("small-stack binder-pattern thread")
+        .join()
+        .expect("binder-pattern copy and cleanup must not overflow");
 }
 
 #[test]

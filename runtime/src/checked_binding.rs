@@ -256,12 +256,40 @@ fn reserve_name<E>(
     name: &Option<String>,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
 ) -> Result<(), BindingFailure<E>> {
+    reserve_name_record(name, NameRecordAdmission::Reserve, reserve)
+}
+
+// Only the binder-vector copy may use Prepaid, after admitting every entry's
+// record before with_capacity. This is not a caller-selectable discount and
+// does not bypass name work/bytes or change the existing FreeVar copy.
+enum NameRecordAdmission {
+    Reserve,
+    Prepaid,
+}
+
+fn reserve_name_record<E>(
+    name: &Option<String>,
+    admission: NameRecordAdmission,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<(), BindingFailure<E>> {
     reserve_binding_parts(
         1 + usize::from(name.is_some()),
-        1,
+        match admission {
+            NameRecordAdmission::Reserve => 1,
+            NameRecordAdmission::Prepaid => 0,
+        },
         name.as_ref().map_or(0, String::len),
         reserve,
     )
+}
+
+fn copy_free_name<E>(
+    name: &FreeVar<String>,
+    admission: NameRecordAdmission,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<FreeVar<String>, BindingFailure<E>> {
+    reserve_name_record(&name.pretty_name, admission, reserve)?;
+    Ok(name.clone())
 }
 
 impl CheckedBindingLeaf for FreeVar<String> {
@@ -271,8 +299,55 @@ impl CheckedBindingLeaf for FreeVar<String> {
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<Self, BindingFailure<E>> {
         // Moniker's FreeVar BoundTerm operations are no-ops, unlike Var::Free.
-        reserve_name(&self.pretty_name, reserve)?;
-        Ok(self.clone())
+        copy_free_name(self, NameRecordAdmission::Reserve, reserve)
+    }
+}
+
+fn copy_binder<E>(
+    binder: &Binder<String>,
+    admission: NameRecordAdmission,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<Binder<String>, BindingFailure<E>> {
+    // Transparent wrapper construction and normal flat teardown. The
+    // contained FreeVar record is also the Binder's in-place storage.
+    reserve_binding_parts(2, 0, 0, reserve)?;
+    Ok(Binder(copy_free_name(&binder.0, admission, reserve)?))
+}
+
+impl CheckedBindingLeaf for Binder<String> {
+    fn try_copy_binding<E>(
+        &self,
+        _: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>> {
+        // Binder BoundPattern open/close are no-ops: never freshen the name
+        // or interpret its identity as an occurrence to close against a roster.
+        copy_binder(self, NameRecordAdmission::Reserve, reserve)
+    }
+}
+
+impl CheckedBindingLeaf for Vec<Binder<String>> {
+    fn try_copy_binding<E>(
+        &self,
+        _: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>> {
+        let records = self
+            .len()
+            .checked_add(1)
+            .ok_or(BindingFailure::SizeOverflow)?;
+        // Header construction/cleanup and ALL in-place FreeVar records are
+        // admitted before allocation. Per-entry name work and bytes remain
+        // cancellable; their record component is already paid exactly once.
+        reserve_binding_parts(2, records, 0, reserve)?;
+        let mut copied = Vec::with_capacity(self.len());
+        for binder in self {
+            // Logical copy-loop insertion and normal cleanup entry dispatch.
+            // Each Binder/FreeVar below additionally pays its own flat work.
+            reserve_binding_parts(2, 0, 0, reserve)?;
+            copied.push(copy_binder(binder, NameRecordAdmission::Prepaid, reserve)?);
+        }
+        Ok(copied)
     }
 }
 
