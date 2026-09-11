@@ -62,6 +62,7 @@ theories/GeneratedDummyCleanupReservation.v
 theories/GeneratedBindingOutputReservation.v
 theories/MonikerLeafOperations.v
 theories/FltSelectorBinding.v
+theories/FlatBindingLeafReservation.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
