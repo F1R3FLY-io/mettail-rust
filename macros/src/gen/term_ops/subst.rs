@@ -207,7 +207,7 @@ pub(crate) struct FieldInfo {
     /// participate in alpha-conversion. (Phase 3A, predicated types.)
     pub(crate) is_predicate: bool,
     /// Opt-Group (2026-04-29): if true, this field's runtime type is
-    /// `Option<Box<Cat>>` (or `Option<Scope<...>>` for Optional inner
+    /// `Option<Arc<Cat>>` (or `Option<Scope<...>>` for Optional inner
     /// abstractions, `Option<HashBag<Cat>>` for Optional collections).
     /// Iterators and constructor-emitters wrap reads in
     /// `if let Some(__inner) = field.as_ref() { ... }` and unwrap
@@ -217,21 +217,19 @@ pub(crate) struct FieldInfo {
     /// OPAQUE CAPTURE LEAF: `Some(kind)` iff
     /// this field is a non-category leaf produced by a syntax-pattern capture —
     /// a `v@Tok` token text (`OpaqueLeafKind::TokenText` → `String`) or a `*flt`
-    /// guest body (`OpaqueLeafKind::GuestBody` → `Arc<FltNode>`). Both are
-    /// handled identically by every term op — like `is_predicate`, they are
-    /// plain values that derive `Clone`/`Hash`/`Eq`/`Ord`, carried through
-    /// substitution/normalization UNCHANGED (a captured token/body is not a host
-    /// term: no free variables, no α-conversion, no β/shift, no descent). The
-    /// ONLY per-kind difference is the emitted field TYPE ([`OpaqueLeafKind::
-    /// field_type`]); every behavioral site branches on [`FieldInfo::
-    /// is_opaque_leaf`] (which never reads the placeholder `category`), so
-    /// three kinds share ONE mechanism with zero behavioral duplication.
+    /// guest body (`OpaqueLeafKind::GuestBody` → `Arc<FltNode>`). Neither is a
+    /// category child, so dispatch must recognize the leaf before reading the
+    /// placeholder `category`. Token text contains no host binding coordinates.
+    /// A guest body does: its selector follows the host's binding operations,
+    /// while its guest text and structural holes remain unchanged. Checked
+    /// binding delegates to each carrier's explicit leaf contract; category
+    /// traversal and dummy replacement must not be applied to either kind.
     pub(crate) opaque_leaf: Option<OpaqueLeafKind>,
 }
 
 /// The opaque capture-leaf field kinds (see [`FieldInfo::opaque_leaf`]).
-/// They differ ONLY in the emitted Rust field type; every term op treats them
-/// the same (inline hash/cmp, clone-through subst/normalize, no descent).
+/// The emitted type and native operation contract belong to each carrier.
+/// In particular, guest-selector binding is not token-text copying.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OpaqueLeafKind {
     /// L9-3: a `v@Tok` token-text capture → `std::string::String`.

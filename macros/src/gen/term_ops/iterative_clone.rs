@@ -252,10 +252,11 @@ fn generate_task_enum(language: &LanguageDef, emission: &CloneEmissionNames) -> 
 }
 
 fn checked_scalar_fields(fields: &[FieldInfo], emission: &CloneEmissionNames) -> bool {
-    emission.checked.is_some()
-        && fields
-            .iter()
-            .all(|field| !field.is_collection && !field.is_predicate && !field.is_opaque_leaf())
+    emission.checked.is_some() && fields.iter().all(|field| !field.is_collection)
+}
+
+fn inline_binding_leaf(field: &FieldInfo) -> bool {
+    field.is_predicate || field.is_opaque_leaf()
 }
 
 fn generate_assemble_task(
@@ -267,7 +268,7 @@ fn generate_assemble_task(
         VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => {
             let task = format_ident!("Assemble{}_{}", category, label);
             let slots = scalar_slot_fields(fields);
-            return Some(quote! { #task { slot: usize, #(#slots),* } });
+            return Some(quote! { #task { src: *const #category, slot: usize, #(#slots),* } });
         },
         VariantKind::Regular { label, fields } if fields.iter().any(|f| f.is_collection) => {
             (label, fields.as_slice(), "f")
@@ -537,6 +538,7 @@ fn scalar_slot_fields(fields: &[FieldInfo]) -> Vec<TokenStream> {
     fields
         .iter()
         .enumerate()
+        .filter(|(_, field)| !inline_binding_leaf(field))
         .map(|(index, field)| {
             let slot = format_ident!("field_{}_slot", index);
             if field.is_optional {
@@ -546,6 +548,28 @@ fn scalar_slot_fields(fields: &[FieldInfo]) -> Vec<TokenStream> {
             }
         })
         .collect()
+}
+
+fn native_field_copy(field: &FieldInfo, source: &Ident, output: &Ident) -> TokenStream {
+    if field.is_optional {
+        // Native fields drop in place: no Option::take, dummy, or category
+        // task. FlatBindingLeafReservation supplies only the 2/1 shell charge.
+        quote! {
+            mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)?;
+            let #output = match #source.as_ref() {
+                Some(value) => Some(mettail_runtime::CheckedBindingLeaf::try_copy_binding(
+                    value, operation, reserve,
+                )?),
+                None => None,
+            };
+        }
+    } else {
+        quote! {
+            let #output = mettail_runtime::CheckedBindingLeaf::try_copy_binding(
+                #source, operation, reserve,
+            )?;
+        }
+    }
 }
 
 // ScalarArcBindingReservation supplies these field-local projections. Parent,
@@ -587,12 +611,37 @@ fn generate_scalar_visit(
         .collect();
     let base = emission.base_admission();
     let admissions = fields.iter().zip(&names).map(|(field, name)| {
-        scalar_field_admission(field, quote! { #name.is_some() }, false, emission)
+        if inline_binding_leaf(field) {
+            TokenStream::new()
+        } else {
+            scalar_field_admission(field, quote! { #name.is_some() }, false, emission)
+        }
     });
-    let clones = names.iter().map(|name| quote! { #name.clone() });
+    let native_copies =
+        fields
+            .iter()
+            .zip(&names)
+            .enumerate()
+            .filter_map(|(index, (field, name))| {
+                inline_binding_leaf(field)
+                    .then(|| native_field_copy(field, name, &format_ident!("bare_{}", index)))
+            });
+    let clones = fields
+        .iter()
+        .zip(&names)
+        .enumerate()
+        .map(|(index, (field, name))| {
+            if inline_binding_leaf(field) {
+                let bare = format_ident!("bare_{}", index);
+                quote! { #bare }
+            } else {
+                quote! { #name.clone() }
+            }
+        });
     let publish = emission.publish(category, quote! { #category::#label(#(#clones),*) });
     let allocations = fields.iter().zip(&names).zip(&slots).map(|((field, name), slot)| {
-        if field.is_optional {
+        if inline_binding_leaf(field) { TokenStream::new() }
+        else if field.is_optional {
             quote! {
                 let #slot = match #name {
                     Some(_) => Some(mettail_runtime::append_binding_slots(results, 1, reserve)?),
@@ -605,8 +654,12 @@ fn generate_scalar_visit(
     });
     let task_enum = &emission.task_enum;
     let task = format_ident!("Assemble{}_{}", category, label);
+    let child_slots = fields
+        .iter()
+        .zip(&slots)
+        .filter_map(|(field, slot)| (!inline_binding_leaf(field)).then_some(slot));
     let assemble = emission.push_task(
-        quote! { #task_enum::#task { slot, #(#slots),* } },
+        quote! { #task_enum::#task { src: source as *const _, slot, #(#child_slots),* } },
         quote! { operation.state() },
     );
     let pushes = fields
@@ -615,6 +668,9 @@ fn generate_scalar_visit(
         .zip(&slots)
         .rev()
         .map(|((field, name), slot)| {
+            if inline_binding_leaf(field) {
+                return TokenStream::new();
+            }
             let visit = format_ident!("Clone{}", field.category);
             let push = emission.push_task(
                 quote! { #task_enum::#visit { src: child.as_ref() as *const _, slot: child_slot } },
@@ -634,6 +690,7 @@ fn generate_scalar_visit(
                 mettail_runtime::BindingOperation::Clone => {
                     #base
                     #(#admissions)*
+                    #(#native_copies)*
                     // No fallible call occurs between cloning the handles
                     // and forming the parent passed to checked publication.
                     #publish
@@ -653,6 +710,7 @@ fn generate_scalar_assemble(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
+    destructure_is_irrefutable: bool,
     emission: &CloneEmissionNames,
 ) -> TokenStream {
     let task_enum = &emission.task_enum;
@@ -661,18 +719,47 @@ fn generate_scalar_assemble(
         .map(|i| format_ident!("field_{}_slot", i))
         .collect();
     let slot_fields = scalar_slot_fields(fields);
+    let child_slots: Vec<_> = fields
+        .iter()
+        .zip(&slots)
+        .filter_map(|(field, slot)| (!inline_binding_leaf(field)).then_some(slot))
+        .collect();
+    let names: Vec<_> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let destructure = if destructure_is_irrefutable {
+        quote! { let #category::#label(#(ref #names),*) = source; }
+    } else {
+        quote! {
+            let #category::#label(#(ref #names),*) = source else {
+                unreachable!("checked binding assembly retains its source variant")
+            };
+        }
+    };
     let base = emission.base_admission();
     let admissions = fields.iter().zip(&slots).map(|(field, slot)| {
-        scalar_field_admission(field, quote! { #slot.is_some() }, true, emission)
+        if inline_binding_leaf(field) {
+            TokenStream::new()
+        } else {
+            scalar_field_admission(field, quote! { #slot.is_some() }, true, emission)
+        }
     });
     let bare: Vec<_> = (0..fields.len())
         .map(|i| format_ident!("bare_{}", i))
         .collect();
+    let native_copies = fields
+        .iter()
+        .zip(&names)
+        .zip(&bare)
+        .filter_map(|((field, name), bare)| {
+            inline_binding_leaf(field).then(|| native_field_copy(field, name, bare))
+        });
     let takes = fields
         .iter()
         .zip(&slots)
         .zip(&bare)
         .map(|((field, slot), bare)| {
+            if inline_binding_leaf(field) {
+                return TokenStream::new();
+            }
             let wrap = format_ident!("Wrap{}", field.category);
             let take = quote! {
                 match mettail_runtime::take_binding_slot(results, child_slot,
@@ -693,7 +780,9 @@ fn generate_scalar_assemble(
             }
         });
     let wrappers = fields.iter().zip(&bare).map(|(field, bare)| {
-        if field.is_optional {
+        if inline_binding_leaf(field) {
+            quote! { #bare }
+        } else if field.is_optional {
             quote! { #bare.map(std::sync::Arc::new) }
         } else {
             quote! { std::sync::Arc::new(#bare) }
@@ -701,24 +790,29 @@ fn generate_scalar_assemble(
     });
     let publish = emission.publish(category, quote! { #category::#label(#(#wrappers),*) });
     quote! {
-        #task_enum::#task { slot, #(#slots),* } => {
+        #task_enum::#task { src, slot, #(#child_slots),* } => {
             #[inline(never)]
             fn assemble<E>(
                 results: &mut Vec<Option<AnyClonedTerm>>,
+                src: *const #category,
                 slot: usize,
                 #(#slot_fields,)*
+                operation: mettail_runtime::BindingOperation<'_>,
                 reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
                 dummy_charges: &[mettail_runtime::binding_receipt::BindingCharge],
             ) -> Result<(), mettail_runtime::BindingFailure<E>> {
+                let source = unsafe { &*src };
+                #destructure
                 #base
                 #(#admissions)*
+                #(#native_copies)*
                 // Every fallible take precedes ALL wrapper construction.
-                // Failure here drops only already-admitted bare categories.
+                // Failure drops admitted native locals and bare categories.
                 #(#takes)*
                 #publish
                 Ok(())
             }
-            assemble(results, slot, #(#slots,)* reserve, dummy_charges)?;
+            assemble(results, src, slot, #(#child_slots,)* operation, reserve, dummy_charges)?;
         },
     }
 }
@@ -931,9 +1025,9 @@ fn generate_assemble_arm(
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
     match variant {
-        VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => {
-            Some(generate_scalar_assemble(category, label, fields, emission))
-        },
+        VariantKind::Regular { label, fields } if checked_scalar_fields(fields, emission) => Some(
+            generate_scalar_assemble(category, label, fields, destructure_is_irrefutable, emission),
+        ),
         VariantKind::Regular { label, fields } if fields.iter().any(|f| f.is_collection) => {
             Some(generate_structured_assemble(
                 category,
@@ -1683,6 +1777,12 @@ mod tests {
                 PPair . left:Proc, right:Proc |- "pair" left right : Proc;
                 PMaybe . *opt(child:Proc) |- "maybe" *opt(child) : Proc;
                 PText . text:Text |- "text" text : Proc;
+                PToken . |- token@Word : Proc;
+                PGuest . |- *flt(node, Open, Close) : Proc;
+                PMixed . child:Proc, ?guard:Guard
+                    |- before@Word child *flt(node, Open, Close) guard after@Word : Proc;
+                POptional . *opt(child:Proc, ?guard:Guard)
+                    |- prefix@Word *opt(before@Word child *flt(node, Open, Close) guard) : Proc;
             },
             equations {}, rewrites {},
         "#,
@@ -1692,35 +1792,26 @@ mod tests {
         let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
             .expect("selected scalar fixture receipts");
         let checked = CloneEmissionNames::checked(&receipts);
-        let enum_types: Vec<_> = language
-            .types
-            .iter()
-            .map(|ty| {
-                let category = &ty.name;
-                let variants: Vec<_> = collect_category_variants(category, &language)
-                    .iter()
-                    .map(|v| match v {
-                        VariantKind::Nullary { label } => quote! { #label },
-                        VariantKind::Var { label } => quote! { #label(mettail_runtime::OrdVar) },
-                        VariantKind::Literal { label } => quote! { #label(String) },
-                        VariantKind::Regular { label, fields } => {
-                            assert!(checked_scalar_fields(fields, &checked));
-                            let types = fields.iter().map(|field| {
-                                let child = &field.category;
-                                if field.is_optional {
-                                    quote! { Option<Arc<#child>> }
-                                } else {
-                                    quote! { Arc<#child> }
-                                }
-                            });
-                            quote! { #label(#(#types),*) }
-                        },
-                        _ => panic!("unexpected nonscalar fixture variant"),
-                    })
-                    .collect();
-                quote! { enum #category { #(#variants),* } }
+        // Use the production enum layout, not an enum reconstructed from the
+        // term-operation classifier. Omit unrelated derives in this focused
+        // fixture; field names, order and Rust payload types remain unchanged.
+        let declarations =
+            syn::parse2::<syn::File>(crate::gen::types::enums::generate_ast_enums(&language))
+                .expect("production enum declarations");
+        let enum_types: Vec<_> = declarations
+            .items
+            .into_iter()
+            .filter_map(|item| {
+                if let syn::Item::Enum(mut item) = item {
+                    if language.types.iter().any(|ty| ty.name == item.ident) {
+                        item.attrs.clear();
+                        return Some(item);
+                    }
+                }
+                None
             })
             .collect();
+        assert_eq!(enum_types.len(), language.types.len());
         let var = crate::gen::generate_var_label(&format_ident!("Proc"));
         let text_label = collect_category_variants(&format_ident!("Text"), &language)
             .into_iter()
@@ -1802,7 +1893,56 @@ mod tests {
                 assert!(matches!(&copied, Proc::PPair(a,b)
                     if Arc::ptr_eq(a,&child) && Arc::ptr_eq(b,&child)));
                 let roster = [Binder(name.clone())];
+                let mut guest = mettail_runtime::FltNode::new("guest".into(), "Term".into(),
+                    "a${x}// literal".into(), vec![mettail_runtime::FltHole {
+                        id: mettail_runtime::FltHoleId(0), name: "x".into(), category: None,
+                        first_occurrence: mettail_runtime::FltSourceRange::new(1,5),
+                    }], 0).expect("structural FLT fixture");
+                guest.selector = OrdVar(Var::Free(name.clone()));
+                let guest = Arc::new(guest);
+                let predicate = mettail_runtime::BehavioralPred::RelationQuery {
+                    relation_name: "relation".into(),
+                    args: vec![mettail_runtime::PredArg::Var("bound".into())], negated: false,
+                };
+                let mixed = Proc::PMixed("first".into(), child.clone(), guest.clone(),
+                    predicate.clone(), "last".into());
+                let (cloned,_) = exercise(&mixed,BindingOperation::Clone);
+                let Proc::PMixed(first,term,payload,pred,last) = &cloned else { panic!("mixed clone"); };
+                assert_eq!((first.as_str(),last.as_str()),("first","last"));
+                assert!(Arc::ptr_eq(term,&child)); assert!(Arc::ptr_eq(payload,&guest));
+                assert_eq!(pred,&predicate);
+                for input in [Proc::PToken(String::new()),Proc::PGuest(guest.clone()),
+                    Proc::POptional("prefix".into(),None,None,None,None)] {
+                    exercise(&input,BindingOperation::Clone);
+                    exercise(&input,BindingOperation::Close { state: moniker::ScopeState::new(), binders: &roster });
+                }
+                let some_empty = Proc::POptional("prefix".into(),Some(String::new()),None,None,None);
+                let (copied,_) = exercise(&some_empty,BindingOperation::Clone);
+                assert!(matches!(&copied,Proc::POptional(prefix,Some(s),None,None,None)
+                    if prefix == "prefix" && s.is_empty()));
                 for state in [moniker::ScopeState::new(), moniker::ScopeState::new().incr().incr()] {
+                    let (closed_mixed,_) = exercise(&mixed,BindingOperation::Close { state, binders: &roster });
+                    let Proc::PMixed(first,term,payload,pred,last) = &closed_mixed else { panic!("closed mixed"); };
+                    assert_eq!((first.as_str(),last.as_str()),("first","last"));
+                    check_bound(term,state.depth().0);
+                    assert!(matches!(&payload.selector.0, Var::Bound(v)
+                        if v.scope == state.depth() && v.binder == moniker::BinderIndex(0)));
+                    let mut expected = guest.as_ref().clone(); expected.selector = payload.selector.clone();
+                    assert_eq!(payload.as_ref(),&expected); assert_eq!(pred,&predicate);
+                    let (opened_mixed,_) = exercise(&closed_mixed,BindingOperation::Open { state, binders: &roster });
+                    let Proc::PMixed(_,_,payload,_,_) = &opened_mixed else { panic!("opened mixed"); };
+                    assert_eq!(payload.as_ref(),guest.as_ref());
+                    assert!(matches!(&payload.selector.0, Var::Free(v) if v.unique_id == name.unique_id));
+                    let optional_mixed = Proc::POptional("prefix".into(),Some(String::new()),Some(child.clone()),
+                        Some(guest.clone()),Some(predicate.clone()));
+                    let (optional_closed,_) = exercise(&optional_mixed,
+                        BindingOperation::Close { state, binders: &roster });
+                    let Proc::POptional(prefix,Some(text),Some(term),Some(payload),Some(pred)) = &optional_closed
+                        else { panic!("optional mixed presence"); };
+                    assert_eq!(prefix,"prefix");
+                    assert!(text.is_empty()); check_bound(term,state.depth().0);
+                    assert!(matches!(&payload.selector.0, Var::Bound(v) if v.scope == state.depth()));
+                    assert_eq!(pred,&predicate);
                     let optional = Proc::PMaybe(Some(child.clone()));
                     let (closed_optional,_) = exercise(&optional,
                         BindingOperation::Close { state, binders: &roster });
@@ -1854,7 +1994,7 @@ mod tests {
                     }
                     drop(source); pools_empty();
                 }).expect("spawn scalar small-stack worker").join().expect("scalar small-stack worker");
-                println!("checked scalar sharing, binding, refusal and 20k-depth cleanup verified");
+                println!("checked category/native fields, FLT binding, refusal and 20k-depth cleanup verified");
             }
         };
         syn::parse2::<syn::File>(fixture.clone()).expect("checked scalar generated Rust syntax");

@@ -497,3 +497,25 @@ impl CheckedBindingLeaf for FltNode {
         })
     }
 }
+
+/// Captured FLT payload boundary, not a recursive category-child traversal.
+/// Clone shares the source-pinned payload; binding copies only through the
+/// existing selector-aware leaf contract, preserving guest text and holes.
+impl CheckedBindingLeaf for Arc<FltNode> {
+    fn try_copy_binding<E>(
+        &self,
+        operation: BindingOperation<'_>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, BindingFailure<E>> {
+        // FlatBindingLeafReservation's standalone wrapper projection. The
+        // copied payload independently admits its own construction/cleanup.
+        reserve_binding_parts(3, 1, 0, reserve)?;
+        match operation {
+            BindingOperation::Clone => Ok(Arc::clone(self)),
+            BindingOperation::Open { .. } | BindingOperation::Close { .. } => {
+                let copied = self.as_ref().try_copy_binding(operation, reserve)?;
+                Ok(Arc::new(copied))
+            },
+        }
+    }
+}

@@ -443,6 +443,36 @@ fields, optional presence, variable binding, every small-case refusal boundary,
 and a 20,000-level chain on a 256 KiB stack. Checked generation remains inactive
 in production until the remaining field and scope cases are integrated.
 
+#### Mixed category and native fields
+
+Token text, captured FLT payloads and behavioral predicates are native leaves,
+not category children. The checked emitter identifies these fields before
+reading their placeholder category metadata. Only actual category children
+receive result slots or scheduled visits. Assembly retains a pointer into the
+immutably borrowed source so it can copy native fields through their existing
+`CheckedBindingLeaf` implementations.
+
+Native copies enter admitted locals before any category result is taken. All
+category takes then complete before their Arc wrappers and the parent are
+constructed. A later refusal disposes both the admitted native locals and bare
+category values; no native payload is hidden inside a pending task.
+
+`Arc<FltNode>` has an explicit leaf adapter: Clone shares the source-pinned Arc,
+while Open/Close use the existing selector-aware FLT copy and construct a fresh
+Arc. Its wrapper costs three work units and one record. The FLT leaf separately
+accounts for its payload; guest text and ranged structural holes are copied
+verbatim, without parsing or granting authority. Behavioral predicate names
+remain inert under host-variable binding.
+
+Optional native fields drop in place, unlike optional category fields. The
+[flat-leaf model](../../formal/rocq/rho_bridge/theories/FlatBindingLeafReservation.v)
+proves a two-work/one-record Option shell charge, plus the existing leaf charge
+only when present. There is no replacement `None`, category dummy or child
+cleanup task. The generated fixture uses production enum layouts and checks
+required and optional mixed fields, `None` versus present-empty text, selector
+opening/closing and failure after earlier native copies. This does not establish
+full grammar-to-field-layout parity for every optional-capture syntax shape.
+
 The [ordered-reconstruction model](../../formal/rocq/rho_bridge/theories/OrderedBindingReconstruction.v)
 supplies the corresponding map, set and PathMap width and partition laws for
 its existing insertion operation. Retained entry count cannot exceed the

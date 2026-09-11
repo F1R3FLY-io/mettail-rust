@@ -2568,7 +2568,8 @@ language! {
         // delimited foreign-language region and assembles an opaque native
         // `FltNode` containing the lexical selector, explicit result category,
         // ordered ranged Text/Hole pieces, stable telescope, and checked finite
-        // extent (an inert BoundTerm leaf). The three forms differ ONLY in surface
+        // extent. Host binding acts on the selector, not on guest text or holes.
+        // The three forms differ ONLY in surface
         // delimiter; all carry the same `Arc<FltNode>` payload. Guest parsing is
         // staged until the selector resolves to an installed handle, so no `eval`
         // disposition is declared. Declared LAST so the

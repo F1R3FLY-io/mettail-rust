@@ -465,6 +465,68 @@ fn assert_exact_flt(actual: &mettail_runtime::FltNode, expected: &mettail_runtim
 }
 
 #[test]
+fn captured_flt_arc_shares_clone_and_checks_selector_binding_without_reparsing() {
+    let name = FreeVar::fresh_named("λ");
+    let source = Arc::new(flt_binding_fixture(name.clone()));
+    let roster = vec![Binder(name)];
+    let state = ScopeState::new().incr().incr();
+    let (cloned, used, calls) = copy_with_limits(&source, BindingOperation::Clone, (3, 4), None);
+    let cloned = cloned.expect("paid captured FLT sharing");
+    assert!(Arc::ptr_eq(&source, &cloned));
+    assert_eq!((used, calls), ((3, 4), 1));
+    drop(cloned);
+    for operation in [
+        BindingOperation::Close { state, binders: &roster },
+        BindingOperation::Open { state, binders: &roster },
+    ] {
+        let mut input = source.as_ref().clone();
+        if matches!(operation, BindingOperation::Open { .. }) {
+            input.selector = bound(2, 0, "old");
+        }
+        let mut expected = input.clone();
+        match operation {
+            BindingOperation::Close { .. } => expected.close_term(state, &roster),
+            BindingOperation::Open { .. } => expected.open_term(state, &roster),
+            _ => unreachable!(),
+        }
+        let (_, leaf_used, leaf_calls) =
+            copy_with_limits(&input, operation, (usize::MAX, usize::MAX), None);
+        let input = Arc::new(input);
+        let total = (leaf_used.0 + 3, leaf_used.1 + 4);
+        let (result, used, calls) = copy_with_limits(&input, operation, total, None);
+        let copied = result.expect("paid captured FLT binding");
+        assert!(!Arc::ptr_eq(&input, &copied));
+        assert_exact_flt(&copied, &expected);
+        assert_eq!((used, calls), (total, leaf_calls + 1));
+        for stop in 1..=calls {
+            let (result, _, observed) = copy_with_limits(&input, operation, total, Some(stop));
+            assert_eq!(result, Err(BindingFailure::Reservation("cancelled")));
+            assert_eq!(observed, stop);
+            assert_eq!(Arc::strong_count(&input), 1);
+        }
+        for limits in [(total.0 - 1, total.1), (total.0, total.1 - 1)] {
+            assert_eq!(
+                copy_with_limits(&input, operation, limits, None).0,
+                Err(BindingFailure::Reservation("limit"))
+            );
+        }
+        assert_exact_flt(
+            &copy_with_limits(&input, operation, total, None)
+                .0
+                .expect("retry"),
+            &expected,
+        );
+    }
+    for limits in [(2, 4), (3, 3)] {
+        assert_eq!(
+            copy_with_limits(&source, BindingOperation::Clone, limits, None).0,
+            Err(BindingFailure::Reservation("limit"))
+        );
+        assert_eq!(Arc::strong_count(&source), 1);
+    }
+}
+
+#[test]
 fn flt_copy_binding_preserves_payload_and_admits_every_copy_and_inspection() {
     let variable: FreeVar<String> = FreeVar::fresh_named("λ");
     let source = flt_binding_fixture(variable.clone());
