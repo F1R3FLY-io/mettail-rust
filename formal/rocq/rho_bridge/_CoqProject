@@ -72,6 +72,7 @@ theories/AdmittedKeyHashExecution.v
 theories/AdmittedStructuralKeyHash.v
 theories/AdmittedGeneratedHashScheduling.v
 theories/AdmittedNativeLeafComparison.v
+theories/AdmittedIdentityComparison.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
