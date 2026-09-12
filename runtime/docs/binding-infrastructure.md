@@ -763,7 +763,8 @@ node readiness.
 #### Native comparison-leaf admission
 
 [`CheckedNativeEqualityLeaf` and `CheckedNativeOrderingLeaf`](../src/checked_cmp.rs)
-admit the existing native comparisons for `i64`, `bool`, `String` and `OrdVar`,
+admit the existing native comparisons for `i64`, `bool`, `String`, `OrdVar`,
+`FltNode` and `Arc<FltNode>`,
 plus equality and inequality for `Binder<String>` and `Vec<Binder<String>>`. Equality
 and ordering are separate sealed capabilities: an equality-only binder must not
 acquire an ordering implementation merely to participate in checked equality.
@@ -821,9 +822,64 @@ checked caller must then immediately evaluate its unchanged expression once.
 The helper does not return a comparator or reusable authority. Scope-body
 access and task scheduling remain separate charges.
 
-Structural FLTs, collection scheduling and the native HashBag insertion
-provider still require their own composed contracts. The leaf interfaces and
+Collection scheduling and the native HashBag insertion provider still require
+their own composed contracts. The leaf interfaces and
 pattern admission helpers alone do not activate bounded public preparation.
+
+##### Structural FLT comparisons
+
+The [FLT comparison inspector](../src/checked_cmp_flt.rs) preserves the whole
+original native operation after paid metadata inspection. The
+[FLT comparison model](../../formal/rocq/rho_bridge/theories/AdmittedFltComparison.v)
+reuses the existing paid flat fold and native-execution composition. No guest
+parser, template validator, hash operation or replacement comparator runs in
+the inspector. All ten native fields remain part of comparison, including
+diagnostic text, ranges, declared bounds and position.
+
+Let $`E(x,y)`$ and $`C(x,y)`$ denote the logical equality and ordering allowances
+for corresponding native components. For a node pair, let $`P_E`$ and $`P_C`$
+be the sum of selector work and the work of the five top-level strings. The
+strings use the byte-length rules above; the selector uses the identity rules.
+For either operation, nested component work is:
+
+| Paired component | Native execution allowance |
+|---|---|
+| Optional category strings, both present | $`6`$ plus String work |
+| Optional category strings, any other case | $`5`$ |
+| Hole declarations | $`16`$ plus name String work and optional category work |
+| Two text pieces | $`14`$ plus text String work |
+| Two hole pieces | $`18`$ |
+| Different piece variants | $`5`$ |
+
+For equal-length vectors, $`V_E=7+\sum_i(3+E_i)`$; otherwise $`V_E=7`$.
+Ordering uses the common prefix: $`V_C=11+\sum_i(4+C_i)`$.
+The node allowances are therefore $`E_N=29+P_E+V_E(holes)+V_E(pieces)`$,
+$`N_N=E_N+1`$ and $`C_N=29+P_C+V_C(holes)+V_C(pieces)`$.
+The sums reserve the whole possible native visited prefix, even when comparison
+returns earlier. They do not assume equality is equivalent to an `Equal`
+ordering result.
+
+After one root metadata reservation, each selected vector pass reserves one
+unit before every paired iterator advance, including its terminal advance.
+Equality and inequality skip the pass for unequal-length vectors; ordering
+always inspects the common prefix. The inspector uses actual vector and String
+lengths, never declared template bounds as a size certificate. Checked sums
+fail before native execution without refunding previous metadata work. The
+implementation borrows the flat vectors without creating a paired roster.
+
+| Arc relationship | Equality work | Inequality work | Ordering work |
+|---|---|---|---|
+| Same allocation | $`3`$ | $`3`$ | $`2+C_N`$ |
+| Different allocations | $`4+E_N`$ | $`5+E_N`$ | $`2+C_N`$ |
+
+Shared-Arc equality and inequality need only the root metadata group. Arc
+ordering still inspects and compares the payload, even for the same allocation.
+No Arc is cloned by admission. This preserves the standard library's separate
+native paths; pointer identity is not generalized into a comparison shortcut.
+The focused tests cover field-by-field parity, every small-fixture refusal
+boundary, exact/under limits and sampled 20,000-entry flat-width checks on a
+256 KiB stack. That is not a claim about arbitrary nested AST depth or complete
+public preparation.
 
 ### Checked leaf copies and binding
 

@@ -32,17 +32,32 @@ mod sealed {
 
     pub trait Leaf {
         // Metadata only, called after its reservation. No payload comparison.
-        fn execution_work(&self, other: &Self, operation: ComparisonOperation) -> Option<usize>;
+        fn execution_work<E>(
+            &self,
+            other: &Self,
+            operation: ComparisonOperation,
+            reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+        ) -> Result<usize, super::BindingFailure<E>>;
     }
 
     pub trait EqualityLeaf {
-        fn equality_work(&self, other: &Self, negated: bool) -> Option<usize>;
+        fn equality_work<E>(
+            &self,
+            other: &Self,
+            negated: bool,
+            reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+        ) -> Result<usize, super::BindingFailure<E>>;
     }
 
     // Equality-only leaves never implement Leaf: there is no invented Cmp
     // request or unsupported/overflow stand-in for a nonexistent Binder Ord.
     impl<T: Leaf + ?Sized> EqualityLeaf for T {
-        fn equality_work(&self, other: &Self, negated: bool) -> Option<usize> {
+        fn equality_work<E>(
+            &self,
+            other: &Self,
+            negated: bool,
+            reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+        ) -> Result<usize, super::BindingFailure<E>> {
             self.execution_work(
                 other,
                 if negated {
@@ -50,6 +65,7 @@ mod sealed {
                 } else {
                     ComparisonOperation::Eq
                 },
+                reserve,
             )
         }
     }
@@ -59,21 +75,23 @@ use sealed::ComparisonOperation;
 /// Paid native equality and inequality for audited leaves.
 ///
 /// One logical-work unit precedes metadata inspection and checked arithmetic,
-/// followed by the native execution allowance. Both reservations retain zero
+/// followed by the native execution allowance. All reservations retain zero
 /// payload units. Refusal leaves both operands unchanged; previously accepted
 /// inspection charges remain spent. Success returns the original native result,
 /// not a receipt authorizing another execution.
 ///
 /// This interface is sealed to i64, bool, String, OrdVar, Binder<String> and
-/// Vec<Binder<String>>. Equality-only binders do not acquire an ordering.
+/// Vec<Binder<String>>, FltNode and Arc<FltNode>. Equality-only binders do not
+/// acquire an ordering. Structural FLTs additionally admit each paired metadata
+/// advance before inspection; declared template bounds are not size receipts.
 pub trait CheckedNativeEqualityLeaf: Eq + sealed::EqualityLeaf {
     fn try_native_eq<E>(
         &self,
         other: &Self,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<bool, NativeComparisonFailure<E>> {
-        admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || {
-            self.equality_work(other, false)
+        admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |reserve| {
+            self.equality_work(other, false, reserve)
         })?;
         Ok(<Self as PartialEq>::eq(self, other))
     }
@@ -84,14 +102,14 @@ pub trait CheckedNativeEqualityLeaf: Eq + sealed::EqualityLeaf {
         other: &Self,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<bool, NativeComparisonFailure<E>> {
-        admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || {
-            self.equality_work(other, true)
+        admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |reserve| {
+            self.equality_work(other, true, reserve)
         })?;
         Ok(<Self as PartialEq>::ne(self, other))
     }
 }
 
-/// Paid original Ord::cmp for audited i64, bool, String and OrdVar leaves.
+/// Paid original Ord::cmp for audited scalar, identity and structural FLT leaves.
 ///
 /// Admission and failure follow the equality interface's two-stage contract.
 /// String work covers both byte ranges supplied to the native byte-comparison
@@ -122,23 +140,25 @@ fn admit_comparison<T: sealed::Leaf + ?Sized, E, R>(
     supported: bool,
     action: impl FnOnce(&T, &T) -> R,
 ) -> Result<R, NativeComparisonFailure<E>> {
-    admit_native_work(reserve, supported, || left.execution_work(right, operation))?;
+    admit_native_work(reserve, supported, |reserve| {
+        left.execution_work(right, operation, reserve)
+    })?;
     Ok(action(left, right))
 }
 
 // Private inspection callback only. Public entrypoints select concrete audited
 // metadata; callers cannot supply their own cost or receive reusable authority.
-fn admit_native_work<E>(
-    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+fn admit_native_work<E, F: FnMut(usize, usize) -> Result<(), E>>(
+    reserve: &mut F,
     supported: bool,
-    inspect: impl FnOnce() -> Option<usize>,
+    inspect: impl FnOnce(&mut F) -> Result<usize, BindingFailure<E>>,
 ) -> Result<(), NativeComparisonFailure<E>> {
     if !supported {
         return Err(NativeComparisonFailure::UnsupportedProfile);
     }
     reserve(1, 0)
         .map_err(|error| NativeComparisonFailure::Admission(BindingFailure::Reservation(error)))?;
-    let work = inspect().ok_or(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))?;
+    let work = inspect(reserve).map_err(NativeComparisonFailure::Admission)?;
     reserve(work, 0)
         .map_err(|error| NativeComparisonFailure::Admission(BindingFailure::Reservation(error)))?;
     Ok(())
@@ -147,9 +167,14 @@ fn admit_native_work<E>(
 macro_rules! fixed_leaf {
     ($ty:ty) => {
         impl sealed::Leaf for $ty {
-            fn execution_work(&self, _: &Self, _: ComparisonOperation) -> Option<usize> {
+            fn execution_work<E>(
+                &self,
+                _: &Self,
+                _: ComparisonOperation,
+                _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<usize, BindingFailure<E>> {
                 // Original method dispatch and its bounded primitive operation.
-                Some(2)
+                Ok(2)
             }
         }
         impl CheckedNativeEqualityLeaf for $ty {}
@@ -178,8 +203,14 @@ fn string_execution_work(
 }
 
 impl sealed::Leaf for String {
-    fn execution_work(&self, other: &Self, operation: ComparisonOperation) -> Option<usize> {
+    fn execution_work<E>(
+        &self,
+        other: &Self,
+        operation: ComparisonOperation,
+        _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, BindingFailure<E>> {
         string_execution_work(self.len(), other.len(), operation)
+            .ok_or(BindingFailure::SizeOverflow)
     }
 }
 impl CheckedNativeEqualityLeaf for String {}
@@ -188,26 +219,39 @@ impl CheckedNativeOrderingLeaf for String {}
 // AdmittedIdentityComparison.v. Equality observes identities, not diagnostic
 // names. Ordering retains the actual OrdVar::cmp: fresh DefaultHasher hashes
 // for free UIDs and both eager scope/index comparisons for bound variables.
+fn ordvar_execution_work(left: &OrdVar, right: &OrdVar, operation: ComparisonOperation) -> usize {
+    let (equality, ordering) = match (&left.0, &right.0) {
+        (Var::Free(_), Var::Free(_)) => (14, 68),
+        (Var::Bound(_), Var::Bound(_)) => (19, 14),
+        _ => (7, 5),
+    };
+    match operation {
+        ComparisonOperation::Eq => equality,
+        ComparisonOperation::Ne => equality + 1,
+        ComparisonOperation::Cmp => ordering,
+    }
+}
 impl sealed::Leaf for OrdVar {
-    fn execution_work(&self, other: &Self, operation: ComparisonOperation) -> Option<usize> {
-        let (equality, ordering) = match (&self.0, &other.0) {
-            (Var::Free(_), Var::Free(_)) => (14, 68),
-            (Var::Bound(_), Var::Bound(_)) => (19, 14),
-            _ => (7, 5),
-        };
-        Some(match operation {
-            ComparisonOperation::Eq => equality,
-            ComparisonOperation::Ne => equality + 1,
-            ComparisonOperation::Cmp => ordering,
-        })
+    fn execution_work<E>(
+        &self,
+        other: &Self,
+        operation: ComparisonOperation,
+        _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, BindingFailure<E>> {
+        Ok(ordvar_execution_work(self, other, operation))
     }
 }
 impl CheckedNativeEqualityLeaf for OrdVar {}
 impl CheckedNativeOrderingLeaf for OrdVar {}
 
 impl sealed::EqualityLeaf for Binder<String> {
-    fn equality_work(&self, _: &Self, negated: bool) -> Option<usize> {
-        Some(if negated { 9 } else { 8 })
+    fn equality_work<E>(
+        &self,
+        _: &Self,
+        negated: bool,
+        _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, BindingFailure<E>> {
+        Ok(if negated { 9 } else { 8 })
     }
 }
 impl CheckedNativeEqualityLeaf for Binder<String> {}
@@ -219,8 +263,14 @@ fn binder_vector_equality_work(left: usize, right: usize, negated: bool) -> Opti
 }
 
 impl sealed::EqualityLeaf for Vec<Binder<String>> {
-    fn equality_work(&self, other: &Self, negated: bool) -> Option<usize> {
+    fn equality_work<E>(
+        &self,
+        other: &Self,
+        negated: bool,
+        _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, BindingFailure<E>> {
         binder_vector_equality_work(self.len(), other.len(), negated)
+            .ok_or(BindingFailure::SizeOverflow)
     }
 }
 impl CheckedNativeEqualityLeaf for Vec<Binder<String>> {}
@@ -245,7 +295,7 @@ pub fn precharge_generated_single_pattern_order<E>(
     _right: &Binder<String>,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
 ) -> Result<(), NativeComparisonFailure<E>> {
-    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || Some(71))
+    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |_| Ok(71))
 }
 
 /// Admit the existing length-first generated multi-binder ordering expression.
@@ -261,10 +311,17 @@ pub fn precharge_generated_multi_pattern_order<E>(
     right: &Vec<Binder<String>>,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
 ) -> Result<(), NativeComparisonFailure<E>> {
-    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || {
-        multi_pattern_order_work(left.len(), right.len())
+    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |_| {
+        multi_pattern_order_work(left.len(), right.len()).ok_or(BindingFailure::SizeOverflow)
     })
 }
+
+#[path = "checked_cmp_flt.rs"]
+mod flt;
+
+#[cfg(test)]
+#[path = "checked_cmp_flt_tests.rs"]
+mod flt_tests;
 
 #[cfg(test)]
 #[path = "checked_cmp_tests.rs"]

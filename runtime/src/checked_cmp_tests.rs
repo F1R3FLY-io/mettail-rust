@@ -389,11 +389,16 @@ struct Probe<'a> {
 }
 
 impl sealed::Leaf for Probe<'_> {
-    fn execution_work(&self, _other: &Self, operation: ComparisonOperation) -> Option<usize> {
+    fn execution_work<E>(
+        &self,
+        _other: &Self,
+        operation: ComparisonOperation,
+        _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, BindingFailure<E>> {
         self.events
             .borrow_mut()
             .push(Event::Inspect(operation_name(&operation)));
-        self.work
+        self.work.ok_or(BindingFailure::SizeOverflow)
     }
 }
 
