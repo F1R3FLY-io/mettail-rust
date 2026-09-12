@@ -297,6 +297,17 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         self.total_count
     }
 
+    /// Number of stored key/count entries, independent of total multiplicity.
+    ///
+    /// This constant-time query does not walk or hash keys. Use it when
+    /// admitting storage or traversal for one operation per stored entry.
+    /// Binding reconstruction can retain the original [`Self::len`] even
+    /// after equal transformed keys collide; zero-count stored entries also
+    /// count here. This query does not normalize either representation.
+    pub fn distinct_len(&self) -> usize {
+        self.counts.len()
+    }
+
     /// Returns `true` if the bag contains no elements.
     ///
     /// # Examples
@@ -850,6 +861,32 @@ mod tests {
     }
 
     #[test]
+    fn distinct_length_counts_storage_not_retained_multiplicity() {
+        let mut source = HashBag::new();
+        assert_eq!(source.distinct_len(), 0);
+        source.insert_n(1u8, 2);
+        source.insert_n(2u8, 5);
+        assert_eq!(source.len(), 7);
+        assert_eq!(source.distinct_len(), 2);
+        assert_eq!(source.distinct_len(), source.iter().count());
+
+        let collided = source.rebuild_binding_entries([(3u8, 2), (3u8, 5)]);
+        assert_eq!(collided.len(), 7);
+        assert_eq!(collided.distinct_len(), 1);
+        assert_eq!(collided.count(&3), 5);
+
+        let zero = source.rebuild_binding_entries([(3u8, 0)]);
+        assert_eq!(zero.len(), 7);
+        assert_eq!(zero.distinct_len(), 1);
+        assert_eq!(zero.iter().next(), Some((&3, 0)));
+
+        let cleared = source.rebuild_binding_entries(std::iter::empty());
+        assert_eq!(cleared.len(), 7);
+        assert_eq!(cleared.distinct_len(), 0);
+        assert_eq!(source.distinct_len(), 2);
+    }
+
+    #[test]
     fn equal_bags_hash_equal_across_insertion_order() {
         let mut left = HashBag::new();
         left.insert("alpha");
@@ -931,6 +968,8 @@ mod tests {
         bag.insert_n(CountingKey(7), 4);
         ELEMENT_HASH_CALLS.store(0, AtomicOrdering::Relaxed);
 
+        assert_eq!(bag.distinct_len(), 1);
+        assert_eq!(bag.distinct_len(), 1);
         let first = hash_of(&bag);
         let second = hash_of(&bag);
         assert_eq!(first, second);
