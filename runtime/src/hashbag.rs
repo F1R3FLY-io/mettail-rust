@@ -89,6 +89,67 @@ fn hashbag_entry_lanes<T: Hash>(elem: &T, count: usize) -> (u64, u64) {
     (a, b)
 }
 
+/// The existing generated-container reconstruction policy.
+///
+/// `CloneEntries` uses repeated `insert_n`, not this type's derived `Clone`.
+/// `BindingEntries` transports the source total and replaces colliding counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HashBagRebuildMode {
+    CloneEntries,
+    BindingEntries,
+}
+
+/// Borrowed retained entries during reconstruction, without a hash-summary API.
+///
+/// The binding summary is not valid until finalization. Admission can inspect
+/// keys through this view, but must pay for its own traversal and key work.
+pub struct HashBagRetainedEntries<'a, T> {
+    counts: &'a HashMap<T, usize, BuildHasherDefault<FxHasher>>,
+}
+
+impl<T> HashBagRetainedEntries<'_, T> {
+    pub fn distinct_len(&self) -> usize {
+        self.counts.len()
+    }
+
+    /// The native map capacity, not a logical entry count or a byte bound.
+    pub fn capacity(&self) -> usize {
+        self.counts.capacity()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&T, usize)> {
+        self.counts.iter().map(|(key, count)| (key, *count))
+    }
+}
+
+/// An imminent reconstruction stage, presented before its native action.
+///
+/// These stages carry facts for the caller's existing admission mechanism;
+/// they do not assign constant costs to hashing, equality or map growth.
+pub enum HashBagRebuildStep<'a, T> {
+    /// Admit the output shell, input iterator and all its advances, and local
+    /// container/iterator cleanup. The input vector and its owned key roots,
+    /// including their cleanup on Start refusal, must already be paid.
+    Start {
+        mode: HashBagRebuildMode,
+        width: usize,
+        source_total: usize,
+    },
+    /// Cover the complete native insertion, including key hashing, possible
+    /// retained-key rehashing, equality, growth, and Clone's summary updates.
+    /// A zero-count Clone insertion discards its already-paid incoming key.
+    Insert {
+        mode: HashBagRebuildMode,
+        key: &'a T,
+        count: usize,
+        retained: HashBagRetainedEntries<'a, T>,
+    },
+    /// Cover the final binding summary: two key hashes per retained entry,
+    /// iterator work and summary bookkeeping. Clone maintains its summary
+    /// incrementally and therefore does not perform this stage.
+    FinalBindingSummary { retained: HashBagRetainedEntries<'a, T> },
+}
+
 impl<T: Clone + Hash + Eq> HashBag<T> {
     fn from_elements(iter: impl IntoIterator<Item = T>) -> Self {
         let mut bag = Self::new();
@@ -111,9 +172,13 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     // first key object and take the last count, while total_count is unchanged.
     fn insert_binding_entries(&mut self, entries: impl IntoIterator<Item = (T, usize)>) {
         for (element, count) in entries {
-            self.counts.insert(element, count);
+            self.insert_binding_entry(element, count);
         }
         self.rebuild_hash_summary();
+    }
+
+    fn insert_binding_entry(&mut self, element: T, count: usize) {
+        self.counts.insert(element, count);
     }
 
     /// Rebuild already-transformed binding entries using the native binding
@@ -131,6 +196,72 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         result.total_count = self.total_count;
         result.insert_binding_entries(entries);
         result
+    }
+
+    /// Reconstruct already-transformed entries with admission before each stage.
+    ///
+    /// This reuses the ordinary generated Clone and native binding recipes.
+    /// The callback must cover each stage's actual work, including its own
+    /// inspection. Insertion coverage includes structural Hash/Eq work and
+    /// table growth; stored width alone is not such a bound. The input vector,
+    /// keys and their normal cleanup must have been admitted by the producer.
+    /// There is no default or implicit key-operation allowance.
+    ///
+    /// Refusal publishes no bag and leaves the borrowed source unchanged.
+    /// Retained, collision-discarded and pending keys spend their existing
+    /// independent-root cleanup allowances. Count overflow rejects before
+    /// `insert_n`; successful Clone recomputes its total, while binding retains
+    /// the source total even if it differs from the surviving count sum.
+    ///
+    /// This interface alone is not a concrete resource bound: generated users
+    /// must supply the source-backed stage coverage required by
+    /// `RequiredHashBagBindingReservation` before exposing bounded execution.
+    #[doc(hidden)]
+    pub fn try_rebuild_entries_with<E>(
+        &self,
+        entries: Vec<(T, usize)>,
+        mode: HashBagRebuildMode,
+        mut admit: impl FnMut(HashBagRebuildStep<'_, T>) -> Result<(), crate::BindingFailure<E>>,
+    ) -> Result<Self, crate::BindingFailure<E>> {
+        admit(HashBagRebuildStep::Start {
+            mode,
+            width: entries.len(),
+            source_total: self.total_count,
+        })?;
+        let mut result = Self::new();
+        if mode == HashBagRebuildMode::BindingEntries {
+            result.total_count = self.total_count;
+        }
+        for (element, count) in entries {
+            admit(HashBagRebuildStep::Insert {
+                mode,
+                key: &element,
+                count,
+                retained: HashBagRetainedEntries { counts: &result.counts },
+            })?;
+            match mode {
+                HashBagRebuildMode::CloneEntries => {
+                    // The accumulator starts empty. Its retained counts sum
+                    // to total_count, so this guard also covers an occupied
+                    // entry's old_count + count inside the reused insert_n.
+                    result
+                        .total_count
+                        .checked_add(count)
+                        .ok_or(crate::BindingFailure::SizeOverflow)?;
+                    result.insert_n(element, count);
+                },
+                HashBagRebuildMode::BindingEntries => {
+                    result.insert_binding_entry(element, count);
+                },
+            }
+        }
+        if mode == HashBagRebuildMode::BindingEntries {
+            admit(HashBagRebuildStep::FinalBindingSummary {
+                retained: HashBagRetainedEntries { counts: &result.counts },
+            })?;
+            result.rebuild_hash_summary();
+        }
+        Ok(result)
     }
 
     /// Creates an empty `HashBag`.
@@ -884,6 +1015,234 @@ mod tests {
         assert_eq!(cleared.len(), 7);
         assert_eq!(cleared.distinct_len(), 0);
         assert_eq!(source.distinct_len(), 2);
+    }
+
+    #[test]
+    fn admitted_rebuild_preserves_both_native_recipes() {
+        use crate::OrdVar;
+        use moniker::FreeVar;
+        let first: FreeVar<String> = FreeVar::fresh_named("first");
+        let mut last = first.clone();
+        last.pretty_name = Some("last".to_owned());
+        let first = OrdVar(Var::Free(first));
+        let last = OrdVar(Var::Free(last));
+        let other = OrdVar(Var::Free(FreeVar::fresh_named("other")));
+        let mut source = HashBag::new();
+        source.insert_n(first.clone(), 19);
+        let original = source.clone();
+        for entries in [
+            vec![],
+            vec![(first.clone(), 0)],
+            vec![(first.clone(), 2), (last.clone(), 5)],
+            vec![(last.clone(), 5), (first.clone(), 2)],
+            vec![(first.clone(), 0), (last.clone(), 5), (other.clone(), 3)],
+            vec![(first.clone(), 2), (other.clone(), 0), (last.clone(), 0)],
+        ] {
+            for mode in [HashBagRebuildMode::CloneEntries, HashBagRebuildMode::BindingEntries] {
+                let expected = match mode {
+                    HashBagRebuildMode::BindingEntries => {
+                        binding_recipe_oracle(&source, entries.clone())
+                    },
+                    HashBagRebuildMode::CloneEntries => {
+                        let mut bag = HashBag::new();
+                        for (key, count) in entries.clone() {
+                            bag.insert_n(key, count);
+                        }
+                        bag
+                    },
+                };
+                let mut stages = Vec::new();
+                let actual = source
+                    .try_rebuild_entries_with(entries.clone(), mode, |step| {
+                        match step {
+                            HashBagRebuildStep::Start {
+                                mode: actual_mode,
+                                width,
+                                source_total,
+                            } => {
+                                assert_eq!(actual_mode, mode);
+                                assert_eq!(width, entries.len());
+                                assert_eq!(source_total, 19);
+                                stages.push(0);
+                            },
+                            HashBagRebuildStep::Insert {
+                                mode: actual_mode,
+                                key,
+                                count,
+                                retained,
+                            } => {
+                                assert_eq!(actual_mode, mode);
+                                let index = stages.len() - 1;
+                                assert_eq!(key, &entries[index].0);
+                                assert_eq!(
+                                    diagnostic_name(key),
+                                    diagnostic_name(&entries[index].0)
+                                );
+                                assert_eq!(count, entries[index].1);
+                                assert!(retained.distinct_len() <= index);
+                                assert!(retained.capacity() >= retained.distinct_len());
+                                assert_eq!(retained.iter().count(), retained.distinct_len());
+                                stages.push(1);
+                            },
+                            HashBagRebuildStep::FinalBindingSummary { retained } => {
+                                assert_eq!(mode, HashBagRebuildMode::BindingEntries);
+                                assert_eq!(retained.distinct_len(), expected.distinct_len());
+                                stages.push(2);
+                            },
+                        }
+                        Ok::<_, crate::BindingFailure<()>>(())
+                    })
+                    .expect("admitted reconstruction");
+                assert_binding_recipe(&actual, &expected);
+                assert_binding_recipe(&source, &original);
+                assert_eq!(
+                    stages.len(),
+                    1 + entries.len() + usize::from(mode == HashBagRebuildMode::BindingEntries)
+                );
+            }
+        }
+    }
+
+    // Per-test shared counters distinguish logical equality from owned key
+    // occurrences. Constant hashes force the real native collision paths.
+    #[derive(Clone, Debug)]
+    struct RebuildKey {
+        identity: u8,
+        occurrence: usize,
+        effects: std::rc::Rc<std::cell::RefCell<RebuildEffects>>,
+    }
+
+    #[derive(Debug, Default)]
+    struct RebuildEffects {
+        hashes: usize,
+        equalities: usize,
+        drops: [usize; 5],
+    }
+
+    impl Hash for RebuildKey {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.effects.borrow_mut().hashes += 1;
+            0u8.hash(state);
+        }
+    }
+
+    impl PartialEq for RebuildKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.effects.borrow_mut().equalities += 1;
+            self.identity == other.identity
+        }
+    }
+    impl Eq for RebuildKey {}
+
+    impl Drop for RebuildKey {
+        fn drop(&mut self) {
+            self.effects.borrow_mut().drops[self.occurrence] += 1;
+        }
+    }
+
+    #[test]
+    fn admitted_rebuild_refuses_every_stage_before_native_work_and_cleans_each_owner() {
+        for mode in [HashBagRebuildMode::CloneEntries, HashBagRebuildMode::BindingEntries] {
+            let stage_count = 5 + usize::from(mode == HashBagRebuildMode::BindingEntries);
+            // Include the exact boundary (success) after every under-limit refusal.
+            for allowed in 0..=stage_count {
+                let effects = std::rc::Rc::new(std::cell::RefCell::new(RebuildEffects::default()));
+                let key = |identity, occurrence| RebuildKey {
+                    identity,
+                    occurrence,
+                    effects: effects.clone(),
+                };
+                let mut source = HashBag::new();
+                source.insert_n(key(9, 0), 17);
+                let source_hash = hash_of(&source);
+                let entries = vec![(key(1, 1), 2), (key(1, 2), 5), (key(2, 3), 0), (key(3, 4), 4)];
+                let mut seen = 0;
+                let mut refused_at = None;
+                let result = source.try_rebuild_entries_with(entries, mode, |_| {
+                    if seen == allowed {
+                        let snapshot = effects.borrow();
+                        refused_at = Some((snapshot.hashes, snapshot.equalities));
+                        return Err(crate::BindingFailure::Reservation(seen));
+                    }
+                    seen += 1;
+                    Ok(())
+                });
+                match result {
+                    Err(error) => {
+                        assert_eq!(error, crate::BindingFailure::Reservation(allowed));
+                        assert!(allowed < stage_count);
+                        let snapshot = effects.borrow();
+                        assert_eq!(
+                            refused_at,
+                            Some((snapshot.hashes, snapshot.equalities)),
+                            "no native Hash/Eq after refusal"
+                        );
+                        assert_eq!(snapshot.drops, [0, 1, 1, 1, 1]);
+                    },
+                    Ok(result) => {
+                        assert_eq!(allowed, stage_count);
+                        assert_cached_hash_matches_legacy(&result);
+                        assert_eq!(
+                            result.len(),
+                            if mode == HashBagRebuildMode::CloneEntries {
+                                11
+                            } else {
+                                17
+                            }
+                        );
+                        let retained: Vec<_> = result
+                            .iter()
+                            .map(|(key, count)| (key.occurrence, count))
+                            .collect();
+                        assert!(retained.contains(&(
+                            1,
+                            if mode == HashBagRebuildMode::CloneEntries {
+                                7
+                            } else {
+                                5
+                            }
+                        )));
+                        assert!(!retained.iter().any(|(occurrence, _)| *occurrence == 2));
+                        assert_eq!(
+                            retained.contains(&(3, 0)),
+                            mode == HashBagRebuildMode::BindingEntries
+                        );
+                        drop(result);
+                        assert_eq!(effects.borrow().drops, [0, 1, 1, 1, 1]);
+                    },
+                }
+                assert_eq!(source.len(), 17);
+                assert_eq!(source.distinct_len(), 1);
+                assert_eq!(source_hash, hash_of(&source));
+                drop(source);
+                assert_eq!(effects.borrow().drops, [1, 1, 1, 1, 1]);
+            }
+        }
+    }
+
+    #[test]
+    fn admitted_clone_rejects_total_and_occupied_count_overflow() {
+        let source = HashBag::<u8>::new();
+        for second_key in [1, 2] {
+            let result = source.try_rebuild_entries_with(
+                vec![(1, usize::MAX), (second_key, 1)],
+                HashBagRebuildMode::CloneEntries,
+                |_| Ok::<_, crate::BindingFailure<()>>(()),
+            );
+            assert_eq!(result, Err(crate::BindingFailure::SizeOverflow));
+        }
+        let exact = source
+            .try_rebuild_entries_with(
+                vec![(1, usize::MAX - 1), (1, 1), (2, 0)],
+                HashBagRebuildMode::CloneEntries,
+                |_| Ok::<_, crate::BindingFailure<()>>(()),
+            )
+            .expect("exact representable total");
+        assert_eq!(exact.len(), usize::MAX);
+        assert_eq!(exact.count(&1), usize::MAX);
+        assert_eq!(exact.distinct_len(), 1);
+        assert_cached_hash_matches_legacy(&exact);
+        assert_eq!(source.len(), 0);
     }
 
     #[test]

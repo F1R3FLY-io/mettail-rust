@@ -11,8 +11,8 @@
 mod binding;
 pub use binding::*;
 
-mod checked_binding;
 pub mod binding_receipt;
+mod checked_binding;
 pub use checked_binding::{
     append_binding_slots, reserve_binding_copy, reserve_binding_parts, take_binding_slot,
     write_binding_slot, BindingFailure, BindingOperation, BindingSlotError, CheckedBindingLeaf,
@@ -140,7 +140,7 @@ pub use safe_arith::{nan_is_a_value, QuietNaN, SafeArith, SafeFloat};
 
 // Collection types
 mod hashbag;
-pub use hashbag::HashBag;
+pub use hashbag::{HashBag, HashBagRebuildMode, HashBagRebuildStep, HashBagRetainedEntries};
 
 mod hashmap_lit;
 pub use hashmap_lit::HashMapLit;
