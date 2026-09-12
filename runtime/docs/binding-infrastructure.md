@@ -630,6 +630,42 @@ order and diagnostic retention, every refusal boundary, zero counts, overflow,
 and cleanup. This staged interface does not by itself establish a concrete
 generated key-cost provider or activate bounded public Rholang preparation.
 
+#### Native hash-leaf admission
+
+[`CheckedFxHashLeaf`](../src/checked_hash.rs) supplies the first concrete native
+hashing boundary for `i64`, `bool`, `u8`, `usize` and `String`. It is sealed to
+these audited implementations. It first reserves one logical work unit for
+constant-size metadata inspection and checked receipt arithmetic, then reserves
+the complete native call. Only then does it invoke the original `Hash::hash`
+against the caller's actual `FxHasher`. No proxy hasher, intermediate digest,
+byte buffer or replacement hashing algorithm is introduced.
+
+The [hash-leaf model](../../formal/rocq/rho_bridge/theories/AdmittedKeyHashExecution.v)
+defines bounded source groups rather than machine instructions. Signed `i64`
+costs three native work units; the other fixed leaves cost two. String work
+accounts for each bulk chunk, mix and byte load, including repeated short-input
+loads and an overlapping final suffix. The bound covers both dependency
+feature profiles: one emits the native string terminator and one omits it.
+This does not assert identical hashes across those profiles; the original
+implementation still determines the result in each profile.
+
+The initial supported build uses pinned `rustc-hash` 2.1.3, the audited x86-64
+64-bit-pointer compiler revision, and its trusted standard prebuilt core.
+The [build check](../build.rs) rejects unknown compiler revisions, wrappers and
+detected sysroot/rebuilt-core overrides for this checked boundary. It is not an
+attestation of arbitrary build environments. Unsupported profiles return
+`UnsupportedProfile`; ordinary hashing remains available. Tests reporting native
+correspondence must show that the profile-gated positive test actually ran.
+
+Refusal or arithmetic overflow leaves the hasher unchanged. Earlier inspection
+charges remain spent. A successful call returns its native execution allowance,
+not an authority token: retaining it or paying for another execution is a
+separate caller obligation tied to unchanged input and the same profile.
+Borrowed byte reads consume work, not owned-byte retention. Hasher construction,
+`finish`, generated worklists, other native leaves, equality and map operations
+remain separate contracts; this leaf interface alone does not activate public
+preparation or complete the generated HashBag admission provider.
+
 ### Checked leaf copies and binding
 
 [`CheckedBindingLeaf`](../src/checked_binding.rs) supplies the payload boundary

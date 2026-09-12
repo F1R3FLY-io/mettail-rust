@@ -17,7 +17,8 @@ name = "mettail_runtime"
 
 [dependencies]
 moniker = { workspace = true }
-rustc-hash = "2.0"
+# Checked key admission is source-audited against this implementation.
+rustc-hash = "=2.1.3"
 # Insertion-order-preserving map, used by HashMapLit for deterministic
 # keys()/values() iteration order.
 indexmap = "2"

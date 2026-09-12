@@ -13,11 +13,13 @@ pub use binding::*;
 
 pub mod binding_receipt;
 mod checked_binding;
+mod checked_hash;
 pub use checked_binding::{
     append_binding_slots, reserve_binding_copy, reserve_binding_parts, take_binding_slot,
     write_binding_slot, BindingFailure, BindingOperation, BindingSlotError, CheckedBindingLeaf,
     CheckedIterativeBinding,
 };
+pub use checked_hash::{CheckedFxHashLeaf, KeyHashFailure, CHECKED_FX_PROFILE_AVAILABLE};
 
 /// Runtime diagnostics queue (D11 ambiguous-display warnings, etc.).
 /// Stage 7 of W7 plan v5.1.
