@@ -521,6 +521,14 @@ counts. The walk uses the existing reverse-iteration projection without a
 staging vector. Source-order slots and reverse task pushes preserve element
 order and repeated occurrences.
 
+Direct category-vector constructors and category-vector literals, such as
+`List::ListLit(Vec<Proc>)`, use the same single-field descriptor and the same
+checked assembly. Both existing Drop paths have the identical empty-vector
+replacement and owned-child push loop, so the required-vector model applies
+without a second reconstruction algorithm. This adaptation is local to checked
+generation; it does not change the shared variant classifier. Primitive byte
+vectors remain native leaves, not vectors of language-category terms.
+
 Assembly admits destination storage before requesting vector capacity. Native
 and pattern copies enter paid locals before any child take. It then takes all
 scalar and scope children into bare category locals and vector children into
@@ -530,8 +538,8 @@ their existing child allowances. Only after every take succeeds are Arc
 wrappers, raw scopes and the parent formed, with no fallible callback until
 publication. No child credit is refunded or charged again during that transfer.
 
-This contract covers required vector fields, not optional vectors, hash-based
-collections, direct collection variants or native zipper carriers. Their
+This contract covers required vector fields and direct/literal category
+vectors, not optional vectors, hash-based collections or native zipper carriers. Their
 checked integration and remaining scope shapes are separate obligations.
 Neither these local models nor this shared-worker increment establish complete
 generated Rholang support, production activation, panic recovery or physical

@@ -264,6 +264,40 @@ fn required_vec_field(field: &FieldInfo) -> bool {
         && matches!(field.coll_type.as_ref(), None | Some(CollectionType::Vec))
 }
 
+// Both category Vec surfaces have exactly the owned field layout and
+// mem::take/DropTask cleanup covered by RequiredVecBindingReservation. Keep
+// this adaptation local: the shared classifier and primitive literals retain
+// their existing meaning for every other generated operation.
+fn checked_vector_payload<'a>(
+    variant: &'a VariantKind,
+    emission: &CloneEmissionNames,
+) -> Option<(&'a Ident, [FieldInfo; 1])> {
+    emission.checked.as_ref()?;
+    match variant {
+        VariantKind::Collection {
+            label,
+            element_cat,
+            coll_type: CollectionType::Vec,
+        }
+        | VariantKind::CollectionLiteral {
+            label,
+            element_cat,
+            coll_type: CollectionType::Vec,
+        } => Some((
+            label,
+            [FieldInfo {
+                category: element_cat.clone(),
+                is_collection: true,
+                coll_type: Some(CollectionType::Vec),
+                is_predicate: false,
+                is_optional: false,
+                opaque_leaf: None,
+            }],
+        )),
+        _ => None,
+    }
+}
+
 fn inline_binding_leaf(field: &FieldInfo) -> bool {
     field.is_predicate || field.is_opaque_leaf()
 }
@@ -303,6 +337,11 @@ fn generate_assemble_task(
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
+    if let Some((label, fields)) = checked_vector_payload(variant, emission) {
+        let task = format_ident!("Assemble{}_{}", category, label);
+        let slots = scalar_slot_fields(&fields);
+        return Some(quote! { #task { src: *const #category, slot: usize, #(#slots),* } });
+    }
     if let Some((label, fields, _)) = checked_scope_fields(variant, emission) {
         let task = format_ident!("Assemble{}_{}", category, label);
         let slots = scalar_slot_fields(fields);
@@ -466,6 +505,9 @@ fn generate_visit_arm(
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> TokenStream {
+    if let Some((label, fields)) = checked_vector_payload(variant, emission) {
+        return generate_scalar_visit(category, label, &fields, None, emission);
+    }
     if let Some((label, fields, scope)) = checked_scope_fields(variant, emission) {
         return generate_scalar_visit(category, label, fields, Some(scope), emission);
     }
@@ -1292,6 +1334,16 @@ fn generate_assemble_arm(
     destructure_is_irrefutable: bool,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
+    if let Some((label, fields)) = checked_vector_payload(variant, emission) {
+        return Some(generate_scalar_assemble(
+            category,
+            label,
+            &fields,
+            None,
+            destructure_is_irrefutable,
+            emission,
+        ));
+    }
     if let Some((label, fields, scope)) = checked_scope_fields(variant, emission) {
         return Some(generate_scalar_assemble(
             category,
@@ -2055,7 +2107,7 @@ mod tests {
         let language: LanguageDef = syn::parse_str(
             r#"
             name: CheckedScalarFixture,
-            types { Proc ![str] as Text },
+            types { Proc ![str] as Text ![Vec<Proc>] as List },
             terms {
                 PZero . |- "0" : Proc;
                 PUnary . child:Proc |- "unary" child : Proc;
@@ -2079,11 +2131,26 @@ mod tests {
                     |- prefix@Word children tail guard : Proc;
                 PVecScope . entries:Vec(Proc), ^[xs].body:[Proc* -> Proc]
                     |- "vecScope" entries xs body : Proc;
+                PVector . entries:Vec(Proc) |- "vector" entries : Proc;
+                PList . entries:List |- "list" entries : Proc;
             },
             equations {}, rewrites {},
         "#,
         )
         .expect("scalar category field fixture");
+        let proc_variants = collect_category_variants(&format_ident!("Proc"), &language);
+        assert!(proc_variants.iter().any(|variant| matches!(variant,
+            VariantKind::Collection { label, coll_type: CollectionType::Vec, .. }
+                if label == "PVector")));
+        let list_label = collect_category_variants(&format_ident!("List"), &language)
+            .into_iter()
+            .find_map(|variant| match variant {
+                VariantKind::CollectionLiteral {
+                    label, coll_type: CollectionType::Vec, ..
+                } => Some(label),
+                _ => None,
+            })
+            .expect("actual category-vector literal");
         let plan = super::super::iterative_drop::select_dummy_plan(&language);
         let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
             .expect("selected scalar fixture receipts");
@@ -2137,7 +2204,7 @@ mod tests {
                     let value = pool.take(); assert!(value.is_empty()); pool.set(value);
                 });
             }
-            fn exercise(source: &Proc, operation: BindingOperation<'_>) -> (Proc, (usize,usize)) {
+            fn exercise<T: CheckedIterativeBinding>(source: &T, operation: BindingOperation<'_>) -> (T, (usize,usize)) {
                 let mut trace = Vec::new();
                 let result = source.try_copy_iterative(operation, &mut |w,u| {
                     trace.push((w,u)); Ok::<_, usize>(())
@@ -2306,6 +2373,55 @@ mod tests {
                     vec![child.as_ref().clone(),Proc::PZero],child.clone(),predicate.clone());
                 let vector_scope=Proc::PVecScope(vec![child.as_ref().clone(),Proc::PZero],
                     Scope::from_parts_unsafe(vec![pattern.clone()],child.clone()));
+                for values in [vec![],vec![child.as_ref().clone(),Proc::PZero,child.as_ref().clone()]] {
+                    let expected_len=values.len();
+                    let direct = Proc::PVector(values.clone());
+                    let literal = Proc::PList(Arc::new(List::#list_label(values)));
+                    let Proc::PList(list) = &literal else {panic!("source list");};
+                    let (copied,_) = exercise(list.as_ref(),BindingOperation::Clone);
+                    let List::#list_label(entries) = &copied else {panic!("root list clone");};
+                    assert_eq!(entries.len(),expected_len);
+                    for entry in entries.iter().step_by(2) {
+                        assert!(matches!(entry,Proc::#var(OrdVar(Var::Free(v)))
+                            if v.unique_id==name.unique_id && v.pretty_name==name.pretty_name));
+                    }
+                    for source in [&direct,&literal] {
+                        for state in [moniker::ScopeState::new(),moniker::ScopeState::new().incr().incr()] {
+                            let (cloned,_) = exercise(source,BindingOperation::Clone);
+                            if let (Proc::PList(before),Proc::PList(after)) = (source,&cloned) {
+                                assert!(Arc::ptr_eq(before,after));
+                            }
+                            let (closed,_) = exercise(source,BindingOperation::Close {state,binders:&roster});
+                            let entries = match &closed {
+                                Proc::PVector(entries) => entries,
+                                Proc::PList(list) => match list.as_ref() {
+                                    List::#list_label(entries) => entries,
+                                    _ => panic!("literal vector variant"),
+                                },
+                                _ => panic!("vector surface variant"),
+                            };
+                            assert_eq!(entries.len(),expected_len);
+                            if !entries.is_empty() {
+                                assert_eq!(entries.len(),3);assert!(matches!(entries[1],Proc::PZero));
+                                check_bound(&entries[0],state.depth().0);check_bound(&entries[2],state.depth().0);
+                            }
+                            let (opened,_) = exercise(&closed,BindingOperation::Open {state,binders:&roster});
+                            let entries = match &opened {
+                                Proc::PVector(entries) => entries,
+                                Proc::PList(list) => match list.as_ref() {
+                                    List::#list_label(entries) => entries,
+                                    _ => panic!("opened literal vector"),
+                                },
+                                _ => panic!("opened vector surface"),
+                            };
+                            assert_eq!(entries.len(),expected_len);
+                            for entry in entries.iter().step_by(2) {
+                                assert!(matches!(entry,Proc::#var(OrdVar(Var::Free(v)))
+                                    if v.unique_id==name.unique_id && v.pretty_name==name.pretty_name));
+                            }
+                        }
+                    }
+                }
                 for state in [moniker::ScopeState::new(),moniker::ScopeState::new().incr().incr()] {
                     for operation in [BindingOperation::Clone,BindingOperation::Close {state,binders:&roster}] {
                         let (copied,_) = exercise(&vector_mixed,operation);
@@ -2461,6 +2577,40 @@ mod tests {
                         }
                     }
                     drop(source);pools_empty();
+                    for literal_surface in [false,true] {
+                        let mut source=Proc::PZero;
+                        for _ in 0..20_000 {
+                            source=if literal_surface {
+                                Proc::PList(Arc::new(List::#list_label(vec![source])))
+                            } else {Proc::PVector(vec![source])};
+                        }
+                        let operation=BindingOperation::Close {state:moniker::ScopeState::new(),binders:&[]};
+                        let mut calls=0;
+                        let copied=source.try_copy_iterative(operation,&mut |_,_| {
+                            calls+=1;Ok::<_,()>(())
+                        }).expect("deep vector surface");
+                        let mut cursor=&copied;
+                        for _ in 0..20_000 {
+                            let entries=match cursor {
+                                Proc::PVector(entries) => entries,
+                                Proc::PList(list) => match list.as_ref() {
+                                    List::#list_label(entries) => entries,
+                                    _ => panic!("deep literal vector"),
+                                },
+                                _ => panic!("deep vector surface"),
+                            };
+                            assert_eq!(entries.len(),1);cursor=&entries[0];
+                        }
+                        assert!(matches!(cursor,Proc::PZero));drop(copied);
+                        for stop in [calls/2,calls-3,calls] {
+                            let mut observed=0;
+                            let failed=source.try_copy_iterative(operation,&mut |_,_| {
+                                observed+=1;if observed==stop {Err(())} else {Ok(())}
+                            });
+                            assert!(matches!(failed,Err(BindingFailure::Reservation(()))));pools_empty();
+                        }
+                        drop(source);pools_empty();
+                    }
                     let name = FreeVar::fresh_named("deep");
                     let roster = [Binder(name.clone())];
                     let mut source = Proc::#var(OrdVar(Var::Free(name)));
