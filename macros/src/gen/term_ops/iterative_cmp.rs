@@ -52,6 +52,62 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+/// Names shared by the comparison builders; ordinary emission is unchanged.
+struct CmpEmissionNames {
+    task_enum: Ident,
+    task_pool: Ident,
+    aux_task_pool: Ident,
+    collection_resume: Ident,
+    eq_driver: Ident,
+    cmp_driver: Ident,
+    deliver: Ident,
+    unordered_eq: Ident,
+    eq_handler_prefix: &'static str,
+    cmp_handler_prefix: &'static str,
+    resume_prefix: &'static str,
+    native_resume_prefix: &'static str,
+}
+
+impl CmpEmissionNames {
+    fn ordinary() -> Self {
+        Self {
+            task_enum: format_ident!("CmpTask"),
+            task_pool: format_ident!("CMP_TASK_POOL"),
+            aux_task_pool: format_ident!("CMP_AUX_TASK_POOL"),
+            collection_resume: format_ident!("CollectionCmpResume"),
+            eq_driver: format_ident!("eq_iterative"),
+            cmp_driver: format_ident!("cmp_iterative"),
+            deliver: format_ident!("cmp_deliver"),
+            unordered_eq: format_ident!("eq_unordered_collection"),
+            eq_handler_prefix: "eq_handle_",
+            cmp_handler_prefix: "cmp_handle_",
+            resume_prefix: "cmp_resume_collection_",
+            native_resume_prefix: "cmp_resume_native_",
+        }
+    }
+
+    fn eq_handler(&self, category: &Ident) -> Ident {
+        format_ident!("{}{}", self.eq_handler_prefix, category.to_string().to_lowercase())
+    }
+
+    fn cmp_handler(&self, category: &Ident) -> Ident {
+        format_ident!("{}{}", self.cmp_handler_prefix, category.to_string().to_lowercase())
+    }
+
+    fn resume(&self, category: &Ident) -> Ident {
+        format_ident!("{}{}", self.resume_prefix, category.to_string().to_lowercase())
+    }
+
+    fn native_resume(&self, category: &Ident, label: &Ident) -> Ident {
+        format_ident!(
+            "{}{}_{}",
+            self.native_resume_prefix,
+            category.to_string().to_lowercase(),
+            label.to_string().to_lowercase(),
+        )
+    }
+}
+
 // =============================================================================
 // ★ #162 — the COLLECTION-ELEMENT BOUNDARY, for both comparison engines
 //
@@ -78,7 +134,10 @@ fn eq_collection_stmts(
     left_expr: &TokenStream,
     right_expr: &TokenStream,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let unordered_eq = &emission.unordered_eq;
     match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Cmp{}", element_cat);
@@ -89,7 +148,7 @@ fn eq_collection_stmts(
                 WalkOrder::Forward,
                 &|l, r| {
                     quote! {
-                        stack.push(CmpTask::#task_variant(#l as *const _, #r as *const _));
+                        stack.push(#task_enum::#task_variant(#l as *const _, #r as *const _));
                     }
                 },
             );
@@ -104,11 +163,10 @@ fn eq_collection_stmts(
         CollectionPlan::WholeValue {
             reason: WholeValueReason::UnorderedContainer,
         } => {
-            let resume_fn =
-                format_ident!("cmp_resume_collection_{}", element_cat.to_string().to_lowercase());
+            let resume_fn = emission.resume(element_cat);
             let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr);
             quote! {
-                if !eq_unordered_collection(#machine, #resume_fn) {
+                if !#unordered_eq(#machine, #resume_fn) {
                     return false;
                 }
             }
@@ -138,7 +196,9 @@ fn cmp_collection_push_stmts(
     left_expr: &TokenStream,
     right_expr: &TokenStream,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Cmp{}", element_cat);
@@ -149,25 +209,31 @@ fn cmp_collection_push_stmts(
                 WalkOrder::ReverseForLifo,
                 &|l, r| {
                     quote! {
-                        stack.push(CmpTask::#task_variant(#l as *const _, #r as *const _));
+                        stack.push(#task_enum::#task_variant(#l as *const _, #r as *const _));
                     }
                 },
             );
             quote! {
                 // Pushed first ⇒ popped LAST ⇒ the length is the tiebreak, which
                 // is what lexicographic order means.
-                stack.push(CmpTask::Verdict(#left_expr.len().cmp(&#right_expr.len())));
+                stack.push(#task_enum::Verdict(#left_expr.len().cmp(&#right_expr.len())));
                 #pushes
             }
         },
         CollectionPlan::WholeValue {
             reason: WholeValueReason::UnorderedContainer,
-        } => unordered_collection_cmp_push_stmts(element_cat, coll_type, left_expr, right_expr),
+        } => unordered_collection_cmp_push_stmts(
+            element_cat,
+            coll_type,
+            left_expr,
+            right_expr,
+            emission,
+        ),
         CollectionPlan::WholeValue {
             reason: WholeValueReason::ElementIsNotACategory,
         } => {
             quote! {
-                stack.push(CmpTask::Verdict(#left_expr.cmp(#right_expr)));
+                stack.push(#task_enum::Verdict(#left_expr.cmp(#right_expr)));
             }
         },
     }
@@ -178,13 +244,14 @@ fn unordered_collection_cmp_push_stmts(
     coll_type: &CollectionType,
     left_expr: &TokenStream,
     right_expr: &TokenStream,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
-    let resume_fn =
-        format_ident!("cmp_resume_collection_{}", element_cat.to_string().to_lowercase());
+    let task_enum = &emission.task_enum;
+    let resume_fn = emission.resume(element_cat);
     let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr);
 
     quote! {
-        stack.push(CmpTask::StartCollection(
+        stack.push(#task_enum::StartCollection(
             Box::new(#machine),
             #resume_fn,
         ));
@@ -301,14 +368,6 @@ fn pathmap_cmp_machine_expr(left_expr: &TokenStream, right_expr: &TokenStream) -
     }
 }
 
-fn recursive_native_cmp_resume_name(category: &Ident, label: &Ident) -> Ident {
-    format_ident!(
-        "cmp_resume_native_{}_{}",
-        category.to_string().to_lowercase(),
-        label.to_string().to_lowercase(),
-    )
-}
-
 // =============================================================================
 // Main Entry Point
 // =============================================================================
@@ -316,11 +375,12 @@ fn recursive_native_cmp_resume_name(category: &Ident, label: &Ident) -> Ident {
 /// Generate `CmpTask` enum, TLS pool, variant_index functions, iterative engines,
 /// and `impl PartialEq/Eq/PartialOrd/Ord` for all exported categories.
 pub fn generate_iterative_cmp(language: &LanguageDef) -> TokenStream {
-    let cmp_task_enum = generate_cmp_task_enum(language);
+    let emission = CmpEmissionNames::ordinary();
+    let cmp_task_enum = generate_cmp_task_enum(language, &emission);
     let variant_index_fns = generate_variant_index_fns(language);
-    let eq_engine = generate_eq_engine(language);
-    let cmp_engine = generate_cmp_engine(language);
-    let trait_impls = generate_trait_impls(language);
+    let eq_engine = generate_eq_engine(language, &emission);
+    let cmp_engine = generate_cmp_engine(language, &emission);
+    let trait_impls = generate_trait_impls(language, &emission);
 
     quote! {
         #cmp_task_enum
@@ -339,7 +399,11 @@ pub fn generate_iterative_cmp(language: &LanguageDef) -> TokenStream {
 ///
 /// `CmpTask` has one variant per category holding raw pointer pairs:
 /// `CmpInt(*const Int, *const Int)`, `CmpProc(*const Proc, *const Proc)`, etc.
-fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
+fn generate_cmp_task_enum(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let task_pool = &emission.task_pool;
+    let aux_task_pool = &emission.aux_task_pool;
+    let collection_resume = &emission.collection_resume;
     let variants: Vec<TokenStream> = language
         .types
         .iter()
@@ -352,8 +416,8 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
         })
         .collect();
     quote! {
-        type CollectionCmpResume = fn(
-            &mut Vec<CmpTask>,
+        type #collection_resume = fn(
+            &mut Vec<#task_enum>,
             Box<mettail_runtime::CollectionCmpPda>,
             Option<std::cmp::Ordering>,
         ) -> Option<std::cmp::Ordering>;
@@ -365,7 +429,7 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
         /// discriminants, and pushes child-pair tasks for `Box<T>` fields and for
         /// the ELEMENTS of every order-faithful collection.
         #[allow(dead_code)]
-        enum CmpTask {
+        enum #task_enum {
             #(#variants,)*
             /// Resume a suspended collection PDA after its requested typed
             /// comparison has completed.  Carrying the continuation function
@@ -373,7 +437,7 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
             /// heterogeneous key/value carriers without type erasure.
             ResumeCollection(
                 Box<mettail_runtime::CollectionCmpPda>,
-                CollectionCmpResume,
+                #collection_resume,
             ),
             /// Begin a canonical-order comparison at its exact lexicographic
             /// position. Deferring the first `resume(None)` call is essential:
@@ -381,7 +445,7 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
             /// pushed would otherwise outrank earlier fields.
             StartCollection(
                 Box<mettail_runtime::CollectionCmpPda>,
-                CollectionCmpResume,
+                #collection_resume,
             ),
             /// ★ #162 — an ALREADY-COMPUTED verdict, consulted in field order.
             ///
@@ -404,8 +468,8 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
         // SAFETY: CmpTask holds *const pointers that are only dereferenced
         // within the same thread that created them, during the lifetime of
         // the references they were derived from.
-        unsafe impl Send for CmpTask {}
-        unsafe impl Sync for CmpTask {}
+        unsafe impl Send for #task_enum {}
+        unsafe impl Sync for #task_enum {}
 
         thread_local! {
             /// Pool for reusing `CmpTask` work stacks across comparison calls.
@@ -415,14 +479,14 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
             /// comparisons reuse the same buffer. Category-bearing collections
             /// remain inside the generated drivers rather than re-entering the
             /// public trait implementations.
-            static CMP_TASK_POOL: std::cell::Cell<Vec<CmpTask>> =
+            static #task_pool: std::cell::Cell<Vec<#task_enum>> =
                 std::cell::Cell::new(Vec::new());
 
             /// Reusable work stack for the canonical-order PDA used by equality
             /// at unordered collection boundaries. It is distinct from
             /// `CMP_TASK_POOL` because the outer equality traversal still owns
             /// that stack while an individual collection is being compared.
-            static CMP_AUX_TASK_POOL: std::cell::Cell<Vec<CmpTask>> =
+            static #aux_task_pool: std::cell::Cell<Vec<#task_enum>> =
                 std::cell::Cell::new(Vec::new());
         }
     }
@@ -507,7 +571,13 @@ fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStr
 /// becomes one mega-function whose `match (left, right) { ... }` arms force
 /// rustc to allocate stack space for every variant's locals up front,
 /// overflowing the default 2 MB thread stack on the first call.
-fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
+fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let aux_task_pool = &emission.aux_task_pool;
+    let collection_resume = &emission.collection_resume;
+    let eq_driver = &emission.eq_driver;
+    let cmp_driver = &emission.cmp_driver;
+    let unordered_eq = &emission.unordered_eq;
     // Per-cat helper functions: each handles one CmpTask::Cmp{Cat}.
     // Returns `Some(false)` to short-circuit (mismatch), `Some(true)` to
     // continue (equal so far for this pair), `None` if there's nothing to
@@ -518,12 +588,12 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
         .map(|t| {
             let cat = &t.name;
             let cat_str = cat.to_string().to_lowercase();
-            let helper_fn = format_ident!("eq_handle_{}", cat_str);
+            let helper_fn = emission.eq_handler(cat);
             let index_fn = format_ident!("variant_index_{}", cat_str);
             let variants = collect_category_variants(cat, language);
             let variant_arms: Vec<TokenStream> = variants
                 .iter()
-                .map(|v| generate_eq_variant_arm(cat, v, language))
+                .map(|v| generate_eq_variant_arm(cat, v, language, emission))
                 .collect();
             let mismatch_arm = if variants.len() == 1 {
                 TokenStream::new()
@@ -536,7 +606,7 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
                 fn #helper_fn(
-                    stack: &mut Vec<CmpTask>,
+                    stack: &mut Vec<#task_enum>,
                     left_ptr: *const #cat,
                     right_ptr: *const #cat,
                 ) -> bool {
@@ -569,9 +639,9 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
-            let helper_fn = format_ident!("eq_handle_{}", cat.to_string().to_lowercase());
+            let helper_fn = emission.eq_handler(cat);
             quote! {
-                CmpTask::#cmp_variant(left_ptr, right_ptr) => {
+                #task_enum::#cmp_variant(left_ptr, right_ptr) => {
                     if !#helper_fn(stack, left_ptr, right_ptr) {
                         return false;
                     }
@@ -586,22 +656,22 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
         /// generated category before scheduling `CmpTask` work.
         #[inline]
         #[allow(dead_code)]
-        fn eq_unordered_collection(
+        fn #unordered_eq(
             machine: mettail_runtime::CollectionCmpPda,
-            resume: CollectionCmpResume,
+            resume: #collection_resume,
         ) -> bool {
             #[inline]
             fn drive(
-                stack: &mut Vec<CmpTask>,
+                stack: &mut Vec<#task_enum>,
                 machine: mettail_runtime::CollectionCmpPda,
-                resume: CollectionCmpResume,
+                resume: #collection_resume,
             ) -> bool {
-                stack.push(CmpTask::StartCollection(Box::new(machine), resume));
-                cmp_iterative(stack) == std::cmp::Ordering::Equal
+                stack.push(#task_enum::StartCollection(Box::new(machine), resume));
+                #cmp_driver(stack) == std::cmp::Ordering::Equal
             }
 
             let mut machine = Some(machine);
-            let tls_result = CMP_AUX_TASK_POOL.try_with(|cell| {
+            let tls_result = #aux_task_pool.try_with(|cell| {
                 let mut stack = cell.take();
                 stack.clear();
                 let result = drive(
@@ -636,20 +706,20 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
         /// for the duration of this function call. This is guaranteed because
         /// they are derived from `&self` and `&other` in `PartialEq::eq()`.
         #[allow(dead_code, unused_variables)]
-        fn eq_iterative(stack: &mut Vec<CmpTask>) -> bool {
+        fn #eq_driver(stack: &mut Vec<#task_enum>) -> bool {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
-                    CmpTask::ResumeCollection(_, _) => {
+                    #task_enum::ResumeCollection(_, _) => {
                         unreachable!("collection ordering continuation reached equality engine");
                     }
-                    CmpTask::StartCollection(_, _) => {
+                    #task_enum::StartCollection(_, _) => {
                         unreachable!("collection ordering start reached equality engine");
                     }
                     // ★ #162 — a precomputed leaf verdict. `PartialEq` only asks
                     // whether every position agrees, so any non-`Equal` verdict
                     // is a mismatch regardless of direction.
-                    CmpTask::Verdict(ord) => {
+                    #task_enum::Verdict(ord) => {
                         if ord != std::cmp::Ordering::Equal {
                             return false;
                         }
@@ -666,7 +736,9 @@ fn generate_eq_variant_arm(
     category: &Ident,
     variant: &VariantKind,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let unordered_eq = &emission.unordered_eq;
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -693,8 +765,14 @@ fn generate_eq_variant_arm(
         // `&Vec<Proc>` calls `Proc::eq` per element, re-entering this very driver
         // by host recursion with no access to `stack`.
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
-            let stmts =
-                eq_collection_stmts(element_cat, coll_type, &quote! { a }, &quote! { b }, language);
+            let stmts = eq_collection_stmts(
+                element_cat,
+                coll_type,
+                &quote! { a },
+                &quote! { b },
+                language,
+                emission,
+            );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #stmts
@@ -708,13 +786,13 @@ fn generate_eq_variant_arm(
             let left_focus = carrier.focus_ref(&quote! { a });
             let right_focus = carrier.focus_ref(&quote! { b });
             let machine = pathmap_cmp_machine_expr(&left_pathmap, &right_pathmap);
-            let resume = recursive_native_cmp_resume_name(category, label);
+            let resume = emission.native_resume(category, label);
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     if #left_focus != #right_focus {
                         return false;
                     }
-                    if !eq_unordered_collection(#machine, #resume) {
+                    if !#unordered_eq(#machine, #resume) {
                         return false;
                     }
                 }
@@ -731,14 +809,20 @@ fn generate_eq_variant_arm(
         },
 
         VariantKind::Regular { label, fields } => {
-            generate_eq_regular_arm(category, label, fields, language)
+            generate_eq_regular_arm(category, label, fields, language, emission)
         },
 
         // ★ #162 — the category-DIRECT collection field (`PPar . ps:HashBag(Proc)`),
         // the same boundary as `CollectionLiteral` above.
         VariantKind::Collection { label, element_cat, coll_type } => {
-            let stmts =
-                eq_collection_stmts(element_cat, coll_type, &quote! { a }, &quote! { b }, language);
+            let stmts = eq_collection_stmts(
+                element_cat,
+                coll_type,
+                &quote! { a },
+                &quote! { b },
+                language,
+                emission,
+            );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #stmts
@@ -747,11 +831,18 @@ fn generate_eq_variant_arm(
         },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-            generate_eq_binder_arm(category, label, pre_scope_fields, body_cat, language)
+            generate_eq_binder_arm(category, label, pre_scope_fields, body_cat, language, emission)
         },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            generate_eq_multi_binder_arm(category, label, pre_scope_fields, body_cat, language)
+            generate_eq_multi_binder_arm(
+                category,
+                label,
+                pre_scope_fields,
+                body_cat,
+                language,
+                emission,
+            )
         },
     }
 }
@@ -782,7 +873,9 @@ fn eq_arm_stmts(
     right_names: &[Ident],
     scope_stmts: Option<TokenStream>,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> Vec<TokenStream> {
+    let task_enum = &emission.task_enum;
     let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
     for (i, field) in fields.iter().enumerate() {
@@ -819,6 +912,7 @@ fn eq_arm_stmts(
                     &quote! { __left_collection },
                     &quote! { __right_collection },
                     language,
+                    emission,
                 );
                 quote! {
                     match (#lname.as_ref(), #rname.as_ref()) {
@@ -839,7 +933,7 @@ fn eq_arm_stmts(
                     match (#lname.as_ref(), #rname.as_ref()) {
                         (None, None) => {}
                         (Some(__l), Some(__r)) => {
-                            stack.push(CmpTask::#task_variant(
+                            stack.push(#task_enum::#task_variant(
                                 __l.as_ref() as *const _,
                                 __r.as_ref() as *const _,
                             ));
@@ -858,13 +952,14 @@ fn eq_arm_stmts(
                 &quote! { #lname },
                 &quote! { #rname },
                 language,
+                emission,
             ),
 
             // A `Box<Cat>` category child: the descent, as a task.
             FieldCarrier::Child => {
                 let task_variant = format_ident!("Cmp{}", field.category);
                 quote! {
-                    stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
+                    stack.push(#task_enum::#task_variant(&**#lname as *const _, &**#rname as *const _));
                 }
             },
         });
@@ -884,10 +979,11 @@ fn generate_eq_regular_arm(
     label: &Ident,
     fields: &[FieldInfo],
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
     let left_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("r{}", i)).collect();
-    let compare_stmts = eq_arm_stmts(fields, &left_names, &right_names, None, language);
+    let compare_stmts = eq_arm_stmts(fields, &left_names, &right_names, None, language, emission);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -903,7 +999,9 @@ fn generate_eq_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let total_fields = pre_scope_fields.len() + 1; // pre-scope fields + scope
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("r{}", i)).collect();
@@ -920,15 +1018,21 @@ fn generate_eq_binder_arm(
             if l_pat != r_pat { return false; }
             let l_body: *const #body_cat = &*#scope_left.inner().unsafe_body;
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
-            stack.push(CmpTask::#body_task(l_body, r_body));
+            stack.push(#task_enum::#body_task(l_body, r_body));
         }
     };
 
     // ★ #197 — the pre-scope fields go through the SHARED builder. This loop used
     // to be a hand-copy that tested `is_predicate` and `is_collection` and nothing
     // else, so three of the five carriers were emitted as the wrong shape.
-    let compare_stmts =
-        eq_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_stmts), language);
+    let compare_stmts = eq_arm_stmts(
+        pre_scope_fields,
+        &left_names,
+        &right_names,
+        Some(scope_stmts),
+        language,
+        emission,
+    );
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -944,7 +1048,9 @@ fn generate_eq_multi_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let total_fields = pre_scope_fields.len() + 1;
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("r{}", i)).collect();
@@ -960,7 +1066,7 @@ fn generate_eq_multi_binder_arm(
             if l_pat != r_pat { return false; }
             let l_body: *const #body_cat = &*#scope_left.inner().unsafe_body;
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
-            stack.push(CmpTask::#body_task(l_body, r_body));
+            stack.push(#task_enum::#body_task(l_body, r_body));
         }
     };
 
@@ -968,8 +1074,14 @@ fn generate_eq_multi_binder_arm(
     // `PInputsOptTagged . ns:Vec(Name), *opt(qs:Vec(Proc)), ^[xs].p:[Name* -> Proc]`
     // puts an `Option<Vec<Proc>>` in a MultiBinder pre-scope slot, and the hand-copy
     // this replaces had no `OptionalCollection` case.
-    let compare_stmts =
-        eq_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_stmts), language);
+    let compare_stmts = eq_arm_stmts(
+        pre_scope_fields,
+        &left_names,
+        &right_names,
+        Some(scope_stmts),
+        language,
+        emission,
+    );
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -988,26 +1100,28 @@ fn generate_eq_multi_binder_arm(
 /// per-cat helpers keep individual stack frames small. Each helper returns
 /// the ordering result; `Equal` means "continue draining stack", anything
 /// else means "stop and propagate".
-fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
+fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let cmp_driver = &emission.cmp_driver;
+    let deliver = &emission.deliver;
     let collection_resume_fns: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
-            let resume_fn =
-                format_ident!("cmp_resume_collection_{}", cat.to_string().to_lowercase());
+            let resume_fn = emission.resume(cat);
             quote! {
                 #[inline]
                 fn #resume_fn(
-                    stack: &mut Vec<CmpTask>,
+                    stack: &mut Vec<#task_enum>,
                     mut machine: Box<mettail_runtime::CollectionCmpPda>,
                     result: Option<std::cmp::Ordering>,
                 ) -> Option<std::cmp::Ordering> {
                     match machine.resume(result) {
                         mettail_runtime::CollectionCmpStep::Compare { left, right, .. } => {
-                            stack.push(CmpTask::ResumeCollection(machine, #resume_fn));
-                            stack.push(CmpTask::#cmp_variant(
+                            stack.push(#task_enum::ResumeCollection(machine, #resume_fn));
+                            stack.push(#task_enum::#cmp_variant(
                                 left.cast::<#cat>(),
                                 right.cast::<#cat>(),
                             ));
@@ -1029,13 +1143,13 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                 .into_iter()
                 .filter_map(move |variant| match variant {
                     VariantKind::RecursiveNativeLiteral { label, carrier } => {
-                        let resume_fn = recursive_native_cmp_resume_name(category, &label);
+                        let resume_fn = emission.native_resume(category, &label);
                         let key_variant = format_ident!("Cmp{}", carrier.key_category());
                         let value_variant = format_ident!("Cmp{}", carrier.value_category());
                         Some(quote! {
                             #[inline]
                             fn #resume_fn(
-                                stack: &mut Vec<CmpTask>,
+                                stack: &mut Vec<#task_enum>,
                                 mut machine: Box<mettail_runtime::CollectionCmpPda>,
                                 result: Option<std::cmp::Ordering>,
                             ) -> Option<std::cmp::Ordering> {
@@ -1045,16 +1159,16 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                                         left,
                                         right,
                                     } => {
-                                        stack.push(CmpTask::ResumeCollection(machine, #resume_fn));
+                                        stack.push(#task_enum::ResumeCollection(machine, #resume_fn));
                                         match role {
                                             mettail_runtime::CollectionCmpRole::Primary => {
-                                                stack.push(CmpTask::#key_variant(
+                                                stack.push(#task_enum::#key_variant(
                                                     left.cast(),
                                                     right.cast(),
                                                 ));
                                             },
                                             mettail_runtime::CollectionCmpRole::Secondary => {
-                                                stack.push(CmpTask::#value_variant(
+                                                stack.push(#task_enum::#value_variant(
                                                     left.cast(),
                                                     right.cast(),
                                                 ));
@@ -1080,12 +1194,12 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         .map(|t| {
             let cat = &t.name;
             let cat_str = cat.to_string().to_lowercase();
-            let helper_fn = format_ident!("cmp_handle_{}", cat_str);
+            let helper_fn = emission.cmp_handler(cat);
             let index_fn = format_ident!("variant_index_{}", cat_str);
             let variants = collect_category_variants(cat, language);
             let variant_arms: Vec<TokenStream> = variants
                 .iter()
-                .map(|v| generate_cmp_variant_arm(cat, v, language))
+                .map(|v| generate_cmp_variant_arm(cat, v, language, emission))
                 .collect();
             let mismatch_arm = if variants.len() == 1 {
                 TokenStream::new()
@@ -1102,7 +1216,7 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
                 fn #helper_fn(
-                    stack: &mut Vec<CmpTask>,
+                    stack: &mut Vec<#task_enum>,
                     left_ptr: *const #cat,
                     right_ptr: *const #cat,
                 ) -> std::cmp::Ordering {
@@ -1129,12 +1243,12 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
-            let helper_fn = format_ident!("cmp_handle_{}", cat.to_string().to_lowercase());
+            let helper_fn = emission.cmp_handler(cat);
             quote! {
-                CmpTask::#cmp_variant(left_ptr, right_ptr) => {
+                #task_enum::#cmp_variant(left_ptr, right_ptr) => {
                     let ord = #helper_fn(stack, left_ptr, right_ptr);
                     if ord != std::cmp::Ordering::Equal {
-                        if let Some(root_ordering) = cmp_deliver(stack, ord) {
+                        if let Some(root_ordering) = #deliver(stack, ord) {
                             return root_ordering;
                         }
                     }
@@ -1149,15 +1263,15 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         #(#helper_fns)*
 
         #[allow(dead_code, unused_variables)]
-        fn cmp_deliver(
-            stack: &mut Vec<CmpTask>,
+        fn #deliver(
+            stack: &mut Vec<#task_enum>,
             mut ordering: std::cmp::Ordering,
         ) -> Option<std::cmp::Ordering> {
             loop {
                 let mut resumed = false;
                 while let Some(task) = stack.pop() {
                     match task {
-                        CmpTask::ResumeCollection(machine, resume) => {
+                        #task_enum::ResumeCollection(machine, resume) => {
                             match resume(stack, machine, Some(ordering)) {
                                 None => return None,
                                 Some(std::cmp::Ordering::Equal) => return None,
@@ -1187,27 +1301,27 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         /// for the duration of this function call. This is guaranteed because
         /// they are derived from `&self` and `&other` in `Ord::cmp()`.
         #[allow(dead_code, unused_variables)]
-        fn cmp_iterative(stack: &mut Vec<CmpTask>) -> std::cmp::Ordering {
+        fn #cmp_driver(stack: &mut Vec<#task_enum>) -> std::cmp::Ordering {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
-                    CmpTask::StartCollection(machine, resume) => {
+                    #task_enum::StartCollection(machine, resume) => {
                         if let Some(ordering) = resume(stack, machine, None) {
                             if ordering != std::cmp::Ordering::Equal {
-                                if let Some(root_ordering) = cmp_deliver(stack, ordering) {
+                                if let Some(root_ordering) = #deliver(stack, ordering) {
                                     return root_ordering;
                                 }
                             }
                         }
                     }
-                    CmpTask::ResumeCollection(machine, resume) => {
+                    #task_enum::ResumeCollection(machine, resume) => {
                         if let Some(ordering) = resume(
                             stack,
                             machine,
                             Some(std::cmp::Ordering::Equal),
                         ) {
                             if ordering != std::cmp::Ordering::Equal {
-                                if let Some(root_ordering) = cmp_deliver(stack, ordering) {
+                                if let Some(root_ordering) = #deliver(stack, ordering) {
                                     return root_ordering;
                                 }
                             }
@@ -1217,9 +1331,9 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
                     // pushed in REVERSE position order, popping them yields
                     // strict left-to-right (lexicographic) semantics: the FIRST
                     // non-`Equal` verdict decides, exactly as `derive(Ord)` does.
-                    CmpTask::Verdict(ord) => {
+                    #task_enum::Verdict(ord) => {
                         if ord != std::cmp::Ordering::Equal {
-                            if let Some(root_ordering) = cmp_deliver(stack, ord) {
+                            if let Some(root_ordering) = #deliver(stack, ord) {
                                 return root_ordering;
                             }
                         }
@@ -1236,7 +1350,9 @@ fn generate_cmp_variant_arm(
     category: &Ident,
     variant: &VariantKind,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -1271,6 +1387,7 @@ fn generate_cmp_variant_arm(
                 &quote! { a },
                 &quote! { b },
                 language,
+                emission,
             );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
@@ -1285,11 +1402,11 @@ fn generate_cmp_variant_arm(
             let left_focus = carrier.focus_ref(&quote! { a });
             let right_focus = carrier.focus_ref(&quote! { b });
             let machine = pathmap_cmp_machine_expr(&left_pathmap, &right_pathmap);
-            let resume = recursive_native_cmp_resume_name(category, label);
+            let resume = emission.native_resume(category, label);
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
-                    stack.push(CmpTask::Verdict((#left_focus).cmp(#right_focus)));
-                    stack.push(CmpTask::StartCollection(
+                    stack.push(#task_enum::Verdict((#left_focus).cmp(#right_focus)));
+                    stack.push(#task_enum::StartCollection(
                         Box::new(#machine),
                         #resume,
                     ));
@@ -1310,7 +1427,7 @@ fn generate_cmp_variant_arm(
         },
 
         VariantKind::Regular { label, fields } => {
-            generate_cmp_regular_arm(category, label, fields, language)
+            generate_cmp_regular_arm(category, label, fields, language, emission)
         },
 
         // ★ #162 — the category-DIRECT collection field, `Ord` side.
@@ -1321,6 +1438,7 @@ fn generate_cmp_variant_arm(
                 &quote! { a },
                 &quote! { b },
                 language,
+                emission,
             );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
@@ -1330,11 +1448,18 @@ fn generate_cmp_variant_arm(
         },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-            generate_cmp_binder_arm(category, label, pre_scope_fields, body_cat, language)
+            generate_cmp_binder_arm(category, label, pre_scope_fields, body_cat, language, emission)
         },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            generate_cmp_multi_binder_arm(category, label, pre_scope_fields, body_cat, language)
+            generate_cmp_multi_binder_arm(
+                category,
+                label,
+                pre_scope_fields,
+                body_cat,
+                language,
+                emission,
+            )
         },
     }
 }
@@ -1413,7 +1538,9 @@ fn cmp_arm_stmts(
     right_names: &[Ident],
     scope_pushes: Option<TokenStream>,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> Vec<TokenStream> {
+    let task_enum = &emission.task_enum;
     // Can this field's contribution be expressed as work ON THE STACK? A leaf
     // cannot because it is not a category. Boxed children, optional children,
     // and every category-bearing collection can: unordered containers use the
@@ -1486,7 +1613,7 @@ fn cmp_arm_stmts(
             // consulted in position order. This is the case the eager prefix
             // could not express, and the reason it had to swallow collections.
             FieldCarrier::Leaf => quote! {
-                stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
+                stack.push(#task_enum::Verdict(#lname.cmp(#rname)));
             },
 
             // `Option<Container>: Ord` uses `None < Some`; `Some`/`Some` then
@@ -1498,15 +1625,16 @@ fn cmp_arm_stmts(
                     &quote! { __left_collection },
                     &quote! { __right_collection },
                     language,
+                    emission,
                 );
                 quote! {
                     match (#lname.as_ref(), #rname.as_ref()) {
                         (None, None) => {},
                         (None, Some(_)) => {
-                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Less));
+                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Less));
                         },
                         (Some(_), None) => {
-                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Greater));
+                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Greater));
                         },
                         (Some(__left_collection), Some(__right_collection)) => {
                             #inner
@@ -1528,13 +1656,13 @@ fn cmp_arm_stmts(
                     match (#lname.as_ref(), #rname.as_ref()) {
                         (None, None) => {}
                         (None, Some(_)) => {
-                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Less));
+                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Less));
                         }
                         (Some(_), None) => {
-                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Greater));
+                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Greater));
                         }
                         (Some(__l), Some(__r)) => {
-                            stack.push(CmpTask::#task_variant(
+                            stack.push(#task_enum::#task_variant(
                                 __l.as_ref() as *const _,
                                 __r.as_ref() as *const _,
                             ));
@@ -1549,6 +1677,7 @@ fn cmp_arm_stmts(
                 &quote! { #lname },
                 &quote! { #rname },
                 language,
+                emission,
             ),
 
             // ★ A boxed category child. Before #162 a child at a position BEFORE the
@@ -1558,7 +1687,7 @@ fn cmp_arm_stmts(
             FieldCarrier::Child => {
                 let task_variant = format_ident!("Cmp{}", field.category);
                 quote! {
-                    stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
+                    stack.push(#task_enum::#task_variant(&**#lname as *const _, &**#rname as *const _));
                 }
             },
         });
@@ -1572,10 +1701,11 @@ fn generate_cmp_regular_arm(
     label: &Ident,
     fields: &[FieldInfo],
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
     let left_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("r{}", i)).collect();
-    let stmts = cmp_arm_stmts(fields, &left_names, &right_names, None, language);
+    let stmts = cmp_arm_stmts(fields, &left_names, &right_names, None, language, emission);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -1596,7 +1726,9 @@ fn generate_cmp_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let total_fields = pre_scope_fields.len() + 1;
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("r{}", i)).collect();
@@ -1623,13 +1755,19 @@ fn generate_cmp_binder_arm(
                 hash_pat(&l_scope.unsafe_pattern).cmp(&hash_pat(&r_scope.unsafe_pattern));
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
-            stack.push(CmpTask::#body_task(l_body, r_body));
-            stack.push(CmpTask::Verdict(pat_ord));
+            stack.push(#task_enum::#body_task(l_body, r_body));
+            stack.push(#task_enum::Verdict(pat_ord));
         }
     };
 
-    let stmts =
-        cmp_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_pushes), language);
+    let stmts = cmp_arm_stmts(
+        pre_scope_fields,
+        &left_names,
+        &right_names,
+        Some(scope_pushes),
+        language,
+        emission,
+    );
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -1650,7 +1788,9 @@ fn generate_cmp_multi_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
     language: &LanguageDef,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let total_fields = pre_scope_fields.len() + 1;
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("r{}", i)).collect();
@@ -1682,13 +1822,19 @@ fn generate_cmp_multi_binder_arm(
             });
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
-            stack.push(CmpTask::#body_task(l_body, r_body));
-            stack.push(CmpTask::Verdict(pat_ord));
+            stack.push(#task_enum::#body_task(l_body, r_body));
+            stack.push(#task_enum::Verdict(pat_ord));
         }
     };
 
-    let stmts =
-        cmp_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_pushes), language);
+    let stmts = cmp_arm_stmts(
+        pre_scope_fields,
+        &left_names,
+        &right_names,
+        Some(scope_pushes),
+        language,
+        emission,
+    );
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -1702,36 +1848,40 @@ fn generate_cmp_multi_binder_arm(
 // =============================================================================
 
 /// Generate `impl PartialEq/Eq/PartialOrd/Ord` for all categories.
-fn generate_trait_impls(language: &LanguageDef) -> TokenStream {
+fn generate_trait_impls(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
     let impls: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|lang_type| generate_category_trait_impls(&lang_type.name))
+        .map(|lang_type| generate_category_trait_impls(&lang_type.name, emission))
         .collect();
 
     quote! { #(#impls)* }
 }
 
 /// Generate all four comparison trait impls for a single category.
-fn generate_category_trait_impls(category: &Ident) -> TokenStream {
+fn generate_category_trait_impls(category: &Ident, emission: &CmpEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let task_pool = &emission.task_pool;
+    let eq_driver = &emission.eq_driver;
+    let cmp_driver = &emission.cmp_driver;
     let cmp_variant = format_ident!("Cmp{}", category);
 
     quote! {
         impl PartialEq for #category {
             fn eq(&self, other: &Self) -> bool {
                 // Fast path: try TLS pool
-                let tls_result = CMP_TASK_POOL.try_with(|cell| {
+                let tls_result = #task_pool.try_with(|cell| {
                     let mut stack = cell.take();
                     let was_empty = stack.is_empty();
 
                     // Push initial comparison task
-                    stack.push(CmpTask::#cmp_variant(
+                    stack.push(#task_enum::#cmp_variant(
                         self as *const _,
                         other as *const _,
                     ));
 
                     // Run the iterative engine
-                    let result = eq_iterative(&mut stack);
+                    let result = #eq_driver(&mut stack);
 
                     // Return pool
                     if was_empty {
@@ -1747,11 +1897,11 @@ fn generate_category_trait_impls(category: &Ident) -> TokenStream {
                 }
 
                 // Fallback: TLS unavailable (thread shutdown). Use local stack.
-                let mut stack = vec![CmpTask::#cmp_variant(
+                let mut stack = vec![#task_enum::#cmp_variant(
                     self as *const _,
                     other as *const _,
                 )];
-                eq_iterative(&mut stack)
+                #eq_driver(&mut stack)
             }
         }
 
@@ -1766,18 +1916,18 @@ fn generate_category_trait_impls(category: &Ident) -> TokenStream {
         impl Ord for #category {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                 // Fast path: try TLS pool
-                let tls_result = CMP_TASK_POOL.try_with(|cell| {
+                let tls_result = #task_pool.try_with(|cell| {
                     let mut stack = cell.take();
                     let was_empty = stack.is_empty();
 
                     // Push initial comparison task
-                    stack.push(CmpTask::#cmp_variant(
+                    stack.push(#task_enum::#cmp_variant(
                         self as *const _,
                         other as *const _,
                     ));
 
                     // Run the iterative engine
-                    let result = cmp_iterative(&mut stack);
+                    let result = #cmp_driver(&mut stack);
 
                     // Return pool
                     if was_empty {
@@ -1793,11 +1943,11 @@ fn generate_category_trait_impls(category: &Ident) -> TokenStream {
                 }
 
                 // Fallback: TLS unavailable (thread shutdown). Use local stack.
-                let mut stack = vec![CmpTask::#cmp_variant(
+                let mut stack = vec![#task_enum::#cmp_variant(
                     self as *const _,
                     other as *const _,
                 )];
-                cmp_iterative(&mut stack)
+                #cmp_driver(&mut stack)
             }
         }
     }
@@ -1911,8 +2061,22 @@ mod carrier_cell_census {
         for (position, scope) in positions() {
             for (carrier, f) in one_per_carrier() {
                 let fields = [f];
-                let eq = rendered(eq_arm_stmts(&fields, &left, &right, scope.clone(), &language));
-                let cmp = rendered(cmp_arm_stmts(&fields, &left, &right, scope.clone(), &language));
+                let eq = rendered(eq_arm_stmts(
+                    &fields,
+                    &left,
+                    &right,
+                    scope.clone(),
+                    &language,
+                    &CmpEmissionNames::ordinary(),
+                ));
+                let cmp = rendered(cmp_arm_stmts(
+                    &fields,
+                    &left,
+                    &right,
+                    scope.clone(),
+                    &language,
+                    &CmpEmissionNames::ordinary(),
+                ));
                 cells += 1;
 
                 // Anti-vacuity: an emitter that produced nothing would satisfy
@@ -2046,7 +2210,14 @@ mod carrier_cell_census {
         let left = vec![format_ident!("l0"), format_ident!("l1")];
         let right = vec![format_ident!("r0"), format_ident!("r1")];
 
-        let cmp = rendered(cmp_arm_stmts(&fields, &left, &right, None, &language));
+        let cmp = rendered(cmp_arm_stmts(
+            &fields,
+            &left,
+            &right,
+            None,
+            &language,
+            &CmpEmissionNames::ordinary(),
+        ));
         assert!(
             cmp.contains("CmpTask::CmpProc(&**l0"),
             "the control: index 0 is a boxed child and must be a DESCENT, which is what \
@@ -2065,7 +2236,14 @@ mod carrier_cell_census {
              Got: {cmp}"
         );
 
-        let eq = rendered(eq_arm_stmts(&fields, &left, &right, None, &language));
+        let eq = rendered(eq_arm_stmts(
+            &fields,
+            &left,
+            &right,
+            None,
+            &language,
+            &CmpEmissionNames::ordinary(),
+        ));
         assert!(
             eq.contains("match(l1.as_ref(),r1.as_ref())")
                 && eq.contains("__left_collection.len()")
@@ -2120,9 +2298,22 @@ mod carrier_cell_census {
             CollectionType::PathMap,
         ] {
             let machine = compact(unordered_collection_cmp_machine_expr(&coll_type, &left, &right));
-            let eq = compact(eq_collection_stmts(&proc, &coll_type, &left, &right, &language));
-            let ord =
-                compact(cmp_collection_push_stmts(&proc, &coll_type, &left, &right, &language));
+            let eq = compact(eq_collection_stmts(
+                &proc,
+                &coll_type,
+                &left,
+                &right,
+                &language,
+                &CmpEmissionNames::ordinary(),
+            ));
+            let ord = compact(cmp_collection_push_stmts(
+                &proc,
+                &coll_type,
+                &left,
+                &right,
+                &language,
+                &CmpEmissionNames::ordinary(),
+            ));
 
             assert!(
                 eq.contains(&machine) && ord.contains(&machine),
@@ -2174,8 +2365,28 @@ mod carrier_cell_census {
         let scope = quote! { { __scope_group(); } };
 
         for (side, stmts) in [
-            ("eq", eq_arm_stmts(&fields, &left, &right, Some(scope.clone()), &language)),
-            ("cmp", cmp_arm_stmts(&fields, &left, &right, Some(scope.clone()), &language)),
+            (
+                "eq",
+                eq_arm_stmts(
+                    &fields,
+                    &left,
+                    &right,
+                    Some(scope.clone()),
+                    &language,
+                    &CmpEmissionNames::ordinary(),
+                ),
+            ),
+            (
+                "cmp",
+                cmp_arm_stmts(
+                    &fields,
+                    &left,
+                    &right,
+                    Some(scope.clone()),
+                    &language,
+                    &CmpEmissionNames::ordinary(),
+                ),
+            ),
         ] {
             let text = rendered(stmts.clone());
             assert_eq!(
@@ -2228,7 +2439,10 @@ mod carrier_cell_census {
     #[test]
     fn equality_helper_checks_pointer_identity_before_dereference() {
         let language = crate::gen::singleton_collection_language_for_tests();
-        let helper = generated_function_body(generate_eq_engine(&language), "eq_handle_meta");
+        let helper = generated_function_body(
+            generate_eq_engine(&language, &CmpEmissionNames::ordinary()),
+            "eq_handle_meta",
+        );
         let pointer_check = helper
             .find("std :: ptr :: eq (left_ptr , right_ptr)")
             .expect("equality helper must test shared allocation identity");
@@ -2245,8 +2459,8 @@ mod carrier_cell_census {
     fn exhaustive_match_codegen_omits_singleton_comparison_fallbacks() {
         let language = crate::gen::singleton_collection_language_for_tests();
         for (engine, function) in [
-            (generate_eq_engine(&language), "eq_handle_meta"),
-            (generate_cmp_engine(&language), "cmp_handle_meta"),
+            (generate_eq_engine(&language, &CmpEmissionNames::ordinary()), "eq_handle_meta"),
+            (generate_cmp_engine(&language, &CmpEmissionNames::ordinary()), "cmp_handle_meta"),
         ] {
             let singleton = generated_function_body(engine, function);
             assert!(

@@ -59,8 +59,18 @@ fn arms(language: &LanguageDef, label: &str) -> (String, String) {
     let category = format_ident!("Proc");
     let variant = variant(language, label);
     (
-        compact(generate_eq_variant_arm(&category, &variant, language)),
-        compact(generate_cmp_variant_arm(&category, &variant, language)),
+        compact(generate_eq_variant_arm(
+            &category,
+            &variant,
+            language,
+            &CmpEmissionNames::ordinary(),
+        )),
+        compact(generate_cmp_variant_arm(
+            &category,
+            &variant,
+            language,
+            &CmpEmissionNames::ordinary(),
+        )),
     )
 }
 
@@ -74,9 +84,20 @@ fn ordinary_comparison_surface_census_and_exact_expansion_capture() {
             .iter()
             .find(|v| matches!(v, VariantKind::Literal { .. }))
             .expect("actual native literal classification");
-        assert!(compact(generate_eq_variant_arm(&category, leaf, &language))
-            .contains("ifa!=b{returnfalse;}"));
-        assert!(compact(generate_cmp_variant_arm(&category, leaf, &language)).contains("a.cmp(b)"));
+        assert!(compact(generate_eq_variant_arm(
+            &category,
+            leaf,
+            &language,
+            &CmpEmissionNames::ordinary()
+        ))
+        .contains("ifa!=b{returnfalse;}"));
+        assert!(compact(generate_cmp_variant_arm(
+            &category,
+            leaf,
+            &language,
+            &CmpEmissionNames::ordinary()
+        ))
+        .contains("a.cmp(b)"));
     }
     let proc = format_ident!("Proc");
     let variants = collect_category_variants(&proc, &language);
@@ -84,9 +105,20 @@ fn ordinary_comparison_surface_census_and_exact_expansion_capture() {
         .iter()
         .find(|v| matches!(v, VariantKind::Var { .. }))
         .expect("actual OrdVar variant");
-    assert!(compact(generate_eq_variant_arm(&proc, variable, &language))
-        .contains("ifa!=b{returnfalse;}"));
-    assert!(compact(generate_cmp_variant_arm(&proc, variable, &language)).contains("a.cmp(b)"));
+    assert!(compact(generate_eq_variant_arm(
+        &proc,
+        variable,
+        &language,
+        &CmpEmissionNames::ordinary()
+    ))
+    .contains("ifa!=b{returnfalse;}"));
+    assert!(compact(generate_cmp_variant_arm(
+        &proc,
+        variable,
+        &language,
+        &CmpEmissionNames::ordinary()
+    ))
+    .contains("a.cmp(b)"));
     for (category, expected) in [
         ("List", CollectionType::Vec),
         ("Bag", CollectionType::HashBag),
@@ -169,7 +201,8 @@ fn ordinary_native_comparisons_remain_at_their_original_evaluation_positions() {
     ordered(&eq, &["ifl1!=r1", "l2.as_ref()", "ifl3!=r3"]);
     ordered(&cmp, &["letord=l1.cmp(r1)", "Verdict(l3.cmp(r3))", "l2.as_ref()"]);
     let engine =
-        syn::parse2::<syn::File>(generate_cmp_engine(&language)).expect("Ord engine syntax");
+        syn::parse2::<syn::File>(generate_cmp_engine(&language, &CmpEmissionNames::ordinary()))
+            .expect("Ord engine syntax");
     let driver = engine
         .items
         .iter()
@@ -201,8 +234,18 @@ fn ordinary_collection_comparisons_keep_existing_pda_and_vector_order() {
             .into_iter()
             .find(|v| matches!(v, VariantKind::CollectionLiteral { .. }))
             .expect("actual unordered literal");
-        let eq = compact(generate_eq_variant_arm(&category, &variant, &language));
-        let cmp = compact(generate_cmp_variant_arm(&category, &variant, &language));
+        let eq = compact(generate_eq_variant_arm(
+            &category,
+            &variant,
+            &language,
+            &CmpEmissionNames::ordinary(),
+        ));
+        let cmp = compact(generate_cmp_variant_arm(
+            &category,
+            &variant,
+            &language,
+            &CmpEmissionNames::ordinary(),
+        ));
         assert!(eq.contains("eq_unordered_collection(mettail_runtime::CollectionCmpPda::new("));
         assert!(cmp
             .contains("CmpTask::StartCollection(Box::new(mettail_runtime::CollectionCmpPda::new("));
