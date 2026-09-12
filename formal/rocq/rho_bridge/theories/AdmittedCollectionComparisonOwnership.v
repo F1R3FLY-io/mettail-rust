@@ -149,7 +149,67 @@ Theorem lead_does_not_replace_roster_totals : forall lead left_roster right_rost
     (repetition_sum (entries left_roster), repetition_sum (entries right_roster)).
 Proof. intros lead left_roster right_roster [_ [_ HL]] [_ [_ HR]].
   unfold core_initial_totals. now rewrite HL, HR. Qed.
+
+(** HashMapLit::try_comparison_roster visits the original contiguous IndexMap
+    entries once, preserving key/value pairing and insertion order. Unlike a
+    generic iterator, pinned IndexMap 2.14.0 Iter::next is a slice advance plus
+    Bucket::refs. The Rust producer pays before each advance, including nil;
+    the owned prefix uses the already-proved roster insertion operation. *)
+Definition paired_entry (pair : Primary * Secondary) :=
+  {| primary := fst pair; secondary := Some (snd pair); repetitions := 1 |}.
+Fixpoint append_pairs maximum pairs roster := match pairs with
+  | [] => Built roster
+  | entry_pair :: rest => match try_push maximum roster (paired_entry entry_pair) with
+      | Built next => append_pairs maximum rest next
+      | Rejected reason => Rejected reason
+      end
+  end.
+Theorem successful_pair_walk_preserves_every_ordered_pair :
+  forall maximum pairs roster final,
+  valid_roster roster -> append_pairs maximum pairs roster = Built final ->
+  valid_roster final /\ reserved_width final = reserved_width roster /\
+  entries final = entries roster ++ map paired_entry pairs /\
+  running_total final = running_total roster + length pairs.
+Proof.
+  intros maximum pairs. induction pairs as [|pair rest IH]; intros roster final HV HA.
+  - cbn [append_pairs] in HA. inversion HA; subst final.
+    cbn [map length]. rewrite app_nil_r. split; [exact HV|].
+    repeat split; try reflexivity; lia.
+  - cbn [append_pairs] in HA.
+    destruct (try_push maximum roster (paired_entry pair)) as [next|reason] eqn:HP;
+      [|discriminate].
+    destruct (successful_push_preserves_prefix_width_and_total
+      maximum roster (paired_entry pair) next HV HP) as [HN [HW [HE [HT HB]]]].
+    destruct (IH next final HN HA) as [HF [HFW [HFE HFT]]].
+    split; [exact HF|]. split; [now rewrite HFW, HW|]. split.
+    + rewrite HFE, HE. cbn [map]. now rewrite <- app_assoc.
+    + rewrite HFT, HT. cbn [paired_entry repetitions length]. lia.
+Qed.
+Theorem complete_map_roster_has_exact_width_and_total : forall maximum pairs final,
+  append_pairs maximum pairs (empty_roster (length pairs)) = Built final ->
+  valid_roster final /\ entries final = map paired_entry pairs /\
+  reserved_width final = length pairs /\ running_total final = length pairs.
+Proof.
+  intros maximum pairs final HA.
+  destruct (successful_pair_walk_preserves_every_ordered_pair maximum pairs
+    (empty_roster (length pairs)) final (empty_roster_is_valid _) HA)
+    as [HV [HW [HE HT]]]. cbn [empty_roster entries reserved_width running_total app] in *.
+  split; [exact HV|]. repeat split; assumption.
+Qed.
 End TypedRosters.
+
+(** Source groups: len metadata, flat-slots metadata and paid allocation,
+    iterator setup, n+1 next calls and n admitted pointer-record insertions.
+    Refusal leaves the previously admitted prefix owned; there is no term
+    hashing, equality, ordering or clone in this producer. *)
+Definition map_producer_work width := 1 + 1 + 2 * (width + 1) + 1 + (width + 1) + width.
+Definition map_producer_units width := 4 * (width + 1).
+Definition map_producer_callbacks width := 1 + 2 + 1 + (width + 1) + width.
+Theorem map_producer_source_group_totals : forall width,
+  map_producer_work width = 4 * width + 6 /\
+  map_producer_units width = 4 * (width + 1) /\
+  map_producer_callbacks width = 2 * width + 5.
+Proof. intros. unfold map_producer_work, map_producer_units, map_producer_callbacks. lia. Qed.
 
 Definition flat_counts width := H.push_range_counts (width + 1).
 Theorem flat_slots_include_header_and_record_disposal : forall width,
@@ -305,6 +365,9 @@ Print Assumptions full_roster_is_protocol_failure.
 Print Assumptions rejected_push_preserves_roster.
 Print Assumptions push_reservation_precedes_validation.
 Print Assumptions lead_does_not_replace_roster_totals.
+Print Assumptions successful_pair_walk_preserves_every_ordered_pair.
+Print Assumptions complete_map_roster_has_exact_width_and_total.
+Print Assumptions map_producer_source_group_totals.
 Print Assumptions flat_slots_include_header_and_record_disposal.
 Print Assumptions checked_flat_reservation_is_exact.
 Print Assumptions buffer_cleanup_is_prepaid.
