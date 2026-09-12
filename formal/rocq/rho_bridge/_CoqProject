@@ -75,6 +75,7 @@ theories/AdmittedNativeLeafComparison.v
 theories/AdmittedIdentityComparison.v
 theories/AdmittedFltComparison.v
 theories/AdmittedGeneratedComparisonScheduling.v
+theories/AdmittedCollectionComparisonOwnership.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
