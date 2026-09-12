@@ -633,10 +633,11 @@ generated key-cost provider or activate bounded public Rholang preparation.
 #### Native hash-leaf admission
 
 [`CheckedFxHashLeaf`](../src/checked_hash.rs) supplies the first concrete native
-hashing boundary for `i64`, `bool`, `u8`, `usize` and `String`. It is sealed to
-these audited implementations. It first reserves one logical work unit for
-constant-size metadata inspection and checked receipt arithmetic, then reserves
-the complete native call. Only then does it invoke the original `Hash::hash`
+hashing boundary for `i64`, `bool`, `u8`, `usize`, `String`, `OrdVar`,
+`Binder<String>`, `Vec<Binder<String>>`, `FltNode` and `Arc<FltNode>`. It is sealed
+to these audited implementations. It first reserves logical work for metadata
+inspection and checked receipt arithmetic, then reserves the complete native
+call. Only then does it invoke the original `Hash::hash`
 against the caller's actual `FxHasher`. No proxy hasher, intermediate digest,
 byte buffer or replacement hashing algorithm is introduced.
 
@@ -648,6 +649,24 @@ loads and an overlapping final suffix. The bound covers both dependency
 feature profiles: one emits the native string terminator and one omits it.
 This does not assert identical hashes across those profiles; the original
 implementation still determines the result in each profile.
+
+The [structural-leaf model](../../formal/rocq/rho_bridge/theories/AdmittedStructuralKeyHash.v)
+composes those native costs with the pinned Moniker 0.5.0 identity hashes and
+the actual FLT fields. Free and bound variables cost 14 and 19 native work
+units respectively; pretty-name hints are not hashed. A binder costs eight,
+and a vector of $`n`$ binders costs $`7+10n`$. Their single inspection unit
+reads only fixed metadata or vector length, not the hints or vector elements.
+The original native call still visits every binder.
+
+An FLT hashes its selector, all five diagnostic/source strings, actual holes
+and pieces, ranges, bounds and position. Declared bounds are hashed scalar
+fields, never trusted work receipts. Inspection borrows string lengths without
+scanning text and uses two explicit iterator loops. Each loop reserves one
+unit **before** advancing, including its terminal advance; successful total
+inspection is $`3+h+p`$ units for $`h`$ holes and $`p`$ pieces. Checked additions
+accumulate native execution work without retaining a plan. Arc forwarding adds
+two native units, without cloning the Arc or its contents. Cancellation at any
+inspection boundary still precedes the single whole-value native hash call.
 
 The initial supported build uses pinned `rustc-hash` 2.1.3, the audited x86-64
 64-bit-pointer compiler revision, and its trusted standard prebuilt core.
