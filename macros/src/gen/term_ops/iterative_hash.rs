@@ -812,6 +812,196 @@ fn generate_hash_impl(category: &Ident) -> TokenStream {
 mod tests {
     use super::*;
 
+    fn ordinary_surface_language() -> LanguageDef {
+        syn::parse_str(
+            r#"
+            name: OrdinaryHashSurfaces,
+            types {
+                Proc ![i64] as Int ![bool] as Bool ![str] as Text
+                ![Vec<u8>] as Bytes ![Vec<Proc>] as List
+                ![mettail_runtime::HashBag<Proc>] as Bag
+                ![mettail_runtime::HashSetLit<Proc>] as Set
+                ![mettail_runtime::HashMapLit<Proc, Proc>] as Map
+                ![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap
+            },
+            terms {
+                PZero . |- "0" : Proc;
+                PMixed . child:Proc, ?guard:Guard
+                    |- before@Word child *flt(node, Open, Close) guard after@Word : Proc;
+                POptional . *opt(child:Proc, ?guard:Guard)
+                    |- prefix@Word *opt(before@Word child *flt(node, Open, Close) guard) : Proc;
+                POptionalVec . *opt(children:Vec(Proc)) |- *opt(children) : Proc;
+                PVector . children:Vec(Proc) |- "vector" children : Proc;
+                PBag . children:HashBag(Proc) |- "bag" children : Proc;
+                PSingle . pre:Proc, ^x.body:[Proc -> Proc] |- "single" pre x body : Proc;
+                PMulti . children:Vec(Proc), ^[xs].body:[Proc* -> Proc]
+                    |- "multi" children xs body : Proc;
+            },
+            equations {}, rewrites {},
+            "#,
+        )
+        .expect("ordinary hash fixture uses the production language parser")
+    }
+
+    fn surface_variant(language: &LanguageDef, category: &str, label: &str) -> VariantKind {
+        collect_category_variants(&format_ident!("{}", category), language)
+            .into_iter()
+            .find(|variant| variant.label() == label)
+            .unwrap_or_else(|| panic!("missing actual {category}::{label} classification"))
+    }
+
+    fn compact(tokens: TokenStream) -> String {
+        tokens.to_string().split_whitespace().collect()
+    }
+
+    fn positions_are_ordered(source: &str, needles: &[&str]) {
+        let mut remaining = source;
+        for needle in needles {
+            let offset = remaining
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing ordered fragment {needle} in {source}"));
+            remaining = &remaining[offset + needle.len()..];
+        }
+    }
+
+    #[test]
+    fn ordinary_hash_surface_census_and_exact_expansion_capture() {
+        let language = ordinary_surface_language();
+        for category in ["Int", "Bool", "Text", "Bytes"] {
+            let variants = collect_category_variants(&format_ident!("{}", category), &language);
+            assert!(variants
+                .iter()
+                .any(|v| matches!(v, VariantKind::Literal { .. })));
+            assert!(!variants
+                .iter()
+                .any(|v| matches!(v, VariantKind::CollectionLiteral { .. })));
+        }
+        for (category, expected) in [
+            ("List", CollectionType::Vec),
+            ("Bag", CollectionType::HashBag),
+            ("Set", CollectionType::HashSet),
+            ("Map", CollectionType::HashMap),
+            ("Pathmap", CollectionType::PathMap),
+        ] {
+            let variants = collect_category_variants(&format_ident!("{}", category), &language);
+            assert!(variants.iter().any(|v| matches!(v,
+                VariantKind::CollectionLiteral { element_cat, coll_type, .. }
+                    if element_cat == "Proc" && *coll_type == expected)));
+        }
+        let variants = collect_category_variants(&format_ident!("Proc"), &language);
+        assert!(variants
+            .iter()
+            .any(|v| matches!(v, VariantKind::Var { .. })));
+        assert!(matches!(
+            surface_variant(&language, "Proc", "PVector"),
+            VariantKind::Collection { coll_type: CollectionType::Vec, .. }
+        ));
+        assert!(matches!(
+            surface_variant(&language, "Proc", "PBag"),
+            VariantKind::Collection { coll_type: CollectionType::HashBag, .. }
+        ));
+        assert!(matches!(
+            surface_variant(&language, "Proc", "PSingle"),
+            VariantKind::Binder { .. }
+        ));
+        assert!(matches!(
+            surface_variant(&language, "Proc", "PMulti"),
+            VariantKind::MultiBinder { .. }
+        ));
+
+        for (name, language) in [
+            ("ordinary-surfaces", language),
+            ("singleton", crate::gen::singleton_collection_language_for_tests()),
+        ] {
+            let expansion = generate_iterative_hash(&language);
+            syn::parse2::<syn::File>(expansion.clone()).expect("ordinary hash Rust item syntax");
+            // Opt-in baseline artifacts; the default unit test has no filesystem writes.
+            // Compare the complete token strings before/after emitter parameterization.
+            if let Ok(phase) = std::env::var("METTAIL_HASH_EXPANSION_PHASE") {
+                assert!(matches!(phase.as_str(), "before" | "after"));
+                let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../target/verification/hash-emitter")
+                    .join(phase);
+                std::fs::create_dir_all(&directory).expect("create hash capture directory");
+                std::fs::write(directory.join(format!("{name}.tokens")), expansion.to_string())
+                    .expect("capture exact ordinary hash emitter output");
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_mixed_fields_keep_eager_prefix_and_reversed_deferred_suffix() {
+        let language = ordinary_surface_language();
+        let variant = surface_variant(&language, "Proc", "PMixed");
+        let VariantKind::Regular { fields, .. } = &variant else {
+            panic!("regular mixed fields")
+        };
+        assert_eq!(fields.len(), 5);
+        assert!(fields[0].is_opaque_leaf() && fields[2].is_opaque_leaf());
+        assert!(fields[3].is_predicate && fields[4].is_opaque_leaf());
+        let arm = compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+        positions_are_ordered(
+            &arm,
+            &[
+                "Hash::hash(f0,state)",
+                "hash_opaque_task::<_,H>(f4)",
+                "hash_opaque_task::<_,H>(f3)",
+                "hash_opaque_task::<_,H>(f2)",
+                "HashTask::HashProc(&**f1as*const_)",
+            ],
+        );
+        assert!(!arm.contains("Hash::hash(&**f1,state)"));
+
+        let variant = surface_variant(&language, "Proc", "POptional");
+        let VariantKind::Regular { fields, .. } = &variant else {
+            panic!("regular optional fields")
+        };
+        assert!(fields.iter().any(|f| f.is_optional && f.is_opaque_leaf()));
+        assert!(fields.iter().any(|f| f.is_optional && f.is_predicate));
+        assert!(fields
+            .iter()
+            .any(|f| f.is_optional && !f.is_collection && !f.is_predicate && !f.is_opaque_leaf()));
+        let arm = compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+        assert!(arm.contains("Hash::hash(__b,state)")); // Optional native eager prefix.
+        assert!(arm.contains("hash_opaque_task::<_,H>(__leaf)")); // Optional native suffix.
+        positions_are_ordered(
+            &arm,
+            &["HashTask::HashProc(&**__childas*const_)", "HashTask::AbsorbU8(1u8)"],
+        );
+    }
+
+    #[test]
+    fn ordinary_optional_vectors_and_scopes_keep_lifo_stream_order() {
+        let language = ordinary_surface_language();
+        let variant = surface_variant(&language, "Proc", "POptionalVec");
+        let VariantKind::Regular { fields, .. } = &variant else {
+            panic!("optional vector field")
+        };
+        assert!(fields.iter().any(|f| f.is_optional && f.is_collection));
+        let arm = compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+        positions_are_ordered(
+            &arm,
+            &[
+                "HashTask::HashProc(",
+                "HashTask::AbsorbUsize(__collection.len())",
+                "HashTask::AbsorbU8(1u8)",
+            ],
+        );
+        for label in ["PSingle", "PMulti"] {
+            let variant = surface_variant(&language, "Proc", label);
+            let arm =
+                compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+            positions_are_ordered(
+                &arm,
+                &[
+                    "HashTask::HashProc(body_ptr)",
+                    "hash_opaque_task::<_,H>(&f1.inner().unsafe_pattern)",
+                    "HashTask::HashProc(",
+                ],
+            );
+        }
+    }
+
     #[test]
     fn regular_arm_optional_pred_hashes_inner_without_deref() {
         // Task #14 gate-1: pre-#14 the Opt-Group arm emitted `&**__b` —
