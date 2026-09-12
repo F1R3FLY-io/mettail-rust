@@ -19,7 +19,10 @@ pub use checked_binding::{
     write_binding_slot, BindingFailure, BindingOperation, BindingSlotError, CheckedBindingLeaf,
     CheckedIterativeBinding,
 };
-pub use checked_hash::{CheckedFxHashLeaf, KeyHashFailure, CHECKED_FX_PROFILE_AVAILABLE};
+pub use checked_hash::{
+    CheckedFxHashLeaf, CheckedFxHasher, CheckedIterativeHash, KeyHashFailure,
+    CHECKED_FX_PROFILE_AVAILABLE,
+};
 
 /// Runtime diagnostics queue (D11 ambiguous-display warnings, etc.).
 /// Stage 7 of W7 plan v5.1.

@@ -634,7 +634,8 @@ generated key-cost provider or activate bounded public Rholang preparation.
 
 [`CheckedFxHashLeaf`](../src/checked_hash.rs) supplies the first concrete native
 hashing boundary for `i64`, `bool`, `u8`, `usize`, `String`, `OrdVar`,
-`Binder<String>`, `Vec<Binder<String>>`, `FltNode` and `Arc<FltNode>`. It is sealed
+`Binder<String>`, `Vec<Binder<String>>`, `FltNode`, `Arc<FltNode>` and the cached
+native hash of `HashBag<T>`. It is sealed
 to these audited implementations. It first reserves logical work for metadata
 inspection and checked receipt arithmetic, then reserves the complete native
 call. Only then does it invoke the original `Hash::hash`
@@ -668,6 +669,13 @@ accumulate native execution work without retaining a plan. Arc forwarding adds
 two native units, without cloning the Arc or its contents. Cancellation at any
 inspection boundary still precedes the single whole-value native hash call.
 
+The cached bag adapter reserves one inspection unit and 19 native work units
+for the original two `usize` fields and four `u64` summary lanes. It invokes
+no element Hash, Eq or Clone operation. This constant-size operation does not
+certify a bag's keys, authorize insertion or validate unsupported descendants.
+Its [scheduling model](../../formal/rocq/rho_bridge/theories/AdmittedGeneratedHashScheduling.v)
+also states the ordered-call and pending-task laws for generated admission.
+
 The initial supported build uses pinned `rustc-hash` 2.1.3, the audited x86-64
 64-bit-pointer compiler revision, and its trusted standard prebuilt core.
 The [build check](../build.rs) rejects unknown compiler revisions, wrappers and
@@ -684,6 +692,14 @@ Borrowed byte reads consume work, not owned-byte retention. Hasher construction,
 `finish`, generated worklists, other native leaves, equality and map operations
 remain separate contracts; this leaf interface alone does not activate public
 preparation or complete the generated HashBag admission provider.
+
+`CheckedFxHasher` names the actual pinned hasher without introducing a proxy.
+`CheckedIterativeHash` is the generated-worklist interface; declaring it alone
+does not activate that worklist or public preparation. Its composite failure
+contract differs from the single-leaf guarantee: a rejected later operation
+may follow earlier hash writes, so the caller must discard the partial hasher.
+Unsupported constructors carry their exact category and constructor names;
+they do not invoke an unchecked fallback.
 
 ### Checked leaf copies and binding
 

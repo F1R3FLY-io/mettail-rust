@@ -5,16 +5,39 @@
 //! `Hash::hash` receives the original `FxHasher`, including its seed and current
 //! state. Only audited leaf types implement the sealed interface.
 
-use crate::{Binder, BindingFailure, FltNode, FltTemplatePiece, OrdVar, Var};
+use crate::{Binder, BindingFailure, FltNode, FltTemplatePiece, HashBag, OrdVar, Var};
 use rustc_hash::FxHasher;
 use std::hash::Hash;
 use std::sync::Arc;
 
-/// Failure before the native hash call; earlier inspection charges remain spent.
+/// Failure before the rejected operation; earlier inspection charges remain spent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyHashFailure<E> {
     UnsupportedProfile,
+    UnsupportedConstructor {
+        category: &'static str,
+        constructor: &'static str,
+    },
     Admission(BindingFailure<E>),
+}
+
+/// The actual pinned native hasher, not a proxy or proof of admission.
+pub type CheckedFxHasher = FxHasher;
+
+/// The generated Hash worklist with admission at its original operation sites.
+///
+/// Successful execution preserves the ordinary native Hash stream. Unlike a
+/// single leaf, a composite refusal may follow earlier hasher writes: callers
+/// must discard the partial hasher and must not use its digest. Borrowed source
+/// terms are unchanged, and pending tasks do not own or drop their children.
+/// Logical task storage/cleanup and native leaf operations are charged through
+/// the caller's existing reservation callback; no new budget is created here.
+pub trait CheckedIterativeHash: Hash {
+    fn try_hash_iterative<E>(
+        &self,
+        state: &mut CheckedFxHasher,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(), KeyHashFailure<E>>;
 }
 
 /// Whether this build matches the initial compiler/target profile.
@@ -48,6 +71,8 @@ mod sealed {
 /// Native execution borrows bytes and allocates no owned payload. These work
 /// units count documented bounded source groups and byte reads, not CPU
 /// instructions, semantic gas, allocator bytes or physical memory.
+/// HashBag admission covers only its cached six-scalar summary: it does not
+/// inspect or admit descendant keys, rebuilding, or insertion operations.
 pub trait CheckedFxHashLeaf: Hash + sealed::Leaf {
     fn try_hash_fx<E>(
         &self,
@@ -229,6 +254,19 @@ impl sealed::Leaf for Arc<FltNode> {
     }
 }
 impl CheckedFxHashLeaf for Arc<FltNode> {}
+
+// AdmittedGeneratedHashScheduling.v: the original cached HashBag::hash reads
+// two usize fields and four u64 lanes. It never invokes T's Hash/Eq/Clone.
+// This is not a receipt for rebuilding the bag or admitting its descendants.
+impl<T: Clone + Hash + Eq> sealed::Leaf for HashBag<T> {
+    fn execution_work<E>(
+        &self,
+        _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, BindingFailure<E>> {
+        Ok(19)
+    }
+}
+impl<T: Clone + Hash + Eq> CheckedFxHashLeaf for HashBag<T> {}
 
 #[cfg(test)]
 mod tests {
@@ -499,5 +537,46 @@ mod tests {
         assert_eq!(binder_vector_execution_work(maximum_width + 1), None);
         assert_eq!(add_work::<()>(usize::MAX, 1), Err(BindingFailure::SizeOverflow));
         assert_eq!(add_work::<()>(usize::MAX, 0), Ok(usize::MAX));
+    }
+
+    #[test]
+    #[cfg(mettail_checked_fx_profile)]
+    fn cached_bag_admission_never_calls_the_key_operations() {
+        use std::{cell::Cell, rc::Rc};
+        struct Key {
+            value: usize,
+            forbid: Rc<Cell<bool>>,
+        }
+        impl Clone for Key {
+            fn clone(&self) -> Self {
+                assert!(!self.forbid.get(), "cached hash must not clone keys");
+                Self {
+                    value: self.value,
+                    forbid: self.forbid.clone(),
+                }
+            }
+        }
+        impl Hash for Key {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                assert!(!self.forbid.get(), "cached hash must not hash keys");
+                self.value.hash(state);
+            }
+        }
+        impl PartialEq for Key {
+            fn eq(&self, other: &Self) -> bool {
+                assert!(!self.forbid.get(), "cached hash must not compare keys");
+                self.value == other.value
+            }
+        }
+        impl Eq for Key {}
+        for width in [0, 1, 32] {
+            let forbid = Rc::new(Cell::new(false));
+            let mut bag = HashBag::new();
+            for value in 0..width {
+                bag.insert_n(Key { value, forbid: forbid.clone() }, value + 1);
+            }
+            forbid.set(true);
+            check(bag, 19);
+        }
     }
 }
