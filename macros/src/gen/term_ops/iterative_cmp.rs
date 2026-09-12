@@ -1820,6 +1820,10 @@ fn generate_category_trait_impls(category: &Ident) -> TokenStream {
 // exercised regardless of what the corpus happens to contain.
 // =============================================================================
 #[cfg(test)]
+#[path = "iterative_cmp_tests.rs"]
+mod ordinary_baseline_tests;
+
+#[cfg(test)]
 mod carrier_cell_census {
     use super::*;
     use crate::gen::term_ops::subst::OpaqueLeafKind;
