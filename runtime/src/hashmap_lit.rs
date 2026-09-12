@@ -115,6 +115,36 @@ impl<K, V> HashMapLit<K, V> {
         self.0.iter()
     }
 
+    /// Produce a paid comparison roster in the original insertion order.
+    ///
+    /// This uses the pinned IndexMap slice iterator, not a generic hash-table
+    /// scan allowance. Every advance, including the terminal one, is admitted.
+    /// Keys and values remain borrowed: no Hash, Eq, Ord or Clone is invoked.
+    /// Refusal drops only the already-paid flat prefix and leaves this map
+    /// unchanged. The returned roster does not own or extend the source lifetime.
+    pub fn try_comparison_roster<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<crate::CheckedCmpRoster, crate::NativeComparisonFailure<E>> {
+        use crate::{reserve_binding_parts, CheckedCmpRoster, NativeComparisonFailure};
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(NativeComparisonFailure::UnsupportedProfile);
+        }
+        reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+        let width = self.len();
+        let mut roster = CheckedCmpRoster::try_with_capacity(width, reserve)?;
+        reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+        let mut entries = self.iter();
+        loop {
+            reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+            let Some((key, value)) = entries.next() else {
+                break;
+            };
+            roster.try_push_pair(key, value, reserve)?;
+        }
+        Ok(roster)
+    }
+
     /// Mutably iterate entries in insertion order.
     #[inline]
     pub fn iter_mut(&mut self) -> indexmap::map::IterMut<'_, K, V> {

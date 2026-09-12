@@ -833,6 +833,15 @@ rosters retain conservative unused credit; they do not prove that a producer
 visited its entire source collection. In particular, a hash-table iterator needs
 its own scan-extent allowance, not merely its logical entry count.
 
+`HashMapLit::try_comparison_roster` supplies that producer for maps through the
+exactly pinned IndexMap 2.14.0 contiguous entry iterator. It preserves insertion
+order and each key/value pair, admits metadata and iterator setup, and pays for
+every advance including the terminal one. It invokes no key/value Hash, Eq, Ord
+or Clone operation. A successful map of width $`n`$ uses $`4n+6`$ logical work
+units, $`4(n+1)`$ raw retention units and $`2n+5`$ reservation calls. The roster
+proof establishes exact pair, width and total preservation for this complete
+walk. These facts are specific to this map iterator, not a bag scan allowance.
+
 | Boundary | Admission and ownership |
 |---|---|
 | Roster or scratch allocation of width $`n`$ | One metadata work unit, then $`2(n+1)`$ work and $`n+1`$ records; each record projects to four raw reservation units |

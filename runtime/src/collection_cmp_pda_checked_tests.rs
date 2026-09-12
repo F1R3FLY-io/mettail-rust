@@ -156,6 +156,100 @@ fn unary(values: &[i32]) -> Vec<CollectionCmpItem> {
     values.iter().map(CollectionCmpItem::unary).collect()
 }
 
+#[test]
+fn map_producer_preserves_pairs_without_key_operations_at_every_budget_boundary() {
+    use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicBool, Ordering as MemoryOrder};
+    use std::sync::Arc;
+    struct Key {
+        id: usize,
+        frozen: Arc<AtomicBool>,
+    }
+    impl PartialEq for Key {
+        fn eq(&self, other: &Self) -> bool {
+            assert!(!self.frozen.load(MemoryOrder::Relaxed), "producer invoked key equality");
+            self.id == other.id
+        }
+    }
+    impl Eq for Key {}
+    impl Hash for Key {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            assert!(!self.frozen.load(MemoryOrder::Relaxed), "producer invoked key hashing");
+            self.id.hash(state);
+        }
+    }
+    // Neither key nor value implements Clone/Ord; value has no Eq/Hash either.
+    struct Value(String);
+    for width in 0..8 {
+        let frozen = Arc::new(AtomicBool::new(false));
+        let mut map = crate::HashMapLit::new();
+        for id in (0..width).rev() {
+            map.insert(Key { id, frozen: Arc::clone(&frozen) }, Value(format!("value-{id}")));
+        }
+        frozen.store(true, MemoryOrder::Relaxed);
+        let mut trace = Vec::new();
+        let roster = map
+            .try_comparison_roster(&mut |w, u| {
+                trace.push((w, u));
+                Ok::<_, ()>(())
+            })
+            .expect("unlimited map roster");
+        assert_eq!(
+            (roster.items.len(), roster.reserved_width, roster.total),
+            (width, width, width)
+        );
+        for (item, (key, value)) in roster.items.iter().zip(map.iter()) {
+            assert_eq!(item.primary, key as *const Key as *const ());
+            assert_eq!(item.secondary, Some(value as *const Value as *const ()));
+            assert_eq!(item.repetitions, 1);
+            assert_eq!(value.0, format!("value-{}", key.id));
+        }
+        assert_eq!(trace.len(), 2 * width + 5);
+        let total = trace
+            .iter()
+            .fold((0, 0), |(w, u), (dw, du)| (w + dw, u + du));
+        assert_eq!(total, (4 * width + 6, 4 * (width + 1)));
+        for stop in 0..trace.len() {
+            let mut actual = Vec::new();
+            let result = map.try_comparison_roster(&mut |w, u| {
+                actual.push((w, u));
+                if actual.len() == stop + 1 {
+                    Err(())
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(result.err(), Some(Failure::Admission(BindingFailure::Reservation(()))));
+            assert_eq!(actual, trace[..=stop]);
+        }
+        for (work, units, succeeds) in [
+            (total.0, total.1, true),
+            (total.0 - 1, total.1, false),
+            (total.0, total.1 - 1, false),
+        ] {
+            let (mut remaining_work, mut remaining_units) = (work, units);
+            let result = map.try_comparison_roster(&mut |w, u| {
+                if w > remaining_work || u > remaining_units {
+                    return Err(());
+                }
+                remaining_work -= w;
+                remaining_units -= u;
+                Ok(())
+            });
+            if succeeds {
+                assert_eq!(result.expect("exact map allowance").total, width);
+                assert_eq!((remaining_work, remaining_units), (0, 0));
+            } else {
+                assert_eq!(result.err(), Some(Failure::Admission(BindingFailure::Reservation(()))));
+            }
+        }
+        assert_eq!(
+            map.iter().map(|(key, _)| key.id).collect::<Vec<_>>(),
+            (0..width).rev().collect::<Vec<_>>()
+        );
+    }
+}
+
 fn charges(
     lead: Ordering,
     left: &[CollectionCmpItem],
