@@ -2,6 +2,7 @@ use std::{env, process::Command};
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(mettail_checked_fx_profile)");
+    println!("cargo:rustc-check-cfg=cfg(mettail_checked_native_comparison_profile)");
     for name in [
         "RUSTC",
         "RUSTC_WRAPPER",
@@ -41,5 +42,6 @@ fn main() {
             .any(|line| line == "commit-hash: 2e2b193f8ada105f27608b7be81c293e0d7292cb")
     {
         println!("cargo:rustc-cfg=mettail_checked_fx_profile");
+        println!("cargo:rustc-cfg=mettail_checked_native_comparison_profile");
     }
 }

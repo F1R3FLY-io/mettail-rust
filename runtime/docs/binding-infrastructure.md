@@ -760,6 +760,49 @@ exact/under work and record limits, explicit unsupported constructors, and
 Rust correspondence tests, not a proof of all generated languages or public
 node readiness.
 
+#### Native comparison-leaf admission
+
+[`CheckedNativeEqualityLeaf` and `CheckedNativeOrderingLeaf`](../src/checked_cmp.rs)
+admit the existing native comparisons for `i64`, `bool` and `String`. Equality
+and ordering are separate sealed capabilities: an equality-only binder must not
+acquire an ordering implementation merely to participate in checked equality.
+The equality interface exposes both `eq` and `ne`; generated inequality checks
+must retain their original `ne` operation rather than substitute an ordering
+test. The ordering interface invokes the original `Ord::cmp`.
+
+The [native comparison model](../../formal/rocq/rho_bridge/theories/AdmittedNativeLeafComparison.v)
+uses one paid metadata group followed by a separate reservation for native
+execution. Metadata inspection reads lengths and performs checked arithmetic;
+it neither scans text nor compares payloads. With lengths $`l`$ and $`r`$, let
+$`m=l`$ when the lengths are equal and $`m=0`$ otherwise.
+
+| Operand type | Equality work | Inequality work | Ordering work |
+|---|---|---|---|
+| `i64` or `bool` | $`2`$ | $`2`$ | $`2`$ |
+| `String` | $`6+2m`$ | $`7+2m`$ | $`9+2\min(l,r)`$ |
+
+These are logical source-group allowances, excluding the metadata unit.
+`String` derives its comparisons over its `Vec<u8>` field, which reaches the
+standard library's byte-slice comparison. The byte contribution covers both
+operand ranges supplied to `compare_bytes`, including bytes after an early
+mismatch. It is **not** a bound on physical machine loads, CPU instructions or
+the internal implementation of `memcmp`. No byte buffer, replacement comparator
+or owned payload is allocated by the adapter.
+
+The build check uses the same audited compiler/target and trusted prebuilt-core
+boundary as native hashing, but comparison does not depend on Fx hash semantics.
+An unsupported profile refuses before metadata admission. Cancellation or
+arithmetic overflow occurs before the native call, with previous inspection
+charges still spent and both operands unchanged. Success returns the original
+native result, not a reusable execution receipt.
+
+Structural FLTs, variable and binder ordering, collection scheduling and the
+native HashBag insertion provider require their own composed contracts. In
+particular, existing variable/binder ordering uses `DefaultHasher`; neither the
+Fx allowance nor an assumed equivalence between equality and an `Equal` ordering
+result establishes that contract. This leaf interface alone does not activate
+bounded public preparation.
+
 ### Checked leaf copies and binding
 
 [`CheckedBindingLeaf`](../src/checked_binding.rs) supplies the payload boundary
