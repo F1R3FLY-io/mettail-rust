@@ -593,6 +593,43 @@ real free/bound-variable collisions, and compare cached hashes with a full
 recomputation. The helper is not a checked allocation interface, and the
 model makes no panic-unwind recovery claim.
 
+#### Admitted reconstruction stages
+
+`HashBag::try_rebuild_entries_with` adds fallible admission around the same
+native reconstruction operations. It consumes already-transformed entry/count
+pairs and borrows the original bag. `CloneEntries` selects repeated `insert_n`:
+positive counts accumulate, zero-count inputs are discarded, and the total is
+recomputed. `BindingEntries` selects the binding recipe above, including retained
+zero-count keys and the original total. These policies are deliberately distinct
+from each other and from the bag's derived `Clone` implementation.
+
+| Stage | Facts available to admission | Native work that follows acceptance |
+| --- | --- | --- |
+| `Start` | Mode, input width, source total | Empty output construction, input iteration and local container cleanup |
+| `Insert` | Incoming key/count and borrowed retained entries | Checked Clone total addition, then the selected native insertion |
+| `FinalBindingSummary` | Borrowed retained entries | Binding-only cached-summary reconstruction |
+
+The retained-entry view exposes keys, counts, stored width and map capacity, but
+not the unfinished summary. `distinct_len()` measures stored keys in constant
+time without hashing them; `len()` measures multiplicity and cannot substitute
+for it. Neither stored width nor capacity bounds structural key Hash/Eq work.
+
+The caller must admit its own inspection, native insertion and growth, key
+hashing/equality, and summary work before accepting a stage. The producer must
+already have paid for the input vector, each owned key and their normal cleanup,
+including refusal at `Start`. No implicit key-operation allowance is supplied.
+Refusal publishes no bag and leaves the borrowed source unchanged. Current,
+pending, retained and collision-discarded keys retain independent ownership and
+are disposed exactly once. Clone count overflow rejects before native insertion;
+the accumulator invariant also bounds an occupied entry's count addition.
+
+The [staged bag model](../../formal/rocq/rho_bridge/theories/RequiredHashBagBindingReservation.v)
+proves occurrence partitions, count invariants and conditional native-trace
+coverage. The [runtime tests](../src/hashbag.rs) exercise both policies, collision
+order and diagnostic retention, every refusal boundary, zero counts, overflow,
+and cleanup. This staged interface does not by itself establish a concrete
+generated key-cost provider or activate bounded public Rholang preparation.
+
 ### Checked leaf copies and binding
 
 [`CheckedBindingLeaf`](../src/checked_binding.rs) supplies the payload boundary
