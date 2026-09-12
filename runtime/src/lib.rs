@@ -177,6 +177,7 @@ pub use hashset_lit::HashSetLit;
 
 mod collection_cmp_pda;
 pub use collection_cmp_pda::{
+    CheckedCmpRoster, CheckedCollectionCmpPda, CheckedCollectionCmpStep,
     CollectionCmpItem, CollectionCmpPda, CollectionCmpRole, CollectionCmpStep,
 };
 

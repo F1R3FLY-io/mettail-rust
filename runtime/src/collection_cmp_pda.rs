@@ -1,4 +1,146 @@
 use std::cmp::Ordering;
+use std::convert::Infallible;
+
+use crate::{
+    reserve_binding_parts, BindingFailure, NativeComparisonFailure,
+    CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE,
+};
+
+// Both public entrypoints execute the same state transitions. Only the checked
+// policy adds admission; ordinary operation has no fallible arithmetic policy.
+trait CollectionCmpPolicy {
+    type Error;
+    fn work(&mut self, work: usize) -> Result<(), Self::Error>;
+    fn flat_slots(&mut self, slots: usize) -> Result<(), Self::Error>;
+    fn protocol(&mut self, message: &'static str) -> Self::Error;
+}
+
+struct OrdinaryPolicy;
+impl CollectionCmpPolicy for OrdinaryPolicy {
+    type Error = Infallible;
+    fn work(&mut self, _: usize) -> Result<(), Infallible> {
+        Ok(())
+    }
+    fn flat_slots(&mut self, _: usize) -> Result<(), Infallible> {
+        Ok(())
+    }
+    fn protocol(&mut self, message: &'static str) -> Infallible {
+        panic!("{message}")
+    }
+}
+
+struct CheckedPolicy<'a, R>(&'a mut R);
+impl<E, R: FnMut(usize, usize) -> Result<(), E>> CollectionCmpPolicy for CheckedPolicy<'_, R> {
+    type Error = NativeComparisonFailure<E>;
+    fn work(&mut self, work: usize) -> Result<(), Self::Error> {
+        reserve_binding_parts(work, 0, 0, self.0).map_err(NativeComparisonFailure::Admission)
+    }
+    fn flat_slots(&mut self, slots: usize) -> Result<(), Self::Error> {
+        self.work(1)?;
+        let records = slots
+            .checked_add(1)
+            .ok_or(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))?;
+        let work = records
+            .checked_mul(2)
+            .ok_or(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))?;
+        reserve_binding_parts(work, records, 0, self.0).map_err(NativeComparisonFailure::Admission)
+    }
+    fn protocol(&mut self, message: &'static str) -> Self::Error {
+        NativeComparisonFailure::InvalidCollectionInput(message)
+    }
+}
+
+fn ordinary_result<T>(result: Result<T, Infallible>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(never) => match never {},
+    }
+}
+
+/// A flat pointer roster with prepaid construction and eventual disposal.
+///
+/// Reserved width, not allocator capacity, bounds pushes. Partial filling is
+/// permitted; this does not certify complete source iteration. The caller must
+/// retain the borrowed terms and restore each requested pointer's correct type,
+/// as with [`CollectionCmpItem`]. No child term is copied or owned here.
+#[derive(Debug)]
+pub struct CheckedCmpRoster {
+    items: Vec<CollectionCmpItem>,
+    total: usize,
+    reserved_width: usize,
+}
+
+impl CheckedCmpRoster {
+    pub fn try_with_capacity<E>(
+        expected_len: usize,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, NativeComparisonFailure<E>> {
+        if !CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(NativeComparisonFailure::UnsupportedProfile);
+        }
+        CheckedPolicy(reserve).flat_slots(expected_len)?;
+        Ok(Self {
+            items: Vec::with_capacity(expected_len),
+            total: 0,
+            reserved_width: expected_len,
+        })
+    }
+
+    // Validation precedes item construction; slot copy/disposal is prepaid.
+    fn admit_push<E>(
+        &self,
+        repetitions: usize,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, NativeComparisonFailure<E>> {
+        let mut policy = CheckedPolicy(reserve);
+        policy.work(1)?;
+        if repetitions == 0 {
+            return Err(policy.protocol("collection comparison items must be present"));
+        }
+        if self.items.len() >= self.reserved_width {
+            return Err(policy.protocol("collection comparison roster exceeds its reserved width"));
+        }
+        self.total
+            .checked_add(repetitions)
+            .ok_or(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))
+    }
+
+    pub fn try_push_unary<T, E>(
+        &mut self,
+        value: &T,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(), NativeComparisonFailure<E>> {
+        let total = self.admit_push(1, reserve)?;
+        self.items.push(CollectionCmpItem::unary(value));
+        self.total = total;
+        Ok(())
+    }
+
+    pub fn try_push_repeated<T, E>(
+        &mut self,
+        value: &T,
+        repetitions: usize,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(), NativeComparisonFailure<E>> {
+        let total = self.admit_push(repetitions, reserve)?;
+        self.items
+            .push(CollectionCmpItem::repeated(value, repetitions));
+        self.total = total;
+        Ok(())
+    }
+
+    pub fn try_push_pair<K, V, E>(
+        &mut self,
+        primary: &K,
+        secondary: &V,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(), NativeComparisonFailure<E>> {
+        let total = self.admit_push(1, reserve)?;
+        self.items.push(CollectionCmpItem::pair(primary, secondary));
+        self.total = total;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct CollectionCmpItem {
@@ -43,6 +185,68 @@ pub enum CollectionCmpStep {
     Done(Ordering),
 }
 
+/// Owns rosters and scratch storage whose normal cleanup was prepaid.
+///
+/// No conversion from an arbitrary ordinary machine exists. Reservations cover
+/// logical source groups and flat slots, not physical allocator execution or
+/// panic recovery. Native term comparison is still requested from the caller.
+#[derive(Debug)]
+pub struct CheckedCollectionCmpPda {
+    machine: Box<CollectionCmpPda>,
+}
+
+#[derive(Debug)]
+pub enum CheckedCollectionCmpStep {
+    Compare {
+        machine: CheckedCollectionCmpPda,
+        role: CollectionCmpRole,
+        left: *const (),
+        right: *const (),
+    },
+    Done(Ordering),
+}
+
+impl CheckedCollectionCmpPda {
+    pub fn try_new<E>(
+        lead: Ordering,
+        left: CheckedCmpRoster,
+        right: CheckedCmpRoster,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, NativeComparisonFailure<E>> {
+        if !CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(NativeComparisonFailure::UnsupportedProfile);
+        }
+        reserve_binding_parts(2, 1, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+        let machine = CollectionCmpPda::from_parts(
+            lead,
+            left.items,
+            right.items,
+            left.total,
+            right.total,
+            &mut CheckedPolicy(reserve),
+        )?;
+        Ok(Self { machine: Box::new(machine) })
+    }
+
+    /// Consumes the continuation. Refusal exposes no partially advanced owner;
+    /// a successful Compare transfers its existing storage credit unchanged.
+    pub fn try_resume<E>(
+        mut self,
+        result: Option<Ordering>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<CheckedCollectionCmpStep, NativeComparisonFailure<E>> {
+        match self
+            .machine
+            .resume_with(result, &mut CheckedPolicy(reserve))?
+        {
+            CollectionCmpStep::Compare { role, left, right } => {
+                Ok(CheckedCollectionCmpStep::Compare { machine: self, role, left, right })
+            },
+            CollectionCmpStep::Done(ordering) => Ok(CheckedCollectionCmpStep::Done(ordering)),
+        }
+    }
+}
+
 /// Identifies which structural position a collection comparison requests.
 ///
 /// Unary collections and map keys use [`Primary`](Self::Primary); map values
@@ -79,10 +283,29 @@ impl CollectionCmpPda {
     ) -> Self {
         let left_total = left.iter().map(|item| item.repetitions).sum();
         let right_total = right.iter().map(|item| item.repetitions).sum();
-        Self {
+        ordinary_result(Self::from_parts(
+            lead,
+            left,
+            right,
+            left_total,
+            right_total,
+            &mut OrdinaryPolicy,
+        ))
+    }
+
+    fn from_parts<P: CollectionCmpPolicy>(
+        lead: Ordering,
+        left: Vec<CollectionCmpItem>,
+        right: Vec<CollectionCmpItem>,
+        left_total: usize,
+        right_total: usize,
+        policy: &mut P,
+    ) -> Result<Self, P::Error> {
+        policy.work(1)?;
+        Ok(Self {
             phase: Phase::Lead,
-            left: MergeSortPda::new(left),
-            right: MergeSortPda::new(right),
+            left: MergeSortPda::new(left, policy)?,
+            right: MergeSortPda::new(right, policy)?,
             pending: None,
             lead,
             left_total,
@@ -91,180 +314,247 @@ impl CollectionCmpPda {
             right_index: 0,
             left_remaining: 0,
             right_remaining: 0,
-        }
+        })
     }
 
     pub fn resume(&mut self, result: Option<Ordering>) -> CollectionCmpStep {
+        ordinary_result(self.resume_with(result, &mut OrdinaryPolicy))
+    }
+
+    fn resume_with<P: CollectionCmpPolicy>(
+        &mut self,
+        result: Option<Ordering>,
+        policy: &mut P,
+    ) -> Result<CollectionCmpStep, P::Error> {
+        policy.work(1)?;
         match (self.pending.take(), result) {
             (Some(pending), Some(ordering)) => {
-                if let Some(step) = self.accept_term_comparison(pending, ordering) {
-                    return step;
+                if let Some(step) = self.accept_term_comparison(pending, ordering, policy)? {
+                    return Ok(step);
                 }
             },
             (None, None) => {},
             (Some(pending), None) => {
                 self.pending = Some(pending);
-                panic!("collection comparison PDA resumed without its requested result");
+                return Err(policy
+                    .protocol("collection comparison PDA resumed without its requested result"));
             },
             (None, Some(_)) => {
-                panic!("collection comparison PDA received an unrequested result");
+                return Err(
+                    policy.protocol("collection comparison PDA received an unrequested result")
+                );
             },
         }
 
         loop {
+            policy.work(1)?;
             match self.phase {
                 Phase::Lead => {
                     if self.lead != Ordering::Equal {
                         self.phase = Phase::Done;
-                        return CollectionCmpStep::Done(self.lead);
+                        return Ok(CollectionCmpStep::Done(self.lead));
                     }
                     self.phase = Phase::SortLeft;
                 },
-                Phase::SortLeft => match self.left.step() {
-                    MergeSortStep::Compare(left, right) => {
-                        if let Some(step) =
-                            self.request_item_comparison(left, right, Destination::SortLeft)
-                        {
-                            return step;
-                        }
-                    },
-                    MergeSortStep::Done => {
-                        self.left.release_scratch();
-                        self.phase = Phase::SortRight;
-                    },
-                },
-                Phase::SortRight => match self.right.step() {
-                    MergeSortStep::Compare(left, right) => {
-                        if let Some(step) =
-                            self.request_item_comparison(left, right, Destination::SortRight)
-                        {
-                            return step;
-                        }
-                    },
-                    MergeSortStep::Done => {
-                        self.right.release_scratch();
-                        self.phase = Phase::Lexicographic;
-                    },
-                },
-                Phase::Lexicographic => {
-                    let Some(left) = self.current_left() else {
-                        self.phase = Phase::Done;
-                        return CollectionCmpStep::Done(self.left_total.cmp(&self.right_total));
-                    };
-                    let Some(right) = self.current_right() else {
-                        self.phase = Phase::Done;
-                        return CollectionCmpStep::Done(self.left_total.cmp(&self.right_total));
-                    };
-                    if let Some(step) =
-                        self.request_item_comparison(left, right, Destination::Lexicographic)
-                    {
-                        return step;
+                Phase::SortLeft => {
+                    let step = self.left.step(policy)?;
+                    policy.work(1)?;
+                    match step {
+                        MergeSortStep::Compare(left, right) => {
+                            if let Some(step) = self.request_item_comparison(
+                                left,
+                                right,
+                                Destination::SortLeft,
+                                policy,
+                            )? {
+                                return Ok(step);
+                            }
+                        },
+                        MergeSortStep::Done => {
+                            self.left.release_scratch(policy)?;
+                            self.phase = Phase::SortRight;
+                        },
                     }
                 },
-                Phase::Done => panic!("collection comparison PDA resumed after completion"),
+                Phase::SortRight => {
+                    let step = self.right.step(policy)?;
+                    policy.work(1)?;
+                    match step {
+                        MergeSortStep::Compare(left, right) => {
+                            if let Some(step) = self.request_item_comparison(
+                                left,
+                                right,
+                                Destination::SortRight,
+                                policy,
+                            )? {
+                                return Ok(step);
+                            }
+                        },
+                        MergeSortStep::Done => {
+                            self.right.release_scratch(policy)?;
+                            self.phase = Phase::Lexicographic;
+                        },
+                    }
+                },
+                Phase::Lexicographic => {
+                    let Some(left) = self.current_left(policy)? else {
+                        policy.work(2)?;
+                        self.phase = Phase::Done;
+                        return Ok(CollectionCmpStep::Done(self.left_total.cmp(&self.right_total)));
+                    };
+                    let Some(right) = self.current_right(policy)? else {
+                        policy.work(2)?;
+                        self.phase = Phase::Done;
+                        return Ok(CollectionCmpStep::Done(self.left_total.cmp(&self.right_total)));
+                    };
+                    if let Some(step) = self.request_item_comparison(
+                        left,
+                        right,
+                        Destination::Lexicographic,
+                        policy,
+                    )? {
+                        return Ok(step);
+                    }
+                },
+                Phase::Done => {
+                    return Err(
+                        policy.protocol("collection comparison PDA resumed after completion")
+                    )
+                },
             }
         }
     }
 
-    fn request_item_comparison(
+    fn request_item_comparison<P: CollectionCmpPolicy>(
         &mut self,
         left: CollectionCmpItem,
         right: CollectionCmpItem,
         destination: Destination,
-    ) -> Option<CollectionCmpStep> {
+        policy: &mut P,
+    ) -> Result<Option<CollectionCmpStep>, P::Error> {
+        policy.work(1)?;
         if left.primary == right.primary {
-            return self.request_secondary_or_accept(left, right, destination);
+            return self.request_secondary_or_accept(left, right, destination, policy);
         }
         self.pending = Some(PendingTermCmp::Primary { left, right, destination });
-        Some(CollectionCmpStep::Compare {
+        Ok(Some(CollectionCmpStep::Compare {
             role: CollectionCmpRole::Primary,
             left: left.primary,
             right: right.primary,
-        })
+        }))
     }
 
-    fn request_secondary_or_accept(
+    fn request_secondary_or_accept<P: CollectionCmpPolicy>(
         &mut self,
         left: CollectionCmpItem,
         right: CollectionCmpItem,
         destination: Destination,
-    ) -> Option<CollectionCmpStep> {
+        policy: &mut P,
+    ) -> Result<Option<CollectionCmpStep>, P::Error> {
+        policy.work(1)?;
         match (left.secondary, right.secondary) {
             (None, None) => {
-                self.accept_item_comparison(destination, Ordering::Equal);
-                None
+                self.accept_item_comparison(destination, Ordering::Equal, policy)?;
+                Ok(None)
             },
             (None, Some(_)) => {
-                self.accept_item_comparison(destination, Ordering::Less);
-                None
+                self.accept_item_comparison(destination, Ordering::Less, policy)?;
+                Ok(None)
             },
             (Some(_), None) => {
-                self.accept_item_comparison(destination, Ordering::Greater);
-                None
+                self.accept_item_comparison(destination, Ordering::Greater, policy)?;
+                Ok(None)
             },
             (Some(left), Some(right)) if left == right => {
-                self.accept_item_comparison(destination, Ordering::Equal);
-                None
+                self.accept_item_comparison(destination, Ordering::Equal, policy)?;
+                Ok(None)
             },
             (Some(left), Some(right)) => {
                 self.pending = Some(PendingTermCmp::Secondary { destination });
-                Some(CollectionCmpStep::Compare {
+                Ok(Some(CollectionCmpStep::Compare {
                     role: CollectionCmpRole::Secondary,
                     left,
                     right,
-                })
+                }))
             },
         }
     }
 
-    fn accept_term_comparison(
+    fn accept_term_comparison<P: CollectionCmpPolicy>(
         &mut self,
         pending: PendingTermCmp,
         ordering: Ordering,
-    ) -> Option<CollectionCmpStep> {
+        policy: &mut P,
+    ) -> Result<Option<CollectionCmpStep>, P::Error> {
+        policy.work(1)?;
         match pending {
             PendingTermCmp::Primary { left, right, destination } => {
                 if ordering == Ordering::Equal {
-                    return self.request_secondary_or_accept(left, right, destination);
+                    return self.request_secondary_or_accept(left, right, destination, policy);
                 }
-                self.accept_item_comparison(destination, ordering);
+                self.accept_item_comparison(destination, ordering, policy)?;
             },
             PendingTermCmp::Secondary { destination } => {
-                self.accept_item_comparison(destination, ordering);
+                self.accept_item_comparison(destination, ordering, policy)?;
             },
         }
-        None
+        Ok(None)
     }
 
-    fn accept_item_comparison(&mut self, destination: Destination, ordering: Ordering) {
+    fn accept_item_comparison<P: CollectionCmpPolicy>(
+        &mut self,
+        destination: Destination,
+        ordering: Ordering,
+        policy: &mut P,
+    ) -> Result<(), P::Error> {
+        policy.work(1)?;
         match destination {
-            Destination::SortLeft => self.left.accept(ordering),
-            Destination::SortRight => self.right.accept(ordering),
-            Destination::Lexicographic if ordering == Ordering::Equal => self.advance_equal_run(),
+            Destination::SortLeft => self.left.accept(ordering, policy)?,
+            Destination::SortRight => self.right.accept(ordering, policy)?,
+            Destination::Lexicographic if ordering == Ordering::Equal => {
+                self.advance_equal_run(policy)?
+            },
             Destination::Lexicographic => {
                 self.lead = ordering;
                 self.phase = Phase::Lead;
             },
         }
+        Ok(())
     }
 
-    fn current_left(&mut self) -> Option<CollectionCmpItem> {
-        let item = *self.left.items().get(self.left_index)?;
+    fn current_left<P: CollectionCmpPolicy>(
+        &mut self,
+        policy: &mut P,
+    ) -> Result<Option<CollectionCmpItem>, P::Error> {
+        policy.work(1)?;
+        let Some(&item) = self.left.items().get(self.left_index) else {
+            return Ok(None);
+        };
         if self.left_remaining == 0 {
             self.left_remaining = item.repetitions;
         }
-        Some(item)
+        Ok(Some(item))
     }
 
-    fn current_right(&mut self) -> Option<CollectionCmpItem> {
-        let item = *self.right.items().get(self.right_index)?;
+    fn current_right<P: CollectionCmpPolicy>(
+        &mut self,
+        policy: &mut P,
+    ) -> Result<Option<CollectionCmpItem>, P::Error> {
+        policy.work(1)?;
+        let Some(&item) = self.right.items().get(self.right_index) else {
+            return Ok(None);
+        };
         if self.right_remaining == 0 {
             self.right_remaining = item.repetitions;
         }
-        Some(item)
+        Ok(Some(item))
     }
 
-    fn advance_equal_run(&mut self) {
+    fn advance_equal_run<P: CollectionCmpPolicy>(
+        &mut self,
+        policy: &mut P,
+    ) -> Result<(), P::Error> {
+        policy.work(1)?;
         let consumed = self.left_remaining.min(self.right_remaining);
         self.left_remaining -= consumed;
         self.right_remaining -= consumed;
@@ -274,6 +564,7 @@ impl CollectionCmpPda {
         if self.right_remaining == 0 {
             self.right_index += 1;
         }
+        Ok(())
     }
 }
 
@@ -321,7 +612,11 @@ struct MergeSortPda {
 }
 
 impl MergeSortPda {
-    fn new(source: Vec<CollectionCmpItem>) -> Self {
+    fn new<P: CollectionCmpPolicy>(
+        source: Vec<CollectionCmpItem>,
+        policy: &mut P,
+    ) -> Result<Self, P::Error> {
+        policy.work(1)?;
         let done = source.len() < 2;
         let mut pda = Self {
             source,
@@ -336,38 +631,56 @@ impl MergeSortPda {
             waiting: false,
             done,
         };
-        pda.reset_run();
-        pda
+        pda.reset_run(policy)?;
+        Ok(pda)
     }
 
     fn items(&self) -> &[CollectionCmpItem] {
         &self.source
     }
 
-    fn step(&mut self) -> MergeSortStep {
-        assert!(!self.waiting, "merge-sort PDA advanced before comparison result");
+    fn step<P: CollectionCmpPolicy>(&mut self, policy: &mut P) -> Result<MergeSortStep, P::Error> {
+        policy.work(1)?;
+        if self.waiting {
+            return Err(policy.protocol("merge-sort PDA advanced before comparison result"));
+        }
         if !self.done && self.target.is_none() {
+            policy.flat_slots(self.source.len())?;
             self.target = Some(self.source.clone());
         }
-        while !self.done {
+        while {
+            policy.work(1)?;
+            !self.done
+        } {
+            policy.work(1)?;
             if self.left < self.middle && self.right < self.end {
                 self.waiting = true;
-                return MergeSortStep::Compare(self.source[self.left], self.source[self.right]);
+                return Ok(MergeSortStep::Compare(self.source[self.left], self.source[self.right]));
             }
-            while self.left < self.middle {
+            while {
+                policy.work(1)?;
+                self.left < self.middle
+            } {
+                policy.work(1)?;
                 self.target.as_mut().expect("merge target exists")[self.output] =
                     self.source[self.left];
                 self.left += 1;
                 self.output += 1;
             }
-            while self.right < self.end {
+            while {
+                policy.work(1)?;
+                self.right < self.end
+            } {
+                policy.work(1)?;
                 self.target.as_mut().expect("merge target exists")[self.output] =
                     self.source[self.right];
                 self.right += 1;
                 self.output += 1;
             }
+            policy.work(1)?;
             self.start = self.end;
             if self.start >= self.source.len() {
+                policy.work(1)?;
                 std::mem::swap(
                     &mut self.source,
                     self.target.as_mut().expect("merge target exists"),
@@ -379,27 +692,38 @@ impl MergeSortPda {
                 }
                 self.start = 0;
             }
-            self.reset_run();
+            self.reset_run(policy)?;
         }
-        MergeSortStep::Done
+        Ok(MergeSortStep::Done)
     }
 
-    fn accept(&mut self, ordering: Ordering) {
-        assert!(self.waiting, "merge-sort PDA received an unrequested comparison result");
+    fn accept<P: CollectionCmpPolicy>(
+        &mut self,
+        ordering: Ordering,
+        policy: &mut P,
+    ) -> Result<(), P::Error> {
+        policy.work(1)?;
+        if !self.waiting {
+            return Err(policy.protocol("merge-sort PDA received an unrequested comparison result"));
+        }
         self.waiting = false;
         if ordering != Ordering::Greater {
+            policy.work(1)?;
             self.target.as_mut().expect("merge target exists")[self.output] =
                 self.source[self.left];
             self.left += 1;
         } else {
+            policy.work(1)?;
             self.target.as_mut().expect("merge target exists")[self.output] =
                 self.source[self.right];
             self.right += 1;
         }
         self.output += 1;
+        Ok(())
     }
 
-    fn reset_run(&mut self) {
+    fn reset_run<P: CollectionCmpPolicy>(&mut self, policy: &mut P) -> Result<(), P::Error> {
+        policy.work(1)?;
         self.middle = self.start.saturating_add(self.width).min(self.source.len());
         self.end = self
             .start
@@ -408,10 +732,13 @@ impl MergeSortPda {
         self.left = self.start;
         self.right = self.middle;
         self.output = self.start;
+        Ok(())
     }
 
-    fn release_scratch(&mut self) {
+    fn release_scratch<P: CollectionCmpPolicy>(&mut self, policy: &mut P) -> Result<(), P::Error> {
+        policy.work(1)?;
         self.target = None;
+        Ok(())
     }
 }
 
@@ -419,6 +746,10 @@ enum MergeSortStep {
     Compare(CollectionCmpItem, CollectionCmpItem),
     Done,
 }
+
+#[cfg(all(test, mettail_checked_native_comparison_profile))]
+#[path = "collection_cmp_pda_checked_tests.rs"]
+mod checked_tests;
 
 #[cfg(test)]
 mod tests {

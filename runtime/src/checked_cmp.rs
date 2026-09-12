@@ -16,6 +16,8 @@ pub enum NativeComparisonFailure<E> {
         category: &'static str,
         constructor: &'static str,
     },
+    /// Invalid roster or continuation protocol, distinct from size/budget refusal.
+    InvalidCollectionInput(&'static str),
     Admission(BindingFailure<E>),
 }
 

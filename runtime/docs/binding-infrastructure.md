@@ -815,6 +815,59 @@ also omit unsupported native calls from generated Rust. Local support is not a
 certificate for descendants skipped by ordinary short-circuiting. Required
 collection and source-profile coverage must be completed before public activation.
 
+#### Admitted collection comparison ownership
+
+[`CheckedCollectionCmpPda`](../src/collection_cmp_pda.rs) adds admission to the
+existing collection comparison and bottom-up merge-sort state machines. Ordinary
+and checked entrypoints share their phase transitions, primary/secondary pointer
+requests, stable left selection on equal merge results, compressed multiplicity
+runs and lazy scratch allocation. A private infallible policy preserves ordinary
+operation; the checked policy uses the caller's existing reservation function.
+This runtime interface is not yet wired into the generated companion above.
+
+Construction requires two `CheckedCmpRoster` values. Each roster reserves its
+declared width before allocation, and each insertion checks positive multiplicity,
+available reserved slots and total-count overflow before creating its pointer
+record. Extra allocator capacity cannot authorize extra entries. Partially filled
+rosters retain conservative unused credit; they do not prove that a producer
+visited its entire source collection. In particular, a hash-table iterator needs
+its own scan-extent allowance, not merely its logical entry count.
+
+| Boundary | Admission and ownership |
+|---|---|
+| Roster or scratch allocation of width $`n`$ | One metadata work unit, then $`2(n+1)`$ work and $`n+1`$ records; each record projects to four raw reservation units |
+| Roster insertion | One work unit before validation; pointer construction and disposal consume prepaid slot credit |
+| Checked owner | Two work units and one record before construction; supplied roster credits transfer into it |
+| Controller routing, merge initialization/reset, request/accept, scratch release | One work unit per reached source group |
+| Outer, readiness and left/right tail predicates | One work unit before each reached predicate, including terminal guards |
+| Taken tail copy, merge-selected copy, run end and taken pass transition | One work unit per group before its action |
+| Exhausted-roster total comparison | Two work units before the original `usize::cmp` |
+
+`try_resume` consumes the checked owner. A comparison request returns that same
+owner with the requested pointer role; completion returns only the ordering.
+Budget or protocol refusal returns no resumable partial machine. Roster/scratch
+cleanup was prepaid before allocation, including when refusal follows earlier
+internal mutations. No child AST is owned or dropped by these flat records.
+Borrowed source lifetime and correct pointer-role decoding remain caller duties.
+
+The supplied leading ordering remains independent of the roster repetition sums.
+For bags, binding reconstruction can retain an original total while collisions
+change surviving counts. The checked interface preserves this distinction and
+rejects zero-count repeated entries explicitly; it does not normalize the bag.
+
+The [ownership model](../../formal/rocq/rho_bridge/theories/AdmittedCollectionComparisonOwnership.v)
+proves roster invariants, checked charge projection, disjoint fresh buffer
+inventories, prepaid disposal and single-use owner-slot transfer. It reuses the
+source-observation admission laws, without claiming global sorting correctness,
+comparator coherence or equivalence to a different native sorting algorithm.
+The [runtime tests](../src/collection_cmp_pda_checked_tests.rs) check exact ordinary
+and checked pointer-request traces, sorted-result parity, every small-fixture
+reservation refusal, exact/under budgets, protocol errors and wide small-stack
+execution. The build-profile gate also covers the original flat scratch clone.
+These remain logical source-work contracts: allocator internals and panic-unwind
+recovery are separate obligations, and this interface alone does not activate
+bounded public preparation.
+
 #### Native comparison-leaf admission
 
 [`CheckedNativeEqualityLeaf` and `CheckedNativeOrderingLeaf`](../src/checked_cmp.rs)
