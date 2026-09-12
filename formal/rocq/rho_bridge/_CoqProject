@@ -68,6 +68,7 @@ theories/BinderPatternCopy.v
 theories/ScopeBindingReservation.v
 theories/RequiredVecBindingReservation.v
 theories/RequiredHashBagBindingReservation.v
+theories/AdmittedKeyHashExecution.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
