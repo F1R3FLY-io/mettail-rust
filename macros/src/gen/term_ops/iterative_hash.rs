@@ -54,6 +54,37 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+/// Names shared by the task, driver, field and trait emitters. This context
+/// currently selects only the existing ordinary Hash implementation.
+struct HashEmissionNames {
+    task_enum: Ident,
+    task_pool: Ident,
+    opaque_constructor: Ident,
+    driver: Ident,
+    handler_prefix: &'static str,
+}
+
+impl HashEmissionNames {
+    fn ordinary() -> Self {
+        Self {
+            task_enum: format_ident!("HashTask"),
+            task_pool: format_ident!("HASH_TASK_POOL"),
+            opaque_constructor: format_ident!("hash_opaque_task"),
+            driver: format_ident!("hash_iterative"),
+            handler_prefix: "hash_handle_",
+        }
+    }
+
+    fn handler(&self, category: &Ident) -> Ident {
+        format_ident!("{}{}", self.handler_prefix, category.to_string().to_lowercase())
+    }
+
+    /// Preserve the native call expression at its existing stream position.
+    fn hash_value(&self, value: TokenStream) -> TokenStream {
+        quote! { std::hash::Hash::hash(#value, state) }
+    }
+}
+
 // =============================================================================
 // Main Entry Point
 // =============================================================================
@@ -61,9 +92,10 @@ use syn::Ident;
 /// Generate `HashTask` enum, TLS pool, the iterative hash engine,
 /// and `impl Hash for Cat` for all exported categories.
 pub fn generate_iterative_hash(language: &LanguageDef) -> TokenStream {
-    let hash_task_enum = generate_hash_task_enum(language);
-    let hash_engine = generate_hash_engine(language);
-    let hash_impls = generate_hash_impls(language);
+    let emission = HashEmissionNames::ordinary();
+    let hash_task_enum = generate_hash_task_enum(language, &emission);
+    let hash_engine = generate_hash_engine(language, &emission);
+    let hash_impls = generate_hash_impls(language, &emission);
 
     quote! {
         #hash_task_enum
@@ -79,7 +111,10 @@ pub fn generate_iterative_hash(language: &LanguageDef) -> TokenStream {
 /// Generate the `HashTask` enum and thread-local pool.
 ///
 /// `HashTask` has one variant per category: `HashInt(*const Int)`, etc.
-fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
+fn generate_hash_task_enum(language: &LanguageDef, emission: &HashEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let task_pool = &emission.task_pool;
+    let opaque_constructor = &emission.opaque_constructor;
     let variants: Vec<TokenStream> = language
         .types
         .iter()
@@ -99,7 +134,7 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
         /// The iterative engine pops tasks, hashes discriminant and leaf
         /// payloads, and pushes child tasks for `Box<T>` fields.
         #[allow(dead_code)]
-        enum HashTask {
+        enum #task_enum {
             #(#variants,)*
             /// ★ #162 — a `usize` written to `state` at its position in the stream.
             ///
@@ -125,7 +160,7 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
         }
 
         #[inline]
-        fn hash_opaque_task<T, H>(value: &T) -> HashTask
+        fn #opaque_constructor<T, H>(value: &T) -> #task_enum
         where
             T: std::hash::Hash,
             H: std::hash::Hasher,
@@ -140,7 +175,7 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
                 std::hash::Hash::hash(value, state);
             }
 
-            HashTask::Opaque {
+            #task_enum::Opaque {
                 value: value as *const T as *const (),
                 hash: apply::<T, H>,
             }
@@ -149,8 +184,8 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
         // SAFETY: HashTask holds *const pointers that are only dereferenced
         // within the same thread that created them, during the lifetime of
         // the references they were derived from.
-        unsafe impl Send for HashTask {}
-        unsafe impl Sync for HashTask {}
+        unsafe impl Send for #task_enum {}
+        unsafe impl Sync for #task_enum {}
 
         thread_local! {
             /// Pool for reusing `HashTask` work stacks across `hash()` calls.
@@ -160,7 +195,7 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
             /// hashes reuse the same buffer. Re-entrant hashes (from
             /// collection fields delegating to their own Hash) get fresh
             /// empty vectors; the outermost call retains pool capacity.
-            static HASH_TASK_POOL: std::cell::Cell<Vec<HashTask>> =
+            static #task_pool: std::cell::Cell<Vec<#task_enum>> =
                 std::cell::Cell::new(Vec::new());
         }
     }
@@ -175,30 +210,32 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
 /// **Frame-size fix (PDA stack-safety):** Per-cat helpers keep individual
 /// stack frames small (the same stack-safety rationale shared across the
 /// iterative term-ops).
-fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
+fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let driver = &emission.driver;
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
-            let cat_str = cat.to_string().to_lowercase();
-            let helper_fn = format_ident!("hash_handle_{}", cat_str);
-            let index_fn = format_ident!("variant_index_{}", cat_str);
+            let helper_fn = emission.handler(cat);
+            let index_fn = format_ident!("variant_index_{}", cat.to_string().to_lowercase());
+            let hash_discriminant = emission.hash_value(quote! { &#index_fn(val) });
             let variants = collect_category_variants(cat, language);
             let variant_arms: Vec<TokenStream> = variants
                 .iter()
-                .map(|v| generate_hash_variant_arm(cat, v, language))
+                .map(|v| generate_hash_variant_arm(cat, v, language, emission))
                 .collect();
             quote! {
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
                 fn #helper_fn<H: std::hash::Hasher>(
-                    stack: &mut Vec<HashTask>,
+                    stack: &mut Vec<#task_enum>,
                     state: &mut H,
                     ptr: *const #cat,
                 ) {
                     let val = unsafe { &*ptr };
-                    std::hash::Hash::hash(&#index_fn(val), state);
+                    #hash_discriminant;
                     match val {
                         #(#variant_arms)*
                     }
@@ -213,14 +250,18 @@ fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
         .map(|t| {
             let cat = &t.name;
             let hash_variant = format_ident!("Hash{}", cat);
-            let helper_fn = format_ident!("hash_handle_{}", cat.to_string().to_lowercase());
+            let helper_fn = emission.handler(cat);
             quote! {
-                HashTask::#hash_variant(ptr) => {
+                #task_enum::#hash_variant(ptr) => {
                     #helper_fn(stack, state, ptr);
                 }
             }
         })
         .collect();
+
+    let absorb_usize = emission.hash_value(quote! { &n });
+    let absorb_u8 = emission.hash_value(quote! { &b });
+    let absorb_pathmap_mode = emission.hash_value(quote! { &mode });
 
     quote! {
         #(#helper_fns)*
@@ -234,7 +275,7 @@ fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
         /// for the duration of this function call. This is guaranteed because
         /// they are derived from `&self` in `Hash::hash()`.
         #[allow(dead_code, unused_variables)]
-        fn hash_iterative<H: std::hash::Hasher>(stack: &mut Vec<HashTask>, state: &mut H) {
+        fn #driver<H: std::hash::Hasher>(stack: &mut Vec<#task_enum>, state: &mut H) {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
@@ -242,16 +283,16 @@ fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
                     // position. `Hash::hash(&n, state)` on a `usize`/`u8` is exactly
                     // `state.write_usize(n)` / `state.write_u8(n)`, so the byte
                     // stream is identical to the eager form these replaced.
-                    HashTask::AbsorbUsize(n) => {
-                        std::hash::Hash::hash(&n, state);
+                    #task_enum::AbsorbUsize(n) => {
+                        #absorb_usize;
                     }
-                    HashTask::AbsorbU8(b) => {
-                        std::hash::Hash::hash(&b, state);
+                    #task_enum::AbsorbU8(b) => {
+                        #absorb_u8;
                     }
-                    HashTask::HashPathMapMode(mode) => {
-                        std::hash::Hash::hash(&mode, state);
+                    #task_enum::HashPathMapMode(mode) => {
+                        #absorb_pathmap_mode;
                     }
-                    HashTask::Opaque { value, hash } => {
+                    #task_enum::Opaque { value, hash } => {
                         unsafe { hash(value, state as *mut H as *mut ()) };
                     }
                 }
@@ -278,14 +319,17 @@ fn hash_collection_stmts(
     coll_type: &CollectionType,
     coll_expr: &TokenStream,
     language: &LanguageDef,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let opaque_constructor = &emission.opaque_constructor;
     match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Hash{}", element_cat);
             let pushes =
                 for_each_subterm(&coll_type, coll_expr, WalkOrder::ReverseForLifo, &|e, _| {
                     quote! {
-                        stack.push(HashTask::#task_variant(#e as *const _));
+                        stack.push(#task_enum::#task_variant(#e as *const _));
                     }
                 });
             quote! {
@@ -296,17 +340,17 @@ fn hash_collection_stmts(
                 // The two orders are genuinely different and getting them
                 // interchanged silently changes every hash and every ordering.
                 #pushes
-                stack.push(HashTask::AbsorbUsize(#coll_expr.len()));
+                stack.push(#task_enum::AbsorbUsize(#coll_expr.len()));
             }
         },
         CollectionPlan::WholeValue {
             reason: WholeValueReason::UnorderedContainer,
-        } => unordered_collection_hash_stmts(element_cat, coll_type, coll_expr),
+        } => unordered_collection_hash_stmts(element_cat, coll_type, coll_expr, emission),
         CollectionPlan::WholeValue {
             reason: WholeValueReason::ElementIsNotACategory,
         } => {
             quote! {
-                stack.push(hash_opaque_task::<_, H>(#coll_expr));
+                stack.push(#opaque_constructor::<_, H>(#coll_expr));
             }
         },
     }
@@ -316,7 +360,10 @@ fn unordered_collection_hash_stmts(
     element_cat: &Ident,
     coll_type: &CollectionType,
     coll_expr: &TokenStream,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let opaque_constructor = &emission.opaque_constructor;
     let task_variant = format_ident!("Hash{}", element_cat);
     match coll_type {
         CollectionType::HashSet => quote! {
@@ -324,13 +371,13 @@ fn unordered_collection_hash_stmts(
                 let mut __items: Vec<_> = #coll_expr.iter().collect();
                 __items.sort_by(|__left, __right| (*__left).cmp(*__right));
                 for __item in __items.into_iter().rev() {
-                    stack.push(HashTask::#task_variant(__item as *const _));
+                    stack.push(#task_enum::#task_variant(__item as *const _));
                 }
-                stack.push(HashTask::AbsorbUsize(#coll_expr.len()));
+                stack.push(#task_enum::AbsorbUsize(#coll_expr.len()));
             }
         },
         CollectionType::HashBag => quote! {
-            stack.push(hash_opaque_task::<_, H>(#coll_expr));
+            stack.push(#opaque_constructor::<_, H>(#coll_expr));
         },
         CollectionType::HashMap => quote! {
             {
@@ -341,13 +388,15 @@ fn unordered_collection_hash_stmts(
                         .then_with(|| __left_value.cmp(__right_value))
                 });
                 for (__key, __value) in __items.into_iter().rev() {
-                    stack.push(HashTask::#task_variant(__value as *const _));
-                    stack.push(HashTask::#task_variant(__key as *const _));
+                    stack.push(#task_enum::#task_variant(__value as *const _));
+                    stack.push(#task_enum::#task_variant(__key as *const _));
                 }
-                stack.push(HashTask::AbsorbUsize(#coll_expr.len()));
+                stack.push(#task_enum::AbsorbUsize(#coll_expr.len()));
             }
         },
-        CollectionType::PathMap => pathmap_hash_stmts(element_cat, element_cat, coll_expr),
+        CollectionType::PathMap => {
+            pathmap_hash_stmts(element_cat, element_cat, coll_expr, emission)
+        },
         CollectionType::Vec => quote! {
             compile_error!("unordered collection hashing requested for Vec");
         },
@@ -363,7 +412,9 @@ fn pathmap_hash_stmts(
     key_category: &Ident,
     value_category: &Ident,
     pathmap: &TokenStream,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
     let key_task = format_ident!("Hash{}", key_category);
     let value_task = format_ident!("Hash{}", value_category);
     quote! {
@@ -374,9 +425,9 @@ fn pathmap_hash_stmts(
                     let mut __items: Vec<_> = __entries.iter().collect();
                     __items.sort_by(|__left, __right| __left.0.cmp(__right.0));
                     for (__key, _) in __items.into_iter().rev() {
-                        stack.push(HashTask::#key_task(__key as *const _));
+                        stack.push(#task_enum::#key_task(__key as *const _));
                     }
-                    stack.push(HashTask::AbsorbUsize(__entries.len()));
+                    stack.push(#task_enum::AbsorbUsize(__entries.len()));
                 },
                 mettail_runtime::PathMapLit::Map(__entries) => {
                     let mut __items: Vec<_> = __entries.iter().collect();
@@ -388,13 +439,13 @@ fn pathmap_hash_stmts(
                         },
                     );
                     for (__key, __value) in __items.into_iter().rev() {
-                        stack.push(HashTask::#value_task(__value as *const _));
-                        stack.push(HashTask::#key_task(__key as *const _));
+                        stack.push(#task_enum::#value_task(__value as *const _));
+                        stack.push(#task_enum::#key_task(__key as *const _));
                     }
-                    stack.push(HashTask::AbsorbUsize(__entries.len()));
+                    stack.push(#task_enum::AbsorbUsize(__entries.len()));
                 },
             }
-            stack.push(HashTask::HashPathMapMode((#pathmap).mode()));
+            stack.push(#task_enum::HashPathMapMode((#pathmap).mode()));
         }
     }
 }
@@ -404,7 +455,9 @@ fn generate_hash_variant_arm(
     category: &Ident,
     variant: &VariantKind,
     language: &LanguageDef,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
+    let opaque_constructor = &emission.opaque_constructor;
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -418,9 +471,10 @@ fn generate_hash_variant_arm(
 
         // An OPAQUE native leaf: whole-value `Hash` is correct and flat.
         VariantKind::Literal { label } => {
+            let hash_value = emission.hash_value(quote! { v });
             quote! {
                 #category::#label(v) => {
-                    std::hash::Hash::hash(v, state);
+                    #hash_value;
                 }
             }
         },
@@ -429,7 +483,8 @@ fn generate_hash_variant_arm(
         // `&Vec<Proc>` calls `Proc::hash` per element, re-entering this driver by
         // host recursion. See `collection_walk`'s header.
         VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
-            let body = hash_collection_stmts(element_cat, coll_type, &quote! { v }, language);
+            let body =
+                hash_collection_stmts(element_cat, coll_type, &quote! { v }, language, emission);
             quote! {
                 #category::#label(v) => {
                     #body
@@ -440,14 +495,18 @@ fn generate_hash_variant_arm(
         VariantKind::RecursiveNativeLiteral { label, carrier } => {
             let pathmap = carrier.pathmap_ref(&quote! { v });
             let focus = carrier.focus_ref(&quote! { v });
-            let body =
-                pathmap_hash_stmts(carrier.key_category(), carrier.value_category(), &pathmap);
+            let body = pathmap_hash_stmts(
+                carrier.key_category(),
+                carrier.value_category(),
+                &pathmap,
+                emission,
+            );
             quote! {
                 #category::#label(v) => {
                     // The carrier hash is the lexicographic product
                     // `PathMap` then focus.  Focus is pushed first so the LIFO
                     // machine absorbs it after every structural PathMap task.
-                    stack.push(hash_opaque_task::<_, H>(#focus));
+                    stack.push(#opaque_constructor::<_, H>(#focus));
                     #body
                 }
             }
@@ -455,20 +514,22 @@ fn generate_hash_variant_arm(
 
         VariantKind::Var { label } => {
             // Var: hash OrdVar
+            let hash_value = emission.hash_value(quote! { v });
             quote! {
                 #category::#label(v) => {
-                    std::hash::Hash::hash(v, state);
+                    #hash_value;
                 }
             }
         },
 
         VariantKind::Regular { label, fields } => {
-            generate_hash_regular_arm(category, label, fields, language)
+            generate_hash_regular_arm(category, label, fields, language, emission)
         },
 
         // ★ #162 — the category-DIRECT collection field, same boundary.
         VariantKind::Collection { label, element_cat, coll_type } => {
-            let body = hash_collection_stmts(element_cat, coll_type, &quote! { coll }, language);
+            let body =
+                hash_collection_stmts(element_cat, coll_type, &quote! { coll }, language, emission);
             quote! {
                 #category::#label(coll) => {
                     #body
@@ -476,12 +537,24 @@ fn generate_hash_variant_arm(
             }
         },
 
-        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-            generate_hash_binder_arm(category, label, pre_scope_fields, body_cat, language)
-        },
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => generate_hash_binder_arm(
+            category,
+            label,
+            pre_scope_fields,
+            body_cat,
+            language,
+            emission,
+        ),
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            generate_hash_multi_binder_arm(category, label, pre_scope_fields, body_cat, language)
+            generate_hash_multi_binder_arm(
+                category,
+                label,
+                pre_scope_fields,
+                body_cat,
+                language,
+                emission,
+            )
         },
     }
 }
@@ -519,9 +592,10 @@ fn generate_hash_regular_arm(
     label: &Ident,
     fields: &[FieldInfo],
     language: &LanguageDef,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
-    let stmts = hash_arm_stmts(fields, &field_names, None, language);
+    let stmts = hash_arm_stmts(fields, &field_names, None, language, emission);
     quote! {
         #category::#label(#(ref #field_names),*) => {
             #(#stmts)*
@@ -554,17 +628,24 @@ fn hash_field_begins_deferred_suffix(field: &FieldInfo, language: &LanguageDef) 
 }
 
 /// Hash one bounded field in the eager prefix, in original field order.
-fn hash_field_eagerly(field: &FieldInfo, name: &Ident) -> TokenStream {
+fn hash_field_eagerly(
+    field: &FieldInfo,
+    name: &Ident,
+    emission: &HashEmissionNames,
+) -> TokenStream {
     if field.is_optional {
+        let hash_none = emission.hash_value(quote! { &0u8 });
+        let hash_some = emission.hash_value(quote! { &1u8 });
         if field.is_collection {
             // Phase 4 #3 (2026-05-12): Optional-Collection — discriminator byte
             // then the container's whole-value `Hash`.
+            let hash_value = emission.hash_value(quote! { __c });
             return quote! {
                 match #name.as_ref() {
-                    None => std::hash::Hash::hash(&0u8, state),
+                    None => #hash_none,
                     Some(__c) => {
-                        std::hash::Hash::hash(&1u8, state);
-                        std::hash::Hash::hash(__c, state);
+                        #hash_some;
+                        #hash_value;
                     }
                 }
             };
@@ -573,34 +654,38 @@ fn hash_field_eagerly(field: &FieldInfo, name: &Ident) -> TokenStream {
             // Task #14 (`Option<Guard>`) / L9-3 (`Option<String>`): the payload is
             // a bare value, so `__b` is hashed directly (the `&**__b` deref of the
             // sibling arm is `E0614` here).
+            let hash_value = emission.hash_value(quote! { __b });
             return quote! {
                 match #name.as_ref() {
-                    None => std::hash::Hash::hash(&0u8, state),
+                    None => #hash_none,
                     Some(__b) => {
-                        std::hash::Hash::hash(&1u8, state);
-                        std::hash::Hash::hash(__b, state);
+                        #hash_some;
+                        #hash_value;
                     }
                 }
             };
         }
+        let hash_value = emission.hash_value(quote! { &**__b });
         return quote! {
             match #name.as_ref() {
-                None => std::hash::Hash::hash(&0u8, state),
+                None => #hash_none,
                 Some(__b) => {
-                    std::hash::Hash::hash(&1u8, state);
-                    std::hash::Hash::hash(&**__b, state);
+                    #hash_some;
+                    #hash_value;
                 }
             }
         };
     }
     if field.is_predicate || field.is_opaque_leaf() || field.is_collection {
         // Phase 3A-B4 / L9-3: predicate and token-text leaves hash inline.
+        let hash_value = emission.hash_value(quote! { #name });
         return quote! {
-            std::hash::Hash::hash(#name, state);
+            #hash_value;
         };
     }
+    let hash_value = emission.hash_value(quote! { &**#name });
     quote! {
-        std::hash::Hash::hash(&**#name, state);
+        #hash_value;
     }
 }
 
@@ -612,7 +697,10 @@ fn hash_arm_stmts(
     field_names: &[Ident],
     scope_pushes: Option<TokenStream>,
     language: &LanguageDef,
+    emission: &HashEmissionNames,
 ) -> Vec<TokenStream> {
+    let task_enum = &emission.task_enum;
+    let opaque_constructor = &emission.opaque_constructor;
     let deferred: Vec<bool> = fields
         .iter()
         .map(|f| hash_field_begins_deferred_suffix(f, language))
@@ -622,7 +710,7 @@ fn hash_arm_stmts(
 
     // ── the eager segment: leaves, in field order ──
     for (i, field) in fields.iter().enumerate().take(split) {
-        stmts.push(hash_field_eagerly(field, &field_names[i]));
+        stmts.push(hash_field_eagerly(field, &field_names[i], emission));
     }
 
     // ── the pushed segment, in REVERSE field order (the scope is last ⇒ first) ──
@@ -636,25 +724,25 @@ fn hash_arm_stmts(
             crate::gen::term_ops::collection_walk::FieldCarrier::Leaf if field.is_optional => {
                 quote! {
                     match #name.as_ref() {
-                        None => stack.push(HashTask::AbsorbU8(0u8)),
+                        None => stack.push(#task_enum::AbsorbU8(0u8)),
                         Some(__leaf) => {
-                            stack.push(hash_opaque_task::<_, H>(__leaf));
-                            stack.push(HashTask::AbsorbU8(1u8));
+                            stack.push(#opaque_constructor::<_, H>(__leaf));
+                            stack.push(#task_enum::AbsorbU8(1u8));
                         },
                     }
                 }
             },
             crate::gen::term_ops::collection_walk::FieldCarrier::Leaf => quote! {
-                stack.push(hash_opaque_task::<_, H>(#name));
+                stack.push(#opaque_constructor::<_, H>(#name));
             },
             crate::gen::term_ops::collection_walk::FieldCarrier::OptionalChild => {
                 let task_variant = format_ident!("Hash{}", field.category);
                 quote! {
                     match #name.as_ref() {
-                        None => stack.push(HashTask::AbsorbU8(0u8)),
+                        None => stack.push(#task_enum::AbsorbU8(0u8)),
                         Some(__child) => {
-                            stack.push(HashTask::#task_variant(&**__child as *const _));
-                            stack.push(HashTask::AbsorbU8(1u8));
+                            stack.push(#task_enum::#task_variant(&**__child as *const _));
+                            stack.push(#task_enum::AbsorbU8(1u8));
                         },
                     }
                 }
@@ -667,24 +755,31 @@ fn hash_arm_stmts(
                     &coll_type,
                     &quote! { __collection },
                     language,
+                    emission,
                 );
                 quote! {
                     match #name.as_ref() {
-                        None => stack.push(HashTask::AbsorbU8(0u8)),
+                        None => stack.push(#task_enum::AbsorbU8(0u8)),
                         Some(__collection) => {
                             #collection
-                            stack.push(HashTask::AbsorbU8(1u8));
+                            stack.push(#task_enum::AbsorbU8(1u8));
                         },
                     }
                 }
             },
             crate::gen::term_ops::collection_walk::FieldCarrier::Collection { coll_type } => {
-                hash_collection_stmts(&field.category, &coll_type, &quote! { #name }, language)
+                hash_collection_stmts(
+                    &field.category,
+                    &coll_type,
+                    &quote! { #name },
+                    language,
+                    emission,
+                )
             },
             crate::gen::term_ops::collection_walk::FieldCarrier::Child => {
                 let task_variant = format_ident!("Hash{}", field.category);
                 quote! {
-                    stack.push(HashTask::#task_variant(&**#name as *const _));
+                    stack.push(#task_enum::#task_variant(&**#name as *const _));
                 }
             },
         });
@@ -708,8 +803,9 @@ fn generate_hash_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
     language: &LanguageDef,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
-    generate_hash_scoped_arm(category, label, pre_scope_fields, body_cat, language)
+    generate_hash_scoped_arm(category, label, pre_scope_fields, body_cat, language, emission)
 }
 
 /// Generate hash arm for a MultiBinder variant. Identical in shape to
@@ -722,8 +818,9 @@ fn generate_hash_multi_binder_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
     language: &LanguageDef,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
-    generate_hash_scoped_arm(category, label, pre_scope_fields, body_cat, language)
+    generate_hash_scoped_arm(category, label, pre_scope_fields, body_cat, language, emission)
 }
 
 /// The shared body of the two scoped-arm generators. See
@@ -734,7 +831,10 @@ fn generate_hash_scoped_arm(
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
     language: &LanguageDef,
+    emission: &HashEmissionNames,
 ) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let opaque_constructor = &emission.opaque_constructor;
     let total_fields = pre_scope_fields.len() + 1;
     let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
     let scope_name = &field_names[total_fields - 1];
@@ -743,11 +843,12 @@ fn generate_hash_scoped_arm(
     let scope_pushes = quote! {
         {
             let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
-            stack.push(HashTask::#body_task(body_ptr));
-            stack.push(hash_opaque_task::<_, H>(&#scope_name.inner().unsafe_pattern));
+            stack.push(#task_enum::#body_task(body_ptr));
+            stack.push(#opaque_constructor::<_, H>(&#scope_name.inner().unsafe_pattern));
         }
     };
-    let hash_stmts = hash_arm_stmts(pre_scope_fields, &field_names, Some(scope_pushes), language);
+    let hash_stmts =
+        hash_arm_stmts(pre_scope_fields, &field_names, Some(scope_pushes), language, emission);
 
     quote! {
         #category::#label(#(ref #field_names),*) => {
@@ -761,33 +862,36 @@ fn generate_hash_scoped_arm(
 // =============================================================================
 
 /// Generate `impl Hash for Cat` for each category.
-fn generate_hash_impls(language: &LanguageDef) -> TokenStream {
+fn generate_hash_impls(language: &LanguageDef, emission: &HashEmissionNames) -> TokenStream {
     let impls: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|lang_type| generate_hash_impl(&lang_type.name))
+        .map(|lang_type| generate_hash_impl(&lang_type.name, emission))
         .collect();
 
     quote! { #(#impls)* }
 }
 
 /// Generate `impl Hash` for a single category.
-fn generate_hash_impl(category: &Ident) -> TokenStream {
+fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let task_pool = &emission.task_pool;
+    let driver = &emission.driver;
     let hash_variant = format_ident!("Hash{}", category);
 
     quote! {
         impl std::hash::Hash for #category {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                 // Fast path: try TLS pool
-                let tls_result = HASH_TASK_POOL.try_with(|cell| {
+                let tls_result = #task_pool.try_with(|cell| {
                     let mut stack = cell.take();
                     let was_empty = stack.is_empty();
 
                     // Push initial hash task
-                    stack.push(HashTask::#hash_variant(self as *const _));
+                    stack.push(#task_enum::#hash_variant(self as *const _));
 
                     // Run the iterative engine
-                    hash_iterative(&mut stack, state);
+                    #driver(&mut stack, state);
 
                     // Return pool
                     if was_empty {
@@ -801,8 +905,8 @@ fn generate_hash_impl(category: &Ident) -> TokenStream {
                 }
 
                 // Fallback: TLS unavailable (thread shutdown). Use local stack.
-                let mut stack = vec![HashTask::#hash_variant(self as *const _)];
-                hash_iterative(&mut stack, state);
+                let mut stack = vec![#task_enum::#hash_variant(self as *const _)];
+                #driver(&mut stack, state);
             }
         }
     }
@@ -932,6 +1036,7 @@ mod tests {
     #[test]
     fn ordinary_mixed_fields_keep_eager_prefix_and_reversed_deferred_suffix() {
         let language = ordinary_surface_language();
+        let emission = HashEmissionNames::ordinary();
         let variant = surface_variant(&language, "Proc", "PMixed");
         let VariantKind::Regular { fields, .. } = &variant else {
             panic!("regular mixed fields")
@@ -939,7 +1044,12 @@ mod tests {
         assert_eq!(fields.len(), 5);
         assert!(fields[0].is_opaque_leaf() && fields[2].is_opaque_leaf());
         assert!(fields[3].is_predicate && fields[4].is_opaque_leaf());
-        let arm = compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+        let arm = compact(generate_hash_variant_arm(
+            &format_ident!("Proc"),
+            &variant,
+            &language,
+            &emission,
+        ));
         positions_are_ordered(
             &arm,
             &[
@@ -961,7 +1071,12 @@ mod tests {
         assert!(fields
             .iter()
             .any(|f| f.is_optional && !f.is_collection && !f.is_predicate && !f.is_opaque_leaf()));
-        let arm = compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+        let arm = compact(generate_hash_variant_arm(
+            &format_ident!("Proc"),
+            &variant,
+            &language,
+            &emission,
+        ));
         assert!(arm.contains("Hash::hash(__b,state)")); // Optional native eager prefix.
         assert!(arm.contains("hash_opaque_task::<_,H>(__leaf)")); // Optional native suffix.
         positions_are_ordered(
@@ -973,12 +1088,18 @@ mod tests {
     #[test]
     fn ordinary_optional_vectors_and_scopes_keep_lifo_stream_order() {
         let language = ordinary_surface_language();
+        let emission = HashEmissionNames::ordinary();
         let variant = surface_variant(&language, "Proc", "POptionalVec");
         let VariantKind::Regular { fields, .. } = &variant else {
             panic!("optional vector field")
         };
         assert!(fields.iter().any(|f| f.is_optional && f.is_collection));
-        let arm = compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+        let arm = compact(generate_hash_variant_arm(
+            &format_ident!("Proc"),
+            &variant,
+            &language,
+            &emission,
+        ));
         positions_are_ordered(
             &arm,
             &[
@@ -989,8 +1110,12 @@ mod tests {
         );
         for label in ["PSingle", "PMulti"] {
             let variant = surface_variant(&language, "Proc", label);
-            let arm =
-                compact(generate_hash_variant_arm(&format_ident!("Proc"), &variant, &language));
+            let arm = compact(generate_hash_variant_arm(
+                &format_ident!("Proc"),
+                &variant,
+                &language,
+                &emission,
+            ));
             positions_are_ordered(
                 &arm,
                 &[
@@ -1018,7 +1143,14 @@ mod tests {
             is_optional: true,
             opaque_leaf: None,
         }];
-        let arm = generate_hash_regular_arm(&cat, &label, &fields, &language).to_string();
+        let arm = generate_hash_regular_arm(
+            &cat,
+            &label,
+            &fields,
+            &language,
+            &HashEmissionNames::ordinary(),
+        )
+        .to_string();
         assert!(
             arm.contains("hash (__b , state)"),
             "the Some arm must hash the bare inner pred: {arm}",
