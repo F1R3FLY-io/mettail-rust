@@ -42,8 +42,8 @@
 //! - `impl Ord for Cat`: delegates to `cmp_iterative`
 
 use crate::gen::term_ops::collection_walk::{
-    field_carrier, for_each_subterm_pair, plan_for, CollectionPlan, FieldCarrier, OrderSensitivity,
-    WalkOrder, WholeValueReason,
+    field_carrier, for_each_subterm_pair, for_each_subterm_pair_with_loop, plan_for,
+    CollectionPlan, FieldCarrier, OrderSensitivity, WalkOrder, WholeValueReason,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
@@ -54,6 +54,7 @@ use syn::Ident;
 
 /// Names shared by the comparison builders; ordinary emission is unchanged.
 struct CmpEmissionNames {
+    checked: bool,
     task_enum: Ident,
     task_pool: Ident,
     aux_task_pool: Ident,
@@ -71,6 +72,7 @@ struct CmpEmissionNames {
 impl CmpEmissionNames {
     fn ordinary() -> Self {
         Self {
+            checked: false,
             task_enum: format_ident!("CmpTask"),
             task_pool: format_ident!("CMP_TASK_POOL"),
             aux_task_pool: format_ident!("CMP_AUX_TASK_POOL"),
@@ -108,6 +110,368 @@ impl CmpEmissionNames {
     }
 }
 
+// The checked path shares the ordinary builders and preserves native call sites.
+impl CmpEmissionNames {
+    fn checked() -> Self {
+        Self {
+            checked: true,
+            task_enum: format_ident!("CheckedCmpTask"),
+            task_pool: format_ident!("CHECKED_CMP_TASK_POOL"),
+            aux_task_pool: format_ident!("CHECKED_CMP_AUX_TASK_POOL"),
+            collection_resume: format_ident!("CheckedCollectionCmpResume"),
+            eq_driver: format_ident!("checked_eq_iterative"),
+            cmp_driver: format_ident!("checked_cmp_iterative"),
+            deliver: format_ident!("checked_cmp_deliver"),
+            unordered_eq: format_ident!("checked_eq_unordered_collection"),
+            eq_handler_prefix: "checked_eq_handle_",
+            cmp_handler_prefix: "checked_cmp_handle_",
+            resume_prefix: "checked_cmp_resume_collection_",
+            native_resume_prefix: "checked_cmp_resume_native_",
+        }
+    }
+
+    fn generics(&self) -> TokenStream {
+        if self.checked {
+            quote! { <E> }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    // Leading commas retain ordinary signature punctuation exactly.
+    fn parameters(&self) -> TokenStream {
+        if self.checked {
+            quote! { , reserve: &mut impl FnMut(usize, usize) -> Result<(), E> }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn arguments(&self) -> TokenStream {
+        if self.checked {
+            quote! { , reserve }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn result_type(&self, value: TokenStream) -> TokenStream {
+        if self.checked {
+            quote! { Result<#value, mettail_runtime::NativeComparisonFailure<E>> }
+        } else {
+            value
+        }
+    }
+
+    fn success(&self, value: TokenStream) -> TokenStream {
+        if self.checked {
+            quote! { Ok(#value) }
+        } else {
+            value
+        }
+    }
+
+    fn return_value(&self, value: TokenStream) -> TokenStream {
+        let result = self.success(value);
+        quote! { return #result; }
+    }
+
+    fn propagate(&self) -> TokenStream {
+        if self.checked {
+            quote! { ? }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn reserve_work(&self, work: usize) -> TokenStream {
+        if self.checked {
+            quote! {
+                mettail_runtime::reserve_binding_parts(#work, 0, 0, reserve)
+                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+            }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn routing(&self) -> TokenStream {
+        self.reserve_work(1)
+    }
+
+    // Root header/release or a borrowed task's construction/disposal.
+    fn record_admission(&self) -> TokenStream {
+        if self.checked {
+            quote! {
+                mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
+                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+            }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn push_task(&self, task: TokenStream) -> TokenStream {
+        if self.checked {
+            let admission = self.record_admission();
+            quote! {{ #admission stack.push(#task); }}
+        } else {
+            quote! { stack.push(#task) }
+        }
+    }
+
+    fn native_ne(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.checked {
+            quote! {
+                mettail_runtime::CheckedNativeEqualityLeaf::try_native_ne(#left, #right, reserve)?
+            }
+        } else {
+            quote! { #left != #right }
+        }
+    }
+
+    fn native_cmp(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.checked {
+            quote! {
+                mettail_runtime::CheckedNativeOrderingLeaf::try_native_cmp(#left, #right, reserve)?
+            }
+        } else {
+            quote! { #left.cmp(#right) }
+        }
+    }
+
+    fn usize_ne(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.checked {
+            let admission = self.reserve_work(2);
+            quote! {{ #admission #left != #right }}
+        } else {
+            quote! { #left != #right }
+        }
+    }
+
+    fn usize_cmp(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.checked {
+            let admission = self.reserve_work(2);
+            quote! {{ #admission #left.cmp(&#right) }}
+        } else {
+            quote! { #left.cmp(&#right) }
+        }
+    }
+
+    fn pattern_order_precharge(
+        &self,
+        left: TokenStream,
+        right: TokenStream,
+        multi: bool,
+    ) -> TokenStream {
+        if !self.checked {
+            return TokenStream::new();
+        }
+        let function = if multi {
+            format_ident!("precharge_generated_multi_pattern_order")
+        } else {
+            format_ident!("precharge_generated_single_pattern_order")
+        };
+        quote! { mettail_runtime::#function(#left, #right, reserve)?; }
+    }
+
+    fn pair_loop(&self, iterator: &TokenStream, body: &TokenStream) -> TokenStream {
+        if self.checked {
+            let setup = self.routing();
+            let advance = self.routing();
+            quote! {{
+                #setup
+                let mut __cmp_walk = #iterator;
+                loop {
+                    #advance
+                    let Some((__walk_left, __walk_right)) = __cmp_walk.next() else { break };
+                    #body
+                }
+            }}
+        } else {
+            quote! { for (__walk_left, __walk_right) in #iterator { #body } }
+        }
+    }
+
+    fn for_each_pair(
+        &self,
+        coll_type: &CollectionType,
+        left: &TokenStream,
+        right: &TokenStream,
+        order: WalkOrder,
+        body: &dyn Fn(&TokenStream, &TokenStream) -> TokenStream,
+    ) -> TokenStream {
+        if self.checked {
+            for_each_subterm_pair_with_loop(
+                coll_type,
+                left,
+                right,
+                order,
+                body,
+                &|iterator, body| self.pair_loop(iterator, body),
+            )
+        } else {
+            for_each_subterm_pair(coll_type, left, right, order, body)
+        }
+    }
+
+    fn unsupported_return(&self, category: &Ident, constructor: &Ident) -> TokenStream {
+        if !self.checked {
+            return TokenStream::new();
+        }
+        let category = category.to_string();
+        let constructor = constructor.to_string();
+        quote! {
+            return Err(mettail_runtime::NativeComparisonFailure::UnsupportedConstructor {
+                category: #category, constructor: #constructor,
+            });
+        }
+    }
+
+    fn support_handler(&self, category: &Ident) -> Ident {
+        format_ident!("{}_support", self.cmp_handler(category))
+    }
+
+    fn operand_support(&self, category: &Ident) -> TokenStream {
+        if !self.checked {
+            return TokenStream::new();
+        }
+        let support = self.support_handler(category);
+        let category_name = category.to_string();
+        let routing = self.routing();
+        quote! {
+            #routing
+            if let Some(constructor) = #support(unsafe { &*left_ptr }) {
+                return Err(mettail_runtime::NativeComparisonFailure::UnsupportedConstructor {
+                    category: #category_name, constructor,
+                });
+            }
+            #routing
+            if let Some(constructor) = #support(unsafe { &*right_ptr }) {
+                return Err(mettail_runtime::NativeComparisonFailure::UnsupportedConstructor {
+                    category: #category_name, constructor,
+                });
+            }
+        }
+    }
+
+    fn pop_loop(&self, body: TokenStream) -> TokenStream {
+        if self.checked {
+            let routing = self.routing();
+            quote! {
+                loop {
+                    #routing
+                    let Some(task) = stack.pop() else { break; };
+                    #routing
+                    #body
+                }
+            }
+        } else {
+            quote! { while let Some(task) = stack.pop() { #body } }
+        }
+    }
+}
+
+fn checked_cmp_collection_supported(
+    category: &Ident,
+    kind: &CollectionType,
+    language: &LanguageDef,
+) -> bool {
+    matches!(
+        plan_for(category, kind, OrderSensitivity::OrderSensitive, language),
+        CollectionPlan::PerElement { coll_type: CollectionType::Vec, .. }
+    )
+}
+
+fn checked_cmp_fields_supported(fields: &[FieldInfo], language: &LanguageDef) -> bool {
+    fields.iter().all(|field| match field_carrier(field) {
+        FieldCarrier::Leaf => {
+            !field.is_predicate
+                && !field.is_optional
+                && matches!(
+                    field.opaque_leaf,
+                    Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+                        | Some(crate::gen::term_ops::subst::OpaqueLeafKind::GuestBody)
+                )
+        },
+        FieldCarrier::Child | FieldCarrier::OptionalChild => {
+            language.types.iter().any(|ty| ty.name == field.category)
+        },
+        FieldCarrier::Collection { coll_type } | FieldCarrier::OptionalCollection { coll_type } => {
+            checked_cmp_collection_supported(&field.category, &coll_type, language)
+        },
+    })
+}
+
+fn checked_cmp_variant_supported(
+    category: &Ident,
+    variant: &VariantKind,
+    language: &LanguageDef,
+) -> bool {
+    match variant {
+        VariantKind::Refused { .. } | VariantKind::Nullary { .. } | VariantKind::Var { .. } => true,
+        VariantKind::Literal { .. } => language
+            .types
+            .iter()
+            .find(|ty| ty.name == *category)
+            .and_then(|ty| ty.native_type.as_ref())
+            .is_some_and(|ty| {
+                matches!(
+                    mettail_ast::language::NativeKind::from_syn_type(ty),
+                    mettail_ast::language::NativeKind::Int64
+                        | mettail_ast::language::NativeKind::Bool
+                        | mettail_ast::language::NativeKind::Str
+                )
+            }),
+        VariantKind::Regular { fields, .. } => checked_cmp_fields_supported(fields, language),
+        VariantKind::Binder { pre_scope_fields, .. }
+        | VariantKind::MultiBinder { pre_scope_fields, .. } => {
+            checked_cmp_fields_supported(pre_scope_fields, language)
+        },
+        VariantKind::Collection { element_cat, coll_type, .. }
+        | VariantKind::CollectionLiteral { element_cat, coll_type, .. } => {
+            checked_cmp_collection_supported(element_cat, coll_type, language)
+        },
+        VariantKind::RecursiveNativeLiteral { .. } => false,
+    }
+}
+
+fn generate_cmp_support_fns(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
+    if !emission.checked {
+        return TokenStream::new();
+    }
+    let functions = language
+        .types
+        .iter()
+        .map(|ty| {
+            let category = &ty.name;
+            let function = emission.support_handler(category);
+            let arms = collect_category_variants(category, language)
+                .into_iter()
+                .map(|variant| {
+                    let pattern = variant_wildcard_pattern(category, &variant);
+                    let unsupported = if checked_cmp_variant_supported(category, &variant, language)
+                    {
+                        quote! { None }
+                    } else {
+                        let constructor = variant.label().to_string();
+                        quote! { Some(#constructor) }
+                    };
+                    quote! { #pattern => #unsupported }
+                })
+                .collect::<Vec<_>>();
+            quote! {
+                #[inline]
+                #[allow(dead_code)]
+                fn #function(value: &#category) -> Option<&'static str> {
+                    match value { #(#arms,)* }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    quote! { #(#functions)* }
+}
+
 // =============================================================================
 // ★ #162 — the COLLECTION-ELEMENT BOUNDARY, for both comparison engines
 //
@@ -138,24 +502,28 @@ fn eq_collection_stmts(
 ) -> TokenStream {
     let task_enum = &emission.task_enum;
     let unordered_eq = &emission.unordered_eq;
+    let return_false = emission.return_value(quote! { false });
     match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Cmp{}", element_cat);
-            let pushes = for_each_subterm_pair(
+            let pushes = emission.for_each_pair(
                 &coll_type,
                 left_expr,
                 right_expr,
                 WalkOrder::Forward,
                 &|l, r| {
-                    quote! {
-                        stack.push(#task_enum::#task_variant(#l as *const _, #r as *const _));
-                    }
+                    let push = emission.push_task(quote! {
+                        #task_enum::#task_variant(#l as *const _, #r as *const _)
+                    });
+                    quote! { #push; }
                 },
             );
+            let lengths_differ =
+                emission.usize_ne(quote! { #left_expr.len() }, quote! { #right_expr.len() });
             quote! {
                 // `Vec::eq` is `len` first, then element-wise — reproduced exactly.
-                if #left_expr.len() != #right_expr.len() {
-                    return false;
+                if #lengths_differ {
+                    #return_false
                 }
                 #pushes
             }
@@ -167,16 +535,17 @@ fn eq_collection_stmts(
             let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr);
             quote! {
                 if !#unordered_eq(#machine, #resume_fn) {
-                    return false;
+                    #return_false
                 }
             }
         },
         CollectionPlan::WholeValue {
             reason: WholeValueReason::ElementIsNotACategory,
         } => {
+            let different = emission.native_ne(left_expr.clone(), right_expr.clone());
             quote! {
-                if #left_expr != #right_expr {
-                    return false;
+                if #different {
+                    #return_false
                 }
             }
         },
@@ -202,21 +571,25 @@ fn cmp_collection_push_stmts(
     match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Cmp{}", element_cat);
-            let pushes = for_each_subterm_pair(
+            let pushes = emission.for_each_pair(
                 &coll_type,
                 left_expr,
                 right_expr,
                 WalkOrder::ReverseForLifo,
                 &|l, r| {
-                    quote! {
-                        stack.push(#task_enum::#task_variant(#l as *const _, #r as *const _));
-                    }
+                    let push = emission.push_task(quote! {
+                        #task_enum::#task_variant(#l as *const _, #r as *const _)
+                    });
+                    quote! { #push; }
                 },
             );
+            let length_order =
+                emission.usize_cmp(quote! { #left_expr.len() }, quote! { #right_expr.len() });
+            let push_length = emission.push_task(quote! { #task_enum::Verdict(#length_order) });
             quote! {
                 // Pushed first ⇒ popped LAST ⇒ the length is the tiebreak, which
                 // is what lexicographic order means.
-                stack.push(#task_enum::Verdict(#left_expr.len().cmp(&#right_expr.len())));
+                #push_length;
                 #pushes
             }
         },
@@ -232,8 +605,10 @@ fn cmp_collection_push_stmts(
         CollectionPlan::WholeValue {
             reason: WholeValueReason::ElementIsNotACategory,
         } => {
+            let order = emission.native_cmp(left_expr.clone(), right_expr.clone());
+            let push = emission.push_task(quote! { #task_enum::Verdict(#order) });
             quote! {
-                stack.push(#task_enum::Verdict(#left_expr.cmp(#right_expr)));
+                #push;
             }
         },
     }
@@ -391,6 +766,55 @@ pub fn generate_iterative_cmp(language: &LanguageDef) -> TokenStream {
     }
 }
 
+/// Generate the checked companion using the same classifiers and arm builders.
+/// Ordinary comparison generation supplies the shared variant-index functions.
+#[allow(dead_code)]
+pub fn generate_checked_iterative_cmp(language: &LanguageDef) -> TokenStream {
+    let emission = CmpEmissionNames::checked();
+    let tasks = generate_cmp_task_enum(language, &emission);
+    let support = generate_cmp_support_fns(language, &emission);
+    let equality = generate_eq_engine(language, &emission);
+    let ordering = generate_cmp_engine(language, &emission);
+    let interfaces = language.types.iter().map(|ty| {
+        let category = &ty.name;
+        let task = format_ident!("Cmp{}", category);
+        let task_enum = &emission.task_enum;
+        let eq_driver = &emission.eq_driver;
+        let cmp_driver = &emission.cmp_driver;
+        let root = emission.record_admission();
+        let push = emission.push_task(quote! { #task_enum::#task(self as *const _, other as *const _) });
+        quote! {
+            impl mettail_runtime::CheckedIterativeComparison for #category {
+                fn try_eq_iterative<E>(
+                    &self, other: &Self,
+                    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                ) -> Result<bool, mettail_runtime::NativeComparisonFailure<E>> {
+                    if !mettail_runtime::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+                        return Err(mettail_runtime::NativeComparisonFailure::UnsupportedProfile);
+                    }
+                    #root
+                    let mut stack = Vec::new();
+                    #push;
+                    #eq_driver(&mut stack, reserve)
+                }
+                fn try_cmp_iterative<E>(
+                    &self, other: &Self,
+                    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                ) -> Result<std::cmp::Ordering, mettail_runtime::NativeComparisonFailure<E>> {
+                    if !mettail_runtime::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+                        return Err(mettail_runtime::NativeComparisonFailure::UnsupportedProfile);
+                    }
+                    #root
+                    let mut stack = Vec::new();
+                    #push;
+                    #cmp_driver(&mut stack, reserve)
+                }
+            }
+        }
+    }).collect::<Vec<_>>();
+    quote! { #tasks #support #equality #ordering #(#interfaces)* }
+}
+
 // =============================================================================
 // CmpTask Enum + TLS Pool
 // =============================================================================
@@ -415,6 +839,15 @@ fn generate_cmp_task_enum(language: &LanguageDef, emission: &CmpEmissionNames) -
             }
         })
         .collect();
+    if emission.checked {
+        return quote! {
+            #[allow(dead_code)]
+            enum #task_enum {
+                #(#variants,)*
+                Verdict(std::cmp::Ordering),
+            }
+        };
+    }
     quote! {
         type #collection_resume = fn(
             &mut Vec<#task_enum>,
@@ -578,6 +1011,16 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
     let eq_driver = &emission.eq_driver;
     let cmp_driver = &emission.cmp_driver;
     let unordered_eq = &emission.unordered_eq;
+    let generics = emission.generics();
+    let parameters = emission.parameters();
+    let arguments = emission.arguments();
+    let propagate = emission.propagate();
+    let result_type = emission.result_type(quote! { bool });
+    let return_true = emission.return_value(quote! { true });
+    let return_false = emission.return_value(quote! { false });
+    let success = emission.success(quote! { true });
+    let routing = emission.routing();
+    let indices = emission.reserve_work(2);
     // Per-cat helper functions: each handles one CmpTask::Cmp{Cat}.
     // Returns `Some(false)` to short-circuit (mismatch), `Some(true)` to
     // continue (equal so far for this pair), `None` if there's nothing to
@@ -598,36 +1041,43 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
             let mismatch_arm = if variants.len() == 1 {
                 TokenStream::new()
             } else {
-                quote! { _ => { return false; } }
+                quote! { _ => { #return_false } }
             };
+            let support = emission.operand_support(cat);
+            let unequal =
+                emission.usize_ne(quote! { #index_fn(left) }, quote! { #index_fn(right) });
             quote! {
                 /// Returns `false` on mismatch (caller should propagate),
                 /// `true` if matched so far (caller should continue draining stack).
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
-                fn #helper_fn(
+                fn #helper_fn #generics(
                     stack: &mut Vec<#task_enum>,
                     left_ptr: *const #cat,
-                    right_ptr: *const #cat,
-                ) -> bool {
+                    right_ptr: *const #cat #parameters,
+                ) -> #result_type {
                     // Shared immutable subterms are definitionally equal. This
                     // check occurs before dereference and before scheduling
                     // descendants, making the common Arc-shared chain edge
                     // constant-time without changing the exact fallback for
                     // separately allocated values.
+                    #support
+                    #routing
                     if std::ptr::eq(left_ptr, right_ptr) {
-                        return true;
+                        #return_true
                     }
                     let left = unsafe { &*left_ptr };
                     let right = unsafe { &*right_ptr };
-                    if #index_fn(left) != #index_fn(right) {
-                        return false;
+                    #indices
+                    if #unequal {
+                        #return_false
                     }
+                    #routing
                     match (left, right) {
                         #(#variant_arms)*
                         #mismatch_arm
                     }
-                    true
+                    #success
                 }
             }
         })
@@ -642,58 +1092,91 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
             let helper_fn = emission.eq_handler(cat);
             quote! {
                 #task_enum::#cmp_variant(left_ptr, right_ptr) => {
-                    if !#helper_fn(stack, left_ptr, right_ptr) {
-                        return false;
+                    if !#helper_fn(stack, left_ptr, right_ptr #arguments) #propagate {
+                        #return_false
                     }
                 }
             }
         })
         .collect();
-    quote! {
-        /// Decide equality of one unordered collection by driving the same
-        /// canonical-order PDA used by `Ord`. The category-specific resume
-        /// function converts the PDA's erased pointers back to the correct
-        /// generated category before scheduling `CmpTask` work.
-        #[inline]
-        #[allow(dead_code)]
-        fn #unordered_eq(
-            machine: mettail_runtime::CollectionCmpPda,
-            resume: #collection_resume,
-        ) -> bool {
+    let unordered_helper = if emission.checked {
+        TokenStream::new()
+    } else {
+        quote! {
+            /// Decide equality of one unordered collection by driving the same
+            /// canonical-order PDA used by `Ord`. The category-specific resume
+            /// function converts the PDA's erased pointers back to the correct
+            /// generated category before scheduling `CmpTask` work.
             #[inline]
-            fn drive(
-                stack: &mut Vec<#task_enum>,
+            #[allow(dead_code)]
+            fn #unordered_eq(
                 machine: mettail_runtime::CollectionCmpPda,
                 resume: #collection_resume,
             ) -> bool {
-                stack.push(#task_enum::StartCollection(Box::new(machine), resume));
-                #cmp_driver(stack) == std::cmp::Ordering::Equal
+                #[inline]
+                fn drive(
+                    stack: &mut Vec<#task_enum>,
+                    machine: mettail_runtime::CollectionCmpPda,
+                    resume: #collection_resume,
+                ) -> bool {
+                    stack.push(#task_enum::StartCollection(Box::new(machine), resume));
+                    #cmp_driver(stack) == std::cmp::Ordering::Equal
+                }
+
+                let mut machine = Some(machine);
+                let tls_result = #aux_task_pool.try_with(|cell| {
+                    let mut stack = cell.take();
+                    stack.clear();
+                    let result = drive(
+                        &mut stack,
+                        machine.take().expect("collection PDA must be driven exactly once"),
+                        resume,
+                    );
+                    stack.clear();
+                    cell.set(stack);
+                    result
+                });
+
+                match tls_result {
+                    Ok(result) => result,
+                    Err(_) => drive(
+                        &mut Vec::new(),
+                        machine.expect("TLS failure must leave the collection PDA available"),
+                        resume,
+                    ),
+                }
             }
 
-            let mut machine = Some(machine);
-            let tls_result = #aux_task_pool.try_with(|cell| {
-                let mut stack = cell.take();
-                stack.clear();
-                let result = drive(
-                    &mut stack,
-                    machine.take().expect("collection PDA must be driven exactly once"),
-                    resume,
-                );
-                stack.clear();
-                cell.set(stack);
-                result
-            });
-
-            match tls_result {
-                Ok(result) => result,
-                Err(_) => drive(
-                    &mut Vec::new(),
-                    machine.expect("TLS failure must leave the collection PDA available"),
-                    resume,
-                ),
+        }
+    };
+    let collection_arms = if emission.checked {
+        TokenStream::new()
+    } else {
+        quote! {
+            #task_enum::ResumeCollection(_, _) => {
+                unreachable!("collection ordering continuation reached equality engine");
+            }
+            #task_enum::StartCollection(_, _) => {
+                unreachable!("collection ordering start reached equality engine");
             }
         }
-
+    };
+    let driver_loop = emission.pop_loop(quote! {
+        match task {
+            #(#task_arms)*
+            #collection_arms
+            // ★ #162 — a precomputed leaf verdict. `PartialEq` only asks
+            // whether every position agrees, so any non-`Equal` verdict
+            // is a mismatch regardless of direction.
+            #task_enum::Verdict(ord) => {
+                if ord != std::cmp::Ordering::Equal {
+                    #return_false
+                }
+            }
+        }
+    });
+    quote! {
+        #unordered_helper
         #(#helper_fns)*
 
         /// Iterative equality engine. Processes the work stack until empty.
@@ -706,27 +1189,9 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
         /// for the duration of this function call. This is guaranteed because
         /// they are derived from `&self` and `&other` in `PartialEq::eq()`.
         #[allow(dead_code, unused_variables)]
-        fn #eq_driver(stack: &mut Vec<#task_enum>) -> bool {
-            while let Some(task) = stack.pop() {
-                match task {
-                    #(#task_arms)*
-                    #task_enum::ResumeCollection(_, _) => {
-                        unreachable!("collection ordering continuation reached equality engine");
-                    }
-                    #task_enum::StartCollection(_, _) => {
-                        unreachable!("collection ordering start reached equality engine");
-                    }
-                    // ★ #162 — a precomputed leaf verdict. `PartialEq` only asks
-                    // whether every position agrees, so any non-`Equal` verdict
-                    // is a mismatch regardless of direction.
-                    #task_enum::Verdict(ord) => {
-                        if ord != std::cmp::Ordering::Equal {
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
+        fn #eq_driver #generics(stack: &mut Vec<#task_enum> #parameters) -> #result_type {
+            #driver_loop
+            #success
         }
     }
 }
@@ -738,7 +1203,15 @@ fn generate_eq_variant_arm(
     language: &LanguageDef,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
+    if emission.checked && !checked_cmp_variant_supported(category, variant, language) {
+        let pattern = variant_wildcard_pattern(category, variant);
+        let refusal = emission.unsupported_return(category, variant.label());
+        return quote! { (#pattern, #pattern) => { #refusal } };
+    }
     let unordered_eq = &emission.unordered_eq;
+    let routing = emission.routing();
+    let return_false = emission.return_value(quote! { false });
+    let native_different = emission.native_ne(quote! { a }, quote! { b });
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -755,7 +1228,8 @@ fn generate_eq_variant_arm(
         VariantKind::Literal { label } => {
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
-                    if a != b { return false; }
+                    #routing
+                    if #native_different { #return_false }
                 }
             }
         },
@@ -775,6 +1249,7 @@ fn generate_eq_variant_arm(
             );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
+                    #routing
                     #stmts
                 }
             }
@@ -803,7 +1278,8 @@ fn generate_eq_variant_arm(
             // Var: compare OrdVar payloads directly
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
-                    if a != b { return false; }
+                    #routing
+                    if #native_different { #return_false }
                 }
             }
         },
@@ -825,6 +1301,7 @@ fn generate_eq_variant_arm(
             );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
+                    #routing
                     #stmts
                 }
             }
@@ -876,21 +1353,25 @@ fn eq_arm_stmts(
     emission: &CmpEmissionNames,
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
+    let routing = emission.routing();
+    let return_false = emission.return_value(quote! { false });
+    let false_value = emission.success(quote! { false });
     let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
     for (i, field) in fields.iter().enumerate() {
         let lname = &left_names[i];
         let rname = &right_names[i];
 
-        stmts.push(match field_carrier(field) {
+        let statement = match field_carrier(field) {
             // Phase 3A-B2: a predicate field uses direct `PartialEq` —
             // `BehavioralPred` derives `Eq`, so the bare value comparison is sound.
             // L9-3/L9-4: a token-text (`String`) or guest-body (`Arc<FltNode>`)
             // capture is the identical direct-Eq with no `CmpTask` descent. All
             // three are also correct under an `Option`, because `Option<T>: PartialEq`
             // whenever `T` is — which is why the carrier absorbs optionality.
-            FieldCarrier::Leaf => quote! {
-                if #lname != #rname { return false; }
+            FieldCarrier::Leaf => {
+                let different = emission.native_ne(quote! { #lname }, quote! { #rname });
+                quote! { if #different { #return_false } }
             },
 
             // Optional-Collection: compare the option tag, then route
@@ -920,7 +1401,7 @@ fn eq_arm_stmts(
                         (Some(__left_collection), Some(__right_collection)) => {
                             #inner
                         },
-                        _ => return false,
+                        _ => return #false_value,
                     }
                 }
             },
@@ -929,16 +1410,19 @@ fn eq_arm_stmts(
             // are `Some`; a `Some`/`None` mismatch short-circuits to `false`.
             FieldCarrier::OptionalChild => {
                 let task_variant = format_ident!("Cmp{}", field.category);
+                let push = emission.push_task(quote! {
+                    #task_enum::#task_variant(
+                        __l.as_ref() as *const _,
+                        __r.as_ref() as *const _,
+                    )
+                });
                 quote! {
                     match (#lname.as_ref(), #rname.as_ref()) {
                         (None, None) => {}
                         (Some(__l), Some(__r)) => {
-                            stack.push(#task_enum::#task_variant(
-                                __l.as_ref() as *const _,
-                                __r.as_ref() as *const _,
-                            ));
+                            #push;
                         }
-                        _ => return false,
+                        _ => return #false_value,
                     }
                 }
             },
@@ -958,11 +1442,13 @@ fn eq_arm_stmts(
             // A `Box<Cat>` category child: the descent, as a task.
             FieldCarrier::Child => {
                 let task_variant = format_ident!("Cmp{}", field.category);
-                quote! {
-                    stack.push(#task_enum::#task_variant(&**#lname as *const _, &**#rname as *const _));
-                }
+                let push = emission.push_task(quote! {
+                    #task_enum::#task_variant(&**#lname as *const _, &**#rname as *const _)
+                });
+                quote! { #push; }
             },
-        });
+        };
+        stmts.push(quote! { #routing #statement });
     }
 
     // The binder `Scope` is the arm's LAST position, so its group goes last.
@@ -1011,14 +1497,19 @@ fn generate_eq_binder_arm(
 
     // Compare scope: compare pattern directly, push body comparison task
     let body_task = format_ident!("Cmp{}", body_cat);
+    let routing = emission.routing();
+    let different = emission.native_ne(quote! { l_pat }, quote! { r_pat });
+    let return_false = emission.return_value(quote! { false });
+    let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
     let scope_stmts = quote! {
         {
+            #routing
             let l_pat = &#scope_left.inner().unsafe_pattern;
             let r_pat = &#scope_right.inner().unsafe_pattern;
-            if l_pat != r_pat { return false; }
+            if #different { #return_false }
             let l_body: *const #body_cat = &*#scope_left.inner().unsafe_body;
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
-            stack.push(#task_enum::#body_task(l_body, r_body));
+            #push_body;
         }
     };
 
@@ -1059,14 +1550,19 @@ fn generate_eq_multi_binder_arm(
     let scope_right = &right_names[total_fields - 1];
 
     let body_task = format_ident!("Cmp{}", body_cat);
+    let routing = emission.routing();
+    let different = emission.native_ne(quote! { l_pat }, quote! { r_pat });
+    let return_false = emission.return_value(quote! { false });
+    let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
     let scope_stmts = quote! {
         {
+            #routing
             let l_pat = &#scope_left.inner().unsafe_pattern;
             let r_pat = &#scope_right.inner().unsafe_pattern;
-            if l_pat != r_pat { return false; }
+            if #different { #return_false }
             let l_body: *const #body_cat = &*#scope_left.inner().unsafe_body;
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
-            stack.push(#task_enum::#body_task(l_body, r_body));
+            #push_body;
         }
     };
 
@@ -1104,9 +1600,20 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
     let task_enum = &emission.task_enum;
     let cmp_driver = &emission.cmp_driver;
     let deliver = &emission.deliver;
+    let generics = emission.generics();
+    let parameters = emission.parameters();
+    let arguments = emission.arguments();
+    let propagate = emission.propagate();
+    let result_type = emission.result_type(quote! { std::cmp::Ordering });
+    let deliver_type = emission.result_type(quote! { Option<std::cmp::Ordering> });
+    let return_root = emission.return_value(quote! { root_ordering });
+    let success = emission.success(quote! { std::cmp::Ordering::Equal });
+    let routing = emission.routing();
+    let indices = emission.reserve_work(2);
     let collection_resume_fns: Vec<TokenStream> = language
         .types
         .iter()
+        .filter(|_| !emission.checked)
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
@@ -1137,6 +1644,7 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
     let native_collection_resume_fns: Vec<TokenStream> = language
         .types
         .iter()
+        .filter(|_| !emission.checked)
         .flat_map(|t| {
             let category = &t.name;
             collect_category_variants(category, language)
@@ -1201,12 +1709,16 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
                 .iter()
                 .map(|v| generate_cmp_variant_arm(cat, v, language, emission))
                 .collect();
+            let support = emission.operand_support(cat);
+            let unequal = emission.usize_ne(quote! { l_idx }, quote! { r_idx });
+            let index_order = emission.usize_cmp(quote! { l_idx }, quote! { r_idx });
+            let return_index = emission.return_value(index_order);
             let mismatch_arm = if variants.len() == 1 {
                 TokenStream::new()
             } else {
                 quote! {
                     _ => {
-                        return l_idx.cmp(&r_idx);
+                        #return_index
                     }
                 }
             };
@@ -1215,23 +1727,26 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
                 /// any other ordering means "stop and propagate up".
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
-                fn #helper_fn(
+                fn #helper_fn #generics(
                     stack: &mut Vec<#task_enum>,
                     left_ptr: *const #cat,
-                    right_ptr: *const #cat,
-                ) -> std::cmp::Ordering {
+                    right_ptr: *const #cat #parameters,
+                ) -> #result_type {
+                    #support
                     let left = unsafe { &*left_ptr };
                     let right = unsafe { &*right_ptr };
+                    #indices
                     let l_idx = #index_fn(left);
                     let r_idx = #index_fn(right);
-                    if l_idx != r_idx {
-                        return l_idx.cmp(&r_idx);
+                    if #unequal {
+                        #return_index
                     }
+                    #routing
                     match (left, right) {
                         #(#variant_arms)*
                         #mismatch_arm
                     }
-                    std::cmp::Ordering::Equal
+                    #success
                 }
             }
         })
@@ -1246,10 +1761,10 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
             let helper_fn = emission.cmp_handler(cat);
             quote! {
                 #task_enum::#cmp_variant(left_ptr, right_ptr) => {
-                    let ord = #helper_fn(stack, left_ptr, right_ptr);
+                    let ord = #helper_fn(stack, left_ptr, right_ptr #arguments) #propagate;
                     if ord != std::cmp::Ordering::Equal {
-                        if let Some(root_ordering) = #deliver(stack, ord) {
-                            return root_ordering;
+                        if let Some(root_ordering) = #deliver(stack, ord #arguments) #propagate {
+                            #return_root
                         }
                     }
                 }
@@ -1257,38 +1772,94 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
         })
         .collect();
 
+    let delivery_body = if emission.checked {
+        // Specialize the same drain to borrowed tasks: no continuation can
+        // intercept this result. Every pop, even terminal, remains admitted.
+        let drain = emission.pop_loop(quote! { let _ = task; });
+        let result = emission.return_value(quote! { Some(ordering) });
+        quote! { #routing #drain #result }
+    } else {
+        quote! {
+                loop {
+                    let mut resumed = false;
+                    while let Some(task) = stack.pop() {
+                        match task {
+                            #task_enum::ResumeCollection(machine, resume) => {
+                                match resume(stack, machine, Some(ordering)) {
+                                    None => return None,
+                                    Some(std::cmp::Ordering::Equal) => return None,
+                                    Some(next) => {
+                                        ordering = next;
+                                        resumed = true;
+                                        break;
+                                    },
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
+                    if !resumed {
+                        return Some(ordering);
+                    }
+                }
+        }
+    };
+    let collection_arms = if emission.checked {
+        TokenStream::new()
+    } else {
+        quote! {
+            #task_enum::StartCollection(machine, resume) => {
+                if let Some(ordering) = resume(stack, machine, None) {
+                    if ordering != std::cmp::Ordering::Equal {
+                        if let Some(root_ordering) = #deliver(stack, ordering) {
+                            return root_ordering;
+                        }
+                    }
+                }
+            }
+            #task_enum::ResumeCollection(machine, resume) => {
+                if let Some(ordering) = resume(
+                    stack,
+                    machine,
+                    Some(std::cmp::Ordering::Equal),
+                ) {
+                    if ordering != std::cmp::Ordering::Equal {
+                        if let Some(root_ordering) = #deliver(stack, ordering) {
+                            return root_ordering;
+                        }
+                    }
+                }
+            }
+        }
+    };
+    let driver_loop = emission.pop_loop(quote! {
+        match task {
+            #(#task_arms)*
+            #collection_arms
+            // ★ #162 — a precomputed leaf verdict. Because tasks are
+            // pushed in REVERSE position order, popping them yields
+            // strict left-to-right (lexicographic) semantics: the FIRST
+            // non-`Equal` verdict decides, exactly as `derive(Ord)` does.
+            #task_enum::Verdict(ord) => {
+                if ord != std::cmp::Ordering::Equal {
+                    if let Some(root_ordering) = #deliver(stack, ord #arguments) #propagate {
+                        #return_root
+                    }
+                }
+            }
+        }
+    });
     quote! {
         #(#collection_resume_fns)*
         #(#native_collection_resume_fns)*
         #(#helper_fns)*
 
         #[allow(dead_code, unused_variables)]
-        fn #deliver(
+        fn #deliver #generics(
             stack: &mut Vec<#task_enum>,
-            mut ordering: std::cmp::Ordering,
-        ) -> Option<std::cmp::Ordering> {
-            loop {
-                let mut resumed = false;
-                while let Some(task) = stack.pop() {
-                    match task {
-                        #task_enum::ResumeCollection(machine, resume) => {
-                            match resume(stack, machine, Some(ordering)) {
-                                None => return None,
-                                Some(std::cmp::Ordering::Equal) => return None,
-                                Some(next) => {
-                                    ordering = next;
-                                    resumed = true;
-                                    break;
-                                },
-                            }
-                        },
-                        _ => {},
-                    }
-                }
-                if !resumed {
-                    return Some(ordering);
-                }
-            }
+            mut ordering: std::cmp::Ordering #parameters,
+        ) -> #deliver_type {
+            #delivery_body
         }
 
         /// Iterative ordering engine. Processes the work stack until empty.
@@ -1301,46 +1872,9 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
         /// for the duration of this function call. This is guaranteed because
         /// they are derived from `&self` and `&other` in `Ord::cmp()`.
         #[allow(dead_code, unused_variables)]
-        fn #cmp_driver(stack: &mut Vec<#task_enum>) -> std::cmp::Ordering {
-            while let Some(task) = stack.pop() {
-                match task {
-                    #(#task_arms)*
-                    #task_enum::StartCollection(machine, resume) => {
-                        if let Some(ordering) = resume(stack, machine, None) {
-                            if ordering != std::cmp::Ordering::Equal {
-                                if let Some(root_ordering) = #deliver(stack, ordering) {
-                                    return root_ordering;
-                                }
-                            }
-                        }
-                    }
-                    #task_enum::ResumeCollection(machine, resume) => {
-                        if let Some(ordering) = resume(
-                            stack,
-                            machine,
-                            Some(std::cmp::Ordering::Equal),
-                        ) {
-                            if ordering != std::cmp::Ordering::Equal {
-                                if let Some(root_ordering) = #deliver(stack, ordering) {
-                                    return root_ordering;
-                                }
-                            }
-                        }
-                    }
-                    // ★ #162 — a precomputed leaf verdict. Because tasks are
-                    // pushed in REVERSE position order, popping them yields
-                    // strict left-to-right (lexicographic) semantics: the FIRST
-                    // non-`Equal` verdict decides, exactly as `derive(Ord)` does.
-                    #task_enum::Verdict(ord) => {
-                        if ord != std::cmp::Ordering::Equal {
-                            if let Some(root_ordering) = #deliver(stack, ord) {
-                                return root_ordering;
-                            }
-                        }
-                    }
-                }
-            }
-            std::cmp::Ordering::Equal
+        fn #cmp_driver #generics(stack: &mut Vec<#task_enum> #parameters) -> #result_type {
+            #driver_loop
+            #success
         }
     }
 }
@@ -1352,7 +1886,15 @@ fn generate_cmp_variant_arm(
     language: &LanguageDef,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
+    if emission.checked && !checked_cmp_variant_supported(category, variant, language) {
+        let pattern = variant_wildcard_pattern(category, variant);
+        let refusal = emission.unsupported_return(category, variant.label());
+        return quote! { (#pattern, #pattern) => { #refusal } };
+    }
     let task_enum = &emission.task_enum;
+    let routing = emission.routing();
+    let native_order = emission.native_cmp(quote! { a }, quote! { b });
+    let return_order = emission.return_value(quote! { ord });
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -1370,9 +1912,10 @@ fn generate_cmp_variant_arm(
         VariantKind::Literal { label } => {
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
-                    let ord = a.cmp(b);
+                    #routing
+                    let ord = #native_order;
                     if ord != std::cmp::Ordering::Equal {
-                        return ord;
+                        #return_order
                     }
                 }
             }
@@ -1391,6 +1934,7 @@ fn generate_cmp_variant_arm(
             );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
+                    #routing
                     #pushes
                 }
             }
@@ -1418,9 +1962,10 @@ fn generate_cmp_variant_arm(
             // Var: compare OrdVar with Ord
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
-                    let ord = a.cmp(b);
+                    #routing
+                    let ord = #native_order;
                     if ord != std::cmp::Ordering::Equal {
-                        return ord;
+                        #return_order
                     }
                 }
             }
@@ -1442,6 +1987,7 @@ fn generate_cmp_variant_arm(
             );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
+                    #routing
                     #pushes
                 }
             }
@@ -1541,6 +2087,11 @@ fn cmp_arm_stmts(
     emission: &CmpEmissionNames,
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
+    let routing = emission.routing();
+    let return_order = emission.return_value(quote! { ord });
+    let push_less = emission.push_task(quote! { #task_enum::Verdict(std::cmp::Ordering::Less) });
+    let push_greater =
+        emission.push_task(quote! { #task_enum::Verdict(std::cmp::Ordering::Greater) });
     // Can this field's contribution be expressed as work ON THE STACK? A leaf
     // cannot because it is not a category. Boxed children, optional children,
     // and every category-bearing collection can: unordered containers use the
@@ -1584,11 +2135,13 @@ fn cmp_arm_stmts(
     for i in 0..split {
         let lname = &left_names[i];
         let rname = &right_names[i];
+        let order = emission.native_cmp(quote! { #lname }, quote! { #rname });
         stmts.push(quote! {
             {
-                let ord = #lname.cmp(#rname);
+                #routing
+                let ord = #order;
                 if ord != std::cmp::Ordering::Equal {
-                    return ord;
+                    #return_order
                 }
             }
         });
@@ -1608,12 +2161,14 @@ fn cmp_arm_stmts(
         // ★ #197 — dispatched on the SAME carrier classification as the `eq` side,
         // with no wildcard, so the two halves cannot disagree about what a field IS
         // and a sixth carrier is a compile error in both.
-        stmts.push(match field_carrier(field) {
+        let statement = match field_carrier(field) {
             // A leaf inside the pushed segment: its verdict is computed now and
             // consulted in position order. This is the case the eager prefix
             // could not express, and the reason it had to swallow collections.
-            FieldCarrier::Leaf => quote! {
-                stack.push(#task_enum::Verdict(#lname.cmp(#rname)));
+            FieldCarrier::Leaf => {
+                let order = emission.native_cmp(quote! { #lname }, quote! { #rname });
+                let push = emission.push_task(quote! { #task_enum::Verdict(#order) });
+                quote! { #push; }
             },
 
             // `Option<Container>: Ord` uses `None < Some`; `Some`/`Some` then
@@ -1631,10 +2186,10 @@ fn cmp_arm_stmts(
                     match (#lname.as_ref(), #rname.as_ref()) {
                         (None, None) => {},
                         (None, Some(_)) => {
-                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Less));
+                            #push_less;
                         },
                         (Some(_), None) => {
-                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Greater));
+                            #push_greater;
                         },
                         (Some(__left_collection), Some(__right_collection)) => {
                             #inner
@@ -1652,20 +2207,23 @@ fn cmp_arm_stmts(
             // collection.
             FieldCarrier::OptionalChild => {
                 let task_variant = format_ident!("Cmp{}", field.category);
+                let push = emission.push_task(quote! {
+                    #task_enum::#task_variant(
+                        __l.as_ref() as *const _,
+                        __r.as_ref() as *const _,
+                    )
+                });
                 quote! {
                     match (#lname.as_ref(), #rname.as_ref()) {
                         (None, None) => {}
                         (None, Some(_)) => {
-                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Less));
+                            #push_less;
                         }
                         (Some(_), None) => {
-                            stack.push(#task_enum::Verdict(std::cmp::Ordering::Greater));
+                            #push_greater;
                         }
                         (Some(__l), Some(__r)) => {
-                            stack.push(#task_enum::#task_variant(
-                                __l.as_ref() as *const _,
-                                __r.as_ref() as *const _,
-                            ));
+                            #push;
                         }
                     }
                 }
@@ -1686,11 +2244,13 @@ fn cmp_arm_stmts(
             // collection. Now every child is a task.
             FieldCarrier::Child => {
                 let task_variant = format_ident!("Cmp{}", field.category);
-                quote! {
-                    stack.push(#task_enum::#task_variant(&**#lname as *const _, &**#rname as *const _));
-                }
+                let push = emission.push_task(quote! {
+                    #task_enum::#task_variant(&**#lname as *const _, &**#rname as *const _)
+                });
+                quote! { #push; }
             },
-        });
+        };
+        stmts.push(quote! { #routing #statement });
     }
 
     stmts
@@ -1736,6 +2296,14 @@ fn generate_cmp_binder_arm(
     let scope_left = &left_names[total_fields - 1];
     let scope_right = &right_names[total_fields - 1];
     let body_task = format_ident!("Cmp{}", body_cat);
+    let routing = emission.routing();
+    let precharge = emission.pattern_order_precharge(
+        quote! { &l_scope.unsafe_pattern },
+        quote! { &r_scope.unsafe_pattern },
+        false,
+    );
+    let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
+    let push_pattern = emission.push_task(quote! { #task_enum::Verdict(pat_ord) });
 
     // Pop order within the group must be pattern-then-body, so the pushes are
     // body-then-pattern. Unchanged from the pre-#162 arm in WHAT it compares —
@@ -1743,8 +2311,10 @@ fn generate_cmp_binder_arm(
     // and it moves to the position the field order says it should have.
     let scope_pushes = quote! {
         {
+            #routing
             let l_scope = #scope_left.inner();
             let r_scope = #scope_right.inner();
+            #precharge
             // Pattern comparison: hash-based ordering, same as `Scope::cmp`.
             let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1755,8 +2325,8 @@ fn generate_cmp_binder_arm(
                 hash_pat(&l_scope.unsafe_pattern).cmp(&hash_pat(&r_scope.unsafe_pattern));
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
-            stack.push(#task_enum::#body_task(l_body, r_body));
-            stack.push(#task_enum::Verdict(pat_ord));
+            #push_body;
+            #push_pattern;
         }
     };
 
@@ -1798,13 +2368,19 @@ fn generate_cmp_multi_binder_arm(
     let scope_left = &left_names[total_fields - 1];
     let scope_right = &right_names[total_fields - 1];
     let body_task = format_ident!("Cmp{}", body_cat);
+    let routing = emission.routing();
+    let precharge = emission.pattern_order_precharge(quote! { l_pats }, quote! { r_pats }, true);
+    let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
+    let push_pattern = emission.push_task(quote! { #task_enum::Verdict(pat_ord) });
 
     let scope_pushes = quote! {
         {
+            #routing
             let l_scope = #scope_left.inner();
             let r_scope = #scope_right.inner();
             let l_pats = &l_scope.unsafe_pattern;
             let r_pats = &r_scope.unsafe_pattern;
+            #precharge
             let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 std::hash::Hash::hash(p, &mut h);
@@ -1822,8 +2398,8 @@ fn generate_cmp_multi_binder_arm(
             });
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
-            stack.push(#task_enum::#body_task(l_body, r_body));
-            stack.push(#task_enum::Verdict(pat_ord));
+            #push_body;
+            #push_pattern;
         }
     };
 
@@ -1972,6 +2548,10 @@ fn generate_category_trait_impls(category: &Ident, emission: &CmpEmissionNames) 
 #[cfg(test)]
 #[path = "iterative_cmp_tests.rs"]
 mod ordinary_baseline_tests;
+
+#[cfg(test)]
+#[path = "iterative_cmp_checked_tests.rs"]
+mod checked_tests;
 
 #[cfg(test)]
 mod carrier_cell_census {

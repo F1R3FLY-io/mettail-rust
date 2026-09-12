@@ -760,6 +760,61 @@ exact/under work and record limits, explicit unsupported constructors, and
 Rust correspondence tests, not a proof of all generated languages or public
 node readiness.
 
+#### Admitted generated comparison scheduling
+
+The [comparison emitter](../../macros/src/gen/term_ops/iterative_cmp.rs) has a
+checked companion implementing `CheckedIterativeComparison`. It shares the
+ordinary constructor classifier, field builders, optional-field routing, paired
+vector iterator and scope-pattern expressions. The companion is not yet the
+public preparation provider. Ordinary `Eq`/`Ord` output and its thread-local
+collection machinery remain unchanged.
+
+Comparison scheduling differs from hashing. Equality evaluates native `ne`
+calls in forward field order while queuing category children forward, so their
+later stack visitation is reversed. Ordering evaluates its eager leaf prefix
+forward, then constructs its remaining tasks in reverse field order. Native
+comparisons in that suffix execute **during task construction**; a verdict task
+stores the result and does not compare again when popped. Vector length verdicts
+are pushed before reversed element tasks, making length the final tie-breaker.
+Scope-pattern ordering retains the original `DefaultHasher` expression after
+its typed admission helper, followed by separately admitted body/verdict pushes.
+
+The [scheduling model](../../formal/rocq/rho_bridge/theories/AdmittedGeneratedComparisonScheduling.v)
+proves these source-trace ordering laws, successful charge erasure, refused-call
+prefixes and prepaid pending-task disposal. It distinguishes native equality,
+inequality and ordering, and assumes neither hash injectivity nor equivalence
+between equality and an `Equal` ordering result. Actual generated Rust remains
+subject to source correspondence and executable regression checks.
+
+| Boundary | Logical admission before the action |
+|---|---|
+| Local task-vector header/release; each task construction/disposal | Two work units and one record, projecting to four reservation units |
+| Attempted pop, including empty; successful dispatch | One work unit each |
+| Each operand's shallow constructor-support projection | One work unit before dereferencing its pointer |
+| Equality pointer-identity check | One work unit, after both support checks |
+| Both variant-index projections | Two work units |
+| Native index or vector-length inequality/ordering | Two work units per operation |
+| Variant match; each field or scope routing group | One work unit each |
+| Paired vector iterator setup; every advance including terminal | One work unit each |
+| Native leaf/pattern comparison | Its separately specified inspection and execution allowance |
+| Ordering-result drain | One begin unit, one per attempted pop, one per discarded task |
+
+The checked task vector contains borrowed category pairs and copied verdicts,
+not owned collection continuations. A known non-equal ordering is returned only
+after its admitted drain completes. Cancellation during that drain returns an
+error, never the already-known ordering; prepaid disposal releases residual
+task storage without traversing child ASTs. The convention bounds logical source
+groups and retained records, not allocator internals or physical execution time.
+
+The initial internal profile admits audited scalar, identity and FLT leaves,
+category children, optional category children, ordered category vectors and
+binder scopes. Unordered collections, recursive native carriers, predicates,
+byte vectors and optional opaque leaves currently refuse by category and
+constructor before pointer-identity or variant-index shortcuts. Refused arms
+also omit unsupported native calls from generated Rust. Local support is not a
+certificate for descendants skipped by ordinary short-circuiting. Required
+collection and source-profile coverage must be completed before public activation.
+
 #### Native comparison-leaf admission
 
 [`CheckedNativeEqualityLeaf` and `CheckedNativeOrderingLeaf`](../src/checked_cmp.rs)

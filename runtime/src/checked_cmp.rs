@@ -11,7 +11,34 @@ use std::cmp::Ordering;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeComparisonFailure<E> {
     UnsupportedProfile,
+    /// No admitted implementation exists for this constructor in this profile.
+    UnsupportedConstructor {
+        category: &'static str,
+        constructor: &'static str,
+    },
     Admission(BindingFailure<E>),
+}
+
+/// Admission at the existing generated equality and ordering worklist sites.
+///
+/// Success returns the ordinary operation's result. A refusal publishes no
+/// result, including when comparison has already found an ordering but pending
+/// work has not finished its admitted drain. Tasks borrow immutable inputs;
+/// their construction reserves eventual disposal. This is a logical source-work
+/// contract, not a physical allocator or arbitrary-callback bound. Constructor
+/// support is checked locally, not certified for skipped descendants.
+pub trait CheckedIterativeComparison: Ord {
+    fn try_eq_iterative<E>(
+        &self,
+        other: &Self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<bool, NativeComparisonFailure<E>>;
+
+    fn try_cmp_iterative<E>(
+        &self,
+        other: &Self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Ordering, NativeComparisonFailure<E>>;
 }
 
 /// Whether this build uses the audited compiler/target and trusted prebuilt core.

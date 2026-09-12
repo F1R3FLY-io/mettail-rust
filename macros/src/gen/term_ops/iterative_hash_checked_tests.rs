@@ -2,7 +2,7 @@
 
 use super::*;
 
-fn fixture_language() -> LanguageDef {
+pub(in crate::gen::term_ops) fn fixture_language() -> LanguageDef {
     syn::parse_str(
         r#"
         name: CheckedHashFixture,
@@ -45,7 +45,7 @@ fn variant(language: &LanguageDef, category: &str, label: &str) -> VariantKind {
         .unwrap_or_else(|| panic!("missing actual {category}::{label}"))
 }
 
-fn literal_label(language: &LanguageDef, category: &str) -> Ident {
+pub(in crate::gen::term_ops) fn literal_label(language: &LanguageDef, category: &str) -> Ident {
     collect_category_variants(&format_ident!("{}", category), language)
         .into_iter()
         .find_map(|variant| match variant {

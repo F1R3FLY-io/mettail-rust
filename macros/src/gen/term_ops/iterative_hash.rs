@@ -1241,7 +1241,7 @@ fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenSt
 
 #[cfg(test)]
 #[path = "iterative_hash_checked_tests.rs"]
-mod checked_tests;
+pub(super) mod checked_tests;
 
 #[cfg(test)]
 mod tests {

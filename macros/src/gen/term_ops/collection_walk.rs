@@ -516,22 +516,39 @@ pub(crate) fn for_each_subterm_pair(
     order: WalkOrder,
     subterm_pair: &dyn Fn(&TokenStream, &TokenStream) -> TokenStream,
 ) -> TokenStream {
+    for_each_subterm_pair_with_loop(
+        coll_type,
+        left_expr,
+        right_expr,
+        order,
+        subterm_pair,
+        &|iterator, body| {
+            quote! {
+                for (__walk_left, __walk_right) in #iterator { #body }
+            }
+        },
+    )
+}
+
+/// Share the paired iterator while allowing admission before every advance.
+pub(crate) fn for_each_subterm_pair_with_loop(
+    coll_type: &CollectionType,
+    left_expr: &TokenStream,
+    right_expr: &TokenStream,
+    order: WalkOrder,
+    subterm_pair: &dyn Fn(&TokenStream, &TokenStream) -> TokenStream,
+    emit_loop: &dyn Fn(&TokenStream, &TokenStream) -> TokenStream,
+) -> TokenStream {
     let body = subterm_pair(&quote! { __walk_left }, &quote! { __walk_right });
     match (coll_type, order) {
-        (CollectionType::Vec, WalkOrder::Forward) => quote! {
-            for (__walk_left, __walk_right) in #left_expr.iter().zip(#right_expr.iter()) {
-                #body
-            }
+        (CollectionType::Vec, WalkOrder::Forward) => {
+            emit_loop(&quote! { #left_expr.iter().zip(#right_expr.iter()) }, &body)
         },
         // `Zip<slice::Iter, slice::Iter>` is `DoubleEndedIterator` because both
         // halves are also `ExactSizeIterator`, so `.rev()` is a real reverse walk
         // over the COMMON prefix — which is exactly the lexicographic domain.
-        (CollectionType::Vec, WalkOrder::ReverseForLifo) => quote! {
-            for (__walk_left, __walk_right) in
-                #left_expr.iter().zip(#right_expr.iter()).rev()
-            {
-                #body
-            }
+        (CollectionType::Vec, WalkOrder::ReverseForLifo) => {
+            emit_loop(&quote! { #left_expr.iter().zip(#right_expr.iter()).rev() }, &body)
         },
         (other, _) => {
             let message = format!(
