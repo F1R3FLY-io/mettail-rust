@@ -54,9 +54,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-/// Names shared by the task, driver, field and trait emitters. This context
-/// currently selects only the existing ordinary Hash implementation.
+/// Names and admission expressions shared by the task, driver, field and trait
+/// emitters. Ordinary Hash retains its exact native stream and TLS hot path.
 struct HashEmissionNames {
+    checked: bool,
     task_enum: Ident,
     task_pool: Ident,
     opaque_constructor: Ident,
@@ -67,11 +68,121 @@ struct HashEmissionNames {
 impl HashEmissionNames {
     fn ordinary() -> Self {
         Self {
+            checked: false,
             task_enum: format_ident!("HashTask"),
             task_pool: format_ident!("HASH_TASK_POOL"),
             opaque_constructor: format_ident!("hash_opaque_task"),
             driver: format_ident!("hash_iterative"),
             handler_prefix: "hash_handle_",
+        }
+    }
+
+    #[allow(dead_code)]
+    fn checked() -> Self {
+        Self {
+            checked: true,
+            task_enum: format_ident!("CheckedHashTask"),
+            task_pool: format_ident!("CHECKED_HASH_TASK_POOL"),
+            opaque_constructor: format_ident!("checked_hash_opaque_task"),
+            driver: format_ident!("checked_hash_iterative"),
+            handler_prefix: "checked_hash_handle_",
+        }
+    }
+
+    fn task_type(&self) -> TokenStream {
+        let task = &self.task_enum;
+        if self.checked {
+            quote! { #task<E> }
+        } else {
+            quote! { #task }
+        }
+    }
+
+    fn generics(&self) -> TokenStream {
+        if self.checked {
+            quote! { <E> }
+        } else {
+            quote! { <H: std::hash::Hasher> }
+        }
+    }
+
+    fn state_type(&self) -> TokenStream {
+        if self.checked {
+            quote! { mettail_runtime::CheckedFxHasher }
+        } else {
+            quote! { H }
+        }
+    }
+
+    fn parameters(&self) -> TokenStream {
+        if self.checked {
+            quote! { reserve: &mut impl FnMut(usize, usize) -> Result<(), E>, }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn arguments(&self) -> TokenStream {
+        if self.checked {
+            quote! { , reserve }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn result_type(&self) -> TokenStream {
+        if self.checked {
+            quote! { -> Result<(), mettail_runtime::KeyHashFailure<E>> }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn propagate(&self) -> TokenStream {
+        if self.checked {
+            quote! { ? }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn success(&self) -> TokenStream {
+        if self.checked {
+            quote! { Ok(()) }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn routing(&self) -> TokenStream {
+        if self.checked {
+            quote! {
+                mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)
+                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+            }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn push_task(&self, task: TokenStream) -> TokenStream {
+        if self.checked {
+            quote! {{
+                mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
+                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+                stack.push(#task);
+            }}
+        } else {
+            quote! { stack.push(#task) }
+        }
+    }
+
+    fn opaque_task(&self, value: TokenStream) -> TokenStream {
+        let constructor = &self.opaque_constructor;
+        if self.checked {
+            quote! { #constructor::<_, E>(#value) }
+        } else {
+            quote! { #constructor::<_, H>(#value) }
         }
     }
 
@@ -81,7 +192,13 @@ impl HashEmissionNames {
 
     /// Preserve the native call expression at its existing stream position.
     fn hash_value(&self, value: TokenStream) -> TokenStream {
-        quote! { std::hash::Hash::hash(#value, state) }
+        if self.checked {
+            quote! {{
+                mettail_runtime::CheckedFxHashLeaf::try_hash_fx(#value, state, reserve)?;
+            }}
+        } else {
+            quote! { std::hash::Hash::hash(#value, state) }
+        }
     }
 }
 
@@ -126,6 +243,46 @@ fn generate_hash_task_enum(language: &LanguageDef, emission: &HashEmissionNames)
             }
         })
         .collect();
+
+    if emission.checked {
+        return quote! {
+            #[allow(dead_code)]
+            enum #task_enum<E> {
+                #(#variants,)*
+                AbsorbUsize(usize),
+                AbsorbU8(u8),
+                Opaque {
+                    value: *const (),
+                    hash: unsafe fn(
+                        *const (),
+                        &mut mettail_runtime::CheckedFxHasher,
+                        &mut dyn FnMut(usize, usize) -> Result<(), E>,
+                    ) -> Result<(), mettail_runtime::KeyHashFailure<E>>,
+                },
+            }
+
+            #[inline]
+            fn #opaque_constructor<T: mettail_runtime::CheckedFxHashLeaf, E>(
+                value: &T,
+            ) -> #task_enum<E> {
+                unsafe fn apply<T: mettail_runtime::CheckedFxHashLeaf, E>(
+                    value: *const (),
+                    state: &mut mettail_runtime::CheckedFxHasher,
+                    reserve: &mut dyn FnMut(usize, usize) -> Result<(), E>,
+                ) -> Result<(), mettail_runtime::KeyHashFailure<E>> {
+                    // The root remains immutably borrowed until the worklist
+                    // returns. Scheduling this pointer never hashes its value.
+                    let value = unsafe { &*value.cast::<T>() };
+                    value.try_hash_fx(state, &mut |work, units| reserve(work, units))?;
+                    Ok(())
+                }
+                #task_enum::Opaque {
+                    value: value as *const T as *const (),
+                    hash: apply::<T, E>,
+                }
+            }
+        };
+    }
 
     quote! {
         /// Work item for the iterative hash engine.
@@ -213,6 +370,15 @@ fn generate_hash_task_enum(language: &LanguageDef, emission: &HashEmissionNames)
 fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) -> TokenStream {
     let task_enum = &emission.task_enum;
     let driver = &emission.driver;
+    let task_type = emission.task_type();
+    let generics = emission.generics();
+    let state_type = emission.state_type();
+    let parameters = emission.parameters();
+    let arguments = emission.arguments();
+    let result_type = emission.result_type();
+    let propagate = emission.propagate();
+    let success = emission.success();
+    let routing = emission.routing();
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
@@ -229,16 +395,19 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
             quote! {
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
-                fn #helper_fn<H: std::hash::Hasher>(
-                    stack: &mut Vec<#task_enum>,
-                    state: &mut H,
+                fn #helper_fn #generics(
+                    stack: &mut Vec<#task_type>,
+                    state: &mut #state_type,
                     ptr: *const #cat,
-                ) {
+                    #parameters
+                ) #result_type {
+                    #routing
                     let val = unsafe { &*ptr };
                     #hash_discriminant;
                     match val {
                         #(#variant_arms)*
                     }
+                    #success
                 }
             }
         })
@@ -253,7 +422,7 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
             let helper_fn = emission.handler(cat);
             quote! {
                 #task_enum::#hash_variant(ptr) => {
-                    #helper_fn(stack, state, ptr);
+                    #helper_fn(stack, state, ptr #arguments) #propagate;
                 }
             }
         })
@@ -262,6 +431,33 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
     let absorb_usize = emission.hash_value(quote! { &n });
     let absorb_u8 = emission.hash_value(quote! { &b });
     let absorb_pathmap_mode = emission.hash_value(quote! { &mode });
+
+    if emission.checked {
+        return quote! {
+            #(#helper_fns)*
+
+            #[allow(dead_code, unused_variables)]
+            fn #driver<E>(
+                stack: &mut Vec<#task_enum<E>>,
+                state: &mut mettail_runtime::CheckedFxHasher,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<(), mettail_runtime::KeyHashFailure<E>> {
+                loop {
+                    #routing
+                    let Some(task) = stack.pop() else { break };
+                    match task {
+                        #(#task_arms)*
+                        #task_enum::AbsorbUsize(n) => { #absorb_usize; },
+                        #task_enum::AbsorbU8(b) => { #absorb_u8; },
+                        #task_enum::Opaque { value, hash } => {
+                            unsafe { hash(value, state, reserve) }?;
+                        },
+                    }
+                }
+                Ok(())
+            }
+        };
+    }
 
     quote! {
         #(#helper_fns)*
@@ -326,6 +522,26 @@ fn hash_collection_stmts(
     match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Hash{}", element_cat);
+            if emission.checked {
+                let routing = emission.routing();
+                let push_child = emission.push_task(quote! {
+                    #task_enum::#task_variant(__hash_item as *const _)
+                });
+                let push_length = emission.push_task(quote! {
+                    #task_enum::AbsorbUsize(__hash_length)
+                });
+                return quote! {{
+                    #routing
+                    let __hash_length = (#coll_expr).len();
+                    let mut __hash_items = (#coll_expr).iter().rev();
+                    loop {
+                        #routing
+                        let Some(__hash_item) = __hash_items.next() else { break };
+                        #push_child;
+                    }
+                    #push_length;
+                }};
+            }
             let pushes =
                 for_each_subterm(&coll_type, coll_expr, WalkOrder::ReverseForLifo, &|e, _| {
                     quote! {
@@ -365,6 +581,10 @@ fn unordered_collection_hash_stmts(
     let task_enum = &emission.task_enum;
     let opaque_constructor = &emission.opaque_constructor;
     let task_variant = format_ident!("Hash{}", element_cat);
+    if emission.checked && *coll_type == CollectionType::HashBag {
+        let push = emission.push_task(emission.opaque_task(quote! { #coll_expr }));
+        return quote! { #push; };
+    }
     match coll_type {
         CollectionType::HashSet => quote! {
             {
@@ -451,12 +671,82 @@ fn pathmap_hash_stmts(
 }
 
 /// Generate match arms for a specific variant in the hash engine.
+fn checked_hash_collection_supported(
+    category: &Ident,
+    kind: &CollectionType,
+    language: &LanguageDef,
+) -> bool {
+    matches!(kind, CollectionType::Vec | CollectionType::HashBag)
+        && language.types.iter().any(|ty| ty.name == *category)
+}
+
+fn checked_hash_fields_supported(fields: &[FieldInfo], language: &LanguageDef) -> bool {
+    fields.iter().all(|field| {
+        !field.is_predicate
+            && (!field.is_collection
+                || checked_hash_collection_supported(
+                    &field.category,
+                    field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag),
+                    language,
+                ))
+    })
+}
+
+// This is an explicit native-operation profile, not a change to the canonical
+// grammar classifier. Refused constructors remain ordinary Hash implementations.
+fn checked_hash_variant_supported(
+    category: &Ident,
+    variant: &VariantKind,
+    language: &LanguageDef,
+) -> bool {
+    match variant {
+        VariantKind::Refused { .. } | VariantKind::Nullary { .. } | VariantKind::Var { .. } => true,
+        VariantKind::Literal { .. } => language
+            .types
+            .iter()
+            .find(|ty| ty.name == *category)
+            .and_then(|ty| ty.native_type.as_ref())
+            .is_some_and(|ty| {
+                matches!(
+                    mettail_ast::language::NativeKind::from_syn_type(ty),
+                    mettail_ast::language::NativeKind::Int64
+                        | mettail_ast::language::NativeKind::Bool
+                        | mettail_ast::language::NativeKind::Str
+                        | mettail_ast::language::NativeKind::UInt8
+                        | mettail_ast::language::NativeKind::Usize
+                )
+            }),
+        VariantKind::Regular { fields, .. } => checked_hash_fields_supported(fields, language),
+        VariantKind::Binder { pre_scope_fields, .. }
+        | VariantKind::MultiBinder { pre_scope_fields, .. } => {
+            checked_hash_fields_supported(pre_scope_fields, language)
+        },
+        VariantKind::Collection { element_cat, coll_type, .. }
+        | VariantKind::CollectionLiteral { element_cat, coll_type, .. } => {
+            checked_hash_collection_supported(element_cat, coll_type, language)
+        },
+        VariantKind::RecursiveNativeLiteral { .. } => false,
+    }
+}
+
 fn generate_hash_variant_arm(
     category: &Ident,
     variant: &VariantKind,
     language: &LanguageDef,
     emission: &HashEmissionNames,
 ) -> TokenStream {
+    if emission.checked && !checked_hash_variant_supported(category, variant, language) {
+        let label = variant.label();
+        let category_name = category.to_string();
+        let constructor = label.to_string();
+        return quote! {
+            #category::#label(..) => {
+                return Err(mettail_runtime::KeyHashFailure::UnsupportedConstructor {
+                    category: #category_name, constructor: #constructor,
+                });
+            }
+        };
+    }
     let opaque_constructor = &emission.opaque_constructor;
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
@@ -700,7 +990,8 @@ fn hash_arm_stmts(
     emission: &HashEmissionNames,
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
-    let opaque_constructor = &emission.opaque_constructor;
+    let push_none = emission.push_task(quote! { #task_enum::AbsorbU8(0u8) });
+    let push_some = emission.push_task(quote! { #task_enum::AbsorbU8(1u8) });
     let deferred: Vec<bool> = fields
         .iter()
         .map(|f| hash_field_begins_deferred_suffix(f, language))
@@ -722,27 +1013,32 @@ fn hash_arm_stmts(
         let name = &field_names[i];
         stmts.push(match crate::gen::term_ops::collection_walk::field_carrier(field) {
             crate::gen::term_ops::collection_walk::FieldCarrier::Leaf if field.is_optional => {
+                let push = emission.push_task(emission.opaque_task(quote! { __leaf }));
                 quote! {
                     match #name.as_ref() {
-                        None => stack.push(#task_enum::AbsorbU8(0u8)),
+                        None => #push_none,
                         Some(__leaf) => {
-                            stack.push(#opaque_constructor::<_, H>(__leaf));
-                            stack.push(#task_enum::AbsorbU8(1u8));
+                            #push;
+                            #push_some;
                         },
                     }
                 }
             },
-            crate::gen::term_ops::collection_walk::FieldCarrier::Leaf => quote! {
-                stack.push(#opaque_constructor::<_, H>(#name));
+            crate::gen::term_ops::collection_walk::FieldCarrier::Leaf => {
+                let push = emission.push_task(emission.opaque_task(quote! { #name }));
+                quote! { #push; }
             },
             crate::gen::term_ops::collection_walk::FieldCarrier::OptionalChild => {
                 let task_variant = format_ident!("Hash{}", field.category);
+                let push = emission.push_task(quote! {
+                    #task_enum::#task_variant(&**__child as *const _)
+                });
                 quote! {
                     match #name.as_ref() {
-                        None => stack.push(#task_enum::AbsorbU8(0u8)),
+                        None => #push_none,
                         Some(__child) => {
-                            stack.push(#task_enum::#task_variant(&**__child as *const _));
-                            stack.push(#task_enum::AbsorbU8(1u8));
+                            #push;
+                            #push_some;
                         },
                     }
                 }
@@ -759,10 +1055,10 @@ fn hash_arm_stmts(
                 );
                 quote! {
                     match #name.as_ref() {
-                        None => stack.push(#task_enum::AbsorbU8(0u8)),
+                        None => #push_none,
                         Some(__collection) => {
                             #collection
-                            stack.push(#task_enum::AbsorbU8(1u8));
+                            #push_some;
                         },
                     }
                 }
@@ -778,8 +1074,11 @@ fn hash_arm_stmts(
             },
             crate::gen::term_ops::collection_walk::FieldCarrier::Child => {
                 let task_variant = format_ident!("Hash{}", field.category);
+                let push = emission.push_task(quote! {
+                    #task_enum::#task_variant(&**#name as *const _)
+                });
                 quote! {
-                    stack.push(#task_enum::#task_variant(&**#name as *const _));
+                    #push;
                 }
             },
         });
@@ -834,17 +1133,20 @@ fn generate_hash_scoped_arm(
     emission: &HashEmissionNames,
 ) -> TokenStream {
     let task_enum = &emission.task_enum;
-    let opaque_constructor = &emission.opaque_constructor;
     let total_fields = pre_scope_fields.len() + 1;
     let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
     let scope_name = &field_names[total_fields - 1];
 
     let body_task = format_ident!("Hash{}", body_cat);
+    let push_body = emission.push_task(quote! { #task_enum::#body_task(body_ptr) });
+    let push_pattern = emission.push_task(emission.opaque_task(quote! {
+        &#scope_name.inner().unsafe_pattern
+    }));
     let scope_pushes = quote! {
         {
             let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
-            stack.push(#task_enum::#body_task(body_ptr));
-            stack.push(#opaque_constructor::<_, H>(&#scope_name.inner().unsafe_pattern));
+            #push_body;
+            #push_pattern;
         }
     };
     let hash_stmts =
@@ -879,6 +1181,31 @@ fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenSt
     let driver = &emission.driver;
     let hash_variant = format_ident!("Hash{}", category);
 
+    if emission.checked {
+        let push_root = emission.push_task(quote! { #task_enum::#hash_variant(self as *const _) });
+        return quote! {
+            impl mettail_runtime::CheckedIterativeHash for #category {
+                fn try_hash_iterative<E>(
+                    &self,
+                    state: &mut mettail_runtime::CheckedFxHasher,
+                    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                ) -> Result<(), mettail_runtime::KeyHashFailure<E>> {
+                    if !mettail_runtime::CHECKED_FX_PROFILE_AVAILABLE {
+                        return Err(mettail_runtime::KeyHashFailure::UnsupportedProfile);
+                    }
+                    // Local vector header and normal release; pending borrowed
+                    // task disposal is prepaid at each push, not a recursive drop.
+                    mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
+                        .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+                    let mut tasks = Vec::new();
+                    let stack = &mut tasks;
+                    #push_root;
+                    #driver(stack, state, reserve)
+                }
+            }
+        };
+    }
+
     quote! {
         impl std::hash::Hash for #category {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -911,6 +1238,10 @@ fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenSt
         }
     }
 }
+
+#[cfg(test)]
+#[path = "iterative_hash_checked_tests.rs"]
+mod checked_tests;
 
 #[cfg(test)]
 mod tests {

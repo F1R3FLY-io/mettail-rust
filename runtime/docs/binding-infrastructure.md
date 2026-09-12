@@ -701,6 +701,65 @@ may follow earlier hash writes, so the caller must discard the partial hasher.
 Unsupported constructors carry their exact category and constructor names;
 they do not invoke an unchecked fallback.
 
+#### Admitted generated Hash scheduling
+
+The [shared emitter](../../macros/src/gen/term_ops/iterative_hash.rs) now has an
+internal checked mode alongside ordinary generation. It uses the same
+constructor classifier, eager field prefix, reverse-pushed deferred suffix,
+scope pattern/body order and category discriminants. Ordinary emission keeps
+its generic hasher and thread-local worklist unchanged; complete captured
+outputs are compared byte-for-byte as a regression gate. The checked mode is
+not yet activated as the public Rholang preparation provider.
+
+Checked tasks use a local vector because their fallible native callbacks carry
+the caller's error type. An opaque task stores only a borrowed pointer and a
+typed callback. Creating it performs no hashing: when that task is popped,
+the callback invokes the existing audited native leaf operation against the
+original hasher. No second hashing algorithm, intermediate digest or recorded
+byte stream is introduced.
+
+The [scheduling proof](../../formal/rocq/rho_bridge/theories/AdmittedGeneratedHashScheduling.v)
+shows that successful admission preserves the original ordered calls and that
+failure exposes only an already-executed prefix. Vector elements retain source
+order after reverse scheduling; their length prefix executes first. Generated
+optional fields retain their explicit `u8` tags, distinct from native derived
+option hashing inside an FLT. Scope patterns execute before their bodies and
+after pre-scope fields.
+
+The resource convention remains logical source work and retained records,
+not physical allocator capacity or wall-clock execution time:
+
+| Boundary | Admission before the action |
+|---|---|
+| Local task-vector header and normal release | Two work units and one logical record |
+| Task construction/push and possible pending disposal | Two work units and one logical record |
+| Pop, including the terminal empty pop | One work unit |
+| Category routing | One work unit |
+| Vector metadata/iterator setup | One work unit |
+| Each vector advance, including the terminal advance | One work unit |
+| Native leaf execution | Its existing inspection and native-work contract |
+
+Each logical record projects to four reservation units. Task payloads borrow
+the root, so pending cleanup releases task storage without recursively dropping
+AST children. The normal vector push may request allocation or growth; allocator
+internals and relocation costs are outside this established logical convention.
+
+The implemented internal profile covers audited scalar and structural leaves,
+category children, optional fields, ordered category vectors, binder scopes,
+and cached bag summaries. Map/Set/PathMap sorting, primitive byte vectors and
+predicate-native branches currently return named constructor refusals before
+their unadmitted operations. Required Map/equality and insertion coverage remain
+necessary for public preparation. A cached bag hash does not inspect its members,
+so this hash operation alone cannot establish whole-source profile admission.
+
+The [generated fixture](../../macros/src/gen/term_ops/iterative_hash_checked_tests.rs)
+uses production enum layouts and the existing Clone, comparison, Hash and Drop
+emitters. It checks seeded native-digest equality, every reservation cutpoint,
+exact/under work and record limits, explicit unsupported constructors, and
+20,000 nested vector/scope levels on a 256 KiB native stack. These are focused
+Rust correspondence tests, not a proof of all generated languages or public
+node readiness.
+
 ### Checked leaf copies and binding
 
 [`CheckedBindingLeaf`](../src/checked_binding.rs) supplies the payload boundary
