@@ -1155,6 +1155,10 @@ mod tests {
                 let mut source = HashBag::new();
                 source.insert_n(key(9, 0), 17);
                 let source_hash = hash_of(&source);
+                let initial_native = {
+                    let snapshot = effects.borrow();
+                    (snapshot.hashes, snapshot.equalities)
+                };
                 let entries = vec![(key(1, 1), 2), (key(1, 2), 5), (key(2, 3), 0), (key(3, 4), 4)];
                 let mut seen = 0;
                 let mut refused_at = None;
@@ -1162,6 +1166,13 @@ mod tests {
                     if seen == allowed {
                         let snapshot = effects.borrow();
                         refused_at = Some((snapshot.hashes, snapshot.equalities));
+                        if allowed <= 1 {
+                            assert_eq!(
+                                refused_at,
+                                Some(initial_native),
+                                "no native work before Start or first insertion admission"
+                            );
+                        }
                         return Err(crate::BindingFailure::Reservation(seen));
                     }
                     seen += 1;
@@ -1243,6 +1254,51 @@ mod tests {
         assert_eq!(exact.distinct_len(), 1);
         assert_cached_hash_matches_legacy(&exact);
         assert_eq!(source.len(), 0);
+    }
+
+    #[test]
+    fn admitted_clone_overflow_precedes_hash_equality_and_native_mutation() {
+        for second_identity in [1, 2] {
+            let effects = std::rc::Rc::new(std::cell::RefCell::new(RebuildEffects::default()));
+            let source = HashBag::<RebuildKey>::new();
+            let entries = vec![
+                (
+                    RebuildKey {
+                        identity: 1,
+                        occurrence: 1,
+                        effects: effects.clone(),
+                    },
+                    usize::MAX,
+                ),
+                (
+                    RebuildKey {
+                        identity: second_identity,
+                        occurrence: 2,
+                        effects: effects.clone(),
+                    },
+                    1,
+                ),
+            ];
+            let mut before_overflow = None;
+            let result = source.try_rebuild_entries_with(
+                entries,
+                HashBagRebuildMode::CloneEntries,
+                |step| {
+                    if let HashBagRebuildStep::Insert { key, .. } = step {
+                        if key.occurrence == 2 {
+                            let snapshot = effects.borrow();
+                            before_overflow = Some((snapshot.hashes, snapshot.equalities));
+                        }
+                    }
+                    Ok::<_, crate::BindingFailure<()>>(())
+                },
+            );
+            assert!(matches!(result, Err(crate::BindingFailure::SizeOverflow)));
+            let snapshot = effects.borrow();
+            assert_eq!(before_overflow, Some((snapshot.hashes, snapshot.equalities)));
+            assert_eq!(snapshot.drops, [0, 1, 1, 0, 0]);
+            assert_eq!(source.len(), 0);
+        }
     }
 
     #[test]
