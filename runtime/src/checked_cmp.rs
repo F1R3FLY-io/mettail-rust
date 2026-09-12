@@ -3,7 +3,8 @@
 //! The source-group contract is AdmittedNativeLeafComparison.v. This module
 //! does not define another comparator or equate equality with ordering equality.
 
-use crate::BindingFailure;
+use crate::{BindingFailure, OrdVar};
+use moniker::{Binder, Var};
 use std::cmp::Ordering;
 
 /// Failure before the rejected operation; previously paid inspection is retained.
@@ -33,6 +34,25 @@ mod sealed {
         // Metadata only, called after its reservation. No payload comparison.
         fn execution_work(&self, other: &Self, operation: ComparisonOperation) -> Option<usize>;
     }
+
+    pub trait EqualityLeaf {
+        fn equality_work(&self, other: &Self, negated: bool) -> Option<usize>;
+    }
+
+    // Equality-only leaves never implement Leaf: there is no invented Cmp
+    // request or unsupported/overflow stand-in for a nonexistent Binder Ord.
+    impl<T: Leaf + ?Sized> EqualityLeaf for T {
+        fn equality_work(&self, other: &Self, negated: bool) -> Option<usize> {
+            self.execution_work(
+                other,
+                if negated {
+                    ComparisonOperation::Ne
+                } else {
+                    ComparisonOperation::Eq
+                },
+            )
+        }
+    }
 }
 use sealed::ComparisonOperation;
 
@@ -44,22 +64,18 @@ use sealed::ComparisonOperation;
 /// inspection charges remain spent. Success returns the original native result,
 /// not a receipt authorizing another execution.
 ///
-/// This interface is sealed to i64, bool and String. It deliberately does not
-/// require Ord: equality-only structural leaves need not acquire an ordering.
-pub trait CheckedNativeEqualityLeaf: Eq + sealed::Leaf {
+/// This interface is sealed to i64, bool, String, OrdVar, Binder<String> and
+/// Vec<Binder<String>>. Equality-only binders do not acquire an ordering.
+pub trait CheckedNativeEqualityLeaf: Eq + sealed::EqualityLeaf {
     fn try_native_eq<E>(
         &self,
         other: &Self,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<bool, NativeComparisonFailure<E>> {
-        admit_comparison(
-            self,
-            other,
-            ComparisonOperation::Eq,
-            reserve,
-            CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE,
-            <Self as PartialEq>::eq,
-        )
+        admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || {
+            self.equality_work(other, false)
+        })?;
+        Ok(<Self as PartialEq>::eq(self, other))
     }
 
     /// Invoke the original inequality method, not a substituted ordering test.
@@ -68,18 +84,14 @@ pub trait CheckedNativeEqualityLeaf: Eq + sealed::Leaf {
         other: &Self,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     ) -> Result<bool, NativeComparisonFailure<E>> {
-        admit_comparison(
-            self,
-            other,
-            ComparisonOperation::Ne,
-            reserve,
-            CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE,
-            <Self as PartialEq>::ne,
-        )
+        admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || {
+            self.equality_work(other, true)
+        })?;
+        Ok(<Self as PartialEq>::ne(self, other))
     }
 }
 
-/// Paid original Ord::cmp for audited i64, bool and String leaves.
+/// Paid original Ord::cmp for audited i64, bool, String and OrdVar leaves.
 ///
 /// Admission and failure follow the equality interface's two-stage contract.
 /// String work covers both byte ranges supplied to the native byte-comparison
@@ -110,17 +122,26 @@ fn admit_comparison<T: sealed::Leaf + ?Sized, E, R>(
     supported: bool,
     action: impl FnOnce(&T, &T) -> R,
 ) -> Result<R, NativeComparisonFailure<E>> {
+    admit_native_work(reserve, supported, || left.execution_work(right, operation))?;
+    Ok(action(left, right))
+}
+
+// Private inspection callback only. Public entrypoints select concrete audited
+// metadata; callers cannot supply their own cost or receive reusable authority.
+fn admit_native_work<E>(
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    supported: bool,
+    inspect: impl FnOnce() -> Option<usize>,
+) -> Result<(), NativeComparisonFailure<E>> {
     if !supported {
         return Err(NativeComparisonFailure::UnsupportedProfile);
     }
     reserve(1, 0)
         .map_err(|error| NativeComparisonFailure::Admission(BindingFailure::Reservation(error)))?;
-    let work = left
-        .execution_work(right, operation)
-        .ok_or(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))?;
+    let work = inspect().ok_or(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))?;
     reserve(work, 0)
         .map_err(|error| NativeComparisonFailure::Admission(BindingFailure::Reservation(error)))?;
-    Ok(action(left, right))
+    Ok(())
 }
 
 macro_rules! fixed_leaf {
@@ -163,6 +184,87 @@ impl sealed::Leaf for String {
 }
 impl CheckedNativeEqualityLeaf for String {}
 impl CheckedNativeOrderingLeaf for String {}
+
+// AdmittedIdentityComparison.v. Equality observes identities, not diagnostic
+// names. Ordering retains the actual OrdVar::cmp: fresh DefaultHasher hashes
+// for free UIDs and both eager scope/index comparisons for bound variables.
+impl sealed::Leaf for OrdVar {
+    fn execution_work(&self, other: &Self, operation: ComparisonOperation) -> Option<usize> {
+        let (equality, ordering) = match (&self.0, &other.0) {
+            (Var::Free(_), Var::Free(_)) => (14, 68),
+            (Var::Bound(_), Var::Bound(_)) => (19, 14),
+            _ => (7, 5),
+        };
+        Some(match operation {
+            ComparisonOperation::Eq => equality,
+            ComparisonOperation::Ne => equality + 1,
+            ComparisonOperation::Cmp => ordering,
+        })
+    }
+}
+impl CheckedNativeEqualityLeaf for OrdVar {}
+impl CheckedNativeOrderingLeaf for OrdVar {}
+
+impl sealed::EqualityLeaf for Binder<String> {
+    fn equality_work(&self, _: &Self, negated: bool) -> Option<usize> {
+        Some(if negated { 9 } else { 8 })
+    }
+}
+impl CheckedNativeEqualityLeaf for Binder<String> {}
+
+fn binder_vector_equality_work(left: usize, right: usize, negated: bool) -> Option<usize> {
+    let fixed = if negated { 8 } else { 7 };
+    let extent = if left == right { left } else { 0 };
+    extent.checked_mul(11)?.checked_add(fixed)
+}
+
+impl sealed::EqualityLeaf for Vec<Binder<String>> {
+    fn equality_work(&self, other: &Self, negated: bool) -> Option<usize> {
+        binder_vector_equality_work(self.len(), other.len(), negated)
+    }
+}
+impl CheckedNativeEqualityLeaf for Vec<Binder<String>> {}
+
+fn multi_pattern_order_work(left: usize, right: usize) -> Option<usize> {
+    match left == right {
+        true => left.checked_mul(80)?.checked_add(27),
+        false => Some(5),
+    }
+}
+
+/// Admit the unchanged generated single-binder hash-pattern ordering expression.
+///
+/// This is not Binder Ord and does not execute or return a comparator. Generated
+/// checked code must immediately run its existing expression on these unchanged
+/// operands, once. Scope-body access and task scheduling are separately charged.
+/// The 71 execution groups cover two fresh native Binder hashes and comparison,
+/// not Fx hashing, arbitrary hashers, retained storage or a reusable receipt.
+#[doc(hidden)]
+pub fn precharge_generated_single_pattern_order<E>(
+    _left: &Binder<String>,
+    _right: &Binder<String>,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<(), NativeComparisonFailure<E>> {
+    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || Some(71))
+}
+
+/// Admit the existing length-first generated multi-binder ordering expression.
+///
+/// Unequal lengths reserve five execution groups without visiting any binder.
+/// Equal lengths reserve 27 setup/terminal groups and 80 per possible visited
+/// pair before native iteration; early inequality does not refund admission.
+/// Only the lengths are inspected after the metadata reservation. The same
+/// immediate, once-only expression contract as the single-binder helper applies.
+#[doc(hidden)]
+pub fn precharge_generated_multi_pattern_order<E>(
+    left: &Vec<Binder<String>>,
+    right: &Vec<Binder<String>>,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<(), NativeComparisonFailure<E>> {
+    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, || {
+        multi_pattern_order_work(left.len(), right.len())
+    })
+}
 
 #[cfg(test)]
 #[path = "checked_cmp_tests.rs"]

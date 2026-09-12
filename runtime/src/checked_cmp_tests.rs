@@ -3,6 +3,229 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
+fn check_equality_pair<T: CheckedNativeEqualityLeaf>(
+    left: &T,
+    right: &T,
+    eq_work: usize,
+    ne_work: usize,
+) {
+    check_operation(PartialEq::eq(left, right), eq_work, |reserve| {
+        left.try_native_eq(right, &mut |work, units| reserve(work, units))
+    });
+    check_operation(PartialEq::ne(left, right), ne_work, |reserve| {
+        left.try_native_ne(right, &mut |work, units| reserve(work, units))
+    });
+}
+
+#[test]
+#[cfg(mettail_checked_native_comparison_profile)]
+fn ordvar_comparisons_preserve_identity_fields_and_ignore_pretty_hints() {
+    use crate::{BoundVar, FreeVar, OrdVar, Var};
+    assert!(CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE);
+    let free = FreeVar::fresh_named("same spelling".to_owned());
+    let other = FreeVar::fresh_named("same spelling".to_owned());
+    let mut renamed = free.clone();
+    renamed.pretty_name = Some("λ".repeat(50_000));
+    let mut unnamed = free.clone();
+    unnamed.pretty_name = None;
+    let bound = |scope, binder, pretty_name| {
+        OrdVar(Var::Bound(BoundVar {
+            scope: moniker::ScopeOffset(scope),
+            binder: moniker::BinderIndex(binder),
+            pretty_name,
+        }))
+    };
+    let values = [
+        OrdVar(Var::Free(free.clone())),
+        OrdVar(Var::Free(renamed)),
+        OrdVar(Var::Free(unnamed)),
+        OrdVar(Var::Free(other)),
+        bound(0, 0, None),
+        bound(0, 0, Some("different bound hint".repeat(1_000))),
+        bound(0, 1, None),
+        bound(1, 0, None),
+        bound(0, u32::MAX, None),
+        bound(u32::MAX, 0, None),
+        bound(u32::MAX, u32::MAX, None),
+    ];
+    assert_eq!(values[0], values[1]);
+    assert_eq!(values[0], values[2]);
+    assert_ne!(values[0], values[3], "matching hints do not establish identity");
+    assert_eq!(values[4], values[5]);
+    assert_eq!(values[8].cmp(&values[7]), Ordering::Less, "scope precedes binder");
+    for left in &values {
+        for right in &values {
+            let (eq, ne, cmp) = match (&left.0, &right.0) {
+                (Var::Free(_), Var::Free(_)) => (14, 15, 68),
+                (Var::Bound(_), Var::Bound(_)) => (19, 20, 14),
+                _ => (7, 8, 5),
+            };
+            check_pair(left, right, eq, ne, cmp);
+        }
+    }
+}
+
+#[test]
+#[cfg(mettail_checked_native_comparison_profile)]
+fn binder_and_binder_vector_admission_requires_equality_only() {
+    use crate::{Binder, FreeVar};
+    assert!(CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE);
+    let binder = Binder(FreeVar::fresh_named("x".to_owned()));
+    let other = Binder(FreeVar::fresh_named("x".to_owned()));
+    let mut renamed = binder.clone();
+    renamed.0.pretty_name = Some("hint".repeat(50_000));
+    let mut unnamed = binder.clone();
+    unnamed.0.pretty_name = None;
+    assert_eq!(binder, renamed);
+    assert_eq!(binder, unnamed);
+    assert_ne!(binder, other);
+    for left in [&binder, &other, &renamed, &unnamed] {
+        for right in [&binder, &other, &renamed, &unnamed] {
+            check_equality_pair(left, right, 8, 9);
+        }
+    }
+    for width in [0, 1, 2, 1_000] {
+        let left = vec![binder.clone(); width];
+        let mut right = left.clone();
+        check_equality_pair(&left, &right, 7 + 11 * width, 8 + 11 * width);
+        if width != 0 {
+            right[0] = other.clone();
+            check_equality_pair(&left, &right, 7 + 11 * width, 8 + 11 * width);
+            right[0] = binder.clone();
+            right[width - 1] = other.clone();
+            check_equality_pair(&left, &right, 7 + 11 * width, 8 + 11 * width);
+        }
+        right.push(other.clone());
+        check_equality_pair(&left, &right, 7, 8);
+        check_equality_pair(&right, &left, 7, 8);
+    }
+    check_equality_pair(&vec![binder.clone(), other.clone()], &vec![other, binder], 29, 30);
+}
+
+// Preserve the expressions in generate_cmp_binder_arm and
+// generate_cmp_multi_binder_arm: no substitute hasher or Binder::cmp.
+fn original_single_pattern_order(
+    left: &crate::Binder<String>,
+    right: &crate::Binder<String>,
+) -> Ordering {
+    let hash_pat = |p: &crate::Binder<String>| -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(p, &mut h);
+        std::hash::Hasher::finish(&h)
+    };
+    hash_pat(left).cmp(&hash_pat(right))
+}
+
+fn original_multi_pattern_order(
+    l_pats: &Vec<crate::Binder<String>>,
+    r_pats: &Vec<crate::Binder<String>>,
+) -> Ordering {
+    let hash_pat = |p: &crate::Binder<String>| -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(p, &mut h);
+        std::hash::Hasher::finish(&h)
+    };
+    l_pats.len().cmp(&r_pats.len()).then_with(|| {
+        l_pats
+            .iter()
+            .zip(r_pats.iter())
+            .map(|(lp, rp)| hash_pat(lp).cmp(&hash_pat(rp)))
+            .find(|o| *o != std::cmp::Ordering::Equal)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+}
+
+#[test]
+#[cfg(mettail_checked_native_comparison_profile)]
+fn generated_pattern_order_precharge_preserves_original_hash_expressions() {
+    use crate::{Binder, FreeVar};
+    assert!(CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE);
+    let binder = Binder(FreeVar::fresh_named("x".to_owned()));
+    let other = Binder(FreeVar::fresh_named("x".to_owned()));
+    let mut renamed = binder.clone();
+    renamed.0.pretty_name = Some("ignored hint".repeat(10_000));
+    let mut unnamed = binder.clone();
+    unnamed.0.pretty_name = None;
+    for left in [&binder, &other, &renamed, &unnamed] {
+        for right in [&binder, &other, &renamed, &unnamed] {
+            let expected = original_single_pattern_order(left, right);
+            let mut executions = 0;
+            check_operation(expected, 71, |reserve| {
+                precharge_generated_single_pattern_order(left, right, &mut |work, units| {
+                    reserve(work, units)
+                })?;
+                executions += 1;
+                Ok(original_single_pattern_order(left, right))
+            });
+            assert_eq!(executions, 2, "only initial and exact-limit successes execute");
+        }
+    }
+    let check_multi = |left: &Vec<Binder<String>>, right: &Vec<Binder<String>>| {
+        let work = if left.len() == right.len() {
+            27 + 80 * left.len()
+        } else {
+            5
+        };
+        let expected = original_multi_pattern_order(left, right);
+        let mut executions = 0;
+        check_operation(expected, work, |reserve| {
+            precharge_generated_multi_pattern_order(left, right, &mut |work, units| {
+                reserve(work, units)
+            })?;
+            executions += 1;
+            Ok(original_multi_pattern_order(left, right))
+        });
+        assert_eq!(executions, 2, "refused precharges never reach the original expression");
+    };
+    check_multi(&vec![binder.clone()], &vec![renamed]);
+    check_multi(&vec![binder.clone()], &vec![unnamed]);
+    for width in [0, 1, 2, 1_000] {
+        let left = vec![binder.clone(); width];
+        let mut right = left.clone();
+        check_multi(&left, &right);
+        if width != 0 {
+            right[0] = other.clone();
+            check_multi(&left, &right);
+            right[0] = binder.clone();
+            right[width - 1] = other.clone();
+            check_multi(&left, &right);
+        }
+        right.push(other.clone());
+        assert_eq!(original_multi_pattern_order(&left, &right), Ordering::Less);
+        check_multi(&left, &right);
+        check_multi(&right, &left);
+    }
+    check_multi(&vec![binder.clone(), other.clone()], &vec![other, binder]);
+}
+
+#[test]
+fn identity_vector_allowances_reject_equal_width_overflow_but_skip_unvisited_width() {
+    for (negated, base) in [(false, 7usize), (true, 8usize)] {
+        assert_eq!(binder_vector_equality_work(0, 0, negated), Some(base));
+        let last = (usize::MAX - base) / 11;
+        assert_eq!(binder_vector_equality_work(last, last, negated), Some(base + 11 * last));
+        assert_eq!(binder_vector_equality_work(last + 1, last + 1, negated), None);
+        assert_eq!(binder_vector_equality_work(usize::MAX, usize::MAX, negated), None);
+    }
+    let last = (usize::MAX - 27) / 80;
+    assert_eq!(multi_pattern_order_work(0, 0), Some(27));
+    assert_eq!(multi_pattern_order_work(last, last), Some(27 + 80 * last));
+    assert_eq!(multi_pattern_order_work(last + 1, last + 1), None);
+    assert_eq!(multi_pattern_order_work(usize::MAX, usize::MAX), None);
+    for (left, right) in [
+        (usize::MAX, 0),
+        (0, usize::MAX),
+        (usize::MAX, 1),
+        (1, usize::MAX),
+        (usize::MAX, usize::MAX - 1),
+        (usize::MAX - 1, usize::MAX),
+    ] {
+        assert_eq!(binder_vector_equality_work(left, right, false), Some(7));
+        assert_eq!(binder_vector_equality_work(left, right, true), Some(8));
+        assert_eq!(multi_pattern_order_work(left, right), Some(5));
+    }
+}
+
 type TestFailure = NativeComparisonFailure<usize>;
 type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), usize> + 'a;
 

@@ -763,7 +763,8 @@ node readiness.
 #### Native comparison-leaf admission
 
 [`CheckedNativeEqualityLeaf` and `CheckedNativeOrderingLeaf`](../src/checked_cmp.rs)
-admit the existing native comparisons for `i64`, `bool` and `String`. Equality
+admit the existing native comparisons for `i64`, `bool`, `String` and `OrdVar`,
+plus equality and inequality for `Binder<String>` and `Vec<Binder<String>>`. Equality
 and ordering are separate sealed capabilities: an equality-only binder must not
 acquire an ordering implementation merely to participate in checked equality.
 The equality interface exposes both `eq` and `ne`; generated inequality checks
@@ -780,6 +781,11 @@ $`m=l`$ when the lengths are equal and $`m=0`$ otherwise.
 |---|---|---|---|
 | `i64` or `bool` | $`2`$ | $`2`$ | $`2`$ |
 | `String` | $`6+2m`$ | $`7+2m`$ | $`9+2\min(l,r)`$ |
+| `OrdVar`, both free | $`14`$ | $`15`$ | $`68`$ |
+| `OrdVar`, both bound | $`19`$ | $`20`$ | $`14`$ |
+| `OrdVar`, different variants | $`7`$ | $`8`$ | $`5`$ |
+| `Binder<String>` | $`8`$ | $`9`$ | Not defined |
+| `Vec<Binder<String>>` | $`7+11m`$ | $`8+11m`$ | Not defined |
 
 These are logical source-group allowances, excluding the metadata unit.
 `String` derives its comparisons over its `Vec<u8>` field, which reaches the
@@ -796,12 +802,28 @@ arithmetic overflow occurs before the native call, with previous inspection
 charges still spent and both operands unchanged. Success returns the original
 native result, not a reusable execution receipt.
 
-Structural FLTs, variable and binder ordering, collection scheduling and the
-native HashBag insertion provider require their own composed contracts. In
-particular, existing variable/binder ordering uses `DefaultHasher`; neither the
-Fx allowance nor an assumed equivalence between equality and an `Equal` ordering
-result establishes that contract. This leaf interface alone does not activate
-bounded public preparation.
+The [identity-comparison model](../../formal/rocq/rho_bridge/theories/AdmittedIdentityComparison.v)
+covers the original identity judgments. Diagnostic names do not participate in
+these equalities. Bound-variable ordering evaluates both field comparisons;
+free-variable ordering uses two fresh `DefaultHasher` instances over the unique
+identities. Its source allowance is distinct from Fx hashing and does not
+assume that hash equality implies identity equality. Vector equality admits the
+full possible visited prefix, even when the native predicate stops early.
+
+Generated scopes order their binder patterns using existing hash expressions,
+not a `Binder::cmp` implementation. Two typed, documentation-hidden helpers admit
+those expressions: `precharge_generated_single_pattern_order` reserves $`71`$
+execution groups, while `precharge_generated_multi_pattern_order` reserves
+$`5`$ for unequal lengths or $`27+80l`$ for equal lengths. Each first pays the
+same metadata unit. Equal-width multiplication and addition are checked;
+unequal lengths never visit or multiply the unused binder range. The generated
+checked caller must then immediately evaluate its unchanged expression once.
+The helper does not return a comparator or reusable authority. Scope-body
+access and task scheduling remain separate charges.
+
+Structural FLTs, collection scheduling and the native HashBag insertion
+provider still require their own composed contracts. The leaf interfaces and
+pattern admission helpers alone do not activate bounded public preparation.
 
 ### Checked leaf copies and binding
 
