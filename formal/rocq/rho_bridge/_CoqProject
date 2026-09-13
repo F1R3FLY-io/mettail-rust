@@ -85,6 +85,9 @@ theories/MergeSortPdaCursor.v
 theories/MergeSortPdaRun.v
 theories/MergeSortPdaNativeRun.v
 theories/MergeSortPdaPass.v
+theories/MergeSortPdaNativePass.v
+theories/MergeSortPdaOuter.v
+theories/MergeSortPdaNativeOuter.v
 theories/AdmittedComparisonClasses.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
