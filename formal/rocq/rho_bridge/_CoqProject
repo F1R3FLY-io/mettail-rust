@@ -24,6 +24,9 @@
 # Reuse the structural fold machine for operation-specific binding state.
 -Q ../trampoline/theories Trampoline
 ../trampoline/theories/WorklistFoldEquivalence.v
+# Reuse the existing dependency-free stable merge model for cursor refinement.
+-Q ../runtime_grammar/theories RuntimeGrammar
+../runtime_grammar/theories/SemanticResultMerge.v
 
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
@@ -78,6 +81,7 @@ theories/AdmittedGeneratedComparisonScheduling.v
 theories/AdmittedCollectionComparisonOwnership.v
 theories/AdmittedGeneratedCollectionScheduling.v
 theories/MergeSortPdaCursor.v
+theories/MergeSortPdaRun.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
