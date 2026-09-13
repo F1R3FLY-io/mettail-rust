@@ -101,6 +101,32 @@ Theorem a_nonempty_positive_width_run_strictly_advances_the_source_suffix :
   forall width (head : Entry) tail, 0 < width ->
   length (skipn width (skipn width (head :: tail))) < length (head :: tail).
 Proof. intros. rewrite !length_skipn. cbn [length]. lia. Qed.
+Lemma completed_prefix_extension_preserves_previous_output :
+  forall (target prefix copied : list Entry),
+  firstn (length prefix + length copied) target = prefix ++ copied ->
+  firstn (length prefix) target = prefix.
+Proof.
+  intros target prefix copied H.
+  pose proof (f_equal (firstn (length prefix)) H) as HP.
+  rewrite firstn_firstn, (Nat.min_l (length prefix)
+    (length prefix + length copied) ltac:(lia)) in HP.
+  rewrite firstn_app, firstn_all, Nat.sub_diag in HP.
+  cbn in HP. now rewrite app_nil_r in HP.
+Qed.
+Lemma completed_output_at_allocated_width_is_the_whole_target :
+  forall output (target prefix copied : list Entry),
+  output = length target ->
+  firstn output target = prefix ++ copied ->
+  target = prefix ++ copied.
+Proof.
+  intros output target prefix copied HO HP.
+  subst output. now rewrite firstn_all in HP.
+Qed.
+Lemma reset_reuses_the_completed_target_prefix :
+  forall maximum size start width (target : list Entry),
+  firstn (output_index (reset_cursor maximum size start width)) target =
+    firstn start target.
+Proof. reflexivity. Qed.
 End ResetSlices.
 
 Section PassAssembly.
@@ -257,6 +283,36 @@ Proof.
 Qed.
 End PassAssembly.
 
+(** The second native run has an existing prefix. Its intermediate scratch
+    deliberately is not a whole-source permutation: only the written prefix
+    is meaningful until the final copy. This is a concrete proof-model witness,
+    not a synthetic implementation or a substitute for indexed-trace projection. *)
+Example second_run_overwrites_only_after_its_existing_prefix :
+  let cursor := {| run_start := 2; run_middle := 3; run_end := 4;
+    left_index := 2; right_index := 3; output_index := 2 |} in
+  copy_record FromRight cursor [2;1;4;3] [1;2;4;3] =
+    Some (advance FromRight cursor, [1;2;3;3]) /\
+  copy_record FromLeft (advance FromRight cursor) [2;1;4;3] [1;2;3;3] =
+    Some (advance FromLeft (advance FromRight cursor), [1;2;3;4]).
+Proof. split; reflexivity. Qed.
+Example second_run_carries_its_existing_nonempty_prefix :
+  @RunExecution nat unit
+    (fun lhs rhs (_ : unit) => (Some (Nat.compare lhs rhs), tt))
+    2 [1;2] [4] [3] tt [1;2;3;4] tt.
+Proof.
+  eapply RunMore; [apply ComparedRight; reflexivity|].
+  eapply RunMore; [apply LeftTail|]. constructor.
+Qed.
+Example second_run_supplies_the_relative_pass_premise :
+  exists copied,
+  @RunExecution nat unit
+    (fun lhs rhs (_ : unit) => (Some (Nat.compare lhs rhs), tt))
+    2 [] [4] [3] tt copied tt /\ [1;2;3;4] = [1;2] ++ copied.
+Proof.
+  apply run_execution_strips_its_existing_output_prefix.
+  exact second_run_carries_its_existing_nonempty_prefix.
+Qed.
+
 Print Assumptions reset_left_is_the_first_source_run.
 Print Assumptions reset_right_is_the_second_source_run.
 Print Assumptions source_after_run_end_is_the_double_skip_suffix.
@@ -269,4 +325,10 @@ Print Assumptions completed_source_pass_preserves_the_allocated_width.
 Print Assumptions responding_driver_completes_the_projected_pass.
 Print Assumptions source_pass_inherits_sorted_run_growth.
 Print Assumptions source_pass_inherits_stable_class_subsequences.
+Print Assumptions completed_prefix_extension_preserves_previous_output.
+Print Assumptions completed_output_at_allocated_width_is_the_whole_target.
+Print Assumptions reset_reuses_the_completed_target_prefix.
+Print Assumptions second_run_overwrites_only_after_its_existing_prefix.
+Print Assumptions second_run_carries_its_existing_nonempty_prefix.
+Print Assumptions second_run_supplies_the_relative_pass_premise.
 End MergeSortPdaPass.

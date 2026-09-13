@@ -261,6 +261,64 @@ Proof.
       exists (S count), final, last.
       eapply RunMore; [apply ComparedRight; exact HC|exact HR].
 Qed.
+Lemma run_step_rebases_its_output_prefix :
+  forall prefix lhs rhs state next_prefix next_lhs next_rhs next_state,
+  RunStep prefix lhs rhs state next_prefix next_lhs next_rhs next_state ->
+  exists value, next_prefix = prefix ++ [value] /\
+    forall replacement,
+      RunStep replacement lhs rhs state (replacement ++ [value])
+        next_lhs next_rhs next_state.
+Proof.
+  intros prefix lhs rhs state next_prefix next_lhs next_rhs next_state HS.
+  destruct HS as [prefix value rest other others state next decision HC HD
+    |prefix value rest other others state next HC
+    |prefix value rest state|prefix value rest state].
+  - exists value. split; [reflexivity|]. intros replacement.
+    eapply ComparedLeft; eassumption.
+  - exists other. split; [reflexivity|]. intros replacement.
+    apply ComparedRight; exact HC.
+  - exists value. split; [reflexivity|]. intros replacement. apply LeftTail.
+  - exists value. split; [reflexivity|]. intros replacement. apply RightTail.
+Qed.
+
+(** Changing a proof frame's output prefix changes neither its comparisons
+    nor the copied records. This relates absolute native target prefixes to
+    the relative empty-prefix runs consumed by the pass model. *)
+Theorem run_execution_rebases_its_output_prefix :
+  forall count prefix lhs rhs state final last,
+  RunExecution count prefix lhs rhs state final last ->
+  forall replacement, exists copied,
+    final = prefix ++ copied /\
+    RunExecution count replacement lhs rhs state (replacement ++ copied) last.
+Proof.
+  intros count prefix lhs rhs state final last HR.
+  induction HR as [prefix state
+    |count prefix lhs rhs state next_prefix next_lhs next_rhs next_state final last HS HT IH];
+    intros replacement.
+  - exists []. split; [now rewrite app_nil_r|].
+    rewrite app_nil_r. constructor.
+  - destruct (run_step_rebases_its_output_prefix
+      _ _ _ _ _ _ _ _ HS) as [value [HP HSTEP]].
+    destruct (IH (replacement ++ [value])) as [copied [HF HREST]].
+    exists (value :: copied). split.
+    + rewrite HF, HP, <- app_assoc. reflexivity.
+    + replace (replacement ++ value :: copied)
+        with ((replacement ++ [value]) ++ copied)
+        by (rewrite <- app_assoc; reflexivity).
+      eapply RunMore; [apply HSTEP|exact HREST].
+Qed.
+Corollary run_execution_strips_its_existing_output_prefix :
+  forall count prefix lhs rhs state final last,
+  RunExecution count prefix lhs rhs state final last ->
+  exists copied,
+    RunExecution count [] lhs rhs state copied last /\ final = prefix ++ copied.
+Proof.
+  intros count prefix lhs rhs state final last HR.
+  destruct (run_execution_rebases_its_output_prefix
+    _ _ _ _ _ _ _ HR []) as [copied [HF HC]].
+  cbn in HC. exists copied. split; assumption.
+Qed.
+
 Theorem responding_driver_completes_the_projected_run :
   (forall lhs rhs state, exists decision next, compare lhs rhs state = (Some decision, next)) ->
   forall prefix lhs rhs state,
@@ -284,5 +342,8 @@ Print Assumptions projected_source_step_consumes_exactly_one_record.
 Print Assumptions completed_source_run_is_the_existing_merge.
 Print Assumptions completed_source_run_copies_exactly_its_remaining_width.
 Print Assumptions completed_empty_prefix_run_preserves_whole_records.
+Print Assumptions run_step_rebases_its_output_prefix.
+Print Assumptions run_execution_rebases_its_output_prefix.
+Print Assumptions run_execution_strips_its_existing_output_prefix.
 Print Assumptions responding_driver_completes_the_projected_run.
 End MergeSortPdaRun.
