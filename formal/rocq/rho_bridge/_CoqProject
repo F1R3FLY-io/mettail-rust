@@ -95,6 +95,7 @@ theories/AdmittedComparisonClasses.v
 theories/AdmittedNativeComparisonFactors.v
 theories/CollectionPairAndUnitLexResults.v
 theories/NativeSortedComparisonClasses.v
+theories/NativeMapRunSuspension.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
