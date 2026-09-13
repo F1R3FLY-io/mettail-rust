@@ -92,6 +92,7 @@ theories/MergeSortPdaOuter.v
 theories/MergeSortPdaNativeOuter.v
 theories/AdmittedCollectionSortOwnership.v
 theories/AdmittedComparisonClasses.v
+theories/AdmittedNativeComparisonFactors.v
 theories/CollectionPairAndUnitLexResults.v
 theories/NativeSortedComparisonClasses.v
 theories/BehavioralFlatCopy.v
