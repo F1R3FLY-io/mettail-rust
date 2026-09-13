@@ -93,6 +93,7 @@ theories/MergeSortPdaNativeOuter.v
 theories/AdmittedCollectionSortOwnership.v
 theories/AdmittedComparisonClasses.v
 theories/CollectionPairAndUnitLexResults.v
+theories/NativeSortedComparisonClasses.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
