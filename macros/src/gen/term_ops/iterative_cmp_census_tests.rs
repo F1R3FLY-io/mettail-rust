@@ -142,6 +142,45 @@ fn check_supported_field(field: &FieldInfo, actual: &syn::Type) {
     assert_eq!(shape(actual), expected, "field carrier {:?}", field);
 }
 
+// Serialize the EXISTING Rocq Field constructor, not a new comparison schema.
+fn formal_field(base: &str, optional: bool) -> String {
+    format!("{{| field_base := {base}; field_optional := {optional} |}}")
+}
+
+// Read positional bindings from the real generated arm. This is a syntax
+// check/source export, not an interpreter or a proof of Rust semantics.
+fn arm_bindings(arm: TokenStream, label: &Ident) -> (String, Vec<String>, Vec<String>) {
+    let expression: syn::ExprMatch = syn::parse2(quote! { match (left, right) { #arm, } })
+        .expect("actual comparison arm parses");
+    assert_eq!(expression.arms.len(), 1);
+    let arm = &expression.arms[0];
+    assert!(arm.guard.is_none());
+    let syn::Pat::Tuple(pair) = &arm.pat else {
+        panic!("actual comparison arm matches two original constructors");
+    };
+    assert_eq!(pair.elems.len(), 2);
+    let bindings = |pattern: &syn::Pat| {
+        assert_eq!(pattern_label(pattern), label.to_string());
+        match pattern {
+            syn::Pat::Path(_) => Vec::new(),
+            syn::Pat::TupleStruct(tuple) => tuple
+                .elems
+                .iter()
+                .map(|field| {
+                    let syn::Pat::Ident(binding) = field else {
+                        panic!("supported constructor binds every original positional field");
+                    };
+                    assert!(binding.subpat.is_none());
+                    binding.ident.to_string()
+                })
+                .collect(),
+            _ => unreachable!(),
+        }
+    };
+    let pattern = &arm.pat;
+    (compact(quote! { #pattern }), bindings(&pair.elems[0]), bindings(&pair.elems[1]))
+}
+
 fn inspect_variant(
     language: &LanguageDef,
     category: &Ident,
@@ -149,6 +188,7 @@ fn inspect_variant(
     kind: &VariantKind,
     declaration: &syn::Variant,
     capture: &mut String,
+    projection: &mut String,
 ) -> bool {
     let supported = checked_cmp_variant_supported(category, kind, language);
     let label = kind.label();
@@ -158,6 +198,26 @@ fn inspect_variant(
         .map(|field| &field.ty)
         .collect::<Vec<_>>();
     let mut recipes = Vec::<String>::new();
+    // Each entry is an existing formal Field and its two original selectors.
+    // Refused rows retain their ordinal but have no invented payload recipe.
+    let mut logical = Vec::<(String, String, String)>::new();
+    let checked_arm =
+        generate_cmp_variant_arm(category, kind, language, &CmpEmissionNames::checked());
+    let ordinary_arm =
+        generate_cmp_variant_arm(category, kind, language, &CmpEmissionNames::ordinary());
+    let (left, right) = if supported {
+        let (pattern, left, right) = arm_bindings(checked_arm.clone(), label);
+        let (ordinary_pattern, ordinary_left, ordinary_right) =
+            arm_bindings(ordinary_arm.clone(), label);
+        assert_eq!(pattern, ordinary_pattern, "checked mode preserves original bindings");
+        assert_eq!((&left, &right), (&ordinary_left, &ordinary_right));
+        assert_eq!(left.len(), fields.len());
+        assert_eq!(right.len(), fields.len());
+        (left, right)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let mut scope_boundary = None;
     let mut ordinary_fields: &[FieldInfo] = &[];
     let description = match kind {
         VariantKind::Refused { .. } => {
@@ -181,6 +241,17 @@ fn inspect_variant(
                     _ => panic!("unsupported native literal entered checked comparison census"),
                 };
                 assert_eq!(shape(fields[0]), expected, "{category}::{label}");
+                let atom = match expected {
+                    "i64" => "Signed",
+                    "bool" => "Boolean",
+                    "String" => "Bytes",
+                    _ => unreachable!(),
+                };
+                logical.push((
+                    formal_field(&format!("Native {atom}"), false),
+                    left[0].clone(),
+                    right[0].clone(),
+                ));
             }
             recipes.push("native-original-cmp".to_owned());
             "literal".to_owned()
@@ -189,6 +260,11 @@ fn inspect_variant(
             assert_eq!(fields.len(), 1, "{category}::{label} variable width");
             assert_eq!(shape(fields[0]), "OrdVar", "{category}::{label}");
             recipes.push("ordvar-original-cmp".to_owned());
+            logical.push((
+                formal_field("Native VariableIdentity", false),
+                left[0].clone(),
+                right[0].clone(),
+            ));
             "variable".to_owned()
         },
         VariantKind::Regular { fields: described, .. } => {
@@ -208,6 +284,7 @@ fn inspect_variant(
                 "{category}::{label} scope must be last"
             );
             ordinary_fields = pre_scope_fields;
+            scope_boundary = Some((pre_scope_fields.len(), body_cat));
             let multi = matches!(kind, VariantKind::MultiBinder { .. });
             let pattern = if multi {
                 "Vec<Binder<String>>"
@@ -238,6 +315,18 @@ fn inspect_variant(
                     _ => panic!("unsupported whole collection entered checked comparison census"),
                 };
                 assert_eq!(shape(fields[0]), expected, "{category}::{label}");
+                let (base, selector) = match coll_type {
+                    CollectionType::Vec => ("Vector", "iter(): original element order"),
+                    CollectionType::HashMap => {
+                        ("MapPairs", "iter(): original paired (key,value) entry order")
+                    },
+                    _ => unreachable!(),
+                };
+                logical.push((
+                    formal_field(&format!("{base} {element_cat}"), false),
+                    format!("{}.{selector}", left[0]),
+                    format!("{}.{selector}", right[0]),
+                ));
             }
             recipes.push(format!("collection:{coll_type:?}:element={element_cat}"));
             if matches!(kind, VariantKind::CollectionLiteral { .. }) {
@@ -256,11 +345,109 @@ fn inspect_variant(
     for (position, field) in ordinary_fields.iter().enumerate() {
         if supported {
             check_supported_field(field, fields[position]);
+            let (base, selector) = match field_carrier(field) {
+                FieldCarrier::Leaf => match field.opaque_leaf {
+                    Some(OpaqueLeafKind::TokenText) => ("Native Bytes".to_owned(), "borrow"),
+                    Some(OpaqueLeafKind::GuestBody) => {
+                        ("Native GuestFlt".to_owned(), "Arc payload borrow")
+                    },
+                    None => unreachable!(),
+                },
+                FieldCarrier::Child | FieldCarrier::OptionalChild => {
+                    (format!("Child {}", field.category), "Arc payload borrow")
+                },
+                FieldCarrier::Collection { coll_type }
+                | FieldCarrier::OptionalCollection { coll_type } => match coll_type {
+                    CollectionType::Vec => {
+                        (format!("Vector {}", field.category), "iter(): original element order")
+                    },
+                    CollectionType::HashMap => (
+                        format!("MapPairs {}", field.category),
+                        "iter(): original paired (key,value) entry order",
+                    ),
+                    _ => unreachable!(),
+                },
+            };
+            let option = if field.is_optional {
+                "as_ref(): preserve None/Some; "
+            } else {
+                ""
+            };
+            logical.push((
+                formal_field(&base, field.is_optional),
+                format!("{}: {option}{selector}", left[position]),
+                format!("{}: {option}{selector}", right[position]),
+            ));
         }
         recipes.push(field_recipe(field));
     }
     if matches!(kind, VariantKind::Binder { .. } | VariantKind::MultiBinder { .. }) {
         recipes.push(description.clone());
+        if supported {
+            let (position, body_cat) = scope_boundary.expect("original scope boundary");
+            assert_eq!(logical.len(), position, "all prefields precede the scope telescope");
+            let atom = if matches!(kind, VariantKind::MultiBinder { .. }) {
+                "Native MultiPattern"
+            } else {
+                "Native SinglePattern"
+            };
+            logical.push((
+                formal_field(atom, false),
+                format!("&{}.inner().unsafe_pattern", left[position]),
+                format!("&{}.inner().unsafe_pattern", right[position]),
+            ));
+            logical.push((
+                formal_field(&format!("Child {body_cat}"), false),
+                format!("&*{}.inner().unsafe_body", left[position]),
+                format!("&*{}.inner().unsafe_body", right[position]),
+            ));
+            for arm in [&checked_arm, &ordinary_arm] {
+                let source = compact(arm.clone());
+                assert!(source.contains(&format!("letl_scope={}.inner();", left[position])));
+                assert!(source.contains(&format!("letr_scope={}.inner();", right[position])));
+                assert!(source.contains("&l_scope.unsafe_pattern"));
+                assert!(source.contains("&r_scope.unsafe_pattern"));
+                assert!(
+                    source.contains(&format!("letl_body:*const{body_cat}=&*l_scope.unsafe_body;"))
+                );
+                assert!(
+                    source.contains(&format!("letr_body:*const{body_cat}=&*r_scope.unsafe_body;"))
+                );
+            }
+        }
+    }
+    assert_eq!(
+        logical.len(),
+        if supported {
+            fields.len() + usize::from(scope_boundary.is_some())
+        } else {
+            0
+        },
+        "one logical recipe per original field, with pattern/body scope expansion"
+    );
+    let variant_kind = match kind {
+        VariantKind::Refused { .. } => "Refused",
+        VariantKind::Nullary { .. } => "Nullary",
+        VariantKind::Literal { .. } => "Literal",
+        VariantKind::Var { .. } => "Var",
+        VariantKind::Regular { .. } => "Regular",
+        VariantKind::Binder { .. } => "Binder",
+        VariantKind::MultiBinder { .. } => "MultiBinder",
+        VariantKind::Collection { .. } => "Collection",
+        VariantKind::CollectionLiteral { .. } => "CollectionLiteral",
+        VariantKind::RecursiveNativeLiteral { .. } => "RecursiveNativeLiteral",
+    };
+    writeln!(projection, "R\t{category}\t{index}\t{label}\t{variant_kind}\tprefields={}\t{{| row_ordinal := {index}; row_admitted := {supported}; row_fields := [{}] |}}",
+        scope_boundary.map_or_else(|| "-".to_owned(), |(n, _)| n.to_string()),
+        logical.iter().map(|(field, _, _)| field.as_str()).collect::<Vec<_>>().join("; "))
+        .expect("append existing formal Row recipe");
+    for (position, (field, left, right)) in logical.iter().enumerate() {
+        writeln!(projection, "L\t{category}\t{index}\t{position}\t{field}\t{left}\t{right}")
+            .expect("append original-source logical projection");
+    }
+    for (mode, arm) in [("ordinary", &ordinary_arm), ("checked", &checked_arm)] {
+        writeln!(projection, "A\t{category}\t{index}\t{mode}\t{}", compact(arm.clone()))
+            .expect("retain actual generated arm, not a reference comparator");
     }
     assert_eq!(
         recipes.len(),
@@ -334,6 +521,14 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
          # F category comparison-index field-position carrier-recipe exact-Rust-type\n",
     );
     let mut rows = BTreeMap::new();
+    let mut projection = String::from(
+        "# Audited Rust source-association evidence, not a kernel-checked Rust interpretation.\n\
+         # Recipes use existing GeneratedConstructorComparisonClasses Row/Field constructors.\n\
+         # Category identifiers denote the actual census categories; refused payloads have no recipe.\n\
+         # R category ordinal constructor VariantKind scope-prefield-boundary formal-Row\n\
+         # L category ordinal logical-position formal-Field original-left-selector original-right-selector\n\
+         # A category ordinal ordinary/checked actual-generated-arm\n",
+    );
     let mut single_scopes = 0;
     let mut multi_scopes = 0;
     let mut maps = 0;
@@ -354,9 +549,17 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
         }
         let variants = collect_category_variants(category, &language);
         let indices = actual_indices(category, &language);
+        let mut previous_ordinal = None;
         assert_eq!(constructors.len(), variants.len(), "{category} classifier covers actual enum");
         assert_eq!(indices.len(), variants.len(), "{category} classifier covers actual indices");
         for (index, kind) in variants.iter().enumerate() {
+            if let Some(previous) = previous_ordinal {
+                assert!(
+                    previous < index,
+                    "formal signature preserves strict numeric ordinal order"
+                );
+            }
+            previous_ordinal = Some(index);
             let label = kind.label().to_string();
             let declaration = constructors
                 .get(&label)
@@ -366,8 +569,15 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
                 Some(&index),
                 "{category}::{label} explicit comparison ordinal, not enum discriminant"
             );
-            let supported =
-                inspect_variant(&language, category, index, kind, declaration, &mut capture);
+            let supported = inspect_variant(
+                &language,
+                category,
+                index,
+                kind,
+                declaration,
+                &mut capture,
+                &mut projection,
+            );
             assert!(
                 rows.insert((category.to_string(), label), supported)
                     .is_none(),
@@ -388,6 +598,26 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
             }
         }
     }
+    assert_eq!(rows.len(), 1990, "bounded actual Rholang constructor snapshot");
+    assert_eq!(
+        (single_scopes, multi_scopes, refused),
+        (441, 443, 12),
+        "bounded scope/refusal snapshot must be reviewed if the actual language changes"
+    );
+    assert_eq!(
+        projection
+            .lines()
+            .filter(|line| line.starts_with("R\t"))
+            .count(),
+        rows.len()
+    );
+    assert_eq!(
+        projection
+            .lines()
+            .filter(|line| line.starts_with("A\t"))
+            .count(),
+        2 * rows.len()
+    );
     for (category, constructor, expected) in [
         ("Proc", "PNew", true),
         ("Proc", "PNewUris", true),
@@ -419,5 +649,7 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
         std::fs::create_dir_all(&directory).expect("create comparison census directory");
         std::fs::write(directory.join("rholang-census.tsv"), capture)
             .expect("write actual Rholang comparison census");
+        std::fs::write(directory.join("rholang-source-projection.tsv"), projection)
+            .expect("write separate logical source-projection evidence");
     }
 }
