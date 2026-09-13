@@ -66,6 +66,36 @@ Qed.
 Section NativeOutput.
 Context {Entry State : Type}.
 Variable view : Entry -> Key.
+
+(** Class equality does not identify source records. Their per-class ordered
+    subsequences supply the missing information, including collisions. *)
+Theorem class_roster_and_each_class_subsequence_determine_the_complete_roster :
+  forall left right : list Entry,
+  map view left = map view right ->
+  (forall wanted,
+    filter (SemanticResultMerge.SemanticResultMerge.has_key view key_compare wanted) left =
+    filter (SemanticResultMerge.SemanticResultMerge.has_key view key_compare wanted) right) ->
+  left = right.
+Proof.
+  induction left as [|a left IH]; intros [|b right] KEYS SUBSEQUENCES;
+    cbn [map] in KEYS; try discriminate; [reflexivity|].
+  injection KEYS as HEAD TAIL.
+  pose proof (SUBSEQUENCES (view a)) as SAME_CLASS.
+  assert (A : SemanticResultMerge.SemanticResultMerge.has_key view key_compare (view a) a = true).
+  { unfold SemanticResultMerge.SemanticResultMerge.has_key.
+    rewrite (proj2 (comparison_eq key_laws (view a) (view a)) eq_refl). reflexivity. }
+  assert (B : SemanticResultMerge.SemanticResultMerge.has_key view key_compare (view a) b = true).
+  { unfold SemanticResultMerge.SemanticResultMerge.has_key. rewrite <- HEAD.
+    rewrite (proj2 (comparison_eq key_laws (view a) (view a)) eq_refl). reflexivity. }
+  cbn [filter] in SAME_CLASS. rewrite A, B in SAME_CLASS.
+  injection SAME_CLASS as RECORD REST. subst b.
+  f_equal. apply IH; [exact TAIL|]. intro wanted.
+  specialize (SUBSEQUENCES wanted). cbn [filter] in SUBSEQUENCES.
+  destruct (SemanticResultMerge.SemanticResultMerge.has_key view key_compare wanted a).
+  - injection SUBSEQUENCES as MATCHED. exact MATCHED.
+  - exact SUBSEQUENCES.
+Qed.
+
 Variable compare : Entry -> Entry -> State -> option comparison * State.
 Hypothesis faithful : forall a b state decision next,
   compare a b state = (Some decision, next) ->
@@ -154,14 +184,42 @@ Proof.
     [apply (comparison_eq key_laws)|apply (comparison_opposite key_laws)|
      apply (not_greater_is_transitive Key key_compare key_laws)|exact faithful|exact SORT].
 Qed.
+
+(** The native output agrees with any ordinary stable sort satisfying its
+    sortedness, whole-record permutation, and equal-class stability contract.
+    The ordinary sort implementation is not modeled by an extra algorithm.
+    Its pinned source/library contract is a separate correspondence boundary. *)
+Theorem native_output_matches_any_stable_sorted_roster :
+  forall maximum count source state output scratch last reference,
+  length source <= maximum ->
+  MergeSortPdaNativeOuter.MergeSortPdaNativeOuter.NativeOuterExecution
+    compare maximum count 1 source None state output scratch last ->
+  StronglySorted (fun a b => class_le (view a) (view b)) reference ->
+  Permutation source reference ->
+  (forall wanted,
+    filter (SemanticResultMerge.SemanticResultMerge.has_key view key_compare wanted) reference =
+    filter (SemanticResultMerge.SemanticResultMerge.has_key view key_compare wanted) source) ->
+  output = reference.
+Proof.
+  intros maximum count source state output scratch last reference WIDTH NATIVE SORT PERM STABLE.
+  apply class_roster_and_each_class_subsequence_determine_the_complete_roster.
+  - eapply native_output_matches_the_unique_canonical_class_roster;
+      [exact WIDTH|exact NATIVE| |].
+    + apply sorted_records_project_to_sorted_classes. exact SORT.
+    + apply Permutation_map. exact PERM.
+  - intro wanted. rewrite STABLE.
+    eapply native_output_preserves_complete_equal_class_subsequences; eassumption.
+Qed.
 End NativeOutput.
 End ClassOrder.
 
 Print Assumptions class_le_is_antisymmetric.
 Print Assumptions sorted_class_permutation_is_unique.
 Print Assumptions sorted_records_project_to_sorted_classes.
+Print Assumptions class_roster_and_each_class_subsequence_determine_the_complete_roster.
 Print Assumptions native_output_is_a_sorted_class_permutation.
 Print Assumptions native_output_matches_the_unique_canonical_class_roster.
 Print Assumptions equal_input_class_multisets_give_equal_native_output_class_rosters.
 Print Assumptions native_output_preserves_complete_equal_class_subsequences.
+Print Assumptions native_output_matches_any_stable_sorted_roster.
 End NativeSortedComparisonClasses.
