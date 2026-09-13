@@ -247,6 +247,123 @@ Qed.
 
 Definition completion_mode result := reply_mode (Completes result).
 
+(** A generated child starts in Run. Every source step retains a mode with
+    an actual empty-prefix boundary; Deliver Eq is not such a boundary.
+    This predicate adds no transition or semantic-result assumption. *)
+Definition boundary_compatible_mode mode := match mode with
+  | Run => True
+  | Deliver ordering => ordering <> Eq
+  end.
+
+Lemma every_core_reply_has_a_boundary_compatible_mode : forall reply,
+  boundary_compatible_mode (reply_mode reply).
+Proof.
+  intros [role position|ordering]; [exact I|].
+  destruct ordering; cbn [reply_mode boundary_compatible_mode];
+    [exact I | discriminate | discriminate].
+Qed.
+
+Lemma source_step_preserves_boundary_compatible_mode :
+  forall mode pending state events next_mode after next,
+  boundary_compatible_mode mode ->
+  SourceStep mode pending state events next_mode after next ->
+  boundary_compatible_mode next_mode.
+Proof.
+  intros mode pending state events next_mode after next MODE STEP.
+  destruct STEP; cbn [boundary_compatible_mode];
+    try exact I; try assumption; apply every_core_reply_has_a_boundary_compatible_mode.
+Qed.
+
+Lemma a_compatible_mode_completes_the_empty_local_prefix : forall mode frame state,
+  boundary_compatible_mode mode ->
+  exists result, ChildTraversal frame 0 mode [] state [] result state /\
+    completion_mode result = mode.
+Proof.
+  intros mode frame state MODE. destruct mode as [|ordering].
+  - exists Eq. split; [constructor | reflexivity].
+  - destruct ordering.
+    + exfalso. apply MODE. reflexivity.
+    + exists Lt. split; [apply TraversalDecisiveBoundary; discriminate | reflexivity].
+    + exists Gt. split; [apply TraversalDecisiveBoundary; discriminate | reflexivity].
+Qed.
+
+(** First-hit decomposition of a GIVEN successful source trace. The local
+    traversal ends before any frame task is popped. Its remainder is the
+    original enclosing trace, with exactly split counts and observations.
+    In particular, a callback's child traversal is extracted, not supplied
+    as an oracle about the result of the category helper. *)
+Theorem finite_source_trace_reaches_its_first_local_boundary :
+  forall count mode pending state events result last,
+  ChildTraversal [] count mode pending state events result last ->
+  boundary_compatible_mode mode -> forall prefix frame,
+  pending = prefix ++ frame ->
+  exists local_count later_count child_result middle first_events later_events,
+    ChildTraversal frame local_count mode prefix state first_events child_result middle /\
+    ChildTraversal [] later_count (completion_mode child_result) frame middle
+      later_events result last /\
+    count = local_count + later_count /\ events = first_events ++ later_events.
+Proof.
+  intros count mode pending state events result last TRACE.
+  induction TRACE as [state|state ordering NE
+    |count mode head rest state first next_mode after next later result last STEP TAIL IH];
+    intros MODE prefix frame SPLIT; destruct prefix as [|local_head local_rest].
+  - cbn [app] in SPLIT. subst frame.
+    exists 0, 0, Eq, state, [], []. repeat split; constructor.
+  - discriminate SPLIT.
+  - cbn [app] in SPLIT. subst frame. destruct ordering; [contradiction| |].
+    + exists 0, 0, Lt, state, [], []. repeat split; try reflexivity;
+        apply TraversalDecisiveBoundary; discriminate.
+    + exists 0, 0, Gt, state, [], []. repeat split; try reflexivity;
+        apply TraversalDecisiveBoundary; discriminate.
+  - discriminate SPLIT.
+  - cbn [app] in SPLIT. subst frame.
+    destruct (a_compatible_mode_completes_the_empty_local_prefix
+      mode (head :: rest) state MODE) as [child_result [EMPTY COMPLETE_MODE]].
+    exists 0, (S count), child_result, state, [], (first ++ later).
+    split; [exact EMPTY|]. split.
+    + rewrite COMPLETE_MODE. eapply TraversalSourceStep; [exact STEP|exact TAIL].
+    + split; reflexivity.
+  - cbn [app] in SPLIT. injection SPLIT as HEAD REST.
+    subst local_head rest. repeat rewrite app_nil_r in STEP.
+    destruct (every_source_step_has_an_exact_local_head_replacement
+      mode (head :: (local_rest ++ frame)) state first next_mode after next STEP)
+      as [actual_head [actual_rest [inserted [INPUT [OUTPUT LOCAL]]]]].
+    injection INPUT as SAME_HEAD SAME_REST. subst actual_head actual_rest.
+    assert (NEXT_SPLIT : after = (inserted ++ local_rest) ++ frame).
+    { rewrite <- app_assoc. exact OUTPUT. }
+    pose proof (source_step_preserves_boundary_compatible_mode
+      mode (head :: (local_rest ++ frame)) state first next_mode after next MODE STEP)
+      as NEXT_MODE.
+    destruct (IH NEXT_MODE (inserted ++ local_rest) frame NEXT_SPLIT)
+      as [local_count [later_count [child_result [middle [child_events [later_events
+        [CHILD [CONTINUATION [COUNTS EVENTS]]]]]]]]].
+    exists (S local_count), later_count, child_result, middle,
+      (first ++ child_events), later_events.
+    split.
+    + eapply TraversalSourceStep with
+        (next_mode := next_mode) (prefix := inserted ++ local_rest) (next := next)
+        (first_events := first) (later_events := child_events).
+      * cbn [app]. rewrite <- app_assoc. exact (LOCAL (local_rest ++ frame)).
+      * exact CHILD.
+    + split; [exact CONTINUATION|]. split.
+      * rewrite COUNTS. reflexivity.
+      * rewrite EVENTS, app_assoc. reflexivity.
+Qed.
+
+Theorem running_child_trace_splits_before_its_untouched_frame :
+  forall count prefix frame state events result last,
+  ChildTraversal [] count Run (prefix ++ frame) state events result last ->
+  exists local_count later_count child_result middle first_events later_events,
+    ChildTraversal frame local_count Run prefix state first_events child_result middle /\
+    ChildTraversal [] later_count (completion_mode child_result) frame middle
+      later_events result last /\
+    count = local_count + later_count /\ events = first_events ++ later_events.
+Proof.
+  intros count prefix frame state events result last TRACE.
+  exact (finite_source_trace_reaches_its_first_local_boundary
+    count Run (prefix ++ frame) state events result last TRACE I prefix frame eq_refl).
+Qed.
+
 Theorem finite_child_traversal_composes_with_its_actual_continuation :
   forall outer continuation count mode prefix state events result middle,
   ChildTraversal (continuation ++ outer) count mode prefix state events result middle ->
@@ -334,6 +451,11 @@ Print Assumptions finite_child_traversal_strips_to_a_genuine_isolated_trace.
 Print Assumptions isolated_child_traversal_extends_to_existing_siblings.
 Print Assumptions source_child_completion_is_contextual_without_a_helper_equal_premise.
 Print Assumptions finite_child_traversal_appends_an_outer_frame_without_new_events.
+Print Assumptions every_core_reply_has_a_boundary_compatible_mode.
+Print Assumptions source_step_preserves_boundary_compatible_mode.
+Print Assumptions a_compatible_mode_completes_the_empty_local_prefix.
+Print Assumptions finite_source_trace_reaches_its_first_local_boundary.
+Print Assumptions running_child_trace_splits_before_its_untouched_frame.
 Print Assumptions finite_child_traversal_composes_with_its_actual_continuation.
 Print Assumptions completed_requested_child_traversal_feeds_its_actual_result_to_core.
 Print Assumptions start_traversal_uses_the_original_none_input_and_native_core_continuation.
