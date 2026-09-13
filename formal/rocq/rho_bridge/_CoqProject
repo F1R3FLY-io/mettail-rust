@@ -83,6 +83,7 @@ theories/AdmittedCollectionComparisonOwnership.v
 theories/AdmittedGeneratedCollectionScheduling.v
 theories/MergeSortPdaCursor.v
 theories/MergeSortPdaRun.v
+theories/MergeSortPdaNativeRun.v
 theories/MergeSortPdaPass.v
 theories/AdmittedComparisonClasses.v
 theories/BehavioralFlatCopy.v
