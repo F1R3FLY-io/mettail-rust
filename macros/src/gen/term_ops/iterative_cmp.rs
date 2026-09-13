@@ -2715,6 +2715,10 @@ mod ordinary_baseline_tests;
 mod checked_tests;
 
 #[cfg(test)]
+#[path = "iterative_cmp_census_tests.rs"]
+mod census_tests;
+
+#[cfg(test)]
 mod carrier_cell_census {
     use super::*;
     use crate::gen::term_ops::subst::OpaqueLeafKind;
