@@ -93,6 +93,7 @@ theories/MergeSortPdaNativeOuter.v
 theories/AdmittedCollectionSortOwnership.v
 theories/AdmittedComparisonClasses.v
 theories/AdmittedNativeComparisonFactors.v
+theories/GeneratedConstructorComparisonClasses.v
 theories/CollectionPairAndUnitLexResults.v
 theories/NativeSortedComparisonClasses.v
 theories/NativeMapRunSuspension.v
