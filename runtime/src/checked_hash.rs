@@ -18,7 +18,24 @@ pub enum KeyHashFailure<E> {
         category: &'static str,
         constructor: &'static str,
     },
+    /// Invalid collection state or protocol, not an admission failure.
+    InvalidCollectionInput(&'static str),
     Admission(BindingFailure<E>),
+}
+
+impl<E> From<crate::NativeComparisonFailure<E>> for KeyHashFailure<E> {
+    fn from(failure: crate::NativeComparisonFailure<E>) -> Self {
+        match failure {
+            crate::NativeComparisonFailure::UnsupportedProfile => Self::UnsupportedProfile,
+            crate::NativeComparisonFailure::UnsupportedConstructor { category, constructor } => {
+                Self::UnsupportedConstructor { category, constructor }
+            },
+            crate::NativeComparisonFailure::InvalidCollectionInput(reason) => {
+                Self::InvalidCollectionInput(reason)
+            },
+            crate::NativeComparisonFailure::Admission(failure) => Self::Admission(failure),
+        }
+    }
 }
 
 /// The actual pinned native hasher, not a proxy or proof of admission.
@@ -272,6 +289,62 @@ impl<T: Clone + Hash + Eq> CheckedFxHashLeaf for HashBag<T> {}
 mod tests {
     use super::*;
     use std::hash::Hasher;
+
+    #[test]
+    fn comparison_failures_retain_their_exact_kind_and_payload() {
+        use crate::{BindingSlotError, NativeComparisonFailure};
+        assert_eq!(
+            KeyHashFailure::<()>::from(NativeComparisonFailure::UnsupportedProfile),
+            KeyHashFailure::UnsupportedProfile,
+        );
+        assert_eq!(
+            KeyHashFailure::<()>::from(NativeComparisonFailure::UnsupportedConstructor {
+                category: "Proc",
+                constructor: "Unsupported",
+            }),
+            KeyHashFailure::UnsupportedConstructor {
+                category: "Proc",
+                constructor: "Unsupported",
+            },
+        );
+        assert_eq!(
+            KeyHashFailure::<()>::from(NativeComparisonFailure::InvalidCollectionInput(
+                "missing comparison response",
+            )),
+            KeyHashFailure::InvalidCollectionInput("missing comparison response"),
+        );
+        for failure in [
+            BindingFailure::Reservation(19),
+            BindingFailure::SizeOverflow,
+            BindingFailure::BinderIndexOverflow,
+            BindingFailure::ScopeDepthOverflow,
+            BindingFailure::MissingBinder { index: 11 },
+            BindingFailure::Slot(BindingSlotError::OutOfBounds { slot: 3, len: 2 }),
+            BindingFailure::Slot(BindingSlotError::Occupied { slot: 5 }),
+            BindingFailure::Slot(BindingSlotError::Empty { slot: 7 }),
+            BindingFailure::Slot(BindingSlotError::WrongCategory { slot: 9 }),
+        ] {
+            assert_eq!(
+                KeyHashFailure::from(NativeComparisonFailure::Admission(failure.clone())),
+                KeyHashFailure::Admission(failure),
+            );
+        }
+    }
+
+    #[test]
+    fn comparison_failure_conversion_moves_nonclone_reservation_payload() {
+        struct Payload(u32);
+        let original = Box::new(Payload(23));
+        let address = std::ptr::from_ref(original.as_ref());
+        let converted = KeyHashFailure::from(crate::NativeComparisonFailure::Admission(
+            BindingFailure::Reservation(original),
+        ));
+        let KeyHashFailure::Admission(BindingFailure::Reservation(payload)) = converted else {
+            panic!("comparison reservation failure must remain a reservation failure");
+        };
+        assert_eq!(std::ptr::from_ref(payload.as_ref()), address);
+        assert_eq!(payload.0, 23);
+    }
 
     fn check<T: CheckedFxHashLeaf>(value: T, expected_work: usize) {
         check_inspections(value, expected_work, 1);
