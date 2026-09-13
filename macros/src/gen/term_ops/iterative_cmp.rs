@@ -138,6 +138,87 @@ impl CmpEmissionNames {
         }
     }
 
+    fn task_type(&self) -> TokenStream {
+        let task = &self.task_enum;
+        if self.checked {
+            quote! { #task<E> }
+        } else {
+            quote! { #task }
+        }
+    }
+
+    fn resume_type(&self) -> TokenStream {
+        let resume = &self.collection_resume;
+        if self.checked {
+            quote! { #resume<E> }
+        } else {
+            quote! { #resume }
+        }
+    }
+
+    fn collection_owner_type(&self) -> TokenStream {
+        if self.checked {
+            quote! { mettail_runtime::CheckedCollectionCmpPda }
+        } else {
+            quote! { Box<mettail_runtime::CollectionCmpPda> }
+        }
+    }
+
+    fn collection_owner(&self, machine: TokenStream) -> TokenStream {
+        if self.checked {
+            machine
+        } else {
+            quote! { Box::new(#machine) }
+        }
+    }
+
+    fn collection_callback_parameters(&self) -> TokenStream {
+        if self.checked {
+            quote! { , reserve: &mut dyn FnMut(usize, usize) -> Result<(), E> }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn collection_callback_begin(&self) -> TokenStream {
+        if self.checked {
+            quote! {
+                reserve(1, 0).map_err(|error| mettail_runtime::NativeComparisonFailure::Admission(
+                    mettail_runtime::BindingFailure::Reservation(error)))?;
+                let mut __collection_reserve = |work, units| reserve(work, units);
+                let reserve = &mut __collection_reserve;
+            }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    fn collection_step(&self) -> TokenStream {
+        if self.checked {
+            let route = self.routing();
+            quote! {{
+                let __collection_step = machine.try_resume(result, reserve)?;
+                #route
+                __collection_step
+            }}
+        } else {
+            quote! { machine.resume(result) }
+        }
+    }
+
+    fn collection_callback_result(&self, call: TokenStream) -> TokenStream {
+        if self.checked {
+            let route = self.routing();
+            quote! {{
+                let __collection_result = #call?;
+                #route
+                __collection_result
+            }}
+        } else {
+            call
+        }
+    }
+
     // Leading commas retain ordinary signature punctuation exactly.
     fn parameters(&self) -> TokenStream {
         if self.checked {
@@ -377,10 +458,15 @@ fn checked_cmp_collection_supported(
     kind: &CollectionType,
     language: &LanguageDef,
 ) -> bool {
-    matches!(
-        plan_for(category, kind, OrderSensitivity::OrderSensitive, language),
-        CollectionPlan::PerElement { coll_type: CollectionType::Vec, .. }
-    )
+    match plan_for(category, kind, OrderSensitivity::OrderSensitive, language) {
+        CollectionPlan::PerElement { coll_type: CollectionType::Vec, .. } => true,
+        CollectionPlan::WholeValue {
+            reason: WholeValueReason::UnorderedContainer,
+        } => {
+            matches!(kind, CollectionType::HashMap)
+        },
+        _ => false,
+    }
 }
 
 fn checked_cmp_fields_supported(fields: &[FieldInfo], language: &LanguageDef) -> bool {
@@ -532,9 +618,12 @@ fn eq_collection_stmts(
             reason: WholeValueReason::UnorderedContainer,
         } => {
             let resume_fn = emission.resume(element_cat);
-            let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr);
+            let machine =
+                unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr, emission);
+            let arguments = emission.arguments();
+            let propagate = emission.propagate();
             quote! {
-                if !#unordered_eq(#machine, #resume_fn) {
+                if !#unordered_eq(#machine, #resume_fn #arguments) #propagate {
                     #return_false
                 }
             }
@@ -623,14 +712,12 @@ fn unordered_collection_cmp_push_stmts(
 ) -> TokenStream {
     let task_enum = &emission.task_enum;
     let resume_fn = emission.resume(element_cat);
-    let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr);
-
-    quote! {
-        stack.push(#task_enum::StartCollection(
-            Box::new(#machine),
-            #resume_fn,
-        ));
-    }
+    let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr, emission);
+    let owner = emission.collection_owner(machine);
+    let push = emission.push_task(quote! {
+        #task_enum::StartCollection(#owner, #resume_fn,)
+    });
+    quote! { #push; }
 }
 
 /// Build the one canonical-order comparison machine shared by `Eq` and `Ord`.
@@ -640,7 +727,21 @@ fn unordered_collection_cmp_machine_expr(
     coll_type: &CollectionType,
     left_expr: &TokenStream,
     right_expr: &TokenStream,
+    emission: &CmpEmissionNames,
 ) -> TokenStream {
+    if emission.checked {
+        return match coll_type {
+            CollectionType::HashMap => quote! {{
+                let __cmp_left = (#left_expr).try_comparison_roster(reserve)?;
+                let __cmp_right = (#right_expr).try_comparison_roster(reserve)?;
+                mettail_runtime::CheckedCollectionCmpPda::try_new(
+                    std::cmp::Ordering::Equal, __cmp_left, __cmp_right, reserve)?
+            }},
+            _ => {
+                quote! { compile_error!("checked comparison source roster is unavailable for this collection") }
+            },
+        };
+    }
     let (lead, left_items, right_items) = match coll_type {
         CollectionType::HashSet => (
             quote! { std::cmp::Ordering::Equal },
@@ -841,9 +942,18 @@ fn generate_cmp_task_enum(language: &LanguageDef, emission: &CmpEmissionNames) -
         .collect();
     if emission.checked {
         return quote! {
+            type #collection_resume<E> = fn(
+                &mut Vec<#task_enum<E>>,
+                mettail_runtime::CheckedCollectionCmpPda,
+                Option<std::cmp::Ordering>,
+                &mut dyn FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<Option<std::cmp::Ordering>, mettail_runtime::NativeComparisonFailure<E>>;
+
             #[allow(dead_code)]
-            enum #task_enum {
+            enum #task_enum<E> {
                 #(#variants,)*
+                ResumeCollection(mettail_runtime::CheckedCollectionCmpPda, #collection_resume<E>),
+                StartCollection(mettail_runtime::CheckedCollectionCmpPda, #collection_resume<E>),
                 Verdict(std::cmp::Ordering),
             }
         };
@@ -1006,6 +1116,7 @@ fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStr
 /// overflowing the default 2 MB thread stack on the first call.
 fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
     let task_enum = &emission.task_enum;
+    let task_type = emission.task_type();
     let aux_task_pool = &emission.aux_task_pool;
     let collection_resume = &emission.collection_resume;
     let eq_driver = &emission.eq_driver;
@@ -1052,7 +1163,7 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
                 fn #helper_fn #generics(
-                    stack: &mut Vec<#task_enum>,
+                    stack: &mut Vec<#task_type>,
                     left_ptr: *const #cat,
                     right_ptr: *const #cat #parameters,
                 ) -> #result_type {
@@ -1100,7 +1211,26 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
         })
         .collect();
     let unordered_helper = if emission.checked {
-        TokenStream::new()
+        let resume_type = emission.resume_type();
+        let header = emission.record_admission();
+        let push = emission.push_task(quote! { #task_enum::StartCollection(machine, resume) });
+        let final_route = emission.routing();
+        quote! {
+            #[inline]
+            #[allow(dead_code)]
+            fn #unordered_eq #generics(
+                machine: mettail_runtime::CheckedCollectionCmpPda,
+                resume: #resume_type #parameters,
+            ) -> #result_type {
+                #header
+                let mut __collection_stack = Vec::new();
+                let stack = &mut __collection_stack;
+                #push;
+                let ordering = #cmp_driver(stack, reserve)?;
+                #final_route
+                Ok(ordering == std::cmp::Ordering::Equal)
+            }
+        }
     } else {
         quote! {
             /// Decide equality of one unordered collection by driving the same
@@ -1150,7 +1280,16 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
         }
     };
     let collection_arms = if emission.checked {
-        TokenStream::new()
+        quote! {
+            #task_enum::ResumeCollection(_, _) => {
+                return Err(mettail_runtime::NativeComparisonFailure::InvalidCollectionInput(
+                    "collection ordering continuation reached equality engine"));
+            }
+            #task_enum::StartCollection(_, _) => {
+                return Err(mettail_runtime::NativeComparisonFailure::InvalidCollectionInput(
+                    "collection ordering start reached equality engine"));
+            }
+        }
     } else {
         quote! {
             #task_enum::ResumeCollection(_, _) => {
@@ -1189,7 +1328,7 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
         /// for the duration of this function call. This is guaranteed because
         /// they are derived from `&self` and `&other` in `PartialEq::eq()`.
         #[allow(dead_code, unused_variables)]
-        fn #eq_driver #generics(stack: &mut Vec<#task_enum> #parameters) -> #result_type {
+        fn #eq_driver #generics(stack: &mut Vec<#task_type> #parameters) -> #result_type {
             #driver_loop
             #success
         }
@@ -1598,6 +1737,7 @@ fn generate_eq_multi_binder_arm(
 /// else means "stop and propagate".
 fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
     let task_enum = &emission.task_enum;
+    let task_type = emission.task_type();
     let cmp_driver = &emission.cmp_driver;
     let deliver = &emission.deliver;
     let generics = emission.generics();
@@ -1613,28 +1753,52 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
     let collection_resume_fns: Vec<TokenStream> = language
         .types
         .iter()
-        .filter(|_| !emission.checked)
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
             let resume_fn = emission.resume(cat);
+            let owner_type = emission.collection_owner_type();
+            let owner_binding = if emission.checked {
+                quote! { machine }
+            } else {
+                quote! { mut machine }
+            };
+            let callback_parameters = emission.collection_callback_parameters();
+            let begin = emission.collection_callback_begin();
+            let step = emission.collection_step();
+            let step_type = if emission.checked {
+                quote! { mettail_runtime::CheckedCollectionCmpStep }
+            } else {
+                quote! { mettail_runtime::CollectionCmpStep }
+            };
+            let owner_field = if emission.checked {
+                quote! { machine, }
+            } else {
+                TokenStream::new()
+            };
+            let push_resume = emission.push_task(quote! {
+                #task_enum::ResumeCollection(machine, #resume_fn)
+            });
+            let push_child = emission.push_task(quote! {
+                #task_enum::#cmp_variant(left.cast::<#cat>(), right.cast::<#cat>(),)
+            });
+            let none = emission.success(quote! { None });
+            let done = emission.success(quote! { Some(ordering) });
             quote! {
                 #[inline]
-                fn #resume_fn(
-                    stack: &mut Vec<#task_enum>,
-                    mut machine: Box<mettail_runtime::CollectionCmpPda>,
-                    result: Option<std::cmp::Ordering>,
-                ) -> Option<std::cmp::Ordering> {
-                    match machine.resume(result) {
-                        mettail_runtime::CollectionCmpStep::Compare { left, right, .. } => {
-                            stack.push(#task_enum::ResumeCollection(machine, #resume_fn));
-                            stack.push(#task_enum::#cmp_variant(
-                                left.cast::<#cat>(),
-                                right.cast::<#cat>(),
-                            ));
-                            None
+                fn #resume_fn #generics(
+                    stack: &mut Vec<#task_type>,
+                    #owner_binding: #owner_type,
+                    result: Option<std::cmp::Ordering> #callback_parameters,
+                ) -> #deliver_type {
+                    #begin
+                    match #step {
+                        #step_type::Compare { #owner_field left, right, .. } => {
+                            #push_resume;
+                            #push_child;
+                            #none
                         },
-                        mettail_runtime::CollectionCmpStep::Done(ordering) => Some(ordering),
+                        #step_type::Done(ordering) => #done,
                     }
                 }
             }
@@ -1728,7 +1892,7 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
                 fn #helper_fn #generics(
-                    stack: &mut Vec<#task_enum>,
+                    stack: &mut Vec<#task_type>,
                     left_ptr: *const #cat,
                     right_ptr: *const #cat #parameters,
                 ) -> #result_type {
@@ -1772,65 +1936,62 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
         })
         .collect();
 
-    let delivery_body = if emission.checked {
-        // Specialize the same drain to borrowed tasks: no continuation can
-        // intercept this result. Every pop, even terminal, remains admitted.
-        let drain = emission.pop_loop(quote! { let _ = task; });
-        let result = emission.return_value(quote! { Some(ordering) });
-        quote! { #routing #drain #result }
-    } else {
-        quote! {
-                loop {
-                    let mut resumed = false;
-                    while let Some(task) = stack.pop() {
-                        match task {
-                            #task_enum::ResumeCollection(machine, resume) => {
-                                match resume(stack, machine, Some(ordering)) {
-                                    None => return None,
-                                    Some(std::cmp::Ordering::Equal) => return None,
-                                    Some(next) => {
-                                        ordering = next;
-                                        resumed = true;
-                                        break;
-                                    },
-                                }
-                            },
-                            _ => {},
-                        }
-                    }
-                    if !resumed {
-                        return Some(ordering);
-                    }
+    let deliver_resume = emission.collection_callback_result(quote! {
+        resume(stack, machine, Some(ordering) #arguments)
+    });
+    let deliver_none = emission.success(quote! { None });
+    let deliver_some = emission.success(quote! { Some(ordering) });
+    let delivery_loop = emission.pop_loop(quote! {
+        match task {
+            #task_enum::ResumeCollection(machine, resume) => {
+                match #deliver_resume {
+                    None => return #deliver_none,
+                    Some(std::cmp::Ordering::Equal) => return #deliver_none,
+                    Some(next) => {
+                        ordering = next;
+                        resumed = true;
+                        break;
+                    },
                 }
+            },
+            _ => {},
+        }
+    });
+    let delivery_body = quote! {
+        loop {
+            #routing
+            let mut resumed = false;
+            #delivery_loop
+            if !resumed {
+                return #deliver_some;
+            }
         }
     };
-    let collection_arms = if emission.checked {
-        TokenStream::new()
-    } else {
-        quote! {
+    let start_result = emission.collection_callback_result(quote! {
+        resume(stack, machine, None #arguments)
+    });
+    let resume_result = emission.collection_callback_result(quote! {
+        resume(stack, machine, Some(std::cmp::Ordering::Equal) #arguments,)
+    });
+    let collection_arms = quote! {
             #task_enum::StartCollection(machine, resume) => {
-                if let Some(ordering) = resume(stack, machine, None) {
+                if let Some(ordering) = #start_result {
                     if ordering != std::cmp::Ordering::Equal {
-                        if let Some(root_ordering) = #deliver(stack, ordering) {
-                            return root_ordering;
+                        if let Some(root_ordering) = #deliver(stack, ordering #arguments) #propagate {
+                            #return_root
                         }
                     }
                 }
             }
             #task_enum::ResumeCollection(machine, resume) => {
-                if let Some(ordering) = resume(
-                    stack,
-                    machine,
-                    Some(std::cmp::Ordering::Equal),
-                ) {
+                if let Some(ordering) = #resume_result {
                     if ordering != std::cmp::Ordering::Equal {
-                        if let Some(root_ordering) = #deliver(stack, ordering) {
-                            return root_ordering;
+                        if let Some(root_ordering) = #deliver(stack, ordering #arguments) #propagate {
+                            #return_root
                         }
                     }
                 }
             }
-        }
     };
     let driver_loop = emission.pop_loop(quote! {
         match task {
@@ -1856,7 +2017,7 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
 
         #[allow(dead_code, unused_variables)]
         fn #deliver #generics(
-            stack: &mut Vec<#task_enum>,
+            stack: &mut Vec<#task_type>,
             mut ordering: std::cmp::Ordering #parameters,
         ) -> #deliver_type {
             #delivery_body
@@ -1872,7 +2033,7 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
         /// for the duration of this function call. This is guaranteed because
         /// they are derived from `&self` and `&other` in `Ord::cmp()`.
         #[allow(dead_code, unused_variables)]
-        fn #cmp_driver #generics(stack: &mut Vec<#task_enum> #parameters) -> #result_type {
+        fn #cmp_driver #generics(stack: &mut Vec<#task_type> #parameters) -> #result_type {
             #driver_loop
             #success
         }
@@ -2877,7 +3038,12 @@ mod carrier_cell_census {
             CollectionType::HashMap,
             CollectionType::PathMap,
         ] {
-            let machine = compact(unordered_collection_cmp_machine_expr(&coll_type, &left, &right));
+            let machine = compact(unordered_collection_cmp_machine_expr(
+                &coll_type,
+                &left,
+                &right,
+                &CmpEmissionNames::ordinary(),
+            ));
             let eq = compact(eq_collection_stmts(
                 &proc,
                 &coll_type,

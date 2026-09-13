@@ -199,6 +199,175 @@ fn checked_comparison_captures_actual_production_layout_executable() {
             exercise(&left, &right);
         }
 
+        fn map(entries: impl IntoIterator<Item = (Proc, Proc)>) -> Map {
+            let mut result = mettail_runtime::HashMapLit::new();
+            for (key, value) in entries { result.insert(key, value); }
+            Map::#map_literal(result)
+        }
+
+        fn token(text: &str) -> Proc { Proc::PToken(text.into()) }
+
+        fn map_proc(value: Map) -> Proc {
+            // Existing generated application constructor, not a new fixture term.
+            Proc::ApplyMap(Arc::new(Proc::PZero), Arc::new(value))
+        }
+
+        fn map_cases() {
+            let empty = map([]);
+            exercise(&empty, &empty);
+            exercise(&empty, &map([]));
+            let singleton = map([(token("a"), token("value"))]);
+            exercise(&empty, &singleton);
+            exercise(&singleton, &empty);
+            let left = map([(token("z"), token("last")), (token("a"), token("first")), (token("m"), token("middle"))]);
+            let permuted = map([(token("m"), token("middle")), (token("z"), token("last")), (token("a"), token("first"))]);
+            assert!(left == permuted);
+            assert_eq!(left.cmp(&permuted), Ordering::Equal);
+            exercise(&left, &permuted);
+            for changed in [
+                map([(token("a"), token("first")), (token("n"), token("middle")), (token("z"), token("last"))]),
+                map([(token("m"), token("middle")), (token("z"), token("last")), (token("a"), token("changed first"))]),
+                map([(token("z"), token("changed last")), (token("a"), token("first")), (token("m"), token("middle"))]),
+            ] {
+                exercise(&left, &changed);
+                exercise(&changed, &left);
+            }
+            let nested = || map_proc(map([(token("inner"), token("a"))]));
+            exercise(&map([(token("outer"), nested())]), &map([(token("outer"), nested())]));
+            exercise(&map([(token("outer"), nested())]),
+                &map([(token("outer"), map_proc(map([(token("inner"), token("b"))])))]));
+
+            // Inner nonEqual key comparisons belong to the outer sorting
+            // continuation; they must never be published as the root answer.
+            let nested_key = |value: &str| map_proc(map([(token("inner"), token(value))]));
+            let left = map([(nested_key("z"), token("Z")), (nested_key("a"), token("A"))]);
+            let right = map([(nested_key("a"), token("A")), (nested_key("z"), token("Z"))]);
+            assert!(left == right);
+            assert_eq!(left.cmp(&right), Ordering::Equal);
+            exercise(&left, &right);
+            exercise(&right, &left);
+            let changed = map([(nested_key("a"), token("A")), (nested_key("z"), token("different"))]);
+            exercise(&left, &changed);
+        }
+
+        fn map_owner(left: &mettail_runtime::HashMapLit<Proc, Proc>,
+            right: &mettail_runtime::HashMapLit<Proc, Proc>) -> mettail_runtime::CheckedCollectionCmpPda {
+            let mut reserve = |_,_| Ok::<_, usize>(());
+            let left = left.try_comparison_roster(&mut reserve).expect("left fixture roster");
+            let right = right.try_comparison_roster(&mut reserve).expect("right fixture roster");
+            mettail_runtime::CheckedCollectionCmpPda::try_new(Ordering::Equal, left, right, &mut reserve)
+                .expect("fixture collection owner")
+        }
+
+        fn paid_cmp_stack() -> Vec<CheckedCmpTask<usize>> {
+            mettail_runtime::reserve_binding_parts(2, 1, 0, &mut |_,_| Ok::<_, usize>(()))
+                .expect("fixture stack header");
+            Vec::new()
+        }
+
+        fn map_owner_is_pushed_before_its_requested_child() {
+            let mut left = mettail_runtime::HashMapLit::new();
+            let mut right = mettail_runtime::HashMapLit::new();
+            left.insert(token("a"), token("left value"));
+            right.insert(token("b"), token("right value"));
+            let mut stack = paid_cmp_stack();
+            let mut trace = Vec::new();
+            assert_eq!(checked_cmp_resume_collection_proc(&mut stack, map_owner(&left, &right),
+                None, &mut |w,u| { trace.push((w,u)); Ok::<_, usize>(()) }), Ok(None));
+            assert_eq!(&trace[trace.len()-2..], &[(2,4), (2,4)]);
+            assert_eq!(stack.len(), 2);
+            assert!(matches!(&stack[0], CheckedCmpTask::ResumeCollection(..)));
+            let (left_key, _) = left.iter().next().expect("left source key");
+            let (right_key, _) = right.iter().next().expect("right source key");
+            match &stack[1] {
+                CheckedCmpTask::CmpProc(l,r) => {
+                    assert_eq!(*l, left_key as *const Proc);
+                    assert_eq!(*r, right_key as *const Proc);
+                }
+                _ => panic!("requested typed child must be above its owner"),
+            }
+            drop(stack);
+            for stop in [trace.len()-1, trace.len()] {
+                let mut stack = paid_cmp_stack();
+                let mut seen = Vec::new();
+                let result = checked_cmp_resume_collection_proc(&mut stack, map_owner(&left, &right),
+                    None, &mut |w,u| {
+                        seen.push((w,u)); if seen.len() == stop { Err(stop) } else { Ok(()) }
+                    });
+                assert!(matches!(result, Err(NativeComparisonFailure::Admission(
+                    BindingFailure::Reservation(n))) if n == stop));
+                assert_eq!(seen, trace[..stop]);
+                if stop == trace.len()-1 {
+                    assert!(stack.is_empty(), "refused owner shell publishes neither task");
+                } else {
+                    assert_eq!(stack.len(), 1);
+                    assert!(matches!(&stack[0], CheckedCmpTask::ResumeCollection(..)),
+                        "child-shell refusal leaves only the already-paid owning continuation");
+                }
+                // Public error return drops its local stack. This disposes
+                // only flat prepaid records and owners, never borrowed keys.
+                drop(stack);
+                assert_eq!(seen, trace[..stop], "cleanup performs no extra reservation");
+            }
+            assert_eq!(left.iter().count(), 1);
+            assert_eq!(right.iter().count(), 1);
+        }
+
+        fn unstarted_map_is_discarded_during_outer_delivery() {
+            // These keys would refuse checked comparison if an unstarted
+            // deferred collection were incorrectly resumed during delivery.
+            let predicate = |name: &str| Proc::PPredicate(mettail_runtime::BehavioralPred::RelationQuery {
+                relation_name: name.into(), args: Vec::new(), negated: false,
+            });
+            let mut left = mettail_runtime::HashMapLit::new();
+            let mut right = mettail_runtime::HashMapLit::new();
+            left.insert(predicate("left unstarted"), Proc::PZero);
+            right.insert(predicate("right unstarted"), Proc::PZero);
+            let prepared = || {
+                let owner = map_owner(&left, &right);
+                let mut stack = paid_cmp_stack();
+                mettail_runtime::reserve_binding_parts(2, 1, 0, &mut |_,_| Ok::<_, usize>(()))
+                    .expect("fixture Start shell");
+                stack.push(CheckedCmpTask::StartCollection(owner, checked_cmp_resume_collection_proc));
+                mettail_runtime::reserve_binding_parts(2, 1, 0, &mut |_,_| Ok::<_, usize>(()))
+                    .expect("fixture verdict shell");
+                stack.push(CheckedCmpTask::Verdict(Ordering::Less));
+                stack
+            };
+            let mut trace = Vec::new();
+            let mut stack = prepared();
+            assert_eq!(checked_cmp_iterative(&mut stack, &mut |w,u| {
+                trace.push((w,u)); Ok::<_, usize>(())
+            }), Ok(Ordering::Less));
+            assert!(stack.is_empty());
+            assert!(!trace.is_empty());
+            assert!(trace.iter().all(|charge| *charge == (1,0)),
+                "discarding an unstarted owner is routing only, with no resumption or child task");
+            for stop in 1..=trace.len() {
+                let mut stack = prepared();
+                let mut seen = Vec::new();
+                let result = checked_cmp_iterative(&mut stack, &mut |w,u| {
+                    seen.push((w,u)); if seen.len() == stop { Err(stop) } else { Ok(()) }
+                });
+                assert!(matches!(result, Err(NativeComparisonFailure::Admission(
+                    BindingFailure::Reservation(n))) if n == stop),
+                    "terminal delivery refusal must withhold the known Less verdict");
+                assert_eq!(seen, trace[..stop]);
+                drop(stack);
+                assert_eq!(seen, trace[..stop]);
+            }
+            assert_eq!(left.iter().count(), 1);
+            assert_eq!(right.iter().count(), 1);
+        }
+
+        fn deep_map(bottom: &str) -> Proc {
+            let mut value = token(bottom);
+            for _ in 0..20_000 {
+                value = map_proc(map([(token("key"), value)]));
+            }
+            value
+        }
+
         fn deep(bottom: &str) -> Proc {
             let mut value = Proc::PToken(bottom.into());
             for depth in 0..20_000 {
@@ -210,8 +379,9 @@ fn checked_comparison_captures_actual_production_layout_executable() {
 
         fn deep_small_stack() {
             std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
+                for build in [deep as fn(&str) -> Proc, deep_map as fn(&str) -> Proc] {
                 // Independent trees prevent Arc aliasing from hiding traversal.
-                let left = deep("a"); let equal = deep("a"); let different = deep("b");
+                let left = build("a"); let equal = build("a"); let different = build("b");
                 for right in [&equal, &different] {
                     for ordering in [false, true] {
                         let expected = native(&left, right, ordering);
@@ -245,6 +415,7 @@ fn checked_comparison_captures_actual_production_layout_executable() {
                     }
                 }
                 drop((left, equal, different));
+                }
             }).expect("spawn checked comparison worker").join().expect("20k small-stack comparison");
         }
 
@@ -322,8 +493,9 @@ fn checked_comparison_captures_actual_production_layout_executable() {
             refuse(&bag, &bag, "Proc", "PBag", Some(5));
             let bag = Bag::#bag_literal(mettail_runtime::HashBag::new());
             refuse(&bag, &bag, "Bag", stringify!(#bag_literal), Some(5));
-            let map = Map::#map_literal(mettail_runtime::HashMapLit::new());
-            refuse(&map, &map, "Map", stringify!(#map_literal), Some(5));
+            map_cases();
+            map_owner_is_pushed_before_its_requested_child();
+            unstarted_map_is_discarded_during_outer_delivery();
             let set = Set::#set_literal(mettail_runtime::HashSetLit::new());
             refuse(&set, &set, "Set", stringify!(#set_literal), Some(5));
             let pathmap = Pathmap::#pathmap_literal(mettail_runtime::PathMapLit::new());

@@ -748,7 +748,7 @@ The implemented internal profile covers audited scalar and structural leaves,
 category children, optional fields, ordered category vectors, binder scopes,
 and cached bag summaries. Map/Set/PathMap sorting, primitive byte vectors and
 predicate-native branches currently return named constructor refusals before
-their unadmitted operations. Required Map/equality and insertion coverage remain
+their unadmitted operations. Required Map hashing and collection insertion remain
 necessary for public preparation. A cached bag hash does not inspect its members,
 so this hash operation alone cannot establish whole-source profile admission.
 
@@ -797,20 +797,41 @@ subject to source correspondence and executable regression checks.
 | Variant match; each field or scope routing group | One work unit each |
 | Paired vector iterator setup; every advance including terminal | One work unit each |
 | Native leaf/pattern comparison | Its separately specified inspection and execution allowance |
-| Ordering-result drain | One begin unit, one per attempted pop, one per discarded task |
+| Collection callback entry, returned machine-step dispatch, and driver result routing | One work unit each; the runtime machine's work is separately admitted |
+| Ordering-result delivery | One unit per outward round, one per attempted pop and successful dispatch, and one per callback-result route |
+| Equality's auxiliary collection stack | Separate header and Start-task allowances, then one final equality-test work unit after its comparison driver succeeds |
 
-The checked task vector contains borrowed category pairs and copied verdicts,
-not owned collection continuations. A known non-equal ordering is returned only
-after its admitted drain completes. Cancellation during that drain returns an
-error, never the already-known ordering; prepaid disposal releases residual
-task storage without traversing child ASTs. The convention bounds logical source
-groups and retained records, not allocator internals or physical execution time.
+The checked task vector contains borrowed category pairs, copied verdicts and
+owning collection continuations. A `StartCollection` constructs its paid machine
+at the original task-construction site but defers the first resume until popped.
+When the machine requests a typed child comparison, its callback pushes the
+owning `ResumeCollection` first and the borrowed child second. The last-in,
+first-out worklist therefore compares the child before resuming its owner.
+Refusal before either push publishes no unpaid task; disposal releases the
+prepaid machine and flat task records without dropping borrowed child ASTs.
+
+A child ordering is delivered to the nearest pending `ResumeCollection`, not
+automatically returned as the root result. An awaiting or equal collection result
+returns control to the driver; a non-equal completed collection continues outward.
+Delivery discards an unstarted `StartCollection` without resuming it. A root
+ordering is returned only after the admitted terminal pop finds no continuation.
+Cancellation during this scan returns an error, never the already-known ordering.
+Equality drives a collection on a separately paid local stack using the same
+comparison driver, without recursive calls to public category `Ord`.
+
+The [owned scheduling model](../../formal/rocq/rho_bridge/theories/AdmittedGeneratedCollectionScheduling.v)
+proves nearest-continuation interception, child-before-resume order, distinct
+owner/task credits and paid terminal publication. Its source correspondence is
+checked by the [actual generated fixture](../../macros/src/gen/term_ops/iterative_cmp_checked_tests.rs),
+including nested map keys, owner/child push refusals, discarded starts and deep
+independently owned map chains. These are logical source-group and retained-record
+contracts, not allocator-internal or physical execution-time bounds.
 
 The initial internal profile admits audited scalar, identity and FLT leaves,
-category children, optional category children, ordered category vectors and
-binder scopes. Unordered collections, recursive native carriers, predicates,
-byte vectors and optional opaque leaves currently refuse by category and
-constructor before pointer-identity or variant-index shortcuts. Refused arms
+category children, optional category children, ordered category vectors, binder
+scopes and homogeneous category maps. Other unordered collections, recursive
+native carriers, predicates, byte vectors and optional opaque leaves refuse by
+category and constructor before pointer-identity or variant-index shortcuts. Refused arms
 also omit unsupported native calls from generated Rust. Local support is not a
 certificate for descendants skipped by ordinary short-circuiting. Required
 collection and source-profile coverage must be completed before public activation.
@@ -823,7 +844,9 @@ and checked entrypoints share their phase transitions, primary/secondary pointer
 requests, stable left selection on equal merge results, compressed multiplicity
 runs and lazy scratch allocation. A private infallible policy preserves ordinary
 operation; the checked policy uses the caller's existing reservation function.
-This runtime interface is not yet wired into the generated companion above.
+The generated companion uses this interface for homogeneous category maps; both
+key and value pointers rejoin the same category's comparison worker. It does not
+activate heterogeneous recursive-native carriers or certify a Map Hash sorter.
 
 Construction requires two `CheckedCmpRoster` values. Each roster reserves its
 declared width before allocation, and each insertion checks positive multiplicity,
