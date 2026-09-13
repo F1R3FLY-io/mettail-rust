@@ -82,6 +82,7 @@ theories/AdmittedCollectionComparisonOwnership.v
 theories/AdmittedGeneratedCollectionScheduling.v
 theories/MergeSortPdaCursor.v
 theories/MergeSortPdaRun.v
+theories/MergeSortPdaPass.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
