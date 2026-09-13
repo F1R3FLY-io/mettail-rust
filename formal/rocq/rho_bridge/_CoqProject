@@ -79,6 +79,7 @@ theories/AdmittedNativeLeafComparison.v
 theories/AdmittedIdentityComparison.v
 theories/AdmittedFltComparison.v
 theories/AdmittedGeneratedComparisonScheduling.v
+theories/GeneratedComparisonFieldResults.v
 theories/AdmittedCollectionComparisonOwnership.v
 theories/AdmittedGeneratedCollectionScheduling.v
 theories/MergeSortPdaCursor.v
@@ -90,6 +91,7 @@ theories/MergeSortPdaOuter.v
 theories/MergeSortPdaNativeOuter.v
 theories/AdmittedCollectionSortOwnership.v
 theories/AdmittedComparisonClasses.v
+theories/CollectionPairAndUnitLexResults.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
