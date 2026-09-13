@@ -617,6 +617,753 @@ Proof.
   eapply MapNativeCompleted; eassumption.
 Qed.
 End MapPhaseContinuations.
+
+(** A retained physical path, not a new runtime comparator or state machine.
+    PairAnswers retains an entire existing PairProtocol block. A resume cut
+    advances its answered prefix before advancing any physical event, so a
+    Primary Equal followed by Secondary preserves the same native copy hole.
+    Run/pass/outer annotations thread the exact existing source/target data.
+    RunBoundary records a reset-initialized boundary, not an extra reset call;
+    initial new/reset and final non-resetting swap timing stay source-audited.
+
+    The source association must identify the actual owner and pending role
+    with the retained path/cut. Compiler checking this annotation is not a
+    proof of Rust compilation or admission totality. Refusal and destruction
+    retain the existing consuming-owner/prepaid-cleanup contracts. *)
+Section AnnotatedResumption.
+Context {Key Value : Type}.
+Variable key_compare : Key -> Key -> comparison.
+Variable value_compare : Value -> Value -> comparison.
+Variable key_alias : Key -> Key -> bool.
+Variable value_alias : Value -> Value -> bool.
+Hypothesis key_alias_sound : forall x y,
+  key_alias x y = true -> key_compare x y = Eq.
+Hypothesis value_alias_sound : forall x y,
+  value_alias x y = true -> value_compare x y = Eq.
+Local Notation PC :=
+  (SemanticComparisonLaws.SemanticComparisonLaws.pair_compare key_compare value_compare).
+Local Notation NC :=
+  (fun (lhs rhs : Key * Value) (_ : unit) => (Some (PC lhs rhs), tt)).
+Local Notation PP :=
+  (@PairProtocol Key Value key_compare value_compare key_alias value_alias).
+Local Notation UL :=
+  (@UnitLexExecution Key Value key_compare value_compare key_alias value_alias).
+Local Notation Role :=
+  AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.Role.
+Local Notation Pending := (@SavedPairPending Key Value key_compare key_alias value_alias).
+
+Inductive SortDestination := InLeftSort | InRightSort.
+Inductive AwaitFocus :=
+| AtSortPair : SortDestination -> list (Key * Value) -> Cursor ->
+    list (Key * Value) -> AwaitFocus
+| AtLexPair : list (Key * Value) -> list (Key * Value) -> nat -> AwaitFocus.
+Inductive NativeEvent :=
+| PairAnswers : AwaitFocus -> (Key * Value) -> (Key * Value) -> list Answer -> NativeEvent
+| CopiedRecord : SortDestination -> list (Key * Value) -> Cursor ->
+    list (Key * Value) -> Side -> list (Key * Value) -> NativeEvent
+| RunBoundary : SortDestination -> nat -> nat -> list (Key * Value) -> nat ->
+    list (Key * Value) -> NativeEvent
+| ScratchBoundary : SortDestination -> list (Key * Value) -> option (list (Key * Value)) -> NativeEvent
+| SwappedBuffers : SortDestination -> nat -> nat -> list (Key * Value) -> list (Key * Value) -> NativeEvent
+| ReleasedSort : SortDestination -> list (Key * Value) -> option (list (Key * Value)) -> NativeEvent
+| EnterRightSort : NativeEvent
+| EnterUnitLex : NativeEvent
+| AdvancedUnitLex : list (Key * Value) -> list (Key * Value) -> nat -> NativeEvent
+| LexLeadDone : comparison -> NativeEvent
+| LexExhausted : comparison -> NativeEvent
+| FinishedMap : comparison -> NativeEvent.
+Definition pair_events focus lhs rhs (answers : list Answer) :=
+  [PairAnswers focus lhs rhs answers].
+
+Inductive CopyEvents (destination : SortDestination) (source : list (Key * Value)) :
+    Cursor -> list (Key * Value) -> Cursor -> list (Key * Value) -> list NativeEvent -> Prop :=
+| EventsAccepted : forall cursor target next lhs rhs answers decision,
+    NativeRequest source cursor lhs rhs -> PP lhs rhs answers decision ->
+    copy_record (accept_side decision) cursor source target =
+      Some (advance (accept_side decision) cursor, next) ->
+    CopyEvents destination source cursor target (advance (accept_side decision) cursor) next
+      (pair_events (AtSortPair destination source cursor target) lhs rhs answers ++
+       [CopiedRecord destination source cursor target (accept_side decision) next])
+| EventsLeftTail : forall cursor target next,
+    can_copy FromLeft cursor -> right_index cursor = run_end cursor ->
+    copy_record FromLeft cursor source target = Some (advance FromLeft cursor, next) ->
+    CopyEvents destination source cursor target (advance FromLeft cursor) next
+      [CopiedRecord destination source cursor target FromLeft next]
+| EventsRightTail : forall cursor target next,
+    left_index cursor = run_middle cursor -> can_copy FromRight cursor ->
+    copy_record FromRight cursor source target = Some (advance FromRight cursor, next) ->
+    CopyEvents destination source cursor target (advance FromRight cursor) next
+      [CopiedRecord destination source cursor target FromRight next].
+
+Inductive RunEvents (destination : SortDestination) (source : list (Key * Value)) :
+    nat -> Cursor -> list (Key * Value) -> Cursor -> list (Key * Value) -> list NativeEvent -> Prop :=
+| RunEventsDone : forall cursor target,
+    left_index cursor = run_middle cursor -> right_index cursor = run_end cursor ->
+    RunEvents destination source 0 cursor target cursor target []
+| RunEventsMore : forall count cursor target middle next final_cursor final_target first rest,
+    CopyEvents destination source cursor target middle next first ->
+    RunEvents destination source count middle next final_cursor final_target rest ->
+    RunEvents destination source (S count) cursor target final_cursor final_target (first ++ rest).
+
+Inductive PassEvents (destination : SortDestination) (maximum width : nat)
+    (source : list (Key * Value)) :
+    nat -> list (Key * Value) -> list (Key * Value) -> list NativeEvent -> Prop :=
+| PassEventsDone : forall target,
+    PassEvents destination maximum width source (length source) target target []
+| PassEventsMore : forall start target count final_cursor next final_target first rest,
+    start < length source ->
+    RunEvents destination source count (reset_cursor maximum (length source) start width)
+      target final_cursor next first ->
+    PassEvents destination maximum width source (run_end final_cursor) next final_target rest ->
+    PassEvents destination maximum width source start target final_target
+      (RunBoundary destination maximum width source start target :: first ++ rest).
+
+Inductive OuterEvents (destination : SortDestination) (maximum : nat) :
+    nat -> nat -> list (Key * Value) -> option (list (Key * Value)) ->
+    list (Key * Value) -> option (list (Key * Value)) -> list NativeEvent -> Prop :=
+| OuterEventsDone : forall width source scratch,
+    length source <= width -> OuterEvents destination maximum 0 width source scratch source scratch []
+| OuterEventsPass : forall count width source scratch completed output final_scratch first rest,
+    width < length source ->
+    PassEvents destination maximum width source 0 (scratch_payload source scratch) completed first ->
+    OuterEvents destination maximum count (saturated_double maximum width)
+      completed (Some source) output final_scratch rest ->
+    OuterEvents destination maximum (S count) width source scratch output final_scratch
+      (ScratchBoundary destination source scratch ::
+       first ++ SwappedBuffers destination maximum width source completed :: rest).
+
+Inductive LexEvents (lhs rhs : list (Key * Value)) :
+    nat -> nat -> comparison -> list NativeEvent -> Prop :=
+| LexEventsLeftEnd : forall index,
+    nth_error lhs index = None ->
+    LexEvents lhs rhs index 0 (Nat.compare (length lhs) (length rhs))
+      [LexExhausted (Nat.compare (length lhs) (length rhs))]
+| LexEventsRightEnd : forall index left,
+    nth_error lhs index = Some left -> nth_error rhs index = None ->
+    LexEvents lhs rhs index 0 (Nat.compare (length lhs) (length rhs))
+      [LexExhausted (Nat.compare (length lhs) (length rhs))]
+| LexEventsEqual : forall index count left right answers result rest,
+    nth_error lhs index = Some left -> nth_error rhs index = Some right ->
+    PP left right answers Eq -> LexEvents lhs rhs (S index) count result rest ->
+    LexEvents lhs rhs index (S count) result
+      (pair_events (AtLexPair lhs rhs index) left right answers ++
+       AdvancedUnitLex lhs rhs index :: rest)
+| LexEventsDecisive : forall index left right answers result,
+    nth_error lhs index = Some left -> nth_error rhs index = Some right ->
+    PP left right answers result -> result <> Eq ->
+    LexEvents lhs rhs index 1 result
+      (pair_events (AtLexPair lhs rhs index) left right answers ++ [LexLeadDone result]).
+
+Inductive MapEvents (maximum : nat)
+    (left_input right_input left_output right_output : list (Key * Value))
+    (result : comparison) : list NativeEvent -> Prop :=
+| MapEventsComplete : forall lc ls rc rs n left_events right_events lex_events,
+    OuterEvents InLeftSort maximum lc 1 left_input None left_output ls left_events ->
+    OuterEvents InRightSort maximum rc 1 right_input None right_output rs right_events ->
+    LexEvents left_output right_output 0 n result lex_events ->
+    MapEvents maximum left_input right_input left_output right_output result
+      (left_events ++ ReleasedSort InLeftSort left_output ls :: EnterRightSort ::
+       right_events ++ ReleasedSort InRightSort right_output rs :: EnterUnitLex ::
+       lex_events ++ [FinishedMap result]).
+
+Theorem source_copy_constructs_its_physical_events :
+  forall destination source cursor target state after_cursor next next_state,
+  NativeCopyStep NC source cursor target state after_cursor next next_state ->
+  exists events, CopyEvents destination source cursor target after_cursor next events.
+Proof.
+  intros destination source cursor target state after_cursor next next_state STEP.
+  destruct STEP as
+    [cursor target next lhs rhs state next_state decision READY CMP COPY
+    |cursor target next state LIVE END COPY
+    |cursor target next state END LIVE COPY].
+  - assert (DEC : PC lhs rhs = decision).
+    { change ((Some (PC lhs rhs), tt) = (Some decision, next_state)) in CMP. congruence. }
+    destruct (@original_pair_responses_construct_the_request_protocol
+      Key Value key_compare value_compare key_alias value_alias lhs rhs)
+      as [answers [result PAIR]].
+    pose proof (@pair_request_accept_returns_key_then_value
+      Key Value key_compare value_compare key_alias value_alias
+      key_alias_sound value_alias_sound lhs rhs answers result PAIR) as RESULT.
+    assert (SAME : result = decision) by congruence.
+    rewrite SAME in PAIR.
+    eexists. eapply EventsAccepted; [exact READY|exact PAIR|exact COPY].
+  - eexists. eapply EventsLeftTail; eassumption.
+  - eexists. eapply EventsRightTail; eassumption.
+Qed.
+
+Theorem physical_copy_events_forget_to_the_same_native_step :
+  forall destination source cursor target after_cursor next events,
+  CopyEvents destination source cursor target after_cursor next events ->
+  NativeCopyStep NC source cursor target tt after_cursor next tt.
+Proof.
+  intros destination source cursor target after_cursor next events EVENTS.
+  destruct EVENTS as
+    [cursor target next lhs rhs answers decision READY PAIR COPY
+    |cursor target next LIVE END COPY|cursor target next END LIVE COPY].
+  - eapply NativeAccepted; [exact READY| |exact COPY].
+    change ((Some (PC lhs rhs), tt) = (Some decision, tt)).
+    rewrite (@pair_request_accept_returns_key_then_value
+      Key Value key_compare value_compare key_alias value_alias
+      key_alias_sound value_alias_sound lhs rhs answers decision PAIR). reflexivity.
+  - eapply NativeLeftTail; eassumption.
+  - eapply NativeRightTail; eassumption.
+Qed.
+
+Theorem source_run_constructs_its_sequenced_physical_events :
+  forall destination source count cursor target state final_cursor final_target last,
+  IndexedRunExecution NC source count cursor target state final_cursor final_target last ->
+  exists events, RunEvents destination source count cursor target final_cursor final_target events.
+Proof.
+  intros destination source count cursor target state final_cursor final_target last RUN.
+  induction RUN as [cursor target state EL ER
+    |count cursor target state middle next next_state fc ft last STEP TAIL IH].
+  - exists []. constructor; assumption.
+  - destruct (source_copy_constructs_its_physical_events destination source cursor target
+      state middle next next_state STEP) as [first COPY].
+    destruct IH as [rest NEXT]. exists (first ++ rest). eapply RunEventsMore; eassumption.
+Qed.
+
+Theorem sequenced_run_events_forget_to_the_same_native_run :
+  forall destination source count cursor target final_cursor final_target events,
+  RunEvents destination source count cursor target final_cursor final_target events ->
+  IndexedRunExecution NC source count cursor target tt final_cursor final_target tt.
+Proof.
+  intros destination source count cursor target final_cursor final_target events EVENTS.
+  induction EVENTS as [cursor target EL ER
+    |count cursor target middle next fc ft first rest COPY TAIL IH].
+  - constructor; assumption.
+  - eapply IndexedRunMore; [|exact IH].
+    eapply physical_copy_events_forget_to_the_same_native_step; eassumption.
+Qed.
+
+Theorem source_pass_constructs_its_sequenced_physical_events :
+  forall destination maximum width source start target state final_target last,
+  IndexedPassExecution NC maximum width source start target state final_target last ->
+  exists events, PassEvents destination maximum width source start target final_target events.
+Proof.
+  intros destination maximum width source start target state final_target last PASS.
+  induction PASS as [target state
+    |start target state count fc next next_state ft last HS RUN TAIL IH].
+  - exists []. constructor.
+  - destruct (source_run_constructs_its_sequenced_physical_events destination source count
+      (reset_cursor maximum (length source) start width) target state fc next next_state RUN)
+      as [first RUN_EVENTS].
+    destruct IH as [rest NEXT].
+    exists (RunBoundary destination maximum width source start target :: first ++ rest).
+    eapply PassEventsMore; eassumption.
+Qed.
+
+Theorem sequenced_pass_events_forget_to_the_same_native_pass :
+  forall destination maximum width source start target final_target events,
+  PassEvents destination maximum width source start target final_target events ->
+  IndexedPassExecution NC maximum width source start target tt final_target tt.
+Proof.
+  intros destination maximum width source start target final_target events EVENTS.
+  induction EVENTS as [target|start target count fc next ft first rest HS RUN TAIL IH].
+  - constructor.
+  - eapply IndexedPassMore; [exact HS| |exact IH].
+    eapply sequenced_run_events_forget_to_the_same_native_run; eassumption.
+Qed.
+
+Theorem source_outer_constructs_its_sequenced_physical_events :
+  forall destination maximum count width source scratch state output final_scratch last,
+  NativeOuterExecution NC maximum count width source scratch state output final_scratch last ->
+  exists events, OuterEvents destination maximum count width source scratch output final_scratch events.
+Proof.
+  intros destination maximum count width source scratch state output final_scratch last OUTER.
+  induction OUTER as [width source scratch state DONE
+    |count width source scratch state completed next output final_scratch last HW PASS TAIL IH].
+  - exists []. now constructor.
+  - destruct (source_pass_constructs_its_sequenced_physical_events destination maximum width
+      source 0 (scratch_payload source scratch) state completed next PASS) as [first PASS_EVENTS].
+    destruct IH as [rest NEXT].
+    exists (ScratchBoundary destination source scratch :: first ++
+      SwappedBuffers destination maximum width source completed :: rest).
+    eapply OuterEventsPass; eassumption.
+Qed.
+
+Theorem sequenced_outer_events_forget_to_the_same_native_outer :
+  forall destination maximum count width source scratch output final_scratch events,
+  OuterEvents destination maximum count width source scratch output final_scratch events ->
+  NativeOuterExecution NC maximum count width source scratch tt output final_scratch tt.
+Proof.
+  intros destination maximum count width source scratch output final_scratch events EVENTS.
+  induction EVENTS as [width source scratch DONE
+    |count width source scratch completed output final_scratch first rest HW PASS TAIL IH].
+  - now constructor.
+  - eapply NativeOuterPass; [exact HW| |exact IH].
+    eapply sequenced_pass_events_forget_to_the_same_native_pass; eassumption.
+Qed.
+
+Theorem source_unit_lex_constructs_its_sequenced_events :
+  forall lhs rhs index count result,
+  UL lhs rhs index count result -> exists events, LexEvents lhs rhs index count result events.
+Proof.
+  intros lhs rhs index count result LEX.
+  induction LEX as [index END|index left NL END
+    |index count left right answers result NL NR PAIR TAIL IH
+    |index left right answers result NL NR PAIR DEC].
+  - eexists. now apply LexEventsLeftEnd.
+  - eexists. eapply LexEventsRightEnd; eassumption.
+  - destruct IH as [rest NEXT]. eexists. eapply LexEventsEqual; eassumption.
+  - eexists. eapply LexEventsDecisive; eassumption.
+Qed.
+
+Theorem sequenced_unit_lex_events_forget_to_the_same_native_lex :
+  forall lhs rhs index count result events,
+  LexEvents lhs rhs index count result events -> UL lhs rhs index count result.
+Proof.
+  intros lhs rhs index count result events EVENTS.
+  induction EVENTS as [index END|index left NL END
+    |index count left right answers result rest NL NR PAIR TAIL IH
+    |index left right answers result NL NR PAIR DEC].
+  - now apply UnitLeftExhausted.
+  - eapply UnitRightExhausted; eassumption.
+  - eapply UnitEqualPair; eassumption.
+  - eapply UnitDecisivePair; eassumption.
+Qed.
+
+Theorem every_native_map_completion_constructs_its_resume_spine :
+  forall maximum left_input right_input left_output right_output result,
+  MapNativeCompletion key_compare value_compare key_alias value_alias
+    maximum left_input right_input left_output right_output result ->
+  exists events, MapEvents maximum left_input right_input left_output right_output result events.
+Proof.
+  intros maximum left_input right_input left_output right_output result COMPLETE.
+  destruct COMPLETE as [lc ls rc rs n LEFT RIGHT LEX].
+  destruct (source_outer_constructs_its_sequenced_physical_events InLeftSort maximum
+    lc 1 left_input None tt left_output ls tt LEFT) as [le LEFT_EVENTS].
+  destruct (source_outer_constructs_its_sequenced_physical_events InRightSort maximum
+    rc 1 right_input None tt right_output rs tt RIGHT) as [re RIGHT_EVENTS].
+  destruct (source_unit_lex_constructs_its_sequenced_events
+    left_output right_output 0 n result LEX) as [xe LEX_EVENTS].
+  eexists. eapply MapEventsComplete; eassumption.
+Qed.
+
+Theorem constructed_resume_spine_retains_the_actual_map_completion :
+  forall maximum left_input right_input left_output right_output result events,
+  MapEvents maximum left_input right_input left_output right_output result events ->
+  MapNativeCompletion key_compare value_compare key_alias value_alias
+    maximum left_input right_input left_output right_output result.
+Proof.
+  intros maximum left_input right_input left_output right_output result events EVENTS.
+  destruct EVENTS as [lc ls rc rs n le re xe LEFT RIGHT LEX].
+  eapply MapNativeCompleted.
+  - eapply sequenced_outer_events_forget_to_the_same_native_outer; exact LEFT.
+  - eapply sequenced_outer_events_forget_to_the_same_native_outer; exact RIGHT.
+  - eapply sequenced_unit_lex_events_forget_to_the_same_native_lex; exact LEX.
+Qed.
+
+Definition focus_has_requested_operands focus lhs rhs := match focus with
+| AtSortPair _ source cursor _ => NativeRequest source cursor lhs rhs
+| AtLexPair left_items right_items index =>
+    nth_error left_items index = Some lhs /\ nth_error right_items index = Some rhs end.
+Definition original_answer role lhs rhs response := match role with
+| AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.Primary =>
+    key_compare (fst lhs) (fst rhs) = response
+| AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.Secondary =>
+    value_compare (snd lhs) (snd rhs) = response end.
+Definition pair_answer_law lhs rhs (answer : Answer) :=
+  Pending lhs rhs (fst answer) /\ original_answer (fst answer) lhs rhs (snd answer).
+
+Lemma existing_pair_protocol_certifies_every_pending_answer :
+  forall lhs rhs answers result, PP lhs rhs answers result ->
+  Forall (pair_answer_law lhs rhs) answers.
+Proof.
+  intros lhs rhs answers result PAIR.
+  destruct PAIR as [answers result HA SECOND|result HA HK DEC|answers result HA HK SECOND].
+  - destruct SECOND as [VA|result VA HR].
+    + constructor.
+    + constructor; [|constructor]. split; [now apply SavedSecondaryAfterAlias|exact HR].
+  - constructor; [|constructor]. split; [now apply SavedPrimaryPending|exact HK].
+  - constructor.
+    + split; [now apply SavedPrimaryPending|exact HK].
+    + destruct SECOND as [VA|result VA HR].
+      * constructor.
+      * constructor; [|constructor]. split; [eapply SavedSecondaryAfterEqual; eassumption|exact HR].
+Qed.
+
+Definition native_body_event_law event := match event with
+| PairAnswers focus lhs rhs answers =>
+    focus_has_requested_operands focus lhs rhs /\ exists result, PP lhs rhs answers result
+| CopiedRecord _ source cursor target side next =>
+    copy_record side cursor source target = Some (advance side cursor, next)
+| SwappedBuffers _ maximum width source completed =>
+    exists target, IndexedPassExecution NC maximum width source 0 target tt completed tt
+| FinishedMap _ => False
+| _ => True end.
+
+Lemma pair_event_annotation_has_exact_original_operands :
+  forall focus lhs rhs answers result,
+  focus_has_requested_operands focus lhs rhs -> PP lhs rhs answers result ->
+  Forall native_body_event_law (pair_events focus lhs rhs answers).
+Proof.
+  intros focus lhs rhs answers result FOCUS PAIR.
+  constructor; [|constructor]. split; [exact FOCUS|]. exists result. exact PAIR.
+Qed.
+
+Lemma physical_copy_event_annotation_is_certified :
+  forall destination source cursor target after_cursor next events,
+  CopyEvents destination source cursor target after_cursor next events ->
+  Forall native_body_event_law events.
+Proof.
+  intros destination source cursor target after_cursor next events EVENTS.
+  destruct EVENTS as [cursor target next lhs rhs answers decision READY PAIR COPY
+    |cursor target next LIVE END COPY|cursor target next END LIVE COPY].
+  - apply Forall_app. split.
+    + eapply pair_event_annotation_has_exact_original_operands; eassumption.
+    + constructor; [exact COPY|constructor].
+  - constructor; [exact COPY|constructor].
+  - constructor; [exact COPY|constructor].
+Qed.
+Lemma sequenced_run_event_annotation_is_certified :
+  forall destination source count cursor target final_cursor final_target events,
+  RunEvents destination source count cursor target final_cursor final_target events ->
+  Forall native_body_event_law events.
+Proof.
+  intros destination source count cursor target final_cursor final_target events EVENTS.
+  induction EVENTS as [cursor target EL ER|count cursor target middle next fc ft first rest COPY TAIL IH].
+  - constructor.
+  - apply Forall_app. split; [eapply physical_copy_event_annotation_is_certified; exact COPY|exact IH].
+Qed.
+Lemma sequenced_pass_event_annotation_is_certified :
+  forall destination maximum width source start target final_target events,
+  PassEvents destination maximum width source start target final_target events ->
+  Forall native_body_event_law events.
+Proof.
+  intros destination maximum width source start target final_target events EVENTS.
+  induction EVENTS as [target|start target count fc next ft first rest HS RUN TAIL IH].
+  - constructor.
+  - constructor; [exact I|]. apply Forall_app. split;
+      [eapply sequenced_run_event_annotation_is_certified; exact RUN|exact IH].
+Qed.
+Lemma sequenced_outer_event_annotation_is_certified :
+  forall destination maximum count width source scratch output final_scratch events,
+  OuterEvents destination maximum count width source scratch output final_scratch events ->
+  Forall native_body_event_law events.
+Proof.
+  intros destination maximum count width source scratch output final_scratch events EVENTS.
+  induction EVENTS as [width source scratch DONE
+    |count width source scratch completed output final_scratch first rest HW PASS TAIL IH].
+  - constructor.
+  - constructor; [exact I|]. apply Forall_app. split.
+    + eapply sequenced_pass_event_annotation_is_certified; exact PASS.
+    + constructor; [|exact IH]. exists (scratch_payload source scratch).
+      eapply sequenced_pass_events_forget_to_the_same_native_pass; exact PASS.
+Qed.
+Lemma sequenced_unit_lex_event_annotation_is_certified :
+  forall lhs rhs index count result events,
+  LexEvents lhs rhs index count result events -> Forall native_body_event_law events.
+Proof.
+  intros lhs rhs index count result events EVENTS.
+  induction EVENTS as [index END|index left NL END
+    |index count left right answers result rest NL NR PAIR TAIL IH
+    |index left right answers result NL NR PAIR DEC].
+  - constructor; [exact I|constructor].
+  - constructor; [exact I|constructor].
+  - apply Forall_app. split.
+    + eapply pair_event_annotation_has_exact_original_operands; [split; eassumption|exact PAIR].
+    + constructor; [exact I|exact IH].
+  - apply Forall_app. split.
+    + eapply pair_event_annotation_has_exact_original_operands; [split; eassumption|exact PAIR].
+    + constructor; [exact I|constructor].
+Qed.
+
+(** Local block adjacency is exported separately from per-event validity.
+    The entire MapEvents certificate is still required for global physical
+    sequencing; Forall native_body_event_law alone is not a native path. *)
+Definition pair_following_action focus lhs rhs answers next :=
+  exists decision, PP lhs rhs answers decision /\
+  match focus with
+  | AtSortPair destination source cursor target =>
+      exists output, next = CopiedRecord destination source cursor target (accept_side decision) output
+  | AtLexPair left_items right_items index =>
+      next = match decision with
+        | Eq => AdvancedUnitLex left_items right_items index
+        | Lt | Gt => LexLeadDone decision end
+  end.
+Fixpoint pair_edges events : Prop := match events with
+| [] => True
+| PairAnswers focus lhs rhs answers :: rest =>
+    (match rest with [] => False | next :: _ => pair_following_action focus lhs rhs answers next end) /\
+    pair_edges rest
+| _ :: rest => pair_edges rest end.
+
+Lemma pair_edges_app : forall first rest,
+  pair_edges first -> pair_edges rest -> pair_edges (first ++ rest).
+Proof.
+  induction first as [|event first IH]; intros rest FIRST REST; [exact REST|].
+  destruct event; cbn [pair_edges app] in FIRST |- *;
+    try (exact (IH rest FIRST REST)).
+  destruct first as [|next first]; [destruct FIRST as [IMP _]; contradiction|].
+  destruct FIRST as [EDGE TAIL]. split; [exact EDGE|]. exact (IH rest TAIL REST).
+Qed.
+Lemma pair_edges_suffix : forall first rest,
+  pair_edges (first ++ rest) -> pair_edges rest.
+Proof.
+  induction first as [|event first IH]; intros rest PATH; [exact PATH|].
+  destruct event; cbn [pair_edges app] in PATH; apply IH;
+    exact PATH || exact (proj2 PATH).
+Qed.
+Lemma own_pair_action_extends_the_certified_path :
+  forall focus lhs rhs answers next rest,
+  pair_following_action focus lhs rhs answers next -> pair_edges (next :: rest) ->
+  pair_edges (pair_events focus lhs rhs answers ++ next :: rest).
+Proof. intros. unfold pair_events. cbn [pair_edges app]. split; assumption. Qed.
+
+Lemma copy_events_preserve_their_own_pair_edges :
+  forall destination source cursor target after_cursor next events,
+  CopyEvents destination source cursor target after_cursor next events -> pair_edges events.
+Proof.
+  intros destination source cursor target after_cursor next events EVENTS.
+  destruct EVENTS as [cursor target next lhs rhs answers decision READY PAIR COPY
+    |cursor target next LIVE END COPY|cursor target next END LIVE COPY].
+  - apply own_pair_action_extends_the_certified_path; [|exact I].
+    exists decision. split; [exact PAIR|]. exists next. reflexivity.
+  - exact I.
+  - exact I.
+Qed.
+Lemma run_events_preserve_their_own_pair_edges :
+  forall destination source count cursor target final_cursor final_target events,
+  RunEvents destination source count cursor target final_cursor final_target events -> pair_edges events.
+Proof.
+  intros destination source count cursor target final_cursor final_target events EVENTS.
+  induction EVENTS as [cursor target EL ER|count cursor target middle next fc ft first rest COPY TAIL IH].
+  - exact I.
+  - apply pair_edges_app; [eapply copy_events_preserve_their_own_pair_edges; exact COPY|exact IH].
+Qed.
+Lemma pass_events_preserve_their_own_pair_edges :
+  forall destination maximum width source start target final_target events,
+  PassEvents destination maximum width source start target final_target events -> pair_edges events.
+Proof.
+  intros destination maximum width source start target final_target events EVENTS.
+  induction EVENTS as [target|start target count fc next ft first rest HS RUN TAIL IH].
+  - exact I.
+  - cbn [pair_edges]. apply pair_edges_app;
+      [eapply run_events_preserve_their_own_pair_edges; exact RUN|exact IH].
+Qed.
+Lemma outer_events_preserve_their_own_pair_edges :
+  forall destination maximum count width source scratch output final_scratch events,
+  OuterEvents destination maximum count width source scratch output final_scratch events -> pair_edges events.
+Proof.
+  intros destination maximum count width source scratch output final_scratch events EVENTS.
+  induction EVENTS as [width source scratch DONE
+    |count width source scratch completed output final_scratch first rest HW PASS TAIL IH].
+  - exact I.
+  - cbn [pair_edges]. apply pair_edges_app;
+      [eapply pass_events_preserve_their_own_pair_edges; exact PASS|exact IH].
+Qed.
+Lemma lex_events_preserve_their_own_pair_edges :
+  forall lhs rhs index count result events,
+  LexEvents lhs rhs index count result events -> pair_edges events.
+Proof.
+  intros lhs rhs index count result events EVENTS.
+  induction EVENTS as [index END|index left NL END
+    |index count left right answers result rest NL NR PAIR TAIL IH
+    |index left right answers result NL NR PAIR DEC].
+  - exact I.
+  - exact I.
+  - apply own_pair_action_extends_the_certified_path; [|exact IH].
+    exists Eq. split; [exact PAIR|reflexivity].
+  - apply own_pair_action_extends_the_certified_path; [|exact I].
+    exists result. split; [exact PAIR|]. destruct result; [contradiction|reflexivity|reflexivity].
+Qed.
+
+Theorem complete_spine_has_one_terminal_after_its_certified_body :
+  forall maximum left_input right_input left_output right_output result events,
+  MapEvents maximum left_input right_input left_output right_output result events ->
+  exists body,
+    events = body ++ [FinishedMap result] /\
+    Forall native_body_event_law body /\ pair_edges body.
+Proof.
+  intros maximum left_input right_input left_output right_output result events EVENTS.
+  destruct EVENTS as [lc ls rc rs n le re xe LEFT RIGHT LEX].
+  pose proof (sequenced_outer_event_annotation_is_certified
+    InLeftSort maximum lc 1 left_input None left_output ls le LEFT) as VL.
+  pose proof (sequenced_outer_event_annotation_is_certified
+    InRightSort maximum rc 1 right_input None right_output rs re RIGHT) as VR.
+  pose proof (sequenced_unit_lex_event_annotation_is_certified
+    left_output right_output 0 n result xe LEX) as VX.
+  pose proof (outer_events_preserve_their_own_pair_edges
+    InLeftSort maximum lc 1 left_input None left_output ls le LEFT) as EL.
+  pose proof (outer_events_preserve_their_own_pair_edges
+    InRightSort maximum rc 1 right_input None right_output rs re RIGHT) as ER.
+  pose proof (lex_events_preserve_their_own_pair_edges
+    left_output right_output 0 n result xe LEX) as EX.
+  exists (le ++ [ReleasedSort InLeftSort left_output ls; EnterRightSort] ++
+    re ++ [ReleasedSort InRightSort right_output rs; EnterUnitLex] ++ xe).
+  split.
+  - repeat rewrite <- app_assoc. reflexivity.
+  - split.
+    + repeat rewrite Forall_app. repeat split; try assumption; repeat constructor.
+    + apply pair_edges_app; [exact EL|]. cbn [pair_edges app].
+      apply pair_edges_app; [exact ER|]. cbn [pair_edges app]. exact EX.
+Qed.
+
+(** A cut retains arbitrary executed physical events and an arbitrary
+    answered prefix in its current pair block. Only the residual suffix is
+    searched after the last answer; the initial spine is never replayed. *)
+Definition AtAnswer body before focus lhs rhs answered pending remaining after :=
+  body = before ++ PairAnswers focus lhs rhs (answered ++ pending :: remaining) :: after.
+Definition quiet_event event := match event with
+| PairAnswers _ _ _ answers => answers = []
+| FinishedMap _ => False
+| _ => True end.
+
+Theorem every_retained_answer_cut_has_its_exact_source_pending_state :
+  forall body before focus lhs rhs answered pending remaining after,
+  Forall native_body_event_law body ->
+  AtAnswer body before focus lhs rhs answered pending remaining after ->
+  focus_has_requested_operands focus lhs rhs /\
+  Pending lhs rhs (fst pending) /\ original_answer (fst pending) lhs rhs (snd pending) /\
+  Forall native_body_event_law after.
+Proof.
+  intros body before focus lhs rhs answered pending remaining after VALID CUT.
+  unfold AtAnswer in CUT. rewrite CUT in VALID.
+  apply Forall_app in VALID as [PAST CURRENT].
+  inversion CURRENT as [|event rest BLOCK FUTURE]; subst.
+  destruct BLOCK as [FOCUS [result PAIR]].
+  pose proof (existing_pair_protocol_certifies_every_pending_answer
+    lhs rhs (answered ++ pending :: remaining) result PAIR) as ANSWERS.
+  apply Forall_app in ANSWERS as [DONE NEXT].
+  inversion NEXT as [|answer tail CURRENT_ANSWER LATER]; subst.
+  destruct CURRENT_ANSWER as [PENDING RESPONSE].
+  split; [exact FOCUS|]. split; [exact PENDING|]. split; assumption.
+Qed.
+
+Theorem every_retained_pair_cut_exposes_its_own_physical_accept_action :
+  forall body before focus lhs rhs answered pending remaining after,
+  pair_edges body ->
+  AtAnswer body before focus lhs rhs answered pending remaining after ->
+  exists next rest,
+    after = next :: rest /\
+    pair_following_action focus lhs rhs (answered ++ pending :: remaining) next /\
+    pair_edges after.
+Proof.
+  intros body before focus lhs rhs answered pending remaining after EDGES CUT.
+  unfold AtAnswer in CUT. rewrite CUT in EDGES.
+  pose proof (pair_edges_suffix before
+    (PairAnswers focus lhs rhs (answered ++ pending :: remaining) :: after) EDGES) as CURRENT.
+  cbn [pair_edges] in CURRENT. destruct CURRENT as [EDGE FUTURE].
+  destruct after as [|next rest]; [contradiction|].
+  exists next, rest. split; [reflexivity|]. split; assumption.
+Qed.
+
+Lemma certified_event_is_quiet_or_a_nonempty_pair_block : forall event,
+  native_body_event_law event -> quiet_event event \/
+  exists focus lhs rhs pending remaining,
+    event = PairAnswers focus lhs rhs (pending :: remaining).
+Proof.
+  intros event.
+  destruct event as [focus lhs rhs answers
+    |destination source cursor target side next
+    |destination maximum width source start target
+    |destination source scratch
+    |destination maximum width source completed
+    |destination output scratch
+    | | |lhs rhs index|decision|decision|decision];
+    cbn [native_body_event_law quiet_event]; intro VALID;
+    try (left; exact I); try contradiction.
+  destruct answers as [|pending remaining].
+  - left. reflexivity.
+  - right. exists focus, lhs, rhs, pending, remaining. reflexivity.
+Qed.
+
+Theorem certified_suffix_exposes_its_next_pair_or_terminal_path : forall body,
+  Forall native_body_event_law body ->
+  Forall quiet_event body \/
+  exists before focus lhs rhs pending remaining after,
+    Forall quiet_event before /\ AtAnswer body before focus lhs rhs [] pending remaining after.
+Proof.
+  intros body VALID. induction VALID as [|event rest HEAD TAIL IH].
+  - left. constructor.
+  - destruct (certified_event_is_quiet_or_a_nonempty_pair_block event HEAD)
+      as [QUIET|[focus [lhs [rhs [pending [remaining EVENT]]]]]].
+    + destruct IH as [DONE|[before [focus [lhs [rhs [pending [remaining [after [PREFIX CUT]]]]]]]]].
+      * left. constructor; assumption.
+      * right. exists (event :: before), focus, lhs, rhs, pending, remaining, after.
+        split; [constructor; assumption|]. unfold AtAnswer in *. cbn [app]. now rewrite CUT.
+    + right. exists [], focus, lhs, rhs, pending, remaining, rest.
+      split; [constructor|]. unfold AtAnswer. cbn [app]. now rewrite EVENT.
+Qed.
+
+Lemma two_original_answers_at_the_same_pending_role_are_equal :
+  forall role lhs rhs first second,
+  original_answer role lhs rhs first -> original_answer role lhs rhs second -> first = second.
+Proof. intros role lhs rhs first second H1 H2. destruct role; cbn in *; congruence. Qed.
+
+Theorem matching_response_advances_within_the_same_native_pair_hole :
+  forall body before focus lhs rhs answered pending next remaining after response,
+  Forall native_body_event_law body ->
+  AtAnswer body before focus lhs rhs answered pending (next :: remaining) after ->
+  original_answer (fst pending) lhs rhs response ->
+  response = snd pending /\
+  AtAnswer body before focus lhs rhs (answered ++ [pending]) next remaining after.
+Proof.
+  intros body before focus lhs rhs answered pending next remaining after response VALID CUT RESPONSE.
+  destruct (every_retained_answer_cut_has_its_exact_source_pending_state
+    body before focus lhs rhs answered pending (next :: remaining) after VALID CUT)
+    as [FOCUS [PENDING [EXPECTED FUTURE]]]. split.
+  - eapply two_original_answers_at_the_same_pending_role_are_equal; eassumption.
+  - unfold AtAnswer in *. rewrite <- app_assoc. cbn [app]. exact CUT.
+Qed.
+
+Theorem matching_last_response_advances_into_the_saved_physical_suffix :
+  forall body before focus lhs rhs answered pending after response,
+  Forall native_body_event_law body ->
+  AtAnswer body before focus lhs rhs answered pending [] after ->
+  original_answer (fst pending) lhs rhs response ->
+  response = snd pending /\
+  body = (before ++ [PairAnswers focus lhs rhs (answered ++ [pending])]) ++ after /\
+  Forall native_body_event_law after /\
+  (Forall quiet_event after \/
+    exists quiet next_focus next_lhs next_rhs next remaining later,
+      Forall quiet_event quiet /\
+      AtAnswer body
+        ((before ++ [PairAnswers focus lhs rhs (answered ++ [pending])]) ++ quiet)
+        next_focus next_lhs next_rhs [] next remaining later).
+Proof.
+  intros body before focus lhs rhs answered pending after response VALID CUT RESPONSE.
+  destruct (every_retained_answer_cut_has_its_exact_source_pending_state
+    body before focus lhs rhs answered pending [] after VALID CUT)
+    as [FOCUS [PENDING [EXPECTED FUTURE]]].
+  assert (PATH : body = (before ++ [PairAnswers focus lhs rhs (answered ++ [pending])]) ++ after).
+  { unfold AtAnswer in CUT. rewrite <- app_assoc. cbn [app]. exact CUT. }
+  split.
+  - eapply two_original_answers_at_the_same_pending_role_are_equal; eassumption.
+  - split; [exact PATH|]. split; [exact FUTURE|].
+    destruct (certified_suffix_exposes_its_next_pair_or_terminal_path after FUTURE)
+      as [DONE|[quiet [nf [nl [nr [next [remaining [later [QUIET NEXT]]]]]]]]].
+    + left. exact DONE.
+    + right. exists quiet, nf, nl, nr, next, remaining, later. split; [exact QUIET|].
+      unfold AtAnswer in NEXT |- *. rewrite PATH, NEXT.
+      repeat rewrite <- app_assoc. reflexivity.
+Qed.
+
+(** Initial extraction and every later cut retain this SAME MapEvents path.
+    Arbitrary-prefix advance above supplies the induction over resumed child
+    answers. Quiet events are still real admitted work; quiet means only that
+    no external child answer is needed, not that executing them is free. *)
+Theorem native_completion_constructs_a_certified_initial_resume_frontier :
+  forall maximum li ri lo ro result,
+  MapNativeCompletion key_compare value_compare key_alias value_alias maximum li ri lo ro result ->
+  exists body,
+    MapEvents maximum li ri lo ro result (body ++ [FinishedMap result]) /\
+    Forall native_body_event_law body /\ pair_edges body /\
+    (Forall quiet_event body \/
+      exists before focus lhs rhs pending remaining after,
+        Forall quiet_event before /\ AtAnswer body before focus lhs rhs [] pending remaining after).
+Proof.
+  intros maximum li ri lo ro result COMPLETE.
+  destruct (every_native_map_completion_constructs_its_resume_spine
+    maximum li ri lo ro result COMPLETE) as [events EVENTS].
+  destruct (complete_spine_has_one_terminal_after_its_certified_body
+    maximum li ri lo ro result events EVENTS) as [body [END [VALID EDGES]]].
+  subst events. exists body. split; [exact EVENTS|].
+  split; [exact VALID|]. split; [exact EDGES|].
+  now apply certified_suffix_exposes_its_next_pair_or_terminal_path.
+Qed.
+End AnnotatedResumption.
 End NativeMapRunSuspension.
 
 Print Assumptions NativeMapRunSuspension.native_primary_request_cut_and_plug.
@@ -641,3 +1388,39 @@ Print Assumptions NativeMapRunSuspension.saved_unit_prefix_plugs_the_same_native
 Print Assumptions NativeMapRunSuspension.accepted_lex_pair_takes_its_original_equal_or_lead_branch.
 Print Assumptions NativeMapRunSuspension.completed_lex_pair_plugs_its_saved_actual_map_destination.
 Print Assumptions NativeMapRunSuspension.original_pair_responses_construct_the_complete_map_phase_witness.
+Print Assumptions NativeMapRunSuspension.source_copy_constructs_its_physical_events.
+Print Assumptions NativeMapRunSuspension.physical_copy_events_forget_to_the_same_native_step.
+Print Assumptions NativeMapRunSuspension.source_run_constructs_its_sequenced_physical_events.
+Print Assumptions NativeMapRunSuspension.sequenced_run_events_forget_to_the_same_native_run.
+Print Assumptions NativeMapRunSuspension.source_pass_constructs_its_sequenced_physical_events.
+Print Assumptions NativeMapRunSuspension.sequenced_pass_events_forget_to_the_same_native_pass.
+Print Assumptions NativeMapRunSuspension.source_outer_constructs_its_sequenced_physical_events.
+Print Assumptions NativeMapRunSuspension.sequenced_outer_events_forget_to_the_same_native_outer.
+Print Assumptions NativeMapRunSuspension.source_unit_lex_constructs_its_sequenced_events.
+Print Assumptions NativeMapRunSuspension.sequenced_unit_lex_events_forget_to_the_same_native_lex.
+Print Assumptions NativeMapRunSuspension.every_native_map_completion_constructs_its_resume_spine.
+Print Assumptions NativeMapRunSuspension.constructed_resume_spine_retains_the_actual_map_completion.
+Print Assumptions NativeMapRunSuspension.existing_pair_protocol_certifies_every_pending_answer.
+Print Assumptions NativeMapRunSuspension.pair_event_annotation_has_exact_original_operands.
+Print Assumptions NativeMapRunSuspension.physical_copy_event_annotation_is_certified.
+Print Assumptions NativeMapRunSuspension.sequenced_run_event_annotation_is_certified.
+Print Assumptions NativeMapRunSuspension.sequenced_pass_event_annotation_is_certified.
+Print Assumptions NativeMapRunSuspension.sequenced_outer_event_annotation_is_certified.
+Print Assumptions NativeMapRunSuspension.sequenced_unit_lex_event_annotation_is_certified.
+Print Assumptions NativeMapRunSuspension.pair_edges_app.
+Print Assumptions NativeMapRunSuspension.pair_edges_suffix.
+Print Assumptions NativeMapRunSuspension.own_pair_action_extends_the_certified_path.
+Print Assumptions NativeMapRunSuspension.copy_events_preserve_their_own_pair_edges.
+Print Assumptions NativeMapRunSuspension.run_events_preserve_their_own_pair_edges.
+Print Assumptions NativeMapRunSuspension.pass_events_preserve_their_own_pair_edges.
+Print Assumptions NativeMapRunSuspension.outer_events_preserve_their_own_pair_edges.
+Print Assumptions NativeMapRunSuspension.lex_events_preserve_their_own_pair_edges.
+Print Assumptions NativeMapRunSuspension.complete_spine_has_one_terminal_after_its_certified_body.
+Print Assumptions NativeMapRunSuspension.every_retained_answer_cut_has_its_exact_source_pending_state.
+Print Assumptions NativeMapRunSuspension.every_retained_pair_cut_exposes_its_own_physical_accept_action.
+Print Assumptions NativeMapRunSuspension.certified_event_is_quiet_or_a_nonempty_pair_block.
+Print Assumptions NativeMapRunSuspension.certified_suffix_exposes_its_next_pair_or_terminal_path.
+Print Assumptions NativeMapRunSuspension.two_original_answers_at_the_same_pending_role_are_equal.
+Print Assumptions NativeMapRunSuspension.matching_response_advances_within_the_same_native_pair_hole.
+Print Assumptions NativeMapRunSuspension.matching_last_response_advances_into_the_saved_physical_suffix.
+Print Assumptions NativeMapRunSuspension.native_completion_constructs_a_certified_initial_resume_frontier.
