@@ -27,6 +27,7 @@
 # Reuse the existing dependency-free stable merge model for cursor refinement.
 -Q ../runtime_grammar/theories RuntimeGrammar
 ../runtime_grammar/theories/SemanticResultMerge.v
+../runtime_grammar/theories/SemanticComparisonLaws.v
 
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
@@ -83,6 +84,7 @@ theories/AdmittedGeneratedCollectionScheduling.v
 theories/MergeSortPdaCursor.v
 theories/MergeSortPdaRun.v
 theories/MergeSortPdaPass.v
+theories/AdmittedComparisonClasses.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
