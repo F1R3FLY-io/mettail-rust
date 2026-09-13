@@ -173,6 +173,105 @@ impl CollectionCmpItem {
             repetitions: 1,
         }
     }
+
+    /// Admits flat metadata inspection and returns a unit pair's exact pointers.
+    ///
+    /// This does not dereference, compare, or certify the borrowed terms. The
+    /// caller must retain them and restore their original types before use.
+    pub fn try_pair_ptrs<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(*const (), *const ()), NativeComparisonFailure<E>> {
+        let mut policy = CheckedPolicy(reserve);
+        policy.work(1)?;
+        match (self.secondary, self.repetitions) {
+            (Some(secondary), 1) => Ok((self.primary, secondary)),
+            _ => Err(policy.protocol("collection sort requires a unit-multiplicity pair")),
+        }
+    }
+}
+
+/// Consumed continuation for the existing stable bottom-up merge sorter.
+///
+/// Construction accepts only a prepaid roster. Each comparison request returns
+/// the same owner; budget or protocol refusal consumes it. Requested entry
+/// comparisons remain the caller's responsibility and need their own admission.
+#[derive(Debug)]
+pub struct CheckedCollectionSortPda {
+    machine: Box<MergeSortPda>,
+}
+
+#[derive(Debug)]
+pub enum CheckedCollectionSortStep {
+    CompareEntries {
+        machine: CheckedCollectionSortPda,
+        left: CollectionCmpItem,
+        right: CollectionCmpItem,
+    },
+    Done(CheckedSortedCmpRoster),
+}
+
+/// Completed sort storage with prepaid normal disposal and admitted reverse pops.
+///
+/// There is intentionally no append or mutable-slice interface: a merge swap
+/// can leave the source allocation smaller than the input's reserved width.
+/// These flat records borrow child terms; this owner does not keep them alive.
+#[derive(Debug)]
+pub struct CheckedSortedCmpRoster {
+    items: Vec<CollectionCmpItem>,
+}
+
+impl CheckedSortedCmpRoster {
+    /// Pays before removing the last sorted entry, including a terminal empty
+    /// pop. Reservation failure leaves the remaining roster unchanged.
+    pub fn try_pop<E>(
+        &mut self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Option<CollectionCmpItem>, NativeComparisonFailure<E>> {
+        CheckedPolicy(reserve).work(1)?;
+        Ok(self.items.pop())
+    }
+}
+
+impl CheckedCollectionSortPda {
+    pub fn try_new<E>(
+        input: CheckedCmpRoster,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<Self, NativeComparisonFailure<E>> {
+        if !CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(NativeComparisonFailure::UnsupportedProfile);
+        }
+        reserve_binding_parts(2, 1, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+        let machine = MergeSortPda::new(input.items, &mut CheckedPolicy(reserve))?;
+        Ok(Self { machine: Box::new(machine) })
+    }
+
+    /// Supplies exactly one ordering after a request, or None for the initial
+    /// step. Done transfers only the sorted source buffer, never a continuation.
+    pub fn try_resume<E>(
+        mut self,
+        result: Option<Ordering>,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<CheckedCollectionSortStep, NativeComparisonFailure<E>> {
+        let mut policy = CheckedPolicy(reserve);
+        policy.work(1)?;
+        if let Some(ordering) = result {
+            self.machine.accept(ordering, &mut policy)?;
+        }
+        let step = self.machine.step(&mut policy)?;
+        policy.work(1)?;
+        match step {
+            MergeSortStep::Compare(left, right) => {
+                Ok(CheckedCollectionSortStep::CompareEntries { machine: self, left, right })
+            },
+            MergeSortStep::Done => {
+                self.machine.release_scratch(&mut policy)?;
+                policy.work(1)?;
+                let MergeSortPda { source, .. } = *self.machine;
+                Ok(CheckedCollectionSortStep::Done(CheckedSortedCmpRoster { items: source }))
+            },
+        }
+    }
 }
 
 #[derive(Debug)]

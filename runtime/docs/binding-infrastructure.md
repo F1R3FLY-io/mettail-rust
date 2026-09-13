@@ -900,6 +900,47 @@ These remain logical source-work contracts: allocator internals and panic-unwind
 recovery are separate obligations, and this interface alone does not activate
 bounded public preparation.
 
+##### Consumed sorting and non-appendable output
+
+`CheckedCollectionSortPda` exposes the same merge sorter independently of the
+two-roster comparison controller. It consumes one prepaid `CheckedCmpRoster`;
+`try_resume(None, reserve)` starts it, and each `CompareEntries` returns the
+same continuation with two whole flat records. The caller supplies their
+ordering on the next resume. The wrapper does not compare child terms or
+certify the cost or laws of a caller-supplied comparison.
+
+Completion releases scratch and transfers the current source allocation into
+`CheckedSortedCmpRoster`. Its only data operation is `try_pop`, which consumes
+entries in reverse sorted order. There is no append, mutable slice, clone or
+conversion back into a mutable input roster. This distinction matters for
+partially filled inputs: the initial allocation can reserve more entries than
+are present, while scratch is allocated for the filled length. After a swap,
+the source must not inherit the original input's larger append allowance.
+Each buffer retains its own prepaid disposal credit.
+
+| Wrapper boundary | Additional admission before its action |
+|---|---|
+| Construction | Two work units and one record before the existing initialization and box allocation |
+| Resume ingress | One work unit before inspecting the supplied optional result |
+| Resume outcome | One work unit before transferring a continuation or entering completion |
+| Completion | Existing scratch-release work, then one work unit before source extraction, box release and publication |
+| Sorted pop | One work unit, including a terminal empty pop; refusal preserves the remaining entries |
+| `CollectionCmpItem::try_pair_ptrs` | One work unit before checking a present secondary pointer and unit multiplicity; no child dereference |
+
+The existing sorter charges its initialization, request/accept, copies, guards
+and pass transitions unchanged. A missing or unrequested response is rejected
+by its existing protocol guard. A failed resume returns no continuation;
+completion returns no resumable machine. Raw pointers still require the caller
+to retain their source terms and restore the correct types.
+
+The [sorting-wrapper model](../../formal/rocq/rho_bridge/theories/AdmittedCollectionSortOwnership.v)
+proves these reservation boundaries, current-allocation transfer, remaining
+cleanup and removal of wrapper-only events from the successful trace. It
+composes with the [native buffer lifecycle model](../../formal/rocq/rho_bridge/theories/MergeSortPdaNativeOuter.v),
+which connects actual indexed passes and buffer swaps to the existing stable
+merge model. These are not claims of complete generated Map hashing or of
+comparator-law coverage for every language constructor.
+
 #### Native comparison-leaf admission
 
 [`CheckedNativeEqualityLeaf` and `CheckedNativeOrderingLeaf`](../src/checked_cmp.rs)

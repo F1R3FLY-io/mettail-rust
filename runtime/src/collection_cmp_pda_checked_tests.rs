@@ -44,7 +44,15 @@ fn roster(
     items: &[CollectionCmpItem],
     reserve: &mut impl FnMut(usize, usize) -> Result<(), ()>,
 ) -> Result<CheckedCmpRoster, Failure> {
-    let mut result = CheckedCmpRoster::try_with_capacity(items.len(), reserve)?;
+    roster_with_capacity(items, items.len(), reserve)
+}
+
+fn roster_with_capacity(
+    items: &[CollectionCmpItem],
+    reserved_width: usize,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), ()>,
+) -> Result<CheckedCmpRoster, Failure> {
+    let mut result = CheckedCmpRoster::try_with_capacity(reserved_width, reserve)?;
     for item in items {
         // The same live source addresses are supplied to ordinary().
         unsafe {
@@ -154,6 +162,353 @@ fn parity(
 
 fn unary(values: &[i32]) -> Vec<CollectionCmpItem> {
     values.iter().map(CollectionCmpItem::unary).collect()
+}
+
+type SortItem = (*const (), Option<*const ()>, usize);
+
+fn sort_item(item: &CollectionCmpItem) -> SortItem {
+    (item.primary, item.secondary, item.repetitions)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SortEvent {
+    Reserve(usize, usize),
+    Compare(SortItem, SortItem),
+    Sorted,
+    Pop(Option<SortItem>),
+}
+
+fn ordinary_sort(items: &[CollectionCmpItem]) -> (Vec<SortItem>, Vec<SortEvent>) {
+    let mut machine = ordinary_result(MergeSortPda::new(items.to_vec(), &mut OrdinaryPolicy));
+    let mut events = Vec::new();
+    loop {
+        match ordinary_result(machine.step(&mut OrdinaryPolicy)) {
+            MergeSortStep::Compare(left, right) => {
+                events.push(SortEvent::Compare(sort_item(&left), sort_item(&right)));
+                ordinary_result(machine.accept(
+                    compare(CollectionCmpRole::Primary, left.primary, right.primary),
+                    &mut OrdinaryPolicy,
+                ));
+            },
+            MergeSortStep::Done => {
+                return (machine.items().iter().rev().map(sort_item).collect(), events);
+            },
+        }
+    }
+}
+
+fn checked_sort(
+    items: &[CollectionCmpItem],
+    capacity: usize,
+    events: &RefCell<Vec<SortEvent>>,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), ()>,
+) -> Result<Vec<SortItem>, Failure> {
+    let input = roster_with_capacity(items, capacity, reserve)?;
+    let mut machine = CheckedCollectionSortPda::try_new(input, reserve)?;
+    let mut result = None;
+    loop {
+        match machine.try_resume(result.take(), reserve)? {
+            CheckedCollectionSortStep::CompareEntries { machine: next, left, right } => {
+                events
+                    .borrow_mut()
+                    .push(SortEvent::Compare(sort_item(&left), sort_item(&right)));
+                result = Some(compare(CollectionCmpRole::Primary, left.primary, right.primary));
+                machine = next;
+            },
+            CheckedCollectionSortStep::Done(mut sorted) => {
+                events.borrow_mut().push(SortEvent::Sorted);
+                let mut output = Vec::new();
+                loop {
+                    let item = sorted.try_pop(reserve)?;
+                    let signature = item.as_ref().map(sort_item);
+                    events.borrow_mut().push(SortEvent::Pop(signature));
+                    match signature {
+                        Some(value) => output.push(value),
+                        None => return Ok(output),
+                    }
+                }
+            },
+        }
+    }
+}
+
+fn sort_parity(items: &[CollectionCmpItem], capacity: usize) -> (Vec<SortItem>, Vec<SortEvent>) {
+    let (expected, requests) = ordinary_sort(items);
+    let events = RefCell::new(Vec::new());
+    let result = checked_sort(items, capacity, &events, &mut |w, u| {
+        events.borrow_mut().push(SortEvent::Reserve(w, u));
+        Ok(())
+    });
+    assert_eq!(result, Ok(expected.clone()));
+    let baseline = events.into_inner();
+    assert_eq!(
+        baseline
+            .iter()
+            .filter(|e| matches!(e, SortEvent::Compare(..)))
+            .cloned()
+            .collect::<Vec<_>>(),
+        requests
+    );
+    assert_eq!(
+        baseline
+            .iter()
+            .filter(|e| matches!(e, SortEvent::Sorted))
+            .count(),
+        1
+    );
+    assert_eq!(baseline.last(), Some(&SortEvent::Pop(None)));
+    for (end, event) in baseline.iter().enumerate() {
+        if !matches!(event, SortEvent::Reserve(..)) {
+            continue;
+        }
+        let events = RefCell::new(Vec::new());
+        let result = checked_sort(items, capacity, &events, &mut |w, u| {
+            let mut trace = events.borrow_mut();
+            trace.push(SortEvent::Reserve(w, u));
+            if trace.len() == end + 1 {
+                Err(())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Err(Failure::Admission(BindingFailure::Reservation(()))));
+        assert_eq!(&*events.borrow(), &baseline[..=end], "sort refusal at event {end}");
+    }
+    let (work, units) = baseline.iter().fold((0, 0), |(w, u), event| match event {
+        SortEvent::Reserve(dw, du) => (w + dw, u + du),
+        _ => (w, u),
+    });
+    for (work_limit, unit_limit, succeeds) in
+        [(work, units, true), (work - 1, units, false), (work, units - 1, false)]
+    {
+        let (mut w_left, mut u_left) = (work_limit, unit_limit);
+        let events = RefCell::new(Vec::new());
+        let result = checked_sort(items, capacity, &events, &mut |w, u| {
+            if w > w_left || u > u_left {
+                return Err(());
+            }
+            w_left -= w;
+            u_left -= u;
+            Ok(())
+        });
+        if succeeds {
+            assert_eq!(result, Ok(expected.clone()));
+            assert_eq!((w_left, u_left), (0, 0));
+        } else {
+            assert_eq!(result, Err(Failure::Admission(BindingFailure::Reservation(()))));
+        }
+    }
+    (expected, baseline)
+}
+
+#[test]
+fn consuming_sort_preserves_stable_records_and_every_admission_boundary() {
+    assert!(crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE);
+    let (empty, trace) = sort_parity(&[], 0);
+    assert!(empty.is_empty());
+    let charges: Vec<_> = trace
+        .iter()
+        .filter_map(|event| match event {
+            SortEvent::Reserve(w, u) => Some((*w, *u)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(charges.len(), 12);
+    assert_eq!(
+        charges
+            .iter()
+            .fold((0, 0), |(w, u), (dw, du)| (w + dw, u + du)),
+        (14, 8)
+    );
+    sort_parity(&[], 4);
+    let keys = [2_i32, 1, 2, 1, 0];
+    let values = ["a", "b", "c", "d", "e"].map(String::from);
+    let items: Vec<_> = keys
+        .iter()
+        .zip(&values)
+        .map(|(key, value)| CollectionCmpItem::pair(key, value))
+        .collect();
+    sort_parity(&items[..1], 1);
+    sort_parity(&items[..1], 5);
+    assert_ne!(items[1].primary, items[3].primary);
+    // Handwritten stable ascending key order, consumed backwards by pop.
+    let expected: Vec<_> = [4, 1, 3, 0, 2]
+        .into_iter()
+        .rev()
+        .map(|index| sort_item(&items[index]))
+        .collect();
+    assert_eq!(sort_parity(&items, items.len()).0, expected);
+    let (partial, trace) = sort_parity(&items, 9);
+    assert_eq!(partial, expected);
+    let allocations: Vec<_> = trace
+        .iter()
+        .filter_map(|event| match event {
+            SortEvent::Reserve(w, u) if *u != 0 => Some((*w, *u)),
+            _ => None,
+        })
+        .collect();
+    // Paid input width 9, owner, scratch for exactly 5 initialized records.
+    // No claim about the allocator's physical capacity is needed.
+    assert_eq!(allocations, vec![(20, 40), (2, 4), (12, 24)]);
+    let reverse: Vec<_> = items.iter().rev().copied().collect();
+    sort_parity(&reverse, reverse.len());
+    assert_eq!(keys, [2, 1, 2, 1, 0]);
+    assert_eq!(values, ["a", "b", "c", "d", "e"].map(String::from));
+}
+
+#[test]
+fn consuming_sort_protocol_errors_and_failed_pop_preserve_source_and_remaining_records() {
+    let values = [3_i32, 1, 2];
+    let items = unary(&values);
+    let mut accept = |_, _| Ok::<_, ()>(());
+    let fresh = || {
+        let mut reserve = |_, _| Ok::<_, ()>(());
+        let input = roster(&items, &mut reserve).expect("paid sort input");
+        CheckedCollectionSortPda::try_new(input, &mut reserve).expect("paid sorter")
+    };
+    for decision in [Ordering::Less, Ordering::Equal, Ordering::Greater] {
+        let mut trace = Vec::new();
+        let result = fresh().try_resume(Some(decision), &mut |w, u| {
+            trace.push((w, u));
+            Ok::<_, ()>(())
+        });
+        assert_eq!(
+            result.err(),
+            Some(Failure::InvalidCollectionInput(
+                "merge-sort PDA received an unrequested comparison result"
+            ))
+        );
+        assert_eq!(trace, vec![(1, 0), (1, 0)]);
+    }
+    let pending = match fresh()
+        .try_resume(None, &mut accept)
+        .expect("first sort request")
+    {
+        CheckedCollectionSortStep::CompareEntries { machine, left, right } => {
+            assert_eq!(sort_item(&left), sort_item(&items[0]));
+            assert_eq!(sort_item(&right), sort_item(&items[1]));
+            machine
+        },
+        CheckedCollectionSortStep::Done(_) => panic!("three entries require comparison"),
+    };
+    let mut trace = Vec::new();
+    let result = pending.try_resume(None, &mut |w, u| {
+        trace.push((w, u));
+        Ok::<_, ()>(())
+    });
+    assert_eq!(
+        result.err(),
+        Some(Failure::InvalidCollectionInput(
+            "merge-sort PDA advanced before comparison result"
+        ))
+    );
+    assert_eq!(trace, vec![(1, 0), (1, 0)]);
+
+    let mut machine = fresh();
+    let mut result = None;
+    let mut sorted = loop {
+        match machine
+            .try_resume(result.take(), &mut accept)
+            .expect("complete sorter")
+        {
+            CheckedCollectionSortStep::CompareEntries { machine: next, left, right } => {
+                result = Some(compare(CollectionCmpRole::Primary, left.primary, right.primary));
+                machine = next;
+            },
+            CheckedCollectionSortStep::Done(sorted) => break sorted,
+        }
+    };
+    assert_eq!(
+        sorted
+            .try_pop(&mut accept)
+            .expect("first pop")
+            .as_ref()
+            .map(sort_item),
+        Some(sort_item(&items[0]))
+    );
+    let mut trace = Vec::new();
+    assert_eq!(
+        sorted
+            .try_pop(&mut |w, u| {
+                trace.push((w, u));
+                Err::<(), _>(())
+            })
+            .err(),
+        Some(Failure::Admission(BindingFailure::Reservation(())))
+    );
+    assert_eq!(trace, vec![(1, 0)]);
+    for index in [2, 1] {
+        assert_eq!(
+            sorted
+                .try_pop(&mut accept)
+                .expect("retry pop")
+                .as_ref()
+                .map(sort_item),
+            Some(sort_item(&items[index]))
+        );
+    }
+    let mut trace = Vec::new();
+    assert_eq!(
+        sorted
+            .try_pop(&mut |w, u| {
+                trace.push((w, u));
+                Err::<(), _>(())
+            })
+            .err(),
+        Some(Failure::Admission(BindingFailure::Reservation(())))
+    );
+    assert_eq!(trace, vec![(1, 0)]);
+    assert!(sorted.try_pop(&mut accept).expect("empty retry").is_none());
+    assert_eq!(values, [3, 1, 2]);
+}
+
+#[test]
+fn sort_pair_projection_pays_before_validation_and_preserves_exact_pointers() {
+    let key = 7_i32;
+    let value = String::from("retained");
+    let pair = CollectionCmpItem::pair(&key, &value);
+    let mut nonunit_pair = pair;
+    nonunit_pair.repetitions = 2;
+    for (item, valid) in [
+        (pair, true),
+        (CollectionCmpItem::unary(&key), false),
+        (CollectionCmpItem::repeated(&key, 3), false),
+        (nonunit_pair, false),
+    ] {
+        let before = sort_item(&item);
+        let mut trace = Vec::new();
+        assert_eq!(
+            item.try_pair_ptrs(&mut |w, u| {
+                trace.push((w, u));
+                Err::<(), _>(())
+            }),
+            Err(Failure::Admission(BindingFailure::Reservation(())))
+        );
+        assert_eq!(trace, vec![(1, 0)]);
+        assert_eq!(sort_item(&item), before);
+        let mut trace = Vec::new();
+        let result = item.try_pair_ptrs(&mut |w, u| {
+            trace.push((w, u));
+            Ok::<_, ()>(())
+        });
+        assert_eq!(trace, vec![(1, 0)]);
+        if valid {
+            assert_eq!(
+                result,
+                Ok((&key as *const i32 as *const (), &value as *const String as *const ()))
+            );
+        } else {
+            assert_eq!(
+                result,
+                Err(Failure::InvalidCollectionInput(
+                    "collection sort requires a unit-multiplicity pair"
+                ))
+            );
+        }
+        assert_eq!(sort_item(&item), before);
+    }
+    assert_eq!(key, 7);
+    assert_eq!(value, "retained");
 }
 
 #[test]
