@@ -230,11 +230,27 @@ Q=1+\lfloor(E-1)/16\rfloor,\qquad
 The [finite scan model](../../formal/rocq/rho_bridge/theories/NativeHashBagBorrowedScan.v)
 establishes local remaining-count and original-slot-order preservation, and
 derives that searching an empty mask with entries remaining has another group
-available. Complete event bounds and their early-refusal prefix versions must
-still be derived from those transitions. The concrete implementation must check arithmetic and
+available. It also derives event-count conservation for every actual prefix.
+The [scan-bound composition](../../formal/rocq/rho_bridge/theories/NativeHashBagScanBound.v)
+uses those laws and the history invariant to cover every prefix componentwise,
+and then under declared nonnegative event weights. The concrete implementation must check arithmetic and
 reserve the scan before constructing the iterator. Existing checked-roster
 allocation and push charges remain separate; neither a stored-entry count nor
 the iterator's exact output length alone pays for sparse control-group scans.
+
+At one logical scalar-work unit per event plus sixteen read-work units per
+control-group load, the native borrowed-pass allowance is $`4n+19Q`$, with no
+owned payload units. Fixed iterator/adaptor setup is grouped in `Construct`;
+native bucket and key/count projections are grouped in `Yield`. Metadata
+inspection and the caller's loop remain separately charged. Borrowed iterator
+destruction invokes no key destructor.
+
+The adapter also relies on the native invariant that `counts.len()` and raw
+`items` equal the number of `FULL` control entries. The model's arbitrary
+Boolean control predicate is explicitly tied to that same immutable table in
+the final adapter theorem. Scalar history reachability alone does not assert
+this equality for an arbitrary predicate. Bag occurrence multiplicity and its
+transported total are not substitutes for this native stored-entry count.
 
 ## Remaining concrete coverage
 

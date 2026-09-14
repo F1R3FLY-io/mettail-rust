@@ -75,6 +75,7 @@ theories/RequiredHashBagBindingReservation.v
 theories/NativeHashBagExtent.v
 theories/NativeHashBagHistory.v
 theories/NativeHashBagBorrowedScan.v
+theories/NativeHashBagScanBound.v
 theories/AdmittedKeyHashExecution.v
 theories/AdmittedStructuralKeyHash.v
 theories/AdmittedGeneratedHashScheduling.v
