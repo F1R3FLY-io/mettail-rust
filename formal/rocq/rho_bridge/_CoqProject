@@ -99,6 +99,7 @@ theories/CollectionPairAndUnitLexResults.v
 theories/NativeSortedComparisonClasses.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
+theories/GeneratedMapCoreDeterminism.v
 theories/GeneratedSourceRowComparison.v
 theories/GeneratedCollectionOwnerFrame.v
 theories/BehavioralFlatCopy.v
