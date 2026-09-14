@@ -12,7 +12,7 @@
 From Stdlib Require Import List.
 From RuntimeGrammar Require Import SemanticComparisonLaws.
 From RhoBridge Require Import GeneratedConstructorComparisonClasses
-  NativeMapRunSuspension.
+  NativeMapRunSuspension NativeSortedComparisonClasses MergeSortPdaNativeOuter.
 Import ListNotations.
 Import GeneratedConstructorComparisonClasses.GeneratedConstructorComparisonClasses.
 Import NativeMapRunSuspension.NativeMapRunSuspension.
@@ -65,6 +65,22 @@ Proof.
     (comparison_laws order) _ _)). reflexivity.
 Qed.
 End Operand.
+
+Theorem list_comparison_commutes_with_a_faithful_view :
+  forall (Source Target : Type) (view : Source -> Target)
+    (source_compare : Source -> Source -> comparison)
+    (target_compare : Target -> Target -> comparison),
+  (forall left right, source_compare left right = target_compare (view left) (view right)) ->
+  forall left right,
+  list_compare source_compare left right =
+    list_compare target_compare (map view left) (map view right).
+Proof.
+  intros Source Target view source_compare target_compare FAITHFUL left.
+  induction left as [|head tail IH]; intros [|other rest];
+    cbn [map list_compare]; try reflexivity.
+  rewrite FAITHFUL. destruct (target_compare (view head) (view other));
+    [apply IH|reflexivity|reflexivity].
+Qed.
 
 Section PairedRoster.
 Context {KeyTerm ValueTerm : Type}.
@@ -138,6 +154,72 @@ Proof.
     maximum left right lo ro result COMPLETE) as [events EVENTS].
   exists lo, ro, result, events. split; assumption.
 Qed.
+
+(** Keys are canonicalized by the existing merge sort, not by a new oracle.
+    Its sorted-permutation theorem and native sorted-class uniqueness connect
+    actual native outputs to the successful source projection's canonical
+    roster. Antisymmetry is used only for keys, never for original terms. *)
+Local Notation PairCompare :=
+  (SemanticComparisonLaws.SemanticComparisonLaws.pair_compare
+    (admitted_compare key_project) (admitted_compare value_project)).
+Local Notation KeyCompare := (comparison_function (pair_order key_order value_order)).
+Local Notation NativeCompare :=
+  (fun (left right : Key * Value) (_ : unit) => (Some (PairCompare left right), tt)).
+
+Theorem admitted_native_output_is_the_source_canonical_key_roster :
+  forall maximum count input output scratch canonical,
+  length input <= maximum ->
+  MergeSortPdaNativeOuter.MergeSortPdaNativeOuter.NativeOuterExecution
+    NativeCompare maximum count 1 input None tt output scratch tt ->
+  canonical_result (pair_order key_order value_order)
+    (map admitted_pair_key input) = Some canonical ->
+  map admitted_pair_key output = canonical.
+Proof.
+  intros maximum count input output scratch canonical WIDTH NATIVE CANONICAL.
+  destruct (canonical_result_has_exact_sorted_permutation_evidence
+    (pair_order key_order value_order) _ _ CANONICAL) as [SORTED PERMUTATION].
+  eapply (NativeSortedComparisonClasses.NativeSortedComparisonClasses.native_output_matches_the_unique_canonical_class_roster
+    KeyCompare (comparison_laws (pair_order key_order value_order))
+    admitted_pair_key NativeCompare); [|exact WIDTH|exact NATIVE|exact SORTED|exact PERMUTATION].
+  intros left right state decision next RESPONSE.
+  injection RESPONSE as DECISION STATE. exact DECISION.
+Qed.
+
+Theorem completed_admitted_map_returns_the_source_canonical_comparison :
+  (forall left right, key_alias left right = true -> left = right) ->
+  (forall left right, value_alias left right = true -> left = right) ->
+  forall maximum left right left_output right_output result left_canonical right_canonical,
+  length left <= maximum -> length right <= maximum ->
+  MapNativeCompletion (admitted_compare key_project) (admitted_compare value_project)
+    admitted_key_alias admitted_value_alias maximum left right left_output right_output result ->
+  canonical_result (pair_order key_order value_order)
+    (map admitted_pair_key left) = Some left_canonical ->
+  canonical_result (pair_order key_order value_order)
+    (map admitted_pair_key right) = Some right_canonical ->
+  result = list_compare KeyCompare left_canonical right_canonical.
+Proof.
+  intros KEY_ALIAS VALUE_ALIAS maximum left right left_output right_output result
+    left_canonical right_canonical WIDTH_LEFT WIDTH_RIGHT COMPLETE CANONICAL_LEFT CANONICAL_RIGHT.
+  assert (KEY_SOUND : forall x y, admitted_key_alias x y = true ->
+      admitted_compare key_project x y = Eq).
+  { apply original_alias_is_sound_on_the_admitted_reference. exact KEY_ALIAS. }
+  assert (VALUE_SOUND : forall x y, admitted_value_alias x y = true ->
+      admitted_compare value_project x y = Eq).
+  { apply original_alias_is_sound_on_the_admitted_reference. exact VALUE_ALIAS. }
+  pose proof (actual_map_completion_returns_the_sorted_roster_lex_result
+    (admitted_compare key_project) (admitted_compare value_project)
+    admitted_key_alias admitted_value_alias KEY_SOUND VALUE_SOUND
+    maximum left right left_output right_output result COMPLETE) as RESULT.
+  destruct COMPLETE as [lc ls rc rs n LEFT RIGHT LEX].
+  pose proof (admitted_native_output_is_the_source_canonical_key_roster
+    maximum lc left left_output ls left_canonical WIDTH_LEFT LEFT CANONICAL_LEFT) as LEFT_KEYS.
+  pose proof (admitted_native_output_is_the_source_canonical_key_roster
+    maximum rc right right_output rs right_canonical WIDTH_RIGHT RIGHT CANONICAL_RIGHT) as RIGHT_KEYS.
+  rewrite RESULT.
+  rewrite (list_comparison_commutes_with_a_faithful_view
+    _ _ admitted_pair_key PairCompare KeyCompare (fun _ _ => eq_refl)).
+  now rewrite LEFT_KEYS, RIGHT_KEYS.
+Qed.
 End PairedRoster.
 End GeneratedAdmittedMapReference.
 
@@ -146,3 +228,6 @@ Print Assumptions GeneratedAdmittedMapReference.same_original_has_the_same_admit
 Print Assumptions GeneratedAdmittedMapReference.original_alias_is_sound_on_the_admitted_reference.
 Print Assumptions GeneratedAdmittedMapReference.successful_paired_projection_constructs_exact_admitted_originals.
 Print Assumptions GeneratedAdmittedMapReference.admitted_originals_construct_the_existing_native_map_events.
+Print Assumptions GeneratedAdmittedMapReference.list_comparison_commutes_with_a_faithful_view.
+Print Assumptions GeneratedAdmittedMapReference.admitted_native_output_is_the_source_canonical_key_roster.
+Print Assumptions GeneratedAdmittedMapReference.completed_admitted_map_returns_the_source_canonical_comparison.
