@@ -100,6 +100,8 @@ theories/NativeSortedComparisonClasses.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v
+theories/GeneratedMapCoreErasure.v
+theories/GeneratedAdmittedMapReference.v
 theories/GeneratedSourceRowComparison.v
 theories/GeneratedCollectionOwnerFrame.v
 theories/BehavioralFlatCopy.v
