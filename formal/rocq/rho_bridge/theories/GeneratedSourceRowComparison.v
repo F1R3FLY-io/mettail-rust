@@ -416,6 +416,320 @@ Proof.
 Qed.
 End ActualBorrowedExecution.
 
+(** This bridge binds the construction witnesses above to successful ORIGINAL
+    operand projections. Its restriction is only the missing Map segment:
+    optional opaque leaves remain impossible by FieldConstruction itself.
+    No result of a recursive operation occurs in the construction premises. *)
+Definition nonmap_base {Cat : Type} (base : @BaseField Cat) : Prop :=
+  match base with MapPairs _ => False | _ => True end.
+
+Section ConstructionProjection.
+Context {Cat : Type}.
+Variable Term : Cat -> Type.
+Variable State : Type.
+Variables uid_digest binder_digest : nat -> nat.
+Variable lookup : Position -> option { category : Cat & (Term category * Term category)%type }.
+Variable make_map_box : forall category,
+  list (Term category * Term category) -> list (Term category * Term category) ->
+  State -> nat -> nat -> State -> Prop.
+Variable field_position : nat -> Position.
+Variable children : Cat -> Ordered.
+Variable next : forall category, Term category -> option (carrier (children category)).
+
+Local Notation PB := (@ProjectedBorrowed Cat Term lookup children next).
+Local Notation BC := (@BaseConstruction Cat Term State uid_digest binder_digest lookup make_map_box).
+Local Notation FC := (@FieldConstruction Cat Term State uid_digest binder_digest lookup make_map_box).
+Local Notation RC := (@ReverseFieldsConstruction Cat Term State uid_digest binder_digest lookup make_map_box field_position).
+Local Notation TC := (@TrailerConstruction Cat Term State uid_digest binder_digest lookup).
+Local Notation ProjectBase := (project_base Term uid_digest binder_digest children next).
+Local Notation ProjectField := (project_field Term uid_digest binder_digest children next).
+Local Notation ProjectFields := (project_fields Term uid_digest binder_digest children next).
+Local Notation lex := SemanticComparisonLaws.SemanticComparisonLaws.lex.
+
+Definition ProjectedBatch tasks decision : Prop :=
+  exists decisions, Forall2 PB tasks decisions /\ fold_decisions decisions = decision.
+
+Lemma projected_bindings_append : forall tasks decisions,
+  Forall2 PB tasks decisions -> forall suffix results,
+  Forall2 PB suffix results -> Forall2 PB (tasks ++ suffix) (decisions ++ results).
+Proof.
+  intros tasks decisions BOUND. induction BOUND; intros suffix results TAIL;
+    cbn [app]; [exact TAIL|constructor; auto].
+Qed.
+
+Lemma projected_batch_empty : ProjectedBatch [] Eq.
+Proof. exists []. split; constructor. Qed.
+
+Lemma projected_batch_verdict : forall position decision,
+  ProjectedBatch [verdict_task position decision] decision.
+Proof.
+  intros position decision. exists [decision]. split.
+  - constructor; [constructor|constructor].
+  - destruct decision; reflexivity.
+Qed.
+
+Lemma projected_batch_append : forall first a rest b,
+  ProjectedBatch first a -> ProjectedBatch rest b ->
+  ProjectedBatch (first ++ rest) (lex a b).
+Proof.
+  intros first a rest b [xs [FIRST A]] [ys [REST B]].
+  exists (xs ++ ys). split.
+  - now apply projected_bindings_append.
+  - now rewrite fold_decisions_app, A, B.
+Qed.
+
+Lemma paired_child_projection_preserves_length : forall category values keys,
+  Forall2 (fun value key => next category value = Some key) values keys ->
+  length values = length keys.
+Proof. intros category values keys PROJECTION. induction PROJECTION; cbn; congruence. Qed.
+
+(** The three Forall2 witnesses share the ORIGINAL common-prefix pairs.
+    This proves the typed pointer association, not just list lengths. *)
+Lemma projected_common_prefix_binds_original_positions :
+  forall category left left_keys,
+  Forall2 (fun value key => next category value = Some key) left left_keys ->
+  forall right right_keys,
+  Forall2 (fun value key => next category value = Some key) right right_keys ->
+  forall positions,
+  Forall2 (fun pair position => pair_at Term lookup category position (fst pair) (snd pair))
+    (combine left right) positions ->
+  Forall2 PB (map child_task positions)
+    (common_prefix_decisions (comparison_function (children category)) left_keys right_keys).
+Proof.
+  intros category left left_keys LEFT.
+  induction LEFT as [|left left_key lefts left_keys LEFT_HEAD LEFT_TAIL IH];
+    intros right right_keys RIGHT positions POSITIONS.
+  - cbn [combine] in POSITIONS. inversion POSITIONS; subst. constructor.
+  - inversion RIGHT as [|right_head right_key rights rest_keys RIGHT_HEAD RIGHT_TAIL]; subst.
+    + cbn [combine] in POSITIONS. inversion POSITIONS; subst. constructor.
+    + cbn [combine] in POSITIONS.
+      inversion POSITIONS as [|pair position pairs rest_positions POSITION REMAINING]; subst.
+      cbn [map common_prefix_decisions combine fst snd]. constructor.
+      * eapply ProjectedChild; [exact POSITION|exact LEFT_HEAD|exact RIGHT_HEAD].
+      * eapply IH; [exact RIGHT_TAIL|exact REMAINING].
+Qed.
+
+Theorem constructed_nonmap_base_binds_its_successful_projection :
+  forall base left right position before word events after,
+  BC base left right position before word events after -> nonmap_base base ->
+  forall left_key right_key,
+  ProjectBase base left = Some left_key -> ProjectBase base right = Some right_key ->
+  ProjectedBatch (rev word) (comparison_function (base_order children base) left_key right_key).
+Proof.
+  intros base left right position before word events after CONSTRUCTION.
+  destruct CONSTRUCTION; intros NONMAP left_key right_key LEFT RIGHT.
+  - pose proof (successful_native_field_projection_has_the_original_leaf_result
+      Term uid_digest binder_digest children next atom left right left_key right_key LEFT RIGHT) as FACTOR.
+    cbn [rev app base_order]. rewrite <- FACTOR. apply projected_batch_verdict.
+  - exists [comparison_function (children category) left_key right_key]. split.
+    + cbn [rev app]. constructor; [eapply ProjectedChild; eassumption|constructor].
+    + cbn [base_order].
+      destruct (comparison_function (children category) left_key right_key); reflexivity.
+  - pose proof (successful_vector_projection_keeps_every_child_view
+      Term uid_digest binder_digest children next category left left_key LEFT) as LEFT_PAIRS.
+    pose proof (successful_vector_projection_keeps_every_child_view
+      Term uid_digest binder_digest children next category right right_key RIGHT) as RIGHT_PAIRS.
+    pose proof (paired_child_projection_preserves_length _ _ _ LEFT_PAIRS) as LEFT_LENGTH.
+    pose proof (paired_child_projection_preserves_length _ _ _ RIGHT_PAIRS) as RIGHT_LENGTH.
+    exists (common_prefix_decisions (comparison_function (children category)) left_key right_key ++
+      [Nat.compare (length left) (length right)]). split.
+    + cbn [rev]. rewrite rev_involutive. apply projected_bindings_append.
+      * eapply projected_common_prefix_binds_original_positions; eassumption.
+      * constructor; [constructor|constructor].
+    + rewrite LEFT_LENGTH, RIGHT_LENGTH.
+      symmetry. apply list_comparison_is_common_prefix_then_length.
+  - contradiction.
+Qed.
+
+Theorem constructed_nonmap_field_binds_its_successful_projection :
+  forall field left right position before word events after,
+  FC field left right position before word events after -> nonmap_base (field_base field) ->
+  forall left_key right_key,
+  ProjectField field left = Some left_key -> ProjectField field right = Some right_key ->
+  ProjectedBatch (rev word) (comparison_function (field_order children field) left_key right_key).
+Proof.
+  intros field left right position before word events after CONSTRUCTION.
+  destruct CONSTRUCTION; intros NONMAP left_key right_key LEFT RIGHT.
+  - eapply constructed_nonmap_base_binds_its_successful_projection; eassumption.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    inversion LEFT; inversion RIGHT; subst. apply projected_batch_empty.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    destruct (ProjectBase base right) as [key|] eqn:KEY; try discriminate.
+    inversion LEFT; inversion RIGHT; subst. apply projected_batch_verdict.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    destruct (ProjectBase base left) as [key|] eqn:KEY; try discriminate.
+    inversion LEFT; inversion RIGHT; subst. apply projected_batch_verdict.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    destruct (ProjectBase base left) as [lk|] eqn:LK; try discriminate.
+    destruct (ProjectBase base right) as [rk|] eqn:RK; try discriminate.
+    inversion LEFT; inversion RIGHT; subst.
+    eapply constructed_nonmap_base_binds_its_successful_projection; eassumption.
+Qed.
+
+Theorem constructed_nonmap_reverse_fields_bind_their_successful_projection :
+  forall fields left right index before word groups events after,
+  RC fields left right index before word groups events after ->
+  Forall (fun field => nonmap_base (field_base field)) fields ->
+  forall left_key right_key,
+  ProjectFields fields left = Some left_key -> ProjectFields fields right = Some right_key ->
+  ProjectedBatch (rev word) (comparison_function (fields_order children fields) left_key right_key).
+Proof.
+  intros fields left right index before word groups events after CONSTRUCTION.
+  induction CONSTRUCTION; intros NONMAP left_key right_key LEFT RIGHT.
+  - destruct left_key, right_key. apply projected_batch_empty.
+  - inversion NONMAP as [|f fs HEAD TAIL]; subst.
+    destruct left_key as [lk lks], right_key as [rk rks].
+    apply successful_pair_projection_keeps_both_original_positions in LEFT as [LEFT_HEAD LEFT_TAIL].
+    apply successful_pair_projection_keeps_both_original_positions in RIGHT as [RIGHT_HEAD RIGHT_TAIL].
+    rewrite rev_app_distr. apply projected_batch_append.
+    + eapply constructed_nonmap_field_binds_its_successful_projection; eassumption.
+    + eapply IHCONSTRUCTION; eassumption.
+Qed.
+
+Theorem constructed_scope_binds_its_successful_projection :
+  forall fields left right before word events after,
+  TC fields left right before word events after -> forall left_key right_key,
+  ProjectFields fields left = Some left_key -> ProjectFields fields right = Some right_key ->
+  ProjectedBatch (rev word) (comparison_function (fields_order children fields) left_key right_key).
+Proof.
+  intros fields left right before word events after CONSTRUCTION.
+  destruct CONSTRUCTION; intros left_key right_key LEFT RIGHT.
+  - destruct left_key, right_key. apply projected_batch_empty.
+  - destruct left_key as [lp [lb []]], right_key as [rp [rb []]].
+    apply successful_pair_projection_keeps_both_original_positions in LEFT as [LP LB].
+    apply successful_pair_projection_keeps_both_original_positions in RIGHT as [RP RB].
+    apply successful_pair_projection_keeps_both_original_positions in LB as [LB _].
+    apply successful_pair_projection_keeps_both_original_positions in RB as [RB _].
+    pose proof (successful_native_field_projection_has_the_original_leaf_result
+      Term uid_digest binder_digest children next (pattern_atom multi)
+      left_pattern right_pattern lp rp LP RP) as PATTERN.
+    exists [atom_source_compare uid_digest binder_digest (pattern_atom multi) left_pattern right_pattern;
+      comparison_function (children category) lb rb]. split.
+    + cbn [rev app]. constructor; [constructor|].
+      constructor; [eapply ProjectedChild; eassumption|constructor].
+    + rewrite PATTERN. reflexivity.
+Qed.
+
+(** This is a proof property of the EXISTING HandlerExit. In particular it
+    does not replace an arm_source step or assign a result to a Map owner. *)
+Definition ProjectedHandler exit decision : Prop := match exit with
+  | Signalled result => result = decision
+  | Scheduled tasks => ProjectedBatch tasks decision
+  end.
+
+Section OriginalRowProjection.
+Variable trailer_fields : list (@Field Cat).
+Variables trailer_left trailer_right : source_fields_type Term trailer_fields.
+Local Notation AC := (@ArmConstruction Cat Term State uid_digest binder_digest lookup
+  make_map_box field_position trailer_fields trailer_left trailer_right).
+
+Theorem constructed_nonmap_arm_binds_its_successful_row_projection :
+  forall fields left right index before exit events after,
+  AC fields left right index before exit events after ->
+  Forall (fun field => nonmap_base (field_base field)) fields ->
+  forall left_key right_key trailer_left_key trailer_right_key,
+  ProjectFields fields left = Some left_key -> ProjectFields fields right = Some right_key ->
+  ProjectFields trailer_fields trailer_left = Some trailer_left_key ->
+  ProjectFields trailer_fields trailer_right = Some trailer_right_key ->
+  ProjectedHandler exit
+    (lex (comparison_function (fields_order children fields) left_key right_key)
+      (comparison_function (fields_order children trailer_fields) trailer_left_key trailer_right_key)).
+Proof.
+  intros fields left right index before exit events after CONSTRUCTION.
+  induction CONSTRUCTION; intros NONMAP left_key right_key tlk trk LEFT RIGHT TRAILER_LEFT TRAILER_RIGHT.
+  - destruct left_key as [lk lks], right_key as [rk rks].
+    apply successful_pair_projection_keeps_both_original_positions in LEFT as [LP LR].
+    apply successful_pair_projection_keeps_both_original_positions in RIGHT as [RP RR].
+    pose proof (successful_native_field_projection_has_the_original_leaf_result
+      Term uid_digest binder_digest children next atom left right lk rk LP RP) as NATIVE.
+    change (atom_source_compare uid_digest binder_digest atom left right =
+      lex (lex (comparison_function (atom_order atom) lk rk)
+        (comparison_function (fields_order children rest) lks rks))
+        (comparison_function (fields_order children trailer_fields) tlk trk)).
+    rewrite <- NATIVE. destruct (atom_source_compare uid_digest binder_digest atom left right);
+      [contradiction|reflexivity|reflexivity].
+  - inversion NONMAP as [|f fs HEAD TAIL]; subst.
+    destruct left_key as [lk lks], right_key as [rk rks].
+    apply successful_pair_projection_keeps_both_original_positions in LEFT as [LP LR].
+    apply successful_pair_projection_keeps_both_original_positions in RIGHT as [RP RR].
+    pose proof (successful_native_field_projection_has_the_original_leaf_result
+      Term uid_digest binder_digest children next atom left right lk rk LP RP) as NATIVE.
+    change (ProjectedHandler exit
+      (lex (lex (comparison_function (atom_order atom) lk rk)
+        (comparison_function (fields_order children rest) lks rks))
+        (comparison_function (fields_order children trailer_fields) tlk trk))).
+    rewrite <- NATIVE, H. eapply IHCONSTRUCTION; eassumption.
+  - unfold ProjectedHandler. rewrite rev_app_distr. apply projected_batch_append.
+    + eapply constructed_nonmap_reverse_fields_bind_their_successful_projection; eassumption.
+    + eapply constructed_scope_binds_its_successful_projection; eassumption.
+  - destruct left_key, right_key. cbn [ProjectedHandler fields_order comparison_function].
+    eapply constructed_scope_binds_its_successful_projection; eassumption.
+Qed.
+
+Section ActualSuffix.
+Variable arm_source : Position -> State -> HandlerExit -> list Observation -> State -> Prop.
+Variable core_source : nat -> nat -> option comparison -> State -> CoreReply -> list Observation -> State -> Prop.
+Variable discard_source : Task -> State -> State -> Prop.
+Local Notation Trace := (@ChildTraversal State arm_source core_source discard_source).
+Hypothesis lower_height_completed_child : forall category position left right left_key right_key,
+  pair_at Term lookup category position left right ->
+  next category left = Some left_key -> next category right = Some right_key ->
+  forall count state events result last,
+  Trace [] count Run [child_task position] state events result last ->
+  result = comparison_function (children category) left_key right_key.
+
+Lemma every_projected_row_fold_has_its_consultation : forall decisions,
+  Consultation decisions (fold_decisions decisions).
+Proof.
+  intro decisions. induction decisions as [|decision rest IH]; [constructor|].
+  destruct decision; [now apply ConsultEqual|apply ConsultDecisive; discriminate|apply ConsultDecisive; discriminate].
+Qed.
+
+(** The Scheduled case consumes the actual isolated suffix traversal. The
+    Signalled case uses its already proved eager source construction, never a
+    supplied comparator result. This is still a HANDLER theorem: the census
+    RowPath/selector/VariantKind association and enclosing CategoryPair source
+    step are not inferred from it. Map-containing rows remain outside it. *)
+Theorem constructed_nonmap_arm_and_actual_suffix_consult_the_projected_row :
+  forall fields left right index before exit events after,
+  AC fields left right index before exit events after ->
+  Forall (fun field => nonmap_base (field_base field)) fields ->
+  forall left_key right_key trailer_left_key trailer_right_key,
+  ProjectFields fields left = Some left_key -> ProjectFields fields right = Some right_key ->
+  ProjectFields trailer_fields trailer_left = Some trailer_left_key ->
+  ProjectFields trailer_fields trailer_right = Some trailer_right_key ->
+  let decisions := projected_field_decisions children fields left_key right_key ++
+    projected_field_decisions children trailer_fields trailer_left_key trailer_right_key in
+  match exit with
+  | Signalled result => Consultation decisions result
+  | Scheduled tasks => forall count suffix_events result last,
+      Trace [] count Run tasks after suffix_events result last -> Consultation decisions result
+  end.
+Proof.
+  intros fields left right index before exit events after CONSTRUCTION NONMAP
+    left_key right_key tlk trk LEFT RIGHT TRAILER_LEFT TRAILER_RIGHT decisions.
+  pose proof (constructed_nonmap_arm_binds_its_successful_row_projection
+    fields left right index before exit events after CONSTRUCTION NONMAP
+    left_key right_key tlk trk LEFT RIGHT TRAILER_LEFT TRAILER_RIGHT) as BOUND.
+  assert (ROW_FOLD : fold_decisions decisions =
+    lex (comparison_function (fields_order children fields) left_key right_key)
+      (comparison_function (fields_order children trailer_fields) tlk trk)).
+  { unfold decisions. rewrite fold_decisions_app.
+    now rewrite !projected_field_fold_is_the_existing_product_comparison. }
+  destruct exit as [tasks|decision].
+  - intros count suffix_events result last TRAVERSAL.
+    destruct BOUND as [task_decisions [TASKS RESULT]].
+    assert (ACTUAL : result = fold_decisions task_decisions).
+    { eapply actual_nonmap_task_batch_returns_its_projected_fold;
+        [exact lower_height_completed_child|exact TASKS|exact TRAVERSAL]. }
+    rewrite ACTUAL, RESULT, <- ROW_FOLD. apply every_projected_row_fold_has_its_consultation.
+  - unfold ProjectedHandler in BOUND. rewrite BOUND, <- ROW_FOLD.
+    apply every_projected_row_fold_has_its_consultation.
+Qed.
+End ActualSuffix.
+End OriginalRowProjection.
+End ConstructionProjection.
+
 Print Assumptions reverse_field_construction_drains_in_forward_groups.
 Print Assumptions a_signalled_arm_constructs_its_decisive_eager_consultation.
 Print Assumptions a_deferred_row_drains_prefields_before_its_scope.
@@ -426,4 +740,11 @@ Print Assumptions an_actual_borrowed_child_returns_its_projected_comparison.
 Print Assumptions delivery_over_nonresume_tasks_cannot_change_the_decision.
 Print Assumptions actual_nonmap_task_batch_constructs_consultation.
 Print Assumptions actual_nonmap_task_batch_returns_its_projected_fold.
+Print Assumptions projected_common_prefix_binds_original_positions.
+Print Assumptions constructed_nonmap_base_binds_its_successful_projection.
+Print Assumptions constructed_nonmap_field_binds_its_successful_projection.
+Print Assumptions constructed_nonmap_reverse_fields_bind_their_successful_projection.
+Print Assumptions constructed_scope_binds_its_successful_projection.
+Print Assumptions constructed_nonmap_arm_binds_its_successful_row_projection.
+Print Assumptions constructed_nonmap_arm_and_actual_suffix_consult_the_projected_row.
 End GeneratedSourceRowComparison.
