@@ -62,9 +62,80 @@ Proof.
     owner tag before returned emptied TAKE)) as FOUND.
   rewrite STORED in FOUND. injection FOUND as PAYLOAD. symmetry. exact PAYLOAD.
 Qed.
+Variable maximum : nat.
+Variable alias : forall category, Term category -> Term category -> bool.
+Variable category_callback : Cat -> nat.
+Variable lookup : AdmittedGeneratedComparisonScheduling.AdmittedGeneratedComparisonScheduling.Position ->
+  option { category : Cat & (Term category * Term category)%type }.
+Local Notation SourceCore := (@core_source Cat Term maximum alias category_callback lookup).
+Local Notation RawResume := GeneratedMapCoreSource.GeneratedMapCoreSource.RawResume.
+Local Notation RawReply := GeneratedMapCoreSource.GeneratedMapCoreSource.RawReply.
+Local Notation RawRequests := GeneratedMapCoreSource.GeneratedMapCoreSource.Requests.
+Local Notation RawCompletes := GeneratedMapCoreSource.GeneratedMapCoreSource.Completes.
+Local Notation RawPrimary := GeneratedMapCoreSource.GeneratedMapCoreSource.PrimaryRequest.
+Local Notation RawSecondary := GeneratedMapCoreSource.GeneratedMapCoreSource.SecondaryRequest.
+Local Notation Requests := GeneratedChildTraversal.GeneratedChildTraversal.Requests.
+Local Notation Completes := GeneratedChildTraversal.GeneratedChildTraversal.Completes.
+Local Notation Primary := AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.Primary.
+Local Notation Secondary := AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.Secondary.
+Local Notation pair_at := (GeneratedSourceRowComparison.GeneratedSourceRowComparison.pair_at Term lookup).
+
+(** The adapter restores precisely the typed pair carried by the raw request.
+    This relation contains no expected comparison or completed-child result. *)
+Definition original_reply_binding category
+    (native_reply : @RawReply (Term category) (Term category))
+    (emitted : GeneratedChildTraversal.GeneratedChildTraversal.CoreReply) : Prop :=
+  match native_reply, emitted with
+  | RawRequests (RawPrimary lhs rhs), Requests Primary position => pair_at category position lhs rhs
+  | RawRequests (RawSecondary lhs rhs), Requests Secondary position => pair_at category position lhs rhs
+  | RawCompletes result, Completes actual => result = actual
+  | _, _ => False end.
+
+Theorem an_actual_callback_uses_the_exact_stored_typed_native_state :
+  forall owner callback input before emitted events after,
+  SourceCore owner callback input before emitted events after ->
+  forall category buffers (raw : RawState category),
+  nth_error before owner = Some (Some (callback, Owned category buffers raw)) ->
+  callback = category_callback category /\
+  exists native_reply native_after,
+    @RawResume (Term category) (Term category) (alias category) (alias category) maximum
+      raw input native_reply native_after /\
+    original_reply_binding category native_reply emitted /\
+    match native_reply with
+    | RawRequests _ => exists next_buffers,
+        nth_error after owner = Some (Some (callback, Owned category next_buffers native_after))
+    | RawCompletes _ => nth_error after owner = Some None end.
+Proof.
+  intros owner callback input before emitted events after SOURCE.
+  destruct SOURCE as [category owner input before emptied after buffers next_buffers raw next_raw left right position TAKE RAW PAIR REFILL
+    |category owner input before emptied after buffers next_buffers raw next_raw left right position TAKE RAW PAIR REFILL
+    |category owner input before emptied after buffers next_buffers raw next_raw result TAKE RAW DONE];
+    intros original_category original_buffers original_raw STORED.
+  all: pose proof (the_taken_owner_is_the_original_complete_stored_payload
+    owner (category_callback category) before (Owned category buffers raw) emptied
+    original_category original_buffers original_raw STORED TAKE) as OWNER.
+  all: pose proof (equal_original_owner_payloads_have_the_same_category
+    category original_category buffers original_buffers raw original_raw OWNER) as CATEGORY.
+  all: subst original_category.
+  all: pose proof (equal_same_category_owners_have_the_exact_same_native_state
+    category buffers original_buffers raw original_raw OWNER) as NATIVE.
+  all: subst original_raw.
+  - split; [reflexivity|]. exists (RawRequests (RawPrimary left right)), next_raw.
+    split; [exact RAW|]. split; [exact PAIR|]. exists next_buffers.
+    eapply successful_write_contains_exactly_the_tagged_payload; exact REFILL.
+  - split; [reflexivity|]. exists (RawRequests (RawSecondary left right)), next_raw.
+    split; [exact RAW|]. split; [exact PAIR|]. exists next_buffers.
+    eapply successful_write_contains_exactly_the_tagged_payload; exact REFILL.
+  - change (Some emptied = Some after) in DONE. injection DONE as <-.
+    split; [reflexivity|]. exists (RawCompletes result), next_raw.
+    split; [exact RAW|]. split; [reflexivity|].
+    exact (proj1 (proj2 (successful_take_moves_the_original_payload_and_empties_its_cell
+      owner (category_callback category) before (Owned category buffers raw) emptied TAKE))).
+Qed.
 End OriginalTypedPayload.
 
 Print Assumptions equal_original_owner_payloads_have_the_same_category.
 Print Assumptions equal_same_category_owners_have_the_exact_same_native_state.
 Print Assumptions the_taken_owner_is_the_original_complete_stored_payload.
+Print Assumptions an_actual_callback_uses_the_exact_stored_typed_native_state.
 End GeneratedMapActualSegment.
