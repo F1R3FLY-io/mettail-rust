@@ -193,6 +193,49 @@ does not prove invariance after an arbitrary interrupted native mutation or
 panic unwinding. Nor can a capacity observation made after growth be used as
 prepayment for that same growth.
 
+## Borrowed iteration accounting
+
+The borrowed-roster path must use the original iterator through explicit
+`next` calls. Native specialized `fold` paths and consuming cleanup require
+their own source correspondence; they are not silently covered by this one.
+`RawIterRange::new` loads one aligned group even for an empty bag. Each
+successful mask probe extracts and clears the lowest occupied position.
+Exhausting a mask advances to the next group. The outer `RawIter::next`
+checks the remaining entry count before probing a mask, so the terminal call
+does not scan an empty suffix (`raw.rs`, around line 3851;
+`control/bitmask.rs`, around line 102).
+
+Let $`n`$ be the number of stored entries and $`L`$ the number of groups
+actually loaded by a complete pass ending at its first `None`. The
+source-shaped scan refinement tracks the following events separately:
+
+| Native event | Complete-pass count |
+|---|---|
+| Aligned control-group loads, including construction | $`L`$ |
+| Successful mask probes and lowest-bit clears | $`n`$ each |
+| Exhausted mask probes and group advances | $`L-1`$ each |
+| Outer `next` calls, including the terminal call | $`n+1`$ |
+| Key/count pair projections | $`n`$ |
+
+For this profile, a control group spans sixteen bytes. One group-load event
+and its byte span are distinct quantities. With historical bucket allowance
+$`E`$ and group allowance $`Q`$:
+
+```math
+E=\max(1,2H),\qquad
+Q=1+\lfloor(E-1)/16\rfloor,\qquad
+1\leq L\leq Q.
+```
+
+The [finite scan model](../../formal/rocq/rho_bridge/theories/NativeHashBagBorrowedScan.v)
+establishes local remaining-count and original-slot-order preservation, and
+derives that searching an empty mask with entries remaining has another group
+available. Complete event bounds and their early-refusal prefix versions must
+still be derived from those transitions. The concrete implementation must check arithmetic and
+reserve the scan before constructing the iterator. Existing checked-roster
+allocation and push charges remain separate; neither a stored-entry count nor
+the iterator's exact output length alone pays for sparse control-group scans.
+
 ## Remaining concrete coverage
 
 The extent invariant is one input to admission, not the complete allowance.
