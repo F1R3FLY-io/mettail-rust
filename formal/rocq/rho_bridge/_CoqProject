@@ -112,6 +112,7 @@ theories/GeneratedMapProjectedTasks.v
 theories/GeneratedMapCategoryProjection.v
 theories/GeneratedMapActualSegment.v
 theories/GeneratedMapSourceComparison.v
+theories/GeneratedMapCategoryComparison.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
