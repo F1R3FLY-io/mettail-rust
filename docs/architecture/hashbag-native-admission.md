@@ -252,15 +252,30 @@ the final adapter theorem. Scalar history reachability alone does not assert
 this equality for an arbitrary predicate. Bag occurrence multiplicity and its
 transported total are not substitutes for this native stored-entry count.
 
+`HashBag::try_comparison_roster` implements this borrowed path using the
+existing `CheckedCmpRoster`. It checks the audited profile and pays for
+metadata inspection, computes the allowance with checked arithmetic, reserves
+flat roster storage, and pays the native scan allowance before constructing
+the iterator. Each explicit consumer advance and repeated-item push retains
+its existing cancellation point. The source keys and stored counts are passed
+through unchanged, and a partial refusal drops only the paid flat roster.
+
+The [roster regressions](../../runtime/src/hashbag_roster_tests.rs) cover real
+sparse/tombstone history, original pointers and entry order, absence of key
+operations, every reservation cut, exact and one-under limits, stored-zero and
+count-sum overflow refusals, and transported-total distinctions. This adapter
+does not itself enable generated `PPar` comparison, pay for sorting or key
+comparisons, or admit consuming reconstruction.
+
 ## Remaining concrete coverage
 
 The extent invariant is one input to admission, not the complete allowance.
 The next refinements must establish:
 
-1. Control-group scanning, yielded entries, terminal probes, and consuming
-   cleanup. `RawIterRange` loads its first group during construction and then
-   advances monotonically through groups (`raw.rs`, lines 3558–3673). Small
-   tables have padded control bytes; count those boundaries explicitly.
+1. Control-group scanning for the remaining consumers, especially consuming
+   cleanup. The borrowed next-based path above has its own coverage; it must
+   not be reused as a proof of specialized folding or owned iterator teardown
+   without checking those actual source paths and ownership effects.
 2. Lookup probing and actual key comparisons. The triangular group probe is
    separate from the sequential iteration walk. Bound its real probe and
    callback behavior, not just the number of returned entries.

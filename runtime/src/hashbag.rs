@@ -94,6 +94,27 @@ fn hashbag_entry_lanes<T: Hash>(elem: &T, count: usize) -> (u64, u64) {
     (a, b)
 }
 
+// NativeHashBagScanBound derives 4*n + 19*Q for every borrowed next-based
+// prefix. Q bounds the aligned 16-byte groups, including the initial padded
+// load. This arithmetic does not inspect the table or grant a reservation.
+fn borrowed_scan_work_allowance<E>(
+    width: usize,
+    high_water: usize,
+) -> Result<usize, crate::BindingFailure<E>> {
+    use crate::BindingFailure::SizeOverflow;
+    let buckets = high_water.checked_mul(2).ok_or(SizeOverflow)?.max(1);
+    let groups = buckets
+        .checked_sub(1)
+        .ok_or(SizeOverflow)?
+        .checked_div(16)
+        .ok_or(SizeOverflow)?
+        .checked_add(1)
+        .ok_or(SizeOverflow)?;
+    let entry_work = width.checked_mul(4).ok_or(SizeOverflow)?;
+    let group_work = groups.checked_mul(19).ok_or(SizeOverflow)?;
+    entry_work.checked_add(group_work).ok_or(SizeOverflow)
+}
+
 /// The existing generated-container reconstruction policy.
 ///
 /// `CloneEntries` uses repeated `insert_n`, not this type's derived `Clone`.
@@ -464,6 +485,43 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     #[doc(hidden)]
     pub fn historical_capacity(&self) -> usize {
         self.capacity_high_water
+    }
+
+    /// Build a paid repeated-item roster in the original native entry order.
+    ///
+    /// The pinned table's stored-entry count and historical allocation extent
+    /// cover sparse native scanning; bag multiplicity does not. Scan work is
+    /// reserved before iterator construction, and each consumer advance and
+    /// roster push remains separately cancellable. No key Hash, Eq, Ord or
+    /// Clone operation occurs here. Zero repetitions and count-sum overflow
+    /// return the existing checked-roster errors, without filtering entries.
+    ///
+    /// Keys remain borrowed. The flat roster neither owns nor extends their
+    /// lifetime; its caller must keep the unchanged source alive while using
+    /// those pointers. This is not insertion, sorting, or consuming-drop credit.
+    pub fn try_comparison_roster<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<crate::CheckedCmpRoster, crate::NativeComparisonFailure<E>> {
+        use crate::{reserve_binding_parts, CheckedCmpRoster, NativeComparisonFailure};
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(NativeComparisonFailure::UnsupportedProfile);
+        }
+        reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+        let width = self.counts.len();
+        let work = borrowed_scan_work_allowance(width, self.capacity_high_water)
+            .map_err(NativeComparisonFailure::Admission)?;
+        let mut roster = CheckedCmpRoster::try_with_capacity(width, reserve)?;
+        reserve_binding_parts(work, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+        let mut entries = self.iter();
+        loop {
+            reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+            let Some((key, count)) = entries.next() else {
+                break;
+            };
+            roster.try_push_repeated(key, count, reserve)?;
+        }
+        Ok(roster)
     }
 
     /// Returns `true` if the bag contains no elements.
@@ -841,6 +899,10 @@ impl<T: Clone + Hash + Eq + Ord + fmt::Display> fmt::Display for HashBag<T> {
 #[cfg(test)]
 #[path = "hashbag_history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "hashbag_roster_tests.rs"]
+mod roster_tests;
 
 #[cfg(test)]
 mod tests {
