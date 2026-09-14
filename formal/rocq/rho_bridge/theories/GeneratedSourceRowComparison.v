@@ -747,4 +747,275 @@ Print Assumptions constructed_nonmap_reverse_fields_bind_their_successful_projec
 Print Assumptions constructed_scope_binds_its_successful_projection.
 Print Assumptions constructed_nonmap_arm_binds_its_successful_row_projection.
 Print Assumptions constructed_nonmap_arm_and_actual_suffix_consult_the_projected_row.
+(** The scope split is a split of the existing finite field telescope, not a
+    second row datatype. These joins retain the terminal unit exactly. *)
+Local Notation lex := SemanticComparisonLaws.SemanticComparisonLaws.lex.
+Section TelescopeAppend.
+Context {Cat : Type}.
+Variable Term : Cat -> Type.
+Variable children : Cat -> Ordered.
+
+Fixpoint append_source_fields (first rest : list (@Field Cat)) :
+    source_fields_type Term first -> source_fields_type Term rest ->
+    source_fields_type Term (first ++ rest) :=
+  match first as selected return source_fields_type Term selected ->
+    source_fields_type Term rest -> source_fields_type Term (selected ++ rest) with
+  | [] => fun _ tail => tail
+  | field :: fields => fun head tail =>
+      (fst head, append_source_fields fields rest (snd head) tail)
+  end.
+Fixpoint append_field_keys (first rest : list (@Field Cat)) :
+    carrier (fields_order children first) -> carrier (fields_order children rest) ->
+    carrier (fields_order children (first ++ rest)) :=
+  match first as selected return carrier (fields_order children selected) ->
+    carrier (fields_order children rest) -> carrier (fields_order children (selected ++ rest)) with
+  | [] => fun _ tail => tail
+  | field :: fields => fun head tail =>
+      (fst head, append_field_keys fields rest (snd head) tail)
+  end.
+
+Theorem appended_field_keys_keep_original_lexicographic_priority :
+  forall first rest left right tail_left tail_right,
+  comparison_function (fields_order children (first ++ rest))
+    (append_field_keys first rest left tail_left)
+    (append_field_keys first rest right tail_right) =
+  lex (comparison_function (fields_order children first) left right)
+    (comparison_function (fields_order children rest) tail_left tail_right).
+Proof.
+  intro first. induction first as [|field fields IH]; intros rest left right tail_left tail_right.
+  - reflexivity.
+  - destruct left as [left left_rest], right as [right right_rest].
+    change (lex (comparison_function (field_order children field) left right)
+      (comparison_function (fields_order children (fields ++ rest))
+        (append_field_keys fields rest left_rest tail_left)
+        (append_field_keys fields rest right_rest tail_right)) =
+      lex (lex (comparison_function (field_order children field) left right)
+        (comparison_function (fields_order children fields) left_rest right_rest))
+        (comparison_function (fields_order children rest) tail_left tail_right)).
+    rewrite IH. destruct (comparison_function (field_order children field) left right); reflexivity.
+Qed.
+
+Variables uid_digest binder_digest : nat -> nat.
+Variable next : forall category, Term category -> option (carrier (children category)).
+Local Notation ProjectFields := (project_fields Term uid_digest binder_digest children next).
+
+Theorem appended_source_projection_is_exactly_the_two_original_projections :
+  forall first rest left tail,
+  ProjectFields (first ++ rest) (append_source_fields first rest left tail) =
+  match ProjectFields first left, ProjectFields rest tail with
+  | Some head, Some last => Some (append_field_keys first rest head last)
+  | _, _ => None end.
+Proof.
+  intro first. induction first as [|field fields IH]; intros rest left tail.
+  - destruct left. cbn [append_source_fields append_field_keys project_fields app].
+    destruct (ProjectFields rest tail); reflexivity.
+  - destruct left as [head remaining].
+    cbn [append_source_fields project_fields fst snd app]. rewrite IH.
+    destruct (project_field Term uid_digest binder_digest children next field head),
+      (ProjectFields fields remaining), (ProjectFields rest tail); reflexivity.
+Qed.
+
+Theorem successful_appended_projection_splits_at_the_original_scope_boundary :
+  forall first rest left tail key,
+  ProjectFields (first ++ rest) (append_source_fields first rest left tail) = Some key ->
+  exists head last,
+    ProjectFields first left = Some head /\ ProjectFields rest tail = Some last /\
+    key = append_field_keys first rest head last.
+Proof.
+  intros first rest left tail key RESULT.
+  rewrite appended_source_projection_is_exactly_the_two_original_projections in RESULT.
+  destruct (ProjectFields first left) as [head|] eqn:HEAD,
+    (ProjectFields rest tail) as [last|] eqn:TAIL; try discriminate.
+  inversion RESULT; subst key. exists head, last. repeat split; reflexivity.
+Qed.
+End TelescopeAppend.
+
+(** Original CategoryPair handler association. It records only constructor
+    selection, original field selectors, scope boundary, and actual arm
+    construction. There is no whole-row comparison-result premise. Binding
+    this relation to Rust is the explicitly audited census/emitter boundary;
+    the comparison indices are not Rust enum discriminants. *)
+Section EnclosingCategorySource.
+Context {Cat : Type}.
+Variable signature : Cat -> list (@Row Cat).
+Variable Term : Cat -> Type.
+Variable State : Type.
+Variables uid_digest binder_digest : nat -> nat.
+Variable observe : forall category, Term category -> SourceObservation signature Term category.
+Variable lookup : Position -> option { category : Cat & (Term category * Term category)%type }.
+Variable make_map_box : forall category,
+  list (Term category * Term category) -> list (Term category * Term category) ->
+  State -> nat -> nat -> State -> Prop.
+Definition admitted_source_row ordinal fields : @Row Cat :=
+  {| row_ordinal := ordinal; row_admitted := true; row_fields := fields |}.
+
+Inductive CategoryArmBinding category position (left right : Term category) :
+    State -> HandlerExit -> list Observation -> State -> Prop :=
+| BindOriginalOrdinalMismatch : forall state events,
+    pair_at Term lookup category position left right ->
+    observed_ordinal signature Term observe category left <>
+      observed_ordinal signature Term observe category right ->
+    CategoryArmBinding category position left right state
+      (Signalled (Nat.compare (observed_ordinal signature Term observe category left)
+        (observed_ordinal signature Term observe category right))) events state
+| BindOriginalSameRow : forall ordinal fields trailer_fields (positions : nat -> Position)
+    (path : RowPath (signature category) (admitted_source_row ordinal (fields ++ trailer_fields)))
+    left_fields right_fields left_trailer right_trailer before exit events after,
+    pair_at Term lookup category position left right ->
+    observe category left = existT _ (admitted_source_row ordinal (fields ++ trailer_fields))
+      (path, append_source_fields Term fields trailer_fields left_fields left_trailer) ->
+    observe category right = existT _ (admitted_source_row ordinal (fields ++ trailer_fields))
+      (path, append_source_fields Term fields trailer_fields right_fields right_trailer) ->
+    ArmConstruction Term State uid_digest binder_digest lookup make_map_box positions
+      trailer_fields left_trailer right_trailer fields left_fields right_fields 0 before exit events after ->
+    CategoryArmBinding category position left right before exit events after.
+
+Definition observed_row_is_nonmap category (term : Term category) :=
+  match observe category term with existT _ row _ =>
+    Forall (fun field => nonmap_base (field_base field)) (row_fields row) end.
+
+Variable arm_source : Position -> State -> HandlerExit -> list Observation -> State -> Prop.
+Variable core_source : nat -> nat -> option comparison -> State -> CoreReply -> list Observation -> State -> Prop.
+Variable discard_source : Task -> State -> State -> Prop.
+Local Notation Trace := (@ChildTraversal State arm_source core_source discard_source).
+Local Notation View := (source_view signature Term uid_digest binder_digest observe).
+Hypothesis ORDINALS : signature_ordinals_ordered signature.
+Variable height : nat.
+Local Notation children := (category_order signature height).
+Local Notation next := (fun category child => View height category child).
+
+(** This is the eventual height-induction hypothesis, not an assumed ArmResult.
+    It quantifies over arbitrary original pairs, including same-roster pairs. *)
+Hypothesis lower_height_completed_child : forall category position left right left_key right_key,
+  pair_at Term lookup category position left right ->
+  next category left = Some left_key -> next category right = Some right_key ->
+  forall count state events result last,
+  Trace [] count Run [child_task position] state events result last ->
+  result = comparison_function (children category) left_key right_key.
+
+Theorem original_bound_nonmap_handler_factors_at_the_enclosing_category :
+  forall category position left right before exit events after,
+  CategoryArmBinding category position left right before exit events after ->
+  (observed_ordinal signature Term observe category left <>
+    observed_ordinal signature Term observe category right \/ observed_row_is_nonmap category left) ->
+  forall left_key right_key,
+  View (S height) category left = Some left_key -> View (S height) category right = Some right_key ->
+  match exit with
+  | Signalled result => result = key_compare signature (S height) category left_key right_key
+  | Scheduled tasks => forall count suffix_events result last,
+      Trace [] count Run tasks after suffix_events result last ->
+      result = key_compare signature (S height) category left_key right_key
+  end.
+Proof.
+  intros category position left right before exit events after BINDING.
+  destruct BINDING as [state events PAIR DIFFERENT
+    |ordinal fields trailer_fields positions path left_fields right_fields left_trailer right_trailer
+      before exit events after PAIR OBSERVED_LEFT OBSERVED_RIGHT CONSTRUCTION];
+    intros CHECK left_key right_key LEFT RIGHT.
+  - symmetry. eapply source_constructor_mismatch_factors_without_an_arm_result_premise; eassumption.
+  - assert (SAME : observed_ordinal signature Term observe category left =
+        observed_ordinal signature Term observe category right).
+    { unfold observed_ordinal. rewrite OBSERVED_LEFT, OBSERVED_RIGHT. reflexivity. }
+    destruct CHECK as [DIFFERENT|NONMAP]; [contradiction|].
+    unfold observed_row_is_nonmap in NONMAP. rewrite OBSERVED_LEFT in NONMAP.
+    cbn [admitted_source_row row_fields] in NONMAP.
+    apply Forall_app in NONMAP as [PREFIELDS_NONMAP TRAILER_NONMAP].
+    cbn [source_view] in LEFT, RIGHT.
+    rewrite OBSERVED_LEFT in LEFT. rewrite OBSERVED_RIGHT in RIGHT.
+    change (option_map (inject_row children path)
+      (project_fields Term uid_digest binder_digest children next (fields ++ trailer_fields)
+        (append_source_fields Term fields trailer_fields left_fields left_trailer)) = Some left_key) in LEFT.
+    change (option_map (inject_row children path)
+      (project_fields Term uid_digest binder_digest children next (fields ++ trailer_fields)
+        (append_source_fields Term fields trailer_fields right_fields right_trailer)) = Some right_key) in RIGHT.
+    destruct (project_fields Term uid_digest binder_digest children next (fields ++ trailer_fields)
+      (append_source_fields Term fields trailer_fields left_fields left_trailer)) as [left_payload|] eqn:PL;
+      cbn [option_map] in LEFT; try discriminate.
+    destruct (project_fields Term uid_digest binder_digest children next (fields ++ trailer_fields)
+      (append_source_fields Term fields trailer_fields right_fields right_trailer)) as [right_payload|] eqn:PR;
+      cbn [option_map] in RIGHT; try discriminate.
+    injection LEFT as LEFT_KEY. injection RIGHT as RIGHT_KEY. subst left_key right_key.
+    destruct (successful_appended_projection_splits_at_the_original_scope_boundary
+      Term children uid_digest binder_digest next fields trailer_fields left_fields left_trailer left_payload PL)
+      as [lk [tlk [LP [TL LEFT_PAYLOAD]]]].
+    destruct (successful_appended_projection_splits_at_the_original_scope_boundary
+      Term children uid_digest binder_digest next fields trailer_fields right_fields right_trailer right_payload PR)
+      as [rk [trk [RP [TR RIGHT_PAYLOAD]]]].
+    subst left_payload right_payload.
+    assert (KEY_RESULT : key_compare signature (S height) category
+        (inject_row children path (append_field_keys children fields trailer_fields lk tlk))
+        (inject_row children path (append_field_keys children fields trailer_fields rk trk)) =
+      lex (comparison_function (fields_order children fields) lk rk)
+        (comparison_function (fields_order children trailer_fields) tlk trk)).
+    { unfold key_compare. cbn [category_order].
+      rewrite same_row_injection_preserves_field_comparison.
+      apply appended_field_keys_keep_original_lexicographic_priority. }
+    rewrite KEY_RESULT.
+    pose proof (@constructed_nonmap_arm_and_actual_suffix_consult_the_projected_row
+      Cat Term State uid_digest binder_digest lookup make_map_box positions children next
+      trailer_fields left_trailer right_trailer arm_source core_source discard_source
+      lower_height_completed_child fields left_fields right_fields 0 before exit events after
+      CONSTRUCTION PREFIELDS_NONMAP lk rk tlk trk LP RP TL TR) as RESULT.
+    assert (FOLD : fold_decisions
+        (projected_field_decisions children fields lk rk ++
+         projected_field_decisions children trailer_fields tlk trk) =
+      lex (comparison_function (fields_order children fields) lk rk)
+        (comparison_function (fields_order children trailer_fields) tlk trk)).
+    { rewrite fold_decisions_app.
+      now rewrite !projected_field_fold_is_the_existing_product_comparison. }
+    destruct exit as [tasks|decision].
+    + intros count suffix_events result last TRAVERSAL.
+      specialize (RESULT count suffix_events result last TRAVERSAL).
+      apply completed_consultation_returns_the_lexicographic_result in RESULT.
+      now rewrite FOLD in RESULT.
+    + apply completed_consultation_returns_the_lexicographic_result in RESULT.
+      now rewrite FOLD in RESULT.
+Qed.
+
+(** This explicit SOURCE ASSOCIATION premise is operational: the census must
+    bind the real enum pair and field selectors to CategoryArmBinding. It is
+    not implied by successful projection and does not assume a row result. *)
+Hypothesis source_arm_has_its_original_constructor_binding :
+  forall category position left right before exit events after,
+  pair_at Term lookup category position left right ->
+  arm_source position before exit events after ->
+  CategoryArmBinding category position left right before exit events after.
+
+Theorem actual_enclosing_nonmap_category_traversal_factors_from_lower_height_children :
+  forall category position left right left_key right_key,
+  pair_at Term lookup category position left right ->
+  View (S height) category left = Some left_key -> View (S height) category right = Some right_key ->
+  (observed_ordinal signature Term observe category left <>
+    observed_ordinal signature Term observe category right \/ observed_row_is_nonmap category left) ->
+  forall count state events result last,
+  Trace [] count Run [child_task position] state events result last ->
+  result = key_compare signature (S height) category left_key right_key.
+Proof.
+  intros category position left right left_key right_key PAIR LEFT RIGHT CHECK
+    count state events result last TRAVERSAL.
+  unfold child_task in TRAVERSAL.
+  inversion TRAVERSAL as [| |n mode head rest before first next_mode prefix middle later final ending STEP TAIL]; subst.
+  repeat rewrite app_nil_r in STEP. inversion STEP; subst.
+  - match goal with ARM : arm_source position state (Scheduled _) _ _ |- _ =>
+      pose proof (source_arm_has_its_original_constructor_binding
+        category position left right _ _ _ _ PAIR ARM) as BOUND
+    end.
+    pose proof (original_bound_nonmap_handler_factors_at_the_enclosing_category
+      category position left right _ _ _ _ BOUND CHECK left_key right_key LEFT RIGHT) as FACTOR.
+    repeat rewrite app_nil_r in TAIL. exact (FACTOR _ _ _ _ TAIL).
+  - match goal with ARM : arm_source position state (Signalled _) _ _ |- _ =>
+      pose proof (source_arm_has_its_original_constructor_binding
+        category position left right _ _ _ _ PAIR ARM) as BOUND
+    end.
+    pose proof (original_bound_nonmap_handler_factors_at_the_enclosing_category
+      category position left right _ _ _ _ BOUND CHECK left_key right_key LEFT RIGHT) as FACTOR.
+    inversion TAIL; subst. exact FACTOR.
+Qed.
+End EnclosingCategorySource.
+
+Print Assumptions appended_field_keys_keep_original_lexicographic_priority.
+Print Assumptions appended_source_projection_is_exactly_the_two_original_projections.
+Print Assumptions successful_appended_projection_splits_at_the_original_scope_boundary.
+Print Assumptions original_bound_nonmap_handler_factors_at_the_enclosing_category.
+Print Assumptions actual_enclosing_nonmap_category_traversal_factors_from_lower_height_children.
 End GeneratedSourceRowComparison.
