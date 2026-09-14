@@ -35,6 +35,20 @@ cleanup, and conditional native-trace coverage laws. Its `native_trace_cover`
 premise must be instantiated from actual source behavior. It does not assign
 constant costs to structural `Hash` or `Eq` calls.
 
+The key operation reached during `HashBag<Proc>` reconstruction is generated
+`Proc::eq`, not native `HashBag::eq`. Its `PPar` branch currently uses the
+existing canonical collection comparison machine. Extend that checked machine
+at its existing typed callbacks; do not introduce a counts-map equality
+algorithm unless a required caller actually invokes one.
+
+Zero-count entries require particular care: ordinary generated Bag comparison
+constructs repeated roster items, whose constructor requires positive counts.
+The checked roster rejects zero with `InvalidCollectionInput` before that
+constructor. Admission must preserve this explicit boundary rather than
+silently drop stored entries or claim that native Bag equality and ordering
+are interchangeable. This does not change the binding reconstruction policy,
+which can store zero counts and transport a differing original total.
+
 ## Exact library boundary
 
 `HashBag` stores `std::collections::HashMap`, not the workspace's direct
@@ -50,8 +64,10 @@ relative to `lib/rustlib/src/rust/library/`:
 | Source | SHA-256 of the audited file |
 |---|---|
 | `std/Cargo.toml` | `caa5a4748d5372fb9bcb32277830488fcbcb1dfa35db5ac6f6d1d8408e849f75` |
+| `std/src/collections/hash/map.rs` | `8db811482220b0d8586619bd4f11bfea00939fa056ed0a1e7b383911efb73d03` |
 | `vendor/hashbrown-0.17.1/src/raw.rs` | `0c8ad353ba95817e72b0a8fea48fa2599099ea3def374f254ab6402a9c468d22` |
 | `vendor/hashbrown-0.17.1/src/map.rs` | `b79497ce537ffc5ed4f8f3399434b9216c01e7927fdc434fee190e9e9ce2abb0` |
+| `vendor/hashbrown-0.17.1/src/rustc_entry.rs` | `35212ecf4d0195954aa6ecc6c0b8e99a8628dffb4fb101fa67d3d7a31a52b837` |
 | `alloc/src/alloc.rs` | `41c7f678fb68d3a52d20399e96903716567b318dd9bbfc0da4e66a1b06f9b4d4` |
 
 Standard `HashMap` uses `Global` by default. In this pinned implementation,
@@ -90,14 +106,14 @@ the allocation remains unchanged. Neither current capacity nor current entry
 count recovers that allocation's scan extent. An empty allocated table must
 not be confused with the unallocated singleton.
 
-The proposed metadata preserves the stronger boundary invariants:
+The metadata design preserves the stronger boundary invariants:
 
 ```math
 C(B)=I+D+G,\qquad C(B)\leq H.
 ```
 
 Valid allocated sizes are powers of two starting at four. Their exact capacity
-formula gives the following target bound; the singleton is handled separately:
+formula gives the following bound; the singleton is handled separately:
 
 ```math
 B\leq 2C(B)\leq 2H,
@@ -111,9 +127,13 @@ the scan on overflow. A mathematical natural-number bound is not itself a
 checked machine-word implementation.
 
 The [extent model](../../formal/rocq/rho_bridge/theories/NativeHashBagExtent.v)
-establishes the exact capacity arithmetic and singleton initialization laws.
-Those facts alone do not establish mutation preservation, scan coverage, or
-prepayment of a future resize.
+establishes the capacity arithmetic, initialization, and raw counter-transition
+laws. The [history model](../../formal/rocq/rho_bridge/theories/NativeHashBagHistory.v)
+derives the boundary invariant and bucket bound by induction over completed
+insertions, erases, clones, and fresh-table resets. Neither model assumes the
+history bound as a transition premise. Resize sizes are overapproximated by
+valid native bucket sizes with sufficient room; the proof does not yet verify
+allocation rounding, scan coverage, prepayment, or Rust metadata maintenance.
 
 ## Mutation and observation order
 
@@ -121,8 +141,17 @@ Reserve/rehash/resize and the final lookup result are distinct steps. In
 particular, `HashMap::insert` calls `find_or_find_insert_index`, whose
 `reserve(1)` precedes searching (`raw.rs`, lines 1120–1143; `map.rs`, around
 line 1806). Replacing an existing binding key can therefore resize the table
-without increasing its entry count. By contrast, `HashMap::entry` searches
-first (`map.rs`, around line 1207), as used by `insert` and `insert_n`.
+without increasing its entry count. By contrast, standard `HashMap::entry`
+delegates to `rustc_entry` (`std/src/collections/hash/map.rs`, around line 1012),
+which searches first and reserves only for a vacant result (`rustc_entry.rs`,
+lines 35–49). This is the path used by bag `insert` and `insert_n`, not
+hashbrown's separate public `entry` method.
+
+The equality operand order also differs: binding insertion calls the incoming
+key's equality on a retained candidate; the standard entry path calls the
+retained candidate's equality on the incoming key. Preserve those exact
+operands when covering structural work. Equality of results does not establish
+equal execution costs in the two directions.
 
 | Native effect | Scalar update before the metadata observation |
 |---|---|
