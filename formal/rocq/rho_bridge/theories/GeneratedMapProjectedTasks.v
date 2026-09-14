@@ -13,6 +13,7 @@
     execution must be connected by the separately proved Map segment. *)
 From Stdlib Require Import List.
 From RhoBridge Require Import GeneratedMapSourceOwnership GeneratedCollectionOwnerFrame
+  GeneratedMapOwnerTraversal
   GeneratedSourceRowComparison GeneratedConstructorSourceProjection
   GeneratedConstructorComparisonClasses GeneratedComparisonFieldResults
   AdmittedGeneratedCollectionScheduling GeneratedMapCoreSource.
@@ -141,6 +142,19 @@ Proof.
   exists decisions. split; [now apply existing_borrowed_bindings_are_original_initial_certificates|exact RESULT].
 Qed.
 
+Lemma a_complete_owner_frame_transports_the_original_batch :
+  forall before tasks decision, ProjectedInitialBatch before tasks decision -> forall after,
+  preserves_owner_frame (owner_refs tasks) before after -> ProjectedInitialBatch after tasks decision.
+Proof.
+  intros before tasks decision [decisions [BOUND RESULT]] after FRAME.
+  exists decisions. split; [|exact RESULT].
+  eapply original_batch_certificates_follow_their_complete_owner_frame; eassumption.
+Qed.
+
+Lemma an_empty_pending_word_has_valid_owner_inventory : forall state : State,
+  pending_owners_valid [] state.
+Proof. intro state. split; constructor. Qed.
+
 Section OriginalConstruction.
 Variable owner_ceiling : nat.
 Local Notation Make := (@GeneratedMapSourceOwnership.GeneratedMapSourceOwnership.make_map_box
@@ -225,6 +239,52 @@ Proof.
     inversion LEFT; inversion RIGHT; subst.
     eapply original_base_construction_certifies_its_successful_projection; eassumption.
 Qed.
+
+Section OriginalReverseFields.
+Variable field_position : nat -> AdmittedGeneratedComparisonScheduling.AdmittedGeneratedComparisonScheduling.Position.
+Local Notation RC := (@ReverseFieldsConstruction Cat Term State uid_digest binder_digest lookup Make field_position).
+Local Notation ProjectFields := (project_fields Term uid_digest binder_digest children next).
+
+Theorem reverse_constructed_original_fields_have_distinct_live_owners :
+  forall fields left right index before word groups events after,
+  RC fields left right index before word groups events after ->
+  pending_owners_valid (rev word) after.
+Proof.
+  intros fields left right index before word groups events after BUILD.
+  pose proof (GeneratedMapOwnerTraversal.GeneratedMapOwnerTraversal.reverse_field_construction_retains_every_previously_parked_owner
+    Term maximum owner_ceiling category_callback uid_digest binder_digest lookup field_position
+    fields left right index before word groups events after BUILD []
+    (an_empty_pending_word_has_valid_owner_inventory before)) as [LIVE FRAME].
+  now rewrite app_nil_r in LIVE.
+Qed.
+
+Theorem reverse_field_construction_certifies_the_original_forward_field_order :
+  forall fields left right index before word groups events after,
+  RC fields left right index before word groups events after -> forall left_key right_key,
+  ProjectFields fields left = Some left_key -> ProjectFields fields right = Some right_key ->
+  ProjectedInitialBatch after (rev word)
+    (comparison_function (fields_order children fields) left_key right_key).
+Proof.
+  intros fields left right index before word groups events after BUILD.
+  induction BUILD as [index state|
+    field rest left right left_rest right_rest index before tail_word tail_groups tail_events middle
+    head_word head_events after TAIL IH HEAD]; intros left_key right_key LEFT RIGHT.
+  - destruct left_key, right_key.
+    apply existing_borrowed_batch_lifts_without_rederiving_its_recipes. apply projected_batch_empty.
+  - destruct left_key as [lk lks], right_key as [rk rks].
+    apply successful_pair_projection_keeps_both_original_positions in LEFT as [LEFT_HEAD LEFT_TAIL].
+    apply successful_pair_projection_keeps_both_original_positions in RIGHT as [RIGHT_HEAD RIGHT_TAIL].
+    pose proof (IH _ _ LEFT_TAIL RIGHT_TAIL) as TAIL_CERTIFICATES.
+    pose proof (reverse_constructed_original_fields_have_distinct_live_owners
+      _ _ _ _ _ _ _ _ _ TAIL) as TAIL_LIVE.
+    pose proof (GeneratedMapOwnerTraversal.GeneratedMapOwnerTraversal.original_field_construction_preserves_its_complete_pending_owner_frame
+      Term maximum owner_ceiling category_callback uid_digest binder_digest lookup
+      _ _ _ _ _ _ _ _ HEAD (rev tail_word) TAIL_LIVE) as [FINAL_LIVE TAIL_FRAME].
+    rewrite rev_app_distr. apply original_initial_batch_append.
+    + eapply original_field_construction_certifies_its_successful_projection; eassumption.
+    + eapply a_complete_owner_frame_transports_the_original_batch; eassumption.
+Qed.
+End OriginalReverseFields.
 End OriginalConstruction.
 End OriginalTaskCertificates.
 End GeneratedMapProjectedTasks.
@@ -241,3 +301,7 @@ Print Assumptions GeneratedMapProjectedTasks.original_map_factory_constructs_its
 Print Assumptions GeneratedMapProjectedTasks.existing_nonmap_base_construction_lifts_to_current_initial_certificates.
 Print Assumptions GeneratedMapProjectedTasks.original_base_construction_certifies_its_successful_projection.
 Print Assumptions GeneratedMapProjectedTasks.original_field_construction_certifies_its_successful_projection.
+Print Assumptions GeneratedMapProjectedTasks.a_complete_owner_frame_transports_the_original_batch.
+Print Assumptions GeneratedMapProjectedTasks.an_empty_pending_word_has_valid_owner_inventory.
+Print Assumptions GeneratedMapProjectedTasks.reverse_constructed_original_fields_have_distinct_live_owners.
+Print Assumptions GeneratedMapProjectedTasks.reverse_field_construction_certifies_the_original_forward_field_order.
