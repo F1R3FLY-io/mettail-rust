@@ -1212,11 +1212,27 @@ mod tests {
         effects: std::rc::Rc<std::cell::RefCell<RebuildEffects>>,
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     struct RebuildEffects {
         hashes: usize,
         equalities: usize,
-        drops: [usize; 5],
+        drops: Vec<usize>,
+    }
+
+    impl Default for RebuildEffects {
+        fn default() -> Self {
+            Self::with_occurrences(5)
+        }
+    }
+
+    impl RebuildEffects {
+        fn with_occurrences(count: usize) -> Self {
+            Self {
+                hashes: 0,
+                equalities: 0,
+                drops: vec![0; count],
+            }
+        }
     }
 
     impl Hash for RebuildKey {
@@ -1327,6 +1343,90 @@ mod tests {
                 assert_eq!(source_hash, hash_of(&source));
                 drop(source);
                 assert_eq!(effects.borrow().drops, [1, 1, 1, 1, 1]);
+            }
+        }
+    }
+
+    #[test]
+    fn growing_rebuild_refusals_preserve_each_owned_occurrence() {
+        const UNIQUE: usize = 65;
+        const INPUTS: usize = UNIQUE + 2;
+        for mode in [HashBagRebuildMode::CloneEntries, HashBagRebuildMode::BindingEntries] {
+            let stages = 1 + INPUTS + usize::from(mode == HashBagRebuildMode::BindingEntries);
+            for allowed in 0..=stages {
+                let effects = std::rc::Rc::new(std::cell::RefCell::new(
+                    RebuildEffects::with_occurrences(INPUTS + 1),
+                ));
+                let key = |identity, occurrence| RebuildKey {
+                    identity,
+                    occurrence,
+                    effects: effects.clone(),
+                };
+                let mut source = HashBag::new();
+                source.insert_n(key(255, 0), 17);
+                let source_hash = hash_of(&source);
+                let mut entries = Vec::with_capacity(INPUTS);
+                for occurrence in 1..=UNIQUE {
+                    entries.push((key(occurrence as u8, occurrence), 1));
+                }
+                entries.push((key(1, UNIQUE + 1), 3));
+                entries.push((key(200, UNIQUE + 2), 0));
+                let mut seen = 0;
+                let mut refused_at = None;
+                let mut largest_retained_capacity = 0;
+                let result = source.try_rebuild_entries_with(entries, mode, |step| {
+                    if let HashBagRebuildStep::Insert { retained, .. }
+                    | HashBagRebuildStep::FinalBindingSummary { retained } = step
+                    {
+                        largest_retained_capacity =
+                            largest_retained_capacity.max(retained.capacity());
+                    }
+                    if seen == allowed {
+                        let snapshot = effects.borrow();
+                        refused_at = Some((snapshot.hashes, snapshot.equalities));
+                        return Err(crate::BindingFailure::Reservation(seen));
+                    }
+                    seen += 1;
+                    Ok(())
+                });
+                match result {
+                    Err(error) => {
+                        assert_eq!(error, crate::BindingFailure::Reservation(allowed));
+                        assert!(allowed < stages);
+                        let snapshot = effects.borrow();
+                        assert_eq!(refused_at, Some((snapshot.hashes, snapshot.equalities)));
+                    },
+                    Ok(result) => {
+                        assert_eq!(allowed, stages);
+                        assert_eq!(
+                            result.distinct_len(),
+                            UNIQUE + usize::from(mode == HashBagRebuildMode::BindingEntries)
+                        );
+                        assert!(largest_retained_capacity >= UNIQUE);
+                        if crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+                            assert_eq!(largest_retained_capacity, 112);
+                        }
+                        assert_eq!(
+                            result.len(),
+                            if mode == HashBagRebuildMode::CloneEntries {
+                                UNIQUE + 3
+                            } else {
+                                17
+                            }
+                        );
+                        assert_cached_hash_matches_legacy(&result);
+                        drop(result);
+                    },
+                }
+                let mut expected_drops = vec![1; INPUTS + 1];
+                expected_drops[0] = 0;
+                assert_eq!(effects.borrow().drops, expected_drops);
+                assert_eq!(source.len(), 17);
+                assert_eq!(source.distinct_len(), 1);
+                assert_eq!(source_hash, hash_of(&source));
+                drop(source);
+                expected_drops[0] = 1;
+                assert_eq!(effects.borrow().drops, expected_drops);
             }
         }
     }
