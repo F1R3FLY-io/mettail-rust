@@ -313,6 +313,110 @@ fn checked_comparison_captures_actual_production_layout_executable() {
             assert_eq!(right.iter().count(), 1);
         }
 
+        fn compare_original_proc_child(stack: &mut Vec<CheckedCmpTask<usize>>,
+            expected_left: &Proc, expected_right: &Proc) -> Ordering {
+            match stack.pop().expect("original requested child") {
+                CheckedCmpTask::CmpProc(left, right) => {
+                    assert_eq!(left, expected_left as *const Proc);
+                    assert_eq!(right, expected_right as *const Proc);
+                    checked_cmp_handle_proc(stack, left, right, &mut |_,_| Ok::<_, usize>(()))
+                        .expect("actual generated child handler")
+                },
+                _ => panic!("request must dispatch the original typed Proc pair"),
+            }
+        }
+
+        fn resume_original_proc_owner(stack: &mut Vec<CheckedCmpTask<usize>>,
+            answer: Ordering) -> Option<Ordering> {
+            match stack.pop().expect("original retained owner") {
+                CheckedCmpTask::ResumeCollection(machine, resume) => {
+                    assert!(std::ptr::fn_addr_eq(resume,
+                        checked_cmp_resume_collection_proc::<usize> as CheckedCollectionCmpResume<usize>));
+                    resume(stack, machine, Some(answer), &mut |_,_| Ok::<_, usize>(()))
+                        .expect("actual retained callback")
+                },
+                _ => panic!("child result must return to its original owning continuation"),
+            }
+        }
+
+        fn secondary_dispatch_preserves_the_distinct_lower_parked_owner() {
+            let nested_key = || map_proc(map([(token("inner key"), token("inner value"))]));
+            let mut left = mettail_runtime::HashMapLit::new();
+            let mut right = mettail_runtime::HashMapLit::new();
+            left.insert(nested_key(), token("a outer value"));
+            right.insert(nested_key(), token("z outer value"));
+            let (left_key, left_value) = left.iter().next().expect("original left outer pair");
+            let (right_key, right_value) = right.iter().next().expect("original right outer pair");
+            let (left_head, left_map) = match left_key {
+                Proc::ApplyMap(head, map) => (head.as_ref(), map.as_ref()),
+                _ => panic!("fixture original nested Map key"),
+            };
+            let (right_head, right_map) = match right_key {
+                Proc::ApplyMap(head, map) => (head.as_ref(), map.as_ref()),
+                _ => panic!("fixture original nested Map key"),
+            };
+            let left_inner = match left_map {
+                Map::#map_literal(entries) => entries.iter().next().expect("left inner pair"),
+                _ => panic!("fixture original Map literal"),
+            };
+            let right_inner = match right_map {
+                Map::#map_literal(entries) => entries.iter().next().expect("right inner pair"),
+                _ => panic!("fixture original Map literal"),
+            };
+            let mut stack = paid_cmp_stack();
+            assert_eq!(checked_cmp_resume_collection_proc(&mut stack, map_owner(&left, &right),
+                None, &mut |_,_| Ok::<_, usize>(())), Ok(None));
+            assert_eq!(stack.len(), 2);
+
+            // Run the real generated constructor handlers. Their original
+            // children create the inner Map Start above the parked outer owner.
+            assert_eq!(compare_original_proc_child(&mut stack, left_key, right_key), Ordering::Equal);
+            assert_eq!(stack.len(), 3);
+            assert_eq!(compare_original_proc_child(&mut stack, left_head, right_head), Ordering::Equal);
+            match stack.pop().expect("original Map child") {
+                CheckedCmpTask::CmpMap(lhs, rhs) => {
+                    assert_eq!(lhs, left_map as *const Map);
+                    assert_eq!(rhs, right_map as *const Map);
+                    assert_eq!(checked_cmp_handle_map(&mut stack, lhs, rhs,
+                        &mut |_,_| Ok::<_, usize>(())), Ok(Ordering::Equal));
+                },
+                _ => panic!("ApplyMap must retain its original typed Map child"),
+            }
+            match stack.pop().expect("inner Map Start") {
+                CheckedCmpTask::StartCollection(machine, resume) => {
+                    assert!(std::ptr::fn_addr_eq(resume,
+                        checked_cmp_resume_collection_proc::<usize> as CheckedCollectionCmpResume<usize>));
+                    assert_eq!(resume(&mut stack, machine, None,
+                        &mut |_,_| Ok::<_, usize>(())), Ok(None));
+                },
+                _ => panic!("generated Map factory must produce its original owning Start"),
+            }
+            assert_eq!(stack.len(), 3);
+            assert!(matches!(&stack[0], CheckedCmpTask::ResumeCollection(..)));
+            assert!(matches!(&stack[1], CheckedCmpTask::ResumeCollection(..)));
+            assert_eq!(compare_original_proc_child(&mut stack, left_inner.0, right_inner.0), Ordering::Equal);
+            assert_eq!(resume_original_proc_owner(&mut stack, Ordering::Equal), None);
+            assert_eq!(stack.len(), 3);
+            // Primary Equal must request the original values, not reissue keys.
+            assert_eq!(compare_original_proc_child(&mut stack, left_inner.1, right_inner.1), Ordering::Equal);
+            let completed_child = resume_original_proc_owner(&mut stack, Ordering::Equal)
+                .expect("inner Map completes at its own return boundary");
+            assert_eq!(completed_child, Ordering::Equal);
+            assert_eq!(stack.len(), 1, "only the distinct original outer owner remains");
+
+            // Its retained primary request must still name the OUTER pair.
+            // Feeding the actual completed child answer reveals that pair's
+            // original secondary pointers, checking this did not restart or
+            // substitute the inner machine for the parked continuation.
+            assert_eq!(resume_original_proc_owner(&mut stack, completed_child), None);
+            assert_eq!(stack.len(), 2);
+            let answer = compare_original_proc_child(&mut stack, left_value, right_value);
+            assert_eq!(answer, Ordering::Less);
+            assert_eq!(resume_original_proc_owner(&mut stack, answer), Some(Ordering::Less));
+            assert!(stack.is_empty());
+            assert_eq!((left.iter().count(), right.iter().count()), (1, 1));
+        }
+
         fn unstarted_map_is_discarded_during_outer_delivery() {
             // These keys would refuse checked comparison if an unstarted
             // deferred collection were incorrectly resumed during delivery.
@@ -495,6 +599,7 @@ fn checked_comparison_captures_actual_production_layout_executable() {
             refuse(&bag, &bag, "Bag", stringify!(#bag_literal), Some(5));
             map_cases();
             map_owner_is_pushed_before_its_requested_child();
+            secondary_dispatch_preserves_the_distinct_lower_parked_owner();
             unstarted_map_is_discarded_during_outer_delivery();
             let set = Set::#set_literal(mettail_runtime::HashSetLit::new());
             refuse(&set, &set, "Set", stringify!(#set_literal), Some(5));

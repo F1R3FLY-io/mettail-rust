@@ -9,6 +9,23 @@ fn compact(tokens: TokenStream) -> String {
     tokens.to_string().split_whitespace().collect()
 }
 
+fn assert_original_map_factory(source: &str, left: &str, right: &str, category: &Ident) {
+    let factory = format!(
+        "CheckedCmpTask::StartCollection({{\
+         let__cmp_left=({left}).try_comparison_roster(reserve)?;\
+         let__cmp_right=({right}).try_comparison_roster(reserve)?;\
+         mettail_runtime::CheckedCollectionCmpPda::try_new(\
+         std::cmp::Ordering::Equal,__cmp_left,__cmp_right,reserve)?\
+         }},checked_cmp_resume_collection_{},)",
+        category.to_string().to_lowercase()
+    );
+    assert!(
+        source.contains(&factory),
+        "Map factory must retain both original selectors, paid paired rosters, Equal lead \
+         and the element-category callback: expected {factory} in {source}"
+    );
+}
+
 fn actual_rholang() -> LanguageDef {
     let source = syn::parse_file(include_str!("../../../../languages/src/rholang.rs"))
         .expect("actual Rholang source must parse as Rust items");
@@ -315,6 +332,11 @@ fn inspect_variant(
                     _ => panic!("unsupported whole collection entered checked comparison census"),
                 };
                 assert_eq!(shape(fields[0]), expected, "{category}::{label}");
+                if matches!(coll_type, CollectionType::HashMap) {
+                    assert_original_map_factory(
+                        &compact(checked_arm.clone()), &left[0], &right[0], element_cat,
+                    );
+                }
                 let (base, selector) = match coll_type {
                     CollectionType::Vec => ("Vector", "iter(): original element order"),
                     CollectionType::HashMap => {
@@ -345,6 +367,24 @@ fn inspect_variant(
     for (position, field) in ordinary_fields.iter().enumerate() {
         if supported {
             check_supported_field(field, fields[position]);
+            match field_carrier(field) {
+                FieldCarrier::Collection { coll_type: CollectionType::HashMap } => {
+                    assert_original_map_factory(
+                        &compact(checked_arm.clone()), &left[position], &right[position],
+                        &field.category,
+                    );
+                },
+                FieldCarrier::OptionalCollection { coll_type: CollectionType::HashMap } => {
+                    let source = compact(checked_arm.clone());
+                    assert!(source.contains(&format!(
+                        "match({}.as_ref(),{}.as_ref())", left[position], right[position]
+                    )), "optional Map must retain the original None/Some selectors");
+                    assert_original_map_factory(
+                        &source, "__left_collection", "__right_collection", &field.category,
+                    );
+                },
+                _ => {},
+            }
             let (base, selector) = match field_carrier(field) {
                 FieldCarrier::Leaf => match field.opaque_leaf {
                     Some(OpaqueLeafKind::TokenText) => ("Native Bytes".to_owned(), "borrow"),
