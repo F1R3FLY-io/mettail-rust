@@ -100,6 +100,7 @@ theories/NativeSortedComparisonClasses.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
 theories/GeneratedSourceRowComparison.v
+theories/GeneratedCollectionOwnerFrame.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
